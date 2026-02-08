@@ -8,20 +8,21 @@ import {
 } from "react";
 
 import {
-  derivePhase,
-  deriveWorkLogEntries,
-  formatElapsed,
-  formatTimestamp,
-  readNativeApi,
-} from "../session-logic";
-import {
   DEFAULT_MODEL,
   DEFAULT_REASONING,
   MODEL_OPTIONS,
   REASONING_OPTIONS,
   resolveModelSlug,
 } from "../model-logic";
+import {
+  derivePhase,
+  deriveWorkLogEntries,
+  formatElapsed,
+  formatTimestamp,
+  readNativeApi,
+} from "../session-logic";
 import { useStore } from "../store";
+import ChatMarkdown from "./ChatMarkdown";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
   if (!duration) return formatTimestamp(createdAt);
@@ -49,9 +50,8 @@ export default function ChatView() {
   const [isSending, setIsSending] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
-  const [selectedEffort, setSelectedEffort] = useState<string>(
-    DEFAULT_REASONING,
-  );
+  const [selectedEffort, setSelectedEffort] =
+    useState<string>(DEFAULT_REASONING);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -356,9 +356,11 @@ export default function ChatView() {
                   </div>
                 ) : (
                   <div className="border-l-2 border-white/[0.15] pl-4">
-                    <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-[#d0d0d0]">
-                      {msg.text || (msg.streaming ? "" : "(empty response)")}
-                    </pre>
+                    <ChatMarkdown
+                      text={
+                        msg.text || (msg.streaming ? "" : "(empty response)")
+                      }
+                    />
                     {msg.streaming && (
                       <div className="pt-1.5">
                         <span className="inline-flex items-center gap-2 rounded-full border border-sky-400/25 bg-sky-500/[0.08] px-2 py-0.5 text-[10px] text-sky-100/90">
@@ -422,10 +424,7 @@ export default function ChatView() {
 
       {/* Input bar */}
       <div className="px-5 pb-4 pt-2">
-        <form
-          onSubmit={onSend}
-          className="mx-auto max-w-3xl"
-        >
+        <form onSubmit={onSend} className="mx-auto max-w-3xl">
           <div className="group rounded-[20px] border border-white/[0.08] bg-[#141416] transition-colors duration-200 focus-within:border-white/[0.16]">
             {/* Textarea area */}
             <div className="px-4 pt-4 pb-2">
@@ -458,8 +457,21 @@ export default function ChatView() {
                     <span className="max-w-[180px] truncate">
                       {selectedModel}
                     </span>
-                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="opacity-50">
-                      <path d="M2.5 4L5 6.5L7.5 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 10 10"
+                      fill="none"
+                      className="opacity-50"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M2.5 4L5 6.5L7.5 4"
+                        stroke="currentColor"
+                        strokeWidth="1.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
                     </svg>
                   </button>
                   {isModelMenuOpen && (
@@ -505,7 +517,10 @@ export default function ChatView() {
                   className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-[#a0a0a0]/70 transition-colors duration-150 hover:bg-white/[0.06] hover:text-[#d0d0d0]"
                   htmlFor="reasoning-effort"
                 >
-                  <span>{selectedEffort.charAt(0).toUpperCase() + selectedEffort.slice(1)}</span>
+                  <span>
+                    {selectedEffort.charAt(0).toUpperCase() +
+                      selectedEffort.slice(1)}
+                  </span>
                   <select
                     id="reasoning-effort"
                     className="absolute opacity-0 w-0 h-0"
@@ -513,14 +528,31 @@ export default function ChatView() {
                     onChange={(event) => setSelectedEffort(event.target.value)}
                   >
                     {REASONING_OPTIONS.map((effort) => (
-                      <option key={effort} value={effort} className="bg-[#1b1b1d]">
+                      <option
+                        key={effort}
+                        value={effort}
+                        className="bg-[#1b1b1d]"
+                      >
                         {effort}
                         {effort === DEFAULT_REASONING ? " (default)" : ""}
                       </option>
                     ))}
                   </select>
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="opacity-50">
-                    <path d="M2.5 4L5 6.5L7.5 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 10 10"
+                    fill="none"
+                    className="opacity-50"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M2.5 4L5 6.5L7.5 4"
+                      stroke="currentColor"
+                      strokeWidth="1.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
                   </svg>
                 </label>
               </div>
@@ -539,7 +571,13 @@ export default function ChatView() {
                     onClick={() => void onInterrupt()}
                     aria-label="Stop generation"
                   >
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 12 12"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
                       <rect x="2" y="2" width="8" height="8" rx="1.5" />
                     </svg>
                   </button>
@@ -548,15 +586,48 @@ export default function ChatView() {
                     type="submit"
                     className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-[#0c0c0c] transition-all duration-150 hover:bg-white hover:scale-105 disabled:opacity-30 disabled:hover:scale-100"
                     disabled={isSending || isConnecting || !prompt.trim()}
-                    aria-label={isConnecting ? "Connecting" : isSending ? "Sending" : "Send message"}
+                    aria-label={
+                      isConnecting
+                        ? "Connecting"
+                        : isSending
+                          ? "Sending"
+                          : "Send message"
+                    }
                   >
                     {isConnecting || isSending ? (
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="animate-spin">
-                        <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeDasharray="20 12" />
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 14 14"
+                        fill="none"
+                        className="animate-spin"
+                        aria-hidden="true"
+                      >
+                        <circle
+                          cx="7"
+                          cy="7"
+                          r="5.5"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeDasharray="20 12"
+                        />
                       </svg>
                     ) : (
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                        <path d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 14 14"
+                        fill="none"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
                       </svg>
                     )}
                   </button>

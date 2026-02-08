@@ -9,6 +9,9 @@ const nativeApi: NativeApi = {
     toggle: (id) => ipcRenderer.invoke(IPC_CHANNELS.todosToggle, id),
     remove: (id) => ipcRenderer.invoke(IPC_CHANNELS.todosRemove, id),
   },
+  dialogs: {
+    pickFolder: () => ipcRenderer.invoke(IPC_CHANNELS.dialogPickFolder),
+  },
   terminal: {
     run: (input) => ipcRenderer.invoke(IPC_CHANNELS.terminalRun, input),
   },

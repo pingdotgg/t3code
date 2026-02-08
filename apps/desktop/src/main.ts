@@ -3,7 +3,7 @@ fixPath();
 
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { BrowserWindow, app, ipcMain, session } from "electron";
+import { BrowserWindow, app, dialog, ipcMain, session } from "electron";
 
 import {
   IPC_CHANNELS,
@@ -76,6 +76,21 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.todosRemove, async (_event, id: unknown) => {
     return todoStore.remove(todoIdSchema.parse(id));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.dialogPickFolder, async () => {
+    const owner =
+      BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const result = owner
+      ? await dialog.showOpenDialog(owner, {
+          properties: ["openDirectory", "createDirectory"],
+        })
+      : await dialog.showOpenDialog({
+          properties: ["openDirectory", "createDirectory"],
+        });
+
+    if (result.canceled) return null;
+    return result.filePaths[0] ?? null;
   });
 
   // Terminal handlers

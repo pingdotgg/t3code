@@ -16,6 +16,7 @@ export const IPC_CHANNELS = {
   todosAdd: "todos:add",
   todosToggle: "todos:toggle",
   todosRemove: "todos:remove",
+  dialogPickFolder: "dialog:pick-folder",
   terminalRun: "terminal:run",
   agentSpawn: "agent:spawn",
   agentKill: "agent:kill",
@@ -36,6 +37,9 @@ export interface NativeApi {
     add: (input: NewTodoInput) => Promise<Todo[]>;
     toggle: (id: string) => Promise<Todo[]>;
     remove: (id: string) => Promise<Todo[]>;
+  };
+  dialogs: {
+    pickFolder: () => Promise<string | null>;
   };
   terminal: {
     run: (input: TerminalCommandInput) => Promise<TerminalCommandResult>;

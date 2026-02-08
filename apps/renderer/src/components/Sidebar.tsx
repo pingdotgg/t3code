@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { DEFAULT_MODEL, MODEL_OPTIONS, resolveModelSlug } from "../model-logic";
+import { readNativeApi } from "../session-logic";
 import { useStore } from "../store";
 import type { Project } from "../types";
 
@@ -15,9 +16,11 @@ function formatRelativeTime(iso: string): string {
 
 export default function Sidebar() {
   const { state, dispatch } = useStore();
+  const api = useMemo(() => readNativeApi(), []);
   const [addingProject, setAddingProject] = useState(false);
   const [newCwd, setNewCwd] = useState("");
   const [newModel, setNewModel] = useState(DEFAULT_MODEL);
+  const [isPickingFolder, setIsPickingFolder] = useState(false);
 
   const handleAddProject = () => {
     const cwd = newCwd.trim();
@@ -54,6 +57,18 @@ export default function Sidebar() {
         createdAt: new Date().toISOString(),
       },
     });
+  };
+
+  const handlePickFolder = async () => {
+    if (!api || isPickingFolder) return;
+    setIsPickingFolder(true);
+    try {
+      const pickedPath = await api.dialogs.pickFolder();
+      if (!pickedPath) return;
+      setNewCwd(pickedPath);
+    } finally {
+      setIsPickingFolder(false);
+    }
   };
 
   return (
@@ -186,6 +201,16 @@ export default function Sidebar() {
               if (e.key === "Escape") setAddingProject(false);
             }}
           />
+          {api && (
+            <button
+              type="button"
+              className="mb-2 flex w-full items-center justify-center rounded-md border border-white/[0.1] px-2 py-1.5 text-xs text-[#a0a0a0]/70 transition-colors duration-150 hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => void handlePickFolder()}
+              disabled={isPickingFolder}
+            >
+              {isPickingFolder ? "Picking folder..." : "Browse for folder"}
+            </button>
+          )}
           <select
             className="mb-2 w-full rounded-md border border-white/[0.1] bg-white/[0.04] px-2 py-1.5 font-mono text-xs text-[#e0e0e0] placeholder:text-[#a0a0a0]/30 focus:border-white/30 focus:outline-none"
             value={newModel}
