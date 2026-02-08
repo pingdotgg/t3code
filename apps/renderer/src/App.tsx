@@ -1,12 +1,55 @@
-import { type FormEvent, useMemo, useState } from "react";
+import {
+  type FormEvent,
+  type MutableRefObject,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
-import type { TerminalCommandResult } from "@acme/contracts";
+import type {
+  ProviderEvent,
+  ProviderKind,
+  ProviderSession,
+} from "@acme/contracts";
 
-interface TerminalEntry {
+type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
+
+interface ChatMessage {
   id: string;
-  command: string;
-  result: TerminalCommandResult;
+  role: "user" | "assistant";
+  text: string;
   createdAt: string;
+  streaming: boolean;
+}
+
+const PROVIDER_OPTIONS: Array<{
+  value: ProviderKind;
+  label: string;
+  available: boolean;
+}> = [
+  { value: "codex", label: "Codex", available: true },
+  { value: "claudeCode", label: "Claude Code (soon)", available: false },
+];
+
+function readNativeApi() {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return window.nativeApi;
+}
+
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function formatTimestamp(isoDate: string): string {
@@ -17,66 +60,364 @@ function formatTimestamp(isoDate: string): string {
   }).format(new Date(isoDate));
 }
 
-function readNativeApi() {
-  if (typeof window === "undefined") {
-    return undefined;
+function derivePhase(session: ProviderSession | null): SessionPhase {
+  if (!session || session.status === "closed") {
+    return "disconnected";
   }
 
-  return window.nativeApi;
+  if (session.status === "connecting") {
+    return "connecting";
+  }
+
+  if (session.status === "running") {
+    return "running";
+  }
+
+  return "ready";
+}
+
+function evolveSession(
+  previous: ProviderSession,
+  event: ProviderEvent,
+): ProviderSession {
+  const payload = asObject(event.payload);
+
+  if (event.method === "thread/started") {
+    const thread = asObject(payload?.thread);
+    return {
+      ...previous,
+      threadId: asString(thread?.id) ?? event.threadId ?? previous.threadId,
+      updatedAt: event.createdAt,
+    };
+  }
+
+  if (event.method === "turn/started") {
+    const turn = asObject(payload?.turn);
+    return {
+      ...previous,
+      status: "running",
+      activeTurnId: asString(turn?.id) ?? event.turnId ?? previous.activeTurnId,
+      updatedAt: event.createdAt,
+    };
+  }
+
+  if (event.method === "turn/completed") {
+    const turn = asObject(payload?.turn);
+    const status = asString(turn?.status);
+    const turnError = asObject(turn?.error);
+    return {
+      ...previous,
+      status: status === "failed" ? "error" : "ready",
+      activeTurnId: undefined,
+      lastError: asString(turnError?.message) ?? previous.lastError,
+      updatedAt: event.createdAt,
+    };
+  }
+
+  if (event.kind === "error") {
+    return {
+      ...previous,
+      status: "error",
+      lastError: event.message ?? previous.lastError,
+      updatedAt: event.createdAt,
+    };
+  }
+
+  if (event.method === "session/closed" || event.method === "session/exited") {
+    return {
+      ...previous,
+      status: "closed",
+      activeTurnId: undefined,
+      lastError: event.message ?? previous.lastError,
+      updatedAt: event.createdAt,
+    };
+  }
+
+  return {
+    ...previous,
+    updatedAt: event.createdAt,
+  };
+}
+
+function applyEventToMessages(
+  previous: ChatMessage[],
+  event: ProviderEvent,
+  activeAssistantItemRef: MutableRefObject<string | null>,
+): ChatMessage[] {
+  const payload = asObject(event.payload);
+
+  if (event.method === "item/started") {
+    const item = asObject(payload?.item);
+    if (asString(item?.type) !== "agentMessage") {
+      return previous;
+    }
+
+    const itemId = asString(item?.id);
+    if (!itemId) {
+      return previous;
+    }
+
+    activeAssistantItemRef.current = itemId;
+    const seedText = asString(item?.text) ?? "";
+    const filtered = previous.filter((entry) => entry.id !== itemId);
+    return [
+      ...filtered,
+      {
+        id: itemId,
+        role: "assistant",
+        text: seedText,
+        createdAt: event.createdAt,
+        streaming: true,
+      },
+    ];
+  }
+
+  if (event.method === "item/agentMessage/delta") {
+    const itemId = event.itemId ?? asString(payload?.itemId);
+    const delta = event.textDelta ?? asString(payload?.delta) ?? "";
+    if (!itemId || !delta) {
+      return previous;
+    }
+
+    const existingIndex = previous.findIndex((entry) => entry.id === itemId);
+    if (existingIndex === -1) {
+      activeAssistantItemRef.current = itemId;
+      return [
+        ...previous,
+        {
+          id: itemId,
+          role: "assistant",
+          text: delta,
+          createdAt: event.createdAt,
+          streaming: true,
+        },
+      ];
+    }
+
+    const updated = [...previous];
+    const existing = updated[existingIndex];
+    if (!existing) {
+      return previous;
+    }
+    updated[existingIndex] = {
+      ...existing,
+      text: `${existing.text}${delta}`,
+      streaming: true,
+    };
+    return updated;
+  }
+
+  if (event.method === "item/completed") {
+    const item = asObject(payload?.item);
+    if (asString(item?.type) !== "agentMessage") {
+      return previous;
+    }
+
+    const itemId = asString(item?.id);
+    if (!itemId) {
+      return previous;
+    }
+
+    const fullText = asString(item?.text);
+    const existingIndex = previous.findIndex((entry) => entry.id === itemId);
+    if (existingIndex === -1) {
+      return [
+        ...previous,
+        {
+          id: itemId,
+          role: "assistant",
+          text: fullText ?? "",
+          createdAt: event.createdAt,
+          streaming: false,
+        },
+      ];
+    }
+
+    const updated = [...previous];
+    const existing = updated[existingIndex];
+    if (!existing) {
+      return previous;
+    }
+    updated[existingIndex] = {
+      ...existing,
+      text: fullText ?? existing.text,
+      streaming: false,
+    };
+
+    if (activeAssistantItemRef.current === itemId) {
+      activeAssistantItemRef.current = null;
+    }
+
+    return updated;
+  }
+
+  if (event.method === "turn/completed") {
+    return previous.map((entry) => ({ ...entry, streaming: false }));
+  }
+
+  return previous;
 }
 
 export default function App() {
   const api = useMemo(() => readNativeApi(), []);
-  const [command, setCommand] = useState("");
-  const [history, setHistory] = useState<TerminalEntry[]>([]);
-  const [isRunning, setIsRunning] = useState(false);
+  const [provider, setProvider] = useState<ProviderKind>("codex");
+  const [cwd, setCwd] = useState("");
+  const [model, setModel] = useState("gpt-5.1-codex");
+  const [prompt, setPrompt] = useState("");
+  const [session, setSession] = useState<ProviderSession | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [events, setEvents] = useState<ProviderEvent[]>([]);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const currentSessionIdRef = useRef<string | null>(null);
+  const activeAssistantItemRef = useRef<string | null>(null);
 
-    if (!api || isRunning) {
+  useEffect(() => {
+    currentSessionIdRef.current = session?.sessionId ?? null;
+  }, [session?.sessionId]);
+
+  useEffect(() => {
+    if (!api) {
       return;
     }
 
-    const trimmed = command.trim();
+    return api.providers.onEvent((event) => {
+      const currentSessionId = currentSessionIdRef.current;
+      if (!currentSessionId || currentSessionId !== event.sessionId) {
+        return;
+      }
+
+      setEvents((previous) => [event, ...previous].slice(0, 200));
+      setSession((previous) => {
+        if (!previous || previous.sessionId !== event.sessionId) {
+          return previous;
+        }
+        return evolveSession(previous, event);
+      });
+      setMessages((previous) =>
+        applyEventToMessages(previous, event, activeAssistantItemRef),
+      );
+
+      if (event.kind === "error" && event.message) {
+        setError(event.message);
+      }
+    });
+  }, [api]);
+
+  const phase = derivePhase(session);
+
+  const onConnect = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!api || provider !== "codex" || isConnecting) {
+      return;
+    }
+
+    setError(null);
+    setIsConnecting(true);
+    try {
+      const nextSession = await api.providers.startSession({
+        provider,
+        cwd: cwd.trim() || undefined,
+        model: model.trim() || undefined,
+      });
+      currentSessionIdRef.current = nextSession.sessionId;
+      activeAssistantItemRef.current = null;
+      setSession(nextSession);
+      setMessages([]);
+      setEvents([]);
+    } catch (connectError) {
+      setError(
+        connectError instanceof Error
+          ? connectError.message
+          : "Unable to connect to Codex app-server.",
+      );
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  const onDisconnect = async () => {
+    if (!api || !session) {
+      return;
+    }
+
+    await api.providers.stopSession({ sessionId: session.sessionId });
+    currentSessionIdRef.current = null;
+    setSession((previous) =>
+      previous
+        ? {
+            ...previous,
+            status: "closed",
+            activeTurnId: undefined,
+            updatedAt: new Date().toISOString(),
+          }
+        : previous,
+    );
+  };
+
+  const onSendPrompt = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!api || !session || isSending) {
+      return;
+    }
+
+    const trimmed = prompt.trim();
     if (!trimmed) {
       return;
     }
 
     setError(null);
-    setIsRunning(true);
+    setMessages((previous) => [
+      ...previous,
+      {
+        id: crypto.randomUUID(),
+        role: "user",
+        text: trimmed,
+        createdAt: new Date().toISOString(),
+        streaming: false,
+      },
+    ]);
+    setPrompt("");
+    setIsSending(true);
 
     try {
-      const result = await api.terminal.run({ command: trimmed });
-      setHistory((previous) => [
-        ...previous,
-        {
-          id: crypto.randomUUID(),
-          command: trimmed,
-          result,
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-      setCommand("");
-    } catch (runError) {
-      const message =
-        runError instanceof Error
-          ? runError.message
-          : "Could not execute command.";
-      setError(message);
+      await api.providers.sendTurn({
+        sessionId: session.sessionId,
+        input: trimmed,
+      });
+    } catch (sendError) {
+      setError(
+        sendError instanceof Error
+          ? sendError.message
+          : "Failed to start a Codex turn.",
+      );
     } finally {
-      setIsRunning(false);
+      setIsSending(false);
     }
+  };
+
+  const onInterrupt = async () => {
+    if (!api || !session) {
+      return;
+    }
+
+    await api.providers.interruptTurn({
+      sessionId: session.sessionId,
+      turnId: session.activeTurnId,
+    });
   };
 
   if (!api) {
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-4xl items-center justify-center px-8">
-        <section className="rounded-3xl border border-amber-200 bg-amber-50 px-6 py-5 text-amber-900 shadow-soft">
-          <h1 className="text-lg font-semibold">Native bridge unavailable</h1>
-          <p className="mt-2 text-sm">
-            Launch this UI through Electron so the preload API is available.
+      <main className="mx-auto flex min-h-screen w-full max-w-3xl items-center justify-center px-6 py-10">
+        <section className="surface-card w-full rounded-3xl p-8">
+          <p className="label-chip">CodeThing</p>
+          <h1 className="mt-3 text-3xl">Native bridge unavailable</h1>
+          <p className="mt-3 text-sm text-amber-100/80">
+            Launch the renderer through Electron so `window.nativeApi` is
+            exposed by preload.
           </p>
         </section>
       </main>
@@ -84,102 +425,192 @@ export default function App() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-6 py-10 text-slate-900 sm:px-10">
-      <header className="rounded-3xl border border-slate-800/80 bg-slate-900 p-7 text-slate-100 shadow-soft">
-        <p className="text-xs uppercase tracking-[0.18em] text-emerald-300">
-          Demo Terminal
-        </p>
-        <h1 className="mt-2 font-mono text-3xl font-semibold tracking-tight">
-          Shell Command Runner
+    <main className="mx-auto min-h-screen w-full max-w-7xl px-4 py-6 text-[#f3f0e9] sm:px-8">
+      <header className="surface-card relative overflow-hidden rounded-3xl px-6 py-7 sm:px-8">
+        <div className="grain absolute inset-0 pointer-events-none" />
+        <p className="label-chip relative">CodeThing / Provider Shell</p>
+        <h1 className="relative mt-3 text-4xl tracking-tight sm:text-5xl">
+          Codex-first workspace
         </h1>
-        <p className="mt-3 text-sm text-slate-300">
-          Runs one command at a time in your shell and prints stdout/stderr.
+        <p className="relative mt-3 max-w-3xl text-sm text-[#efe8d7]/82 sm:text-base">
+          Built on the Codex app-server protocol with a provider abstraction in
+          the IPC layer, so Claude Code can be added without reshaping the UI
+          contract.
         </p>
 
-        <form className="mt-6 flex gap-3" onSubmit={onSubmit}>
-          <input
-            value={command}
-            onChange={(event) => setCommand(event.target.value)}
-            placeholder="e.g. ls -la"
-            className="h-11 flex-1 rounded-xl border border-emerald-500/50 bg-slate-950 px-4 font-mono text-sm text-emerald-100 outline-none ring-0 transition focus:border-emerald-300"
-            maxLength={4000}
-          />
-          <button
-            type="submit"
-            className="h-11 rounded-xl bg-emerald-500 px-5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-emerald-800 disabled:text-emerald-300"
-            disabled={isRunning}
-          >
-            {isRunning ? "Running..." : "Run"}
-          </button>
-          <button
-            type="button"
-            className="h-11 rounded-xl border border-slate-600 px-5 text-sm font-medium text-slate-200 transition hover:border-slate-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={history.length === 0 || isRunning}
-            onClick={() => setHistory([])}
-          >
-            Clear
-          </button>
+        <form
+          className="relative mt-6 grid gap-3 rounded-2xl border border-[#f6a40f]/30 bg-[#0f2034]/65 p-4 sm:grid-cols-6"
+          onSubmit={onConnect}
+        >
+          <label className="sm:col-span-2">
+            <span className="field-label">Provider</span>
+            <select
+              className="field-input"
+              value={provider}
+              onChange={(event) =>
+                setProvider(event.target.value as ProviderKind)
+              }
+              disabled={isConnecting || phase !== "disconnected"}
+            >
+              {PROVIDER_OPTIONS.map((option) => (
+                <option
+                  key={option.value}
+                  value={option.value}
+                  disabled={!option.available}
+                >
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="sm:col-span-2">
+            <span className="field-label">Working directory</span>
+            <input
+              className="field-input font-mono text-xs sm:text-sm"
+              value={cwd}
+              onChange={(event) => setCwd(event.target.value)}
+              placeholder="/Users/theo/Code/Work/..."
+              disabled={isConnecting || phase !== "disconnected"}
+            />
+          </label>
+
+          <label className="sm:col-span-1">
+            <span className="field-label">Model</span>
+            <input
+              className="field-input font-mono text-xs sm:text-sm"
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              placeholder="gpt-5.1-codex"
+              disabled={isConnecting || phase !== "disconnected"}
+            />
+          </label>
+
+          <div className="sm:col-span-1 flex items-end">
+            {phase === "disconnected" ? (
+              <button
+                type="submit"
+                className="action-button action-primary w-full"
+                disabled={provider !== "codex" || isConnecting}
+              >
+                {isConnecting ? "Connecting..." : "Connect"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="action-button action-danger w-full"
+                onClick={() => void onDisconnect()}
+              >
+                Disconnect
+              </button>
+            )}
+          </div>
         </form>
+
+        <div className="relative mt-4 flex flex-wrap gap-2 text-xs">
+          <span className="status-pill">
+            phase={phase} provider={session?.provider ?? "none"}
+          </span>
+          <span className="status-pill">
+            thread={session?.threadId ?? "none"}
+          </span>
+          <span className="status-pill">
+            turn={session?.activeTurnId ?? "none"}
+          </span>
+        </div>
       </header>
 
       {error ? (
-        <div className="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        <div className="mt-4 rounded-2xl border border-rose-300/35 bg-rose-900/35 px-4 py-3 text-sm text-rose-100">
           {error}
         </div>
       ) : null}
 
-      <section className="mt-6 flex-1 space-y-4">
-        {history.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-            No commands run yet.
+      <section className="mt-5 grid gap-4 lg:grid-cols-[2fr_1fr]">
+        <article className="surface-card rounded-3xl p-4 sm:p-5">
+          <h2 className="text-xl">Conversation</h2>
+          <div className="mt-4 max-h-[52vh] space-y-3 overflow-y-auto pr-1">
+            {messages.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-[#f6d79e]/30 bg-[#0d1827]/70 px-4 py-5 text-sm text-[#d8d0c3]/75">
+                No turns yet. Start a session, then send a prompt.
+              </div>
+            ) : null}
+
+            {messages.map((entry) => (
+              <div
+                key={entry.id}
+                className={`message-card ${
+                  entry.role === "user" ? "message-user" : "message-assistant"
+                }`}
+              >
+                <header className="mb-2 flex items-center justify-between text-[11px] uppercase tracking-[0.12em] text-[#d8d0c3]/68">
+                  <span>{entry.role === "user" ? "you" : "codex"}</span>
+                  <span>{formatTimestamp(entry.createdAt)}</span>
+                </header>
+                <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-6">
+                  {entry.text || (entry.streaming ? "..." : "(empty response)")}
+                </pre>
+              </div>
+            ))}
           </div>
-        ) : null}
 
-        {history.map((entry) => (
-          <article
-            key={entry.id}
-            className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-950 shadow-soft"
-          >
-            <header className="flex items-center justify-between border-b border-slate-800 px-4 py-3 font-mono text-xs text-slate-300">
-              <p>$ {entry.command}</p>
-              <p>{formatTimestamp(entry.createdAt)}</p>
-            </header>
-
-            <div className="space-y-3 px-4 py-4 font-mono text-sm">
-              {entry.result.stdout ? (
-                <div>
-                  <p className="mb-1 text-xs uppercase tracking-wide text-emerald-300">
-                    stdout
-                  </p>
-                  <pre className="whitespace-pre-wrap break-words text-emerald-100">
-                    {entry.result.stdout}
-                  </pre>
-                </div>
-              ) : null}
-
-              {entry.result.stderr ? (
-                <div>
-                  <p className="mb-1 text-xs uppercase tracking-wide text-rose-300">
-                    stderr
-                  </p>
-                  <pre className="whitespace-pre-wrap break-words text-rose-200">
-                    {entry.result.stderr}
-                  </pre>
-                </div>
-              ) : null}
-
-              {!entry.result.stdout && !entry.result.stderr ? (
-                <p className="text-slate-400">(no output)</p>
-              ) : null}
+          <form className="mt-4 grid gap-3" onSubmit={onSendPrompt}>
+            <textarea
+              className="field-input min-h-28 resize-y font-mono text-sm leading-6"
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              placeholder="Ask Codex to inspect, plan, or edit this project..."
+              disabled={phase === "disconnected" || isSending}
+            />
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                className="action-button action-primary"
+                disabled={phase === "disconnected" || isSending}
+              >
+                {isSending ? "Starting turn..." : "Send"}
+              </button>
+              <button
+                type="button"
+                className="action-button action-muted"
+                disabled={phase !== "running"}
+                onClick={() => void onInterrupt()}
+              >
+                Interrupt
+              </button>
             </div>
+          </form>
+        </article>
 
-            <footer className="border-t border-slate-800 bg-slate-900/60 px-4 py-2 font-mono text-xs text-slate-400">
-              exit={entry.result.code ?? "null"} signal=
-              {entry.result.signal ?? "null"} timedOut=
-              {entry.result.timedOut ? "yes" : "no"}
-            </footer>
-          </article>
-        ))}
+        <aside className="surface-card rounded-3xl p-4 sm:p-5">
+          <h2 className="text-xl">Protocol stream</h2>
+          <p className="mt-2 text-xs text-[#d8d0c3]/76">
+            Live notifications from the app-server (latest first).
+          </p>
+          <div className="mt-4 max-h-[58vh] space-y-2 overflow-y-auto pr-1">
+            {events.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-[#f6d79e]/30 bg-[#0d1827]/70 px-3 py-4 text-xs text-[#d8d0c3]/76">
+                Waiting for events...
+              </p>
+            ) : null}
+            {events.map((entry) => (
+              <div key={entry.id} className="event-card">
+                <p className="font-mono text-[11px] uppercase tracking-[0.12em] text-[#f8ca64]">
+                  {entry.method}
+                </p>
+                {entry.message ? (
+                  <p className="mt-1 text-xs text-[#efe8d7]/88">
+                    {entry.message}
+                  </p>
+                ) : null}
+                <p className="mt-2 text-[11px] text-[#d8d0c3]/66">
+                  {formatTimestamp(entry.createdAt)}
+                  {entry.turnId ? ` · ${entry.turnId}` : ""}
+                </p>
+              </div>
+            ))}
+          </div>
+        </aside>
       </section>
     </main>
   );

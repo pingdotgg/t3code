@@ -31,6 +31,24 @@ const nativeApi: NativeApi = {
       return () => ipcRenderer.removeListener(IPC_CHANNELS.agentExit, listener);
     },
   },
+  providers: {
+    startSession: (input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.providerSessionStart, input),
+    sendTurn: (input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.providerTurnStart, input),
+    interruptTurn: (input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.providerTurnInterrupt, input),
+    stopSession: (input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.providerSessionStop, input),
+    listSessions: () => ipcRenderer.invoke(IPC_CHANNELS.providerSessionList),
+    onEvent: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: unknown) =>
+        callback(payload as Parameters<typeof callback>[0]);
+      ipcRenderer.on(IPC_CHANNELS.providerEvent, listener);
+      return () =>
+        ipcRenderer.removeListener(IPC_CHANNELS.providerEvent, listener);
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld("nativeApi", nativeApi);

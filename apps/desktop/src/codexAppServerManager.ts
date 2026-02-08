@@ -1,0 +1,690 @@
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
+import readline from "node:readline";
+
+import type {
+  ProviderEvent,
+  ProviderSendTurnInput,
+  ProviderSession,
+  ProviderSessionStartInput,
+  ProviderTurnStartResult,
+} from "@acme/contracts";
+
+type PendingRequestKey = string;
+
+interface PendingRequest {
+  method: string;
+  timeout: ReturnType<typeof setTimeout>;
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+}
+
+interface CodexSessionContext {
+  session: ProviderSession;
+  child: ChildProcessWithoutNullStreams;
+  output: readline.Interface;
+  pending: Map<PendingRequestKey, PendingRequest>;
+  nextRequestId: number;
+  stopping: boolean;
+}
+
+interface JsonRpcError {
+  code?: number;
+  message?: string;
+}
+
+interface JsonRpcRequest {
+  id: string | number;
+  method: string;
+  params?: unknown;
+}
+
+interface JsonRpcResponse {
+  id: string | number;
+  result?: unknown;
+  error?: JsonRpcError;
+}
+
+interface JsonRpcNotification {
+  method: string;
+  params?: unknown;
+}
+
+export interface CodexAppServerManagerEvents {
+  event: [event: ProviderEvent];
+}
+
+export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEvents> {
+  private readonly sessions = new Map<string, CodexSessionContext>();
+
+  async startSession(
+    input: ProviderSessionStartInput,
+  ): Promise<ProviderSession> {
+    const sessionId = randomUUID();
+    const now = new Date().toISOString();
+
+    const session: ProviderSession = {
+      sessionId,
+      provider: "codex",
+      status: "connecting",
+      model: input.model,
+      cwd: input.cwd,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const child = spawn("codex", ["app-server"], {
+      cwd: input.cwd,
+      env: process.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const output = readline.createInterface({ input: child.stdout });
+
+    const context: CodexSessionContext = {
+      session,
+      child,
+      output,
+      pending: new Map(),
+      nextRequestId: 1,
+      stopping: false,
+    };
+
+    this.sessions.set(sessionId, context);
+    this.attachProcessListeners(context);
+
+    this.emitLifecycleEvent(
+      context,
+      "session/connecting",
+      "Starting codex app-server",
+    );
+
+    try {
+      await this.sendRequest(context, "initialize", {
+        clientInfo: {
+          name: "codething_desktop",
+          title: "CodeThing Desktop",
+          version: "0.1.0",
+        },
+        capabilities: {
+          experimentalApi: false,
+        },
+      });
+
+      this.writeMessage(context, { method: "initialized" });
+
+      const threadStart = await this.sendRequest(context, "thread/start", {
+        model: input.model ?? null,
+        cwd: input.cwd ?? null,
+        approvalPolicy: input.approvalPolicy,
+        sandbox: input.sandboxMode,
+        experimentalRawEvents: false,
+      });
+
+      const threadId = this.readString(
+        this.readObject(threadStart)?.thread,
+        "id",
+      );
+      if (!threadId) {
+        throw new Error("thread/start response did not include a thread id.");
+      }
+
+      this.updateSession(context, {
+        status: "ready",
+        threadId,
+      });
+      this.emitLifecycleEvent(
+        context,
+        "session/ready",
+        `Connected to thread ${threadId}`,
+      );
+      return { ...context.session };
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to start Codex session.";
+      this.updateSession(context, {
+        status: "error",
+        lastError: message,
+      });
+      this.emitErrorEvent(context, "session/startFailed", message);
+      this.stopSession(sessionId);
+      throw new Error(message);
+    }
+  }
+
+  async sendTurn(
+    input: ProviderSendTurnInput,
+  ): Promise<ProviderTurnStartResult> {
+    const context = this.requireSession(input.sessionId);
+    if (!context.session.threadId) {
+      throw new Error("Session is missing a thread id.");
+    }
+
+    const response = await this.sendRequest(context, "turn/start", {
+      threadId: context.session.threadId,
+      input: [
+        {
+          type: "text",
+          text: input.input,
+          text_elements: [],
+        },
+      ],
+    });
+
+    const turn = this.readObject(this.readObject(response), "turn");
+    const turnId = this.readString(turn, "id");
+    if (!turnId) {
+      throw new Error("turn/start response did not include a turn id.");
+    }
+
+    this.updateSession(context, {
+      status: "running",
+      activeTurnId: turnId,
+    });
+
+    return {
+      threadId: context.session.threadId,
+      turnId,
+    };
+  }
+
+  async interruptTurn(sessionId: string, turnId?: string): Promise<void> {
+    const context = this.requireSession(sessionId);
+    const effectiveTurnId = turnId ?? context.session.activeTurnId;
+
+    if (!effectiveTurnId || !context.session.threadId) {
+      return;
+    }
+
+    await this.sendRequest(context, "turn/interrupt", {
+      threadId: context.session.threadId,
+      turnId: effectiveTurnId,
+    });
+  }
+
+  stopSession(sessionId: string): void {
+    const context = this.sessions.get(sessionId);
+    if (!context) {
+      return;
+    }
+
+    context.stopping = true;
+
+    for (const pending of context.pending.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error("Session stopped before request completed."));
+    }
+    context.pending.clear();
+
+    context.output.close();
+
+    if (!context.child.killed) {
+      context.child.kill();
+    }
+
+    this.updateSession(context, {
+      status: "closed",
+      activeTurnId: undefined,
+    });
+    this.emitLifecycleEvent(context, "session/closed", "Session stopped");
+    this.sessions.delete(sessionId);
+  }
+
+  listSessions(): ProviderSession[] {
+    return Array.from(this.sessions.values(), ({ session }) => ({
+      ...session,
+    }));
+  }
+
+  hasSession(sessionId: string): boolean {
+    return this.sessions.has(sessionId);
+  }
+
+  stopAll(): void {
+    for (const sessionId of this.sessions.keys()) {
+      this.stopSession(sessionId);
+    }
+  }
+
+  private requireSession(sessionId: string): CodexSessionContext {
+    const context = this.sessions.get(sessionId);
+    if (!context) {
+      throw new Error(`Unknown session: ${sessionId}`);
+    }
+
+    if (context.session.status === "closed") {
+      throw new Error(`Session is closed: ${sessionId}`);
+    }
+
+    return context;
+  }
+
+  private attachProcessListeners(context: CodexSessionContext): void {
+    context.output.on("line", (line) => {
+      this.handleStdoutLine(context, line);
+    });
+
+    context.child.stderr.on("data", (chunk: Buffer) => {
+      const message = chunk.toString().trim();
+      if (!message) {
+        return;
+      }
+
+      this.emitErrorEvent(context, "process/stderr", message);
+    });
+
+    context.child.on("error", (error) => {
+      const message = error.message || "codex app-server process errored.";
+      this.updateSession(context, {
+        status: "error",
+        lastError: message,
+      });
+      this.emitErrorEvent(context, "process/error", message);
+    });
+
+    context.child.on("exit", (code, signal) => {
+      if (context.stopping) {
+        return;
+      }
+
+      const message = `codex app-server exited (code=${code ?? "null"}, signal=${signal ?? "null"}).`;
+      this.updateSession(context, {
+        status: "closed",
+        activeTurnId: undefined,
+        lastError: code === 0 ? context.session.lastError : message,
+      });
+      this.emitLifecycleEvent(context, "session/exited", message);
+      this.sessions.delete(context.session.sessionId);
+    });
+  }
+
+  private handleStdoutLine(context: CodexSessionContext, line: string): void {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      this.emitErrorEvent(
+        context,
+        "protocol/parseError",
+        "Received invalid JSON from codex app-server.",
+      );
+      return;
+    }
+
+    if (!parsed || typeof parsed !== "object") {
+      this.emitErrorEvent(
+        context,
+        "protocol/invalidMessage",
+        "Received non-object protocol message.",
+      );
+      return;
+    }
+
+    if (this.isServerRequest(parsed)) {
+      this.handleServerRequest(context, parsed);
+      return;
+    }
+
+    if (this.isServerNotification(parsed)) {
+      this.handleServerNotification(context, parsed);
+      return;
+    }
+
+    if (this.isResponse(parsed)) {
+      this.handleResponse(context, parsed);
+      return;
+    }
+
+    this.emitErrorEvent(
+      context,
+      "protocol/unrecognizedMessage",
+      "Received protocol message in an unknown shape.",
+    );
+  }
+
+  private handleServerNotification(
+    context: CodexSessionContext,
+    notification: JsonRpcNotification,
+  ): void {
+    const route = this.readRouteFields(notification.params);
+    const textDelta =
+      notification.method === "item/agentMessage/delta"
+        ? this.readString(notification.params, "delta")
+        : undefined;
+
+    this.emitEvent({
+      id: randomUUID(),
+      kind: "notification",
+      provider: "codex",
+      sessionId: context.session.sessionId,
+      createdAt: new Date().toISOString(),
+      method: notification.method,
+      threadId: route.threadId,
+      turnId: route.turnId,
+      itemId: route.itemId,
+      textDelta,
+      payload: notification.params,
+    });
+
+    if (notification.method === "thread/started") {
+      const threadId = this.readString(
+        this.readObject(notification.params)?.thread,
+        "id",
+      );
+      if (threadId) {
+        this.updateSession(context, { threadId });
+      }
+      return;
+    }
+
+    if (notification.method === "turn/started") {
+      const turnId = this.readString(
+        this.readObject(notification.params)?.turn,
+        "id",
+      );
+      this.updateSession(context, {
+        status: "running",
+        activeTurnId: turnId,
+      });
+      return;
+    }
+
+    if (notification.method === "turn/completed") {
+      const turn = this.readObject(notification.params, "turn");
+      const status = this.readString(turn, "status");
+      const errorMessage = this.readString(
+        this.readObject(turn, "error"),
+        "message",
+      );
+      this.updateSession(context, {
+        status: status === "failed" ? "error" : "ready",
+        activeTurnId: undefined,
+        lastError: errorMessage ?? context.session.lastError,
+      });
+      return;
+    }
+
+    if (notification.method === "error") {
+      const message = this.readString(
+        this.readObject(notification.params)?.error,
+        "message",
+      );
+      const willRetry = this.readBoolean(notification.params, "willRetry");
+
+      this.updateSession(context, {
+        status: willRetry ? "running" : "error",
+        lastError: message ?? context.session.lastError,
+      });
+    }
+  }
+
+  private handleServerRequest(
+    context: CodexSessionContext,
+    request: JsonRpcRequest,
+  ): void {
+    const route = this.readRouteFields(request.params);
+    this.emitEvent({
+      id: randomUUID(),
+      kind: "request",
+      provider: "codex",
+      sessionId: context.session.sessionId,
+      createdAt: new Date().toISOString(),
+      method: request.method,
+      threadId: route.threadId,
+      turnId: route.turnId,
+      itemId: route.itemId,
+      payload: request.params,
+    });
+
+    if (request.method === "item/commandExecution/requestApproval") {
+      this.writeMessage(context, {
+        id: request.id,
+        result: { decision: "decline" },
+      });
+      return;
+    }
+
+    if (request.method === "item/fileChange/requestApproval") {
+      this.writeMessage(context, {
+        id: request.id,
+        result: { decision: "decline" },
+      });
+      return;
+    }
+
+    if (request.method === "item/tool/requestUserInput") {
+      this.writeMessage(context, {
+        id: request.id,
+        result: { answers: {} },
+      });
+      return;
+    }
+
+    this.writeMessage(context, {
+      id: request.id,
+      error: {
+        code: -32601,
+        message: `Unsupported server request: ${request.method}`,
+      },
+    });
+  }
+
+  private handleResponse(
+    context: CodexSessionContext,
+    response: JsonRpcResponse,
+  ): void {
+    const key = String(response.id);
+    const pending = context.pending.get(key);
+    if (!pending) {
+      return;
+    }
+
+    clearTimeout(pending.timeout);
+    context.pending.delete(key);
+
+    if (response.error?.message) {
+      pending.reject(
+        new Error(
+          `${pending.method} failed: ${String(response.error.message)}`,
+        ),
+      );
+      return;
+    }
+
+    pending.resolve(response.result);
+  }
+
+  private async sendRequest<TResponse>(
+    context: CodexSessionContext,
+    method: string,
+    params: unknown,
+    timeoutMs = 20_000,
+  ): Promise<TResponse> {
+    const id = context.nextRequestId;
+    context.nextRequestId += 1;
+
+    const result = await new Promise<unknown>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        context.pending.delete(String(id));
+        reject(new Error(`Timed out waiting for ${method}.`));
+      }, timeoutMs);
+
+      context.pending.set(String(id), {
+        method,
+        timeout,
+        resolve,
+        reject,
+      });
+      this.writeMessage(context, {
+        method,
+        id,
+        params,
+      });
+    });
+
+    return result as TResponse;
+  }
+
+  private writeMessage(context: CodexSessionContext, message: unknown): void {
+    const encoded = JSON.stringify(message);
+    if (!context.child.stdin.writable) {
+      throw new Error("Cannot write to codex app-server stdin.");
+    }
+
+    context.child.stdin.write(`${encoded}\n`);
+  }
+
+  private emitLifecycleEvent(
+    context: CodexSessionContext,
+    method: string,
+    message: string,
+  ): void {
+    this.emitEvent({
+      id: randomUUID(),
+      kind: "session",
+      provider: "codex",
+      sessionId: context.session.sessionId,
+      createdAt: new Date().toISOString(),
+      method,
+      message,
+    });
+  }
+
+  private emitErrorEvent(
+    context: CodexSessionContext,
+    method: string,
+    message: string,
+  ): void {
+    this.emitEvent({
+      id: randomUUID(),
+      kind: "error",
+      provider: "codex",
+      sessionId: context.session.sessionId,
+      createdAt: new Date().toISOString(),
+      method,
+      message,
+    });
+  }
+
+  private emitEvent(event: ProviderEvent): void {
+    this.emit("event", event);
+  }
+
+  private updateSession(
+    context: CodexSessionContext,
+    updates: Partial<ProviderSession>,
+  ): void {
+    context.session = {
+      ...context.session,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  private isServerRequest(value: unknown): value is JsonRpcRequest {
+    if (!value || typeof value !== "object") {
+      return false;
+    }
+
+    const candidate = value as Record<string, unknown>;
+    return (
+      typeof candidate.method === "string" &&
+      (typeof candidate.id === "string" || typeof candidate.id === "number")
+    );
+  }
+
+  private isServerNotification(value: unknown): value is JsonRpcNotification {
+    if (!value || typeof value !== "object") {
+      return false;
+    }
+
+    const candidate = value as Record<string, unknown>;
+    return typeof candidate.method === "string" && !("id" in candidate);
+  }
+
+  private isResponse(value: unknown): value is JsonRpcResponse {
+    if (!value || typeof value !== "object") {
+      return false;
+    }
+
+    const candidate = value as Record<string, unknown>;
+    const hasId =
+      typeof candidate.id === "string" || typeof candidate.id === "number";
+    const hasMethod = typeof candidate.method === "string";
+    return hasId && !hasMethod;
+  }
+
+  private readRouteFields(params: unknown): {
+    threadId?: string;
+    turnId?: string;
+    itemId?: string;
+  } {
+    const route: {
+      threadId?: string;
+      turnId?: string;
+      itemId?: string;
+    } = {};
+
+    const threadId =
+      this.readString(params, "threadId") ??
+      this.readString(this.readObject(params, "thread"), "id");
+    const turnId =
+      this.readString(params, "turnId") ??
+      this.readString(this.readObject(params, "turn"), "id");
+    const itemId =
+      this.readString(params, "itemId") ??
+      this.readString(this.readObject(params, "item"), "id");
+
+    if (threadId) {
+      route.threadId = threadId;
+    }
+
+    if (turnId) {
+      route.turnId = turnId;
+    }
+
+    if (itemId) {
+      route.itemId = itemId;
+    }
+
+    return route;
+  }
+
+  private readObject(
+    value: unknown,
+    key?: string,
+  ): Record<string, unknown> | undefined {
+    const target =
+      key === undefined
+        ? value
+        : value && typeof value === "object"
+          ? (value as Record<string, unknown>)[key]
+          : undefined;
+
+    if (!target || typeof target !== "object") {
+      return undefined;
+    }
+
+    return target as Record<string, unknown>;
+  }
+
+  private readString(value: unknown, key: string): string | undefined {
+    if (!value || typeof value !== "object") {
+      return undefined;
+    }
+
+    const candidate = (value as Record<string, unknown>)[key];
+    return typeof candidate === "string" ? candidate : undefined;
+  }
+
+  private readBoolean(value: unknown, key: string): boolean | undefined {
+    if (!value || typeof value !== "object") {
+      return undefined;
+    }
+
+    const candidate = (value as Record<string, unknown>)[key];
+    return typeof candidate === "boolean" ? candidate : undefined;
+  }
+}

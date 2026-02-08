@@ -1,8 +1,8 @@
 import { fixPath } from "./fixPath";
 fixPath();
 
-import path from "node:path";
 import { spawn } from "node:child_process";
+import path from "node:path";
 import { BrowserWindow, app, ipcMain, session } from "electron";
 
 import {
@@ -16,12 +16,14 @@ import {
   todoIdSchema,
 } from "@acme/contracts";
 import { ProcessManager } from "./processManager";
+import { ProviderManager } from "./providerManager";
 import { TodoStore } from "./todoStore";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 
 let todoStore: TodoStore;
 const processManager = new ProcessManager();
+const providerManager = new ProviderManager();
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -94,6 +96,47 @@ function registerIpcHandlers(): void {
       processManager.write(agentSessionIdSchema.parse(sessionId), String(data));
     },
   );
+
+  // Provider handlers
+  ipcMain.handle(
+    IPC_CHANNELS.providerSessionStart,
+    async (_event, payload: unknown) => {
+      return providerManager.startSession(
+        payload as Parameters<typeof providerManager.startSession>[0],
+      );
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.providerTurnStart,
+    async (_event, payload: unknown) => {
+      return providerManager.sendTurn(
+        payload as Parameters<typeof providerManager.sendTurn>[0],
+      );
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.providerTurnInterrupt,
+    async (_event, payload: unknown) => {
+      await providerManager.interruptTurn(
+        payload as Parameters<typeof providerManager.interruptTurn>[0],
+      );
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.providerSessionStop,
+    async (_event, payload: unknown) => {
+      providerManager.stopSession(
+        payload as Parameters<typeof providerManager.stopSession>[0],
+      );
+    },
+  );
+
+  ipcMain.handle(IPC_CHANNELS.providerSessionList, async () => {
+    return providerManager.listSessions();
+  });
 }
 
 async function runTerminalCommand(
@@ -101,8 +144,8 @@ async function runTerminalCommand(
 ): Promise<TerminalCommandResult> {
   const shellPath =
     process.platform === "win32"
-      ? process.env.ComSpec ?? "cmd.exe"
-      : process.env.SHELL ?? "/bin/sh";
+      ? (process.env.ComSpec ?? "cmd.exe")
+      : (process.env.SHELL ?? "/bin/sh");
 
   const args =
     process.platform === "win32"
@@ -169,12 +212,20 @@ function setupEventForwarding(window: BrowserWindow): void {
     }
   };
 
+  const onProviderEvent = (event: unknown) => {
+    if (!window.isDestroyed()) {
+      window.webContents.send(IPC_CHANNELS.providerEvent, event);
+    }
+  };
+
   processManager.on("output", onOutput);
   processManager.on("exit", onExit);
+  providerManager.on("event", onProviderEvent);
 
   window.on("closed", () => {
     processManager.off("output", onOutput);
     processManager.off("exit", onExit);
+    providerManager.off("event", onProviderEvent);
   });
 }
 
@@ -211,6 +262,7 @@ async function bootstrap(): Promise<void> {
 
 app.on("before-quit", () => {
   processManager.killAll();
+  providerManager.stopAll();
 });
 
 app.whenReady().then(() => {

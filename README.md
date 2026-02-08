@@ -1,16 +1,22 @@
-# Electron TODO Monorepo (Turborepo + Bun)
+# CodeThing (Electron + Vite + Bun)
 
-A long-lived Electron starter focused on:
+CodeThing is a desktop shell for coding agents. This first implementation is:
 
-1. Performance: Vite renderer, small typed IPC surface, serialized persistence writes.
-2. Maintainability: strict TypeScript, explicit package boundaries, isolated renderer.
-3. Modern best practices: Bun workspaces, Turborepo task graph, shared contracts.
+1. Codex-first: connects to `codex app-server` and streams turn/item events.
+2. Provider-ready: renderer speaks a provider abstraction so Claude Code can plug in later.
+3. Typed end-to-end: contracts validate payloads at preload/main boundaries.
 
 ## Workspace layout
 
-- `apps/desktop`: Electron main + preload process.
-- `apps/renderer`: React + Vite + Tailwind renderer UI.
-- `packages/contracts`: shared runtime-validated schemas and IPC/type contracts.
+- `/apps/desktop`: Electron main + preload process, includes provider and Codex session managers.
+- `/apps/renderer`: React + Vite UI for session control, conversation, and protocol event stream.
+- `/packages/contracts`: shared Zod schemas + TypeScript types for IPC and provider events.
+
+## Codex prerequisites
+
+- Install Codex CLI so `codex` is on your PATH.
+- Authenticate Codex before running CodeThing (for example via API key or ChatGPT auth supported by Codex).
+- CodeThing starts the server via `codex app-server` per session.
 
 ## Security and boundary model
 
@@ -25,18 +31,20 @@ A long-lived Electron starter focused on:
 - `bun run dev`: starts contract build/watch, renderer dev server, and Electron process.
 - `bun run build`: builds contracts, renderer, and desktop bundles through Turbo.
 - `bun run typecheck`: strict TypeScript checks for all packages.
+- `bun run test`: runs workspace tests.
 
 Optional:
 - `ELECTRON_RENDERER_PORT=5180 bun run dev` if `5173` is already in use.
 
-## Notes for future native bindings
+## Provider architecture
 
-Add new main-process capabilities by extending `packages/contracts` first:
+The renderer now depends on `nativeApi.providers.*`:
 
-1. Add schema + types for payload/result.
-2. Add an IPC channel constant.
-3. Implement `ipcMain.handle` in `apps/desktop/src/main.ts`.
-4. Expose a typed preload wrapper in `apps/desktop/src/preload.ts`.
-5. Consume only via `window.nativeApi` in renderer.
+1. `startSession`
+2. `sendTurn`
+3. `interruptTurn`
+4. `stopSession`
+5. `listSessions`
+6. `onEvent`
 
-This keeps native concerns out of React and makes refactors low risk.
+Codex is the only implemented provider right now. `claudeCode` is reserved in contracts/UI but returns a not-implemented error in main-process dispatch.

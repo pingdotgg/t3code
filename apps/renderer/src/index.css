@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
 @import "tailwindcss";
 
 @theme {
@@ -5,14 +6,160 @@
 }
 
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 body {
-  font-family: "Iowan Old Style", "Georgia", serif;
+  font-family: "Fraunces", "Iowan Old Style", serif;
   min-height: 100vh;
-  background:
-    radial-gradient(circle at top left, #d1fae5 0%, transparent 38%),
-    radial-gradient(circle at 88% 20%, #fef3c7 0%, transparent 28%),
-    linear-gradient(130deg, #f8fafc 0%, #eef6f2 50%, #f8fafc 100%);
+  color: #f3f0e9;
+  background: radial-gradient(circle at 8% 3%, #e69f15 0%, transparent 33%),
+    radial-gradient(circle at 92% 6%, #2d8ba8 0%, transparent 30%),
+    linear-gradient(160deg, #050913 0%, #091320 42%, #090f1a 100%);
+}
+
+pre,
+code,
+textarea,
+input,
+select {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.surface-card {
+  border: 1px solid rgba(246, 215, 158, 0.24);
+  background: linear-gradient(
+      140deg,
+      rgba(11, 24, 40, 0.9),
+      rgba(9, 16, 29, 0.84)
+    ), radial-gradient(circle at top, rgba(245, 166, 35, 0.15), transparent 45%);
+  box-shadow: 0 28px 70px -45px rgba(0, 0, 0, 0.85), inset 0 1px 0
+    rgba(255, 255, 255, 0.08);
+}
+
+.grain {
+  opacity: 0.18;
+  mix-blend-mode: soft-light;
+  background-image: linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.04) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.04) 50%,
+    rgba(255, 255, 255, 0.04) 75%,
+    transparent 75%,
+    transparent
+  );
+  background-size: 4px 4px;
+}
+
+.label-chip {
+  display: inline-flex;
+  border-radius: 9999px;
+  border: 1px solid rgba(246, 215, 158, 0.44);
+  background: rgba(23, 38, 56, 0.55);
+  padding: 0.28rem 0.72rem;
+  font-size: 0.67rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #f8ca64;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 0.32rem;
+  font-size: 0.67rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(246, 233, 201, 0.82);
+}
+
+.field-input {
+  width: 100%;
+  border-radius: 0.8rem;
+  border: 1px solid rgba(246, 215, 158, 0.3);
+  background: rgba(5, 12, 22, 0.85);
+  padding: 0.65rem 0.75rem;
+  color: #f7f1e6;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.field-input:focus {
+  outline: none;
+  border-color: rgba(250, 206, 99, 0.75);
+  box-shadow: 0 0 0 2px rgba(250, 206, 99, 0.18);
+}
+
+.action-button {
+  border-radius: 0.8rem;
+  padding: 0.62rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: filter 140ms ease, transform 140ms ease;
+}
+
+.action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.action-button:not(:disabled):hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+.action-primary {
+  border: 1px solid rgba(250, 206, 99, 0.6);
+  background: linear-gradient(140deg, #f8c861, #e59f0d);
+  color: #1f2530;
+}
+
+.action-danger {
+  border: 1px solid rgba(252, 148, 124, 0.44);
+  background: linear-gradient(140deg, #8f2c2b, #bf4738);
+  color: #fff3ef;
+}
+
+.action-muted {
+  border: 1px solid rgba(149, 181, 205, 0.4);
+  background: rgba(13, 31, 49, 0.85);
+  color: #dfecfb;
+}
+
+.status-pill {
+  border-radius: 9999px;
+  border: 1px solid rgba(246, 215, 158, 0.29);
+  background: rgba(9, 20, 33, 0.9);
+  padding: 0.27rem 0.64rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  color: rgba(248, 235, 206, 0.86);
+}
+
+.message-card {
+  border-radius: 1rem;
+  border: 1px solid rgba(246, 215, 158, 0.25);
+  background: rgba(8, 16, 27, 0.82);
+  padding: 0.9rem;
+}
+
+.message-user {
+  border-color: rgba(111, 198, 238, 0.38);
+  background: linear-gradient(
+    160deg,
+    rgba(14, 44, 64, 0.92),
+    rgba(8, 21, 36, 0.92)
+  );
+}
+
+.message-assistant {
+  border-color: rgba(250, 206, 99, 0.34);
+}
+
+.event-card {
+  border-radius: 0.85rem;
+  border: 1px solid rgba(246, 215, 158, 0.2);
+  background: rgba(8, 16, 27, 0.76);
+  padding: 0.62rem 0.72rem;
 }
