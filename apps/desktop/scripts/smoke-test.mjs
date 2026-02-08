@@ -61,8 +61,8 @@ child.on("exit", () => {
   const fatalPatterns = [
     "Cannot find module",
     "MODULE_NOT_FOUND",
-    "Refused to execute",       // CSP blocking scripts
-    "can't detect preamble",    // @vitejs/plugin-react failure
+    "Refused to execute", // CSP blocking scripts
+    "can't detect preamble", // @vitejs/plugin-react failure
     "Uncaught Error",
     "Uncaught TypeError",
     "Uncaught ReferenceError",
