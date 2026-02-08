@@ -439,38 +439,46 @@ export default function ChatView() {
       </div>
 
       {/* Input bar */}
-      <div className="border-t border-white/[0.08] px-5 py-3">
+      <div className="px-5 pb-4 pt-2">
         <form
           onSubmit={onSend}
-          className="mx-auto flex max-w-3xl items-end gap-2"
+          className="mx-auto max-w-3xl"
         >
-          <div className="flex-1 rounded-2xl border border-white/[0.1] bg-[#121214] px-3 py-3">
-            <textarea
-              ref={textareaRef}
-              className="w-full resize-none bg-transparent px-1 pb-1 font-mono text-sm text-[#e0e0e0] placeholder:text-[#a0a0a0]/30 focus:outline-none"
-              rows={1}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={onKeyDown}
-              placeholder={
-                phase === "disconnected"
-                  ? "Type a message (session auto-connects)..."
-                  : "Type a message..."
-              }
-              disabled={isSending || isConnecting}
-            />
-            <div className="mt-2 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
+          <div className="group rounded-[20px] border border-white/[0.08] bg-[#141416] transition-colors duration-200 focus-within:border-white/[0.16]">
+            {/* Textarea area */}
+            <div className="px-4 pt-4 pb-2">
+              <textarea
+                ref={textareaRef}
+                className="w-full resize-none bg-transparent text-[14px] leading-relaxed text-[#e0e0e0] placeholder:text-[#a0a0a0]/35 focus:outline-none"
+                rows={2}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={onKeyDown}
+                placeholder={
+                  phase === "disconnected"
+                    ? "Ask for follow-up changes"
+                    : "Ask anything..."
+                }
+                disabled={isSending || isConnecting}
+              />
+            </div>
+
+            {/* Bottom toolbar */}
+            <div className="flex items-center justify-between px-3 pb-3">
+              <div className="flex items-center gap-1">
+                {/* Model picker */}
                 <div className="relative" ref={modelMenuRef}>
                   <button
                     type="button"
-                    className="inline-flex items-center gap-2 rounded-full border border-white/[0.1] bg-white/[0.04] px-3 py-1.5 text-xs text-[#d8d8d8] transition-colors duration-150 hover:bg-white/[0.08]"
+                    className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-[#a0a0a0]/70 transition-colors duration-150 hover:bg-white/[0.06] hover:text-[#d0d0d0]"
                     onClick={() => setIsModelMenuOpen((open) => !open)}
                   >
-                    <span className="max-w-[180px] truncate font-mono">
+                    <span className="max-w-[180px] truncate">
                       {selectedModel}
                     </span>
-                    <span className="text-[10px] text-[#a0a0a0]/70">▼</span>
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="opacity-50">
+                      <path d="M2.5 4L5 6.5L7.5 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
                   </button>
                   {isModelMenuOpen && (
                     <div className="absolute bottom-full left-0 z-20 mb-2 w-[320px] rounded-2xl border border-white/[0.1] bg-[#1b1b1d]/95 p-2 shadow-[0_16px_40px_rgba(0,0,0,0.55)] backdrop-blur">
@@ -506,14 +514,19 @@ export default function ChatView() {
                     </div>
                   )}
                 </div>
+
+                {/* Divider */}
+                <div className="mx-0.5 h-4 w-px bg-white/[0.08]" />
+
+                {/* Reasoning effort */}
                 <label
-                  className="inline-flex items-center gap-2 rounded-full border border-white/[0.1] bg-white/[0.04] px-3 py-1.5 text-xs text-[#d8d8d8]"
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-[#a0a0a0]/70 transition-colors duration-150 hover:bg-white/[0.06] hover:text-[#d0d0d0]"
                   htmlFor="reasoning-effort"
                 >
-                  <span>Reasoning</span>
+                  <span>{selectedEffort.charAt(0).toUpperCase() + selectedEffort.slice(1)}</span>
                   <select
                     id="reasoning-effort"
-                    className="bg-transparent font-mono text-xs text-[#d8d8d8] outline-none"
+                    className="absolute opacity-0 w-0 h-0"
                     value={selectedEffort}
                     onChange={(event) => setSelectedEffort(event.target.value)}
                   >
@@ -524,36 +537,51 @@ export default function ChatView() {
                       </option>
                     ))}
                   </select>
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="opacity-50">
+                    <path d="M2.5 4L5 6.5L7.5 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
                 </label>
               </div>
-              {activeProject && (
-                <span className="text-[10px] text-[#a0a0a0]/35">
-                  {activeProject.name}
-                </span>
-              )}
+
+              {/* Right side: send / stop button */}
+              <div className="flex items-center gap-2">
+                {activeProject && (
+                  <span className="text-[11px] text-[#a0a0a0]/25">
+                    {activeProject.name}
+                  </span>
+                )}
+                {phase === "running" ? (
+                  <button
+                    type="button"
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105"
+                    onClick={() => void onInterrupt()}
+                    aria-label="Stop generation"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                      <rect x="2" y="2" width="8" height="8" rx="1.5" />
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-[#0c0c0c] transition-all duration-150 hover:bg-white hover:scale-105 disabled:opacity-30 disabled:hover:scale-100"
+                    disabled={isSending || isConnecting || !prompt.trim()}
+                    aria-label={isConnecting ? "Connecting" : isSending ? "Sending" : "Send message"}
+                  >
+                    {isConnecting || isSending ? (
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="animate-spin">
+                        <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeDasharray="20 12" />
+                      </svg>
+                    ) : (
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <path d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
-          {phase === "running" ? (
-            <button
-              type="button"
-              className="shrink-0 rounded-xl bg-rose-600/80 px-4 py-3 text-xs font-medium text-white transition-colors duration-150 hover:bg-rose-600"
-              onClick={() => void onInterrupt()}
-            >
-              Stop
-            </button>
-          ) : (
-            <button
-              type="submit"
-              className="shrink-0 rounded-xl bg-white px-4 py-3 text-xs font-medium text-[#0c0c0c] transition-colors duration-150 hover:bg-white/90 disabled:opacity-40"
-              disabled={isSending || isConnecting || !prompt.trim()}
-            >
-              {isConnecting
-                ? "Connecting..."
-                : isSending
-                  ? "Sending..."
-                  : "Send"}
-            </button>
-          )}
         </form>
       </div>
     </div>
