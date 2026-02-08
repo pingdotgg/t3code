@@ -51,6 +51,41 @@ interface JsonRpcNotification {
   params?: unknown;
 }
 
+const ANSI_ESCAPE_CHAR = String.fromCharCode(27);
+const ANSI_ESCAPE_REGEX = new RegExp(`${ANSI_ESCAPE_CHAR}\\[[0-9;]*m`, "g");
+const CODEX_STDERR_LOG_REGEX =
+  /^\d{4}-\d{2}-\d{2}T\S+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\s+\S+:\s+(.*)$/;
+const BENIGN_ERROR_LOG_SNIPPETS = [
+  "state db missing rollout path for thread",
+  "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
+];
+
+export function classifyCodexStderrLine(
+  rawLine: string,
+): { message: string } | null {
+  const line = rawLine.replaceAll(ANSI_ESCAPE_REGEX, "").trim();
+  if (!line) {
+    return null;
+  }
+
+  const match = line.match(CODEX_STDERR_LOG_REGEX);
+  if (match) {
+    const level = match[1];
+    if (level && level !== "ERROR") {
+      return null;
+    }
+
+    const isBenignError = BENIGN_ERROR_LOG_SNIPPETS.some((snippet) =>
+      line.includes(snippet),
+    );
+    if (isBenignError) {
+      return null;
+    }
+  }
+
+  return { message: line };
+}
+
 export interface CodexAppServerManagerEvents {
   event: [event: ProviderEvent];
 }
@@ -267,12 +302,16 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     });
 
     context.child.stderr.on("data", (chunk: Buffer) => {
-      const message = chunk.toString().trim();
-      if (!message) {
-        return;
-      }
+      const raw = chunk.toString();
+      const lines = raw.split(/\r?\n/g);
+      for (const rawLine of lines) {
+        const classified = classifyCodexStderrLine(rawLine);
+        if (!classified) {
+          continue;
+        }
 
-      this.emitErrorEvent(context, "process/stderr", message);
+        this.emitErrorEvent(context, "process/stderr", classified.message);
+      }
     });
 
     context.child.on("error", (error) => {
