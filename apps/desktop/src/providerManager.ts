@@ -1,4 +1,6 @@
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import path from "node:path";
 
 import {
   type ProviderEvent,
@@ -21,10 +23,22 @@ export interface ProviderManagerEvents {
 
 export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
   private readonly codex = new CodexAppServerManager();
+  private readonly logStream: fs.WriteStream;
 
   constructor() {
     super();
-    this.codex.on("event", (event) => this.emit("event", event));
+
+    const logsDir = path.resolve(process.cwd(), ".logs");
+    fs.mkdirSync(logsDir, { recursive: true });
+    this.logStream = fs.createWriteStream(
+      path.join(logsDir, "events.txt"),
+      { flags: "a" },
+    );
+
+    this.codex.on("event", (event) => {
+      this.logStream.write(`${JSON.stringify(event)}\n`);
+      this.emit("event", event);
+    });
   }
 
   async startSession(raw: ProviderSessionStartInput): Promise<ProviderSession> {

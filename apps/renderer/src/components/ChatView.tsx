@@ -36,10 +36,10 @@ function statusLabel(phase: string): string {
 }
 
 function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
-  if (tone === "thinking") return "text-sky-100";
-  if (tone === "tool") return "text-emerald-100";
-  if (tone === "error") return "text-rose-100";
-  return "text-[#d8d8d8]";
+  if (tone === "error") return "text-rose-300/50";
+  if (tone === "tool") return "text-[#8a8a8a]";
+  if (tone === "thinking") return "text-[#707070]";
+  return "text-[#606060]";
 }
 
 export default function ChatView() {
@@ -341,53 +341,6 @@ export default function ChatView() {
           </div>
         ) : (
           <div className="mx-auto max-w-3xl space-y-4">
-            {isWorking && (
-              <div className="rounded-2xl border border-sky-400/20 bg-sky-500/[0.06] px-3 py-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="inline-flex items-center gap-2 text-xs text-sky-100">
-                    <span className="relative inline-flex h-2.5 w-2.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-300/70" />
-                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-sky-200" />
-                    </span>
-                    <span>Model is working</span>
-                  </div>
-                  <span className="text-[10px] text-sky-100/70">
-                    {recentWorkLogEntries.length} event
-                    {recentWorkLogEntries.length === 1 ? "" : "s"}
-                  </span>
-                </div>
-                {recentWorkLogEntries.length === 0 ? (
-                  <p className="pt-2 text-[11px] text-sky-100/70">
-                    Waiting for tool/preamble updates...
-                  </p>
-                ) : (
-                  <div className="mt-2 max-h-48 space-y-1.5 overflow-y-auto pr-1">
-                    {recentWorkLogEntries.map((entry) => (
-                      <div
-                        key={entry.id}
-                        className="rounded-lg border border-white/[0.08] bg-black/20 px-2 py-1.5"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <p
-                            className={`text-[11px] ${workToneClass(entry.tone)}`}
-                          >
-                            {entry.label}
-                          </p>
-                          <span className="shrink-0 text-[10px] text-[#a0a0a0]/60">
-                            {formatTimestamp(entry.createdAt)}
-                          </span>
-                        </div>
-                        {entry.detail && (
-                          <p className="pt-0.5 font-mono text-[11px] text-[#d0d0d0]/75">
-                            {entry.detail}
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
             {activeThread.messages.map((msg) => (
               <div key={msg.id}>
                 {msg.role === "user" ? (
@@ -433,6 +386,35 @@ export default function ChatView() {
                 )}
               </div>
             ))}
+            {/* Inline activity feed */}
+            {isWorking && (
+              <div className="border-l-2 border-white/[0.05] pl-4 py-1">
+                {recentWorkLogEntries.map((entry) => (
+                  <p
+                    key={entry.id}
+                    className={`py-[2px] text-[12px] leading-relaxed ${workToneClass(entry.tone)}`}
+                  >
+                    {entry.detail ? (
+                      <>
+                        {entry.label}
+                        <span className="ml-1.5 font-mono text-[11px] opacity-60">
+                          {entry.detail}
+                        </span>
+                      </>
+                    ) : (
+                      entry.label
+                    )}
+                  </p>
+                ))}
+                <div className="flex items-center pt-1">
+                  <span className="inline-flex items-center gap-[3px]">
+                    <span className="h-1 w-1 rounded-full bg-white/20 animate-pulse" />
+                    <span className="h-1 w-1 rounded-full bg-white/20 animate-pulse [animation-delay:200ms]" />
+                    <span className="h-1 w-1 rounded-full bg-white/20 animate-pulse [animation-delay:400ms]" />
+                  </span>
+                </div>
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </div>
         )}
