@@ -314,6 +314,7 @@ async function bootstrap(): Promise<void> {
 app.on("before-quit", () => {
   processManager.killAll();
   providerManager.stopAll();
+  providerManager.dispose();
 });
 
 app.whenReady().then(() => {

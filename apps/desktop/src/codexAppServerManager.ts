@@ -10,6 +10,7 @@ import type {
   ProviderSessionStartInput,
   ProviderTurnStartResult,
 } from "@acme/contracts";
+import { normalizeModelSlug } from "@acme/contracts";
 
 type PendingRequestKey = string;
 
@@ -59,29 +60,20 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db missing rollout path for thread",
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
 ];
-const MODEL_SLUG_ALIASES: Record<string, string> = {
-  "5.3": "gpt-5.3-codex",
-  "gpt-5.3": "gpt-5.3-codex",
-};
-
 export function normalizeCodexModelSlug(
   model: string | undefined | null,
   preferredId?: string,
 ): string | undefined {
-  if (typeof model !== "string") {
+  const normalized = normalizeModelSlug(model);
+  if (!normalized) {
     return undefined;
   }
 
-  const trimmed = model.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  if (preferredId?.endsWith("-codex") && preferredId !== trimmed) {
+  if (preferredId?.endsWith("-codex") && preferredId !== normalized) {
     return preferredId;
   }
 
-  return MODEL_SLUG_ALIASES[trimmed] ?? trimmed;
+  return normalized;
 }
 
 export function classifyCodexStderrLine(

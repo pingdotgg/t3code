@@ -24,6 +24,15 @@ export interface ProviderManagerEvents {
 export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
   private readonly codex = new CodexAppServerManager();
   private readonly logStream: fs.WriteStream;
+  private disposed = false;
+  private readonly onCodexEvent = (event: ProviderEvent) => {
+    if (this.disposed) {
+      return;
+    }
+
+    this.logStream.write(`${JSON.stringify(event)}\n`);
+    this.emit("event", event);
+  };
 
   constructor() {
     super();
@@ -34,10 +43,7 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
       flags: "a",
     });
 
-    this.codex.on("event", (event) => {
-      this.logStream.write(`${JSON.stringify(event)}\n`);
-      this.emit("event", event);
-    });
+    this.codex.on("event", this.onCodexEvent);
   }
 
   async startSession(raw: ProviderSessionStartInput): Promise<ProviderSession> {
@@ -78,5 +84,15 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
 
   stopAll(): void {
     this.codex.stopAll();
+  }
+
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.disposed = true;
+    this.codex.off("event", this.onCodexEvent);
+    this.logStream.end();
   }
 }

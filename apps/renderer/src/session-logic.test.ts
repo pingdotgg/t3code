@@ -1,7 +1,38 @@
 import { describe, expect, it } from "vitest";
-import type { WorkLogEntry } from "./session-logic";
-import { deriveTimelineEntries } from "./session-logic";
+
+import type { ProviderEvent, ProviderSession } from "@acme/contracts";
+import {
+  type WorkLogEntry,
+  applyEventToMessages,
+  deriveTimelineEntries,
+  evolveSession,
+} from "./session-logic";
 import type { ChatMessage } from "./types";
+
+function makeEvent(overrides: Partial<ProviderEvent>): ProviderEvent {
+  return {
+    id: "evt-1",
+    kind: "notification",
+    provider: "codex",
+    sessionId: "sess-1",
+    createdAt: "2026-02-08T10:00:00.000Z",
+    method: "noop",
+    ...overrides,
+  };
+}
+
+function makeSession(
+  overrides: Partial<ProviderSession> = {},
+): ProviderSession {
+  return {
+    sessionId: "sess-1",
+    provider: "codex",
+    status: "ready",
+    createdAt: "2026-02-08T09:59:00.000Z",
+    updatedAt: "2026-02-08T09:59:00.000Z",
+    ...overrides,
+  };
+}
 
 describe("deriveTimelineEntries", () => {
   it("interleaves messages and work entries by timestamp", () => {
@@ -71,5 +102,244 @@ describe("deriveTimelineEntries", () => {
       "work:w-1",
       "message:m-1",
     ]);
+  });
+});
+
+describe("evolveSession", () => {
+  it("updates thread id when thread starts", () => {
+    const previous = makeSession();
+    const next = evolveSession(
+      previous,
+      makeEvent({
+        method: "thread/started",
+        createdAt: "2026-02-08T10:01:00.000Z",
+        payload: { thread: { id: "thread-1" } },
+      }),
+    );
+
+    expect(next.threadId).toBe("thread-1");
+    expect(next.updatedAt).toBe("2026-02-08T10:01:00.000Z");
+  });
+
+  it("moves to running and records active turn on turn start", () => {
+    const previous = makeSession();
+    const next = evolveSession(
+      previous,
+      makeEvent({
+        method: "turn/started",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:02:00.000Z",
+      }),
+    );
+
+    expect(next.status).toBe("running");
+    expect(next.activeTurnId).toBe("turn-1");
+    expect(next.updatedAt).toBe("2026-02-08T10:02:00.000Z");
+  });
+
+  it("returns to ready and clears active turn on successful completion", () => {
+    const previous = makeSession({
+      status: "running",
+      activeTurnId: "turn-1",
+      lastError: "older error",
+    });
+    const next = evolveSession(
+      previous,
+      makeEvent({
+        method: "turn/completed",
+        createdAt: "2026-02-08T10:03:00.000Z",
+        payload: { turn: { id: "turn-1", status: "completed" } },
+      }),
+    );
+
+    expect(next.status).toBe("ready");
+    expect(next.activeTurnId).toBeUndefined();
+    expect(next.lastError).toBe("older error");
+  });
+
+  it("marks session as error when turn fails", () => {
+    const previous = makeSession({
+      status: "running",
+      activeTurnId: "turn-1",
+    });
+    const next = evolveSession(
+      previous,
+      makeEvent({
+        method: "turn/completed",
+        createdAt: "2026-02-08T10:03:00.000Z",
+        payload: {
+          turn: { id: "turn-1", status: "failed", error: { message: "boom" } },
+        },
+      }),
+    );
+
+    expect(next.status).toBe("error");
+    expect(next.activeTurnId).toBeUndefined();
+    expect(next.lastError).toBe("boom");
+  });
+
+  it("moves to error on runtime error events", () => {
+    const previous = makeSession();
+    const next = evolveSession(
+      previous,
+      makeEvent({
+        kind: "error",
+        method: "runtime/error",
+        createdAt: "2026-02-08T10:04:00.000Z",
+        message: "runtime failure",
+      }),
+    );
+
+    expect(next.status).toBe("error");
+    expect(next.lastError).toBe("runtime failure");
+  });
+
+  it("closes session on close lifecycle events", () => {
+    const previous = makeSession({
+      status: "running",
+      activeTurnId: "turn-1",
+    });
+    const next = evolveSession(
+      previous,
+      makeEvent({
+        method: "session/closed",
+        createdAt: "2026-02-08T10:05:00.000Z",
+        message: "closed",
+      }),
+    );
+
+    expect(next.status).toBe("closed");
+    expect(next.activeTurnId).toBeUndefined();
+    expect(next.lastError).toBe("closed");
+  });
+});
+
+describe("applyEventToMessages", () => {
+  it("handles start/delta/completed flow for assistant messages", () => {
+    const activeAssistantItemRef = { current: null as string | null };
+    const started = applyEventToMessages(
+      [],
+      makeEvent({
+        method: "item/started",
+        createdAt: "2026-02-08T10:00:00.000Z",
+        payload: {
+          item: {
+            id: "item-1",
+            type: "agentMessage",
+            text: "Hello",
+          },
+        },
+      }),
+      activeAssistantItemRef,
+    );
+
+    expect(started).toEqual([
+      {
+        id: "item-1",
+        role: "assistant",
+        text: "Hello",
+        createdAt: "2026-02-08T10:00:00.000Z",
+        streaming: true,
+      },
+    ]);
+    expect(activeAssistantItemRef.current).toBe("item-1");
+
+    const withDelta = applyEventToMessages(
+      started,
+      makeEvent({
+        method: "item/agentMessage/delta",
+        createdAt: "2026-02-08T10:00:01.000Z",
+        itemId: "item-1",
+        textDelta: " world",
+      }),
+      activeAssistantItemRef,
+    );
+    expect(withDelta[0]?.text).toBe("Hello world");
+    expect(withDelta[0]?.streaming).toBe(true);
+
+    const completed = applyEventToMessages(
+      withDelta,
+      makeEvent({
+        method: "item/completed",
+        createdAt: "2026-02-08T10:00:02.000Z",
+        payload: {
+          item: {
+            id: "item-1",
+            type: "agentMessage",
+            text: "Hello world!",
+          },
+        },
+      }),
+      activeAssistantItemRef,
+    );
+    expect(completed[0]?.text).toBe("Hello world!");
+    expect(completed[0]?.streaming).toBe(false);
+    expect(activeAssistantItemRef.current).toBeNull();
+  });
+
+  it("supports out-of-order delta before started/completed", () => {
+    const activeAssistantItemRef = { current: null as string | null };
+    const withDelta = applyEventToMessages(
+      [],
+      makeEvent({
+        method: "item/agentMessage/delta",
+        createdAt: "2026-02-08T10:00:01.000Z",
+        itemId: "item-2",
+        textDelta: "Partial",
+      }),
+      activeAssistantItemRef,
+    );
+    expect(withDelta[0]?.id).toBe("item-2");
+    expect(withDelta[0]?.text).toBe("Partial");
+    expect(withDelta[0]?.streaming).toBe(true);
+    expect(activeAssistantItemRef.current).toBe("item-2");
+
+    const completed = applyEventToMessages(
+      withDelta,
+      makeEvent({
+        method: "item/completed",
+        createdAt: "2026-02-08T10:00:02.000Z",
+        payload: {
+          item: {
+            id: "item-2",
+            type: "agentMessage",
+            text: "Partial + final",
+          },
+        },
+      }),
+      activeAssistantItemRef,
+    );
+
+    expect(completed[0]?.text).toBe("Partial + final");
+    expect(completed[0]?.streaming).toBe(false);
+  });
+
+  it("clears all streaming flags when turn completes", () => {
+    const previous: ChatMessage[] = [
+      {
+        id: "m-user",
+        role: "user",
+        text: "Hi",
+        createdAt: "2026-02-08T10:00:00.000Z",
+        streaming: false,
+      },
+      {
+        id: "m-assistant",
+        role: "assistant",
+        text: "Typing",
+        createdAt: "2026-02-08T10:00:01.000Z",
+        streaming: true,
+      },
+    ];
+
+    const next = applyEventToMessages(
+      previous,
+      makeEvent({
+        method: "turn/completed",
+      }),
+      { current: null },
+    );
+
+    expect(next.every((entry) => entry.streaming === false)).toBe(true);
   });
 });
