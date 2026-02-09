@@ -49,13 +49,16 @@ export const providerSessionStartInputSchema = z.object({
   provider: providerKindSchema.default("codex"),
   cwd: z.string().min(1).optional(),
   model: z.string().trim().min(1).optional(),
+  resumeThreadId: z.string().trim().min(1).optional(),
   approvalPolicy: providerApprovalPolicySchema.default("never"),
   sandboxMode: providerSandboxModeSchema.default("workspace-write"),
 });
 
+export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
+
 export const providerSendTurnInputSchema = z.object({
   sessionId: z.string().min(1),
-  input: z.string().trim().min(1).max(120_000),
+  input: z.string().trim().min(1).max(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
   model: z.string().trim().min(1).optional(),
   effort: z.string().trim().min(1).optional(),
 });

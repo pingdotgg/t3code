@@ -28,6 +28,7 @@ const persistedMessageSchema = z.object({
 
 const persistedThreadSchema = z.object({
   id: z.string().min(1),
+  codexThreadId: z.string().min(1).nullable().default(null),
   projectId: z.string().min(1),
   title: z.string().min(1),
   model: z.string().min(1),
@@ -56,7 +57,13 @@ export const persistedStateV3Schema = persistedStateBodySchema.extend({
   version: z.literal(3).optional(),
 });
 
+export const persistedStateV4Schema = persistedStateBodySchema.extend({
+  runtimeMode: runtimeModeSchema.default(DEFAULT_RUNTIME_MODE),
+  version: z.literal(4).optional(),
+});
+
 const persistedStateSchema = z.union([
+  persistedStateV4Schema,
   persistedStateV3Schema,
   persistedStateV2Schema,
   persistedStateV1Schema,
@@ -93,6 +100,7 @@ function hydrateThread(
 ): Thread {
   return {
     id: thread.id,
+    codexThreadId: thread.codexThreadId,
     projectId: thread.projectId,
     title: thread.title,
     model: resolveModelSlug(maybeMigrateLegacyModel(thread.model, isLegacyPayload)),
@@ -150,12 +158,13 @@ export function hydratePersistedState(
 
 export function toPersistedState(
   state: PersistedStoreSnapshot,
-): z.infer<typeof persistedStateV3Schema> {
+): z.infer<typeof persistedStateV4Schema> {
   return {
-    version: 3,
+    version: 4,
     projects: state.projects,
     threads: state.threads.map((thread) => ({
       id: thread.id,
+      codexThreadId: thread.codexThreadId,
       projectId: thread.projectId,
       title: thread.title,
       model: thread.model,

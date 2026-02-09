@@ -22,6 +22,7 @@ export interface Project {
 
 export interface Thread {
   id: string;
+  codexThreadId: string | null;
   projectId: string;
   title: string;
   model: string;

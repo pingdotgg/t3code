@@ -14,6 +14,21 @@ describe("providerSessionStartInputSchema", () => {
     expect(parsed.approvalPolicy).toBe("never");
     expect(parsed.sandboxMode).toBe("workspace-write");
   });
+
+  it("accepts optional resumeThreadId", () => {
+    const parsed = providerSessionStartInputSchema.parse({
+      resumeThreadId: "thread_123",
+    });
+    expect(parsed.resumeThreadId).toBe("thread_123");
+  });
+
+  it("rejects blank resumeThreadId", () => {
+    expect(() =>
+      providerSessionStartInputSchema.parse({
+        resumeThreadId: "   ",
+      }),
+    ).toThrow();
+  });
 });
 
 describe("providerSendTurnInputSchema", () => {

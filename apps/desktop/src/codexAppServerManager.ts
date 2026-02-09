@@ -75,6 +75,14 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db missing rollout path for thread",
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
 ];
+const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
+  "not found",
+  "missing thread",
+  "no such thread",
+  "unknown thread",
+  "does not exist",
+];
+
 export function normalizeCodexModelSlug(
   model: string | undefined | null,
   preferredId?: string,
@@ -111,6 +119,19 @@ export function classifyCodexStderrLine(rawLine: string): { message: string } | 
   }
 
   return { message: line };
+}
+
+export function isRecoverableThreadResumeError(error: unknown): boolean {
+  const message = (
+    error instanceof Error ? error.message : String(error)
+  ).toLowerCase();
+  if (!message.includes("thread/resume")) {
+    return false;
+  }
+
+  return RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS.some((snippet) =>
+    message.includes(snippet),
+  );
 }
 
 export interface CodexAppServerManagerEvents {
@@ -170,17 +191,66 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       this.writeMessage(context, { method: "initialized" });
 
-      const threadStart = await this.sendRequest(context, "thread/start", {
-        model: null,
+      const normalizedModel = normalizeCodexModelSlug(input.model);
+      const sessionOverrides = {
+        model: normalizedModel ?? null,
         cwd: input.cwd ?? null,
         approvalPolicy: input.approvalPolicy,
         sandbox: input.sandboxMode,
-        experimentalRawEvents: false,
-      });
+      };
 
-      const threadId = this.readString(this.readObject(threadStart)?.thread, "id");
+      const threadStartParams = {
+        ...sessionOverrides,
+        experimentalRawEvents: false,
+      };
+
+      let threadOpenMethod: "thread/start" | "thread/resume" = "thread/start";
+      let threadOpenResponse: unknown;
+      if (input.resumeThreadId) {
+        try {
+          threadOpenMethod = "thread/resume";
+          threadOpenResponse = await this.sendRequest(
+            context,
+            "thread/resume",
+            {
+              ...sessionOverrides,
+              threadId: input.resumeThreadId,
+            },
+          );
+        } catch (error) {
+          if (!isRecoverableThreadResumeError(error)) {
+            throw error;
+          }
+
+          threadOpenMethod = "thread/start";
+          this.emitLifecycleEvent(
+            context,
+            "session/threadResumeFallback",
+            `Could not resume thread ${input.resumeThreadId}; started a new thread instead.`,
+          );
+          threadOpenResponse = await this.sendRequest(
+            context,
+            "thread/start",
+            threadStartParams,
+          );
+        }
+      } else {
+        threadOpenMethod = "thread/start";
+        threadOpenResponse = await this.sendRequest(
+          context,
+          "thread/start",
+          threadStartParams,
+        );
+      }
+
+      const threadOpenRecord = this.readObject(threadOpenResponse);
+      const threadId =
+        this.readString(this.readObject(threadOpenRecord, "thread"), "id") ??
+        this.readString(threadOpenRecord, "threadId");
       if (!threadId) {
-        throw new Error("thread/start response did not include a thread id.");
+        throw new Error(
+          `${threadOpenMethod} response did not include a thread id.`,
+        );
       }
 
       this.updateSession(context, {

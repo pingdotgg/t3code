@@ -46,6 +46,7 @@ describe("hydratePersistedState", () => {
     expect(hydrated).not.toBeNull();
     expect(hydrated?.projects[0]?.model).toBe(DEFAULT_MODEL);
     expect(hydrated?.threads[0]?.model).toBe(DEFAULT_MODEL);
+    expect(hydrated?.threads[0]?.codexThreadId).toBeNull();
     expect(hydrated?.threads[0]?.messages[0]?.streaming).toBe(false);
     expect(hydrated?.runtimeMode).toBe("full-access");
   });
@@ -85,6 +86,7 @@ describe("hydratePersistedState", () => {
     const hydrated = hydratePersistedState(payload, false);
     expect(hydrated).not.toBeNull();
     expect(hydrated?.threads.map((thread) => thread.id)).toEqual(["t-1"]);
+    expect(hydrated?.threads[0]?.codexThreadId).toBeNull();
     expect(hydrated?.activeThreadId).toBe("t-1");
     expect(hydrated?.runtimeMode).toBe("full-access");
   });
@@ -112,9 +114,10 @@ describe("hydratePersistedState", () => {
 });
 
 describe("toPersistedState", () => {
-  it("writes v3 payload and strips non-persisted thread fields", () => {
+  it("writes v4 payload and strips non-persisted thread fields", () => {
     const thread: Thread = {
       id: "t-1",
+      codexThreadId: "thr_1",
       projectId: "p-1",
       title: "Thread",
       model: "gpt-5.3-codex",
@@ -148,10 +151,11 @@ describe("toPersistedState", () => {
       runtimeMode: "full-access",
     });
 
-    expect(persisted.version).toBe(3);
+    expect(persisted.version).toBe(4);
     expect(persisted.runtimeMode).toBe("full-access");
     expect(persisted.threads[0]).toEqual({
       id: "t-1",
+      codexThreadId: "thr_1",
       projectId: "p-1",
       title: "Thread",
       model: "gpt-5.3-codex",

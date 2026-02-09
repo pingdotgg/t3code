@@ -1,4 +1,8 @@
-import type { ProviderApprovalDecision, ProviderEvent } from "@acme/contracts";
+import {
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  type ProviderApprovalDecision,
+  type ProviderEvent,
+} from "@acme/contracts";
 import {
   type FormEvent,
   Fragment,
@@ -10,6 +14,7 @@ import {
 } from "react";
 
 import { EDITORS, type EditorId } from "@acme/contracts";
+import { buildBootstrapInput } from "../historyBootstrap";
 import {
   DEFAULT_MODEL,
   DEFAULT_REASONING,
@@ -58,6 +63,14 @@ interface PendingApprovalCard {
   requestKind: "command" | "file-change";
   createdAt: string;
   detail?: string;
+}
+
+type SessionContinuityState = "resumed" | "new" | "fallback_new";
+
+interface EnsuredSessionInfo {
+  sessionId: string;
+  resolvedThreadId: string | null;
+  continuityState: SessionContinuityState;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -240,8 +253,7 @@ export default function ChatView() {
     const sessionIds = state.threads
       .map((t) => t.session)
       .filter(
-        (s): s is NonNullable<typeof s> =>
-          s !== null && s.status !== "closed",
+        (s): s is NonNullable<typeof s> => s !== null && s.status !== "closed",
       )
       .map((s) => s.sessionId);
 
@@ -345,18 +357,31 @@ export default function ChatView() {
     setIsEditorMenuOpen(false);
   };
 
-  const ensureSession = async (): Promise<string | null> => {
+  const ensureSession = async (): Promise<EnsuredSessionInfo | null> => {
     if (!api || !activeThread || !activeProject) return null;
     if (activeThread.session && activeThread.session.status !== "closed") {
-      return activeThread.session.sessionId;
+      const sessionThreadId = activeThread.session.threadId ?? null;
+      const continuityState: SessionContinuityState =
+        activeThread.codexThreadId === null
+          ? "new"
+          : sessionThreadId === activeThread.codexThreadId
+            ? "resumed"
+            : "fallback_new";
+      return {
+        sessionId: activeThread.session.sessionId,
+        resolvedThreadId: sessionThreadId,
+        continuityState,
+      } satisfies EnsuredSessionInfo;
     }
 
+    const priorCodexThreadId = activeThread.codexThreadId;
     setIsConnecting(true);
     try {
       const session = await api.providers.startSession({
         provider: "codex",
         cwd: activeProject.cwd || undefined,
         model: selectedModel || undefined,
+        resumeThreadId: priorCodexThreadId ?? undefined,
         approvalPolicy: runtimeSessionConfig.approvalPolicy,
         sandboxMode: runtimeSessionConfig.sandboxMode,
       });
@@ -365,7 +390,18 @@ export default function ChatView() {
         threadId: activeThread.id,
         session,
       });
-      return session.sessionId;
+      const resolvedThreadId = session.threadId ?? null;
+      const continuityState: SessionContinuityState =
+        priorCodexThreadId === null
+          ? "new"
+          : resolvedThreadId === priorCodexThreadId
+            ? "resumed"
+            : "fallback_new";
+      return {
+        sessionId: session.sessionId,
+        resolvedThreadId,
+        continuityState,
+      };
     } catch (err) {
       dispatch({
         type: "SET_ERROR",
@@ -405,16 +441,28 @@ export default function ChatView() {
       id: crypto.randomUUID(),
       text: trimmed,
     });
+    const previousMessages = activeThread.messages;
     setPrompt("");
 
-    const sessionId = await ensureSession();
-    if (!sessionId) return;
+    const sessionInfo = await ensureSession();
+    if (!sessionInfo) return;
 
     setIsSending(true);
     try {
+      const shouldBootstrap =
+        previousMessages.length > 0 &&
+        (sessionInfo.continuityState === "new" ||
+          sessionInfo.continuityState === "fallback_new");
+      const input = shouldBootstrap
+        ? buildBootstrapInput(
+            previousMessages,
+            trimmed,
+            PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+          ).text
+        : trimmed;
       await api.providers.sendTurn({
-        sessionId,
-        input: trimmed,
+        sessionId: sessionInfo.sessionId,
+        input,
         model: selectedModel || undefined,
         effort: selectedEffort || undefined,
       });

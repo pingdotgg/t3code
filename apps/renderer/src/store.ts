@@ -54,8 +54,9 @@ export interface AppState {
   diffOpen: boolean;
 }
 
-const PERSISTED_STATE_KEY = "codething:renderer-state:v3";
+const PERSISTED_STATE_KEY = "codething:renderer-state:v4";
 const LEGACY_PERSISTED_STATE_KEYS = [
+  "codething:renderer-state:v3",
   "codething:renderer-state:v2",
   "codething:renderer-state:v1",
 ] as const;
@@ -75,14 +76,15 @@ function readPersistedState(): AppState {
 
   try {
     const rawCurrent = window.localStorage.getItem(PERSISTED_STATE_KEY);
-    const [legacyV2Key, legacyV1Key] = LEGACY_PERSISTED_STATE_KEYS;
+    const [legacyV3Key, legacyV2Key, legacyV1Key] = LEGACY_PERSISTED_STATE_KEYS;
+    const rawLegacyV3 = window.localStorage.getItem(legacyV3Key);
     const rawLegacyV2 = window.localStorage.getItem(legacyV2Key);
     const rawLegacyV1 = window.localStorage.getItem(legacyV1Key);
-    const raw = rawCurrent ?? rawLegacyV2 ?? rawLegacyV1;
+    const raw = rawCurrent ?? rawLegacyV3 ?? rawLegacyV2 ?? rawLegacyV1;
     if (!raw) return initialState;
     const hydrated = hydratePersistedState(
       raw,
-      !rawCurrent && !rawLegacyV2 && Boolean(rawLegacyV1),
+      !rawCurrent && !rawLegacyV3 && !rawLegacyV2 && Boolean(rawLegacyV1),
     );
     if (!hydrated) return initialState;
 
@@ -125,6 +127,12 @@ function getEventTurnId(event: ProviderEvent): string | undefined {
   const payload = asObject(event.payload);
   const turn = asObject(payload?.turn);
   return asString(turn?.id);
+}
+
+function getEventThreadId(event: ProviderEvent): string | undefined {
+  if (event.threadId) return event.threadId;
+  const payload = asObject(event.payload);
+  return asString(payload?.threadId) ?? asString(asObject(payload?.thread)?.id);
 }
 
 function durationMs(startIso: string, endIso: string): number | undefined {
@@ -173,7 +181,7 @@ function updateTurnFields(
 
 // ── Reducer ──────────────────────────────────────────────────────────
 
-function reducer(state: AppState, action: Action): AppState {
+export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "ADD_PROJECT":
       return {
@@ -223,6 +231,24 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         threads: updateThread(state.threads, target.id, (t) => ({
           ...t,
+          ...(() => {
+            const eventThreadId = getEventThreadId(event);
+            const hasThreadMismatch =
+              t.codexThreadId !== null &&
+              eventThreadId !== undefined &&
+              eventThreadId !== t.codexThreadId;
+            const threadMismatchError = hasThreadMismatch
+              ? `Thread identity mismatch: expected ${t.codexThreadId}, received ${eventThreadId}.`
+              : null;
+            return {
+              codexThreadId: t.codexThreadId ?? eventThreadId ?? null,
+              error:
+                threadMismatchError ??
+                (event.kind === "error" && event.message
+                  ? event.message
+                  : t.error),
+            };
+          })(),
           session: t.session ? evolveSession(t.session, event) : t.session,
           messages: applyEventToMessages(
             t.messages,
@@ -230,8 +256,6 @@ function reducer(state: AppState, action: Action): AppState {
             activeAssistantItemRef,
           ),
           events: [event, ...t.events],
-          error:
-            event.kind === "error" && event.message ? event.message : t.error,
           ...updateTurnFields(t, event),
         })),
       };
@@ -243,6 +267,7 @@ function reducer(state: AppState, action: Action): AppState {
         threads: updateThread(state.threads, action.threadId, (t) => ({
           ...t,
           session: action.session,
+          codexThreadId: action.session.threadId ?? t.codexThreadId,
           events: [],
           error: null,
           latestTurnId: undefined,

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyCodexStderrLine, normalizeCodexModelSlug } from "./codexAppServerManager";
+import {
+  classifyCodexStderrLine,
+  isRecoverableThreadResumeError,
+  normalizeCodexModelSlug,
+} from "./codexAppServerManager";
 
 describe("classifyCodexStderrLine", () => {
   it("ignores empty lines", () => {
@@ -47,5 +51,31 @@ describe("normalizeCodexModelSlug", () => {
   it("keeps non-aliased models as-is", () => {
     expect(normalizeCodexModelSlug("gpt-5.2-codex")).toBe("gpt-5.2-codex");
     expect(normalizeCodexModelSlug("gpt-5.2")).toBe("gpt-5.2");
+  });
+});
+
+describe("isRecoverableThreadResumeError", () => {
+  it("matches not-found resume errors", () => {
+    expect(
+      isRecoverableThreadResumeError(
+        new Error("thread/resume failed: thread not found"),
+      ),
+    ).toBe(true);
+  });
+
+  it("ignores non-resume errors", () => {
+    expect(
+      isRecoverableThreadResumeError(
+        new Error("thread/start failed: permission denied"),
+      ),
+    ).toBe(false);
+  });
+
+  it("ignores non-recoverable resume errors", () => {
+    expect(
+      isRecoverableThreadResumeError(
+        new Error("thread/resume failed: timed out waiting for server"),
+      ),
+    ).toBe(false);
   });
 });

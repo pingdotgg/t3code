@@ -7,8 +7,6 @@ import { useStore } from "../store";
 import type { Project } from "../types";
 
 const THEME_CYCLE = { system: "light", light: "dark", dark: "system" } as const;
-
-
 function formatRelativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const minutes = Math.floor(diff / 60_000);
@@ -57,6 +55,7 @@ export default function Sidebar() {
         type: "ADD_THREAD",
         thread: {
           id: crypto.randomUUID(),
+          codexThreadId: null,
           projectId,
           title: "New thread",
           model:
