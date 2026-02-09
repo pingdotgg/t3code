@@ -13,7 +13,7 @@
  * the first render). For production mode (no React DevTools message), we
  * instead check that no fatal errors appeared.
  */
-import { execSync, spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -75,7 +75,7 @@ child.on("exit", () => {
     for (const f of failures) {
       console.error(`   • ${f}`);
     }
-    console.error(`\nFull output:\n${output}`);
+    console.error("\nFull output:\n" + output);
     process.exit(1);
   }
 

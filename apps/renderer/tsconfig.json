@@ -4,11 +4,7 @@
     "composite": true,
     "jsx": "react-jsx",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "exactOptionalPropertyTypes": false,
-    "types": ["vite/client"],
-    "paths": {
-      "#/*": ["./src/*"]
-    }
+    "types": ["vite/client"]
   },
   "include": ["src", "vite.config.ts"]
 }
