@@ -262,6 +262,36 @@ describe("git integration", () => {
       ).rejects.toThrow();
     });
 
+    it("listGitBranches from worktree cwd reports worktree branch as current", async () => {
+      await using tmp = await makeTmpDir();
+      await initRepoWithCommit(tmp.path);
+
+      const wtPath = path.join(tmp.path, "wt-list-dir");
+      const mainBranch = (await listGitBranches({ cwd: tmp.path })).branches.find(
+        (b) => b.current,
+      )!.name;
+
+      await createGitWorktree({
+        cwd: tmp.path,
+        branch: mainBranch,
+        newBranch: "wt-list",
+        path: wtPath,
+      });
+
+      // listGitBranches from the worktree should show wt-list as current
+      const wtBranches = await listGitBranches({ cwd: wtPath });
+      expect(wtBranches.isRepo).toBe(true);
+      const wtCurrent = wtBranches.branches.find((b) => b.current);
+      expect(wtCurrent!.name).toBe("wt-list");
+
+      // Main repo should still show the original branch as current
+      const mainBranches = await listGitBranches({ cwd: tmp.path });
+      const mainCurrent = mainBranches.branches.find((b) => b.current);
+      expect(mainCurrent!.name).toBe(mainBranch);
+
+      await removeGitWorktree({ cwd: tmp.path, path: wtPath });
+    });
+
     it("removeGitWorktree cleans up the worktree", async () => {
       await using tmp = await makeTmpDir();
       await initRepoWithCommit(tmp.path);
