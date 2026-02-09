@@ -8,7 +8,10 @@ export const gitListBranchesInputSchema = z.object({
 
 export const gitCreateWorktreeInputSchema = z.object({
   cwd: z.string().min(1),
+  /** Base branch to create the worktree from. */
   branch: z.string().min(1),
+  /** New branch name to create in the worktree. */
+  newBranch: z.string().min(1),
   path: z.string().min(1).optional(),
 });
 

@@ -123,14 +123,16 @@ export async function listGitBranches(
 export async function createGitWorktree(
   input: GitCreateWorktreeInput,
 ): Promise<GitCreateWorktreeResult> {
-  const sanitizedBranch = input.branch.replace(/\//g, "-");
+  const esc = (s: string) => s.replace(/'/g, "'\\''");
+  const sanitizedBranch = input.newBranch.replace(/\//g, "-");
   const repoName = path.basename(input.cwd);
   const worktreePath =
     input.path ??
     path.join(input.cwd, "..", `${repoName}-worktrees`, sanitizedBranch);
 
+  // Create a new branch from the base branch in a new worktree
   const result = await runTerminalCommand({
-    command: `git worktree add '${worktreePath.replace(/'/g, "'\\''")}' '${input.branch.replace(/'/g, "'\\''")}'`,
+    command: `git worktree add -b '${esc(input.newBranch)}' '${esc(worktreePath)}' '${esc(input.branch)}'`,
     cwd: input.cwd,
     timeoutMs: 30_000,
   });
@@ -142,7 +144,7 @@ export async function createGitWorktree(
   return {
     worktree: {
       path: worktreePath,
-      branch: input.branch,
+      branch: input.newBranch,
     },
   };
 }

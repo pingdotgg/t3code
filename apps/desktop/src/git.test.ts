@@ -194,15 +194,19 @@ describe("git integration", () => {
   // ── createGitWorktree + removeGitWorktree ──
 
   describe("createGitWorktree", () => {
-    it("creates a worktree directory at the expected path", async () => {
+    it("creates a worktree with a new branch from the base branch", async () => {
       await using tmp = await makeTmpDir();
       await initRepoWithCommit(tmp.path);
-      await createGitBranch({ cwd: tmp.path, branch: "wt-branch" });
 
       const wtPath = path.join(tmp.path, "worktree-out");
+      const currentBranch = (await listGitBranches({ cwd: tmp.path })).branches.find(
+        (b) => b.current,
+      )!.name;
+
       const result = await createGitWorktree({
         cwd: tmp.path,
-        branch: "wt-branch",
+        branch: currentBranch,
+        newBranch: "wt-branch",
         path: wtPath,
       });
 
@@ -215,37 +219,44 @@ describe("git integration", () => {
       await removeGitWorktree({ cwd: tmp.path, path: wtPath });
     });
 
-    it("worktree has the correct branch checked out", async () => {
+    it("worktree has the new branch checked out", async () => {
       await using tmp = await makeTmpDir();
       await initRepoWithCommit(tmp.path);
-      await createGitBranch({ cwd: tmp.path, branch: "wt-check" });
 
       const wtPath = path.join(tmp.path, "wt-check-dir");
+      const currentBranch = (await listGitBranches({ cwd: tmp.path })).branches.find(
+        (b) => b.current,
+      )!.name;
+
       await createGitWorktree({
         cwd: tmp.path,
-        branch: "wt-check",
+        branch: currentBranch,
+        newBranch: "wt-check",
         path: wtPath,
       });
 
-      // Verify the worktree is on the right branch
+      // Verify the worktree is on the new branch
       const branchOutput = await git(wtPath, "branch --show-current");
       expect(branchOutput).toBe("wt-check");
 
       await removeGitWorktree({ cwd: tmp.path, path: wtPath });
     });
 
-    it("throws when branch is already checked out in main worktree", async () => {
+    it("throws when new branch name already exists", async () => {
       await using tmp = await makeTmpDir();
       await initRepoWithCommit(tmp.path);
-      // Try to create a worktree for the current branch (already checked out)
-      const branches = await listGitBranches({ cwd: tmp.path });
-      const currentBranch = branches.branches.find((b) => b.current)!.name;
+      await createGitBranch({ cwd: tmp.path, branch: "existing" });
 
       const wtPath = path.join(tmp.path, "wt-conflict");
+      const currentBranch = (await listGitBranches({ cwd: tmp.path })).branches.find(
+        (b) => b.current,
+      )!.name;
+
       await expect(
         createGitWorktree({
           cwd: tmp.path,
           branch: currentBranch,
+          newBranch: "existing",
           path: wtPath,
         }),
       ).rejects.toThrow();
@@ -254,12 +265,16 @@ describe("git integration", () => {
     it("removeGitWorktree cleans up the worktree", async () => {
       await using tmp = await makeTmpDir();
       await initRepoWithCommit(tmp.path);
-      await createGitBranch({ cwd: tmp.path, branch: "wt-remove" });
 
       const wtPath = path.join(tmp.path, "wt-remove-dir");
+      const currentBranch = (await listGitBranches({ cwd: tmp.path })).branches.find(
+        (b) => b.current,
+      )!.name;
+
       await createGitWorktree({
         cwd: tmp.path,
-        branch: "wt-remove",
+        branch: currentBranch,
+        newBranch: "wt-remove",
         path: wtPath,
       });
       expect(existsSync(wtPath)).toBe(true);
@@ -284,18 +299,22 @@ describe("git integration", () => {
     });
   });
 
-  // ── Full flow: worktree creation from selected branch ──
+  // ── Full flow: worktree creation from base branch ──
 
   describe("full flow: worktree creation", () => {
-    it("creates worktree from a non-current branch", async () => {
+    it("creates worktree with new branch from current branch", async () => {
       await using tmp = await makeTmpDir();
       await initRepoWithCommit(tmp.path);
-      await createGitBranch({ cwd: tmp.path, branch: "feature-wt" });
+
+      const currentBranch = (await listGitBranches({ cwd: tmp.path })).branches.find(
+        (b) => b.current,
+      )!.name;
 
       const wtPath = path.join(tmp.path, "my-worktree");
       const result = await createGitWorktree({
         cwd: tmp.path,
-        branch: "feature-wt",
+        branch: currentBranch,
+        newBranch: "feature-wt",
         path: wtPath,
       });
 
@@ -305,9 +324,9 @@ describe("git integration", () => {
       // Main repo still on original branch
       const mainBranches = await listGitBranches({ cwd: tmp.path });
       const mainCurrent = mainBranches.branches.find((b) => b.current);
-      expect(mainCurrent!.name).not.toBe("feature-wt");
+      expect(mainCurrent!.name).toBe(currentBranch);
 
-      // Worktree is on feature-wt
+      // Worktree is on the new branch
       const wtBranch = await git(wtPath, "branch --show-current");
       expect(wtBranch).toBe("feature-wt");
 
@@ -356,7 +375,9 @@ describe("git integration", () => {
       await git(tmp.path, "commit -m 'diverge'");
 
       // Go back to default branch
-      const defaultBranch = (await git(tmp.path, "rev-parse --abbrev-ref HEAD")).includes("diverged")
+      const defaultBranch = (await git(tmp.path, "rev-parse --abbrev-ref HEAD")).includes(
+        "diverged",
+      )
         ? // we're on diverged, need to find the other one
           (await listGitBranches({ cwd: tmp.path })).branches.find(
             (b) => !b.current && b.name !== "diverged",
