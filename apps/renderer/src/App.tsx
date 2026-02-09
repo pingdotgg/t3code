@@ -31,10 +31,10 @@ function Layout() {
 
   if (!api) {
     return (
-      <div className="flex h-screen flex-col bg-[#0c0c0c] text-[#e0e0e0]">
+      <div className="flex h-screen flex-col bg-background text-foreground">
         <div className="drag-region h-[52px] shrink-0" />
         <div className="flex flex-1 items-center justify-center">
-          <p className="text-sm text-[#a0a0a0]/60">
+          <p className="text-sm text-muted-foreground">
             Native bridge unavailable. Launch through Electron.
           </p>
         </div>
@@ -43,7 +43,7 @@ function Layout() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#0c0c0c] text-[#e0e0e0]">
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <EventRouter />
       <Sidebar />
       <ChatView />

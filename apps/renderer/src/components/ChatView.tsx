@@ -47,10 +47,10 @@ function editorLabel(editor: (typeof EDITORS)[number]): string {
 const LAST_EDITOR_KEY = "codething:last-editor";
 
 function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
-  if (tone === "error") return "text-rose-300/50";
-  if (tone === "tool") return "text-[#8a8a8a]";
-  if (tone === "thinking") return "text-[#707070]";
-  return "text-[#606060]";
+  if (tone === "error") return "text-rose-300/50 dark:text-rose-300/50";
+  if (tone === "tool") return "text-muted-foreground/70";
+  if (tone === "thinking") return "text-muted-foreground/50";
+  return "text-muted-foreground/40";
 }
 
 interface PendingApprovalCard {
@@ -488,7 +488,7 @@ export default function ChatView() {
   // Empty state: no active thread
   if (!activeThread) {
     return (
-      <div className="flex flex-1 flex-col bg-[#0c0c0c] text-[#a0a0a0]/40">
+      <div className="flex flex-1 flex-col bg-background text-muted-foreground/40">
         <div className="drag-region h-[52px] shrink-0" />
         <div className="flex flex-1 items-center justify-center">
           <div className="text-center">
@@ -500,11 +500,11 @@ export default function ChatView() {
   }
 
   return (
-    <div className="flex flex-1 flex-col bg-[#0c0c0c]">
+    <div className="flex flex-1 flex-col bg-background">
       {/* Top bar */}
-      <header className="drag-region flex items-center justify-between border-b border-white/8 px-5 pt-[28px] pb-3">
+      <header className="drag-region flex items-center justify-between border-b border-border px-5 pt-[28px] pb-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-sm font-medium text-[#e0e0e0]">
+          <h2 className="text-sm font-medium text-foreground">
             {activeThread.title}
           </h2>
         </div>
@@ -514,23 +514,23 @@ export default function ChatView() {
             <div className="relative" ref={editorMenuRef}>
               <button
                 type="button"
-                className="rounded-md px-2 py-1 text-[10px] text-[#a0a0a0]/40 transition-colors duration-150 hover:text-[#a0a0a0]/60"
+                className="rounded-md px-2 py-1 text-[10px] text-muted-foreground/40 transition-colors duration-150 hover:text-muted-foreground/60"
                 onClick={() => setIsEditorMenuOpen((v) => !v)}
               >
                 Open in&hellip;
               </button>
               {isEditorMenuOpen && (
-                <div className="absolute right-0 top-full z-50 mt-1 min-w-[120px] rounded-md border border-white/[0.08] bg-[#1b1b1d] py-1 shadow-xl">
+                <div className="absolute right-0 top-full z-50 mt-1 min-w-[120px] rounded-md border border-border bg-popover py-1 shadow-xl">
                   {EDITORS.map((editor) => (
                     <button
                       key={editor.id}
                       type="button"
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-[#e0e0e0] hover:bg-white/[0.06]"
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground hover:bg-accent"
                       onClick={() => openInEditor(editor.id)}
                     >
                       {editorLabel(editor)}
                       {editor.id === lastEditor && (
-                        <kbd className="ml-auto text-[9px] text-[#a0a0a0]/40">
+                        <kbd className="ml-auto text-[9px] text-muted-foreground/40">
                           {navigator.platform.includes("Mac")
                             ? "\u2318O"
                             : "Ctrl+O"}
@@ -547,8 +547,8 @@ export default function ChatView() {
             type="button"
             className={`rounded-md px-2 py-1 text-[10px] transition-colors duration-150 ${
               state.diffOpen
-                ? "bg-white/10 text-white"
-                : "text-[#a0a0a0]/40 hover:text-[#a0a0a0]/60"
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground/40 hover:text-muted-foreground/60"
             }`}
             onClick={() => dispatch({ type: "TOGGLE_DIFF" })}
           >
@@ -591,7 +591,7 @@ export default function ChatView() {
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   <button
                     type="button"
-                    className="rounded-md border border-white/[0.15] bg-white/[0.08] px-2 py-1 text-[11px] text-[#e8e8e8] transition-colors duration-150 hover:bg-white/[0.13] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-md border border-border bg-accent px-2 py-1 text-[11px] text-foreground transition-colors duration-150 hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={isResponding}
                     onClick={() =>
                       void onRespondToApproval(approval.requestId, "accept")
@@ -614,7 +614,7 @@ export default function ChatView() {
                   </button>
                   <button
                     type="button"
-                    className="rounded-md border border-white/[0.15] px-2 py-1 text-[11px] text-[#d8d8d8] transition-colors duration-150 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-md border border-border px-2 py-1 text-[11px] text-foreground/90 transition-colors duration-150 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={isResponding}
                     onClick={() =>
                       void onRespondToApproval(approval.requestId, "decline")
@@ -643,7 +643,7 @@ export default function ChatView() {
       <div className="flex-1 overflow-y-auto px-5 py-4">
         {activeThread.messages.length === 0 && !isWorking ? (
           <div className="flex h-full items-center justify-center">
-            <p className="text-sm text-[#a0a0a0]/30">Send a message to start the conversation.</p>
+            <p className="text-sm text-muted-foreground/30">Send a message to start the conversation.</p>
           </div>
         ) : (
           <div className="mx-auto max-w-3xl space-y-4">
@@ -654,18 +654,18 @@ export default function ChatView() {
                   (completionDividerBeforeEntryId === timelineEntry.id ||
                     timelineEntries[index - 1]?.kind === "work") && (
                     <div className="my-3 flex items-center gap-3">
-                      <span className="h-px flex-1 bg-white/[0.1]" />
-                      <span className="rounded-full border border-white/[0.12] bg-[#121212] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[#9a9a9a]/80">
+                      <span className="h-px flex-1 bg-border" />
+                      <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
                         {completionSummary
                           ? `Response • ${completionSummary}`
                           : "Response"}
                       </span>
-                      <span className="h-px flex-1 bg-white/[0.1]" />
+                      <span className="h-px flex-1 bg-border" />
                     </div>
                   )}
                 {timelineEntry.kind === "work" ? (
                   <div className="flex items-start gap-2 py-0.5 pl-1.5">
-                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-white/[0.18]" />
+                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
                     <p
                       className={`py-[2px] text-[11px] leading-relaxed ${workToneClass(timelineEntry.entry.tone)}`}
                     >
@@ -686,11 +686,11 @@ export default function ChatView() {
                   </div>
                 ) : timelineEntry.message.role === "user" ? (
                   <div className="flex justify-end">
-                    <div className="max-w-[80%] rounded-2xl rounded-br-sm border border-white/[0.08] bg-white/[0.05] px-4 py-3">
-                      <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-[#e0e0e0]">
+                    <div className="max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
+                      <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-foreground">
                         {timelineEntry.message.text}
                       </pre>
-                      <p className="mt-1.5 text-right text-[10px] text-[#a0a0a0]/30">
+                      <p className="mt-1.5 text-right text-[10px] text-muted-foreground/30">
                         {formatTimestamp(timelineEntry.message.createdAt)}
                       </p>
                     </div>
@@ -717,7 +717,7 @@ export default function ChatView() {
                         </span>
                       </div>
                     )}
-                    <p className="mt-1.5 text-[10px] text-[#a0a0a0]/30">
+                    <p className="mt-1.5 text-[10px] text-muted-foreground/30">
                       {formatMessageMeta(
                         timelineEntry.message.createdAt,
                         timelineEntry.message.streaming
@@ -739,12 +739,12 @@ export default function ChatView() {
             ))}
             {isWorking && (
               <div className="flex items-center gap-2 py-0.5 pl-1.5">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-white/[0.18]" />
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
                 <div className="flex items-center pt-1">
                   <span className="inline-flex items-center gap-[3px]">
-                    <span className="h-1 w-1 rounded-full bg-white/20 animate-pulse" />
-                    <span className="h-1 w-1 rounded-full bg-white/20 animate-pulse [animation-delay:200ms]" />
-                    <span className="h-1 w-1 rounded-full bg-white/20 animate-pulse [animation-delay:400ms]" />
+                    <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
+                    <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
+                    <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
                   </span>
                 </div>
               </div>
@@ -757,12 +757,12 @@ export default function ChatView() {
       {/* Input bar */}
       <div className="px-5 pb-4 pt-2">
         <form onSubmit={onSend} className="mx-auto max-w-3xl">
-          <div className="group rounded-[20px] border border-white/8 bg-[#141416] transition-colors duration-200 focus-within:border-white/16">
+          <div className="group rounded-[20px] border border-border bg-card transition-colors duration-200 focus-within:border-ring">
             {/* Textarea area */}
             <div className="px-4 pt-4 pb-2">
               <textarea
                 ref={textareaRef}
-                className="w-full resize-none bg-transparent text-[14px] leading-relaxed text-[#e0e0e0] placeholder:text-[#a0a0a0]/35 focus:outline-none"
+                className="w-full resize-none bg-transparent text-[14px] leading-relaxed text-foreground placeholder:text-muted-foreground/35 focus:outline-none"
                 rows={2}
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
@@ -781,7 +781,7 @@ export default function ChatView() {
                 <div className="relative" ref={modelMenuRef}>
                   <button
                     type="button"
-                    className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-[#a0a0a0]/70 transition-colors duration-150 hover:bg-white/6 hover:text-[#d0d0d0]"
+                    className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-muted-foreground/70 transition-colors duration-150 hover:bg-accent hover:text-foreground/80"
                     onClick={() => setIsModelMenuOpen((open) => !open)}
                   >
                     <span className="max-w-[180px] truncate">{selectedModel}</span>
@@ -803,8 +803,8 @@ export default function ChatView() {
                     </svg>
                   </button>
                   {isModelMenuOpen && (
-                    <div className="absolute bottom-full left-0 z-20 mb-2 w-[320px] rounded-2xl border border-white/10 bg-[#1b1b1d]/95 p-2 shadow-[0_16px_40px_rgba(0,0,0,0.55)] backdrop-blur">
-                      <p className="px-2 py-1 text-[11px] text-[#a0a0a0]/70">Select model</p>
+                    <div className="absolute bottom-full left-0 z-20 mb-2 w-[320px] rounded-2xl border border-border bg-popover/95 p-2 shadow-[0_16px_40px_rgba(0,0,0,0.55)] backdrop-blur">
+                      <p className="px-2 py-1 text-[11px] text-muted-foreground/70">Select model</p>
                       <div className="max-h-72 overflow-y-auto">
                         {modelOptions.map((model) => {
                           const isSelected = model === selectedModel;
@@ -814,15 +814,15 @@ export default function ChatView() {
                               type="button"
                               className={`mb-0.5 flex w-full items-center justify-between gap-2 rounded-xl px-2 py-2 text-left font-mono text-sm transition-colors duration-150 ${
                                 isSelected
-                                  ? "bg-white/8 text-white"
-                                  : "text-[#d4d4d4] hover:bg-white/5"
+                                  ? "bg-accent text-foreground"
+                                  : "text-foreground/90 hover:bg-accent"
                               }`}
                               onClick={() => onModelSelect(model)}
                             >
                               <span className="truncate">{model}</span>
                               <span
                                 className={`pt-0.5 text-sm ${
-                                  isSelected ? "text-white" : "text-transparent"
+                                  isSelected ? "text-foreground" : "text-transparent"
                                 }`}
                               >
                                 ✓
@@ -836,11 +836,11 @@ export default function ChatView() {
                 </div>
 
                 {/* Divider */}
-                <div className="mx-0.5 h-4 w-px bg-white/8" />
+                <div className="mx-0.5 h-4 w-px bg-border" />
 
                 {/* Reasoning effort */}
                 <label
-                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-[#a0a0a0]/70 transition-colors duration-150 hover:bg-white/6 hover:text-[#d0d0d0]"
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-muted-foreground/70 transition-colors duration-150 hover:bg-accent hover:text-foreground/80"
                   htmlFor="reasoning-effort"
                 >
                   <span>{selectedEffort.charAt(0).toUpperCase() + selectedEffort.slice(1)}</span>
@@ -851,7 +851,7 @@ export default function ChatView() {
                     onChange={(event) => setSelectedEffort(event.target.value)}
                   >
                     {REASONING_OPTIONS.map((effort) => (
-                      <option key={effort} value={effort} className="bg-[#1b1b1d]">
+                      <option key={effort} value={effort} className="bg-popover">
                         {effort}
                         {effort === DEFAULT_REASONING ? " (default)" : ""}
                       </option>
@@ -876,12 +876,12 @@ export default function ChatView() {
                 </label>
 
                 {/* Divider */}
-                <div className="mx-0.5 h-4 w-px bg-white/[0.08]" />
+                <div className="mx-0.5 h-4 w-px bg-border" />
 
                 {/* Runtime mode toggle */}
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-[#a0a0a0]/70 transition-colors duration-150 hover:bg-white/[0.06] hover:text-[#d0d0d0]"
+                  className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-muted-foreground/70 transition-colors duration-150 hover:bg-accent hover:text-foreground/80"
                   disabled={isSwitchingRuntimeMode}
                   onClick={() =>
                     void handleRuntimeModeChange(
@@ -975,7 +975,7 @@ export default function ChatView() {
                 ) : (
                   <button
                     type="submit"
-                    className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-[#0c0c0c] transition-all duration-150 hover:bg-white hover:scale-105 disabled:opacity-30 disabled:hover:scale-100"
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:opacity-30 disabled:hover:scale-100"
                     disabled={isSending || isConnecting || !prompt.trim()}
                     aria-label={
                       isConnecting ? "Connecting" : isSending ? "Sending" : "Send message"
