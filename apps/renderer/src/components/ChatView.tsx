@@ -113,6 +113,7 @@ export default function ChatView() {
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [selectedEffort, setSelectedEffort] =
     useState<string>(DEFAULT_REASONING);
+  const [isSwitchingRuntimeMode, setIsSwitchingRuntimeMode] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<string[]>(
     [],
   );
@@ -209,6 +210,35 @@ export default function ChatView() {
           approvalPolicy: "on-request",
           sandboxMode: "workspace-write",
         } as const);
+
+  const handleRuntimeModeChange = async (
+    mode: "approval-required" | "full-access",
+  ) => {
+    if (mode === state.runtimeMode) return;
+    dispatch({ type: "SET_RUNTIME_MODE", mode });
+    if (!api) return;
+
+    const sessionIds = state.threads
+      .map((t) => t.session)
+      .filter(
+        (s): s is NonNullable<typeof s> =>
+          s !== null && s.status !== "closed",
+      )
+      .map((s) => s.sessionId);
+
+    if (sessionIds.length === 0) return;
+
+    setIsSwitchingRuntimeMode(true);
+    try {
+      await Promise.all(
+        sessionIds.map((id) =>
+          api.providers.stopSession({ sessionId: id }).catch(() => undefined),
+        ),
+      );
+    } finally {
+      setIsSwitchingRuntimeMode(false);
+    }
+  };
 
   // Auto-scroll on new messages
   const messageCount = activeThread?.messages.length ?? 0;
@@ -775,6 +805,83 @@ export default function ChatView() {
                     />
                   </svg>
                 </label>
+
+                {/* Divider */}
+                <div className="mx-0.5 h-4 w-px bg-white/[0.08]" />
+
+                {/* Runtime mode toggle */}
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-[#a0a0a0]/70 transition-colors duration-150 hover:bg-white/[0.06] hover:text-[#d0d0d0]"
+                  disabled={isSwitchingRuntimeMode}
+                  onClick={() =>
+                    void handleRuntimeModeChange(
+                      state.runtimeMode === "full-access"
+                        ? "approval-required"
+                        : "full-access",
+                    )
+                  }
+                  title={
+                    state.runtimeMode === "full-access"
+                      ? "Full access — click to require approvals"
+                      : "Approval required — click for full access"
+                  }
+                >
+                  {state.runtimeMode === "full-access" ? (
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 14 14"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <rect
+                        x="2"
+                        y="5.5"
+                        width="10"
+                        height="7"
+                        rx="1.5"
+                        stroke="currentColor"
+                        strokeWidth="1.3"
+                      />
+                      <path
+                        d="M9.5 5.5V4a2.5 2.5 0 0 0-5 0"
+                        stroke="currentColor"
+                        strokeWidth="1.3"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  ) : (
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 14 14"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <rect
+                        x="2"
+                        y="5.5"
+                        width="10"
+                        height="7"
+                        rx="1.5"
+                        stroke="currentColor"
+                        strokeWidth="1.3"
+                      />
+                      <path
+                        d="M4.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"
+                        stroke="currentColor"
+                        strokeWidth="1.3"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  )}
+                  <span>
+                    {state.runtimeMode === "full-access"
+                      ? "Full access"
+                      : "Supervised"}
+                  </span>
+                </button>
               </div>
 
               {/* Right side: send / stop button */}
