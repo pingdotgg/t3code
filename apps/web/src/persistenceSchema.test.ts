@@ -134,6 +134,8 @@ describe("toPersistedState", () => {
       events: [],
       error: "boom",
       createdAt: "2026-02-08T10:00:00.000Z",
+      branch: null,
+      worktreePath: null,
     };
 
     const persisted = toPersistedState({
