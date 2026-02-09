@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  DEFAULT_MODEL,
-  MODEL_OPTIONS,
-  normalizeModelSlug,
-  resolveModelSlug,
-} from "./model";
+import { DEFAULT_MODEL, MODEL_OPTIONS, normalizeModelSlug, resolveModelSlug } from "./model";
 
 describe("normalizeModelSlug", () => {
   it("maps known aliases to canonical slugs", () => {

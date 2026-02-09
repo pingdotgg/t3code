@@ -1,23 +1,29 @@
 {
   "name": "ct-round-5",
   "private": true,
-  "packageManager": "bun@1.1.38",
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "bun run build:contracts && turbo run dev --parallel",
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
-    "lint": "turbo run lint",
+    "lint": "oxlint --report-unused-disable-directives",
     "test": "turbo run test",
-    "format": "biome format --write .",
-    "check": "biome check .",
+    "fmt": "oxfmt",
     "smoke-test": "turbo run smoke-test",
     "build:contracts": "bun run --cwd packages/contracts build"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9.0",
+    "oxfmt": "^0.28.0",
+    "oxlint": "^1.43.0",
     "turbo": "^2.3.3",
     "typescript": "^5.7.3",
     "vitest": "^3.0.0"
-  }
+  },
+  "engines": {
+    "bun": ">=1.3.9"
+  },
+  "packageManager": "bun@1.3.9"
 }

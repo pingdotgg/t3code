@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_MODEL,
-  normalizeModelSlug,
-  resolveModelSlug,
-} from "./model-logic";
+import { DEFAULT_MODEL, normalizeModelSlug, resolveModelSlug } from "./model-logic";
 
 describe("normalizeModelSlug", () => {
   it("maps 5.3 aliases to canonical codex slug", () => {

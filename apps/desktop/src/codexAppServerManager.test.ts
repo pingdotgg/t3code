@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  classifyCodexStderrLine,
-  normalizeCodexModelSlug,
-} from "./codexAppServerManager";
+import { classifyCodexStderrLine, normalizeCodexModelSlug } from "./codexAppServerManager";
 
 describe("classifyCodexStderrLine", () => {
   it("ignores empty lines", () => {
@@ -23,8 +20,7 @@ describe("classifyCodexStderrLine", () => {
   });
 
   it("keeps unknown structured errors", () => {
-    const line =
-      "2026-02-08T04:24:20.085687Z ERROR codex_core::runtime: unrecoverable failure";
+    const line = "2026-02-08T04:24:20.085687Z ERROR codex_core::runtime: unrecoverable failure";
     expect(classifyCodexStderrLine(line)).toEqual({
       message: line,
     });
@@ -45,9 +41,7 @@ describe("normalizeCodexModelSlug", () => {
   });
 
   it("prefers codex id when model differs", () => {
-    expect(normalizeCodexModelSlug("gpt-5.3", "gpt-5.3-codex")).toBe(
-      "gpt-5.3-codex",
-    );
+    expect(normalizeCodexModelSlug("gpt-5.3", "gpt-5.3-codex")).toBe("gpt-5.3-codex");
   });
 
   it("keeps non-aliased models as-is", () => {

@@ -69,10 +69,7 @@ export interface PersistedStoreSnapshot {
   runtimeMode: RuntimeMode;
 }
 
-function maybeMigrateLegacyModel(
-  model: string,
-  isLegacyPayload: boolean,
-): string {
+function maybeMigrateLegacyModel(model: string, isLegacyPayload: boolean): string {
   if (!isLegacyPayload) {
     return model;
   }
@@ -86,9 +83,7 @@ function hydrateProject(
 ): Project {
   return {
     ...project,
-    model: resolveModelSlug(
-      maybeMigrateLegacyModel(project.model, isLegacyPayload),
-    ),
+    model: resolveModelSlug(maybeMigrateLegacyModel(project.model, isLegacyPayload)),
   };
 }
 
@@ -100,9 +95,7 @@ function hydrateThread(
     id: thread.id,
     projectId: thread.projectId,
     title: thread.title,
-    model: resolveModelSlug(
-      maybeMigrateLegacyModel(thread.model, isLegacyPayload),
-    ),
+    model: resolveModelSlug(maybeMigrateLegacyModel(thread.model, isLegacyPayload)),
     session: null,
     messages: thread.messages.map((message) => ({
       ...message,
@@ -139,7 +132,7 @@ export function hydratePersistedState(
     .filter((thread) => projectIds.has(thread.projectId));
   const hasActiveThread = Boolean(
     parsedState.data.activeThreadId &&
-      threads.some((thread) => thread.id === parsedState.data.activeThreadId),
+    threads.some((thread) => thread.id === parsedState.data.activeThreadId),
   );
 
   return {

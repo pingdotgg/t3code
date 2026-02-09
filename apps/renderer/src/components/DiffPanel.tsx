@@ -7,9 +7,7 @@ export default function DiffPanel() {
     <aside className="flex h-full w-[400px] shrink-0 flex-col border-l border-white/[0.08] bg-[#141414]">
       {/* Header */}
       <div className="drag-region flex items-center justify-between border-b border-white/[0.08] px-4 pt-[28px] pb-3">
-        <h3 className="text-xs font-medium text-[#e0e0e0]">
-          Uncommitted changes
-        </h3>
+        <h3 className="text-xs font-medium text-[#e0e0e0]">Uncommitted changes</h3>
         <button
           type="button"
           className="text-[#a0a0a0]/40 transition-colors duration-150 hover:text-[#a0a0a0]/70"
@@ -27,15 +25,11 @@ export default function DiffPanel() {
               <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-medium text-emerald-400">
                 M
               </span>
-              <span className="font-mono text-xs text-[#a0a0a0]/60">
-                src/App.tsx
-              </span>
+              <span className="font-mono text-xs text-[#a0a0a0]/60">src/App.tsx</span>
             </div>
             <div className="space-y-0.5 font-mono text-[11px]">
               <div className="text-red-400/60">- const oldValue = "hello";</div>
-              <div className="text-emerald-400/60">
-                + const newValue = "world";
-              </div>
+              <div className="text-emerald-400/60">+ const newValue = "world";</div>
             </div>
           </div>
 
@@ -44,9 +38,7 @@ export default function DiffPanel() {
               <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-[9px] font-medium text-blue-400">
                 A
               </span>
-              <span className="font-mono text-xs text-[#a0a0a0]/60">
-                src/utils.ts
-              </span>
+              <span className="font-mono text-xs text-[#a0a0a0]/60">src/utils.ts</span>
             </div>
           </div>
         </div>

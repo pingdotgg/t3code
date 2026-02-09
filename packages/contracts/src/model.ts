@@ -1,8 +1,4 @@
-export const MODEL_OPTIONS = [
-  "gpt-5.3-codex",
-  "gpt-5.2-codex",
-  "gpt-5.2",
-] as const;
+export const MODEL_OPTIONS = ["gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.2"] as const;
 
 export const DEFAULT_MODEL = "gpt-5.3-codex";
 
@@ -11,9 +7,7 @@ export const MODEL_SLUG_ALIASES: Record<string, string> = {
   "gpt-5.3": "gpt-5.3-codex",
 };
 
-export function normalizeModelSlug(
-  model: string | null | undefined,
-): string | null {
+export function normalizeModelSlug(model: string | null | undefined): string | null {
   if (typeof model !== "string") {
     return null;
   }

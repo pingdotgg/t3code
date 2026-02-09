@@ -18,9 +18,7 @@ export default function ChatMarkdown({ text }: ChatMarkdownProps) {
     <div className="chat-markdown text-sm leading-relaxed text-[#d0d0d0]">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[
-          [rehypeHighlight, { detect: true, ignoreMissing: true }],
-        ]}
+        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         components={markdownComponents}
       >
         {text}

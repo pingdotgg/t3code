@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "ignorePatterns": [
+    ".plans",
+    "dist",
+    "dist-electron",
+    "node_modules",
+    "bun.lock",
+    "*.tsbuildinfo"
+  ],
+  "experimentalSortPackageJson": {}
+}

@@ -4,14 +4,13 @@
   "private": true,
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "concurrently -k -n BUNDLE,ELECTRON \"bun run dev:bundle\" \"bun run dev:electron\"",
+    "dev": "bun run --parallel dev:bundle dev:electron",
     "dev:bundle": "tsup --watch",
     "dev:electron": "bun run scripts/dev-electron.mjs",
     "build": "tsup",
     "start": "electron dist-electron/main.js",
     "postinstall": "electron-rebuild",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check src/",
     "test": "vitest run",
     "smoke-test": "node scripts/smoke-test.mjs"
   },
@@ -23,7 +22,6 @@
   "devDependencies": {
     "@electron/rebuild": "^3.7.0",
     "@types/node": "^22.10.2",
-    "concurrently": "^9.1.2",
     "electronmon": "^2.0.2",
     "tsup": "^8.3.5",
     "typescript": "^5.7.3",

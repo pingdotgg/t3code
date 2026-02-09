@@ -55,11 +55,9 @@ describe("withParsedPayload", () => {
 
 describe("withParsedArgs", () => {
   it("parses tuple arguments before invoking handler", () => {
-    const handler = vi.fn(
-      (_event: unknown, sessionId: string, data: string) => {
-        return `${sessionId}:${data}`;
-      },
-    );
+    const handler = vi.fn((_event: unknown, sessionId: string, data: string) => {
+      return `${sessionId}:${data}`;
+    });
     const wrapped = withParsedArgs(
       {
         parse(args: unknown[]): [string, string] {

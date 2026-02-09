@@ -116,10 +116,7 @@ function updateThread(
   return threads.map((t) => (t.id === threadId ? updater(t) : t));
 }
 
-function findThreadBySessionId(
-  threads: Thread[],
-  sessionId: string,
-): Thread | undefined {
+function findThreadBySessionId(threads: Thread[], sessionId: string): Thread | undefined {
   return threads.find((t) => t.session?.sessionId === sessionId);
 }
 
@@ -325,11 +322,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     persistState(state);
   }, [state]);
 
-  return createElement(
-    StoreContext.Provider,
-    { value: { state, dispatch } },
-    children,
-  );
+  return createElement(StoreContext.Provider, { value: { state, dispatch } }, children);
 }
 
 export function useStore() {

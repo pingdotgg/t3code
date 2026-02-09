@@ -49,6 +49,7 @@ Mode changes apply across all threads. Existing live sessions are restarted so o
 - `.github/workflows/ci.yml` runs `bun run lint`, `bun run typecheck`, and `bun run test` on pull requests and pushes to `main`.
 
 Optional:
+
 - `ELECTRON_RENDERER_PORT=5180 bun run dev` if `5173` is already in use.
 
 ## Provider architecture

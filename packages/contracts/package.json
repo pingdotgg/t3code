@@ -2,6 +2,9 @@
   "name": "@acme/contracts",
   "version": "0.0.0",
   "private": true,
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -13,12 +16,10 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist"],
   "scripts": {
     "dev": "tsup src/index.ts --format esm,cjs --dts --watch --clean",
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check src/",
     "test": "vitest run"
   },
   "dependencies": {

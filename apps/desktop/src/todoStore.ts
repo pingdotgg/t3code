@@ -82,11 +82,7 @@ export class TodoStore {
   }
 
   private async persist(): Promise<void> {
-    await fs.writeFile(
-      this.filePath,
-      JSON.stringify(this.todos, null, 2),
-      "utf8",
-    );
+    await fs.writeFile(this.filePath, JSON.stringify(this.todos, null, 2), "utf8");
   }
 
   private async runExclusive<T>(operation: () => Promise<T>): Promise<T> {

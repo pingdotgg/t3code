@@ -6,15 +6,10 @@ const port = Number(process.env.ELECTRON_RENDERER_PORT ?? 5173);
 const devServerUrl = `http://localhost:${port}`;
 
 await waitOn({
-  resources: [
-    `tcp:${port}`,
-    "file:dist-electron/main.js",
-    "file:dist-electron/preload.js",
-  ],
+  resources: [`tcp:${port}`, "file:dist-electron/main.js", "file:dist-electron/preload.js"],
 });
 
-const command =
-  process.platform === "win32" ? "electronmon.cmd" : "electronmon";
+const command = process.platform === "win32" ? "electronmon.cmd" : "electronmon";
 const child = spawn(command, ["dist-electron/main.js"], {
   stdio: "inherit",
   env: {
