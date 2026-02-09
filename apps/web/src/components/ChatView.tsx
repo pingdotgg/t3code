@@ -384,7 +384,9 @@ export default function ChatView() {
     setIsEditorMenuOpen(false);
   };
 
-  const ensureSession = async (): Promise<EnsuredSessionInfo | null> => {
+  const ensureSession = async (
+    cwdOverride?: string,
+  ): Promise<EnsuredSessionInfo | null> => {
     if (!api || !activeThread || !activeProject) return null;
     if (activeThread.session && activeThread.session.status !== "closed") {
       const sessionThreadId = activeThread.session.threadId ?? null;
@@ -406,7 +408,7 @@ export default function ChatView() {
     try {
       const session = await api.providers.startSession({
         provider: "codex",
-        cwd: activeProject.cwd || undefined,
+        cwd: cwdOverride ?? activeThread.worktreePath ?? activeProject.cwd,
         model: selectedModel || undefined,
         resumeThreadId: priorCodexThreadId ?? undefined,
         approvalPolicy: runtimeSessionConfig.approvalPolicy,
@@ -471,7 +473,7 @@ export default function ChatView() {
     const previousMessages = activeThread.messages;
     setPrompt("");
 
-    const sessionInfo = await ensureSession();
+    const sessionInfo = await ensureSession(activeThread.worktreePath ?? undefined);
     if (!sessionInfo) return;
 
     setIsSending(true);
