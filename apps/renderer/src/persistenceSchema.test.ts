@@ -47,6 +47,7 @@ describe("hydratePersistedState", () => {
     expect(hydrated?.projects[0]?.model).toBe(DEFAULT_MODEL);
     expect(hydrated?.threads[0]?.model).toBe(DEFAULT_MODEL);
     expect(hydrated?.threads[0]?.messages[0]?.streaming).toBe(false);
+    expect(hydrated?.runtimeMode).toBe("full-access");
   });
 
   it("filters unknown project references and repairs active thread", () => {
@@ -85,11 +86,33 @@ describe("hydratePersistedState", () => {
     expect(hydrated).not.toBeNull();
     expect(hydrated?.threads.map((thread) => thread.id)).toEqual(["t-1"]);
     expect(hydrated?.activeThreadId).toBe("t-1");
+    expect(hydrated?.runtimeMode).toBe("full-access");
+  });
+
+  it("hydrates runtime mode from v3 payload", () => {
+    const payload = JSON.stringify({
+      version: 3,
+      runtimeMode: "approval-required",
+      projects: [
+        {
+          id: "p-1",
+          name: "Project",
+          cwd: "/tmp/project",
+          model: "gpt-5.3-codex",
+          expanded: false,
+        },
+      ],
+      threads: [],
+      activeThreadId: null,
+    });
+
+    const hydrated = hydratePersistedState(payload, false);
+    expect(hydrated?.runtimeMode).toBe("approval-required");
   });
 });
 
 describe("toPersistedState", () => {
-  it("writes v2 payload and strips non-persisted thread fields", () => {
+  it("writes v3 payload and strips non-persisted thread fields", () => {
     const thread: Thread = {
       id: "t-1",
       projectId: "p-1",
@@ -122,9 +145,11 @@ describe("toPersistedState", () => {
       ],
       threads: [thread],
       activeThreadId: "t-1",
+      runtimeMode: "full-access",
     });
 
-    expect(persisted.version).toBe(2);
+    expect(persisted.version).toBe(3);
+    expect(persisted.runtimeMode).toBe("full-access");
     expect(persisted.threads[0]).toEqual({
       id: "t-1",
       projectId: "p-1",

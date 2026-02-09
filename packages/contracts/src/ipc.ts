@@ -2,6 +2,7 @@ import type { AgentConfig, AgentExit, OutputChunk } from "./agent";
 import type {
   ProviderEvent,
   ProviderInterruptTurnInput,
+  ProviderRespondToRequestInput,
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
@@ -28,6 +29,7 @@ export const IPC_CHANNELS = {
   providerTurnInterrupt: "provider:turn:interrupt",
   providerSessionStop: "provider:session:stop",
   providerSessionList: "provider:session:list",
+  providerRequestRespond: "provider:request:respond",
   providerEvent: "provider:event",
 } as const;
 
@@ -59,6 +61,7 @@ export interface NativeApi {
       input: ProviderSendTurnInput,
     ) => Promise<ProviderTurnStartResult>;
     interruptTurn: (input: ProviderInterruptTurnInput) => Promise<void>;
+    respondToRequest: (input: ProviderRespondToRequestInput) => Promise<void>;
     stopSession: (input: ProviderStopSessionInput) => Promise<void>;
     listSessions: () => Promise<ProviderSession[]>;
     onEvent: (callback: (event: ProviderEvent) => void) => () => void;

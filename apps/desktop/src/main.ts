@@ -13,6 +13,7 @@ import {
   agentSessionIdSchema,
   newTodoInputSchema,
   providerInterruptTurnInputSchema,
+  providerRespondToRequestInputSchema,
   providerSendTurnInputSchema,
   providerSessionStartInputSchema,
   providerStopSessionInputSchema,
@@ -171,6 +172,16 @@ function registerIpcHandlers(): void {
       providerInterruptTurnInputSchema,
       async (_event, payload) => {
         await providerManager.interruptTurn(payload);
+      },
+    ),
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.providerRequestRespond,
+    withParsedPayload(
+      providerRespondToRequestInputSchema,
+      async (_event, payload) => {
+        await providerManager.respondToRequest(payload);
       },
     ),
   );

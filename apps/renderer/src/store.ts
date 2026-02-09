@@ -17,7 +17,12 @@ import {
   asString,
   evolveSession,
 } from "./session-logic";
-import type { Project, Thread } from "./types";
+import {
+  DEFAULT_RUNTIME_MODE,
+  type Project,
+  type RuntimeMode,
+  type Thread,
+} from "./types";
 
 // ── Actions ──────────────────────────────────────────────────────────
 
@@ -36,7 +41,8 @@ type Action =
   | { type: "PUSH_USER_MESSAGE"; threadId: string; id: string; text: string }
   | { type: "SET_ERROR"; threadId: string; error: string | null }
   | { type: "SET_THREAD_TITLE"; threadId: string; title: string }
-  | { type: "SET_THREAD_MODEL"; threadId: string; model: string };
+  | { type: "SET_THREAD_MODEL"; threadId: string; model: string }
+  | { type: "SET_RUNTIME_MODE"; mode: RuntimeMode };
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -44,16 +50,21 @@ export interface AppState {
   projects: Project[];
   threads: Thread[];
   activeThreadId: string | null;
+  runtimeMode: RuntimeMode;
   diffOpen: boolean;
 }
 
-const PERSISTED_STATE_KEY = "codething:renderer-state:v2";
-const LEGACY_PERSISTED_STATE_KEY = "codething:renderer-state:v1";
+const PERSISTED_STATE_KEY = "codething:renderer-state:v3";
+const LEGACY_PERSISTED_STATE_KEYS = [
+  "codething:renderer-state:v2",
+  "codething:renderer-state:v1",
+] as const;
 
 const initialState: AppState = {
   projects: [],
   threads: [],
   activeThreadId: null,
+  runtimeMode: DEFAULT_RUNTIME_MODE,
   diffOpen: false,
 };
 
@@ -64,12 +75,14 @@ function readPersistedState(): AppState {
 
   try {
     const rawCurrent = window.localStorage.getItem(PERSISTED_STATE_KEY);
-    const rawLegacy = window.localStorage.getItem(LEGACY_PERSISTED_STATE_KEY);
-    const raw = rawCurrent ?? rawLegacy;
+    const [legacyV2Key, legacyV1Key] = LEGACY_PERSISTED_STATE_KEYS;
+    const rawLegacyV2 = window.localStorage.getItem(legacyV2Key);
+    const rawLegacyV1 = window.localStorage.getItem(legacyV1Key);
+    const raw = rawCurrent ?? rawLegacyV2 ?? rawLegacyV1;
     if (!raw) return initialState;
     const hydrated = hydratePersistedState(
       raw,
-      !rawCurrent && Boolean(rawLegacy),
+      !rawCurrent && !rawLegacyV2 && Boolean(rawLegacyV1),
     );
     if (!hydrated) return initialState;
 
@@ -87,7 +100,9 @@ function persistState(state: AppState): void {
       PERSISTED_STATE_KEY,
       JSON.stringify(toPersistedState(state)),
     );
-    window.localStorage.removeItem(LEGACY_PERSISTED_STATE_KEY);
+    for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
+      window.localStorage.removeItem(legacyKey);
+    }
   } catch {
     // Ignore quota/storage errors to avoid breaking chat UX.
   }
@@ -283,6 +298,12 @@ function reducer(state: AppState, action: Action): AppState {
           ...t,
           model: resolveModelSlug(action.model),
         })),
+      };
+
+    case "SET_RUNTIME_MODE":
+      return {
+        ...state,
+        runtimeMode: action.mode,
       };
 
     default:

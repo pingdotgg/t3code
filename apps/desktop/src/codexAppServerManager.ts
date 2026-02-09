@@ -4,7 +4,9 @@ import { EventEmitter } from "node:events";
 import readline from "node:readline";
 
 import type {
+  ProviderApprovalDecision,
   ProviderEvent,
+  ProviderRequestKind,
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
@@ -21,11 +23,24 @@ interface PendingRequest {
   reject: (error: Error) => void;
 }
 
+interface PendingApprovalRequest {
+  requestId: string;
+  jsonRpcId: string | number;
+  method:
+    | "item/commandExecution/requestApproval"
+    | "item/fileChange/requestApproval";
+  requestKind: ProviderRequestKind;
+  threadId?: string;
+  turnId?: string;
+  itemId?: string;
+}
+
 interface CodexSessionContext {
   session: ProviderSession;
   child: ChildProcessWithoutNullStreams;
   output: readline.Interface;
   pending: Map<PendingRequestKey, PendingRequest>;
+  pendingApprovals: Map<string, PendingApprovalRequest>;
   nextRequestId: number;
   stopping: boolean;
 }
@@ -137,6 +152,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       child,
       output,
       pending: new Map(),
+      pendingApprovals: new Map(),
       nextRequestId: 1,
       stopping: false,
     };
@@ -273,6 +289,45 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     });
   }
 
+  async respondToRequest(
+    sessionId: string,
+    requestId: string,
+    decision: ProviderApprovalDecision,
+  ): Promise<void> {
+    const context = this.requireSession(sessionId);
+    const pendingRequest = context.pendingApprovals.get(requestId);
+    if (!pendingRequest) {
+      throw new Error(`Unknown pending approval request: ${requestId}`);
+    }
+
+    context.pendingApprovals.delete(requestId);
+    this.writeMessage(context, {
+      id: pendingRequest.jsonRpcId,
+      result: {
+        decision,
+      },
+    });
+
+    this.emitEvent({
+      id: randomUUID(),
+      kind: "notification",
+      provider: "codex",
+      sessionId: context.session.sessionId,
+      createdAt: new Date().toISOString(),
+      method: "item/requestApproval/decision",
+      threadId: pendingRequest.threadId,
+      turnId: pendingRequest.turnId,
+      itemId: pendingRequest.itemId,
+      requestId: pendingRequest.requestId,
+      requestKind: pendingRequest.requestKind,
+      payload: {
+        requestId: pendingRequest.requestId,
+        requestKind: pendingRequest.requestKind,
+        decision,
+      },
+    });
+  }
+
   stopSession(sessionId: string): void {
     const context = this.sessions.get(sessionId);
     if (!context) {
@@ -286,6 +341,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       pending.reject(new Error("Session stopped before request completed."));
     }
     context.pending.clear();
+    context.pendingApprovals.clear();
 
     context.output.close();
 
@@ -498,6 +554,25 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     request: JsonRpcRequest,
   ): void {
     const route = this.readRouteFields(request.params);
+    const requestKind = this.requestKindForMethod(request.method);
+    let requestId: string | undefined;
+    if (requestKind) {
+      requestId = randomUUID();
+      const pendingRequest: PendingApprovalRequest = {
+        requestId,
+        jsonRpcId: request.id,
+        method:
+          requestKind === "command"
+            ? "item/commandExecution/requestApproval"
+            : "item/fileChange/requestApproval",
+        requestKind,
+        ...(route.threadId ? { threadId: route.threadId } : {}),
+        ...(route.turnId ? { turnId: route.turnId } : {}),
+        ...(route.itemId ? { itemId: route.itemId } : {}),
+      };
+      context.pendingApprovals.set(requestId, pendingRequest);
+    }
+
     this.emitEvent({
       id: randomUUID(),
       kind: "request",
@@ -508,22 +583,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       threadId: route.threadId,
       turnId: route.turnId,
       itemId: route.itemId,
+      requestId,
+      requestKind,
       payload: request.params,
     });
 
-    if (request.method === "item/commandExecution/requestApproval") {
-      this.writeMessage(context, {
-        id: request.id,
-        result: { decision: "decline" },
-      });
-      return;
-    }
-
-    if (request.method === "item/fileChange/requestApproval") {
-      this.writeMessage(context, {
-        id: request.id,
-        result: { decision: "decline" },
-      });
+    if (requestKind) {
       return;
     }
 
@@ -654,6 +719,20 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       ...updates,
       updatedAt: new Date().toISOString(),
     };
+  }
+
+  private requestKindForMethod(
+    method: string,
+  ): ProviderRequestKind | undefined {
+    if (method === "item/commandExecution/requestApproval") {
+      return "command";
+    }
+
+    if (method === "item/fileChange/requestApproval") {
+      return "file-change";
+    }
+
+    return undefined;
   }
 
   private isServerRequest(value: unknown): value is JsonRpcRequest {

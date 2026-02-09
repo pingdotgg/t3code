@@ -28,6 +28,7 @@ export default function Sidebar() {
   const [addingProject, setAddingProject] = useState(false);
   const [newCwd, setNewCwd] = useState("");
   const [isPickingFolder, setIsPickingFolder] = useState(false);
+  const [isSwitchingRuntimeMode, setIsSwitchingRuntimeMode] = useState(false);
 
   const handleAddProject = () => {
     const cwd = newCwd.trim();
@@ -78,6 +79,43 @@ export default function Sidebar() {
       setIsPickingFolder(false);
     }
   };
+
+  const handleRuntimeModeChange = useCallback(
+    async (mode: "approval-required" | "full-access") => {
+      if (mode === state.runtimeMode) return;
+
+      dispatch({
+        type: "SET_RUNTIME_MODE",
+        mode,
+      });
+
+      if (!api) return;
+
+      const sessionIds = state.threads
+        .map((thread) => thread.session)
+        .filter(
+          (session): session is NonNullable<typeof session> =>
+            session !== null && session.status !== "closed",
+        )
+        .map((session) => session.sessionId);
+
+      if (sessionIds.length === 0) {
+        return;
+      }
+
+      setIsSwitchingRuntimeMode(true);
+      try {
+        await Promise.all(
+          sessionIds.map((sessionId) =>
+            api.providers.stopSession({ sessionId }).catch(() => undefined),
+          ),
+        );
+      } finally {
+        setIsSwitchingRuntimeMode(false);
+      }
+    },
+    [api, dispatch, state.runtimeMode, state.threads],
+  );
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -149,6 +187,43 @@ export default function Sidebar() {
           <span className="text-white">+</span>
           New thread
         </button>
+      </div>
+
+      <div className="px-3 pb-3">
+        <div className="rounded-lg border border-white/[0.08] bg-white/[0.03] p-2">
+          <p className="px-1 text-[10px] font-medium uppercase tracking-[0.08em] text-[#a0a0a0]/60">
+            Runtime mode
+          </p>
+          <p className="px-1 pt-0.5 pb-2 text-[10px] text-[#a0a0a0]/45">
+            Switching restarts live sessions.
+          </p>
+          <div className="grid grid-cols-2 gap-1">
+            <button
+              type="button"
+              className={`rounded-md px-2 py-1.5 text-[11px] transition-colors duration-150 ${
+                state.runtimeMode === "approval-required"
+                  ? "bg-white/12 text-white"
+                  : "text-[#a0a0a0]/70 hover:bg-white/[0.06]"
+              }`}
+              disabled={isSwitchingRuntimeMode}
+              onClick={() => void handleRuntimeModeChange("approval-required")}
+            >
+              Approval required
+            </button>
+            <button
+              type="button"
+              className={`rounded-md px-2 py-1.5 text-[11px] transition-colors duration-150 ${
+                state.runtimeMode === "full-access"
+                  ? "bg-white/12 text-white"
+                  : "text-[#a0a0a0]/70 hover:bg-white/[0.06]"
+              }`}
+              disabled={isSwitchingRuntimeMode}
+              onClick={() => void handleRuntimeModeChange("full-access")}
+            >
+              Full access
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Project list */}

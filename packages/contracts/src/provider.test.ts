@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   providerEventSchema,
+  providerRespondToRequestInputSchema,
   providerSendTurnInputSchema,
   providerSessionStartInputSchema,
 } from "./provider";
@@ -44,5 +45,41 @@ describe("providerEventSchema", () => {
       textDelta: "hi",
     });
     expect(parsed.method).toBe("item/agentMessage/delta");
+  });
+
+  it("accepts request approval metadata", () => {
+    const parsed = providerEventSchema.parse({
+      id: "evt_2",
+      kind: "request",
+      provider: "codex",
+      sessionId: "sess_1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      method: "item/commandExecution/requestApproval",
+      requestId: "req_123",
+      requestKind: "command",
+    });
+    expect(parsed.requestId).toBe("req_123");
+    expect(parsed.requestKind).toBe("command");
+  });
+});
+
+describe("providerRespondToRequestInputSchema", () => {
+  it("accepts valid decisions", () => {
+    const parsed = providerRespondToRequestInputSchema.parse({
+      sessionId: "sess_1",
+      requestId: "req_1",
+      decision: "acceptForSession",
+    });
+    expect(parsed.decision).toBe("acceptForSession");
+  });
+
+  it("rejects unknown decisions", () => {
+    expect(() =>
+      providerRespondToRequestInputSchema.parse({
+        sessionId: "sess_1",
+        requestId: "req_1",
+        decision: "always",
+      }),
+    ).toThrow();
   });
 });

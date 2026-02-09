@@ -1,3 +1,4 @@
+import type { ProviderApprovalDecision, ProviderEvent } from "@acme/contracts";
 import {
   type FormEvent,
   Fragment,
@@ -39,6 +40,70 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   return "text-[#606060]";
 }
 
+interface PendingApprovalCard {
+  requestId: string;
+  requestKind: "command" | "file-change";
+  createdAt: string;
+  detail?: string;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function approvalDetail(event: ProviderEvent): string | undefined {
+  const payload = asRecord(event.payload);
+  const command = asString(payload?.command);
+  if (command) return command;
+  return asString(payload?.reason);
+}
+
+function derivePendingApprovals(
+  events: ProviderEvent[],
+): PendingApprovalCard[] {
+  const pending = new Map<string, PendingApprovalCard>();
+  const ordered = [...events].reverse();
+
+  for (const event of ordered) {
+    if (
+      event.method === "session/closed" ||
+      event.method === "session/exited"
+    ) {
+      pending.clear();
+      continue;
+    }
+
+    const requestId =
+      event.requestId ?? asString(asRecord(event.payload)?.requestId);
+    if (!requestId) continue;
+
+    if (
+      event.kind === "request" &&
+      (event.requestKind === "command" || event.requestKind === "file-change")
+    ) {
+      const detail = approvalDetail(event);
+      pending.set(requestId, {
+        requestId,
+        requestKind: event.requestKind,
+        createdAt: event.createdAt,
+        ...(detail ? { detail } : {}),
+      });
+      continue;
+    }
+
+    if (event.method === "item/requestApproval/decision") {
+      pending.delete(requestId);
+    }
+  }
+
+  return Array.from(pending.values());
+}
+
 export default function ChatView() {
   const { state, dispatch } = useStore();
   const api = useMemo(() => readNativeApi(), []);
@@ -48,6 +113,9 @@ export default function ChatView() {
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [selectedEffort, setSelectedEffort] =
     useState<string>(DEFAULT_REASONING);
+  const [respondingRequestIds, setRespondingRequestIds] = useState<string[]>(
+    [],
+  );
   const [nowTick, setNowTick] = useState(() => Date.now());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -66,6 +134,10 @@ export default function ChatView() {
   const modelOptions = MODEL_OPTIONS;
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(activeThread?.events ?? [], undefined),
+    [activeThread?.events],
+  );
+  const pendingApprovals = useMemo(
+    () => derivePendingApprovals(activeThread?.events ?? []),
     [activeThread?.events],
   );
   const assistantCompletionByItemId = useMemo(() => {
@@ -127,6 +199,16 @@ export default function ChatView() {
     timelineEntries,
     workLogEntries.length,
   ]);
+  const runtimeSessionConfig =
+    state.runtimeMode === "full-access"
+      ? ({
+          approvalPolicy: "never",
+          sandboxMode: "danger-full-access",
+        } as const)
+      : ({
+          approvalPolicy: "on-request",
+          sandboxMode: "workspace-write",
+        } as const);
 
   // Auto-scroll on new messages
   const messageCount = activeThread?.messages.length ?? 0;
@@ -191,6 +273,8 @@ export default function ChatView() {
         provider: "codex",
         cwd: activeProject.cwd || undefined,
         model: selectedModel || undefined,
+        approvalPolicy: runtimeSessionConfig.approvalPolicy,
+        sandboxMode: runtimeSessionConfig.sandboxMode,
       });
       dispatch({
         type: "UPDATE_SESSION",
@@ -270,6 +354,37 @@ export default function ChatView() {
     });
   };
 
+  const onRespondToApproval = async (
+    requestId: string,
+    decision: ProviderApprovalDecision,
+  ) => {
+    if (!api || !activeThread?.session) return;
+
+    setRespondingRequestIds((existing) =>
+      existing.includes(requestId) ? existing : [...existing, requestId],
+    );
+    try {
+      await api.providers.respondToRequest({
+        sessionId: activeThread.session.sessionId,
+        requestId,
+        decision,
+      });
+    } catch (err) {
+      dispatch({
+        type: "SET_ERROR",
+        threadId: activeThread.id,
+        error:
+          err instanceof Error
+            ? err.message
+            : "Failed to submit approval decision.",
+      });
+    } finally {
+      setRespondingRequestIds((existing) =>
+        existing.filter((id) => id !== requestId),
+      );
+    }
+  };
+
   const onModelSelect = (model: string) => {
     if (!activeThread) return;
     dispatch({
@@ -332,6 +447,81 @@ export default function ChatView() {
       {activeThread.error && (
         <div className="mx-4 mt-3 rounded-lg border border-rose-400/20 bg-rose-900/20 px-3 py-2 text-xs text-rose-200">
           {activeThread.error}
+        </div>
+      )}
+
+      {pendingApprovals.length > 0 && (
+        <div className="mx-4 mt-3 space-y-2">
+          {pendingApprovals.map((approval) => {
+            const isResponding = respondingRequestIds.includes(
+              approval.requestId,
+            );
+            return (
+              <div
+                key={approval.requestId}
+                className="rounded-lg border border-amber-300/20 bg-amber-500/[0.07] px-3 py-2"
+              >
+                <p className="text-xs font-medium text-amber-100">
+                  {approval.requestKind === "command"
+                    ? "Command approval requested"
+                    : "File-change approval requested"}
+                </p>
+                {approval.detail && (
+                  <p
+                    className="mt-1 truncate font-mono text-[11px] text-amber-100/75"
+                    title={approval.detail}
+                  >
+                    {approval.detail}
+                  </p>
+                )}
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    className="rounded-md border border-white/[0.15] bg-white/[0.08] px-2 py-1 text-[11px] text-[#e8e8e8] transition-colors duration-150 hover:bg-white/[0.13] disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={isResponding}
+                    onClick={() =>
+                      void onRespondToApproval(approval.requestId, "accept")
+                    }
+                  >
+                    Approve once
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md border border-sky-300/30 bg-sky-500/[0.15] px-2 py-1 text-[11px] text-sky-100 transition-colors duration-150 hover:bg-sky-500/[0.22] disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={isResponding}
+                    onClick={() =>
+                      void onRespondToApproval(
+                        approval.requestId,
+                        "acceptForSession",
+                      )
+                    }
+                  >
+                    Always allow this session
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md border border-white/[0.15] px-2 py-1 text-[11px] text-[#d8d8d8] transition-colors duration-150 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={isResponding}
+                    onClick={() =>
+                      void onRespondToApproval(approval.requestId, "decline")
+                    }
+                  >
+                    Decline
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md border border-rose-300/30 bg-rose-500/[0.12] px-2 py-1 text-[11px] text-rose-100 transition-colors duration-150 hover:bg-rose-500/[0.2] disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={isResponding}
+                    onClick={() =>
+                      void onRespondToApproval(approval.requestId, "cancel")
+                    }
+                  >
+                    Cancel turn
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 

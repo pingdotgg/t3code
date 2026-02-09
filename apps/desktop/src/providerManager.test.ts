@@ -48,4 +48,18 @@ describe("ProviderManager", () => {
     manager.dispose();
     expect(() => manager.dispose()).not.toThrow();
   });
+
+  it("rejects request responses for unknown sessions", async () => {
+    const manager = new ProviderManager();
+
+    await expect(
+      manager.respondToRequest({
+        sessionId: "missing-session",
+        requestId: "req-1",
+        decision: "accept",
+      }),
+    ).rejects.toThrow("Unknown provider session: missing-session");
+
+    manager.dispose();
+  });
 });

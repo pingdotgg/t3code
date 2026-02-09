@@ -26,6 +26,17 @@ CodeThing is a desktop shell for coding agents. This first implementation is:
 - Renderer talks only to `window.nativeApi` exposed by preload.
 - Preload and main both validate inputs using shared Zod schemas.
 
+`sandbox: true` above is Electron renderer sandboxing. It is separate from Codex execution sandbox policy (`read-only`, `workspace-write`, `danger-full-access`) used when starting provider sessions.
+
+## Runtime modes
+
+CodeThing has a global runtime mode switch in the sidebar:
+
+- `Full access` (default): starts new sessions with `approvalPolicy: never` and `sandboxMode: danger-full-access`.
+- `Approval required`: starts new sessions with `approvalPolicy: on-request` and `sandboxMode: workspace-write`, then prompts in-app for command/file approvals.
+
+Mode changes apply across all threads. Existing live sessions are restarted so old and new threads use the selected mode.
+
 ## Scripts
 
 - `bun run dev`: starts contract build/watch, renderer dev server, and Electron process.
@@ -47,8 +58,9 @@ The renderer now depends on `nativeApi.providers.*`:
 1. `startSession`
 2. `sendTurn`
 3. `interruptTurn`
-4. `stopSession`
-5. `listSessions`
-6. `onEvent`
+4. `respondToRequest`
+5. `stopSession`
+6. `listSessions`
+7. `onEvent`
 
 Codex is the only implemented provider right now. `claudeCode` is reserved in contracts/UI but returns a not-implemented error in main-process dispatch.

@@ -1,6 +1,8 @@
 import type { ProviderEvent, ProviderSession } from "@acme/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
+export type RuntimeMode = "approval-required" | "full-access";
+export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
 export interface ChatMessage {
   id: string;

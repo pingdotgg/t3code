@@ -15,6 +15,15 @@ export const providerSandboxModeSchema = z.enum([
   "danger-full-access",
 ]);
 
+export const providerRequestKindSchema = z.enum(["command", "file-change"]);
+
+export const providerApprovalDecisionSchema = z.enum([
+  "accept",
+  "acceptForSession",
+  "decline",
+  "cancel",
+]);
+
 export const providerSessionStatusSchema = z.enum([
   "connecting",
   "ready",
@@ -65,6 +74,12 @@ export const providerStopSessionInputSchema = z.object({
   sessionId: z.string().min(1),
 });
 
+export const providerRespondToRequestInputSchema = z.object({
+  sessionId: z.string().min(1),
+  requestId: z.string().min(1),
+  decision: providerApprovalDecisionSchema,
+});
+
 export const providerEventKindSchema = z.enum([
   "session",
   "notification",
@@ -83,6 +98,8 @@ export const providerEventSchema = z.object({
   threadId: z.string().min(1).optional(),
   turnId: z.string().min(1).optional(),
   itemId: z.string().min(1).optional(),
+  requestId: z.string().min(1).optional(),
+  requestKind: providerRequestKindSchema.optional(),
   textDelta: z.string().optional(),
   payload: z.unknown().optional(),
 });
@@ -92,6 +109,10 @@ export type ProviderApprovalPolicy = z.infer<
   typeof providerApprovalPolicySchema
 >;
 export type ProviderSandboxMode = z.infer<typeof providerSandboxModeSchema>;
+export type ProviderRequestKind = z.infer<typeof providerRequestKindSchema>;
+export type ProviderApprovalDecision = z.infer<
+  typeof providerApprovalDecisionSchema
+>;
 export type ProviderSessionStatus = z.infer<typeof providerSessionStatusSchema>;
 export type ProviderSession = z.infer<typeof providerSessionSchema>;
 export type ProviderSessionStartInput = z.input<
@@ -106,6 +127,9 @@ export type ProviderInterruptTurnInput = z.input<
 >;
 export type ProviderStopSessionInput = z.input<
   typeof providerStopSessionInputSchema
+>;
+export type ProviderRespondToRequestInput = z.input<
+  typeof providerRespondToRequestInputSchema
 >;
 export type ProviderEventKind = z.infer<typeof providerEventKindSchema>;
 export type ProviderEvent = z.infer<typeof providerEventSchema>;

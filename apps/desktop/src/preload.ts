@@ -41,6 +41,8 @@ const nativeApi: NativeApi = {
       ipcRenderer.invoke(IPC_CHANNELS.providerTurnStart, input),
     interruptTurn: (input) =>
       ipcRenderer.invoke(IPC_CHANNELS.providerTurnInterrupt, input),
+    respondToRequest: (input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.providerRequestRespond, input),
     stopSession: (input) =>
       ipcRenderer.invoke(IPC_CHANNELS.providerSessionStop, input),
     listSessions: () => ipcRenderer.invoke(IPC_CHANNELS.providerSessionList),

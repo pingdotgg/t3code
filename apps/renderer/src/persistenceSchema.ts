@@ -1,7 +1,12 @@
 import { z } from "zod";
 
 import { DEFAULT_MODEL, resolveModelSlug } from "./model-logic";
-import type { Project, Thread } from "./types";
+import {
+  DEFAULT_RUNTIME_MODE,
+  type Project,
+  type RuntimeMode,
+  type Thread,
+} from "./types";
 
 const LEGACY_DEFAULT_MODEL = "gpt-5.2-codex";
 
@@ -36,6 +41,8 @@ const persistedStateBodySchema = z.object({
   activeThreadId: z.string().min(1).nullable(),
 });
 
+const runtimeModeSchema = z.enum(["approval-required", "full-access"]);
+
 export const persistedStateV1Schema = persistedStateBodySchema.extend({
   version: z.literal(1).optional(),
 });
@@ -44,7 +51,13 @@ export const persistedStateV2Schema = persistedStateBodySchema.extend({
   version: z.literal(2).optional(),
 });
 
+export const persistedStateV3Schema = persistedStateBodySchema.extend({
+  runtimeMode: runtimeModeSchema.default(DEFAULT_RUNTIME_MODE),
+  version: z.literal(3).optional(),
+});
+
 const persistedStateSchema = z.union([
+  persistedStateV3Schema,
   persistedStateV2Schema,
   persistedStateV1Schema,
 ]);
@@ -53,6 +66,7 @@ export interface PersistedStoreSnapshot {
   projects: Project[];
   threads: Thread[];
   activeThreadId: string | null;
+  runtimeMode: RuntimeMode;
 }
 
 function maybeMigrateLegacyModel(
@@ -134,14 +148,18 @@ export function hydratePersistedState(
     activeThreadId: hasActiveThread
       ? parsedState.data.activeThreadId
       : (threads[0]?.id ?? null),
+    runtimeMode:
+      "runtimeMode" in parsedState.data
+        ? parsedState.data.runtimeMode
+        : DEFAULT_RUNTIME_MODE,
   };
 }
 
 export function toPersistedState(
   state: PersistedStoreSnapshot,
-): z.infer<typeof persistedStateV2Schema> {
+): z.infer<typeof persistedStateV3Schema> {
   return {
-    version: 2,
+    version: 3,
     projects: state.projects,
     threads: state.threads.map((thread) => ({
       id: thread.id,
@@ -152,5 +170,6 @@ export function toPersistedState(
       createdAt: thread.createdAt,
     })),
     activeThreadId: state.activeThreadId,
+    runtimeMode: state.runtimeMode,
   };
 }

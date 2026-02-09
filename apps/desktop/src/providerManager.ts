@@ -5,12 +5,14 @@ import path from "node:path";
 import {
   type ProviderEvent,
   type ProviderInterruptTurnInput,
+  type ProviderRespondToRequestInput,
   type ProviderSendTurnInput,
   type ProviderSession,
   type ProviderSessionStartInput,
   type ProviderStopSessionInput,
   type ProviderTurnStartResult,
   providerInterruptTurnInputSchema,
+  providerRespondToRequestInputSchema,
   providerSendTurnInputSchema,
   providerSessionStartInputSchema,
   providerStopSessionInputSchema,
@@ -77,6 +79,19 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
     }
 
     await this.codex.interruptTurn(input.sessionId, input.turnId);
+  }
+
+  async respondToRequest(raw: ProviderRespondToRequestInput): Promise<void> {
+    const input = providerRespondToRequestInputSchema.parse(raw);
+    if (!this.codex.hasSession(input.sessionId)) {
+      throw new Error(`Unknown provider session: ${input.sessionId}`);
+    }
+
+    await this.codex.respondToRequest(
+      input.sessionId,
+      input.requestId,
+      input.decision,
+    );
   }
 
   stopSession(raw: ProviderStopSessionInput): void {
