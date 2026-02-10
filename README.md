@@ -93,7 +93,7 @@ Runtime command semantics:
 - Runtime successful responses always include `result` (using `null` for void methods) to keep websocket envelopes schema-safe.
 - Websocket event envelopes are channel-typed (`provider:event`, `agent:output`, `agent:exit`) and validated against shared payload schemas.
 - Websocket protocol envelopes are strict (unexpected top-level fields are rejected) to keep RPC/event parsing deterministic.
-- Websocket request envelope guards also cap request id/method lengths (currently 256 chars each) for predictable parsing under load.
+- Websocket request envelope guards also cap request id/method lengths (currently 256 chars each); over-limit requests are treated as malformed and ignored.
 - Codex execution sandbox policy (`read-only`, `workspace-write`, `danger-full-access`) is still selected per session startup options.
 - Static HTML responses are served with `Cache-Control: no-store`; built `/assets/*` files are served with long-lived immutable cache headers.
 - Static file success responses include `Accept-Ranges: bytes`, `Vary: Range`, deterministic `ETag` and `Last-Modified` validators, plus hardened browser headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Resource-Policy`, `Cross-Origin-Opener-Policy`).
