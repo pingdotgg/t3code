@@ -1089,12 +1089,15 @@ describe("runtimeApiServer", () => {
       wrongPathMessageCount += 1;
     });
     const wrongPathClose = await withTimeout(
-      new Promise<{ code: number }>((resolve, reject) => {
-        wrongPathClient.once("close", (code) => resolve({ code }));
+      new Promise<{ code: number; reason: string }>((resolve, reject) => {
+        wrongPathClient.once("close", (code, reason) =>
+          resolve({ code, reason: reason.toString() }),
+        );
         wrongPathClient.once("error", (error) => reject(error));
       }),
     );
     expect(wrongPathClose.code).toBe(4001);
+    expect(wrongPathClose.reason).toBe("unauthorized");
     expect(wrongPathMessageCount).toBe(0);
 
     const unexpectedQueryClient = new WebSocket(`${server.wsUrl}?debug=1`);
@@ -1103,12 +1106,15 @@ describe("runtimeApiServer", () => {
       unexpectedQueryMessageCount += 1;
     });
     const unexpectedQueryClose = await withTimeout(
-      new Promise<{ code: number }>((resolve, reject) => {
-        unexpectedQueryClient.once("close", (code) => resolve({ code }));
+      new Promise<{ code: number; reason: string }>((resolve, reject) => {
+        unexpectedQueryClient.once("close", (code, reason) =>
+          resolve({ code, reason: reason.toString() }),
+        );
         unexpectedQueryClient.once("error", (error) => reject(error));
       }),
     );
     expect(unexpectedQueryClose.code).toBe(4001);
+    expect(unexpectedQueryClose.reason).toBe("unauthorized");
     expect(unexpectedQueryMessageCount).toBe(0);
 
     const unexpectedTokenClient = new WebSocket(`${server.wsUrl}?token=legacy-token`);
@@ -1117,12 +1123,15 @@ describe("runtimeApiServer", () => {
       unexpectedTokenMessageCount += 1;
     });
     const unexpectedTokenClose = await withTimeout(
-      new Promise<{ code: number }>((resolve, reject) => {
-        unexpectedTokenClient.once("close", (code) => resolve({ code }));
+      new Promise<{ code: number; reason: string }>((resolve, reject) => {
+        unexpectedTokenClient.once("close", (code, reason) =>
+          resolve({ code, reason: reason.toString() }),
+        );
         unexpectedTokenClient.once("error", (error) => reject(error));
       }),
     );
     expect(unexpectedTokenClose.code).toBe(4001);
+    expect(unexpectedTokenClose.reason).toBe("unauthorized");
     expect(unexpectedTokenMessageCount).toBe(0);
 
     const authorizedClient = await connectClient(server.wsUrl);
