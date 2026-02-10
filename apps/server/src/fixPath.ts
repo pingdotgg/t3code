@@ -13,6 +13,6 @@ export function fixPath(): void {
       process.env.PATH = result;
     }
   } catch {
-    // Keep inherited PATH if shell lookup fails.
+    // Silently ignore — keep default PATH
   }
 }

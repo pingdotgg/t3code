@@ -4,28 +4,25 @@
   "private": true,
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "concurrently -k -n BUNDLE,ELECTRON \"bun run dev:bundle\" \"bun run dev:electron\"",
+    "dev": "bun run --cwd ../server build && concurrently -k -n BUNDLE,RENDERER,ELECTRON \"bun run dev:bundle\" \"bun run --cwd ../renderer dev\" \"bun run dev:electron\"",
     "dev:bundle": "tsup --watch",
     "dev:electron": "bun run scripts/dev-electron.mjs",
     "build": "tsup",
     "start": "electron dist-electron/main.js",
-    "postinstall": "electron-rebuild",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "smoke-test": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
-    "@acme/contracts": "workspace:*",
-    "electron": "33.4.11",
-    "node-pty": "^1.0.0"
+    "electron": "33.4.11"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2",
-    "@electron/rebuild": "^3.7.0",
     "@types/node": "^22.10.2",
+    "concurrently": "^9.1.2",
     "electronmon": "^2.0.2",
     "tsup": "^8.3.5",
     "typescript": "^5.7.3",
+    "vitest": "^3.0.0",
     "wait-on": "^8.0.2"
   }
 }

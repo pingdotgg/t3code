@@ -10,11 +10,11 @@ await waitOn({
     `tcp:${port}`,
     "file:dist-electron/main.js",
     "file:dist-electron/preload.js",
+    "file:../server/dist/index.js",
   ],
 });
 
-const command =
-  process.platform === "win32" ? "electronmon.cmd" : "electronmon";
+const command = process.platform === "win32" ? "electronmon.cmd" : "electronmon";
 const child = spawn(command, ["dist-electron/main.js"], {
   stdio: "inherit",
   env: {

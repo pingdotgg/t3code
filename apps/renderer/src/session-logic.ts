@@ -1,5 +1,6 @@
-import type { ProviderEvent, ProviderKind, ProviderSession } from "@acme/contracts";
+import type { NativeApi, ProviderEvent, ProviderKind, ProviderSession } from "@acme/contracts";
 import type { ChatMessage, SessionPhase } from "./types";
+import { createWsNativeApi } from "./wsNativeApi";
 
 export const PROVIDER_OPTIONS: Array<{
   value: ProviderKind;
@@ -10,9 +11,21 @@ export const PROVIDER_OPTIONS: Array<{
   { value: "claudeCode", label: "Claude Code (soon)", available: false },
 ];
 
-export function readNativeApi() {
+let cachedApi: NativeApi | undefined;
+
+export function readNativeApi(): NativeApi | undefined {
   if (typeof window === "undefined") return undefined;
-  return window.nativeApi;
+  if (cachedApi) return cachedApi;
+
+  // Prefer Electron preload bridge if available
+  if (window.nativeApi) {
+    cachedApi = window.nativeApi;
+    return cachedApi;
+  }
+
+  // Fall back to WebSocket transport
+  cachedApi = createWsNativeApi();
+  return cachedApi;
 }
 
 export function asObject(value: unknown): Record<string, unknown> | undefined {

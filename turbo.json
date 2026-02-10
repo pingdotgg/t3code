@@ -1,12 +1,24 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalEnv": ["ELECTRON_RENDERER_PORT"],
+  "globalEnv": [
+    "PORT",
+    "VITE_WS_URL",
+    "VITE_DEV_SERVER_URL",
+    "CODETHING_LOG_WS_EVENTS",
+    "CODETHING_MODE",
+    "CODETHING_PORT",
+    "CODETHING_NO_BROWSER",
+    "CODETHING_STATE_DIR",
+    "CODETHING_AUTH_TOKEN",
+    "CODETHING_DESKTOP_WS_URL"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**", "dist-electron/**"]
     },
     "dev": {
+      "dependsOn": ["@acme/contracts#build"],
       "cache": false,
       "persistent": true
     },
@@ -16,11 +28,6 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "outputs": []
-    },
-    "smoke-test": {
-      "dependsOn": ["build"],
-      "cache": false,
       "outputs": []
     }
   }

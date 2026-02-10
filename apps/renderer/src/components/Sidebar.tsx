@@ -1,5 +1,6 @@
 import { MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { DEFAULT_MODEL } from "../model-logic";
 import { readNativeApi } from "../session-logic";
@@ -17,6 +18,13 @@ function formatRelativeTime(iso: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+function inferProjectName(cwd: string): string {
+  const normalized = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
+  const parts = normalized.split("/");
+  const last = parts[parts.length - 1];
+  return last && last.length > 0 ? last : "project";
+}
+
 function threadStatusLabel(
   status: "connecting" | "ready" | "running" | "error" | "closed" | undefined,
 ): "Working" | "Connecting" | null {
@@ -32,22 +40,7 @@ export default function Sidebar() {
   const [addingProject, setAddingProject] = useState(false);
   const [newCwd, setNewCwd] = useState("");
   const [isPickingFolder, setIsPickingFolder] = useState(false);
-
-  const handleAddProject = () => {
-    const cwd = newCwd.trim();
-    if (!cwd) return;
-    const name = cwd.split("/").filter(Boolean).pop() ?? "project";
-    const project: Project = {
-      id: crypto.randomUUID(),
-      name,
-      cwd,
-      model: DEFAULT_MODEL,
-      expanded: true,
-    };
-    dispatch({ type: "ADD_PROJECT", project });
-    setNewCwd("");
-    setAddingProject(false);
-  };
+  const [isAddingProject, setIsAddingProject] = useState(false);
 
   const handleNewThread = useCallback(
     (projectId: string) => {
@@ -58,9 +51,7 @@ export default function Sidebar() {
           codexThreadId: null,
           projectId,
           title: "New thread",
-          model:
-            state.projects.find((p) => p.id === projectId)?.model ??
-            DEFAULT_MODEL,
+          model: state.projects.find((p) => p.id === projectId)?.model ?? DEFAULT_MODEL,
           session: null,
           messages: [],
           events: [],
@@ -72,13 +63,98 @@ export default function Sidebar() {
     [dispatch, state.projects],
   );
 
+  const focusMostRecentThreadForProject = useCallback(
+    (projectId: string) => {
+      const latestThread = state.threads
+        .filter((thread) => thread.projectId === projectId)
+        .toSorted((a, b) => {
+          const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+          if (byDate !== 0) return byDate;
+          return b.id.localeCompare(a.id);
+        })[0];
+      if (!latestThread) return;
+
+      dispatch({
+        type: "SET_ACTIVE_THREAD",
+        threadId: latestThread.id,
+      });
+    },
+    [dispatch, state.threads],
+  );
+
+  const addProjectFromPath = useCallback(
+    async (rawCwd: string) => {
+      const cwd = rawCwd.trim();
+      if (!cwd || isAddingProject) return;
+
+      setIsAddingProject(true);
+      try {
+        if (isElectron && api) {
+          const result = await api.projects.add({ cwd });
+          const project: Project = {
+            id: result.project.id,
+            name: result.project.name,
+            cwd: result.project.cwd,
+            model: DEFAULT_MODEL,
+            expanded: true,
+          };
+          const existingById = state.projects.find((p) => p.id === project.id);
+          const existingByCwd = state.projects.find((p) => p.cwd === project.cwd);
+          if (!existingById && !existingByCwd) {
+            dispatch({ type: "ADD_PROJECT", project });
+          }
+          const resolvedProjectId = existingByCwd?.id ?? project.id;
+
+          if (result.created) {
+            handleNewThread(resolvedProjectId);
+          } else {
+            focusMostRecentThreadForProject(resolvedProjectId);
+          }
+        } else {
+          const existing = state.projects.find((project) => project.cwd === cwd);
+          if (existing) {
+            focusMostRecentThreadForProject(existing.id);
+            return;
+          }
+
+          const name = inferProjectName(cwd);
+          const project: Project = {
+            id: crypto.randomUUID(),
+            name,
+            cwd,
+            model: DEFAULT_MODEL,
+            expanded: true,
+          };
+          dispatch({ type: "ADD_PROJECT", project });
+          handleNewThread(project.id);
+        }
+      } finally {
+        setIsAddingProject(false);
+        setNewCwd("");
+        setAddingProject(false);
+      }
+    },
+    [
+      api,
+      dispatch,
+      focusMostRecentThreadForProject,
+      handleNewThread,
+      isAddingProject,
+      state.projects,
+    ],
+  );
+
+  const handleAddProject = () => {
+    void addProjectFromPath(newCwd);
+  };
+
   const handlePickFolder = async () => {
     if (!api || isPickingFolder) return;
     setIsPickingFolder(true);
     try {
       const pickedPath = await api.dialogs.pickFolder();
       if (!pickedPath) return;
-      setNewCwd(pickedPath);
+      await addProjectFromPath(pickedPath);
     } finally {
       setIsPickingFolder(false);
     }
@@ -107,9 +183,7 @@ export default function Sidebar() {
         }
       }
 
-      const activeThread = state.threads.find(
-        (t) => t.id === state.activeThreadId,
-      );
+      const activeThread = state.threads.find((t) => t.id === state.activeThreadId);
       const projectId = activeThread?.projectId ?? state.projects[0]?.id;
       if (!projectId) return;
 
@@ -125,10 +199,10 @@ export default function Sidebar() {
 
   return (
     <aside className="sidebar flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-card">
-      {/* Drag region / traffic light space */}
-      <div className="drag-region h-[52px] shrink-0" />
+      {/* Drag region / traffic light space (Electron only) */}
+      {isElectron && <div className="drag-region h-[52px] shrink-0" />}
       {/* Branding */}
-      <div className="flex items-center gap-2 px-4 pb-4">
+      <div className={`flex items-center gap-2 px-4 pb-4 ${isElectron ? "" : "pt-4"}`}>
         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-xs font-bold text-primary-foreground">
           CT
         </div>
@@ -176,10 +250,8 @@ export default function Sidebar() {
         {state.projects.map((project) => {
           const threads = state.threads
             .filter((t) => t.projectId === project.id)
-            .sort((a, b) => {
-              const byDate =
-                new Date(b.createdAt).getTime() -
-                new Date(a.createdAt).getTime();
+            .toSorted((a, b) => {
+              const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
               if (byDate !== 0) return byDate;
               return b.id.localeCompare(a.id);
             });
@@ -205,15 +277,15 @@ export default function Sidebar() {
                 <div className="ml-2 border-l border-border/80 pl-2">
                   {threads.map((thread) => {
                     const isActive = state.activeThreadId === thread.id;
-                    const threadStatus = threadStatusLabel(
-                      thread.session?.status,
-                    );
+                    const threadStatus = threadStatusLabel(thread.session?.status);
                     return (
                       <button
                         key={thread.id}
                         type="button"
                         className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors duration-150 ${
-                          isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-secondary"
+                          isActive
+                            ? "bg-accent text-foreground"
+                            : "text-muted-foreground hover:bg-secondary"
                         }`}
                         onClick={() =>
                           dispatch({
@@ -226,14 +298,10 @@ export default function Sidebar() {
                           {threadStatus && (
                             <span className="inline-flex items-center gap-1 text-[10px] text-sky-600 dark:text-sky-300/80">
                               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sky-500 dark:bg-sky-300/80" />
-                              <span className="hidden xl:inline">
-                                {threadStatus}
-                              </span>
+                              <span className="hidden xl:inline">{threadStatus}</span>
                             </span>
                           )}
-                          <span className="min-w-0 flex-1 truncate text-xs">
-                            {thread.title}
-                          </span>
+                          <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
                         </div>
                         <span className="shrink-0 text-[10px] text-muted-foreground/40">
                           {formatRelativeTime(thread.createdAt)}
@@ -281,12 +349,12 @@ export default function Sidebar() {
               if (e.key === "Escape") setAddingProject(false);
             }}
           />
-          {api && (
+          {isElectron && api && (
             <button
               type="button"
               className="mb-2 flex w-full items-center justify-center rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
               onClick={() => void handlePickFolder()}
-              disabled={isPickingFolder}
+              disabled={isPickingFolder || isAddingProject}
             >
               {isPickingFolder ? "Picking folder..." : "Browse for folder"}
             </button>
@@ -296,8 +364,9 @@ export default function Sidebar() {
               type="button"
               className="flex-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90"
               onClick={handleAddProject}
+              disabled={isAddingProject}
             >
-              Add
+              {isAddingProject ? "Adding..." : "Add"}
             </button>
             <button
               type="button"

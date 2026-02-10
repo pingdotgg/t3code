@@ -1,16 +1,38 @@
-# CodeThing (Electron + Vite + Bun)
+# CodeThing
 
-CodeThing is a desktop shell for coding agents. This first implementation is:
+CodeThing is a minimal web GUI for coding agents. Currently Codex-first, with Claude Code support coming soon.
 
-1. Codex-first: connects to `codex app-server` and streams turn/item events.
-2. Provider-ready: renderer speaks a provider abstraction so Claude Code can plug in later.
-3. Typed end-to-end: contracts validate payloads at preload/main boundaries.
+Run `npx t3` in any project directory to launch the web interface.
+Run `bun run dev:desktop` to launch the Electron desktop app in this monorepo.
+
+## Architecture
+
+CodeThing runs as a **Node.js WebSocket server** that wraps `codex app-server` (JSON-RPC over stdio) and serves a React web app.
+
+```
+┌─────────────────────────────────┐
+│  Browser (React + Vite)         │
+│  Connected via WebSocket        │
+└──────────┬──────────────────────┘
+           │ ws://localhost:3773
+┌──────────▼──────────────────────┐
+│  apps/server (Node.js)          │
+│  WebSocket + HTTP static server │
+│  ProviderManager                │
+│  CodexAppServerManager          │
+└──────────┬──────────────────────┘
+           │ JSON-RPC over stdio
+┌──────────▼──────────────────────┐
+│  codex app-server               │
+└─────────────────────────────────┘
+```
 
 ## Workspace layout
 
-- `/apps/desktop`: Electron main + preload process, includes provider and Codex session managers.
-- `/apps/renderer`: React + Vite UI for session control, conversation, and protocol event stream.
-- `/packages/contracts`: shared Zod schemas + TypeScript types for IPC and provider events.
+- `/apps/server`: Node.js WebSocket server. Wraps Codex app-server, serves the built renderer, and opens the browser on start.
+- `/apps/renderer`: React + Vite UI. Session control, conversation, and provider event rendering. Connects to the server via WebSocket.
+- `/apps/desktop`: Electron shell. Spawns a desktop-scoped `t3` backend process and loads the shared renderer.
+- `/packages/contracts`: Shared Zod schemas and TypeScript contracts for provider events, WebSocket protocol, and model/session types.
 
 ## Codex prerequisites
 
@@ -18,50 +40,55 @@ CodeThing is a desktop shell for coding agents. This first implementation is:
 - Authenticate Codex before running CodeThing (for example via API key or ChatGPT auth supported by Codex).
 - CodeThing starts the server via `codex app-server` per session.
 
-## Security and boundary model
+## Quick start
 
-- `nodeIntegration: false`
-- `contextIsolation: true`
-- `sandbox: true`
-- Renderer talks only to `window.nativeApi` exposed by preload.
-- Preload and main both validate inputs using shared Zod schemas.
+```bash
+# Development (with hot reload)
+bun run dev
 
-`sandbox: true` above is Electron renderer sandboxing. It is separate from Codex execution sandbox policy (`read-only`, `workspace-write`, `danger-full-access`) used when starting provider sessions.
+# Desktop development
+bun run dev:desktop
 
-## Runtime modes
+# Production
+bun run build
+bun run start
 
-CodeThing has a global runtime mode switch in the sidebar:
-
-- `Full access` (default): starts new sessions with `approvalPolicy: never` and `sandboxMode: danger-full-access`.
-- `Approval required`: starts new sessions with `approvalPolicy: on-request` and `sandboxMode: workspace-write`, then prompts in-app for command/file approvals.
-
-Mode changes apply across all threads. Existing live sessions are restarted so old and new threads use the selected mode.
+# Or from any project directory after publishing:
+npx t3
+```
 
 ## Scripts
 
-- `bun run dev`: starts contract build/watch, renderer dev server, and Electron process.
-- `bun run build`: builds contracts, renderer, and desktop bundles through Turbo.
-- `bun run typecheck`: strict TypeScript checks for all packages.
-- `bun run test`: runs workspace tests.
+- `bun run dev` — Starts contracts, server, and web dev tasks via Turborepo's parallel task runner.
+- `bun run dev:server` — Starts just the WebSocket server (uses tsx for TS execution).
+- `bun run dev:web` — Starts just the Vite dev server for the renderer.
+- `bun run start` — Runs the production server (serves built renderer as static files).
+- `bun run build` — Builds contracts, renderer, and server through Turbo.
+- `bun run typecheck` — Strict TypeScript checks for all packages.
+- `bun run test` — Runs workspace tests.
+
+## Runtime modes
+
+CodeThing has a global runtime mode switch in the chat toolbar:
+
+- **Full access** (default): starts sessions with `approvalPolicy: never` and `sandboxMode: danger-full-access`.
+- **Supervised**: starts sessions with `approvalPolicy: on-request` and `sandboxMode: workspace-write`, then prompts in-app for command/file approvals.
+
+## Provider architecture
+
+The renderer communicates with the server via WebSocket using a simple JSON-RPC-style protocol:
+
+- **Request/Response**: `{ id, method, params }` → `{ id, result }` or `{ id, error }`
+- **Push events**: `{ type: "push", channel, data }` for streaming provider events
+
+Methods mirror the `NativeApi` interface defined in `@acme/contracts`:
+
+- `providers.startSession`, `providers.sendTurn`, `providers.interruptTurn`
+- `providers.respondToRequest`, `providers.stopSession`, `providers.listSessions`
+- `shell.openInEditor`, `server.getConfig`
+
+Codex is the only implemented provider. `claudeCode` is reserved in contracts/UI.
 
 ## CI quality gates
 
 - `.github/workflows/ci.yml` runs `bun run lint`, `bun run typecheck`, and `bun run test` on pull requests and pushes to `main`.
-
-Optional:
-
-- `ELECTRON_RENDERER_PORT=5180 bun run dev` if `5173` is already in use.
-
-## Provider architecture
-
-The renderer now depends on `nativeApi.providers.*`:
-
-1. `startSession`
-2. `sendTurn`
-3. `interruptTurn`
-4. `respondToRequest`
-5. `stopSession`
-6. `listSessions`
-7. `onEvent`
-
-Codex is the only implemented provider right now. `claudeCode` is reserved in contracts/UI but returns a not-implemented error in main-process dispatch.

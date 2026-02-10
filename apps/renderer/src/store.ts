@@ -11,23 +11,14 @@ import {
 import type { ProviderEvent, ProviderSession } from "@acme/contracts";
 import { resolveModelSlug } from "./model-logic";
 import { hydratePersistedState, toPersistedState } from "./persistenceSchema";
-import {
-  applyEventToMessages,
-  asObject,
-  asString,
-  evolveSession,
-} from "./session-logic";
-import {
-  DEFAULT_RUNTIME_MODE,
-  type Project,
-  type RuntimeMode,
-  type Thread,
-} from "./types";
+import { applyEventToMessages, asObject, asString, evolveSession } from "./session-logic";
+import { DEFAULT_RUNTIME_MODE, type Project, type RuntimeMode, type Thread } from "./types";
 
 // ── Actions ──────────────────────────────────────────────────────────
 
 type Action =
   | { type: "ADD_PROJECT"; project: Project }
+  | { type: "SYNC_PROJECTS"; projects: Project[] }
   | { type: "TOGGLE_PROJECT"; projectId: string }
   | { type: "ADD_THREAD"; thread: Thread }
   | { type: "SET_ACTIVE_THREAD"; threadId: string }
@@ -98,10 +89,7 @@ function persistState(state: AppState): void {
   if (typeof window === "undefined") return;
 
   try {
-    window.localStorage.setItem(
-      PERSISTED_STATE_KEY,
-      JSON.stringify(toPersistedState(state)),
-    );
+    window.localStorage.setItem(PERSISTED_STATE_KEY, JSON.stringify(toPersistedState(state)));
     for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
       window.localStorage.removeItem(legacyKey);
     }
@@ -143,10 +131,7 @@ function getEventThreadId(event: ProviderEvent): string | undefined {
   );
 }
 
-function shouldIgnoreForeignThreadEvent(
-  thread: Thread,
-  event: ProviderEvent,
-): boolean {
+function shouldIgnoreForeignThreadEvent(thread: Thread, event: ProviderEvent): boolean {
   const eventThreadId = getEventThreadId(event);
   if (!eventThreadId) {
     return false;
@@ -175,10 +160,7 @@ function durationMs(startIso: string, endIso: string): number | undefined {
   return end - start;
 }
 
-function updateTurnFields(
-  thread: Thread,
-  event: ProviderEvent,
-): Partial<Thread> {
+function updateTurnFields(thread: Thread, event: ProviderEvent): Partial<Thread> {
   if (event.method === "turn/started") {
     return {
       latestTurnId: getEventTurnId(event) ?? thread.latestTurnId,
@@ -195,9 +177,7 @@ function updateTurnFields(
         ? thread.latestTurnStartedAt
         : undefined;
     const elapsed =
-      startedAt && startedAt.length > 0
-        ? durationMs(startedAt, event.createdAt)
-        : undefined;
+      startedAt && startedAt.length > 0 ? durationMs(startedAt, event.createdAt) : undefined;
 
     return {
       latestTurnId: completedTurnId ?? thread.latestTurnId,
@@ -214,6 +194,9 @@ function updateTurnFields(
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "ADD_PROJECT":
+      if (state.projects.some((project) => project.cwd === action.project.cwd)) {
+        return state;
+      }
       return {
         ...state,
         projects: [
@@ -224,6 +207,48 @@ export function reducer(state: AppState, action: Action): AppState {
           },
         ],
       };
+
+    case "SYNC_PROJECTS": {
+      const previousByCwd = new Map(
+        state.projects.map((project) => [project.cwd, project] as const),
+      );
+      const nextProjects = action.projects.map((project) => {
+        const previous = previousByCwd.get(project.cwd);
+        return {
+          ...project,
+          model: resolveModelSlug(previous?.model ?? project.model),
+          expanded: previous?.expanded ?? project.expanded,
+        };
+      });
+      const previousProjectById = new Map(
+        state.projects.map((project) => [project.id, project] as const),
+      );
+      const nextProjectIdByCwd = new Map(
+        nextProjects.map((project) => [project.cwd, project.id] as const),
+      );
+      const nextThreads = state.threads
+        .map((thread) => {
+          const previousProject = previousProjectById.get(thread.projectId);
+          if (!previousProject) return null;
+          const mappedProjectId = nextProjectIdByCwd.get(previousProject.cwd);
+          if (!mappedProjectId) return null;
+          return {
+            ...thread,
+            projectId: mappedProjectId,
+          };
+        })
+        .filter((thread): thread is Thread => thread !== null);
+      const activeThreadId = nextThreads.some((thread) => thread.id === state.activeThreadId)
+        ? state.activeThreadId
+        : (nextThreads[0]?.id ?? null);
+
+      return {
+        ...state,
+        projects: nextProjects,
+        threads: nextThreads,
+        activeThreadId,
+      };
+    }
 
     case "TOGGLE_PROJECT":
       return {
@@ -265,24 +290,16 @@ export function reducer(state: AppState, action: Action): AppState {
           ...(() => {
             const eventThreadId = getEventThreadId(event);
             const shouldRebindIdentity =
-              event.method === "thread/started" &&
-              t.session?.status === "connecting";
+              event.method === "thread/started" && t.session?.status === "connecting";
             return {
               codexThreadId: shouldRebindIdentity
-                ? eventThreadId ?? t.codexThreadId
-                : t.codexThreadId ?? eventThreadId ?? null,
-              error:
-                (event.kind === "error" && event.message
-                  ? event.message
-                  : t.error),
+                ? (eventThreadId ?? t.codexThreadId)
+                : (t.codexThreadId ?? eventThreadId ?? null),
+              error: event.kind === "error" && event.message ? event.message : t.error,
             };
           })(),
           session: t.session ? evolveSession(t.session, event) : t.session,
-          messages: applyEventToMessages(
-            t.messages,
-            event,
-            activeAssistantItemRef,
-          ),
+          messages: applyEventToMessages(t.messages, event, activeAssistantItemRef),
           events: [event, ...t.events],
           ...updateTurnFields(t, event),
         })),

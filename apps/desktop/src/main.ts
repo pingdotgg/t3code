@@ -1,46 +1,145 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
+
 import { fixPath } from "./fixPath";
+
 fixPath();
 
-import { spawn } from "node:child_process";
-import path from "node:path";
-import { BrowserWindow, app, dialog, ipcMain, session, shell } from "electron";
-
-import {
-  EDITORS,
-  IPC_CHANNELS,
-  type TerminalCommandInput,
-  type TerminalCommandResult,
-  agentConfigSchema,
-  agentSessionIdSchema,
-  newTodoInputSchema,
-  providerInterruptTurnInputSchema,
-  providerRespondToRequestInputSchema,
-  providerSendTurnInputSchema,
-  providerSessionStartInputSchema,
-  providerStopSessionInputSchema,
-  terminalCommandInputSchema,
-  todoIdSchema,
-} from "@acme/contracts";
-import { withParsedArgs, withParsedPayload } from "./ipcHelpers";
-import { ProcessManager } from "./processManager";
-import { ProviderManager } from "./providerManager";
-import { TodoStore } from "./todoStore";
-
+const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
+const ROOT_DIR = path.resolve(__dirname, "../../..");
+const BACKEND_ENTRY = path.join(ROOT_DIR, "apps/server/dist/index.js");
+const RENDERER_ENTRY = path.join(ROOT_DIR, "apps/renderer/dist/index.html");
+const STATE_DIR = path.join(os.homedir(), ".t3", "userdata");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 
-let todoStore: TodoStore;
-const processManager = new ProcessManager();
-const providerManager = new ProviderManager();
-const agentWriteArgsParser = {
-  parse(args: unknown[]): [string, string] {
-    const [sessionId, data] = args;
-    if (typeof data !== "string") {
-      throw new Error("agent:write data must be a string");
-    }
+let mainWindow: BrowserWindow | null = null;
+let backendProcess: ChildProcess | null = null;
+let backendPort = 0;
+let backendAuthToken = "";
+let backendWsUrl = "";
+let restartAttempt = 0;
+let restartTimer: ReturnType<typeof setTimeout> | null = null;
+let isQuitting = false;
 
-    return [agentSessionIdSchema.parse(sessionId), data];
-  },
-};
+async function reserveLoopbackPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.listen(0, "127.0.0.1", () => {
+      const address = probe.address();
+      const port = typeof address === "object" && address !== null ? address.port : 0;
+      probe.close(() => {
+        if (port > 0) {
+          resolve(port);
+          return;
+        }
+        reject(new Error("Failed to reserve backend port"));
+      });
+    });
+    probe.on("error", reject);
+  });
+}
+
+function backendEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    CODETHING_MODE: "desktop",
+    CODETHING_NO_BROWSER: "1",
+    CODETHING_PORT: String(backendPort),
+    CODETHING_STATE_DIR: STATE_DIR,
+    CODETHING_AUTH_TOKEN: backendAuthToken,
+  };
+}
+
+function scheduleBackendRestart(reason: string): void {
+  if (isQuitting || restartTimer) return;
+
+  const delayMs = Math.min(500 * 2 ** restartAttempt, 10_000);
+  restartAttempt += 1;
+  console.error(`[desktop] backend exited unexpectedly (${reason}); restarting in ${delayMs}ms`);
+
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
+    startBackend();
+  }, delayMs);
+}
+
+function startBackend(): void {
+  if (isQuitting || backendProcess) return;
+
+  if (!fs.existsSync(BACKEND_ENTRY)) {
+    scheduleBackendRestart(`missing server entry at ${BACKEND_ENTRY}`);
+    return;
+  }
+
+  const child = spawn(process.execPath, [BACKEND_ENTRY], {
+    cwd: ROOT_DIR,
+    env: backendEnv(),
+    stdio: "inherit",
+  });
+  backendProcess = child;
+
+  child.once("spawn", () => {
+    restartAttempt = 0;
+  });
+
+  child.on("error", (error) => {
+    if (backendProcess === child) {
+      backendProcess = null;
+    }
+    scheduleBackendRestart(error.message);
+  });
+
+  child.on("exit", (code, signal) => {
+    if (backendProcess === child) {
+      backendProcess = null;
+    }
+    if (isQuitting) return;
+    const reason = `code=${code ?? "null"} signal=${signal ?? "null"}`;
+    scheduleBackendRestart(reason);
+  });
+}
+
+function stopBackend(): void {
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+    restartTimer = null;
+  }
+
+  const child = backendProcess;
+  backendProcess = null;
+  if (!child) return;
+
+  if (!child.killed) {
+    child.kill("SIGTERM");
+    setTimeout(() => {
+      if (!child.killed) {
+        child.kill("SIGKILL");
+      }
+    }, 2_000).unref();
+  }
+}
+
+function registerIpcHandlers(): void {
+  ipcMain.removeHandler(PICK_FOLDER_CHANNEL);
+  ipcMain.handle(PICK_FOLDER_CHANNEL, async () => {
+    const owner = BrowserWindow.getFocusedWindow() ?? mainWindow;
+    const result = owner
+      ? await dialog.showOpenDialog(owner, {
+          properties: ["openDirectory", "createDirectory"],
+        })
+      : await dialog.showOpenDialog({
+          properties: ["openDirectory", "createDirectory"],
+        });
+    if (result.canceled) return null;
+    return result.filePaths[0] ?? null;
+  });
+}
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -61,285 +160,52 @@ function createWindow(): BrowserWindow {
   });
 
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-
   window.once("ready-to-show", () => {
     window.show();
   });
 
-  setupEventForwarding(window);
-
   if (isDevelopment) {
     void window.loadURL(process.env.VITE_DEV_SERVER_URL as string);
-    return window;
+  } else {
+    if (!fs.existsSync(RENDERER_ENTRY)) {
+      throw new Error(`Renderer bundle missing at ${RENDERER_ENTRY}`);
+    }
+    void window.loadFile(RENDERER_ENTRY);
   }
 
-  void window.loadFile(path.join(__dirname, "../../renderer/dist/index.html"));
+  window.on("closed", () => {
+    if (mainWindow === window) {
+      mainWindow = null;
+    }
+  });
+
   return window;
 }
 
-function registerIpcHandlers(): void {
-  // Todo handlers
-  ipcMain.handle(IPC_CHANNELS.todosList, async () => {
-    return todoStore.list();
-  });
-
-  ipcMain.handle(
-    IPC_CHANNELS.todosAdd,
-    withParsedPayload(newTodoInputSchema, async (_event, payload) => {
-      return todoStore.add(payload);
-    }),
-  );
-
-  ipcMain.handle(
-    IPC_CHANNELS.todosToggle,
-    withParsedPayload(todoIdSchema, async (_event, id) => {
-      return todoStore.toggle(id);
-    }),
-  );
-
-  ipcMain.handle(
-    IPC_CHANNELS.todosRemove,
-    withParsedPayload(todoIdSchema, async (_event, id) => {
-      return todoStore.remove(id);
-    }),
-  );
-
-  ipcMain.handle(IPC_CHANNELS.dialogPickFolder, async () => {
-    const owner = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-    const result = owner
-      ? await dialog.showOpenDialog(owner, {
-          properties: ["openDirectory", "createDirectory"],
-        })
-      : await dialog.showOpenDialog({
-          properties: ["openDirectory", "createDirectory"],
-        });
-
-    if (result.canceled) return null;
-    return result.filePaths[0] ?? null;
-  });
-
-  // Terminal handlers
-  ipcMain.handle(
-    IPC_CHANNELS.terminalRun,
-    withParsedPayload(terminalCommandInputSchema, async (_event, payload) => {
-      return runTerminalCommand(payload);
-    }),
-  );
-
-  // Shell handlers
-  ipcMain.handle(
-    IPC_CHANNELS.shellOpenInEditor,
-    async (_event, cwd: string, editor: string) => {
-      if (!cwd) throw new Error("cwd is required");
-      const editorDef = EDITORS.find((e) => e.id === editor);
-      if (!editorDef) throw new Error(`Unknown editor: ${editor}`);
-      if (!editorDef.command) {
-        const error = await shell.openPath(cwd);
-        if (error) throw new Error(error);
-        return;
-      }
-      const child = spawn(editorDef.command, [cwd], {
-        detached: true,
-        stdio: "ignore",
-      });
-      child.on("error", () => {
-        /* ignore spawn failures for detached editors */
-      });
-      child.unref();
-    },
-  );
-
-  // Agent handlers
-  ipcMain.handle(
-    IPC_CHANNELS.agentSpawn,
-    withParsedPayload(agentConfigSchema, async (_event, config) => {
-      return processManager.spawn(config);
-    }),
-  );
-
-  ipcMain.handle(
-    IPC_CHANNELS.agentKill,
-    withParsedPayload(agentSessionIdSchema, async (_event, sessionId) => {
-      processManager.kill(sessionId);
-    }),
-  );
-
-  ipcMain.handle(
-    IPC_CHANNELS.agentWrite,
-    withParsedArgs(agentWriteArgsParser, async (_event, sessionId, data) => {
-      processManager.write(sessionId, data);
-    }),
-  );
-
-  // Provider handlers
-  ipcMain.handle(
-    IPC_CHANNELS.providerSessionStart,
-    withParsedPayload(providerSessionStartInputSchema, async (_event, payload) => {
-      return providerManager.startSession(payload);
-    }),
-  );
-
-  ipcMain.handle(
-    IPC_CHANNELS.providerTurnStart,
-    withParsedPayload(providerSendTurnInputSchema, async (_event, payload) => {
-      return providerManager.sendTurn(payload);
-    }),
-  );
-
-  ipcMain.handle(
-    IPC_CHANNELS.providerTurnInterrupt,
-    withParsedPayload(providerInterruptTurnInputSchema, async (_event, payload) => {
-      await providerManager.interruptTurn(payload);
-    }),
-  );
-
-  ipcMain.handle(
-    IPC_CHANNELS.providerRequestRespond,
-    withParsedPayload(
-      providerRespondToRequestInputSchema,
-      async (_event, payload) => {
-        await providerManager.respondToRequest(payload);
-      },
-    ),
-  );
-
-  ipcMain.handle(
-    IPC_CHANNELS.providerSessionStop,
-    withParsedPayload(providerStopSessionInputSchema, async (_event, payload) => {
-      providerManager.stopSession(payload);
-    }),
-  );
-
-  ipcMain.handle(IPC_CHANNELS.providerSessionList, async () => {
-    return providerManager.listSessions();
-  });
-}
-
-async function runTerminalCommand(input: TerminalCommandInput): Promise<TerminalCommandResult> {
-  const shellPath =
-    process.platform === "win32"
-      ? (process.env.ComSpec ?? "cmd.exe")
-      : (process.env.SHELL ?? "/bin/sh");
-
-  const args =
-    process.platform === "win32" ? ["/d", "/s", "/c", input.command] : ["-lc", input.command];
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(shellPath, args, {
-      cwd: input.cwd,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-      setTimeout(() => {
-        if (!child.killed) {
-          child.kill("SIGKILL");
-        }
-      }, 1_000).unref();
-    }, input.timeoutMs ?? 30_000);
-
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-
-    child.on("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-
-    child.on("close", (code, signal) => {
-      clearTimeout(timeout);
-      resolve({
-        stdout,
-        stderr,
-        code: code ?? null,
-        signal: signal ?? null,
-        timedOut,
-      });
-    });
-  });
-}
-
-function setupEventForwarding(window: BrowserWindow): void {
-  const onOutput = (chunk: unknown) => {
-    if (!window.isDestroyed()) {
-      window.webContents.send(IPC_CHANNELS.agentOutput, chunk);
-    }
-  };
-
-  const onExit = (exit: unknown) => {
-    if (!window.isDestroyed()) {
-      window.webContents.send(IPC_CHANNELS.agentExit, exit);
-    }
-  };
-
-  const onProviderEvent = (event: unknown) => {
-    if (!window.isDestroyed()) {
-      window.webContents.send(IPC_CHANNELS.providerEvent, event);
-    }
-  };
-
-  processManager.on("output", onOutput);
-  processManager.on("exit", onExit);
-  providerManager.on("event", onProviderEvent);
-
-  window.on("closed", () => {
-    processManager.off("output", onOutput);
-    processManager.off("exit", onExit);
-    providerManager.off("event", onProviderEvent);
-  });
-}
-
-function setupCSP(): void {
-  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    const csp = isDevelopment
-      ? "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://localhost:* http://localhost:*"
-      : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'";
-
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        "Content-Security-Policy": [csp],
-      },
-    });
-  });
-}
-
 async function bootstrap(): Promise<void> {
-  setupCSP();
-
-  todoStore = new TodoStore(path.join(app.getPath("userData"), "todos.json"));
-  await todoStore.init();
+  backendPort = await reserveLoopbackPort();
+  backendAuthToken = randomBytes(24).toString("hex");
+  backendWsUrl = `ws://127.0.0.1:${backendPort}/?token=${encodeURIComponent(backendAuthToken)}`;
+  process.env.CODETHING_DESKTOP_WS_URL = backendWsUrl;
 
   registerIpcHandlers();
-  createWindow();
-
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
-  });
+  startBackend();
+  mainWindow = createWindow();
 }
 
 app.on("before-quit", () => {
-  processManager.killAll();
-  providerManager.stopAll();
-  providerManager.dispose();
+  isQuitting = true;
+  stopBackend();
 });
 
 app.whenReady().then(() => {
   void bootstrap();
+
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      mainWindow = createWindow();
+    }
+  });
 });
 
 app.on("window-all-closed", () => {

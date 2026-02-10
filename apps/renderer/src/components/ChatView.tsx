@@ -14,6 +14,7 @@ import {
 } from "react";
 
 import { EDITORS, type EditorId } from "@acme/contracts";
+import { isElectron } from "../env";
 import { buildBootstrapInput } from "../historyBootstrap";
 import {
   DEFAULT_MODEL,
@@ -563,7 +564,7 @@ export default function ChatView() {
   if (!activeThread) {
     return (
       <div className="flex flex-1 flex-col bg-background text-muted-foreground/40">
-        <div className="drag-region h-[52px] shrink-0" />
+        {isElectron && <div className="drag-region h-[52px] shrink-0" />}
         <div className="flex flex-1 items-center justify-center">
           <div className="text-center">
             <p className="text-sm">Select a thread or create a new one to get started.</p>
@@ -576,7 +577,7 @@ export default function ChatView() {
   return (
     <div className="flex flex-1 flex-col bg-background">
       {/* Top bar */}
-      <header className="drag-region flex items-center justify-between border-b border-border px-5 pt-[28px] pb-3">
+      <header className={`flex items-center justify-between border-b border-border px-5 pb-3 ${isElectron ? "drag-region pt-[28px]" : "pt-3"}`}>
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-medium text-foreground">
             {activeThread.title}

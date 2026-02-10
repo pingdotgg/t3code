@@ -9,6 +9,12 @@ import type {
   ProviderStopSessionInput,
   ProviderTurnStartResult,
 } from "./provider";
+import type {
+  ProjectAddInput,
+  ProjectAddResult,
+  ProjectListResult,
+  ProjectRemoveInput,
+} from "./project";
 import type { TerminalCommandInput, TerminalCommandResult } from "./terminal";
 import type { NewTodoInput, Todo } from "./todo";
 
@@ -18,28 +24,6 @@ export const EDITORS = [
 ] as const;
 
 export type EditorId = (typeof EDITORS)[number]["id"];
-
-export const IPC_CHANNELS = {
-  todosList: "todos:list",
-  todosAdd: "todos:add",
-  todosToggle: "todos:toggle",
-  todosRemove: "todos:remove",
-  dialogPickFolder: "dialog:pick-folder",
-  terminalRun: "terminal:run",
-  agentSpawn: "agent:spawn",
-  agentKill: "agent:kill",
-  agentWrite: "agent:write",
-  agentOutput: "agent:output",
-  agentExit: "agent:exit",
-  providerSessionStart: "provider:session:start",
-  providerTurnStart: "provider:turn:start",
-  providerTurnInterrupt: "provider:turn:interrupt",
-  providerSessionStop: "provider:session:stop",
-  providerSessionList: "provider:session:list",
-  providerRequestRespond: "provider:request:respond",
-  providerEvent: "provider:event",
-  shellOpenInEditor: "shell:open-in-editor",
-} as const;
 
 export interface NativeApi {
   todos: {
@@ -69,6 +53,11 @@ export interface NativeApi {
     stopSession: (input: ProviderStopSessionInput) => Promise<void>;
     listSessions: () => Promise<ProviderSession[]>;
     onEvent: (callback: (event: ProviderEvent) => void) => () => void;
+  };
+  projects: {
+    list: () => Promise<ProjectListResult>;
+    add: (input: ProjectAddInput) => Promise<ProjectAddResult>;
+    remove: (input: ProjectRemoveInput) => Promise<void>;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;

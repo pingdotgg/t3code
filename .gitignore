@@ -5,7 +5,6 @@ node_modules
 *.log
 *.tsbuildinfo
 apps/*/dist
-apps/*/dist-electron
 packages/*/dist
 .env
 .env.local
