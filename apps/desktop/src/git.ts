@@ -14,6 +14,10 @@ import type {
   TerminalCommandResult,
 } from "@t3tools/contracts";
 
+function escapeSingleQuotes(value: string): string {
+  return value.replace(/'/g, "'\\''");
+}
+
 export async function runTerminalCommand(
   input: TerminalCommandInput,
 ): Promise<TerminalCommandResult> {
@@ -111,7 +115,7 @@ export async function listGitBranches(
       current: line.startsWith("* "),
       isDefault: line.replace(/^[*+]\s+/, "") === defaultBranch,
     }))
-    .sort((a, b) => {
+    .toSorted((a, b) => {
       if (a.current !== b.current) return a.current ? -1 : 1;
       if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
       return a.name.localeCompare(b.name);
@@ -123,7 +127,6 @@ export async function listGitBranches(
 export async function createGitWorktree(
   input: GitCreateWorktreeInput,
 ): Promise<GitCreateWorktreeResult> {
-  const esc = (s: string) => s.replace(/'/g, "'\\''");
   const sanitizedBranch = input.newBranch.replace(/\//g, "-");
   const repoName = path.basename(input.cwd);
   const worktreePath =
@@ -132,7 +135,7 @@ export async function createGitWorktree(
 
   // Create a new branch from the base branch in a new worktree
   const result = await runTerminalCommand({
-    command: `git worktree add -b '${esc(input.newBranch)}' '${esc(worktreePath)}' '${esc(input.branch)}'`,
+    command: `git worktree add -b '${escapeSingleQuotes(input.newBranch)}' '${escapeSingleQuotes(worktreePath)}' '${escapeSingleQuotes(input.branch)}'`,
     cwd: input.cwd,
     timeoutMs: 30_000,
   });
@@ -153,7 +156,7 @@ export async function removeGitWorktree(
   input: GitRemoveWorktreeInput,
 ): Promise<void> {
   const result = await runTerminalCommand({
-    command: `git worktree remove '${input.path.replace(/'/g, "'\\''")}'`,
+    command: `git worktree remove '${escapeSingleQuotes(input.path)}'`,
     cwd: input.cwd,
     timeoutMs: 15_000,
   });
@@ -167,7 +170,7 @@ export async function createGitBranch(
   input: GitCreateBranchInput,
 ): Promise<void> {
   const result = await runTerminalCommand({
-    command: `git branch '${input.branch.replace(/'/g, "'\\''")}'`,
+    command: `git branch '${escapeSingleQuotes(input.branch)}'`,
     cwd: input.cwd,
     timeoutMs: 10_000,
   });
@@ -181,7 +184,7 @@ export async function checkoutGitBranch(
   input: GitCheckoutInput,
 ): Promise<void> {
   const result = await runTerminalCommand({
-    command: `git checkout '${input.branch.replace(/'/g, "'\\''")}'`,
+    command: `git checkout '${escapeSingleQuotes(input.branch)}'`,
     cwd: input.cwd,
     timeoutMs: 10_000,
   });

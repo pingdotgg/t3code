@@ -404,16 +404,6 @@ describe("git integration", () => {
       await git(tmp.path, "add .");
       await git(tmp.path, "commit -m 'diverge'");
 
-      // Go back to default branch
-      const defaultBranch = (await git(tmp.path, "rev-parse --abbrev-ref HEAD")).includes(
-        "diverged",
-      )
-        ? // we're on diverged, need to find the other one
-          (await listGitBranches({ cwd: tmp.path })).branches.find(
-            (b) => !b.current && b.name !== "diverged",
-          )!.name
-        : await git(tmp.path, "rev-parse --abbrev-ref HEAD");
-
       // Actually, let's just get back to the initial branch explicitly
       const allBranches = await listGitBranches({ cwd: tmp.path });
       const initialBranch = allBranches.branches.find((b) => b.name !== "diverged")!.name;
