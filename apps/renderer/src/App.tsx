@@ -148,7 +148,7 @@ function Layout() {
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">
         <div className="flex flex-1 items-center justify-center">
-          <p className="text-sm text-muted-foreground">Connecting to CodeThing server...</p>
+          <p className="text-sm text-muted-foreground">Connecting to T3 Code server...</p>
         </div>
       </div>
     );

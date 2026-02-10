@@ -2,7 +2,7 @@ import {
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ProviderApprovalDecision,
   type ProviderEvent,
-} from "@acme/contracts";
+} from "@t3tools/contracts";
 import {
   type FormEvent,
   Fragment,
@@ -13,7 +13,7 @@ import {
   useState,
 } from "react";
 
-import { EDITORS, type EditorId } from "@acme/contracts";
+import { EDITORS, type EditorId } from "@t3tools/contracts";
 import { isElectron } from "../env";
 import { buildBootstrapInput } from "../historyBootstrap";
 import {
@@ -50,7 +50,7 @@ function editorLabel(editor: (typeof EDITORS)[number]): string {
   return editor.command ? editor.label : FILE_MANAGER_LABEL;
 }
 
-const LAST_EDITOR_KEY = "codething:last-editor";
+const LAST_EDITOR_KEY = "t3code:last-editor";
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 
 function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {

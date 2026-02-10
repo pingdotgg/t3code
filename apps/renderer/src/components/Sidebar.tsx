@@ -202,12 +202,9 @@ export default function Sidebar() {
       {/* Drag region / traffic light space (Electron only) */}
       {isElectron && <div className="drag-region h-[52px] shrink-0" />}
       {/* Branding */}
-      <div className={`flex items-center gap-2 px-4 pb-4 ${isElectron ? "" : "pt-4"}`}>
-        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-xs font-bold text-primary-foreground">
-          CT
-        </div>
+      <div className={`flex items-center gap-2.5 px-4 pb-4 ${isElectron ? "" : "pt-4"}`}>
         <span className="flex-1 text-sm font-semibold tracking-tight text-foreground">
-          CodeThing
+          T3 <span className="font-normal text-muted-foreground">Code</span>
         </span>
         <button
           type="button"

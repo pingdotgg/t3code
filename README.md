@@ -1,13 +1,13 @@
-# CodeThing
+# T3 Code
 
-CodeThing is a minimal web GUI for coding agents. Currently Codex-first, with Claude Code support coming soon.
+T3 Code is a minimal web GUI for coding agents. Currently Codex-first, with Claude Code support coming soon.
 
 Run `npx t3` in any project directory to launch the web interface.
 Run `bun run dev:desktop` to launch the Electron desktop app in this monorepo.
 
 ## Architecture
 
-CodeThing runs as a **Node.js WebSocket server** that wraps `codex app-server` (JSON-RPC over stdio) and serves a React web app.
+T3 Code runs as a **Node.js WebSocket server** that wraps `codex app-server` (JSON-RPC over stdio) and serves a React web app.
 
 ```
 ┌─────────────────────────────────┐
@@ -37,8 +37,8 @@ CodeThing runs as a **Node.js WebSocket server** that wraps `codex app-server` (
 ## Codex prerequisites
 
 - Install Codex CLI so `codex` is on your PATH.
-- Authenticate Codex before running CodeThing (for example via API key or ChatGPT auth supported by Codex).
-- CodeThing starts the server via `codex app-server` per session.
+- Authenticate Codex before running T3 Code (for example via API key or ChatGPT auth supported by Codex).
+- T3 Code starts the server via `codex app-server` per session.
 
 ## Quick start
 
@@ -69,7 +69,7 @@ npx t3
 
 ## Runtime modes
 
-CodeThing has a global runtime mode switch in the chat toolbar:
+T3 Code has a global runtime mode switch in the chat toolbar:
 
 - **Full access** (default): starts sessions with `approvalPolicy: never` and `sandboxMode: danger-full-access`.
 - **Supervised**: starts sessions with `approvalPolicy: on-request` and `sandboxMode: workspace-write`, then prompts in-app for command/file approvals.
@@ -81,7 +81,7 @@ The renderer communicates with the server via WebSocket using a simple JSON-RPC-
 - **Request/Response**: `{ id, method, params }` → `{ id, result }` or `{ id, error }`
 - **Push events**: `{ type: "push", channel, data }` for streaming provider events
 
-Methods mirror the `NativeApi` interface defined in `@acme/contracts`:
+Methods mirror the `NativeApi` interface defined in `@t3tools/contracts`:
 
 - `providers.startSession`, `providers.sendTurn`, `providers.interruptTurn`
 - `providers.respondToRequest`, `providers.stopSession`, `providers.listSessions`

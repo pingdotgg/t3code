@@ -11,7 +11,7 @@ import {
   projectAddInputSchema,
   projectRecordSchema,
   projectRemoveInputSchema,
-} from "@acme/contracts";
+} from "@t3tools/contracts";
 
 function normalizeCwd(rawCwd: string): string {
   const resolved = path.resolve(rawCwd.trim());

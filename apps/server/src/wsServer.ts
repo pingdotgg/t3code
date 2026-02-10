@@ -13,7 +13,7 @@ import {
   type WsRequest,
   type WsResponse,
   wsRequestSchema,
-} from "@acme/contracts";
+} from "@t3tools/contracts";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { createLogger } from "./logger";
@@ -71,7 +71,7 @@ export function createServer(options: ServerOptions) {
   const clients = new Set<WebSocket>();
   const logger = createLogger("ws");
   const logWebSocketEvents =
-    explicitLogWsEvents ?? parseBooleanEnv(process.env.CODETHING_LOG_WS_EVENTS) ?? Boolean(devUrl);
+    explicitLogWsEvents ?? parseBooleanEnv(process.env.T3CODE_LOG_WS_EVENTS) ?? Boolean(devUrl);
 
   function logOutgoingPush(push: WsPush, recipients: number) {
     if (!logWebSocketEvents) return;

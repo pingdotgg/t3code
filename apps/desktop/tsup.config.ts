@@ -6,5 +6,5 @@ export default defineConfig({
   outDir: "dist-electron",
   sourcemap: true,
   clean: true,
-  noExternal: ["@acme/contracts"],
+  noExternal: ["@t3tools/contracts"],
 });

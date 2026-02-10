@@ -13,7 +13,7 @@
       },
     },
     "apps/desktop": {
-      "name": "@acme/desktop",
+      "name": "@t3tools/desktop",
       "version": "0.0.0",
       "dependencies": {
         "electron": "33.4.11",
@@ -29,10 +29,10 @@
       },
     },
     "apps/renderer": {
-      "name": "@acme/renderer",
+      "name": "@t3tools/renderer",
       "version": "0.0.0",
       "dependencies": {
-        "@acme/contracts": "workspace:*",
+        "@t3tools/contracts": "workspace:*",
         "highlight.js": "^11.11.1",
         "lucide-react": "^0.563.0",
         "react": "^19.0.0",
@@ -64,8 +64,8 @@
         "ws": "^8.18.0",
       },
       "devDependencies": {
-        "@acme/contracts": "workspace:*",
-        "@acme/renderer": "workspace:*",
+        "@t3tools/contracts": "workspace:*",
+        "@t3tools/renderer": "workspace:*",
         "@types/node": "^22.10.2",
         "@types/ws": "^8.5.13",
         "tsup": "^8.3.5",
@@ -74,7 +74,7 @@
       },
     },
     "packages/contracts": {
-      "name": "@acme/contracts",
+      "name": "@t3tools/contracts",
       "version": "0.0.0",
       "dependencies": {
         "zod": "^3.24.1",
@@ -86,12 +86,6 @@
     },
   },
   "packages": {
-    "@acme/contracts": ["@acme/contracts@workspace:packages/contracts"],
-
-    "@acme/desktop": ["@acme/desktop@workspace:apps/desktop"],
-
-    "@acme/renderer": ["@acme/renderer@workspace:apps/renderer"],
-
     "@babel/code-frame": ["@babel/code-frame@7.29.0", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.28.5", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw=="],
 
     "@babel/compat-data": ["@babel/compat-data@7.29.0", "", {}, "sha512-T1NCJqT/j9+cn8fvkt7jtwbLBfLC/1y1c7NtCeXFRgzGTsafi68MRv8yzkYSapBnFA6L3U2VSc02ciDzoAJhJg=="],
@@ -295,6 +289,12 @@
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
     "@szmarczak/http-timer": ["@szmarczak/http-timer@4.0.6", "", { "dependencies": { "defer-to-connect": "^2.0.0" } }, "sha512-4BAffykYOgO+5nzBWYwE3W90sBgLJoUPRWWcL8wlyiM8IB8ipJz3UMJ9KXQd1RKQXpKp8Tutn80HZtWsu2u76w=="],
+
+    "@t3tools/contracts": ["@t3tools/contracts@workspace:packages/contracts"],
+
+    "@t3tools/desktop": ["@t3tools/desktop@workspace:apps/desktop"],
+
+    "@t3tools/renderer": ["@t3tools/renderer@workspace:apps/renderer"],
 
     "@tailwindcss/node": ["@tailwindcss/node@4.1.18", "", { "dependencies": { "@jridgewell/remapping": "^2.3.4", "enhanced-resolve": "^5.18.3", "jiti": "^2.6.1", "lightningcss": "1.30.2", "magic-string": "^0.30.21", "source-map-js": "^1.2.1", "tailwindcss": "4.1.18" } }, "sha512-DoR7U1P7iYhw16qJ49fgXUlry1t4CpXeErJHnQ44JgTSKMaZUdf17cfn5mHchfJ4KRBZRFA/Coo+MUF5+gOaCQ=="],
 

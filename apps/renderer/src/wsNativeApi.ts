@@ -1,4 +1,4 @@
-import { type NativeApi, WS_CHANNELS, WS_METHODS, type WsWelcomePayload } from "@acme/contracts";
+import { type NativeApi, WS_CHANNELS, WS_METHODS, type WsWelcomePayload } from "@t3tools/contracts";
 
 import { WsTransport } from "./wsTransport";
 

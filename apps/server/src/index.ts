@@ -29,7 +29,7 @@ function parsePort(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-    throw new Error(`Invalid CODETHING_PORT: ${value}`);
+    throw new Error(`Invalid T3CODE_PORT: ${value}`);
   }
   return parsed;
 }
@@ -97,15 +97,15 @@ function resolveStaticDir(): string | undefined {
 }
 
 async function main() {
-  const mode: RuntimeMode = process.env.CODETHING_MODE === "desktop" ? "desktop" : "web";
-  const requestedPort = parsePort(process.env.CODETHING_PORT);
+  const mode: RuntimeMode = process.env.T3CODE_MODE === "desktop" ? "desktop" : "web";
+  const requestedPort = parsePort(process.env.T3CODE_PORT);
   const port =
     requestedPort ?? (mode === "desktop" ? DEFAULT_PORT : await findAvailablePort(DEFAULT_PORT));
-  const stateDir = resolveStateDir(process.env.CODETHING_STATE_DIR);
+  const stateDir = resolveStateDir(process.env.T3CODE_STATE_DIR);
   const projectRegistry = new ProjectRegistry(stateDir);
   const devUrl = process.env.VITE_DEV_SERVER_URL;
-  const noBrowser = parseBooleanEnv(process.env.CODETHING_NO_BROWSER) ?? mode === "desktop";
-  const authToken = process.env.CODETHING_AUTH_TOKEN;
+  const noBrowser = parseBooleanEnv(process.env.T3CODE_NO_BROWSER) ?? mode === "desktop";
+  const authToken = process.env.T3CODE_AUTH_TOKEN;
   const staticDir = devUrl ? undefined : resolveStaticDir();
 
   if (!devUrl && !staticDir) {
@@ -126,7 +126,7 @@ async function main() {
   await server.start();
 
   const url = `http://localhost:${port}`;
-  logger.info("CodeThing running", {
+  logger.info("T3 Code running", {
     url,
     cwd,
     mode,
@@ -171,6 +171,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  logger.error("failed to start CodeThing", { error: err });
+  logger.error("failed to start T3 Code", { error: err });
   process.exit(1);
 });

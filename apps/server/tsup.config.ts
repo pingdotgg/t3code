@@ -6,7 +6,7 @@ export default defineConfig({
   outDir: "dist",
   sourcemap: true,
   clean: true,
-  noExternal: ["@acme/contracts"],
+  noExternal: ["@t3tools/contracts"],
   banner: {
     js: '#!/usr/bin/env node\n',
   },

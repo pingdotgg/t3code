@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 ## Project Snapshot
-CodeThing is a minimal web GUI for using code agents like Codex and Claude Code (coming soon).
+T3 Code is a minimal web GUI for using code agents like Codex and Claude Code (coming soon).
 
 This repository is a VERY EARLY WIP. Proposing sweeping changes that improve long-term maintainability is encouraged.
 
@@ -18,7 +18,7 @@ If a tradeoff is required, choose correctness and robustness over short-term con
 - `packages/contracts`: Shared Zod schemas and TypeScript contracts for provider events, WebSocket protocol, and model/session types.
 
 ## Codex App Server (Important)
-CodeThing is currently Codex-first. The server starts `codex app-server` (JSON-RPC over stdio) per provider session, then streams structured events to the browser through WebSocket push messages.
+T3 Code is currently Codex-first. The server starts `codex app-server` (JSON-RPC over stdio) per provider session, then streams structured events to the browser through WebSocket push messages.
 
 How we use it in this codebase:
 - Session startup/resume and turn lifecycle are brokered in `apps/server/src/codexAppServerManager.ts`.

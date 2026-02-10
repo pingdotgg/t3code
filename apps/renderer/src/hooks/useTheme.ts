@@ -2,7 +2,7 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 
 type Theme = "light" | "dark" | "system";
 
-const STORAGE_KEY = "codething:theme";
+const STORAGE_KEY = "t3code:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 
 let listeners: Array<() => void> = [];

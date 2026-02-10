@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { NativeApi } from "@acme/contracts";
+import type { NativeApi } from "@t3tools/contracts";
 
 interface DesktopBridge {
   getWsUrl: () => string | null;

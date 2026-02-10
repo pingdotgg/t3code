@@ -11,10 +11,10 @@
   "main": "./dist/index.js",
   "scripts": {
     "dev": "VITE_DEV_SERVER_URL=http://localhost:5173 tsx src/index.ts",
-    "dev:desktop": "CODETHING_MODE=desktop CODETHING_NO_BROWSER=1 tsx src/index.ts",
+    "dev:desktop": "T3CODE_MODE=desktop T3CODE_NO_BROWSER=1 tsx src/index.ts",
     "build": "tsup && node scripts/bundle-client.mjs",
     "start": "node dist/index.js",
-    "start:desktop": "CODETHING_MODE=desktop CODETHING_NO_BROWSER=1 node dist/index.js",
+    "start:desktop": "T3CODE_MODE=desktop T3CODE_NO_BROWSER=1 node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -23,8 +23,8 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@acme/contracts": "workspace:*",
-    "@acme/renderer": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/renderer": "workspace:*",
     "@types/node": "^22.10.2",
     "@types/ws": "^8.5.13",
     "tsup": "^8.3.5",

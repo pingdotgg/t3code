@@ -8,7 +8,7 @@ import {
   useReducer,
 } from "react";
 
-import type { ProviderEvent, ProviderSession } from "@acme/contracts";
+import type { ProviderEvent, ProviderSession } from "@t3tools/contracts";
 import { resolveModelSlug } from "./model-logic";
 import { hydratePersistedState, toPersistedState } from "./persistenceSchema";
 import { applyEventToMessages, asObject, asString, evolveSession } from "./session-logic";
@@ -45,8 +45,10 @@ export interface AppState {
   diffOpen: boolean;
 }
 
-const PERSISTED_STATE_KEY = "codething:renderer-state:v4";
+const PERSISTED_STATE_KEY = "t3code:renderer-state:v4";
 const LEGACY_PERSISTED_STATE_KEYS = [
+  "t3code:renderer-state:v3",
+  "codething:renderer-state:v4",
   "codething:renderer-state:v3",
   "codething:renderer-state:v2",
   "codething:renderer-state:v1",

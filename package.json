@@ -1,12 +1,12 @@
 {
-  "name": "ct-round-5",
+  "name": "@t3tools/monorepo",
   "private": true,
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "scripts": {
-    "dev": "CODETHING_LOG_WS_EVENTS=1 VITE_WS_URL=ws://localhost:3773 turbo run dev --ui=tui --filter=@acme/contracts --filter=@acme/renderer --filter=t3 --parallel",
+    "dev": "T3CODE_LOG_WS_EVENTS=1 VITE_WS_URL=ws://localhost:3773 turbo run dev --ui=tui --filter=@t3tools/contracts --filter=@t3tools/renderer --filter=t3 --parallel",
     "dev:server": "bun run build:contracts && bun run --cwd apps/server dev",
     "dev:web": "VITE_WS_URL=ws://localhost:3773 bun run --cwd apps/renderer dev",
     "dev:desktop": "bun run --cwd apps/desktop dev",

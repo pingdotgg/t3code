@@ -1,4 +1,4 @@
-import type { NativeApi, ProviderEvent, ProviderKind, ProviderSession } from "@acme/contracts";
+import type { NativeApi, ProviderEvent, ProviderKind, ProviderSession } from "@t3tools/contracts";
 import type { ChatMessage, SessionPhase } from "./types";
 import { createWsNativeApi } from "./wsNativeApi";
 

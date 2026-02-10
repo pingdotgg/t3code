@@ -1,4 +1,4 @@
-import type { ProviderEvent, ProviderSession } from "@acme/contracts";
+import type { ProviderEvent, ProviderSession } from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export type RuntimeMode = "approval-required" | "full-access";

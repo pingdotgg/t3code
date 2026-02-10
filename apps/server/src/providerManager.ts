@@ -16,7 +16,7 @@ import {
   providerSendTurnInputSchema,
   providerSessionStartInputSchema,
   providerStopSessionInputSchema,
-} from "@acme/contracts";
+} from "@t3tools/contracts";
 import { CodexAppServerManager } from "./codexAppServerManager";
 
 export interface ProviderManagerEvents {

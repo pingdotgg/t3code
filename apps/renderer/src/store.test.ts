@@ -1,4 +1,4 @@
-import type { ProviderEvent, ProviderSession } from "@acme/contracts";
+import type { ProviderEvent, ProviderSession } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import { type AppState, reducer } from "./store";

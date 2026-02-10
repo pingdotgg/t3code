@@ -11,8 +11,8 @@ import type {
   ProviderSession,
   ProviderSessionStartInput,
   ProviderTurnStartResult,
-} from "@acme/contracts";
-import { normalizeModelSlug } from "@acme/contracts";
+} from "@t3tools/contracts";
+import { normalizeModelSlug } from "@t3tools/contracts";
 
 type PendingRequestKey = string;
 
@@ -180,8 +180,8 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     try {
       await this.sendRequest(context, "initialize", {
         clientInfo: {
-          name: "codething_desktop",
-          title: "CodeThing Desktop",
+          name: "t3code_desktop",
+          title: "T3 Code Desktop",
           version: "0.1.0",
         },
         capabilities: {

@@ -1,5 +1,5 @@
 {
-  "name": "@acme/renderer",
+  "name": "@t3tools/renderer",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@acme/contracts": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.563.0",
     "react": "^19.0.0",

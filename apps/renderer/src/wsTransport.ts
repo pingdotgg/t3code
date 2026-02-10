@@ -1,4 +1,4 @@
-import type { WsPush, WsRequest, WsResponse } from "@acme/contracts";
+import type { WsPush, WsRequest, WsResponse } from "@t3tools/contracts";
 
 type PushListener = (data: unknown) => void;
 

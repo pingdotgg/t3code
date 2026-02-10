@@ -48,11 +48,11 @@ async function reserveLoopbackPort(): Promise<number> {
 function backendEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    CODETHING_MODE: "desktop",
-    CODETHING_NO_BROWSER: "1",
-    CODETHING_PORT: String(backendPort),
-    CODETHING_STATE_DIR: STATE_DIR,
-    CODETHING_AUTH_TOKEN: backendAuthToken,
+    T3CODE_MODE: "desktop",
+    T3CODE_NO_BROWSER: "1",
+    T3CODE_PORT: String(backendPort),
+    T3CODE_STATE_DIR: STATE_DIR,
+    T3CODE_AUTH_TOKEN: backendAuthToken,
   };
 }
 
@@ -186,7 +186,7 @@ async function bootstrap(): Promise<void> {
   backendPort = await reserveLoopbackPort();
   backendAuthToken = randomBytes(24).toString("hex");
   backendWsUrl = `ws://127.0.0.1:${backendPort}/?token=${encodeURIComponent(backendAuthToken)}`;
-  process.env.CODETHING_DESKTOP_WS_URL = backendWsUrl;
+  process.env.T3CODE_DESKTOP_WS_URL = backendWsUrl;
 
   registerIpcHandlers();
   startBackend();

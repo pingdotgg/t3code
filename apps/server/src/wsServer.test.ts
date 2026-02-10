@@ -6,7 +6,7 @@ import { describe, expect, it, afterEach, vi } from "vitest";
 import { createServer } from "./wsServer";
 import WebSocket from "ws";
 
-import { WS_CHANNELS, WS_METHODS, type WsPush, type WsResponse } from "@acme/contracts";
+import { WS_CHANNELS, WS_METHODS, type WsPush, type WsResponse } from "@t3tools/contracts";
 import { ProjectRegistry } from "./projectRegistry";
 
 interface PendingMessages {
@@ -87,7 +87,7 @@ describe("WebSocket Server", () => {
       stateDir?: string;
     } = {},
   ): ReturnType<typeof createServer> {
-    const stateDir = options.stateDir ?? makeTempDir("codething-ws-state-");
+    const stateDir = options.stateDir ?? makeTempDir("t3code-ws-state-");
     return createServer({
       port: 0,
       cwd: options.cwd ?? "/test/project",
@@ -234,8 +234,8 @@ describe("WebSocket Server", () => {
   });
 
   it("supports projects list/add/dedupe/remove", async () => {
-    const stateDir = makeTempDir("codething-ws-projects-state-");
-    const firstProjectCwd = makeTempDir("codething-ws-project-a-");
+    const stateDir = makeTempDir("t3code-ws-projects-state-");
+    const firstProjectCwd = makeTempDir("t3code-ws-project-a-");
 
     server = createTestServer({ stateDir, cwd: "/test" });
     await server.start();
@@ -282,8 +282,8 @@ describe("WebSocket Server", () => {
   });
 
   it("prunes missing projects on startup", async () => {
-    const stateDir = makeTempDir("codething-ws-prune-state-");
-    const existing = makeTempDir("codething-ws-existing-project-");
+    const stateDir = makeTempDir("t3code-ws-prune-state-");
+    const existing = makeTempDir("t3code-ws-existing-project-");
     const missing = path.join(stateDir, "definitely-missing");
     const now = new Date().toISOString();
     const projectsFile = path.join(stateDir, "projects.json");

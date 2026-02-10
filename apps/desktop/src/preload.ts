@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
-const wsUrl = process.env.CODETHING_DESKTOP_WS_URL ?? null;
+const wsUrl = process.env.T3CODE_DESKTOP_WS_URL ?? null;
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: () => wsUrl,
