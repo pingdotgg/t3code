@@ -1174,12 +1174,15 @@ describe("runtimeApiServer", () => {
 
     const unauthorizedUnexpectedQueryClient = new WebSocket(`${server.wsUrl}?debug=1`);
     const unauthorizedUnexpectedQueryClose = await withTimeout(
-      new Promise<{ code: number }>((resolve, reject) => {
-        unauthorizedUnexpectedQueryClient.once("close", (code) => resolve({ code }));
+      new Promise<{ code: number; reason: string }>((resolve, reject) => {
+        unauthorizedUnexpectedQueryClient.once("close", (code, reason) =>
+          resolve({ code, reason: reason.toString() }),
+        );
         unauthorizedUnexpectedQueryClient.once("error", (error) => reject(error));
       }),
     );
     expect(unauthorizedUnexpectedQueryClose.code).toBe(4001);
+    expect(unauthorizedUnexpectedQueryClose.reason).toBe("unauthorized");
 
     const response = await sendRequest(
       activeClient.socket,
@@ -1213,12 +1216,15 @@ describe("runtimeApiServer", () => {
     const unauthorizedUrl = `${authorizedUrl.origin}${authorizedUrl.pathname}`;
     const unauthorizedClient = new WebSocket(unauthorizedUrl);
     const unauthorizedClose = await withTimeout(
-      new Promise<{ code: number }>((resolve, reject) => {
-        unauthorizedClient.once("close", (code) => resolve({ code }));
+      new Promise<{ code: number; reason: string }>((resolve, reject) => {
+        unauthorizedClient.once("close", (code, reason) =>
+          resolve({ code, reason: reason.toString() }),
+        );
         unauthorizedClient.once("error", (error) => reject(error));
       }),
     );
     expect(unauthorizedClose.code).toBe(4001);
+    expect(unauthorizedClose.reason).toBe("unauthorized");
 
     const response = await sendRequest(
       authorizedClient.socket,
@@ -1253,12 +1259,15 @@ describe("runtimeApiServer", () => {
       `${authorizedUrl.origin}${authorizedUrl.pathname}?token=secret-token&token=wrong-token`,
     );
     const duplicateTokenClose = await withTimeout(
-      new Promise<{ code: number }>((resolve, reject) => {
-        duplicateTokenClient.once("close", (code) => resolve({ code }));
+      new Promise<{ code: number; reason: string }>((resolve, reject) => {
+        duplicateTokenClient.once("close", (code, reason) =>
+          resolve({ code, reason: reason.toString() }),
+        );
         duplicateTokenClient.once("error", (error) => reject(error));
       }),
     );
     expect(duplicateTokenClose.code).toBe(4001);
+    expect(duplicateTokenClose.reason).toBe("unauthorized");
 
     const response = await sendRequest(
       authorizedClient.socket,
@@ -1293,12 +1302,15 @@ describe("runtimeApiServer", () => {
       `${authorizedUrl.origin}${authorizedUrl.pathname}?token=secret-token&debug=1`,
     );
     const extraQueryClose = await withTimeout(
-      new Promise<{ code: number }>((resolve, reject) => {
-        extraQueryClient.once("close", (code) => resolve({ code }));
+      new Promise<{ code: number; reason: string }>((resolve, reject) => {
+        extraQueryClient.once("close", (code, reason) =>
+          resolve({ code, reason: reason.toString() }),
+        );
         extraQueryClient.once("error", (error) => reject(error));
       }),
     );
     expect(extraQueryClose.code).toBe(4001);
+    expect(extraQueryClose.reason).toBe("unauthorized");
 
     const response = await sendRequest(
       authorizedClient.socket,
