@@ -59,6 +59,15 @@ function runtimeConnectErrorFromClose(event: unknown) {
 
 function requestDisconnectError(id: string, event: unknown) {
   const { code, reason } = closeDetailsFromEvent(event);
+  if (code === WS_CLOSE_CODES.unauthorized || reason === WS_CLOSE_REASONS.unauthorized) {
+    return new Error(`Request ${id} failed: websocket disconnected (unauthorized).`);
+  }
+  if (
+    code === WS_CLOSE_CODES.replacedByNewClient ||
+    reason === WS_CLOSE_REASONS.replacedByNewClient
+  ) {
+    return new Error(`Request ${id} failed: websocket disconnected (replaced-by-new-client).`);
+  }
   if (code === null) {
     return new Error(`Request ${id} failed: websocket disconnected.`);
   }

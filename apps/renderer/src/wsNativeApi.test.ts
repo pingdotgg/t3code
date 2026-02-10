@@ -436,7 +436,23 @@ describe("wsNativeApi", () => {
       reason: WS_CLOSE_REASONS.unauthorized,
     });
 
-    await expect(request).rejects.toThrow("websocket disconnected (code 4001: unauthorized)");
+    await expect(request).rejects.toThrow("websocket disconnected (unauthorized)");
+  });
+
+  it("includes replacement details when pending request disconnects", async () => {
+    setWindowSearch("?ws=ws%3A%2F%2F127.0.0.1%3A4453");
+    const { getOrCreateWsNativeApi } = await import("./wsNativeApi");
+    const api = getOrCreateWsNativeApi();
+
+    const request = api.todos.list();
+    const socket = MockWebSocket.instances[0];
+    await waitForCondition(() => (socket?.sentMessages.length ?? 0) > 0);
+    socket?.closeWith({
+      code: WS_CLOSE_CODES.replacedByNewClient,
+      reason: WS_CLOSE_REASONS.replacedByNewClient,
+    });
+
+    await expect(request).rejects.toThrow("websocket disconnected (replaced-by-new-client)");
   });
 
   it("reconnects on subsequent requests after websocket close", async () => {
