@@ -321,6 +321,16 @@ async function main() {
         `Smoke test failed: expected weak conditional asset status 304, received ${weakConditionalAsset.status}.`,
       );
     }
+    const lowercaseWeakConditionalAsset = await fetch(assetUrl, {
+      headers: {
+        "If-None-Match": `w/${assetEtag}`,
+      },
+    });
+    if (lowercaseWeakConditionalAsset.status !== 304) {
+      throw new Error(
+        `Smoke test failed: expected lowercase weak conditional asset status 304, received ${lowercaseWeakConditionalAsset.status}.`,
+      );
+    }
     const wildcardConditionalAsset = await fetch(assetUrl, {
       headers: {
         "If-None-Match": "*",
@@ -382,6 +392,16 @@ async function main() {
     }
     if ((ifMatchMismatchAsset.headers.get("x-content-type-options") ?? "").toLowerCase() !== "nosniff") {
       throw new Error("Smoke test failed: expected nosniff on If-Match mismatch response.");
+    }
+    const ifMatchLowercaseWeakAsset = await fetch(assetUrl, {
+      headers: {
+        "If-Match": `w/${assetEtag}`,
+      },
+    });
+    if (ifMatchLowercaseWeakAsset.status !== 412) {
+      throw new Error(
+        `Smoke test failed: expected lowercase weak If-Match status 412, received ${ifMatchLowercaseWeakAsset.status}.`,
+      );
     }
     const ifMatchWildcardAsset = await fetch(assetUrl, {
       headers: {
@@ -753,6 +773,17 @@ async function main() {
     if (ifRangeWeakAsset.status !== 200) {
       throw new Error(
         `Smoke test failed: expected If-Range weak-etag asset status 200, received ${ifRangeWeakAsset.status}.`,
+      );
+    }
+    const ifRangeLowercaseWeakAsset = await fetch(assetUrl, {
+      headers: {
+        Range: `bytes=0-${rangeEnd}`,
+        "If-Range": `w/${assetEtag}`,
+      },
+    });
+    if (ifRangeLowercaseWeakAsset.status !== 200) {
+      throw new Error(
+        `Smoke test failed: expected If-Range lowercase weak-etag asset status 200, received ${ifRangeLowercaseWeakAsset.status}.`,
       );
     }
     if (ifRangeWeakAsset.headers.get("content-range") !== null) {
