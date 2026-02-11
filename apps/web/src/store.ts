@@ -376,15 +376,23 @@ export function reducer(state: AppState, action: Action): AppState {
         })),
       };
 
-    case "SET_THREAD_BRANCH":
+    case "SET_THREAD_BRANCH": {
       return {
         ...state,
-        threads: updateThread(state.threads, action.threadId, (t) => ({
-          ...t,
-          branch: action.branch,
-          worktreePath: action.worktreePath,
-        })),
+        threads: updateThread(state.threads, action.threadId, (t) => {
+          // When the effective cwd changes (worktreePath differs), the old
+          // session is no longer valid — clear it so ensureSession creates a
+          // new one with the correct cwd on the next message.
+          const cwdChanged = t.worktreePath !== action.worktreePath;
+          return {
+            ...t,
+            branch: action.branch,
+            worktreePath: action.worktreePath,
+            ...(cwdChanged ? { session: null } : {}),
+          };
+        }),
       };
+    }
 
     case "SET_RUNTIME_MODE":
       return {

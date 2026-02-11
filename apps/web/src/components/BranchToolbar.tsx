@@ -108,6 +108,12 @@ export default function BranchToolbar({ envMode, onEnvModeChange, envLocked }: B
 
   const setThreadBranch = (branch: string | null, worktreePath: string | null) => {
     if (!activeThreadId) return;
+    // If the effective cwd is about to change, stop the running session so the
+    // next message creates a new one with the correct cwd.
+    const sessionId = activeThread?.session?.sessionId;
+    if (sessionId && worktreePath !== activeWorktreePath) {
+      void api?.providers.stopSession({ sessionId }).catch(() => undefined);
+    }
     dispatch({ type: "SET_THREAD_BRANCH", threadId: activeThreadId, branch, worktreePath });
   };
 
