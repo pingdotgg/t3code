@@ -10,7 +10,7 @@ await waitOn({
     `tcp:${port}`,
     "file:dist-electron/main.js",
     "file:dist-electron/preload.js",
-    // "file:../server/dist/index.cjs",
+    "file:../server/dist/index.mjs",
   ],
 });
 

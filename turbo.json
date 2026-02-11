@@ -18,12 +18,12 @@
       "outputs": ["dist/**", "dist-electron/**"]
     },
     "dev": {
-      "dependsOn": ["^dev"],
+      "dependsOn": ["@t3tools/contracts#build"],
       "cache": false,
-      "persistent": false
+      "persistent": true
     },
     "typecheck": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^typecheck"],
       "outputs": []
     },
     "test": {

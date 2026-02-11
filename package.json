@@ -6,10 +6,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "T3CODE_LOG_WS_EVENTS=1 VITE_WS_URL=ws://localhost:3773 turbo watch dev --ui=tui --filter=@t3tools/contracts --filter=@t3tools/web --filter=t3",
-    "dev:server": "turbo watch dev --filter=t3",
-    "dev:web": "VITE_WS_URL=ws://localhost:3773 turbo watch dev --filter=@t3tools/web",
-    "dev:desktop": "turbo watch dev --filter=@t3tools/desktop --filter=@t3tools/web",
+    "dev": "T3CODE_LOG_WS_EVENTS=1 VITE_WS_URL=ws://localhost:3773 turbo run dev --ui=tui --filter=@t3tools/contracts --filter=@t3tools/web --filter=t3 --parallel",
+    "dev:server": "turbo run dev --filter=t3",
+    "dev:web": "VITE_WS_URL=ws://localhost:3773 turbo run dev --filter=@t3tools/web",
+    "dev:desktop": "turbo run dev --filter=@t3tools/desktop --filter=@t3tools/web --parallel",
     "start": "turbo run start --filter=t3",
     "start:desktop": "turbo run start --filter=@t3tools/desktop",
     "build": "turbo run build",

@@ -8,21 +8,16 @@
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
-  "types": "./src/index.d.cts",
+  "types": "./src/index.ts",
   "exports": {
     ".": {
-      "import": {
-        "types": "./src/index.d.mts",
-        "default": "./dist/index.mjs"
-      },
-      "require": {
-        "types": "./src/index.d.cts",
-        "default": "./dist/index.cjs"
-      }
+      "types": "./src/index.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
     }
   },
   "scripts": {
-    "dev": "tsdown src/index.ts --format esm,cjs --dts",
+    "dev": "tsdown src/index.ts --format esm,cjs --dts --watch --clean",
     "build": "tsdown src/index.ts --format esm,cjs --dts --clean",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
