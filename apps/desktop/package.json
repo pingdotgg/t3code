@@ -8,7 +8,7 @@
     "dev:bundle": "tsdown --watch",
     "dev:electron": "bun run scripts/dev-electron.mjs",
     "build": "tsdown",
-    "start": "electron dist-electron/main.cjs",
+    "start": "electron dist-electron/main.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "smoke-test": "node scripts/smoke-test.mjs"

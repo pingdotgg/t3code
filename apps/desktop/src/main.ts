@@ -13,7 +13,7 @@ fixPath();
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const ROOT_DIR = path.resolve(__dirname, "../../..");
-const BACKEND_ENTRY = path.join(ROOT_DIR, "apps/server/dist/index.js");
+const BACKEND_ENTRY = path.join(ROOT_DIR, "apps/server/dist/index.mjs");
 const WEB_ENTRY = path.join(ROOT_DIR, "apps/web/dist/index.html");
 const STATE_DIR = path.join(os.homedir(), ".t3", "userdata");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);

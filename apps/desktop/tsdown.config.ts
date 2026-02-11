@@ -1,10 +1,21 @@
-import { defineConfig } from "tsup";
+import { defineConfig } from "tsdown";
 
-export default defineConfig({
-  entry: ["src/main.ts", "src/preload.ts"],
-  format: "cjs",
+const shared = {
+  format: "cjs" as const,
   outDir: "dist-electron",
   sourcemap: true,
-  clean: true,
-  noExternal: ["@t3tools/contracts"],
-});
+  outExtensions: () => ({ js: ".js" }),
+};
+
+export default defineConfig([
+  {
+    ...shared,
+    entry: ["src/main.ts"],
+    clean: true,
+    noExternal: ["@t3tools/contracts"],
+  },
+  {
+    ...shared,
+    entry: ["src/preload.ts"],
+  },
+]);
