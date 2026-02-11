@@ -8,15 +8,15 @@
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
-  "types": "./src/index.d.cts",
+  "types": "./src/index.ts",
   "exports": {
     ".": {
       "import": {
-        "types": "./src/index.d.mts",
+        "types": "./src/index.ts",
         "default": "./dist/index.mjs"
       },
       "require": {
-        "types": "./src/index.d.cts",
+        "types": "./src/index.ts",
         "default": "./dist/index.cjs"
       }
     }
