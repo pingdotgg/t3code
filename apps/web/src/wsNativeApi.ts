@@ -1,5 +1,6 @@
 import { type NativeApi, WS_CHANNELS, WS_METHODS, type WsWelcomePayload } from "@t3tools/contracts";
 
+import { showContextMenuFallback } from "./contextMenuFallback";
 import { WsTransport } from "./wsTransport";
 
 let instance: { api: NativeApi; transport: WsTransport } | null = null;
@@ -104,6 +105,17 @@ export function createWsNativeApi(): NativeApi {
       createBranch: (input) => transport.request(WS_METHODS.gitCreateBranch, input),
       checkout: (input) => transport.request(WS_METHODS.gitCheckout, input),
       init: (input) => transport.request(WS_METHODS.gitInit, input),
+    },
+    contextMenu: {
+      show: async <T extends string>(
+        items: readonly { id: T; label: string }[],
+        position?: { x: number; y: number },
+      ): Promise<T | null> => {
+        if (window.desktopBridge) {
+          return window.desktopBridge.showContextMenu(items) as Promise<T | null>;
+        }
+        return showContextMenuFallback(items, position);
+      },
     },
   };
 

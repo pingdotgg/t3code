@@ -162,6 +162,31 @@ export default function Sidebar() {
     }
   };
 
+  const handleThreadContextMenu = useCallback(
+    async (threadId: string, position: { x: number; y: number }) => {
+      if (!api) return;
+      const clicked = await api.contextMenu.show([{ id: "delete", label: "Delete" }], position);
+      if (clicked !== "delete") return;
+
+      const thread = state.threads.find((t) => t.id === threadId);
+      if (!thread) return;
+
+      // Stop active session if running
+      if (thread.session?.sessionId) {
+        try {
+          await api.providers.stopSession({
+            sessionId: thread.session.sessionId,
+          });
+        } catch {
+          // Session may already be stopped
+        }
+      }
+
+      dispatch({ type: "DELETE_THREAD", threadId });
+    },
+    [api, dispatch, state.threads],
+  );
+
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       const isNewThreadShortcut =
@@ -292,6 +317,13 @@ export default function Sidebar() {
                             threadId: thread.id,
                           })
                         }
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          void handleThreadContextMenu(thread.id, {
+                            x: e.clientX,
+                            y: e.clientY,
+                          });
+                        }}
                       >
                         <div className="flex min-w-0 flex-1 items-center gap-1.5">
                           {threadStatus && (

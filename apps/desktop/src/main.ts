@@ -5,13 +5,14 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 
 import { fixPath } from "./fixPath";
 
 fixPath();
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
+const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const ROOT_DIR = path.resolve(__dirname, "../../..");
 const BACKEND_ENTRY = path.join(ROOT_DIR, "apps/server/dist/index.mjs");
 const WEB_ENTRY = path.join(ROOT_DIR, "apps/web/dist/index.html");
@@ -138,6 +139,25 @@ function registerIpcHandlers(): void {
         });
     if (result.canceled) return null;
     return result.filePaths[0] ?? null;
+  });
+
+  ipcMain.removeHandler(CONTEXT_MENU_CHANNEL);
+  ipcMain.handle(CONTEXT_MENU_CHANNEL, async (_event, items: { id: string; label: string }[]) => {
+    const window = BrowserWindow.getFocusedWindow() ?? mainWindow;
+    if (!window) return null;
+
+    return new Promise<string | null>((resolve) => {
+      const menu = Menu.buildFromTemplate(
+        items.map((item) => ({
+          label: item.label,
+          click: () => resolve(item.id),
+        })),
+      );
+      menu.popup({
+        window,
+        callback: () => resolve(null),
+      });
+    });
   });
 }
 
