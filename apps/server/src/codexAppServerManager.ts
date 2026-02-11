@@ -26,9 +26,7 @@ interface PendingRequest {
 interface PendingApprovalRequest {
   requestId: string;
   jsonRpcId: string | number;
-  method:
-    | "item/commandExecution/requestApproval"
-    | "item/fileChange/requestApproval";
+  method: "item/commandExecution/requestApproval" | "item/fileChange/requestApproval";
   requestKind: ProviderRequestKind;
   threadId?: string;
   turnId?: string;
@@ -122,16 +120,12 @@ export function classifyCodexStderrLine(rawLine: string): { message: string } | 
 }
 
 export function isRecoverableThreadResumeError(error: unknown): boolean {
-  const message = (
-    error instanceof Error ? error.message : String(error)
-  ).toLowerCase();
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
   if (!message.includes("thread/resume")) {
     return false;
   }
 
-  return RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS.some((snippet) =>
-    message.includes(snippet),
-  );
+  return RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS.some((snippet) => message.includes(snippet));
 }
 
 export interface CodexAppServerManagerEvents {
@@ -209,14 +203,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       if (input.resumeThreadId) {
         try {
           threadOpenMethod = "thread/resume";
-          threadOpenResponse = await this.sendRequest(
-            context,
-            "thread/resume",
-            {
-              ...sessionOverrides,
-              threadId: input.resumeThreadId,
-            },
-          );
+          threadOpenResponse = await this.sendRequest(context, "thread/resume", {
+            ...sessionOverrides,
+            threadId: input.resumeThreadId,
+          });
         } catch (error) {
           if (!isRecoverableThreadResumeError(error)) {
             throw error;
@@ -228,19 +218,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
             "session/threadResumeFallback",
             `Could not resume thread ${input.resumeThreadId}; started a new thread instead.`,
           );
-          threadOpenResponse = await this.sendRequest(
-            context,
-            "thread/start",
-            threadStartParams,
-          );
+          threadOpenResponse = await this.sendRequest(context, "thread/start", threadStartParams);
         }
       } else {
         threadOpenMethod = "thread/start";
-        threadOpenResponse = await this.sendRequest(
-          context,
-          "thread/start",
-          threadStartParams,
-        );
+        threadOpenResponse = await this.sendRequest(context, "thread/start", threadStartParams);
       }
 
       const threadOpenRecord = this.readObject(threadOpenResponse);
@@ -248,9 +230,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         this.readString(this.readObject(threadOpenRecord, "thread"), "id") ??
         this.readString(threadOpenRecord, "threadId");
       if (!threadId) {
-        throw new Error(
-          `${threadOpenMethod} response did not include a thread id.`,
-        );
+        throw new Error(`${threadOpenMethod} response did not include a thread id.`);
       }
 
       this.updateSession(context, {
@@ -732,9 +712,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     };
   }
 
-  private requestKindForMethod(
-    method: string,
-  ): ProviderRequestKind | undefined {
+  private requestKindForMethod(method: string): ProviderRequestKind | undefined {
     if (method === "item/commandExecution/requestApproval") {
       return "command";
     }

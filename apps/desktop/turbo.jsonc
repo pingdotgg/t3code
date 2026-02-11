@@ -4,21 +4,21 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist-electron/**"]
+      "outputs": ["dist-electron/**"],
     },
     "dev": {
       "dependsOn": ["t3#build"],
-      "persistent": true
+      "persistent": true,
     },
     "start": {
       "dependsOn": ["build", "@t3tools/web#build", "t3#build"],
       "cache": false,
-      "persistent": true
+      "persistent": true,
     },
     "smoke-test": {
       "dependsOn": ["build", "@t3tools/web#build", "t3#build"],
       "cache": false,
-      "outputs": []
-    }
-  }
+      "outputs": [],
+    },
+  },
 }

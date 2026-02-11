@@ -16,11 +16,7 @@ import type {
 } from "@t3tools/contracts";
 
 /** Spawn git directly with an argv array — no shell, no quoting needed. */
-function runGit(
-  args: string[],
-  cwd: string,
-  timeoutMs = 30_000,
-): Promise<TerminalCommandResult> {
+function runGit(args: string[], cwd: string, timeoutMs = 30_000): Promise<TerminalCommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn("git", args, {
       cwd,
@@ -127,11 +123,7 @@ export async function listGitBranches(input: GitListBranchesInput): Promise<GitL
   }
 
   // Resolve the real default branch from the remote
-  const defaultRef = await runGit(
-    ["symbolic-ref", "refs/remotes/origin/HEAD"],
-    input.cwd,
-    5_000,
-  );
+  const defaultRef = await runGit(["symbolic-ref", "refs/remotes/origin/HEAD"], input.cwd, 5_000);
   const defaultBranch =
     defaultRef.code === 0 ? defaultRef.stdout.trim().replace(/^refs\/remotes\/origin\//, "") : null;
 

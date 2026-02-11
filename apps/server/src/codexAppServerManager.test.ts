@@ -57,17 +57,13 @@ describe("normalizeCodexModelSlug", () => {
 describe("isRecoverableThreadResumeError", () => {
   it("matches not-found resume errors", () => {
     expect(
-      isRecoverableThreadResumeError(
-        new Error("thread/resume failed: thread not found"),
-      ),
+      isRecoverableThreadResumeError(new Error("thread/resume failed: thread not found")),
     ).toBe(true);
   });
 
   it("ignores non-resume errors", () => {
     expect(
-      isRecoverableThreadResumeError(
-        new Error("thread/start failed: permission denied"),
-      ),
+      isRecoverableThreadResumeError(new Error("thread/start failed: permission denied")),
     ).toBe(false);
   });
 

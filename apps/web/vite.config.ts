@@ -13,9 +13,7 @@ export default defineConfig({
   ],
   define: {
     // In dev mode, tell the web app where the WebSocket server lives
-    "import.meta.env.VITE_WS_URL": JSON.stringify(
-      process.env.VITE_WS_URL ?? "",
-    ),
+    "import.meta.env.VITE_WS_URL": JSON.stringify(process.env.VITE_WS_URL ?? ""),
   },
   server: {
     port: Number(process.env.PORT ?? 5173),

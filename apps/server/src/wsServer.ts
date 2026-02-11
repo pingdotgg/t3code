@@ -369,7 +369,10 @@ export function createServer(options: ServerOptions) {
     const isServerNotRunningError = (error: unknown): boolean => {
       if (!(error instanceof Error)) return false;
       const maybeCode = (error as NodeJS.ErrnoException).code;
-      return maybeCode === "ERR_SERVER_NOT_RUNNING" || error.message.toLowerCase().includes("not running");
+      return (
+        maybeCode === "ERR_SERVER_NOT_RUNNING" ||
+        error.message.toLowerCase().includes("not running")
+      );
     };
 
     const closeWebSocketServer = new Promise<void>((resolve, reject) => {

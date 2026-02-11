@@ -395,9 +395,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case "DELETE_THREAD": {
       const threads = state.threads.filter((t) => t.id !== action.threadId);
       const activeThreadId =
-        state.activeThreadId === action.threadId
-          ? (threads[0]?.id ?? null)
-          : state.activeThreadId;
+        state.activeThreadId === action.threadId ? (threads[0]?.id ?? null) : state.activeThreadId;
       return { ...state, threads, activeThreadId };
     }
 

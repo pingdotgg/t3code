@@ -36,13 +36,8 @@ export function buildBootstrapInput(
   latestPrompt: string,
   maxChars: number,
 ): BootstrapInputResult {
-  const budget = Number.isFinite(maxChars)
-    ? Math.max(1, Math.floor(maxChars))
-    : 1;
-  const promptOnly =
-    latestPrompt.length <= budget
-      ? latestPrompt
-      : latestPrompt.slice(0, budget);
+  const budget = Number.isFinite(maxChars) ? Math.max(1, Math.floor(maxChars)) : 1;
+  const promptOnly = latestPrompt.length <= budget ? latestPrompt : latestPrompt.slice(0, budget);
 
   if (previousMessages.length === 0) {
     return {
@@ -87,8 +82,7 @@ export function buildBootstrapInput(
 
   let includedChronological = [...includedNewestFirst].reverse();
   while (true) {
-    const omittedCount =
-      newestFirstBlocks.length - includedChronological.length;
+    const omittedCount = newestFirstBlocks.length - includedChronological.length;
     const transcriptBody =
       omittedCount > 0
         ? includedChronological.length > 0
@@ -101,8 +95,7 @@ export function buildBootstrapInput(
         text: finalized,
         includedCount: includedChronological.length,
         omittedCount,
-        truncated:
-          omittedCount > 0 || latestPrompt.length !== promptOnly.length,
+        truncated: omittedCount > 0 || latestPrompt.length !== promptOnly.length,
       };
     }
 

@@ -98,10 +98,8 @@ export function createWsNativeApi(): NativeApi {
     },
     git: {
       listBranches: (input) => transport.request(WS_METHODS.gitListBranches, input),
-      createWorktree: (input) =>
-        transport.request(WS_METHODS.gitCreateWorktree, input),
-      removeWorktree: (input) =>
-        transport.request(WS_METHODS.gitRemoveWorktree, input),
+      createWorktree: (input) => transport.request(WS_METHODS.gitCreateWorktree, input),
+      removeWorktree: (input) => transport.request(WS_METHODS.gitRemoveWorktree, input),
       createBranch: (input) => transport.request(WS_METHODS.gitCreateBranch, input),
       checkout: (input) => transport.request(WS_METHODS.gitCheckout, input),
       init: (input) => transport.request(WS_METHODS.gitInit, input),

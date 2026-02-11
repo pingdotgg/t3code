@@ -1,5 +1,6 @@
 import type { GitBranch } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { readNativeApi } from "../session-logic";
 import { useStore } from "../store";
@@ -10,76 +11,85 @@ interface BranchToolbarProps {
   envLocked: boolean;
 }
 
-export default function BranchToolbar({
-  envMode,
-  onEnvModeChange,
-  envLocked,
-}: BranchToolbarProps) {
+export default function BranchToolbar({ envMode, onEnvModeChange, envLocked }: BranchToolbarProps) {
   const { state, dispatch } = useStore();
   const api = useMemo(() => readNativeApi(), []);
+  const queryClient = useQueryClient();
 
-  const [branches, setBranches] = useState<GitBranch[]>([]);
-  const [isRepo, setIsRepo] = useState(false);
-  const [isLoadingBranches, setIsLoadingBranches] = useState(false);
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [isCreatingBranch, setIsCreatingBranch] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
-  const [isInitializingRepo, setIsInitializingRepo] = useState(false);
   const branchMenuRef = useRef<HTMLDivElement>(null);
 
   const activeThread = state.threads.find((thread) => thread.id === state.activeThreadId);
   const activeProject = state.projects.find((project) => project.id === activeThread?.projectId);
-  const branchCwd = activeThread?.worktreePath ?? activeProject?.cwd;
+  const activeThreadId = activeThread?.id;
+  const activeThreadBranch = activeThread?.branch ?? null;
+  const activeWorktreePath = activeThread?.worktreePath ?? null;
+  const branchCwd = activeWorktreePath ?? activeProject?.cwd;
 
-  const loadBranches = useCallback(async () => {
-    if (!api || !branchCwd) return;
-    setIsLoadingBranches(true);
-    try {
-      const result = await api.git.listBranches({ cwd: branchCwd });
-      setIsRepo(result.isRepo);
-      setBranches(result.branches);
-    } catch (error) {
-      setIsRepo(false);
-      setBranches([]);
-      if (activeThread) {
-        dispatch({
-          type: "SET_ERROR",
-          threadId: activeThread.id,
-          error:
-            error instanceof Error ? error.message : "Failed to load git branches.",
-        });
-      }
-    } finally {
-      setIsLoadingBranches(false);
-    }
-  }, [activeThread, api, branchCwd, dispatch]);
+  // ── Queries ───────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    void loadBranches();
-  }, [loadBranches]);
+  const branchesQuery = useQuery({
+    queryKey: ["git", "branches", branchCwd],
+    queryFn: () => api!.git.listBranches({ cwd: branchCwd! }),
+    enabled: !!api && !!branchCwd,
+  });
+
+  const branches = branchesQuery.data?.branches ?? [];
+  const isRepo = branchesQuery.data?.isRepo ?? false;
+
+  // ── Mutations ─────────────────────────────────────────────────────────
+
+  const checkoutMutation = useMutation({
+    mutationFn: (branch: string) => api!.git.checkout({ cwd: branchCwd!, branch }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["git", "branches", branchCwd] }),
+    onError: (error) =>
+      setThreadError(error instanceof Error ? error.message : "Failed to checkout branch."),
+  });
+
+  const createBranchMutation = useMutation({
+    mutationFn: (branch: string) =>
+      api!.git
+        .createBranch({ cwd: branchCwd!, branch })
+        .then(() => api!.git.checkout({ cwd: branchCwd!, branch })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["git", "branches", branchCwd] }),
+    onError: (error) =>
+      setThreadError(error instanceof Error ? error.message : "Failed to create branch."),
+  });
+
+  const initMutation = useMutation({
+    mutationFn: () => api!.git.init({ cwd: branchCwd! }),
+    onSuccess: () => {
+      setThreadError(null);
+      queryClient.invalidateQueries({ queryKey: ["git", "branches", branchCwd] });
+    },
+    onError: (error) =>
+      setThreadError(error instanceof Error ? error.message : "Failed to initialize git repo."),
+  });
+
+  // ── Effects ───────────────────────────────────────────────────────────
 
   // Keep thread branch synced to git current branch for local threads.
+  const queryBranches = branchesQuery.data?.branches;
   useEffect(() => {
-    if (!activeThread || activeThread.worktreePath) return;
-    const current = branches.find((branch) => branch.current);
+    if (!activeThreadId || activeWorktreePath) return;
+    const current = queryBranches?.find((branch) => branch.current);
     if (!current) return;
-    if (current.name === activeThread.branch) return;
+    if (current.name === activeThreadBranch) return;
     dispatch({
       type: "SET_THREAD_BRANCH",
-      threadId: activeThread.id,
+      threadId: activeThreadId,
       branch: current.name,
       worktreePath: null,
     });
-  }, [activeThread, branches, dispatch]);
+  }, [activeThreadId, activeWorktreePath, activeThreadBranch, queryBranches, dispatch]);
 
   useEffect(() => {
     if (!isBranchMenuOpen) return;
     const handleClickOutside = (event: MouseEvent) => {
       if (!branchMenuRef.current) return;
-      if (
-        event.target instanceof Node &&
-        !branchMenuRef.current.contains(event.target)
-      ) {
+      if (event.target instanceof Node && !branchMenuRef.current.contains(event.target)) {
         setIsBranchMenuOpen(false);
       }
     };
@@ -89,79 +99,50 @@ export default function BranchToolbar({
     };
   }, [isBranchMenuOpen]);
 
+  // ── Helpers ───────────────────────────────────────────────────────────
+
   const setThreadError = (error: string | null) => {
-    if (!activeThread) return;
-    dispatch({
-      type: "SET_ERROR",
-      threadId: activeThread.id,
-      error,
-    });
+    if (!activeThreadId) return;
+    dispatch({ type: "SET_ERROR", threadId: activeThreadId, error });
   };
 
   const setThreadBranch = (branch: string | null, worktreePath: string | null) => {
-    if (!activeThread) return;
-    dispatch({
-      type: "SET_THREAD_BRANCH",
-      threadId: activeThread.id,
-      branch,
-      worktreePath,
-    });
+    if (!activeThreadId) return;
+    dispatch({ type: "SET_THREAD_BRANCH", threadId: activeThreadId, branch, worktreePath });
   };
 
-  const initializeRepo = async () => {
-    if (!api || !branchCwd || !activeThread || isInitializingRepo) return;
-    setIsInitializingRepo(true);
-    try {
-      await api.git.init({ cwd: branchCwd });
-      setThreadError(null);
-      await loadBranches();
-    } catch (error) {
-      setThreadError(error instanceof Error ? error.message : "Failed to initialize git repo.");
-    } finally {
-      setIsInitializingRepo(false);
-    }
-  };
-
-  const selectBranch = async (branch: GitBranch) => {
-    if (!api || !activeThread || !branchCwd) return;
+  const selectBranch = (branch: GitBranch) => {
+    if (!api || !activeThreadId || !branchCwd) return;
 
     // For new worktree mode, selecting a branch picks the base branch.
-    if (envMode === "worktree" && !envLocked && !activeThread.worktreePath) {
+    if (envMode === "worktree" && !envLocked && !activeWorktreePath) {
       setThreadError(null);
       setThreadBranch(branch.name, null);
       setIsBranchMenuOpen(false);
       return;
     }
 
-    try {
-      await api.git.checkout({
-        cwd: branchCwd,
-        branch: branch.name,
-      });
-      setThreadError(null);
-      setThreadBranch(branch.name, activeThread.worktreePath);
-      setIsBranchMenuOpen(false);
-      await loadBranches();
-    } catch (error) {
-      setThreadError(error instanceof Error ? error.message : "Failed to checkout branch.");
-    }
+    checkoutMutation.mutate(branch.name, {
+      onSuccess: () => {
+        setThreadError(null);
+        setThreadBranch(branch.name, activeWorktreePath);
+        setIsBranchMenuOpen(false);
+      },
+    });
   };
 
-  const createBranch = async () => {
+  const createBranch = () => {
     const name = newBranchName.trim();
-    if (!api || !activeThread || !branchCwd || !name) return;
-    try {
-      await api.git.createBranch({ cwd: branchCwd, branch: name });
-      await api.git.checkout({ cwd: branchCwd, branch: name });
-      setThreadError(null);
-      setThreadBranch(name, activeThread.worktreePath);
-      setNewBranchName("");
-      setIsCreatingBranch(false);
-      setIsBranchMenuOpen(false);
-      await loadBranches();
-    } catch (error) {
-      setThreadError(error instanceof Error ? error.message : "Failed to create branch.");
-    }
+    if (!api || !activeThreadId || !branchCwd || !name) return;
+    createBranchMutation.mutate(name, {
+      onSuccess: () => {
+        setThreadError(null);
+        setThreadBranch(name, activeWorktreePath);
+        setNewBranchName("");
+        setIsCreatingBranch(false);
+        setIsBranchMenuOpen(false);
+      },
+    });
   };
 
   if (!activeThread || !activeProject) return null;
@@ -192,10 +173,10 @@ export default function BranchToolbar({
         <button
           type="button"
           className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2 py-1 text-[12px] text-muted-foreground/70 transition-colors duration-150 hover:bg-accent hover:text-foreground/80 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={!branchCwd || isInitializingRepo}
-          onClick={() => void initializeRepo()}
+          disabled={!branchCwd || initMutation.isPending}
+          onClick={() => initMutation.mutate()}
         >
-          {isInitializingRepo ? "Initializing…" : "Initialize git"}
+          {initMutation.isPending ? "Initializing\u2026" : "Initialize git"}
         </button>
       ) : (
         <div className="relative" ref={branchMenuRef}>
@@ -203,7 +184,7 @@ export default function BranchToolbar({
             type="button"
             className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] text-muted-foreground/60 transition-colors duration-150 hover:bg-accent/50 hover:text-muted-foreground/80"
             onClick={() => setIsBranchMenuOpen((open) => !open)}
-            disabled={isLoadingBranches}
+            disabled={branchesQuery.isLoading}
           >
             <span className="max-w-[240px] truncate font-mono">
               {activeThread.branch
@@ -246,7 +227,7 @@ export default function BranchToolbar({
                           ? "bg-accent text-foreground"
                           : "text-foreground/90 hover:bg-accent/50"
                       }`}
-                      onClick={() => void selectBranch(branch)}
+                      onClick={() => selectBranch(branch)}
                     >
                       <span className="truncate">{branch.name}</span>
                       {(branch.current || branch.isDefault) && (
@@ -266,7 +247,7 @@ export default function BranchToolbar({
                       className="flex items-center gap-1 px-1"
                       onSubmit={(event) => {
                         event.preventDefault();
-                        void createBranch();
+                        createBranch();
                       }}
                     >
                       <input
@@ -286,7 +267,7 @@ export default function BranchToolbar({
                       />
                       <button
                         type="submit"
-                        disabled={!newBranchName.trim()}
+                        disabled={!newBranchName.trim() || createBranchMutation.isPending}
                         className="rounded-lg px-2 py-1.5 text-xs text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground/80 disabled:opacity-30"
                       >
                         Create

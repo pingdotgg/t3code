@@ -109,11 +109,7 @@ function normalizeItemType(raw: string | undefined): string {
 }
 
 function shouldDropItemType(type: string): boolean {
-  if (
-    type.includes("preamble") ||
-    type.includes("reasoning") ||
-    type.includes("thought")
-  ) {
+  if (type.includes("preamble") || type.includes("reasoning") || type.includes("thought")) {
     return true;
   }
 
@@ -121,11 +117,7 @@ function shouldDropItemType(type: string): boolean {
 }
 
 function shouldShowItemLifecycle(type: string): boolean {
-  return (
-    type.includes("tool") ||
-    type.includes("command") ||
-    type.includes("file change")
-  );
+  return type.includes("tool") || type.includes("command") || type.includes("file change");
 }
 
 function shouldDropMethod(method: string): boolean {
@@ -182,9 +174,7 @@ function extractDetail(
   return undefined;
 }
 
-function lifecycleCandidateFromItemEvent(
-  event: ProviderEvent,
-): ItemLifecycleCandidate | null {
+function lifecycleCandidateFromItemEvent(event: ProviderEvent): ItemLifecycleCandidate | null {
   const payload = asObject(event.payload);
   const item = asObject(payload?.item);
   const normalizedType = normalizeItemType(asString(item?.type));
@@ -360,10 +350,7 @@ export function deriveWorkLogEntries(
       ) {
         continue;
       }
-      if (
-        lifecycleCandidate.label === "Tool call" &&
-        !lifecycleCandidate.detail
-      ) {
+      if (lifecycleCandidate.label === "Tool call" && !lifecycleCandidate.detail) {
         continue;
       }
 
@@ -371,9 +358,7 @@ export function deriveWorkLogEntries(
         id: lifecycleCandidate.id,
         createdAt: lifecycleCandidate.createdAt,
         label: lifecycleCandidate.label,
-        ...(lifecycleCandidate.detail
-          ? { detail: lifecycleCandidate.detail }
-          : {}),
+        ...(lifecycleCandidate.detail ? { detail: lifecycleCandidate.detail } : {}),
         tone: lifecycleCandidate.tone,
       });
       continue;

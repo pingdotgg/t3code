@@ -3,7 +3,7 @@
   "extends": ["//"],
   "tasks": {
     "dev": {
-      "persistent": true
-    }
-  }
+      "persistent": true,
+    },
+  },
 }

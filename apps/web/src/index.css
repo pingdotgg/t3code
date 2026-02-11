@@ -88,11 +88,7 @@
   --secondary: --alpha(var(--color-black) / 4%);
   --secondary-foreground: var(--color-neutral-800);
   --muted: --alpha(var(--color-black) / 4%);
-  --muted-foreground: color-mix(
-    in srgb,
-    var(--color-neutral-500) 90%,
-    var(--color-black)
-  );
+  --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-black));
   --accent: --alpha(var(--color-black) / 5%);
   --accent-foreground: var(--color-neutral-800);
   --destructive: var(--color-red-500);
@@ -122,11 +118,7 @@
 
   @variant dark {
     color-scheme: dark;
-    --background: color-mix(
-      in srgb,
-      var(--color-neutral-950) 95%,
-      var(--color-white)
-    );
+    --background: color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white));
     --foreground: var(--color-neutral-100);
     --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
     --card-foreground: var(--color-neutral-100);
@@ -137,18 +129,10 @@
     --secondary: --alpha(var(--color-white) / 4%);
     --secondary-foreground: var(--color-neutral-100);
     --muted: --alpha(var(--color-white) / 4%);
-    --muted-foreground: color-mix(
-      in srgb,
-      var(--color-neutral-500) 90%,
-      var(--color-white)
-    );
+    --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
     --accent: --alpha(var(--color-white) / 4%);
     --accent-foreground: var(--color-neutral-100);
-    --destructive: color-mix(
-      in srgb,
-      var(--color-red-500) 90%,
-      var(--color-white)
-    );
+    --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
     --border: --alpha(var(--color-white) / 6%);
     --input: --alpha(var(--color-white) / 8%);
     --ring: oklch(0.588 0.217 264);
@@ -177,7 +161,12 @@
 
 body {
   font-family:
-    "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    "DM Sans",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    system-ui,
+    sans-serif;
   margin: 0;
   padding: 0;
   min-height: 100vh;
@@ -287,11 +276,7 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown a {
   color: var(--info-foreground);
   text-decoration: underline;
-  text-decoration-color: color-mix(
-    in srgb,
-    var(--info-foreground) 40%,
-    transparent
-  );
+  text-decoration-color: color-mix(in srgb, var(--info-foreground) 40%, transparent);
 }
 
 .chat-markdown a:hover {

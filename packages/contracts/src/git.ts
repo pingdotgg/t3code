@@ -51,13 +51,9 @@ export const gitWorktreeSchema = z.object({
 
 export type GitListBranchesInput = z.infer<typeof gitListBranchesInputSchema>;
 export type GitBranch = z.infer<typeof gitBranchSchema>;
-export type GitCreateWorktreeInput = z.infer<
-  typeof gitCreateWorktreeInputSchema
->;
+export type GitCreateWorktreeInput = z.infer<typeof gitCreateWorktreeInputSchema>;
 export type GitWorktree = z.infer<typeof gitWorktreeSchema>;
-export type GitRemoveWorktreeInput = z.infer<
-  typeof gitRemoveWorktreeInputSchema
->;
+export type GitRemoveWorktreeInput = z.infer<typeof gitRemoveWorktreeInputSchema>;
 export type GitCreateBranchInput = z.infer<typeof gitCreateBranchInputSchema>;
 export type GitCheckoutInput = z.infer<typeof gitCheckoutInputSchema>;
 export type GitInitInput = z.infer<typeof gitInitInputSchema>;

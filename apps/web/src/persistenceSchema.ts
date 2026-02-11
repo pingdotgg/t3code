@@ -1,12 +1,7 @@
 import { z } from "zod";
 
 import { DEFAULT_MODEL, resolveModelSlug } from "./model-logic";
-import {
-  DEFAULT_RUNTIME_MODE,
-  type Project,
-  type RuntimeMode,
-  type Thread,
-} from "./types";
+import { DEFAULT_RUNTIME_MODE, type Project, type RuntimeMode, type Thread } from "./types";
 
 const LEGACY_DEFAULT_MODEL = "gpt-5.2-codex";
 
@@ -150,13 +145,9 @@ export function hydratePersistedState(
   return {
     projects,
     threads,
-    activeThreadId: hasActiveThread
-      ? parsedState.data.activeThreadId
-      : (threads[0]?.id ?? null),
+    activeThreadId: hasActiveThread ? parsedState.data.activeThreadId : (threads[0]?.id ?? null),
     runtimeMode:
-      "runtimeMode" in parsedState.data
-        ? parsedState.data.runtimeMode
-        : DEFAULT_RUNTIME_MODE,
+      "runtimeMode" in parsedState.data ? parsedState.data.runtimeMode : DEFAULT_RUNTIME_MODE,
   };
 }
 
