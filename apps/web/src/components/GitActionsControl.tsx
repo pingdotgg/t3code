@@ -344,9 +344,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
     }
 
     void api.shell.openExternal(prUrl).catch((error) => {
-      setGitActionError(
-        error instanceof Error ? error.message : "Unable to open PR link.",
-      );
+      setGitActionError(error instanceof Error ? error.message : "Unable to open PR link.");
     });
   }, [api, gitStatus?.openPr?.url]);
 
@@ -415,10 +413,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
           if (commitRun.commit.subject) {
             setGitModalCommitMessage(commitRun.commit.subject);
           }
-          updateStep(
-            "generate",
-            "completed",
-          );
+          updateStep("generate", "completed");
         } else {
           updateStep("generate", "skipped", "No local changes to commit.");
         }
@@ -696,9 +691,6 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
                 onChange={(event) => setGitModalCommitMessage(event.target.value)}
                 disabled={!gitModalSelectionMode || isGitActionRunning}
               />
-              <p className="mt-1.5 text-xs text-muted-foreground/65">
-                Leave this empty to use AI-generated commit text.
-              </p>
             </div>
             <div className="mt-6">
               <p className="text-sm font-medium text-foreground">Next steps</p>
