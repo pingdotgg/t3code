@@ -6,8 +6,6 @@ import path from "node:path";
 import {
   gitRunStackedActionInputSchema,
   gitRunStackedActionResultSchema,
-  gitStatusInputSchema,
-  gitStatusResultSchema,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
   type GitStatusInput,
@@ -20,11 +18,8 @@ import type {
   TextGenerationService,
 } from "./coreServices";
 import { CodexTextGenerator } from "./codexTextGenerator";
+import { GitCoreService } from "./git";
 import { type ProcessRunOptions, runProcess } from "./processRunner";
-
-interface GitStatusDetails extends GitStatusResult {
-  upstreamRef: string | null;
-}
 
 interface GitManagerDeps {
   runProcess?: (
@@ -39,6 +34,7 @@ interface GitManagerDeps {
     timedOut: boolean;
   }>;
   textGenerator?: TextGenerationService;
+  gitCore?: GitCoreService;
 }
 
 interface OpenPrInfo {
@@ -117,15 +113,6 @@ function extractBranchFromRef(ref: string): string {
   return afterSlash.trim();
 }
 
-function parseBranchAb(value: string): { ahead: number; behind: number } {
-  const match = value.match(/^\+(\d+)\s+-(\d+)$/);
-  if (!match) return { ahead: 0, behind: 0 };
-  return {
-    ahead: Number(match[1] ?? "0"),
-    behind: Number(match[2] ?? "0"),
-  };
-}
-
 function asCommandNotFound(
   command: string,
   error: unknown,
@@ -137,9 +124,6 @@ function asCommandNotFound(
   }
   if (command === "codex") {
     return new Error("Codex CLI (`codex`) is required but not available on PATH.");
-  }
-  if (command === "git") {
-    return new Error("Git is required but not available on PATH.");
   }
   return new Error(`${command} is required but not available on PATH.`);
 }
@@ -158,33 +142,19 @@ function normalizeGitHubAuthError(error: unknown): Error | undefined {
   return undefined;
 }
 
-function normalizeNotGitRepoError(error: unknown): Error | undefined {
-  if (!(error instanceof Error)) return undefined;
-  if (error.message.toLowerCase().includes("not a git repository")) {
-    return new Error("Current folder is not a git repository.");
-  }
-  return undefined;
-}
-
 export class GitManager {
   private readonly run: NonNullable<GitManagerDeps["runProcess"]>;
   private readonly textGenerator: TextGenerationService;
+  private readonly gitCore: GitCoreService;
 
   constructor(deps: GitManagerDeps = {}) {
     this.run = deps.runProcess ?? runProcess;
     this.textGenerator = deps.textGenerator ?? new CodexTextGenerator();
+    this.gitCore = deps.gitCore ?? new GitCoreService();
   }
 
   async status(raw: GitStatusInput): Promise<GitStatusResult> {
-    const input = gitStatusInputSchema.parse(raw);
-    const details = await this.readStatusDetails(input.cwd);
-    return gitStatusResultSchema.parse({
-      branch: details.branch,
-      hasWorkingTreeChanges: details.hasWorkingTreeChanges,
-      hasUpstream: details.hasUpstream,
-      aheadCount: details.aheadCount,
-      behindCount: details.behindCount,
-    });
+    return this.gitCore.status(raw);
   }
 
   async runStackedAction(
@@ -194,7 +164,7 @@ export class GitManager {
     const wantsPush = input.action !== "commit";
     const wantsPr = input.action === "commit_push_pr";
 
-    const initialStatus = await this.readStatusDetails(input.cwd);
+    const initialStatus = await this.gitCore.statusDetails(input.cwd);
     if (wantsPush && !initialStatus.branch) {
       throw new Error("Cannot push from detached HEAD.");
     }
@@ -205,7 +175,7 @@ export class GitManager {
     const commit = await this.runCommitStep(input.cwd, initialStatus.branch);
 
     const push = wantsPush
-      ? await this.runPushStep(input.cwd, initialStatus.branch)
+      ? await this.gitCore.pushCurrentBranch(input.cwd, initialStatus.branch)
       : { status: "skipped_not_requested" as const };
 
     const pr = wantsPr
@@ -220,57 +190,6 @@ export class GitManager {
     });
   }
 
-  private async readStatusDetails(cwd: string): Promise<GitStatusDetails> {
-    let stdout = "";
-    try {
-      stdout = await this.runGitStdout(cwd, ["status", "--porcelain=2", "--branch"]);
-    } catch (error) {
-      throw (
-        asCommandNotFound("git", error) ??
-        normalizeNotGitRepoError(error) ??
-        (error instanceof Error ? error : new Error("Failed to read git status."))
-      );
-    }
-
-    let branch: string | null = null;
-    let upstreamRef: string | null = null;
-    let aheadCount = 0;
-    let behindCount = 0;
-    let hasWorkingTreeChanges = false;
-
-    for (const line of stdout.split(/\r?\n/g)) {
-      if (line.startsWith("# branch.head ")) {
-        const value = line.slice("# branch.head ".length).trim();
-        branch = value.startsWith("(") ? null : value;
-        continue;
-      }
-      if (line.startsWith("# branch.upstream ")) {
-        const value = line.slice("# branch.upstream ".length).trim();
-        upstreamRef = value.length > 0 ? value : null;
-        continue;
-      }
-      if (line.startsWith("# branch.ab ")) {
-        const value = line.slice("# branch.ab ".length).trim();
-        const parsed = parseBranchAb(value);
-        aheadCount = parsed.ahead;
-        behindCount = parsed.behind;
-        continue;
-      }
-      if (line.trim().length > 0 && !line.startsWith("#")) {
-        hasWorkingTreeChanges = true;
-      }
-    }
-
-    return {
-      branch,
-      upstreamRef,
-      hasWorkingTreeChanges,
-      hasUpstream: upstreamRef !== null,
-      aheadCount,
-      behindCount,
-    };
-  }
-
   private async runCommitStep(
     cwd: string,
     branch: string | null,
@@ -279,22 +198,10 @@ export class GitManager {
     commitSha?: string | undefined;
     subject?: string | undefined;
   }> {
-    await this.runGit(cwd, ["add", "-A"]);
-    const stagedSummary = await this.runGitStdout(cwd, [
-      "diff",
-      "--cached",
-      "--name-status",
-    ]);
-    if (trimStdout(stagedSummary).length === 0) {
+    const context = await this.gitCore.prepareCommitContext(cwd);
+    if (!context) {
       return { status: "skipped_no_changes" };
     }
-
-    const stagedPatch = await this.runGitStdout(cwd, [
-      "diff",
-      "--cached",
-      "--patch",
-      "--minimal",
-    ]);
 
     let generated: CommitMessageGenerationResult;
     try {
@@ -302,67 +209,19 @@ export class GitManager {
         await this.textGenerator.generateCommitMessage({
           cwd,
           branch,
-          stagedSummary: limitContext(stagedSummary, 8_000),
-          stagedPatch: limitContext(stagedPatch, 50_000),
+          stagedSummary: limitContext(context.stagedSummary, 8_000),
+          stagedPatch: limitContext(context.stagedPatch, 50_000),
         }),
       );
     } catch (error) {
       throw asCommandNotFound("codex", error) ?? error;
     }
 
-    const commitArgs = ["commit", "-m", generated.subject];
-    if (generated.body.length > 0) {
-      commitArgs.push("-m", generated.body);
-    }
-    await this.runGit(cwd, commitArgs);
-
-    const commitSha = trimStdout(await this.runGitStdout(cwd, ["rev-parse", "HEAD"]));
+    const { commitSha } = await this.gitCore.commit(cwd, generated.subject, generated.body);
     return {
       status: "created",
       commitSha,
       subject: generated.subject,
-    };
-  }
-
-  private async runPushStep(
-    cwd: string,
-    fallbackBranch: string | null,
-  ): Promise<{
-    status: "pushed" | "skipped_not_requested" | "skipped_up_to_date";
-    branch?: string | undefined;
-    upstreamBranch?: string | undefined;
-    setUpstream?: boolean | undefined;
-  }> {
-    const details = await this.readStatusDetails(cwd);
-    const branch = details.branch ?? fallbackBranch;
-    if (!branch) {
-      throw new Error("Cannot push from detached HEAD.");
-    }
-
-    if (details.hasUpstream && details.aheadCount === 0) {
-      return {
-        status: "skipped_up_to_date",
-        branch,
-        ...(details.upstreamRef ? { upstreamBranch: details.upstreamRef } : {}),
-      };
-    }
-
-    if (!details.hasUpstream) {
-      await this.runGit(cwd, ["push", "-u", "origin", branch]);
-      return {
-        status: "pushed",
-        branch,
-        upstreamBranch: `origin/${branch}`,
-        setUpstream: true,
-      };
-    }
-
-    await this.runGit(cwd, ["push"]);
-    return {
-      status: "pushed",
-      branch,
-      ...(details.upstreamRef ? { upstreamBranch: details.upstreamRef } : {}),
-      setUpstream: false,
     };
   }
 
@@ -377,7 +236,7 @@ export class GitManager {
     headBranch?: string | undefined;
     title?: string | undefined;
   }> {
-    const details = await this.readStatusDetails(cwd);
+    const details = await this.gitCore.statusDetails(cwd);
     const branch = details.branch ?? fallbackBranch;
     if (!branch) {
       throw new Error("Cannot create a pull request from detached HEAD.");
@@ -400,22 +259,7 @@ export class GitManager {
     }
 
     const baseBranch = await this.resolveBaseBranch(cwd, branch, details.upstreamRef);
-    const commitSummary = await this.runGitStdout(cwd, [
-      "log",
-      "--oneline",
-      `${baseBranch}..HEAD`,
-    ]);
-    const diffSummary = await this.runGitStdout(cwd, [
-      "diff",
-      "--stat",
-      `${baseBranch}..HEAD`,
-    ]);
-    const diffPatch = await this.runGitStdout(cwd, [
-      "diff",
-      "--patch",
-      "--minimal",
-      `${baseBranch}..HEAD`,
-    ]);
+    const rangeContext = await this.gitCore.readRangeContext(cwd, baseBranch);
 
     let generated: PrContentGenerationResult;
     try {
@@ -423,9 +267,9 @@ export class GitManager {
         cwd,
         baseBranch,
         headBranch: branch,
-        commitSummary: limitContext(commitSummary, 20_000),
-        diffSummary: limitContext(diffSummary, 20_000),
-        diffPatch: limitContext(diffPatch, 60_000),
+        commitSummary: limitContext(rangeContext.commitSummary, 20_000),
+        diffSummary: limitContext(rangeContext.diffSummary, 20_000),
+        diffPatch: limitContext(rangeContext.diffPatch, 60_000),
       });
     } catch (error) {
       throw asCommandNotFound("codex", error) ?? error;
@@ -524,13 +368,11 @@ export class GitManager {
     branch: string,
     upstreamRef: string | null,
   ): Promise<string> {
-    const mergeBaseConfig = await this.runGitStdout(
+    const configured = await this.gitCore.readConfigValue(
       cwd,
-      ["config", "--get", `branch.${branch}.gh-merge-base`],
-      true,
+      `branch.${branch}.gh-merge-base`,
     );
-    const configured = trimStdout(mergeBaseConfig);
-    if (configured.length > 0) return configured;
+    if (configured) return configured;
 
     if (upstreamRef) {
       const upstreamBranch = extractBranchFromRef(upstreamRef);
@@ -555,45 +397,6 @@ export class GitManager {
     }
 
     return "main";
-  }
-
-  private async runGit(
-    cwd: string,
-    args: readonly string[],
-    allowNonZeroExit = false,
-  ): Promise<void> {
-    try {
-      await this.run("git", args, {
-        cwd,
-        allowNonZeroExit,
-      });
-    } catch (error) {
-      throw (
-        asCommandNotFound("git", error) ??
-        normalizeNotGitRepoError(error) ??
-        (error instanceof Error ? error : new Error("Git command failed."))
-      );
-    }
-  }
-
-  private async runGitStdout(
-    cwd: string,
-    args: readonly string[],
-    allowNonZeroExit = false,
-  ): Promise<string> {
-    try {
-      const result = await this.run("git", args, {
-        cwd,
-        allowNonZeroExit,
-      });
-      return result.stdout;
-    } catch (error) {
-      throw (
-        asCommandNotFound("git", error) ??
-        normalizeNotGitRepoError(error) ??
-        (error instanceof Error ? error : new Error("Git command failed."))
-      );
-    }
   }
 
   private async runGh(cwd: string, args: readonly string[]): Promise<void> {
