@@ -8,7 +8,7 @@ export default function DiffPanel() {
     <aside className="flex h-full w-[400px] shrink-0 flex-col border-l border-border bg-card">
       {/* Header */}
       <div
-        className={`flex items-center justify-between border-b border-border px-4 pb-3 ${isElectron ? "drag-region pt-[28px]" : "pt-3"}`}
+        className={`flex items-center justify-between border-b border-border px-4 ${isElectron ? "drag-region h-[52px]" : "py-3"}`}
       >
         <h3 className="text-xs font-medium text-foreground">Uncommitted changes</h3>
         <button

@@ -257,20 +257,40 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       throw new Error("Session is missing a thread id.");
     }
 
+    const turnInput: Array<
+      | { type: "text"; text: string; text_elements: [] }
+      | { type: "image"; url: string }
+    > = [];
+    if (input.input) {
+      turnInput.push({
+        type: "text",
+        text: input.input,
+        text_elements: [],
+      });
+    }
+    for (const attachment of input.attachments ?? []) {
+      if (attachment.type === "image") {
+        turnInput.push({
+          type: "image",
+          url: attachment.dataUrl,
+        });
+      }
+    }
+    if (turnInput.length === 0) {
+      throw new Error("Turn input must include text or attachments.");
+    }
+
     const turnStartParams: {
       threadId: string;
-      input: Array<{ type: "text"; text: string; text_elements: [] }>;
+      input: Array<
+        | { type: "text"; text: string; text_elements: [] }
+        | { type: "image"; url: string }
+      >;
       model?: string;
       effort?: string;
     } = {
       threadId: context.session.threadId,
-      input: [
-        {
-          type: "text",
-          text: input.input,
-          text_elements: [],
-        },
-      ],
+      input: turnInput,
     };
     const normalizedModel = normalizeCodexModelSlug(input.model);
     if (normalizedModel) {

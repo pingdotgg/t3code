@@ -1,10 +1,41 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  CodexAppServerManager,
   classifyCodexStderrLine,
   isRecoverableThreadResumeError,
   normalizeCodexModelSlug,
 } from "./codexAppServerManager";
+
+function createSendTurnHarness() {
+  const manager = new CodexAppServerManager();
+  const context = {
+    session: {
+      sessionId: "sess_1",
+      provider: "codex",
+      status: "ready",
+      threadId: "thread_1",
+      createdAt: "2026-02-10T00:00:00.000Z",
+      updatedAt: "2026-02-10T00:00:00.000Z",
+    },
+  };
+
+  const requireSession = vi
+    .spyOn(manager as unknown as { requireSession: (sessionId: string) => unknown }, "requireSession")
+    .mockReturnValue(context);
+  const sendRequest = vi
+    .spyOn(manager as unknown as { sendRequest: (...args: unknown[]) => Promise<unknown> }, "sendRequest")
+    .mockResolvedValue({
+      turn: {
+        id: "turn_1",
+      },
+    });
+  const updateSession = vi
+    .spyOn(manager as unknown as { updateSession: (...args: unknown[]) => void }, "updateSession")
+    .mockImplementation(() => {});
+
+  return { manager, context, requireSession, sendRequest, updateSession };
+}
 
 describe("classifyCodexStderrLine", () => {
   it("ignores empty lines", () => {
@@ -73,5 +104,90 @@ describe("isRecoverableThreadResumeError", () => {
         new Error("thread/resume failed: timed out waiting for server"),
       ),
     ).toBe(false);
+  });
+});
+
+describe("sendTurn", () => {
+  it("sends text and image user input items to turn/start", async () => {
+    const { manager, context, requireSession, sendRequest, updateSession } = createSendTurnHarness();
+
+    const result = await manager.sendTurn({
+      sessionId: "sess_1",
+      input: "Inspect this image",
+      attachments: [
+        {
+          type: "image",
+          name: "error.png",
+          mimeType: "image/png",
+          sizeBytes: 1_024,
+          dataUrl: "data:image/png;base64,AAAA",
+        },
+      ],
+      model: "gpt-5.3",
+      effort: "high",
+    });
+
+    expect(result).toEqual({
+      threadId: "thread_1",
+      turnId: "turn_1",
+    });
+    expect(requireSession).toHaveBeenCalledWith("sess_1");
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Inspect this image",
+          text_elements: [],
+        },
+        {
+          type: "image",
+          url: "data:image/png;base64,AAAA",
+        },
+      ],
+      model: "gpt-5.3-codex",
+      effort: "high",
+    });
+    expect(updateSession).toHaveBeenCalledWith(context, {
+      status: "running",
+      activeTurnId: "turn_1",
+    });
+  });
+
+  it("supports image-only turns", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+
+    await manager.sendTurn({
+      sessionId: "sess_1",
+      attachments: [
+        {
+          type: "image",
+          name: "diagram.png",
+          mimeType: "image/png",
+          sizeBytes: 256,
+          dataUrl: "data:image/png;base64,BBBB",
+        },
+      ],
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "image",
+          url: "data:image/png;base64,BBBB",
+        },
+      ],
+    });
+  });
+
+  it("rejects empty turn input", async () => {
+    const { manager } = createSendTurnHarness();
+
+    await expect(
+      manager.sendTurn({
+        sessionId: "sess_1",
+      }),
+    ).rejects.toThrow("Turn input must include text or attachments.");
   });
 });

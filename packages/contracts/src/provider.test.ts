@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   providerEventSchema,
   providerRespondToRequestInputSchema,
   providerSendTurnInputSchema,
@@ -40,8 +41,66 @@ describe("providerSendTurnInputSchema", () => {
       effort: "  high  ",
     });
     expect(parsed.input).toBe("summarize this repo");
+    expect(parsed.attachments).toEqual([]);
     expect(parsed.model).toBe("gpt-5.2-codex");
     expect(parsed.effort).toBe("high");
+  });
+
+  it("accepts image-only turns", () => {
+    const parsed = providerSendTurnInputSchema.parse({
+      sessionId: "sess_1",
+      attachments: [
+        {
+          type: "image",
+          name: "diagram.png",
+          mimeType: "image/png",
+          sizeBytes: 1_024,
+          dataUrl: "data:image/png;base64,AAAA",
+        },
+      ],
+    });
+    expect(parsed.input).toBeUndefined();
+    expect(parsed.attachments).toHaveLength(1);
+  });
+
+  it("rejects turns with neither text nor attachments", () => {
+    expect(() =>
+      providerSendTurnInputSchema.parse({
+        sessionId: "sess_1",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects non-image data urls", () => {
+    expect(() =>
+      providerSendTurnInputSchema.parse({
+        sessionId: "sess_1",
+        attachments: [
+          {
+            type: "image",
+            name: "not-image.txt",
+            mimeType: "text/plain",
+            sizeBytes: 25,
+            dataUrl: "data:text/plain;base64,QQ==",
+          },
+        ],
+      }),
+    ).toThrow();
+  });
+
+  it("rejects more than the max attachment count", () => {
+    expect(() =>
+      providerSendTurnInputSchema.parse({
+        sessionId: "sess_1",
+        attachments: Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS + 1 }, (_, index) => ({
+          type: "image" as const,
+          name: `image-${index}.png`,
+          mimeType: "image/png",
+          sizeBytes: 1_024,
+          dataUrl: "data:image/png;base64,AAAA",
+        })),
+      }),
+    ).toThrow();
   });
 });
 

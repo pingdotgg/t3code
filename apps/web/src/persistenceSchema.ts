@@ -23,6 +23,17 @@ const persistedMessageSchema = z.object({
   id: z.string().min(1),
   role: z.enum(["user", "assistant"]),
   text: z.string(),
+  attachments: z
+    .array(
+      z.object({
+        type: z.literal("image"),
+        id: z.string().min(1),
+        name: z.string().min(1),
+        mimeType: z.string().min(1),
+        sizeBytes: z.number().int().min(1),
+      }),
+    )
+    .optional(),
   createdAt: z.string().min(1),
   streaming: z.boolean(),
 });
@@ -126,10 +137,19 @@ function hydrateThread(
     terminalOpen: thread.terminalOpen ?? false,
     terminalHeight: thread.terminalHeight ?? DEFAULT_THREAD_TERMINAL_HEIGHT,
     session: null,
-    messages: thread.messages.map((message) => ({
-      ...message,
-      streaming: false,
-    })),
+    messages: thread.messages.map((message) => {
+      const hydratedAttachments = message.attachments?.map((attachment) => ({ ...attachment }));
+      return {
+        id: message.id,
+        role: message.role,
+        text: message.text,
+        ...(hydratedAttachments && hydratedAttachments.length > 0
+          ? { attachments: hydratedAttachments }
+          : {}),
+        createdAt: message.createdAt,
+        streaming: false,
+      };
+    }),
     events: [],
     error: null,
     createdAt: thread.createdAt,
@@ -189,7 +209,24 @@ export function toPersistedState(
       model: thread.model,
       terminalOpen: thread.terminalOpen,
       terminalHeight: thread.terminalHeight,
-      messages: thread.messages,
+      messages: thread.messages.map((message) => ({
+        id: message.id,
+        role: message.role,
+        text: message.text,
+        ...(message.attachments && message.attachments.length > 0
+          ? {
+              attachments: message.attachments.map((attachment) => ({
+                type: attachment.type,
+                id: attachment.id,
+                name: attachment.name,
+                mimeType: attachment.mimeType,
+                sizeBytes: attachment.sizeBytes,
+              })),
+            }
+          : {}),
+        createdAt: message.createdAt,
+        streaming: message.streaming,
+      })),
       createdAt: thread.createdAt,
       branch: thread.branch,
       worktreePath: thread.worktreePath,

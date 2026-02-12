@@ -237,10 +237,10 @@ export default function Sidebar() {
 
   return (
     <aside className="sidebar flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-card">
-      {/* Drag region / traffic light space (Electron only) */}
-      {isElectron && <div className="drag-region h-[52px] shrink-0" />}
       {/* Branding */}
-      <div className={`flex items-center gap-2.5 px-4 pb-4 ${isElectron ? "" : "pt-4"}`}>
+      <div
+        className={`flex items-center gap-2.5 px-4 ${isElectron ? "drag-region h-[52px] pl-[76px]" : "py-4"}`}
+      >
         <span className="flex-1 text-sm font-semibold tracking-tight text-foreground">
           T3 <span className="font-normal text-muted-foreground">Code</span>
         </span>

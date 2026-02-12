@@ -13,6 +13,7 @@ import { resolveModelSlug } from "./model-logic";
 import { hydratePersistedState, toPersistedState } from "./persistenceSchema";
 import { applyEventToMessages, asObject, asString, evolveSession } from "./session-logic";
 import {
+  type ChatAttachment,
   DEFAULT_RUNTIME_MODE,
   type Project,
   type RuntimeMode,
@@ -37,7 +38,13 @@ type Action =
       activeAssistantItemRef: { current: string | null };
     }
   | { type: "UPDATE_SESSION"; threadId: string; session: ProviderSession }
-  | { type: "PUSH_USER_MESSAGE"; threadId: string; id: string; text: string }
+  | {
+      type: "PUSH_USER_MESSAGE";
+      threadId: string;
+      id: string;
+      text: string;
+      attachments?: ChatAttachment[];
+    }
   | { type: "SET_ERROR"; threadId: string; error: string | null }
   | { type: "SET_THREAD_TITLE"; threadId: string; title: string }
   | { type: "SET_THREAD_MODEL"; threadId: string; model: string }
@@ -380,6 +387,9 @@ export function reducer(state: AppState, action: Action): AppState {
               id: action.id,
               role: "user" as const,
               text: action.text,
+              ...(action.attachments && action.attachments.length > 0
+                ? { attachments: action.attachments }
+                : {}),
               createdAt: new Date().toISOString(),
               streaming: false,
             },

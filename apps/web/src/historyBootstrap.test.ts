@@ -91,4 +91,32 @@ describe("buildBootstrapInput", () => {
     expect(result.omittedCount).toBe(1);
     expect(result.truncated).toBe(true);
   });
+
+  it("captures user image attachment context in transcript blocks", () => {
+    const result = buildBootstrapInput(
+      [
+        {
+          id: "u-image",
+          role: "user",
+          text: "",
+          attachments: [
+            {
+              type: "image",
+              id: "img-1",
+              name: "screenshot.png",
+              mimeType: "image/png",
+              sizeBytes: 2_048,
+            },
+          ],
+          createdAt: "2026-02-09T00:00:00.000Z",
+          streaming: false,
+        },
+      ],
+      "What does this error mean?",
+      1_500,
+    );
+
+    expect(result.text).toContain("Attached image");
+    expect(result.text).toContain("screenshot.png");
+  });
 });
