@@ -3,6 +3,7 @@ import type { ProviderEvent, ProviderSession } from "@t3tools/contracts";
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export type RuntimeMode = "approval-required" | "full-access";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
+export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
 
 export interface ChatMessage {
   id: string;
@@ -26,6 +27,8 @@ export interface Thread {
   projectId: string;
   title: string;
   model: string;
+  terminalOpen: boolean;
+  terminalHeight: number;
   session: ProviderSession | null;
   messages: ChatMessage[];
   events: ProviderEvent[];

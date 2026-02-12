@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { EventEmitter } from "node:events";
 
 import { describe, expect, it, afterEach, vi } from "vitest";
 import { createServer } from "./wsServer";
@@ -8,6 +9,15 @@ import WebSocket from "ws";
 
 import { WS_CHANNELS, WS_METHODS, type WsPush, type WsResponse } from "@t3tools/contracts";
 import { ProjectRegistry } from "./projectRegistry";
+import type {
+  TerminalCloseInput,
+  TerminalEvent,
+  TerminalOpenInput,
+  TerminalSessionSnapshot,
+  TerminalThreadInput,
+  TerminalWriteInput,
+} from "@t3tools/contracts";
+import type { TerminalManager } from "./terminalManager";
 
 interface PendingMessages {
   queue: unknown[];
@@ -15,6 +25,91 @@ interface PendingMessages {
 }
 
 const pendingBySocket = new WeakMap<WebSocket, PendingMessages>();
+
+class MockTerminalManager extends EventEmitter<{ event: [event: TerminalEvent] }> {
+  private readonly sessions = new Map<string, TerminalSessionSnapshot>();
+
+  async open(input: TerminalOpenInput): Promise<TerminalSessionSnapshot> {
+    const now = new Date().toISOString();
+    const snapshot: TerminalSessionSnapshot = {
+      threadId: input.threadId,
+      cwd: input.cwd,
+      status: "running",
+      pid: 4242,
+      history: "",
+      exitCode: null,
+      exitSignal: null,
+      updatedAt: now,
+    };
+    this.sessions.set(input.threadId, snapshot);
+    queueMicrotask(() => {
+      this.emit("event", {
+        type: "started",
+        threadId: input.threadId,
+        createdAt: now,
+        snapshot,
+      });
+    });
+    return snapshot;
+  }
+
+  async write(input: TerminalWriteInput): Promise<void> {
+    const existing = this.sessions.get(input.threadId);
+    if (!existing) {
+      throw new Error(`Unknown terminal thread: ${input.threadId}`);
+    }
+    queueMicrotask(() => {
+      this.emit("event", {
+        type: "output",
+        threadId: input.threadId,
+        createdAt: new Date().toISOString(),
+        data: input.data,
+      });
+    });
+  }
+
+  async resize(_input: TerminalThreadInput & { cols: number; rows: number }): Promise<void> {}
+
+  async clear(input: TerminalThreadInput): Promise<void> {
+    queueMicrotask(() => {
+      this.emit("event", {
+        type: "cleared",
+        threadId: input.threadId,
+        createdAt: new Date().toISOString(),
+      });
+    });
+  }
+
+  async restart(input: TerminalOpenInput): Promise<TerminalSessionSnapshot> {
+    const now = new Date().toISOString();
+    const snapshot: TerminalSessionSnapshot = {
+      threadId: input.threadId,
+      cwd: input.cwd,
+      status: "running",
+      pid: 5252,
+      history: "",
+      exitCode: null,
+      exitSignal: null,
+      updatedAt: now,
+    };
+    this.sessions.set(input.threadId, snapshot);
+    queueMicrotask(() => {
+      this.emit("event", {
+        type: "restarted",
+        threadId: input.threadId,
+        createdAt: now,
+        snapshot,
+      });
+    });
+    return snapshot;
+  }
+
+  async close(input: TerminalCloseInput): Promise<void> {
+    this.sessions.delete(input.threadId);
+  }
+
+  dispose(): void {}
+}
 
 function connectWs(port: number, token?: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
@@ -89,6 +184,7 @@ describe("WebSocket Server", () => {
         status: (input: { cwd: string }) => Promise<unknown>;
         runStackedAction: (input: { cwd: string; action: string }) => Promise<unknown>;
       };
+      terminalManager?: TerminalManager;
     } = {},
   ): ReturnType<typeof createServer> {
     const stateDir = options.stateDir ?? makeTempDir("t3code-ws-state-");
@@ -99,6 +195,9 @@ describe("WebSocket Server", () => {
       ...(options.authToken ? { authToken: options.authToken } : {}),
       projectRegistry: new ProjectRegistry(stateDir),
       ...(options.gitManager ? { gitManager: options.gitManager as never } : {}),
+      ...(options.terminalManager
+        ? { terminalManager: options.terminalManager }
+        : {}),
     });
   }
 
@@ -216,6 +315,111 @@ describe("WebSocket Server", () => {
     const response = await sendRequest(ws, WS_METHODS.providersListSessions);
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual([]);
+  });
+
+  it("routes terminal RPC methods and broadcasts terminal events", async () => {
+    const cwd = makeTempDir("t3code-ws-terminal-cwd-");
+    const terminalManager = new MockTerminalManager();
+    server = createTestServer({
+      cwd: "/test",
+      terminalManager: terminalManager as unknown as TerminalManager,
+    });
+    await server.start();
+    const addr = server.httpServer.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const open = await sendRequest(ws, WS_METHODS.terminalOpen, {
+      threadId: "thread-1",
+      cwd,
+      cols: 100,
+      rows: 24,
+    });
+    expect(open.error).toBeUndefined();
+    expect((open.result as TerminalSessionSnapshot).threadId).toBe("thread-1");
+
+    const write = await sendRequest(ws, WS_METHODS.terminalWrite, {
+      threadId: "thread-1",
+      data: "echo hello\n",
+    });
+    expect(write.error).toBeUndefined();
+
+    const resize = await sendRequest(ws, WS_METHODS.terminalResize, {
+      threadId: "thread-1",
+      cols: 120,
+      rows: 30,
+    });
+    expect(resize.error).toBeUndefined();
+
+    const clear = await sendRequest(ws, WS_METHODS.terminalClear, {
+      threadId: "thread-1",
+    });
+    expect(clear.error).toBeUndefined();
+
+    const restart = await sendRequest(ws, WS_METHODS.terminalRestart, {
+      threadId: "thread-1",
+      cwd,
+      cols: 120,
+      rows: 30,
+    });
+    expect(restart.error).toBeUndefined();
+
+    const close = await sendRequest(ws, WS_METHODS.terminalClose, {
+      threadId: "thread-1",
+      deleteHistory: true,
+    });
+    expect(close.error).toBeUndefined();
+
+    const manualEvent: TerminalEvent = {
+      type: "output",
+      threadId: "thread-1",
+      createdAt: new Date().toISOString(),
+      data: "manual test output\n",
+    };
+    terminalManager.emit("event", manualEvent);
+
+    const push = (await waitForMessage(ws)) as WsPush;
+    expect(push.type).toBe("push");
+    expect(push.channel).toBe(WS_CHANNELS.terminalEvent);
+    expect((push.data as TerminalEvent).type).toBe("output");
+  });
+
+  it("detaches terminal event listener on stop for injected manager", async () => {
+    const terminalManager = new MockTerminalManager();
+    server = createTestServer({
+      cwd: "/test",
+      terminalManager: terminalManager as unknown as TerminalManager,
+    });
+    await server.start();
+
+    expect(terminalManager.listenerCount("event")).toBe(1);
+
+    await server.stop();
+    server = null;
+
+    expect(terminalManager.listenerCount("event")).toBe(0);
+  });
+
+  it("returns validation errors for invalid terminal open params", async () => {
+    server = createTestServer({ cwd: "/test" });
+    await server.start();
+    const addr = server.httpServer.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.terminalOpen, {
+      threadId: "",
+      cwd: "",
+      cols: 1,
+      rows: 1,
+    });
+    expect(response.error).toBeDefined();
   });
 
   it("handles invalid JSON gracefully", async () => {

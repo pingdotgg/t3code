@@ -54,6 +54,21 @@ async function initRepoWithCommit(cwd: string): Promise<void> {
 // ── Tests ──
 
 describe("git integration", () => {
+  describe("runTerminalCommand", () => {
+    it("caps captured output when maxOutputBytes is exceeded", async () => {
+      const result = await runTerminalCommand({
+        command: `node -e "process.stdout.write('x'.repeat(2000))"`,
+        cwd: process.cwd(),
+        timeoutMs: 10_000,
+        maxOutputBytes: 128,
+      });
+
+      expect(result.code).toBe(0);
+      expect(result.stdout.length).toBeLessThanOrEqual(128);
+      expect(result.stderr).toContain("output truncated");
+    });
+  });
+
   // ── initGitRepo ──
 
   describe("initGitRepo", () => {

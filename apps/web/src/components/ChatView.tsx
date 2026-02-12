@@ -37,7 +37,9 @@ import {
 } from "../session-logic";
 import { useStore } from "../store";
 import BranchToolbar from "./BranchToolbar";
+import { isTerminalToggleShortcut } from "../terminal-shortcuts";
 import ChatMarkdown from "./ChatMarkdown";
+import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
   if (!duration) return formatTimestamp(createdAt);
@@ -158,14 +160,17 @@ export default function ChatView() {
   const [respondingRequestIds, setRespondingRequestIds] = useState<string[]>([]);
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [nowTick, setNowTick] = useState(() => Date.now());
+  const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const editorMenuRef = useRef<HTMLDivElement>(null);
   const gitMenuRef = useRef<HTMLDivElement>(null);
   const latestGitCwdRef = useRef<string | null>(null);
+  const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   const activeThread = state.threads.find((t) => t.id === state.activeThreadId);
+  const activeThreadId = activeThread?.id ?? null;
   const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
   const selectedModel = resolveModelSlug(
     activeThread?.model ?? activeProject?.model ?? DEFAULT_MODEL,
@@ -388,6 +393,25 @@ export default function ChatView() {
     (activeThread.messages.length > 0 ||
       (activeThread.session !== null && activeThread.session.status !== "closed")),
   );
+  const terminalShortcutHint = navigator.platform.includes("Mac")
+    ? "\u2318J"
+    : "Ctrl+J";
+  const focusComposer = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.focus();
+    const cursor = textarea.value.length;
+    textarea.setSelectionRange(cursor, cursor);
+  }, []);
+  const toggleTerminalVisibility = useCallback(() => {
+    if (!activeThreadId) return;
+    const isOpen = Boolean(activeThread?.terminalOpen);
+    dispatch({
+      type: "SET_THREAD_TERMINAL_OPEN",
+      threadId: activeThreadId,
+      open: !isOpen,
+    });
+  }, [activeThread?.terminalOpen, activeThreadId, dispatch]);
 
   const handleRuntimeModeChange = async (mode: "approval-required" | "full-access") => {
     if (mode === state.runtimeMode) return;
@@ -549,6 +573,37 @@ export default function ChatView() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [api, activeProject, activeThread, lastEditor]);
+
+  useEffect(() => {
+    if (!activeThreadId) return;
+    const previous = terminalOpenByThreadRef.current[activeThreadId] ?? false;
+    const current = Boolean(activeThread?.terminalOpen);
+
+    if (!previous && current) {
+      setTerminalFocusRequestId((value) => value + 1);
+    } else if (previous && !current) {
+      terminalOpenByThreadRef.current[activeThreadId] = current;
+      const frame = window.requestAnimationFrame(() => {
+        focusComposer();
+      });
+      return () => {
+        window.cancelAnimationFrame(frame);
+      };
+    }
+
+    terminalOpenByThreadRef.current[activeThreadId] = current;
+  }, [activeThread?.terminalOpen, activeThreadId, focusComposer]);
+
+  useEffect(() => {
+    const handler = (event: globalThis.KeyboardEvent) => {
+      if (!activeThreadId) return;
+      if (!isTerminalToggleShortcut(event)) return;
+      event.preventDefault();
+      toggleTerminalVisibility();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [activeThreadId, toggleTerminalVisibility]);
 
   const openInEditor = (editorId: EditorId) => {
     if (!api || !activeProject) return;
@@ -758,7 +813,7 @@ export default function ChatView() {
   // Empty state: no active thread
   if (!activeThread) {
     return (
-      <div className="flex flex-1 flex-col bg-background text-muted-foreground/40">
+      <div className="flex min-h-0 flex-1 flex-col bg-background text-muted-foreground/40">
         {isElectron && <div className="drag-region h-[52px] shrink-0" />}
         <div className="flex flex-1 items-center justify-center">
           <div className="text-center">
@@ -770,7 +825,7 @@ export default function ChatView() {
   }
 
   return (
-    <div className="flex flex-1 flex-col bg-background">
+    <div className="flex min-h-0 flex-1 flex-col bg-background">
       {/* Top bar */}
       <header
         className={`flex items-center justify-between border-b border-border px-5 pb-3 ${isElectron ? "drag-region pt-[28px]" : "pt-3"}`}
@@ -875,6 +930,17 @@ export default function ChatView() {
           <button
             type="button"
             className={`rounded-md px-2 py-1 text-[10px] transition-colors duration-150 ${
+              activeThread.terminalOpen
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground/40 hover:text-muted-foreground/60"
+            }`}
+            onClick={toggleTerminalVisibility}
+          >
+            Terminal <span className="text-muted-foreground/50">{terminalShortcutHint}</span>
+          </button>
+          <button
+            type="button"
+            className={`rounded-md px-2 py-1 text-[10px] transition-colors duration-150 ${
               state.diffOpen
                 ? "bg-accent text-foreground"
                 : "text-muted-foreground/40 hover:text-muted-foreground/60"
@@ -962,7 +1028,7 @@ export default function ChatView() {
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-5 py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         {activeThread.messages.length === 0 && !isWorking ? (
           <div className="flex h-full items-center justify-center">
             <p className="text-sm text-muted-foreground/30">
@@ -1383,6 +1449,31 @@ export default function ChatView() {
       </div>
 
       <BranchToolbar envMode={envMode} onEnvModeChange={setEnvMode} envLocked={envLocked} />
+
+      {activeThread.terminalOpen && api && activeProject && (
+        <ThreadTerminalDrawer
+          key={activeThread.id}
+          api={api}
+          threadId={activeThread.id}
+          cwd={activeProject.cwd}
+          height={activeThread.terminalHeight}
+          focusRequestId={terminalFocusRequestId}
+          onHeightChange={(height) =>
+            dispatch({
+              type: "SET_THREAD_TERMINAL_HEIGHT",
+              threadId: activeThread.id,
+              height,
+            })
+          }
+          onThreadExited={() =>
+            dispatch({
+              type: "SET_THREAD_TERMINAL_OPEN",
+              threadId: activeThread.id,
+              open: false,
+            })
+          }
+        />
+      )}
     </div>
   );
 }

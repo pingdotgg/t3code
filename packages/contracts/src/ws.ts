@@ -29,6 +29,14 @@ export const WS_METHODS = {
   gitCheckout: "git.checkout",
   gitInit: "git.init",
 
+  // Terminal methods
+  terminalOpen: "terminal.open",
+  terminalWrite: "terminal.write",
+  terminalResize: "terminal.resize",
+  terminalClear: "terminal.clear",
+  terminalRestart: "terminal.restart",
+  terminalClose: "terminal.close",
+
   // Server meta
   serverGetConfig: "server.getConfig",
 } as const;
@@ -37,6 +45,7 @@ export const WS_METHODS = {
 
 export const WS_CHANNELS = {
   providerEvent: "providers.event",
+  terminalEvent: "terminal.event",
   serverWelcome: "server.welcome",
 } as const;
 

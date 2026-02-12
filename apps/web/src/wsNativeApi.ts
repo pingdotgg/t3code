@@ -62,13 +62,14 @@ export function createWsNativeApi(): NativeApi {
       },
     },
     terminal: {
-      run: async () => ({
-        stdout: "",
-        stderr: "Terminal not available in web mode",
-        code: 1,
-        signal: null,
-        timedOut: false,
-      }),
+      open: (input) => transport.request(WS_METHODS.terminalOpen, input),
+      write: (input) => transport.request(WS_METHODS.terminalWrite, input),
+      resize: (input) => transport.request(WS_METHODS.terminalResize, input),
+      clear: (input) => transport.request(WS_METHODS.terminalClear, input),
+      restart: (input) => transport.request(WS_METHODS.terminalRestart, input),
+      close: (input) => transport.request(WS_METHODS.terminalClose, input),
+      onEvent: (callback) =>
+        transport.subscribe(WS_CHANNELS.terminalEvent, callback as (data: unknown) => void),
     },
     agent: {
       spawn: async () => "",

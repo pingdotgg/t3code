@@ -29,7 +29,15 @@ import type {
   ProjectListResult,
   ProjectRemoveInput,
 } from "./project";
-import type { TerminalCommandInput, TerminalCommandResult } from "./terminal";
+import type {
+  TerminalCloseInput,
+  TerminalEvent,
+  TerminalOpenInput,
+  TerminalResizeInput,
+  TerminalSessionSnapshot,
+  TerminalThreadInput,
+  TerminalWriteInput,
+} from "./terminal";
 import type { NewTodoInput, Todo } from "./todo";
 
 export const EDITORS = [
@@ -50,7 +58,13 @@ export interface NativeApi {
     pickFolder: () => Promise<string | null>;
   };
   terminal: {
-    run: (input: TerminalCommandInput) => Promise<TerminalCommandResult>;
+    open: (input: TerminalOpenInput) => Promise<TerminalSessionSnapshot>;
+    write: (input: TerminalWriteInput) => Promise<void>;
+    resize: (input: TerminalResizeInput) => Promise<void>;
+    clear: (input: TerminalThreadInput) => Promise<void>;
+    restart: (input: TerminalOpenInput) => Promise<TerminalSessionSnapshot>;
+    close: (input: TerminalCloseInput) => Promise<void>;
+    onEvent: (callback: (event: TerminalEvent) => void) => () => void;
   };
   agent: {
     spawn: (config: AgentConfig) => Promise<string>;

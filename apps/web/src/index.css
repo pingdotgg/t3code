@@ -229,6 +229,20 @@ input {
   background: rgba(255, 255, 255, 0.18);
 }
 
+/* Terminal drawer scrollbar parity with chat */
+.thread-terminal-drawer .xterm .xterm-scrollable-element > .scrollbar.vertical {
+  width: 6px !important;
+}
+
+.thread-terminal-drawer .xterm .xterm-scrollable-element > .scrollbar > .slider {
+  border-radius: 3px;
+}
+
+.thread-terminal-drawer .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  width: 6px !important;
+  left: 0 !important;
+}
+
 /* Reasoning select -- clickable label surface */
 label:has(> select#reasoning-effort) {
   position: relative;

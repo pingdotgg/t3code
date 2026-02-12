@@ -2,6 +2,7 @@ import type { ProviderEvent, ProviderSession } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import { type AppState, reducer } from "./store";
+import { DEFAULT_THREAD_TERMINAL_HEIGHT } from "./types";
 import type { Thread } from "./types";
 
 function makeSession(overrides: Partial<ProviderSession> = {}): ProviderSession {
@@ -34,6 +35,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     projectId: "project-1",
     title: "Thread",
     model: "gpt-5.3-codex",
+    terminalOpen: false,
+    terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
     session: makeSession(),
     messages: [],
     events: [],
@@ -77,6 +80,35 @@ describe("store reducer thread continuity", () => {
     });
 
     expect(next.threads[0]?.codexThreadId).toBe("thr_123");
+  });
+
+  it("toggles terminal open state per thread", () => {
+    const state = makeState(makeThread({ terminalOpen: false }));
+    const next = reducer(state, {
+      type: "TOGGLE_THREAD_TERMINAL",
+      threadId: "thread-local-1",
+    });
+    expect(next.threads[0]?.terminalOpen).toBe(true);
+  });
+
+  it("sets terminal open state per thread", () => {
+    const state = makeState(makeThread({ terminalOpen: true }));
+    const next = reducer(state, {
+      type: "SET_THREAD_TERMINAL_OPEN",
+      threadId: "thread-local-1",
+      open: false,
+    });
+    expect(next.threads[0]?.terminalOpen).toBe(false);
+  });
+
+  it("sets terminal height per thread", () => {
+    const state = makeState(makeThread({ terminalHeight: 280 }));
+    const next = reducer(state, {
+      type: "SET_THREAD_TERMINAL_HEIGHT",
+      threadId: "thread-local-1",
+      height: 360,
+    });
+    expect(next.threads[0]?.terminalHeight).toBe(360);
   });
 
   it("backfills codexThreadId from routed provider events", () => {

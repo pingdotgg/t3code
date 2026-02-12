@@ -9,6 +9,7 @@ import {
   EDITORS,
   WS_CHANNELS,
   WS_METHODS,
+  type TerminalEvent,
   type WsPush,
   type WsRequest,
   type WsResponse,
@@ -28,6 +29,7 @@ import {
   listGitBranches,
   removeGitWorktree,
 } from "./git";
+import { TerminalManager } from "./terminalManager";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -53,6 +55,7 @@ export interface ServerOptions {
   logWebSocketEvents?: boolean | undefined;
   projectRegistry?: ProjectRegistry | undefined;
   gitManager?: GitManager | undefined;
+  terminalManager?: TerminalManager | undefined;
   authToken?: string | undefined;
 }
 
@@ -74,9 +77,11 @@ export function createServer(options: ServerOptions) {
     logWebSocketEvents: explicitLogWsEvents,
     projectRegistry: providedRegistry,
     gitManager: providedGitManager,
+    terminalManager: providedTerminalManager,
     authToken,
   } = options;
   const providerManager = new ProviderManager();
+  const terminalManager = providedTerminalManager ?? new TerminalManager();
   const projectRegistry =
     providedRegistry ?? new ProjectRegistry(path.join(os.homedir(), ".t3", "userdata"));
   const gitManager = providedGitManager ?? new GitManager();
@@ -111,6 +116,24 @@ export function createServer(options: ServerOptions) {
     }
     logOutgoingPush(push, recipients);
   });
+
+  const onTerminalEvent = (event: TerminalEvent) => {
+    const push: WsPush = {
+      type: "push",
+      channel: WS_CHANNELS.terminalEvent,
+      data: event,
+    };
+    const message = JSON.stringify(push);
+    let recipients = 0;
+    for (const client of clients) {
+      if (client.readyState === client.OPEN) {
+        client.send(message);
+        recipients += 1;
+      }
+    }
+    logOutgoingPush(push, recipients);
+  };
+  terminalManager.on("event", onTerminalEvent);
 
   // HTTP server — serves static files or redirects to Vite dev server
   const httpServer = http.createServer((req, res) => {
@@ -339,6 +362,28 @@ export function createServer(options: ServerOptions) {
       case WS_METHODS.gitInit:
         return initGitRepo(request.params as never);
 
+      case WS_METHODS.terminalOpen:
+        return terminalManager.open(request.params as never);
+
+      case WS_METHODS.terminalWrite:
+        await terminalManager.write(request.params as never);
+        return undefined;
+
+      case WS_METHODS.terminalResize:
+        await terminalManager.resize(request.params as never);
+        return undefined;
+
+      case WS_METHODS.terminalClear:
+        await terminalManager.clear(request.params as never);
+        return undefined;
+
+      case WS_METHODS.terminalRestart:
+        return terminalManager.restart(request.params as never);
+
+      case WS_METHODS.terminalClose:
+        await terminalManager.close(request.params as never);
+        return undefined;
+
       case WS_METHODS.serverGetConfig:
         return { cwd };
 
@@ -367,8 +412,10 @@ export function createServer(options: ServerOptions) {
   }
 
   async function stop(): Promise<void> {
+    terminalManager.off("event", onTerminalEvent);
     providerManager.stopAll();
     providerManager.dispose();
+    terminalManager.dispose();
 
     for (const client of clients) {
       client.close();

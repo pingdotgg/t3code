@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_MODEL } from "./model-logic";
 import { hydratePersistedState, toPersistedState } from "./persistenceSchema";
+import { DEFAULT_THREAD_TERMINAL_HEIGHT } from "./types";
 import type { Thread } from "./types";
 
 describe("hydratePersistedState", () => {
@@ -47,6 +48,8 @@ describe("hydratePersistedState", () => {
     expect(hydrated?.projects[0]?.model).toBe(DEFAULT_MODEL);
     expect(hydrated?.threads[0]?.model).toBe(DEFAULT_MODEL);
     expect(hydrated?.threads[0]?.codexThreadId).toBeNull();
+    expect(hydrated?.threads[0]?.terminalOpen).toBe(false);
+    expect(hydrated?.threads[0]?.terminalHeight).toBe(DEFAULT_THREAD_TERMINAL_HEIGHT);
     expect(hydrated?.threads[0]?.messages[0]?.streaming).toBe(false);
     expect(hydrated?.runtimeMode).toBe("full-access");
   });
@@ -87,6 +90,8 @@ describe("hydratePersistedState", () => {
     expect(hydrated).not.toBeNull();
     expect(hydrated?.threads.map((thread) => thread.id)).toEqual(["t-1"]);
     expect(hydrated?.threads[0]?.codexThreadId).toBeNull();
+    expect(hydrated?.threads[0]?.terminalOpen).toBe(false);
+    expect(hydrated?.threads[0]?.terminalHeight).toBe(DEFAULT_THREAD_TERMINAL_HEIGHT);
     expect(hydrated?.activeThreadId).toBe("t-1");
     expect(hydrated?.runtimeMode).toBe("full-access");
   });
@@ -111,16 +116,84 @@ describe("hydratePersistedState", () => {
     const hydrated = hydratePersistedState(payload, false);
     expect(hydrated?.runtimeMode).toBe("approval-required");
   });
+
+  it("hydrates terminal fields from v6 payload", () => {
+    const payload = JSON.stringify({
+      version: 6,
+      runtimeMode: "full-access",
+      projects: [
+        {
+          id: "p-1",
+          name: "Project",
+          cwd: "/tmp/project",
+          model: "gpt-5.3-codex",
+          expanded: true,
+        },
+      ],
+      threads: [
+        {
+          id: "t-1",
+          codexThreadId: null,
+          projectId: "p-1",
+          title: "Thread",
+          model: "gpt-5.3-codex",
+          terminalOpen: true,
+          terminalHeight: 360,
+          messages: [],
+          createdAt: "2026-02-08T10:00:00.000Z",
+        },
+      ],
+      activeThreadId: "t-1",
+    });
+
+    const hydrated = hydratePersistedState(payload, false);
+    expect(hydrated?.threads[0]?.terminalOpen).toBe(true);
+    expect(hydrated?.threads[0]?.terminalHeight).toBe(360);
+  });
+
+  it("defaults terminalHeight when hydrating v5 payloads", () => {
+    const payload = JSON.stringify({
+      version: 5,
+      runtimeMode: "full-access",
+      projects: [
+        {
+          id: "p-1",
+          name: "Project",
+          cwd: "/tmp/project",
+          model: "gpt-5.3-codex",
+          expanded: true,
+        },
+      ],
+      threads: [
+        {
+          id: "t-1",
+          codexThreadId: null,
+          projectId: "p-1",
+          title: "Thread",
+          model: "gpt-5.3-codex",
+          terminalOpen: true,
+          messages: [],
+          createdAt: "2026-02-08T10:00:00.000Z",
+        },
+      ],
+      activeThreadId: "t-1",
+    });
+
+    const hydrated = hydratePersistedState(payload, false);
+    expect(hydrated?.threads[0]?.terminalHeight).toBe(DEFAULT_THREAD_TERMINAL_HEIGHT);
+  });
 });
 
 describe("toPersistedState", () => {
-  it("writes v4 payload and strips non-persisted thread fields", () => {
+  it("writes v6 payload and strips non-persisted thread fields", () => {
     const thread: Thread = {
       id: "t-1",
       codexThreadId: "thr_1",
       projectId: "p-1",
       title: "Thread",
       model: "gpt-5.3-codex",
+      terminalOpen: true,
+      terminalHeight: 320,
       session: null,
       messages: [
         {
@@ -153,7 +226,7 @@ describe("toPersistedState", () => {
       runtimeMode: "full-access",
     });
 
-    expect(persisted.version).toBe(4);
+    expect(persisted.version).toBe(6);
     expect(persisted.runtimeMode).toBe("full-access");
     expect(persisted.threads[0]).toEqual({
       id: "t-1",
@@ -161,6 +234,8 @@ describe("toPersistedState", () => {
       projectId: "p-1",
       title: "Thread",
       model: "gpt-5.3-codex",
+      terminalOpen: true,
+      terminalHeight: 320,
       messages: thread.messages,
       createdAt: thread.createdAt,
       branch: null,

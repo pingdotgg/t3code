@@ -12,7 +12,12 @@ import type { ProviderEvent, ProviderSession } from "@t3tools/contracts";
 import { resolveModelSlug } from "./model-logic";
 import { hydratePersistedState, toPersistedState } from "./persistenceSchema";
 import { applyEventToMessages, asObject, asString, evolveSession } from "./session-logic";
-import { DEFAULT_RUNTIME_MODE, type Project, type RuntimeMode, type Thread } from "./types";
+import {
+  DEFAULT_RUNTIME_MODE,
+  type Project,
+  type RuntimeMode,
+  type Thread,
+} from "./types";
 
 // ── Actions ──────────────────────────────────────────────────────────
 
@@ -22,6 +27,9 @@ type Action =
   | { type: "TOGGLE_PROJECT"; projectId: string }
   | { type: "ADD_THREAD"; thread: Thread }
   | { type: "SET_ACTIVE_THREAD"; threadId: string }
+  | { type: "TOGGLE_THREAD_TERMINAL"; threadId: string }
+  | { type: "SET_THREAD_TERMINAL_OPEN"; threadId: string; open: boolean }
+  | { type: "SET_THREAD_TERMINAL_HEIGHT"; threadId: string; height: number }
   | { type: "TOGGLE_DIFF" }
   | {
       type: "APPLY_EVENT";
@@ -52,8 +60,10 @@ export interface AppState {
   diffOpen: boolean;
 }
 
-const PERSISTED_STATE_KEY = "t3code:renderer-state:v4";
+const PERSISTED_STATE_KEY = "t3code:renderer-state:v6";
 const LEGACY_PERSISTED_STATE_KEYS = [
+  "t3code:renderer-state:v5",
+  "t3code:renderer-state:v4",
   "t3code:renderer-state:v3",
   "codething:renderer-state:v4",
   "codething:renderer-state:v3",
@@ -76,15 +86,16 @@ function readPersistedState(): AppState {
 
   try {
     const rawCurrent = window.localStorage.getItem(PERSISTED_STATE_KEY);
-    const [legacyV3Key, legacyV2Key, legacyV1Key] = LEGACY_PERSISTED_STATE_KEYS;
-    const rawLegacyV3 = window.localStorage.getItem(legacyV3Key);
-    const rawLegacyV2 = window.localStorage.getItem(legacyV2Key);
-    const rawLegacyV1 = window.localStorage.getItem(legacyV1Key);
-    const raw = rawCurrent ?? rawLegacyV3 ?? rawLegacyV2 ?? rawLegacyV1;
+    const legacyValues = LEGACY_PERSISTED_STATE_KEYS.map((key) =>
+      window.localStorage.getItem(key),
+    );
+    const rawLegacy = legacyValues.find((value) => value !== null) ?? null;
+    const raw = rawCurrent ?? rawLegacy;
     if (!raw) return initialState;
+    const rawCodethingV1 = window.localStorage.getItem("codething:renderer-state:v1");
     const hydrated = hydratePersistedState(
       raw,
-      !rawCurrent && !rawLegacyV3 && !rawLegacyV2 && Boolean(rawLegacyV1),
+      !rawCurrent && raw === rawCodethingV1,
     );
     if (!hydrated) return initialState;
 
@@ -282,6 +293,33 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case "SET_ACTIVE_THREAD":
       return { ...state, activeThreadId: action.threadId };
+
+    case "TOGGLE_THREAD_TERMINAL":
+      return {
+        ...state,
+        threads: updateThread(state.threads, action.threadId, (t) => ({
+          ...t,
+          terminalOpen: !t.terminalOpen,
+        })),
+      };
+
+    case "SET_THREAD_TERMINAL_OPEN":
+      return {
+        ...state,
+        threads: updateThread(state.threads, action.threadId, (t) => ({
+          ...t,
+          terminalOpen: action.open,
+        })),
+      };
+
+    case "SET_THREAD_TERMINAL_HEIGHT":
+      return {
+        ...state,
+        threads: updateThread(state.threads, action.threadId, (t) => ({
+          ...t,
+          terminalHeight: action.height,
+        })),
+      };
 
     case "TOGGLE_DIFF":
       return { ...state, diffOpen: !state.diffOpen };

@@ -16,9 +16,22 @@ import {
   type GitRemoveWorktreeInput,
   type GitStatusInput,
   type GitStatusResult,
-  type TerminalCommandInput,
-  type TerminalCommandResult,
 } from "@t3tools/contracts";
+
+export interface TerminalCommandInput {
+  command: string;
+  cwd: string;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+}
+
+export interface TerminalCommandResult {
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  timedOut: boolean;
+}
 
 export interface GitStatusDetails extends GitStatusResult {
   upstreamRef: string | null;
@@ -47,6 +60,36 @@ interface RunGitOptions {
   allowNonZeroExit?: boolean | undefined;
 }
 
+const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
+
+function appendChunkWithinLimit(
+  target: string,
+  currentBytes: number,
+  chunk: Buffer,
+  maxBytes: number,
+): {
+  next: string;
+  nextBytes: number;
+  truncated: boolean;
+} {
+  const remaining = maxBytes - currentBytes;
+  if (remaining <= 0) {
+    return { next: target, nextBytes: currentBytes, truncated: true };
+  }
+  if (chunk.length <= remaining) {
+    return {
+      next: `${target}${chunk.toString()}`,
+      nextBytes: currentBytes + chunk.length,
+      truncated: false,
+    };
+  }
+  return {
+    next: `${target}${chunk.subarray(0, remaining).toString()}`,
+    nextBytes: currentBytes + remaining,
+    truncated: true,
+  };
+}
+
 /** Spawn git directly with an argv array — no shell, no quoting needed. */
 function runGit(args: readonly string[], cwd: string, timeoutMs = 30_000): Promise<TerminalCommandResult> {
   return new Promise((resolve, reject) => {
@@ -56,9 +99,13 @@ function runGit(args: readonly string[], cwd: string, timeoutMs = 30_000): Promi
       stdio: ["ignore", "pipe", "pipe"],
     });
 
+    const maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES;
     let stdout = "";
     let stderr = "";
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
     let timedOut = false;
+    let outputTruncated = false;
 
     const timeout = setTimeout(() => {
       timedOut = true;
@@ -69,10 +116,16 @@ function runGit(args: readonly string[], cwd: string, timeoutMs = 30_000): Promi
     }, timeoutMs);
 
     child.stdout?.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
+      const appended = appendChunkWithinLimit(stdout, stdoutBytes, chunk, maxOutputBytes);
+      stdout = appended.next;
+      stdoutBytes = appended.nextBytes;
+      outputTruncated = outputTruncated || appended.truncated;
     });
     child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      const appended = appendChunkWithinLimit(stderr, stderrBytes, chunk, maxOutputBytes);
+      stderr = appended.next;
+      stderrBytes = appended.nextBytes;
+      outputTruncated = outputTruncated || appended.truncated;
     });
     child.on("error", (error) => {
       clearTimeout(timeout);
@@ -80,6 +133,9 @@ function runGit(args: readonly string[], cwd: string, timeoutMs = 30_000): Promi
     });
     child.on("close", (code, signal) => {
       clearTimeout(timeout);
+      if (outputTruncated) {
+        stderr = `${stderr}\n[output truncated at ${maxOutputBytes} bytes]`;
+      }
       resolve({ stdout, stderr, code: code ?? null, signal: signal ?? null, timedOut });
     });
   });
@@ -309,6 +365,7 @@ export class GitCoreService {
 export async function runTerminalCommand(
   input: TerminalCommandInput,
 ): Promise<TerminalCommandResult> {
+  const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const shellPath =
     process.platform === "win32"
       ? (process.env.ComSpec ?? "cmd.exe")
@@ -326,7 +383,10 @@ export async function runTerminalCommand(
 
     let stdout = "";
     let stderr = "";
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
     let timedOut = false;
+    let outputTruncated = false;
 
     const timeout = setTimeout(() => {
       timedOut = true;
@@ -339,11 +399,17 @@ export async function runTerminalCommand(
     }, input.timeoutMs ?? 30_000);
 
     child.stdout?.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
+      const appended = appendChunkWithinLimit(stdout, stdoutBytes, chunk, maxOutputBytes);
+      stdout = appended.next;
+      stdoutBytes = appended.nextBytes;
+      outputTruncated = outputTruncated || appended.truncated;
     });
 
     child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      const appended = appendChunkWithinLimit(stderr, stderrBytes, chunk, maxOutputBytes);
+      stderr = appended.next;
+      stderrBytes = appended.nextBytes;
+      outputTruncated = outputTruncated || appended.truncated;
     });
 
     child.on("error", (error) => {
@@ -353,6 +419,9 @@ export async function runTerminalCommand(
 
     child.on("close", (code, signal) => {
       clearTimeout(timeout);
+      if (outputTruncated) {
+        stderr = `${stderr}\n[output truncated at ${maxOutputBytes} bytes]`;
+      }
       resolve({
         stdout,
         stderr,
@@ -387,8 +456,8 @@ export async function listGitBranches(input: GitListBranchesInput): Promise<GitL
     let currentPath: string | null = null;
     for (const line of worktreeList.stdout.split("\n")) {
       if (line.startsWith("worktree ")) {
-        currentPath = line.slice("worktree ".length);
-        if (!fs.existsSync(currentPath)) currentPath = null;
+        const candidatePath = line.slice("worktree ".length);
+        currentPath = fs.existsSync(candidatePath) ? candidatePath : null;
       } else if (line.startsWith("branch refs/heads/") && currentPath) {
         worktreeMap.set(line.slice("branch refs/heads/".length), currentPath);
       } else if (line === "") {

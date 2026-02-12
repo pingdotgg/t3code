@@ -5,7 +5,7 @@ import { useTheme } from "../hooks/useTheme";
 import { DEFAULT_MODEL } from "../model-logic";
 import { readNativeApi } from "../session-logic";
 import { useStore } from "../store";
-import type { Project } from "../types";
+import { DEFAULT_THREAD_TERMINAL_HEIGHT, type Project } from "../types";
 
 const THEME_CYCLE = { system: "light", light: "dark", dark: "system" } as const;
 function formatRelativeTime(iso: string): string {
@@ -52,6 +52,8 @@ export default function Sidebar() {
           projectId,
           title: "New thread",
           model: state.projects.find((p) => p.id === projectId)?.model ?? DEFAULT_MODEL,
+          terminalOpen: false,
+          terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
           session: null,
           messages: [],
           events: [],
@@ -180,6 +182,15 @@ export default function Sidebar() {
         } catch {
           // Session may already be stopped
         }
+      }
+
+      try {
+        await api.terminal.close({
+          threadId,
+          deleteHistory: true,
+        });
+      } catch {
+        // Terminal may already be closed
       }
 
       dispatch({ type: "DELETE_THREAD", threadId });

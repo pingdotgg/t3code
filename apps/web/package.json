@@ -11,6 +11,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "@t3tools/contracts": "workspace:*",
     "@tanstack/react-query": "^5.90.0",
     "highlight.js": "^11.11.1",

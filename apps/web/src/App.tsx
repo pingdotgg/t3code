@@ -8,6 +8,7 @@ import { isElectron } from "./env";
 import { DEFAULT_MODEL } from "./model-logic";
 import { readNativeApi } from "./session-logic";
 import { StoreProvider, useStore } from "./store";
+import { DEFAULT_THREAD_TERMINAL_HEIGHT } from "./types";
 import { onServerWelcome } from "./wsNativeApi";
 
 function EventRouter() {
@@ -22,6 +23,18 @@ function EventRouter() {
         type: "APPLY_EVENT",
         event,
         activeAssistantItemRef,
+      });
+    });
+  }, [api, dispatch]);
+
+  useEffect(() => {
+    if (!api) return;
+    return api.terminal.onEvent((event) => {
+      if (event.type !== "exited") return;
+      dispatch({
+        type: "SET_THREAD_TERMINAL_OPEN",
+        threadId: event.threadId,
+        open: false,
       });
     });
   }, [api, dispatch]);
@@ -78,6 +91,8 @@ function AutoProjectBootstrap() {
           projectId,
           title: "New thread",
           model: DEFAULT_MODEL,
+          terminalOpen: false,
+          terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
           session: null,
           messages: [],
           events: [],

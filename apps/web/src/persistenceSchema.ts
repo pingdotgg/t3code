@@ -1,7 +1,13 @@
 import { z } from "zod";
 
 import { DEFAULT_MODEL, resolveModelSlug } from "./model-logic";
-import { DEFAULT_RUNTIME_MODE, type Project, type RuntimeMode, type Thread } from "./types";
+import {
+  DEFAULT_THREAD_TERMINAL_HEIGHT,
+  DEFAULT_RUNTIME_MODE,
+  type Project,
+  type RuntimeMode,
+  type Thread,
+} from "./types";
 
 const LEGACY_DEFAULT_MODEL = "gpt-5.2-codex";
 
@@ -27,6 +33,10 @@ const persistedThreadSchema = z.object({
   projectId: z.string().min(1),
   title: z.string().min(1),
   model: z.string().min(1),
+  terminalOpen: z.boolean().default(false),
+  terminalHeight: z.number().int().min(120).max(4_096).default(
+    DEFAULT_THREAD_TERMINAL_HEIGHT,
+  ),
   messages: z.array(persistedMessageSchema),
   createdAt: z.string().min(1),
   branch: z.string().min(1).nullable().optional(),
@@ -59,7 +69,19 @@ export const persistedStateV4Schema = persistedStateBodySchema.extend({
   version: z.literal(4).optional(),
 });
 
+export const persistedStateV6Schema = persistedStateBodySchema.extend({
+  runtimeMode: runtimeModeSchema.default(DEFAULT_RUNTIME_MODE),
+  version: z.literal(6).optional(),
+});
+
+export const persistedStateV5Schema = persistedStateBodySchema.extend({
+  runtimeMode: runtimeModeSchema.default(DEFAULT_RUNTIME_MODE),
+  version: z.literal(5).optional(),
+});
+
 const persistedStateSchema = z.union([
+  persistedStateV6Schema,
+  persistedStateV5Schema,
   persistedStateV4Schema,
   persistedStateV3Schema,
   persistedStateV2Schema,
@@ -101,6 +123,8 @@ function hydrateThread(
     projectId: thread.projectId,
     title: thread.title,
     model: resolveModelSlug(maybeMigrateLegacyModel(thread.model, isLegacyPayload)),
+    terminalOpen: thread.terminalOpen ?? false,
+    terminalHeight: thread.terminalHeight ?? DEFAULT_THREAD_TERMINAL_HEIGHT,
     session: null,
     messages: thread.messages.map((message) => ({
       ...message,
@@ -153,9 +177,9 @@ export function hydratePersistedState(
 
 export function toPersistedState(
   state: PersistedStoreSnapshot,
-): z.infer<typeof persistedStateV4Schema> {
+): z.infer<typeof persistedStateV6Schema> {
   return {
-    version: 4,
+    version: 6,
     projects: state.projects,
     threads: state.threads.map((thread) => ({
       id: thread.id,
@@ -163,6 +187,8 @@ export function toPersistedState(
       projectId: thread.projectId,
       title: thread.title,
       model: thread.model,
+      terminalOpen: thread.terminalOpen,
+      terminalHeight: thread.terminalHeight,
       messages: thread.messages,
       createdAt: thread.createdAt,
       branch: thread.branch,
