@@ -268,14 +268,16 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         text_elements: [],
       });
     }
-    for (const image of input.images ?? []) {
-      turnInput.push({
-        type: "image",
-        url: image.dataUrl,
-      });
+    for (const attachment of input.attachments ?? []) {
+      if (attachment.type === "image") {
+        turnInput.push({
+          type: "image",
+          url: attachment.dataUrl,
+        });
+      }
     }
     if (turnInput.length === 0) {
-      throw new Error("Turn input must include text or image attachments.");
+      throw new Error("Turn input must include text or attachments.");
     }
 
     const turnStartParams: {

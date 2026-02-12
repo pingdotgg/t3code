@@ -114,8 +114,9 @@ describe("sendTurn", () => {
     const result = await manager.sendTurn({
       sessionId: "sess_1",
       input: "Inspect this image",
-      images: [
+      attachments: [
         {
+          type: "image",
           name: "error.png",
           mimeType: "image/png",
           sizeBytes: 1_024,
@@ -158,8 +159,9 @@ describe("sendTurn", () => {
 
     await manager.sendTurn({
       sessionId: "sess_1",
-      images: [
+      attachments: [
         {
+          type: "image",
           name: "diagram.png",
           mimeType: "image/png",
           sizeBytes: 256,
@@ -186,6 +188,6 @@ describe("sendTurn", () => {
       manager.sendTurn({
         sessionId: "sess_1",
       }),
-    ).rejects.toThrow("Turn input must include text or image attachments.");
+    ).rejects.toThrow("Turn input must include text or attachments.");
   });
 });

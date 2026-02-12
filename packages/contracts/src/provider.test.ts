@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  PROVIDER_SEND_TURN_MAX_IMAGES,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   providerEventSchema,
   providerRespondToRequestInputSchema,
   providerSendTurnInputSchema,
@@ -41,7 +41,7 @@ describe("providerSendTurnInputSchema", () => {
       effort: "  high  ",
     });
     expect(parsed.input).toBe("summarize this repo");
-    expect(parsed.images).toEqual([]);
+    expect(parsed.attachments).toEqual([]);
     expect(parsed.model).toBe("gpt-5.2-codex");
     expect(parsed.effort).toBe("high");
   });
@@ -49,8 +49,9 @@ describe("providerSendTurnInputSchema", () => {
   it("accepts image-only turns", () => {
     const parsed = providerSendTurnInputSchema.parse({
       sessionId: "sess_1",
-      images: [
+      attachments: [
         {
+          type: "image",
           name: "diagram.png",
           mimeType: "image/png",
           sizeBytes: 1_024,
@@ -59,10 +60,10 @@ describe("providerSendTurnInputSchema", () => {
       ],
     });
     expect(parsed.input).toBeUndefined();
-    expect(parsed.images).toHaveLength(1);
+    expect(parsed.attachments).toHaveLength(1);
   });
 
-  it("rejects turns with neither text nor images", () => {
+  it("rejects turns with neither text nor attachments", () => {
     expect(() =>
       providerSendTurnInputSchema.parse({
         sessionId: "sess_1",
@@ -74,8 +75,9 @@ describe("providerSendTurnInputSchema", () => {
     expect(() =>
       providerSendTurnInputSchema.parse({
         sessionId: "sess_1",
-        images: [
+        attachments: [
           {
+            type: "image",
             name: "not-image.txt",
             mimeType: "text/plain",
             sizeBytes: 25,
@@ -86,11 +88,12 @@ describe("providerSendTurnInputSchema", () => {
     ).toThrow();
   });
 
-  it("rejects more than the max image count", () => {
+  it("rejects more than the max attachment count", () => {
     expect(() =>
       providerSendTurnInputSchema.parse({
         sessionId: "sess_1",
-        images: Array.from({ length: PROVIDER_SEND_TURN_MAX_IMAGES + 1 }, (_, index) => ({
+        attachments: Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS + 1 }, (_, index) => ({
+          type: "image" as const,
           name: `image-${index}.png`,
           mimeType: "image/png",
           sizeBytes: 1_024,

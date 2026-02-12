@@ -1,8 +1,8 @@
 import {
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
-  PROVIDER_SEND_TURN_MAX_IMAGES,
-  type ProviderSendTurnImageInput,
+  type ProviderSendTurnAttachmentInput,
   type ProviderApprovalDecision,
   type ProviderEvent,
 } from "@t3tools/contracts";
@@ -541,8 +541,8 @@ export default function ChatView() {
         error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
         continue;
       }
-      if (nextImages.length >= PROVIDER_SEND_TURN_MAX_IMAGES) {
-        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_IMAGES} images per message.`;
+      if (nextImages.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
         break;
       }
 
@@ -772,8 +772,9 @@ export default function ChatView() {
 
     setIsSending(true);
     try {
-      const turnImages = await Promise.all(
-        composerImagesSnapshot.map(async (image): Promise<ProviderSendTurnImageInput> => ({
+      const turnAttachments = await Promise.all(
+        composerImagesSnapshot.map(async (image): Promise<ProviderSendTurnAttachmentInput> => ({
+          type: "image",
           name: image.name,
           mimeType: image.mimeType,
           sizeBytes: image.sizeBytes,
@@ -794,7 +795,7 @@ export default function ChatView() {
       await api.providers.sendTurn({
         sessionId: sessionInfo.sessionId,
         ...(input ? { input } : {}),
-        ...(turnImages.length > 0 ? { images: turnImages } : {}),
+        ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
         model: selectedModel || undefined,
         effort: selectedEffort || undefined,
       });
