@@ -57,6 +57,68 @@ function defaultShellResolver(): string {
   return process.env.SHELL ?? "bash";
 }
 
+function normalizeShellCommand(value: string | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+
+  if (process.platform === "win32") {
+    return trimmed;
+  }
+
+  const firstToken = trimmed.split(/\s+/g)[0]?.trim();
+  if (!firstToken) return null;
+  return firstToken.replace(/^['"]|['"]$/g, "");
+}
+
+function uniqueShells(shells: Array<string | null>): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const shell of shells) {
+    if (!shell || shell.length === 0) continue;
+    if (seen.has(shell)) continue;
+    seen.add(shell);
+    ordered.push(shell);
+  }
+  return ordered;
+}
+
+function resolveShellCandidates(shellResolver: () => string): string[] {
+  const requested = normalizeShellCommand(shellResolver());
+
+  if (process.platform === "win32") {
+    return uniqueShells([
+      requested,
+      process.env.ComSpec ?? null,
+      "powershell.exe",
+      "cmd.exe",
+    ]);
+  }
+
+  return uniqueShells([
+    requested,
+    normalizeShellCommand(process.env.SHELL),
+    "/bin/zsh",
+    "/bin/bash",
+    "/bin/sh",
+    "zsh",
+    "bash",
+    "sh",
+  ]);
+}
+
+function isRetryableShellSpawnError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("posix_spawnp failed") ||
+    message.includes("enoent") ||
+    message.includes("not found") ||
+    message.includes("file not found") ||
+    message.includes("no such file")
+  );
+}
+
 function capHistory(history: string, maxLines: number): string {
   if (history.length === 0) return history;
   const hasTrailingNewline = history.endsWith("\n");
@@ -270,16 +332,43 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     session.exitSignal = null;
     session.updatedAt = new Date().toISOString();
 
-    const shell = this.shellResolver();
     let ptyProcess: PtyProcess | null = null;
+    let startedShell: string | null = null;
     try {
-      ptyProcess = this.ptyAdapter.spawn({
-        shell,
-        cwd: session.cwd,
-        cols: session.cols,
-        rows: session.rows,
-        env: process.env,
-      });
+      const shellCandidates = resolveShellCandidates(this.shellResolver);
+      let lastSpawnError: unknown = null;
+
+      for (const shell of shellCandidates) {
+        try {
+          ptyProcess = this.ptyAdapter.spawn({
+            shell,
+            cwd: session.cwd,
+            cols: session.cols,
+            rows: session.rows,
+            env: process.env,
+          });
+          startedShell = shell;
+          break;
+        } catch (error) {
+          lastSpawnError = error;
+          if (!isRetryableShellSpawnError(error)) {
+            throw error;
+          }
+        }
+      }
+
+      if (!ptyProcess) {
+        const detail =
+          lastSpawnError instanceof Error
+            ? lastSpawnError.message
+            : "Terminal start failed";
+        const tried =
+          shellCandidates.length > 0
+            ? ` Tried shells: ${shellCandidates.join(", ")}.`
+            : "";
+        throw new Error(`${detail}.${tried}`.trim());
+      }
+
       session.process = ptyProcess;
       session.pid = ptyProcess.pid;
       session.status = "running";
@@ -318,6 +407,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
       this.logger.error("failed to start terminal", {
         threadId: session.threadId,
         error: message,
+        ...(startedShell ? { shell: startedShell } : {}),
       });
     }
   }

@@ -7,6 +7,7 @@ export interface ProcessRunOptions {
   stdin?: string | undefined;
   allowNonZeroExit?: boolean | undefined;
   maxBufferBytes?: number | undefined;
+  outputMode?: "error" | "truncate" | undefined;
 }
 
 export interface ProcessRunResult {
@@ -15,6 +16,8 @@ export interface ProcessRunResult {
   code: number | null;
   signal: NodeJS.Signals | null;
   timedOut: boolean;
+  stdoutTruncated?: boolean | undefined;
+  stderrTruncated?: boolean | undefined;
 }
 
 function commandLabel(command: string, args: readonly string[]): string {
@@ -79,6 +82,34 @@ function normalizeBufferError(
 
 const DEFAULT_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 
+function appendChunkWithinLimit(
+  target: string,
+  currentBytes: number,
+  chunk: Buffer,
+  maxBytes: number,
+): {
+  next: string;
+  nextBytes: number;
+  truncated: boolean;
+} {
+  const remaining = maxBytes - currentBytes;
+  if (remaining <= 0) {
+    return { next: target, nextBytes: currentBytes, truncated: true };
+  }
+  if (chunk.length <= remaining) {
+    return {
+      next: `${target}${chunk.toString()}`,
+      nextBytes: currentBytes + chunk.length,
+      truncated: false,
+    };
+  }
+  return {
+    next: `${target}${chunk.subarray(0, remaining).toString()}`,
+    nextBytes: currentBytes + remaining,
+    truncated: true,
+  };
+}
+
 export async function runProcess(
   command: string,
   args: readonly string[],
@@ -86,6 +117,7 @@ export async function runProcess(
 ): Promise<ProcessRunResult> {
   const timeoutMs = options.timeoutMs ?? 60_000;
   const maxBufferBytes = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES;
+  const outputMode = options.outputMode ?? "error";
 
   return new Promise<ProcessRunResult>((resolve, reject) => {
     const child = spawn(command, args, {
@@ -98,6 +130,8 @@ export async function runProcess(
     let stderr = "";
     let stdoutBytes = 0;
     let stderrBytes = 0;
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
     let timedOut = false;
     let settled = false;
     let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
@@ -131,15 +165,41 @@ export async function runProcess(
       stream: "stdout" | "stderr",
       chunk: Buffer | string,
     ): Error | null => {
-      const text = chunk.toString();
-      const byteLength = Buffer.byteLength(text);
+      const chunkBuffer =
+        typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+      const text = chunkBuffer.toString();
+      const byteLength = chunkBuffer.length;
       if (stream === "stdout") {
+        if (outputMode === "truncate") {
+          const appended = appendChunkWithinLimit(
+            stdout,
+            stdoutBytes,
+            chunkBuffer,
+            maxBufferBytes,
+          );
+          stdout = appended.next;
+          stdoutBytes = appended.nextBytes;
+          stdoutTruncated = stdoutTruncated || appended.truncated;
+          return null;
+        }
         stdout += text;
         stdoutBytes += byteLength;
         if (stdoutBytes > maxBufferBytes) {
           return normalizeBufferError(command, args, "stdout", maxBufferBytes);
         }
       } else {
+        if (outputMode === "truncate") {
+          const appended = appendChunkWithinLimit(
+            stderr,
+            stderrBytes,
+            chunkBuffer,
+            maxBufferBytes,
+          );
+          stderr = appended.next;
+          stderrBytes = appended.nextBytes;
+          stderrTruncated = stderrTruncated || appended.truncated;
+          return null;
+        }
         stderr += text;
         stderrBytes += byteLength;
         if (stderrBytes > maxBufferBytes) {
@@ -176,6 +236,8 @@ export async function runProcess(
         code,
         signal,
         timedOut,
+        stdoutTruncated,
+        stderrTruncated,
       };
 
       finalize(() => {

@@ -62,10 +62,15 @@ class FakePtyProcess implements PtyProcess {
 class FakePtyAdapter implements PtyAdapter {
   readonly spawnInputs: PtySpawnInput[] = [];
   readonly processes: FakePtyProcess[] = [];
+  readonly spawnFailures: Error[] = [];
   private nextPid = 9000;
 
   spawn(input: PtySpawnInput): PtyProcess {
     this.spawnInputs.push(input);
+    const failure = this.spawnFailures.shift();
+    if (failure) {
+      throw failure;
+    }
     const process = new FakePtyProcess(this.nextPid++);
     this.processes.push(process);
     return process;
@@ -117,7 +122,10 @@ describe("TerminalManager", () => {
     }
   });
 
-  function makeManager(historyLineLimit = 5) {
+  function makeManager(
+    historyLineLimit = 5,
+    options: { shellResolver?: () => string } = {},
+  ) {
     const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-terminal-"));
     tempDirs.push(logsDir);
     const ptyAdapter = new FakePtyAdapter();
@@ -125,7 +133,7 @@ describe("TerminalManager", () => {
       logsDir,
       ptyAdapter,
       historyLineLimit,
-      shellResolver: () => "/bin/bash",
+      shellResolver: options.shellResolver ?? (() => "/bin/bash"),
     });
     return { logsDir, ptyAdapter, manager };
   }
@@ -263,6 +271,37 @@ describe("TerminalManager", () => {
 
     expect(snapshot.history).toBe("legacy-line\n");
     expect(fs.existsSync(legacyPath)).toBe(true);
+
+    manager.dispose();
+  });
+
+  it("retries with fallback shells when preferred shell spawn fails", async () => {
+    const { manager, ptyAdapter } = makeManager(5, {
+      shellResolver: () => "/definitely/missing-shell -l",
+    });
+    ptyAdapter.spawnFailures.push(new Error("posix_spawnp failed."));
+
+    const snapshot = await manager.open(openInput());
+
+    expect(snapshot.status).toBe("running");
+    expect(ptyAdapter.spawnInputs.length).toBeGreaterThanOrEqual(2);
+    expect(ptyAdapter.spawnInputs[0]?.shell).toBe("/definitely/missing-shell");
+
+    if (process.platform === "win32") {
+      expect(
+        ptyAdapter.spawnInputs.some(
+          (input) => input.shell === "cmd.exe" || input.shell === "powershell.exe",
+        ),
+      ).toBe(true);
+    } else {
+      expect(
+        ptyAdapter.spawnInputs.some((input) =>
+          ["/bin/zsh", "/bin/bash", "/bin/sh", "zsh", "bash", "sh"].includes(
+            input.shell,
+          ),
+        ),
+      ).toBe(true);
+    }
 
     manager.dispose();
   });

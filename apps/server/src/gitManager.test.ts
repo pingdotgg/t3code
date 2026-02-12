@@ -168,6 +168,65 @@ afterEach(() => {
 });
 
 describe("GitManager", () => {
+  it("status includes open PR metadata when branch already has an open PR", async () => {
+    const repoDir = makeTempDir("t3code-git-manager-");
+    await initRepo(repoDir);
+    await runGit(repoDir, ["checkout", "-b", "feature/status-open-pr"]);
+    const remoteDir = await createBareRemote();
+    await runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+    await runGit(repoDir, ["push", "-u", "origin", "feature/status-open-pr"]);
+
+    const { runner } = createRunnerWithFakeGh({
+      prListSequence: [
+        JSON.stringify([
+          {
+            number: 13,
+            title: "Existing PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/13",
+            baseRefName: "main",
+            headRefName: "feature/status-open-pr",
+          },
+        ]),
+      ],
+    });
+
+    const manager = new GitManager({
+      runProcess: runner,
+      textGenerator: createTextGenerator(),
+    });
+
+    const status = await manager.status({ cwd: repoDir });
+    expect(status.branch).toBe("feature/status-open-pr");
+    expect(status.openPr).toEqual({
+      number: 13,
+      title: "Existing PR",
+      url: "https://github.com/pingdotgg/codething-mvp/pull/13",
+      baseBranch: "main",
+      headBranch: "feature/status-open-pr",
+    });
+  });
+
+  it("status is resilient to gh lookup failures and returns openPr null", async () => {
+    const repoDir = makeTempDir("t3code-git-manager-");
+    await initRepo(repoDir);
+    await runGit(repoDir, ["checkout", "-b", "feature/status-no-gh"]);
+    const remoteDir = await createBareRemote();
+    await runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+    await runGit(repoDir, ["push", "-u", "origin", "feature/status-no-gh"]);
+
+    const { runner } = createRunnerWithFakeGh({
+      failWith: new Error("Command not found: gh"),
+    });
+    const manager = new GitManager({
+      runProcess: runner,
+      textGenerator: createTextGenerator(),
+    });
+
+    const status = await manager.status({ cwd: repoDir });
+    expect(status.branch).toBe("feature/status-no-gh");
+    expect(status.openPr).toBeNull();
+  });
+
   it("creates a commit when working tree is dirty", async () => {
     const repoDir = makeTempDir("t3code-git-manager-");
     await initRepo(repoDir);

@@ -438,6 +438,25 @@ describe("git integration", () => {
   });
 
   describe("GitCoreService", () => {
+    it("supports branch lifecycle operations through the service API", async () => {
+      await using tmp = await makeTmpDir();
+      const core = new GitCoreService();
+
+      await core.initRepo({ cwd: tmp.path });
+      await git(tmp.path, "config user.email 'test@test.com'");
+      await git(tmp.path, "config user.name 'Test'");
+      await writeFile(path.join(tmp.path, "README.md"), "# test\n");
+      await git(tmp.path, "add .");
+      await git(tmp.path, "commit -m 'initial commit'");
+
+      await core.createBranch({ cwd: tmp.path, branch: "feature/service-api" });
+      await core.checkoutBranch({ cwd: tmp.path, branch: "feature/service-api" });
+      const branches = await core.listBranches({ cwd: tmp.path });
+
+      expect(branches.isRepo).toBe(true);
+      expect(branches.branches.find((branch) => branch.current)?.name).toBe("feature/service-api");
+    });
+
     it("reports status details and dirty state", async () => {
       await using tmp = await makeTmpDir();
       await initRepoWithCommit(tmp.path);

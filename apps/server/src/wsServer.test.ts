@@ -524,6 +524,7 @@ describe("WebSocket Server", () => {
         hasUpstream: false,
         aheadCount: 0,
         behindCount: 0,
+        openPr: null,
       }),
       runStackedAction: vi.fn(),
     };
@@ -547,6 +548,7 @@ describe("WebSocket Server", () => {
       hasUpstream: false,
       aheadCount: 0,
       behindCount: 0,
+      openPr: null,
     });
     expect(gitManager.status).toHaveBeenCalledWith({ cwd: "/test" });
   });

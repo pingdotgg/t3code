@@ -21,6 +21,7 @@ describe("git contracts", () => {
       hasUpstream: false,
       aheadCount: 0,
       behindCount: 0,
+      openPr: null,
     });
     expect(parsed.branch).toBe("feature/git-actions");
     expect(parsed.hasWorkingTreeChanges).toBe(true);
@@ -70,4 +71,3 @@ describe("git contracts", () => {
     expect(parsed.pr.number).toBe(123);
   });
 });
-

@@ -63,6 +63,69 @@ interface GitActionMenuItem {
   id: GitStackedAction;
   label: string;
   disabled: boolean;
+  icon: "commit" | "push" | "pr";
+}
+
+function GitActionIcon(props: { icon: GitActionMenuItem["icon"]; disabled: boolean }) {
+  const toneClass = props.disabled ? "text-muted-foreground/45" : "text-foreground/85";
+
+  if (props.icon === "commit") {
+    return (
+      <svg
+        viewBox="0 0 20 20"
+        aria-hidden="true"
+        className={`h-5 w-5 shrink-0 ${toneClass}`}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="10" cy="10" r="4.2" />
+        <path d="M1.8 10h4.2" />
+        <path d="M14 10h4.2" />
+      </svg>
+    );
+  }
+
+  if (props.icon === "push") {
+    return (
+      <svg
+        viewBox="0 0 20 20"
+        aria-hidden="true"
+        className={`h-5 w-5 shrink-0 ${toneClass}`}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M5.2 16h9.6a3.2 3.2 0 0 0 .2-6.4h-.5A4.8 4.8 0 0 0 5 9 3.7 3.7 0 0 0 5.2 16Z" />
+        <path d="M10 5.8v6.2" />
+        <path d="m7.7 8.1 2.3-2.3 2.3 2.3" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      aria-hidden="true"
+      className={`h-5 w-5 shrink-0 ${toneClass}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="6" cy="5" r="1.7" />
+      <circle cx="6" cy="15" r="1.7" />
+      <circle cx="14" cy="10" r="1.7" />
+      <path d="M6 6.8v6.5" />
+      <path d="M7.8 6.1c2.9 0 3.8 1.4 5.1 2.9" />
+      <path d="M7.8 13.9c2.9 0 3.8-1.4 5.1-2.9" />
+    </svg>
+  );
 }
 
 function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
@@ -277,65 +340,34 @@ export default function ChatView() {
     if (!gitStatus) return [];
 
     const hasBranch = gitStatus.branch !== null;
+    const hasOpenPr = gitStatus.openPr !== null;
     const canCommit = !gitBaseDisabled && gitStatus.hasWorkingTreeChanges;
-    const canPushOrPr = !gitBaseDisabled && hasBranch;
+    const canPush =
+      !gitBaseDisabled && hasBranch && (gitStatus.hasWorkingTreeChanges || gitStatus.aheadCount > 0);
+    const canViewPr =
+      !gitBaseDisabled &&
+      hasBranch &&
+      gitStatus.behindCount === 0 &&
+      (gitStatus.hasWorkingTreeChanges || gitStatus.aheadCount > 0 || hasOpenPr);
 
-    if (!hasBranch) {
-      return [
-        {
-          id: "commit",
-          label: "Commit",
-          disabled: !canCommit,
-        },
-      ];
-    }
-
-    if (gitStatus.hasWorkingTreeChanges) {
-      return [
-        {
-          id: "commit",
-          label: "Commit",
-          disabled: !canCommit,
-        },
-        {
-          id: "commit_push",
-          label: "Commit & Push",
-          disabled: !canPushOrPr,
-        },
-        {
-          id: "commit_push_pr",
-          label: "Commit, Push & Create PR",
-          disabled: !canPushOrPr,
-        },
-      ];
-    }
-
-    if (gitStatus.aheadCount > 0) {
-      return [
-        {
-          id: "commit",
-          label: "Commit",
-          disabled: true,
-        },
-        {
-          id: "commit_push",
-          label: "Commit & Push",
-          disabled: !canPushOrPr,
-        },
-        {
-          id: "commit_push_pr",
-          label: "Commit, Push & Create PR",
-          disabled: !canPushOrPr,
-        },
-      ];
-    }
-
-    const openPrDisabled = !canPushOrPr || gitStatus.behindCount > 0;
     return [
       {
+        id: "commit",
+        label: "Commit",
+        disabled: !canCommit,
+        icon: "commit",
+      },
+      {
+        id: "commit_push",
+        label: "Push",
+        disabled: !canPush,
+        icon: "push",
+      },
+      {
         id: "commit_push_pr",
-        label: "Open PR",
-        disabled: openPrDisabled,
+        label: "View PR",
+        disabled: !canViewPr,
+        icon: "pr",
       },
     ];
   }, [gitBaseDisabled, gitStatus]);
@@ -882,15 +914,20 @@ export default function ChatView() {
               <button
                 type="button"
                 className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground/70 transition-colors duration-150 hover:bg-accent hover:text-foreground/80 disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={() => setIsGitMenuOpen((v) => !v)}
+                onClick={() => {
+                  if (!isGitMenuOpen) {
+                    void refreshGitStatus().catch(() => undefined);
+                  }
+                  setIsGitMenuOpen((v) => !v);
+                }}
                 disabled={!gitStatus || isGitActionRunning}
               >
                 {isGitActionRunning ? "Running..." : "Git actions"}
                 <span aria-hidden="true">▾</span>
               </button>
               {isGitMenuOpen && (
-                <div className="absolute right-0 top-full z-50 mt-1 w-[240px] rounded-xl border border-border bg-popover p-2 shadow-xl">
-                  <p className="px-2 pb-1 text-[10px] uppercase tracking-[0.1em] text-muted-foreground/60">
+                <div className="absolute right-0 top-full z-50 mt-1 w-[280px] rounded-3xl border border-border bg-popover p-3 shadow-xl">
+                  <p className="px-3 pb-2 text-[13px] text-muted-foreground/75">
                     Git actions
                   </p>
                   {gitActionMenuItems.map((item) => {
@@ -898,13 +935,14 @@ export default function ChatView() {
                       <button
                         key={item.id}
                         type="button"
-                        className="mb-1 flex w-full items-center rounded-lg px-2 py-2 text-left text-[11px] text-foreground transition-colors duration-150 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                        className="mb-1.5 flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-[14px] text-foreground transition-colors duration-150 hover:bg-accent disabled:cursor-not-allowed disabled:text-muted-foreground/65"
                         disabled={item.disabled}
                         onClick={() => {
                           void runGitAction(item.id);
                         }}
                       >
-                        {item.label}
+                        <GitActionIcon icon={item.icon} disabled={item.disabled} />
+                        <span>{item.label}</span>
                       </button>
                     );
                   })}
@@ -918,7 +956,7 @@ export default function ChatView() {
                     !gitStatus.hasWorkingTreeChanges &&
                     gitStatus.aheadCount === 0 &&
                     gitStatus.behindCount > 0 && (
-                      <p className="px-2 pt-1 text-[10px] text-amber-500 dark:text-amber-300">
+                      <p className="px-3 pt-1 text-[10px] text-amber-500 dark:text-amber-300">
                         Branch is behind upstream. Pull/rebase before opening a PR.
                       </p>
                     )}

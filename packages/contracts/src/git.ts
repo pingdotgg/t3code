@@ -74,6 +74,15 @@ export const gitStatusResultSchema = z.object({
   hasUpstream: z.boolean(),
   aheadCount: z.number().int().nonnegative(),
   behindCount: z.number().int().nonnegative(),
+  openPr: z
+    .object({
+      number: z.number().int().positive(),
+      title: z.string().min(1),
+      url: z.string().url(),
+      baseBranch: z.string().min(1),
+      headBranch: z.string().min(1),
+    })
+    .nullable(),
 });
 
 export const gitStackedActionSchema = z.enum([
@@ -127,4 +136,3 @@ export type GitStatusResult = z.infer<typeof gitStatusResultSchema>;
 export type GitStackedAction = z.infer<typeof gitStackedActionSchema>;
 export type GitRunStackedActionInput = z.input<typeof gitRunStackedActionInputSchema>;
 export type GitRunStackedActionResult = z.infer<typeof gitRunStackedActionResultSchema>;
-

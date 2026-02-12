@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   gitRunStackedActionInputSchema,
   gitRunStackedActionResultSchema,
+  gitStatusInputSchema,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
   type GitStatusInput,
@@ -19,7 +20,11 @@ import type {
 } from "./coreServices";
 import { CodexTextGenerator } from "./codexTextGenerator";
 import { GitCoreService } from "./git";
-import { type ProcessRunOptions, runProcess } from "./processRunner";
+import {
+  type ProcessRunOptions,
+  type ProcessRunResult,
+  runProcess,
+} from "./processRunner";
 
 const GH_CLI_TIMEOUT_MS = 30_000;
 
@@ -28,13 +33,7 @@ interface GitManagerDeps {
     command: string,
     args: readonly string[],
     options?: ProcessRunOptions,
-  ) => Promise<{
-    stdout: string;
-    stderr: string;
-    code: number | null;
-    signal: NodeJS.Signals | null;
-    timedOut: boolean;
-  }>;
+  ) => Promise<ProcessRunResult>;
   textGenerator?: TextGenerationService;
   gitCore?: GitCoreService;
 }
@@ -155,6 +154,22 @@ function normalizeGitHubAuthError(error: unknown): Error | undefined {
   return undefined;
 }
 
+function toStatusOpenPr(pr: OpenPrInfo): {
+  number: number;
+  title: string;
+  url: string;
+  baseBranch: string;
+  headBranch: string;
+} {
+  return {
+    number: pr.number,
+    title: pr.title,
+    url: pr.url,
+    baseBranch: pr.baseRefName,
+    headBranch: pr.headRefName,
+  };
+}
+
 export class GitManager {
   private readonly run: NonNullable<GitManagerDeps["runProcess"]>;
   private readonly textGenerator: TextGenerationService;
@@ -167,7 +182,29 @@ export class GitManager {
   }
 
   async status(raw: GitStatusInput): Promise<GitStatusResult> {
-    return this.gitCore.status(raw);
+    const input = gitStatusInputSchema.parse(raw);
+    const details = await this.gitCore.statusDetails(input.cwd);
+
+    let openPr: ReturnType<typeof toStatusOpenPr> | null = null;
+    if (details.branch && details.hasUpstream) {
+      try {
+        const existing = await this.findOpenPr(input.cwd, details.branch);
+        if (existing) {
+          openPr = toStatusOpenPr(existing);
+        }
+      } catch {
+        // PR lookup is best-effort for status rendering.
+      }
+    }
+
+    return {
+      branch: details.branch,
+      hasWorkingTreeChanges: details.hasWorkingTreeChanges,
+      hasUpstream: details.hasUpstream,
+      aheadCount: details.aheadCount,
+      behindCount: details.behindCount,
+      openPr,
+    };
   }
 
   async runStackedAction(
@@ -413,24 +450,23 @@ export class GitManager {
   }
 
   private async runGh(cwd: string, args: readonly string[]): Promise<void> {
-    try {
-      await this.run("gh", args, { cwd, timeoutMs: GH_CLI_TIMEOUT_MS });
-    } catch (error) {
-      throw (
-        asCommandNotFound("gh", error) ??
-        normalizeGitHubAuthError(error) ??
-        (error instanceof Error ? error : new Error("GitHub CLI command failed."))
-      );
-    }
+    await this.runGhCommand(cwd, args);
   }
 
   private async runGhStdout(cwd: string, args: readonly string[]): Promise<string> {
+    const result = await this.runGhCommand(cwd, args);
+    return result.stdout;
+  }
+
+  private async runGhCommand(
+    cwd: string,
+    args: readonly string[],
+  ): Promise<ProcessRunResult> {
     try {
-      const result = await this.run("gh", args, {
+      return await this.run("gh", args, {
         cwd,
         timeoutMs: GH_CLI_TIMEOUT_MS,
       });
-      return result.stdout;
     } catch (error) {
       throw (
         asCommandNotFound("gh", error) ??

@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+
 import * as nodePty from "node-pty";
 
 export interface PtyExitEvent {
@@ -24,6 +28,57 @@ export interface PtySpawnInput {
 
 export interface PtyAdapter {
   spawn(input: PtySpawnInput): PtyProcess;
+}
+
+const requireForNodePty = createRequire(import.meta.url);
+let didEnsureSpawnHelperExecutable = false;
+
+function resolveNodePtySpawnHelperPath(): string | null {
+  try {
+    const packageJsonPath = requireForNodePty.resolve("node-pty/package.json");
+    const packageDir = path.dirname(packageJsonPath);
+    const candidates = [
+      path.join(packageDir, "build", "Release", "spawn-helper"),
+      path.join(packageDir, "build", "Debug", "spawn-helper"),
+      path.join(
+        packageDir,
+        "prebuilds",
+        `${process.platform}-${process.arch}`,
+        "spawn-helper",
+      ),
+    ];
+
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function ensureNodePtySpawnHelperExecutable(explicitPath?: string): void {
+  if (process.platform === "win32") return;
+  if (!explicitPath && didEnsureSpawnHelperExecutable) return;
+
+  const helperPath = explicitPath ?? resolveNodePtySpawnHelperPath();
+  if (!helperPath) return;
+  if (!explicitPath) {
+    didEnsureSpawnHelperExecutable = true;
+  }
+
+  try {
+    const stat = fs.statSync(helperPath);
+    const mode = stat.mode & 0o777;
+    if ((mode & 0o111) === 0) {
+      fs.chmodSync(helperPath, mode | 0o111);
+    }
+  } catch {
+    // Best effort only. If chmod fails, node-pty spawn will surface the real error.
+  }
 }
 
 class NodePtyProcess implements PtyProcess {
@@ -67,12 +122,16 @@ class NodePtyProcess implements PtyProcess {
 
 export class NodePtyAdapter implements PtyAdapter {
   spawn(input: PtySpawnInput): PtyProcess {
+    ensureNodePtySpawnHelperExecutable();
     const ptyProcess = nodePty.spawn(input.shell, [], {
       cwd: input.cwd,
       cols: input.cols,
       rows: input.rows,
       env: input.env,
-      name: globalThis.process.platform === "win32" ? "xterm-color" : "xterm-256color",
+      name:
+        globalThis.process.platform === "win32"
+          ? "xterm-color"
+          : "xterm-256color",
     });
     return new NodePtyProcess(ptyProcess);
   }
