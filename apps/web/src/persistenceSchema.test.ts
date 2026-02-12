@@ -200,6 +200,15 @@ describe("toPersistedState", () => {
           id: "m-1",
           role: "user",
           text: "Hi",
+          images: [
+            {
+              id: "img-1",
+              name: "diagram.png",
+              mimeType: "image/png",
+              sizeBytes: 4_096,
+              previewUrl: "blob:preview-1",
+            },
+          ],
           createdAt: "2026-02-08T10:00:00.000Z",
           streaming: false,
         },
@@ -236,7 +245,23 @@ describe("toPersistedState", () => {
       model: "gpt-5.3-codex",
       terminalOpen: true,
       terminalHeight: 320,
-      messages: thread.messages,
+      messages: [
+        {
+          id: "m-1",
+          role: "user",
+          text: "Hi",
+          images: [
+            {
+              id: "img-1",
+              name: "diagram.png",
+              mimeType: "image/png",
+              sizeBytes: 4_096,
+            },
+          ],
+          createdAt: "2026-02-08T10:00:00.000Z",
+          streaming: false,
+        },
+      ],
       createdAt: thread.createdAt,
       branch: null,
       worktreePath: null,

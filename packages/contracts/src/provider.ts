@@ -55,12 +55,46 @@ export const providerSessionStartInputSchema = z.object({
 });
 
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
+export const PROVIDER_SEND_TURN_MAX_IMAGES = 8;
+export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+export const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
+
+export const providerSendTurnImageInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(255),
+    mimeType: z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .regex(/^image\//i, "mimeType must be an image/* MIME type"),
+    sizeBytes: z.number().int().min(1).max(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES),
+    dataUrl: z.string().trim().min(1).max(PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.dataUrl.startsWith("data:image/")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Image dataUrl must start with data:image/",
+        path: ["dataUrl"],
+      });
+    }
+  });
 
 export const providerSendTurnInputSchema = z.object({
   sessionId: z.string().min(1),
-  input: z.string().trim().min(1).max(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
+  input: z.string().trim().min(1).max(PROVIDER_SEND_TURN_MAX_INPUT_CHARS).optional(),
+  images: z.array(providerSendTurnImageInputSchema).max(PROVIDER_SEND_TURN_MAX_IMAGES).default([]),
   model: z.string().trim().min(1).optional(),
   effort: z.string().trim().min(1).optional(),
+}).superRefine((value, ctx) => {
+  if (!value.input && value.images.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Either input text or at least one image is required",
+      path: ["input"],
+    });
+  }
 });
 
 export const providerTurnStartResultSchema = z.object({
@@ -110,6 +144,8 @@ export type ProviderApprovalDecision = z.infer<typeof providerApprovalDecisionSc
 export type ProviderSessionStatus = z.infer<typeof providerSessionStatusSchema>;
 export type ProviderSession = z.infer<typeof providerSessionSchema>;
 export type ProviderSessionStartInput = z.input<typeof providerSessionStartInputSchema>;
+export type ProviderSendTurnImage = z.infer<typeof providerSendTurnImageInputSchema>;
+export type ProviderSendTurnImageInput = z.input<typeof providerSendTurnImageInputSchema>;
 export type ProviderSendTurnInput = z.input<typeof providerSendTurnInputSchema>;
 export type ProviderTurnStartResult = z.infer<typeof providerTurnStartResultSchema>;
 export type ProviderInterruptTurnInput = z.input<typeof providerInterruptTurnInputSchema>;

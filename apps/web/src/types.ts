@@ -5,10 +5,19 @@ export type RuntimeMode = "approval-required" | "full-access";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
 
+export interface ChatImageAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  previewUrl?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
+  images?: ChatImageAttachment[];
   createdAt: string;
   streaming: boolean;
 }

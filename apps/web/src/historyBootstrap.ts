@@ -18,8 +18,33 @@ function messageRoleLabel(message: ChatMessage): "USER" | "ASSISTANT" {
   return message.role === "assistant" ? "ASSISTANT" : "USER";
 }
 
+function imageSummary(message: ChatMessage): string | null {
+  const count = message.images?.length ?? 0;
+  if (count === 0) {
+    return null;
+  }
+
+  const names = message.images?.slice(0, 3).map((image) => image.name) ?? [];
+  const namesSummary = names.join(", ");
+  const extraCount = count - names.length;
+  const extraSummary = extraCount > 0 ? ` (+${extraCount} more)` : "";
+  return `[Attached image${count === 1 ? "" : "s"}: ${namesSummary}${extraSummary}]`;
+}
+
 function buildMessageBlock(message: ChatMessage): string {
-  return `${messageRoleLabel(message)}:\n${message.text}`;
+  const text = message.text;
+  const images = imageSummary(message);
+
+  if (text && images) {
+    return `${messageRoleLabel(message)}:\n${text}\n${images}`;
+  }
+  if (text) {
+    return `${messageRoleLabel(message)}:\n${text}`;
+  }
+  if (images) {
+    return `${messageRoleLabel(message)}:\n${images}`;
+  }
+  return `${messageRoleLabel(message)}:\n(empty message)`;
 }
 
 function finalizeWithPrompt(
@@ -68,7 +93,7 @@ export function buildBootstrapInput(
   let includedNewestFirst: string[] = [];
   for (const block of newestFirstBlocks) {
     const nextNewestFirst = [...includedNewestFirst, block];
-    const nextChronological = [...nextNewestFirst].reverse();
+    const nextChronological = nextNewestFirst.toReversed();
     const omittedCount = newestFirstBlocks.length - nextChronological.length;
     const transcriptBody =
       omittedCount > 0
@@ -80,7 +105,7 @@ export function buildBootstrapInput(
     includedNewestFirst = nextNewestFirst;
   }
 
-  let includedChronological = [...includedNewestFirst].reverse();
+  let includedChronological = includedNewestFirst.toReversed();
   while (true) {
     const omittedCount = newestFirstBlocks.length - includedChronological.length;
     const transcriptBody =

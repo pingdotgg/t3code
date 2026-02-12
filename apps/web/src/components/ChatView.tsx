@@ -1,9 +1,14 @@
 import {
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  PROVIDER_SEND_TURN_MAX_IMAGES,
+  type ProviderSendTurnImageInput,
   type ProviderApprovalDecision,
   type ProviderEvent,
 } from "@t3tools/contracts";
 import {
+  type ClipboardEvent,
+  type DragEvent,
   type FormEvent,
   Fragment,
   type KeyboardEvent,
@@ -33,6 +38,7 @@ import {
   formatTimestamp,
 } from "../session-logic";
 import { useStore } from "../store";
+import type { ChatImageAttachment } from "../types";
 import BranchToolbar from "./BranchToolbar";
 import GitActionsControl from "./GitActionsControl";
 import { isTerminalToggleShortcut } from "../terminal-shortcuts";
@@ -57,6 +63,9 @@ function editorLabel(editor: (typeof EDITORS)[number]): string {
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
+const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
+const IMAGE_ONLY_BOOTSTRAP_PROMPT =
+  "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 
 function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   if (tone === "error") return "text-rose-300/50 dark:text-rose-300/50";
@@ -78,6 +87,16 @@ interface EnsuredSessionInfo {
   sessionId: string;
   resolvedThreadId: string | null;
   continuityState: SessionContinuityState;
+}
+
+interface ComposerImageAttachment extends Omit<ChatImageAttachment, "previewUrl"> {
+  previewUrl: string;
+  file: File;
+}
+
+interface ExpandedImagePreview {
+  src: string;
+  name: string;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -131,10 +150,30 @@ function derivePendingApprovals(events: ProviderEvent[]): PendingApprovalCard[] 
   return Array.from(pending.values());
 }
 
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error("Could not read image data."));
+    });
+    reader.addEventListener("error", () => {
+      reject(reader.error ?? new Error("Failed to read image."));
+    });
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function ChatView() {
   const { state, dispatch } = useStore();
   const api = useNativeApi();
   const [prompt, setPrompt] = useState("");
+  const [composerImages, setComposerImages] = useState<ComposerImageAttachment[]>([]);
+  const [isDragOverComposer, setIsDragOverComposer] = useState(false);
+  const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
@@ -152,6 +191,8 @@ export default function ChatView() {
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
+  const dragDepthRef = useRef(0);
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const editorMenuRef = useRef<HTMLDivElement>(null);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
@@ -264,7 +305,15 @@ export default function ChatView() {
     (activeThread.messages.length > 0 ||
       (activeThread.session !== null && activeThread.session.status !== "closed")),
   );
-  const terminalShortcutHint = navigator.platform.includes("Mac") ? "\u2318J" : "Ctrl+J";
+  const terminalShortcutHint = navigator.platform.includes("Mac")
+    ? "\u2318J"
+    : "Ctrl+J";
+  const revokePreviewUrls = useCallback((images: Array<{ previewUrl?: string }>) => {
+    for (const image of images) {
+      if (!image.previewUrl) continue;
+      URL.revokeObjectURL(image.previewUrl);
+    }
+  }, []);
   const focusComposer = useCallback(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -318,6 +367,44 @@ export default function ChatView() {
   useEffect(() => {
     setExpandedWorkGroups({});
   }, [activeThread?.id]);
+
+  useEffect(() => {
+    composerImagesRef.current = composerImages;
+  }, [composerImages]);
+
+  useEffect(() => {
+    setComposerImages((existing) => {
+      revokePreviewUrls(existing);
+      return [];
+    });
+    dragDepthRef.current = 0;
+    setIsDragOverComposer(false);
+    setExpandedImage(null);
+  }, [activeThread?.id, revokePreviewUrls]);
+
+  useEffect(() => {
+    return () => {
+      revokePreviewUrls(composerImagesRef.current);
+    };
+  }, [revokePreviewUrls]);
+
+  useEffect(() => {
+    if (!expandedImage) {
+      return;
+    }
+
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      setExpandedImage(null);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [expandedImage]);
 
   const activeWorktreePath = activeThread?.worktreePath;
 
@@ -431,6 +518,124 @@ export default function ChatView() {
     setIsEditorMenuOpen(false);
   };
 
+  const setThreadError = (threadId: string | null, error: string | null) => {
+    if (!threadId) return;
+    dispatch({
+      type: "SET_ERROR",
+      threadId,
+      error,
+    });
+  };
+
+  const addComposerImages = (files: File[]) => {
+    if (!activeThreadId || files.length === 0) return;
+
+    const nextImages = [...composerImagesRef.current];
+    let error: string | null = null;
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) {
+        error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
+        continue;
+      }
+      if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+        error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
+        continue;
+      }
+      if (nextImages.length >= PROVIDER_SEND_TURN_MAX_IMAGES) {
+        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_IMAGES} images per message.`;
+        break;
+      }
+
+      const previewUrl = URL.createObjectURL(file);
+      nextImages.push({
+        id: crypto.randomUUID(),
+        name: file.name || "image",
+        mimeType: file.type,
+        sizeBytes: file.size,
+        previewUrl,
+        file,
+      });
+    }
+
+    setComposerImages(nextImages);
+    setThreadError(activeThreadId, error);
+  };
+
+  const removeComposerImage = (imageId: string) => {
+    setComposerImages((existing) => {
+      const match = existing.find((image) => image.id === imageId);
+      if (match?.previewUrl) {
+        URL.revokeObjectURL(match.previewUrl);
+      }
+      return existing.filter((image) => image.id !== imageId);
+    });
+  };
+
+  const openImageDialog = (src: string | undefined, name: string) => {
+    if (!src) {
+      return;
+    }
+    setExpandedImage({ src, name });
+  };
+
+  const onComposerPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData.files);
+    if (files.length === 0) {
+      return;
+    }
+    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+    if (imageFiles.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    addComposerImages(imageFiles);
+  };
+
+  const onComposerDragEnter = (event: DragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    setIsDragOverComposer(true);
+  };
+
+  const onComposerDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setIsDragOverComposer(true);
+  };
+
+  const onComposerDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) {
+      setIsDragOverComposer(false);
+    }
+  };
+
+  const onComposerDrop = (event: DragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDragOverComposer(false);
+    const files = Array.from(event.dataTransfer.files);
+    addComposerImages(files);
+    focusComposer();
+  };
+
   const ensureSession = async (cwdOverride?: string): Promise<EnsuredSessionInfo | null> => {
     if (!api || !activeThread || !activeProject) return null;
     if (activeThread.session && activeThread.session.status !== "closed") {
@@ -492,8 +697,9 @@ export default function ChatView() {
     e.preventDefault();
     if (!api || !activeThread || isSending || isConnecting) return;
     const trimmed = prompt.trim();
-    if (!trimmed) return;
+    if (!trimmed && composerImages.length === 0) return;
     if (!activeProject) return;
+    const composerImagesSnapshot = [...composerImages];
 
     // On first message: lock in branch + create worktree if needed.
     let sessionCwd: string | undefined;
@@ -529,7 +735,12 @@ export default function ChatView() {
 
     // Auto-title from first message
     if (activeThread.messages.length === 0) {
-      const title = trimmed.length > 50 ? `${trimmed.slice(0, 50)}...` : trimmed;
+      const titleSeed =
+        trimmed ||
+        (composerImagesSnapshot.length > 0
+          ? `Image: ${composerImagesSnapshot[0]?.name ?? "attachment"}`
+          : "New thread");
+      const title = titleSeed.length > 50 ? `${titleSeed.slice(0, 50)}...` : titleSeed;
       dispatch({
         type: "SET_THREAD_TITLE",
         threadId: activeThread.id,
@@ -537,43 +748,61 @@ export default function ChatView() {
       });
     }
 
-    dispatch({
-      type: "SET_ERROR",
-      threadId: activeThread.id,
-      error: null,
-    });
+    setThreadError(activeThread.id, null);
+    const messageImages: ChatImageAttachment[] = composerImagesSnapshot.map((image) => ({
+      id: image.id,
+      name: image.name,
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+      previewUrl: image.previewUrl,
+    }));
     dispatch({
       type: "PUSH_USER_MESSAGE",
       threadId: activeThread.id,
       id: crypto.randomUUID(),
       text: trimmed,
+      ...(messageImages.length > 0 ? { images: messageImages } : {}),
     });
     const previousMessages = activeThread.messages;
     setPrompt("");
+    setComposerImages([]);
 
     const sessionInfo = await ensureSession(sessionCwd);
     if (!sessionInfo) return;
 
     setIsSending(true);
     try {
+      const turnImages = await Promise.all(
+        composerImagesSnapshot.map(async (image): Promise<ProviderSendTurnImageInput> => ({
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          dataUrl: await readFileAsDataUrl(image.file),
+        })),
+      );
       const shouldBootstrap =
         previousMessages.length > 0 &&
         (sessionInfo.continuityState === "new" || sessionInfo.continuityState === "fallback_new");
+      const latestPromptForBootstrap = trimmed || IMAGE_ONLY_BOOTSTRAP_PROMPT;
       const input = shouldBootstrap
-        ? buildBootstrapInput(previousMessages, trimmed, PROVIDER_SEND_TURN_MAX_INPUT_CHARS).text
-        : trimmed;
+        ? buildBootstrapInput(
+            previousMessages,
+            latestPromptForBootstrap,
+            PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+          ).text
+        : (trimmed || undefined);
       await api.providers.sendTurn({
         sessionId: sessionInfo.sessionId,
-        input,
+        ...(input ? { input } : {}),
+        ...(turnImages.length > 0 ? { images: turnImages } : {}),
         model: selectedModel || undefined,
         effort: selectedEffort || undefined,
       });
     } catch (err) {
-      dispatch({
-        type: "SET_ERROR",
-        threadId: activeThread.id,
-        error: err instanceof Error ? err.message : "Failed to send message.",
-      });
+      setThreadError(
+        activeThread.id,
+        err instanceof Error ? err.message : "Failed to send message.",
+      );
     } finally {
       setIsSending(false);
     }
@@ -876,13 +1105,39 @@ export default function ChatView() {
               }
 
               if (timelineEntry.message.role === "user") {
+                const userImages = timelineEntry.message.images ?? [];
                 return (
                   <Fragment key={timelineEntry.id}>
                     <div className="flex justify-end">
                       <div className="max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
-                        <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
-                          {timelineEntry.message.text}
-                        </pre>
+                        {userImages.length > 0 && (
+                          <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+                            {userImages.map((image) => (
+                              <div
+                                key={image.id}
+                                className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                              >
+                                {image.previewUrl ? (
+                                  <img
+                                    src={image.previewUrl}
+                                    alt={image.name}
+                                    className="h-full max-h-[220px] w-full cursor-zoom-in object-cover"
+                                    onClick={() => openImageDialog(image.previewUrl, image.name)}
+                                  />
+                                ) : (
+                                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
+                                    {image.name}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {timelineEntry.message.text && (
+                          <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-foreground">
+                            {timelineEntry.message.text}
+                          </pre>
+                        )}
                         <p className="mt-1.5 text-right text-[10px] text-muted-foreground/30">
                           {formatTimestamp(timelineEntry.message.createdAt)}
                         </p>
@@ -945,9 +1200,48 @@ export default function ChatView() {
       {/* Input bar */}
       <div className="px-5 pb-1 pt-2">
         <form onSubmit={onSend} className="mx-auto max-w-3xl">
-          <div className="group rounded-[20px] border border-border bg-card transition-colors duration-200 focus-within:border-ring">
+          <div
+            className={`group rounded-[20px] border bg-card transition-colors duration-200 focus-within:border-ring ${
+              isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border"
+            }`}
+            onDragEnter={onComposerDragEnter}
+            onDragOver={onComposerDragOver}
+            onDragLeave={onComposerDragLeave}
+            onDrop={onComposerDrop}
+          >
             {/* Textarea area */}
             <div className="px-4 pt-4 pb-2">
+              {composerImages.length > 0 && (
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {composerImages.map((image) => (
+                    <div
+                      key={image.id}
+                      className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
+                    >
+                      {image.previewUrl ? (
+                        <img
+                          src={image.previewUrl}
+                          alt={image.name}
+                          className="h-full w-full cursor-zoom-in object-cover"
+                          onClick={() => openImageDialog(image.previewUrl, image.name)}
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
+                          {image.name}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-background/80 text-[11px] leading-none text-foreground transition-colors duration-150 hover:bg-background"
+                        onClick={() => removeComposerImage(image.id)}
+                        aria-label={`Remove ${image.name}`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <textarea
                 ref={textareaRef}
                 className="w-full resize-none bg-transparent text-[14px] leading-relaxed text-foreground placeholder:text-muted-foreground/35 focus:outline-none"
@@ -955,8 +1249,11 @@ export default function ChatView() {
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 onKeyDown={onKeyDown}
+                onPaste={onComposerPaste}
                 placeholder={
-                  phase === "disconnected" ? "Ask for follow-up changes" : "Ask anything..."
+                  phase === "disconnected"
+                    ? "Ask for follow-up changes or attach images"
+                    : "Ask anything, or attach images..."
                 }
                 disabled={isSending || isConnecting}
               />
@@ -1146,7 +1443,7 @@ export default function ChatView() {
                   <button
                     type="submit"
                     className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:opacity-30 disabled:hover:scale-100"
-                    disabled={isSending || isConnecting || !prompt.trim()}
+                    disabled={isSending || isConnecting || (!prompt.trim() && composerImages.length === 0)}
                     aria-label={
                       isConnecting ? "Connecting" : isSending ? "Sending" : "Send message"
                     }
@@ -1220,6 +1517,39 @@ export default function ChatView() {
             })
           }
         />
+      )}
+
+      {expandedImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 py-6 [-webkit-app-region:no-drag]"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Expanded image preview"
+          onClick={() => setExpandedImage(null)}
+        >
+          <div
+            className="relative isolate max-h-[92vh] max-w-[92vw]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="absolute right-2 top-2 z-30 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-black/60 text-xl leading-none text-white transition-colors duration-150 hover:bg-black/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80 [-webkit-app-region:no-drag]"
+              onClick={() => setExpandedImage(null)}
+              aria-label="Close image preview"
+            >
+              <span className="pointer-events-none">×</span>
+            </button>
+            <img
+              src={expandedImage.src}
+              alt={expandedImage.name}
+              className="max-h-[86vh] max-w-[92vw] select-none rounded-lg border border-border/70 bg-background object-contain shadow-2xl"
+              draggable={false}
+            />
+            <p className="mt-2 max-w-[92vw] truncate text-center text-xs text-muted-foreground/80">
+              {expandedImage.name}
+            </p>
+          </div>
+        </div>
       )}
     </div>
   );

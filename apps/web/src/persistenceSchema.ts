@@ -23,6 +23,16 @@ const persistedMessageSchema = z.object({
   id: z.string().min(1),
   role: z.enum(["user", "assistant"]),
   text: z.string(),
+  images: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        name: z.string().min(1),
+        mimeType: z.string().min(1),
+        sizeBytes: z.number().int().min(1),
+      }),
+    )
+    .optional(),
   createdAt: z.string().min(1),
   streaming: z.boolean(),
 });
@@ -126,10 +136,19 @@ function hydrateThread(
     terminalOpen: thread.terminalOpen ?? false,
     terminalHeight: thread.terminalHeight ?? DEFAULT_THREAD_TERMINAL_HEIGHT,
     session: null,
-    messages: thread.messages.map((message) => ({
-      ...message,
-      streaming: false,
-    })),
+    messages: thread.messages.map((message) => {
+      const hydratedImages = message.images?.map((image) => ({
+        ...image,
+      }));
+      return {
+        id: message.id,
+        role: message.role,
+        text: message.text,
+        ...(hydratedImages && hydratedImages.length > 0 ? { images: hydratedImages } : {}),
+        createdAt: message.createdAt,
+        streaming: false,
+      };
+    }),
     events: [],
     error: null,
     createdAt: thread.createdAt,
@@ -189,7 +208,23 @@ export function toPersistedState(
       model: thread.model,
       terminalOpen: thread.terminalOpen,
       terminalHeight: thread.terminalHeight,
-      messages: thread.messages,
+      messages: thread.messages.map((message) => ({
+        id: message.id,
+        role: message.role,
+        text: message.text,
+        ...(message.images && message.images.length > 0
+          ? {
+              images: message.images.map((image) => ({
+                id: image.id,
+                name: image.name,
+                mimeType: image.mimeType,
+                sizeBytes: image.sizeBytes,
+              })),
+            }
+          : {}),
+        createdAt: message.createdAt,
+        streaming: message.streaming,
+      })),
       createdAt: thread.createdAt,
       branch: thread.branch,
       worktreePath: thread.worktreePath,
