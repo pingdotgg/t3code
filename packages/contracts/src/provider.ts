@@ -59,17 +59,7 @@ export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
 export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 export const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
 
-function validateImageDataUrl(value: { dataUrl: string }, ctx: z.RefinementCtx): void {
-  if (!value.dataUrl.startsWith("data:image/")) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Image dataUrl must start with data:image/",
-      path: ["dataUrl"],
-    });
-  }
-}
-
-const providerSendTurnImageAttachmentBaseSchema = z.object({
+export const providerSendTurnImageAttachmentSchema = z.object({
   type: z.literal("image"),
   name: z.string().trim().min(1).max(255),
   mimeType: z
@@ -82,35 +72,30 @@ const providerSendTurnImageAttachmentBaseSchema = z.object({
   dataUrl: z.string().trim().min(1).max(PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS),
 });
 
-export const providerSendTurnImageAttachmentInputSchema =
-  providerSendTurnImageAttachmentBaseSchema.superRefine(validateImageDataUrl);
-
 export const providerSendTurnAttachmentInputSchema = z.discriminatedUnion("type", [
-  providerSendTurnImageAttachmentBaseSchema,
-]).superRefine((value, ctx) => {
-  if (value.type === "image") {
-    validateImageDataUrl(value, ctx);
-  }
-});
+  providerSendTurnImageAttachmentSchema,
+]);
 
-export const providerSendTurnInputSchema = z.object({
-  sessionId: z.string().min(1),
-  input: z.string().trim().min(1).max(PROVIDER_SEND_TURN_MAX_INPUT_CHARS).optional(),
-  attachments: z
-    .array(providerSendTurnAttachmentInputSchema)
-    .max(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)
-    .default([]),
-  model: z.string().trim().min(1).optional(),
-  effort: z.string().trim().min(1).optional(),
-}).superRefine((value, ctx) => {
-  if (!value.input && value.attachments.length === 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Either input text or at least one attachment is required",
-      path: ["input"],
-    });
-  }
-});
+export const providerSendTurnInputSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    input: z.string().trim().min(1).max(PROVIDER_SEND_TURN_MAX_INPUT_CHARS).optional(),
+    attachments: z
+      .array(providerSendTurnAttachmentInputSchema)
+      .max(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)
+      .default([]),
+    model: z.string().trim().min(1).optional(),
+    effort: z.string().trim().min(1).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.input && value.attachments.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Either input text or at least one attachment is required",
+        path: ["input"],
+      });
+    }
+  });
 
 export const providerTurnStartResultSchema = z.object({
   threadId: z.string().min(1),
@@ -159,8 +144,7 @@ export type ProviderApprovalDecision = z.infer<typeof providerApprovalDecisionSc
 export type ProviderSessionStatus = z.infer<typeof providerSessionStatusSchema>;
 export type ProviderSession = z.infer<typeof providerSessionSchema>;
 export type ProviderSessionStartInput = z.input<typeof providerSessionStartInputSchema>;
-export type ProviderSendTurnImageAttachment = z.infer<typeof providerSendTurnImageAttachmentInputSchema>;
-export type ProviderSendTurnImageAttachmentInput = z.input<typeof providerSendTurnImageAttachmentInputSchema>;
+export type ProviderSendTurnImageAttachment = z.infer<typeof providerSendTurnImageAttachmentSchema>;
 export type ProviderSendTurnAttachment = z.infer<typeof providerSendTurnAttachmentInputSchema>;
 export type ProviderSendTurnAttachmentInput = z.input<typeof providerSendTurnAttachmentInputSchema>;
 export type ProviderSendTurnInput = z.input<typeof providerSendTurnInputSchema>;
