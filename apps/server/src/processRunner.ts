@@ -6,6 +6,7 @@ export interface ProcessRunOptions {
   env?: NodeJS.ProcessEnv | undefined;
   stdin?: string | undefined;
   allowNonZeroExit?: boolean | undefined;
+  maxBufferBytes?: number | undefined;
 }
 
 export interface ProcessRunResult {
@@ -52,12 +53,39 @@ function normalizeExitError(
   return new Error(`${commandLabel(command, args)} ${reason}.${detail}`);
 }
 
+function normalizeStdinError(
+  command: string,
+  args: readonly string[],
+  error: unknown,
+): Error {
+  if (!(error instanceof Error)) {
+    return new Error(`Failed to write stdin for ${commandLabel(command, args)}.`);
+  }
+  return new Error(
+    `Failed to write stdin for ${commandLabel(command, args)}: ${error.message}`,
+  );
+}
+
+function normalizeBufferError(
+  command: string,
+  args: readonly string[],
+  stream: "stdout" | "stderr",
+  maxBufferBytes: number,
+): Error {
+  return new Error(
+    `${commandLabel(command, args)} exceeded ${stream} buffer limit (${maxBufferBytes} bytes).`,
+  );
+}
+
+const DEFAULT_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
+
 export async function runProcess(
   command: string,
   args: readonly string[],
   options: ProcessRunOptions = {},
 ): Promise<ProcessRunResult> {
   const timeoutMs = options.timeoutMs ?? 60_000;
+  const maxBufferBytes = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES;
 
   return new Promise<ProcessRunResult>((resolve, reject) => {
     const child = spawn(command, args, {
@@ -68,6 +96,8 @@ export async function runProcess(
 
     let stdout = "";
     let stderr = "";
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
     let timedOut = false;
     let settled = false;
     let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
@@ -90,12 +120,47 @@ export async function runProcess(
       callback();
     };
 
+    const fail = (error: Error): void => {
+      child.kill("SIGTERM");
+      finalize(() => {
+        reject(error);
+      });
+    };
+
+    const appendOutput = (
+      stream: "stdout" | "stderr",
+      chunk: Buffer | string,
+    ): Error | null => {
+      const text = chunk.toString();
+      const byteLength = Buffer.byteLength(text);
+      if (stream === "stdout") {
+        stdout += text;
+        stdoutBytes += byteLength;
+        if (stdoutBytes > maxBufferBytes) {
+          return normalizeBufferError(command, args, "stdout", maxBufferBytes);
+        }
+      } else {
+        stderr += text;
+        stderrBytes += byteLength;
+        if (stderrBytes > maxBufferBytes) {
+          return normalizeBufferError(command, args, "stderr", maxBufferBytes);
+        }
+      }
+      return null;
+    };
+
     child.stdout.on("data", (chunk: Buffer | string) => {
-      stdout += chunk.toString();
+      const error = appendOutput("stdout", chunk);
+      if (error) {
+        fail(error);
+      }
     });
 
     child.stderr.on("data", (chunk: Buffer | string) => {
-      stderr += chunk.toString();
+      const error = appendOutput("stderr", chunk);
+      if (error) {
+        fail(error);
+      }
     });
 
     child.once("error", (error) => {
@@ -125,10 +190,20 @@ export async function runProcess(
       });
     });
 
+    child.stdin.once("error", (error) => {
+      fail(normalizeStdinError(command, args, error));
+    });
+
     if (options.stdin !== undefined) {
-      child.stdin.write(options.stdin);
+      child.stdin.write(options.stdin, (error) => {
+        if (error) {
+          fail(normalizeStdinError(command, args, error));
+          return;
+        }
+        child.stdin.end();
+      });
+      return;
     }
     child.stdin.end();
   });
 }
-

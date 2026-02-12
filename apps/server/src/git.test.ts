@@ -462,7 +462,7 @@ describe("git integration", () => {
       await using remote = await makeTmpDir();
       await initRepoWithCommit(tmp.path);
       await git(remote.path, "init --bare");
-      await git(tmp.path, `remote add origin '${remote.path}'`);
+      await git(tmp.path, `remote add origin ${JSON.stringify(remote.path)}`);
       await createGitBranch({ cwd: tmp.path, branch: "feature/core-push" });
       await checkoutGitBranch({ cwd: tmp.path, branch: "feature/core-push" });
 

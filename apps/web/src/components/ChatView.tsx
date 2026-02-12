@@ -196,6 +196,7 @@ export default function ChatView() {
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const editorMenuRef = useRef<HTMLDivElement>(null);
   const gitMenuRef = useRef<HTMLDivElement>(null);
+  const latestGitCwdRef = useRef<string | null>(null);
 
   const activeThread = state.threads.find((t) => t.id === state.activeThreadId);
   const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
@@ -302,19 +303,27 @@ export default function ChatView() {
     !api || !gitCwd || !gitStatus || isGitActionRunning;
   const pushActionDisabled = gitActionsDisabled || gitStatus.branch === null;
 
+  useEffect(() => {
+    latestGitCwdRef.current = gitCwd;
+  }, [gitCwd]);
+
   const refreshGitStatus = useCallback(async () => {
-    if (!api || !gitCwd) {
+    const requestCwd = gitCwd;
+    if (!api || !requestCwd) {
       setGitStatus(null);
       return;
     }
 
-    const nextStatus = await api.git.status({ cwd: gitCwd });
+    const nextStatus = await api.git.status({ cwd: requestCwd });
+    if (latestGitCwdRef.current !== requestCwd) return;
     setGitStatus(nextStatus);
+    setGitActionError(null);
   }, [api, gitCwd]);
 
   const runGitAction = useCallback(
     async (action: GitStackedAction) => {
       if (!api || !gitCwd) return;
+      const actionCwd = gitCwd;
 
       setIsGitMenuOpen(false);
       setIsGitActionRunning(true);
@@ -322,7 +331,7 @@ export default function ChatView() {
       setGitActionNotice(null);
       try {
         const result = await api.git.runStackedAction({
-          cwd: gitCwd,
+          cwd: actionCwd,
           action,
         });
         setGitActionNotice(summarizeGitActionResult(result));
@@ -333,7 +342,9 @@ export default function ChatView() {
       } finally {
         setIsGitActionRunning(false);
         try {
-          await refreshGitStatus();
+          if (latestGitCwdRef.current === actionCwd) {
+            await refreshGitStatus();
+          }
         } catch {
           setGitStatus(null);
         }
@@ -404,6 +415,7 @@ export default function ChatView() {
         const nextStatus = await api.git.status({ cwd: gitCwd });
         if (!cancelled) {
           setGitStatus(nextStatus);
+          setGitActionError(null);
         }
       } catch (error) {
         if (!cancelled) {

@@ -21,6 +21,8 @@ import { CodexTextGenerator } from "./codexTextGenerator";
 import { GitCoreService } from "./git";
 import { type ProcessRunOptions, runProcess } from "./processRunner";
 
+const GH_CLI_TIMEOUT_MS = 30_000;
+
 interface GitManagerDeps {
   runProcess?: (
     command: string,
@@ -107,10 +109,21 @@ function sanitizeCommitMessage(
 
 function extractBranchFromRef(ref: string): string {
   const normalized = ref.trim();
-  const afterSlash = normalized.includes("/")
-    ? normalized.slice(normalized.lastIndexOf("/") + 1)
-    : normalized;
-  return afterSlash.trim();
+
+  if (normalized.startsWith("refs/remotes/")) {
+    const withoutPrefix = normalized.slice("refs/remotes/".length);
+    const firstSlash = withoutPrefix.indexOf("/");
+    if (firstSlash === -1) {
+      return withoutPrefix.trim();
+    }
+    return withoutPrefix.slice(firstSlash + 1).trim();
+  }
+
+  const firstSlash = normalized.indexOf("/");
+  if (firstSlash === -1) {
+    return normalized;
+  }
+  return normalized.slice(firstSlash + 1).trim();
 }
 
 function asCommandNotFound(
@@ -401,7 +414,7 @@ export class GitManager {
 
   private async runGh(cwd: string, args: readonly string[]): Promise<void> {
     try {
-      await this.run("gh", args, { cwd });
+      await this.run("gh", args, { cwd, timeoutMs: GH_CLI_TIMEOUT_MS });
     } catch (error) {
       throw (
         asCommandNotFound("gh", error) ??
@@ -413,7 +426,10 @@ export class GitManager {
 
   private async runGhStdout(cwd: string, args: readonly string[]): Promise<string> {
     try {
-      const result = await this.run("gh", args, { cwd });
+      const result = await this.run("gh", args, {
+        cwd,
+        timeoutMs: GH_CLI_TIMEOUT_MS,
+      });
       return result.stdout;
     } catch (error) {
       throw (

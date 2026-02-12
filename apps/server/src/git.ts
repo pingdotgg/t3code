@@ -102,12 +102,15 @@ function commandLabel(args: readonly string[]): string {
   return `git ${args.join(" ")}`;
 }
 
-function normalizeGitSpawnError(error: unknown): Error {
+function normalizeGitSpawnError(cwd: string, error: unknown): Error {
   if (!(error instanceof Error)) {
     return new Error("Failed to run git command.");
   }
   const code = (error as NodeJS.ErrnoException).code;
   if (code === "ENOENT") {
+    if (!fs.existsSync(cwd)) {
+      return new Error(`Working directory does not exist: ${cwd}`);
+    }
     return new Error("Git is required but not available on PATH.");
   }
   return new Error(`Failed to run git command: ${error.message}`);
@@ -135,10 +138,13 @@ async function runGitOrThrow(
   try {
     result = await runGit(args, cwd, options.timeoutMs);
   } catch (error) {
-    throw normalizeGitSpawnError(error);
+    throw normalizeGitSpawnError(cwd, error);
   }
 
-  if (!options.allowNonZeroExit && (result.code !== 0 || result.timedOut)) {
+  if (result.timedOut) {
+    throw normalizeGitExecutionError(args, result);
+  }
+  if (!options.allowNonZeroExit && result.code !== 0) {
     throw normalizeGitExecutionError(args, result);
   }
   return result;
@@ -242,7 +248,7 @@ export class GitCoreService {
       throw new Error("Cannot push from detached HEAD.");
     }
 
-    if (details.hasUpstream && details.aheadCount === 0) {
+    if (details.hasUpstream && details.aheadCount === 0 && details.behindCount === 0) {
       return {
         status: "skipped_up_to_date",
         branch,

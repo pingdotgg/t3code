@@ -117,9 +117,11 @@ async function runCodexJson<T>({
     "codex-schema",
     JSON.stringify(outputSchemaJson),
   );
-  const outputPath = await writeTempFile("codex-output", "");
+  let outputPath: string | null = null;
 
   try {
+    outputPath = await writeTempFile("codex-output", "");
+
     await runProcess(
       "codex",
       [
@@ -154,7 +156,10 @@ async function runCodexJson<T>({
 
     return parse(parsedJson);
   } finally {
-    await Promise.all([safeUnlink(schemaPath), safeUnlink(outputPath)]);
+    await Promise.all([
+      safeUnlink(schemaPath),
+      ...(outputPath ? [safeUnlink(outputPath)] : []),
+    ]);
   }
 }
 
