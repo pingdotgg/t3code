@@ -19,6 +19,10 @@ export const WS_METHODS = {
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
 
+  // Git methods
+  gitStatus: "git.status",
+  gitRunStackedAction: "git.runStackedAction",
+
   // Server meta
   serverGetConfig: "server.getConfig",
 } as const;

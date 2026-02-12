@@ -1,5 +1,11 @@
 import type { AgentConfig, AgentExit, OutputChunk } from "./agent";
 import type {
+  GitRunStackedActionInput,
+  GitRunStackedActionResult,
+  GitStatusInput,
+  GitStatusResult,
+} from "./git";
+import type {
   ProviderEvent,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
@@ -61,6 +67,12 @@ export interface NativeApi {
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
+  };
+  git: {
+    status: (input: GitStatusInput) => Promise<GitStatusResult>;
+    runStackedAction: (
+      input: GitRunStackedActionInput,
+    ) => Promise<GitRunStackedActionResult>;
   };
   contextMenu: {
     show: <T extends string>(

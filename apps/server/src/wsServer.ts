@@ -19,6 +19,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { createLogger } from "./logger";
 import { ProjectRegistry } from "./projectRegistry";
 import { ProviderManager } from "./providerManager";
+import { GitManager } from "./gitManager";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -43,6 +44,7 @@ export interface ServerOptions {
   devUrl?: string | undefined;
   logWebSocketEvents?: boolean | undefined;
   projectRegistry?: ProjectRegistry | undefined;
+  gitManager?: GitManager | undefined;
   authToken?: string | undefined;
 }
 
@@ -63,11 +65,13 @@ export function createServer(options: ServerOptions) {
     devUrl,
     logWebSocketEvents: explicitLogWsEvents,
     projectRegistry: providedRegistry,
+    gitManager: providedGitManager,
     authToken,
   } = options;
   const providerManager = new ProviderManager();
   const projectRegistry =
     providedRegistry ?? new ProjectRegistry(path.join(os.homedir(), ".t3", "userdata"));
+  const gitManager = providedGitManager ?? new GitManager();
   const clients = new Set<WebSocket>();
   const logger = createLogger("ws");
   const logWebSocketEvents =
@@ -303,6 +307,12 @@ export function createServer(options: ServerOptions) {
         child.unref();
         return undefined;
       }
+
+      case WS_METHODS.gitStatus:
+        return gitManager.status(request.params as never);
+
+      case WS_METHODS.gitRunStackedAction:
+        return gitManager.runStackedAction(request.params as never);
 
       case WS_METHODS.serverGetConfig:
         return { cwd };

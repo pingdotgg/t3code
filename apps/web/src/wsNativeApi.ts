@@ -96,6 +96,10 @@ export function createWsNativeApi(): NativeApi {
       openInEditor: (cwd, editor) =>
         transport.request(WS_METHODS.shellOpenInEditor, { cwd, editor }),
     },
+    git: {
+      status: (input) => transport.request(WS_METHODS.gitStatus, input),
+      runStackedAction: (input) => transport.request(WS_METHODS.gitRunStackedAction, input),
+    },
     contextMenu: {
       show: async <T extends string>(
         items: readonly { id: T; label: string }[],

@@ -6,3 +6,4 @@ export * from "./provider";
 export * from "./model";
 export * from "./ws";
 export * from "./project";
+export * from "./git";

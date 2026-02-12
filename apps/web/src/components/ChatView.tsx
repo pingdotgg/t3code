@@ -1,5 +1,8 @@
 import {
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  type GitRunStackedActionResult,
+  type GitStackedAction,
+  type GitStatusResult,
   type ProviderApprovalDecision,
   type ProviderEvent,
 } from "@t3tools/contracts";
@@ -7,6 +10,7 @@ import {
   type FormEvent,
   Fragment,
   type KeyboardEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -52,6 +56,14 @@ function editorLabel(editor: (typeof EDITORS)[number]): string {
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
+const GIT_ACTION_ITEMS: Array<{
+  id: GitStackedAction;
+  label: string;
+}> = [
+  { id: "commit", label: "Commit" },
+  { id: "commit_push", label: "Commit & Push" },
+  { id: "commit_push_pr", label: "Commit, Push & Create PR" },
+];
 
 function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   if (tone === "error") return "text-rose-300/50 dark:text-rose-300/50";
@@ -132,6 +144,35 @@ function derivePendingApprovals(
   return Array.from(pending.values());
 }
 
+function summarizeGitActionResult(result: GitRunStackedActionResult): string {
+  const parts: string[] = [];
+
+  if (result.commit.status === "created") {
+    parts.push(`Committed: ${result.commit.subject ?? "changes saved"}.`);
+  } else {
+    parts.push("No local changes to commit.");
+  }
+
+  if (result.push.status === "pushed") {
+    const upstream = result.push.upstreamBranch;
+    parts.push(
+      upstream ? `Pushed to ${upstream}.` : "Pushed to remote branch.",
+    );
+  } else if (result.push.status === "skipped_up_to_date") {
+    parts.push("Push skipped: branch already up to date.");
+  }
+
+  if (result.pr.status === "created") {
+    parts.push(result.pr.url ? `PR created: ${result.pr.url}` : "PR created.");
+  } else if (result.pr.status === "opened_existing") {
+    parts.push(
+      result.pr.url ? `Opened existing PR: ${result.pr.url}` : "Opened existing PR.",
+    );
+  }
+
+  return parts.join(" ");
+}
+
 export default function ChatView() {
   const { state, dispatch } = useStore();
   const api = useMemo(() => readNativeApi(), []);
@@ -140,6 +181,11 @@ export default function ChatView() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [isEditorMenuOpen, setIsEditorMenuOpen] = useState(false);
+  const [isGitMenuOpen, setIsGitMenuOpen] = useState(false);
+  const [isGitActionRunning, setIsGitActionRunning] = useState(false);
+  const [gitStatus, setGitStatus] = useState<GitStatusResult | null>(null);
+  const [gitActionNotice, setGitActionNotice] = useState<string | null>(null);
+  const [gitActionError, setGitActionError] = useState<string | null>(null);
   const [lastEditor, setLastEditor] = useState<EditorId>(() => {
     const stored = localStorage.getItem(LAST_EDITOR_KEY);
     return EDITORS.some((e) => e.id === stored)
@@ -160,6 +206,7 @@ export default function ChatView() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const editorMenuRef = useRef<HTMLDivElement>(null);
+  const gitMenuRef = useRef<HTMLDivElement>(null);
 
   const activeThread = state.threads.find((t) => t.id === state.activeThreadId);
   const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
@@ -265,6 +312,49 @@ export default function ChatView() {
           approvalPolicy: "on-request",
           sandboxMode: "workspace-write",
         } as const);
+  const gitActionsDisabled =
+    !api || !activeProject || !gitStatus || isGitActionRunning;
+  const pushActionDisabled = gitActionsDisabled || gitStatus.branch === null;
+
+  const refreshGitStatus = useCallback(async () => {
+    if (!api || !activeProject) {
+      setGitStatus(null);
+      return;
+    }
+
+    const nextStatus = await api.git.status({ cwd: activeProject.cwd });
+    setGitStatus(nextStatus);
+  }, [api, activeProject]);
+
+  const runGitAction = useCallback(
+    async (action: GitStackedAction) => {
+      if (!api || !activeProject) return;
+
+      setIsGitMenuOpen(false);
+      setIsGitActionRunning(true);
+      setGitActionError(null);
+      setGitActionNotice(null);
+      try {
+        const result = await api.git.runStackedAction({
+          cwd: activeProject.cwd,
+          action,
+        });
+        setGitActionNotice(summarizeGitActionResult(result));
+      } catch (error) {
+        setGitActionError(
+          error instanceof Error ? error.message : "Git action failed.",
+        );
+      } finally {
+        setIsGitActionRunning(false);
+        try {
+          await refreshGitStatus();
+        } catch {
+          setGitStatus(null);
+        }
+      }
+    },
+    [api, activeProject, refreshGitStatus],
+  );
 
   const handleRuntimeModeChange = async (
     mode: "approval-required" | "full-access",
@@ -308,6 +398,42 @@ export default function ChatView() {
   useEffect(() => {
     setExpandedWorkGroups({});
   }, [activeThread?.id]);
+
+  useEffect(() => {
+    setGitActionNotice(null);
+    setGitActionError(null);
+  }, [activeProject?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!api || !activeProject) {
+      setGitStatus(null);
+      return;
+    }
+
+    const load = async () => {
+      try {
+        const nextStatus = await api.git.status({ cwd: activeProject.cwd });
+        if (!cancelled) {
+          setGitStatus(nextStatus);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setGitStatus(null);
+          setGitActionError(
+            error instanceof Error
+              ? error.message
+              : "Failed to read git status.",
+          );
+        }
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [api, activeProject]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -361,6 +487,22 @@ export default function ChatView() {
       window.removeEventListener("mousedown", handleClickOutside);
     };
   }, [isEditorMenuOpen]);
+
+  useEffect(() => {
+    if (!isGitMenuOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!gitMenuRef.current) return;
+      if (event.target instanceof Node && !gitMenuRef.current.contains(event.target)) {
+        setIsGitMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      window.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isGitMenuOpen]);
 
   // Cmd+O / Ctrl+O to open in last-used editor
   useEffect(() => {
@@ -617,6 +759,49 @@ export default function ChatView() {
               )}
             </div>
           )}
+          {/* Git actions */}
+          {activeProject && (
+            <div className="relative" ref={gitMenuRef}>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground/70 transition-colors duration-150 hover:bg-accent hover:text-foreground/80 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => setIsGitMenuOpen((v) => !v)}
+                disabled={!gitStatus || isGitActionRunning}
+              >
+                {isGitActionRunning ? "Running..." : "Git actions"}
+                <span aria-hidden="true">▾</span>
+              </button>
+              {isGitMenuOpen && (
+                <div className="absolute right-0 top-full z-50 mt-1 w-[240px] rounded-xl border border-border bg-popover p-2 shadow-xl">
+                  <p className="px-2 pb-1 text-[10px] uppercase tracking-[0.1em] text-muted-foreground/60">
+                    Git actions
+                  </p>
+                  {GIT_ACTION_ITEMS.map((item) => {
+                    const disabled =
+                      item.id === "commit" ? gitActionsDisabled : pushActionDisabled;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="mb-1 flex w-full items-center rounded-lg px-2 py-2 text-left text-[11px] text-foreground transition-colors duration-150 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={disabled}
+                        onClick={() => {
+                          void runGitAction(item.id);
+                        }}
+                      >
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                  {gitStatus?.branch === null && (
+                    <p className="px-2 pt-1 text-[10px] text-amber-500 dark:text-amber-300">
+                      Detached HEAD: push and PR actions are unavailable.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           {/* Diff toggle */}
           <button
             type="button"
@@ -636,6 +821,18 @@ export default function ChatView() {
       {activeThread.error && (
         <div className="mx-4 mt-3 rounded-lg border border-rose-400/20 bg-rose-900/20 px-3 py-2 text-xs text-rose-200">
           {activeThread.error}
+        </div>
+      )}
+
+      {gitActionError && (
+        <div className="mx-4 mt-3 rounded-lg border border-rose-400/20 bg-rose-900/20 px-3 py-2 text-xs text-rose-200">
+          {gitActionError}
+        </div>
+      )}
+
+      {gitActionNotice && (
+        <div className="mx-4 mt-3 rounded-lg border border-emerald-400/20 bg-emerald-500/[0.08] px-3 py-2 text-xs text-emerald-100">
+          {gitActionNotice}
         </div>
       )}
 
