@@ -1,15 +1,11 @@
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(__dirname, "..");
-const rootDir = resolve(__dirname, "../../..");
 const electronBin = resolve(desktopDir, "node_modules/.bin/electron");
 const mainJs = resolve(desktopDir, "dist-electron/main.js");
-
-console.log("Building contracts + web + server + desktop...");
-execSync("bun run build", { cwd: rootDir, stdio: "inherit" });
 
 console.log("\nLaunching Electron smoke test...");
 

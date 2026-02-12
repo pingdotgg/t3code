@@ -83,12 +83,7 @@ export const providerRespondToRequestInputSchema = z.object({
   decision: providerApprovalDecisionSchema,
 });
 
-export const providerEventKindSchema = z.enum([
-  "session",
-  "notification",
-  "request",
-  "error",
-]);
+export const providerEventKindSchema = z.enum(["session", "notification", "request", "error"]);
 
 export const providerEventSchema = z.object({
   id: z.string().min(1),
@@ -111,24 +106,14 @@ export type ProviderKind = z.infer<typeof providerKindSchema>;
 export type ProviderApprovalPolicy = z.infer<typeof providerApprovalPolicySchema>;
 export type ProviderSandboxMode = z.infer<typeof providerSandboxModeSchema>;
 export type ProviderRequestKind = z.infer<typeof providerRequestKindSchema>;
-export type ProviderApprovalDecision = z.infer<
-  typeof providerApprovalDecisionSchema
->;
+export type ProviderApprovalDecision = z.infer<typeof providerApprovalDecisionSchema>;
 export type ProviderSessionStatus = z.infer<typeof providerSessionStatusSchema>;
 export type ProviderSession = z.infer<typeof providerSessionSchema>;
 export type ProviderSessionStartInput = z.input<typeof providerSessionStartInputSchema>;
 export type ProviderSendTurnInput = z.input<typeof providerSendTurnInputSchema>;
-export type ProviderTurnStartResult = z.infer<
-  typeof providerTurnStartResultSchema
->;
-export type ProviderInterruptTurnInput = z.input<
-  typeof providerInterruptTurnInputSchema
->;
-export type ProviderStopSessionInput = z.input<
-  typeof providerStopSessionInputSchema
->;
-export type ProviderRespondToRequestInput = z.input<
-  typeof providerRespondToRequestInputSchema
->;
+export type ProviderTurnStartResult = z.infer<typeof providerTurnStartResultSchema>;
+export type ProviderInterruptTurnInput = z.input<typeof providerInterruptTurnInputSchema>;
+export type ProviderStopSessionInput = z.input<typeof providerStopSessionInputSchema>;
+export type ProviderRespondToRequestInput = z.input<typeof providerRespondToRequestInputSchema>;
 export type ProviderEventKind = z.infer<typeof providerEventKindSchema>;
 export type ProviderEvent = z.infer<typeof providerEventSchema>;

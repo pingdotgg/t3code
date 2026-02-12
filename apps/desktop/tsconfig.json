@@ -3,7 +3,7 @@
   "compilerOptions": {
     "composite": true,
     "types": ["node", "electron"],
-    "lib": ["ES2023", "DOM"]
+    "lib": ["ES2023", "DOM", "esnext.disposable"]
   },
-  "include": ["src", "tsup.config.ts"]
+  "include": ["src", "tsdown.config.ts"]
 }

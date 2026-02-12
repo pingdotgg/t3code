@@ -2,19 +2,17 @@
   "name": "t3",
   "version": "0.1.0",
   "bin": {
-    "t3": "./dist/index.js"
+    "t3": "./dist/index.mjs"
   },
   "files": [
     "dist"
   ],
   "type": "module",
-  "main": "./dist/index.js",
+  "main": "./dist/index.mjs",
   "scripts": {
-    "dev": "VITE_DEV_SERVER_URL=http://localhost:5173 tsx src/index.ts",
-    "dev:desktop": "T3CODE_MODE=desktop T3CODE_NO_BROWSER=1 tsx src/index.ts",
-    "build": "tsup && node scripts/bundle-client.mjs",
-    "start": "node dist/index.js",
-    "start:desktop": "T3CODE_MODE=desktop T3CODE_NO_BROWSER=1 node dist/index.js",
+    "dev": "VITE_DEV_SERVER_URL=http://localhost:5173 bun run src/index.ts",
+    "build": "tsdown && node scripts/bundle-client.mjs",
+    "start": "node dist/index.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -27,8 +25,7 @@
     "@t3tools/web": "workspace:*",
     "@types/node": "^22.10.2",
     "@types/ws": "^8.5.13",
-    "tsup": "^8.3.5",
-    "tsx": "^4.19.0",
+    "tsdown": "^0.20.3",
     "typescript": "^5.7.3"
   }
 }

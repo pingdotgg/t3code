@@ -87,11 +87,7 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
       throw new Error(`Unknown provider session: ${input.sessionId}`);
     }
 
-    await this.codex.respondToRequest(
-      input.sessionId,
-      input.requestId,
-      input.decision,
-    );
+    await this.codex.respondToRequest(input.sessionId, input.requestId, input.decision);
   }
 
   stopSession(raw: ProviderStopSessionInput): void {
@@ -151,10 +147,7 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
 
   private resolveThreadId(event: ProviderEvent): string | undefined {
     const fromPayload = this.readThreadIdFromPayload(event.payload);
-    const threadId =
-      event.threadId ??
-      fromPayload ??
-      this.sessionThreadIds.get(event.sessionId);
+    const threadId = event.threadId ?? fromPayload ?? this.sessionThreadIds.get(event.sessionId);
 
     if (threadId) {
       this.sessionThreadIds.set(event.sessionId, threadId);

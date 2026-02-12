@@ -22,6 +22,12 @@ export const WS_METHODS = {
   // Git methods
   gitStatus: "git.status",
   gitRunStackedAction: "git.runStackedAction",
+  gitListBranches: "git.listBranches",
+  gitCreateWorktree: "git.createWorktree",
+  gitRemoveWorktree: "git.removeWorktree",
+  gitCreateBranch: "git.createBranch",
+  gitCheckout: "git.checkout",
+  gitInit: "git.init",
 
   // Server meta
   serverGetConfig: "server.getConfig",

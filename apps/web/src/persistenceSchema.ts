@@ -1,12 +1,7 @@
 import { z } from "zod";
 
 import { DEFAULT_MODEL, resolveModelSlug } from "./model-logic";
-import {
-  DEFAULT_RUNTIME_MODE,
-  type Project,
-  type RuntimeMode,
-  type Thread,
-} from "./types";
+import { DEFAULT_RUNTIME_MODE, type Project, type RuntimeMode, type Thread } from "./types";
 
 const LEGACY_DEFAULT_MODEL = "gpt-5.2-codex";
 
@@ -34,6 +29,8 @@ const persistedThreadSchema = z.object({
   model: z.string().min(1),
   messages: z.array(persistedMessageSchema),
   createdAt: z.string().min(1),
+  branch: z.string().min(1).nullable().optional(),
+  worktreePath: z.string().min(1).nullable().optional(),
 });
 
 const persistedStateBodySchema = z.object({
@@ -112,6 +109,8 @@ function hydrateThread(
     events: [],
     error: null,
     createdAt: thread.createdAt,
+    branch: thread.branch ?? null,
+    worktreePath: thread.worktreePath ?? null,
   };
 }
 
@@ -146,13 +145,9 @@ export function hydratePersistedState(
   return {
     projects,
     threads,
-    activeThreadId: hasActiveThread
-      ? parsedState.data.activeThreadId
-      : (threads[0]?.id ?? null),
+    activeThreadId: hasActiveThread ? parsedState.data.activeThreadId : (threads[0]?.id ?? null),
     runtimeMode:
-      "runtimeMode" in parsedState.data
-        ? parsedState.data.runtimeMode
-        : DEFAULT_RUNTIME_MODE,
+      "runtimeMode" in parsedState.data ? parsedState.data.runtimeMode : DEFAULT_RUNTIME_MODE,
   };
 }
 
@@ -170,6 +165,8 @@ export function toPersistedState(
       model: thread.model,
       messages: thread.messages,
       createdAt: thread.createdAt,
+      branch: thread.branch,
+      worktreePath: thread.worktreePath,
     })),
     activeThreadId: state.activeThreadId,
     runtimeMode: state.runtimeMode,

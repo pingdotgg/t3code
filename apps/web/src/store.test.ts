@@ -39,6 +39,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     events: [],
     error: null,
     createdAt: "2026-02-09T00:00:00.000Z",
+    branch: null,
+    worktreePath: null,
     ...overrides,
   };
 }

@@ -7,18 +7,18 @@
   ],
   "type": "module",
   "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
+  "module": "./dist/index.mjs",
   "types": "./src/index.ts",
   "exports": {
     ".": {
       "types": "./src/index.ts",
-      "import": "./dist/index.js",
+      "import": "./dist/index.mjs",
       "require": "./dist/index.cjs"
     }
   },
   "scripts": {
-    "dev": "tsup src/index.ts --format esm,cjs --dts --watch --clean",
-    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "dev": "tsdown src/index.ts --format esm,cjs --dts --watch --clean",
+    "build": "tsdown src/index.ts --format esm,cjs --dts --clean",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -26,7 +26,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "tsup": "^8.3.5",
+    "tsdown": "^0.20.3",
     "typescript": "^5.7.3"
   }
 }

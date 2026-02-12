@@ -4,10 +4,10 @@
   "private": true,
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "bun run --cwd ../server build && concurrently -k -n BUNDLE,WEB,ELECTRON \"bun run dev:bundle\" \"bun run --cwd ../web dev\" \"bun run dev:electron\"",
-    "dev:bundle": "tsup --watch",
+    "dev": "bun run --parallel dev:bundle dev:electron",
+    "dev:bundle": "tsdown --watch",
     "dev:electron": "bun run scripts/dev-electron.mjs",
-    "build": "tsup",
+    "build": "tsdown",
     "start": "electron dist-electron/main.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
@@ -18,11 +18,10 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "concurrently": "^9.1.2",
     "electronmon": "^2.0.2",
-    "tsup": "^8.3.5",
+    "tsdown": "^0.20.3",
     "typescript": "^5.7.3",
-    "vitest": "^3.0.0",
+    "vitest": "^4.0.0",
     "wait-on": "^8.0.2"
   }
 }

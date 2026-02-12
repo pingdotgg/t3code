@@ -33,6 +33,12 @@ type Action =
   | { type: "SET_ERROR"; threadId: string; error: string | null }
   | { type: "SET_THREAD_TITLE"; threadId: string; title: string }
   | { type: "SET_THREAD_MODEL"; threadId: string; model: string }
+  | {
+      type: "SET_THREAD_BRANCH";
+      threadId: string;
+      branch: string | null;
+      worktreePath: string | null;
+    }
   | { type: "SET_RUNTIME_MODE"; mode: RuntimeMode }
   | { type: "DELETE_THREAD"; threadId: string };
 
@@ -370,6 +376,24 @@ export function reducer(state: AppState, action: Action): AppState {
         })),
       };
 
+    case "SET_THREAD_BRANCH": {
+      return {
+        ...state,
+        threads: updateThread(state.threads, action.threadId, (t) => {
+          // When the effective cwd changes (worktreePath differs), the old
+          // session is no longer valid — clear it so ensureSession creates a
+          // new one with the correct cwd on the next message.
+          const cwdChanged = t.worktreePath !== action.worktreePath;
+          return {
+            ...t,
+            branch: action.branch,
+            worktreePath: action.worktreePath,
+            ...(cwdChanged ? { session: null } : {}),
+          };
+        }),
+      };
+    }
+
     case "SET_RUNTIME_MODE":
       return {
         ...state,
@@ -379,9 +403,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case "DELETE_THREAD": {
       const threads = state.threads.filter((t) => t.id !== action.threadId);
       const activeThreadId =
-        state.activeThreadId === action.threadId
-          ? (threads[0]?.id ?? null)
-          : state.activeThreadId;
+        state.activeThreadId === action.threadId ? (threads[0]?.id ?? null) : state.activeThreadId;
       return { ...state, threads, activeThreadId };
     }
 

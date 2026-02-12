@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
+    "@tanstack/react-query": "^5.90.0",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.563.0",
     "react": "^19.0.0",
@@ -25,10 +26,10 @@
     "@tailwindcss/vite": "^4.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^5.1.4",
     "babel-plugin-react-compiler": "^19.0.0-beta-e552027-20250112",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.3",
-    "vite": "^6.0.5"
+    "vite": "^8.0.0-beta.12"
   }
 }

@@ -59,8 +59,8 @@ npx t3
 
 ## Scripts
 
-- `bun run dev` — Starts contracts, server, and web dev tasks via Turborepo's parallel task runner.
-- `bun run dev:server` — Starts just the WebSocket server (uses tsx for TS execution).
+- `bun run dev` — Starts contracts, server, and web in `turbo watch` mode.
+- `bun run dev:server` — Starts just the WebSocket server (uses Bun TypeScript execution).
 - `bun run dev:web` — Starts just the Vite dev server for the web app.
 - `bun run start` — Runs the production server (serves built web app as static files).
 - `bun run build` — Builds contracts, web app, and server through Turbo.

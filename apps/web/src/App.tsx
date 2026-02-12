@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef } from "react";
 
 import ChatView from "./components/ChatView";
@@ -82,6 +83,8 @@ function AutoProjectBootstrap() {
           events: [],
           error: null,
           createdAt: new Date().toISOString(),
+          branch: null,
+          worktreePath: null,
         },
       });
     });
@@ -166,10 +169,14 @@ function Layout() {
   );
 }
 
+const queryClient = new QueryClient();
+
 export default function App() {
   return (
-    <StoreProvider>
-      <Layout />
-    </StoreProvider>
+    <QueryClientProvider client={queryClient}>
+      <StoreProvider>
+        <Layout />
+      </StoreProvider>
+    </QueryClientProvider>
   );
 }

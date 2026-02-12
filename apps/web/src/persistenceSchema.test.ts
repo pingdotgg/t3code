@@ -134,6 +134,8 @@ describe("toPersistedState", () => {
       events: [],
       error: "boom",
       createdAt: "2026-02-08T10:00:00.000Z",
+      branch: null,
+      worktreePath: null,
     };
 
     const persisted = toPersistedState({
@@ -161,6 +163,8 @@ describe("toPersistedState", () => {
       model: "gpt-5.3-codex",
       messages: thread.messages,
       createdAt: thread.createdAt,
+      branch: null,
+      worktreePath: null,
     });
     const persistedThread = persisted.threads[0];
     expect(persistedThread).toBeDefined();

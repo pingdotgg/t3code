@@ -16,10 +16,7 @@ describe("ProviderManager", () => {
         method: string;
         threadId: string;
       }) => void;
-      threadLogStreams: Map<
-        string,
-        { writableEnded: boolean; destroyed: boolean }
-      >;
+      threadLogStreams: Map<string, { writableEnded: boolean; destroyed: boolean }>;
     };
     internals.onCodexEvent({
       id: "evt-1",

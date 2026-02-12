@@ -35,4 +35,6 @@ export interface Thread {
   latestTurnStartedAt?: string | undefined;
   latestTurnCompletedAt?: string | undefined;
   latestTurnDurationMs?: number | undefined;
+  branch: string | null;
+  worktreePath: string | null;
 }

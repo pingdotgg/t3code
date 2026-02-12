@@ -1,5 +1,13 @@
 import type { AgentConfig, AgentExit, OutputChunk } from "./agent";
 import type {
+  GitCheckoutInput,
+  GitCreateBranchInput,
+  GitCreateWorktreeInput,
+  GitCreateWorktreeResult,
+  GitInitInput,
+  GitListBranchesInput,
+  GitListBranchesResult,
+  GitRemoveWorktreeInput,
   GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStatusInput,
@@ -69,6 +77,14 @@ export interface NativeApi {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
   };
   git: {
+    // Existing branch/worktree API
+    listBranches: (input: GitListBranchesInput) => Promise<GitListBranchesResult>;
+    createWorktree: (input: GitCreateWorktreeInput) => Promise<GitCreateWorktreeResult>;
+    removeWorktree: (input: GitRemoveWorktreeInput) => Promise<void>;
+    createBranch: (input: GitCreateBranchInput) => Promise<void>;
+    checkout: (input: GitCheckoutInput) => Promise<void>;
+    init: (input: GitInitInput) => Promise<void>;
+    // Stacked action API
     status: (input: GitStatusInput) => Promise<GitStatusResult>;
     runStackedAction: (
       input: GitRunStackedActionInput,
@@ -81,3 +97,4 @@ export interface NativeApi {
     ) => Promise<T | null>;
   };
 }
+

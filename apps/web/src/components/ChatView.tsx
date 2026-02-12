@@ -37,6 +37,7 @@ import {
   readNativeApi,
 } from "../session-logic";
 import { useStore } from "../store";
+import BranchToolbar from "./BranchToolbar";
 import ChatMarkdown from "./ChatMarkdown";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
@@ -103,23 +104,17 @@ function approvalDetail(event: ProviderEvent): string | undefined {
   return asString(payload?.reason);
 }
 
-function derivePendingApprovals(
-  events: ProviderEvent[],
-): PendingApprovalCard[] {
+function derivePendingApprovals(events: ProviderEvent[]): PendingApprovalCard[] {
   const pending = new Map<string, PendingApprovalCard>();
   const ordered = [...events].toReversed();
 
   for (const event of ordered) {
-    if (
-      event.method === "session/closed" ||
-      event.method === "session/exited"
-    ) {
+    if (event.method === "session/closed" || event.method === "session/exited") {
       pending.clear();
       continue;
     }
 
-    const requestId =
-      event.requestId ?? asString(asRecord(event.payload)?.requestId);
+    const requestId = event.requestId ?? asString(asRecord(event.payload)?.requestId);
     if (!requestId) continue;
 
     if (
@@ -188,19 +183,13 @@ export default function ChatView() {
   const [gitActionError, setGitActionError] = useState<string | null>(null);
   const [lastEditor, setLastEditor] = useState<EditorId>(() => {
     const stored = localStorage.getItem(LAST_EDITOR_KEY);
-    return EDITORS.some((e) => e.id === stored)
-      ? (stored as EditorId)
-      : EDITORS[0].id;
+    return EDITORS.some((e) => e.id === stored) ? (stored as EditorId) : EDITORS[0].id;
   });
-  const [selectedEffort, setSelectedEffort] =
-    useState<string>(DEFAULT_REASONING);
+  const [selectedEffort, setSelectedEffort] = useState<string>(DEFAULT_REASONING);
+  const [envMode, setEnvMode] = useState<"local" | "worktree">("local");
   const [isSwitchingRuntimeMode, setIsSwitchingRuntimeMode] = useState(false);
-  const [respondingRequestIds, setRespondingRequestIds] = useState<string[]>(
-    [],
-  );
-  const [expandedWorkGroups, setExpandedWorkGroups] = useState<
-    Record<string, boolean>
-  >({});
+  const [respondingRequestIds, setRespondingRequestIds] = useState<string[]>([]);
+  const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [nowTick, setNowTick] = useState(() => Date.now());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -222,11 +211,7 @@ export default function ChatView() {
     [activeThread?.events],
   );
   const latestTurnWorkEntries = useMemo(
-    () =>
-      deriveWorkLogEntries(
-        activeThread?.events ?? [],
-        activeThread?.latestTurnId,
-      ),
+    () => deriveWorkLogEntries(activeThread?.events ?? [], activeThread?.latestTurnId),
     [activeThread?.events, activeThread?.latestTurnId],
   );
   const pendingApprovals = useMemo(
@@ -312,23 +297,24 @@ export default function ChatView() {
           approvalPolicy: "on-request",
           sandboxMode: "workspace-write",
         } as const);
+  const gitCwd = activeThread?.worktreePath ?? activeProject?.cwd ?? null;
   const gitActionsDisabled =
-    !api || !activeProject || !gitStatus || isGitActionRunning;
+    !api || !gitCwd || !gitStatus || isGitActionRunning;
   const pushActionDisabled = gitActionsDisabled || gitStatus.branch === null;
 
   const refreshGitStatus = useCallback(async () => {
-    if (!api || !activeProject) {
+    if (!api || !gitCwd) {
       setGitStatus(null);
       return;
     }
 
-    const nextStatus = await api.git.status({ cwd: activeProject.cwd });
+    const nextStatus = await api.git.status({ cwd: gitCwd });
     setGitStatus(nextStatus);
-  }, [api, activeProject]);
+  }, [api, gitCwd]);
 
   const runGitAction = useCallback(
     async (action: GitStackedAction) => {
-      if (!api || !activeProject) return;
+      if (!api || !gitCwd) return;
 
       setIsGitMenuOpen(false);
       setIsGitActionRunning(true);
@@ -336,7 +322,7 @@ export default function ChatView() {
       setGitActionNotice(null);
       try {
         const result = await api.git.runStackedAction({
-          cwd: activeProject.cwd,
+          cwd: gitCwd,
           action,
         });
         setGitActionNotice(summarizeGitActionResult(result));
@@ -353,21 +339,23 @@ export default function ChatView() {
         }
       }
     },
-    [api, activeProject, refreshGitStatus],
+    [api, gitCwd, refreshGitStatus],
   );
 
-  const handleRuntimeModeChange = async (
-    mode: "approval-required" | "full-access",
-  ) => {
+  const envLocked = Boolean(
+    activeThread &&
+    (activeThread.messages.length > 0 ||
+      (activeThread.session !== null && activeThread.session.status !== "closed")),
+  );
+
+  const handleRuntimeModeChange = async (mode: "approval-required" | "full-access") => {
     if (mode === state.runtimeMode) return;
     dispatch({ type: "SET_RUNTIME_MODE", mode });
     if (!api) return;
 
     const sessionIds = state.threads
       .map((t) => t.session)
-      .filter(
-        (s): s is NonNullable<typeof s> => s !== null && s.status !== "closed",
-      )
+      .filter((s): s is NonNullable<typeof s> => s !== null && s.status !== "closed")
       .map((s) => s.sessionId);
 
     if (sessionIds.length === 0) return;
@@ -375,9 +363,7 @@ export default function ChatView() {
     setIsSwitchingRuntimeMode(true);
     try {
       await Promise.all(
-        sessionIds.map((id) =>
-          api.providers.stopSession({ sessionId: id }).catch(() => undefined),
-        ),
+        sessionIds.map((id) => api.providers.stopSession({ sessionId: id }).catch(() => undefined)),
       );
     } finally {
       setIsSwitchingRuntimeMode(false);
@@ -399,21 +385,23 @@ export default function ChatView() {
     setExpandedWorkGroups({});
   }, [activeThread?.id]);
 
+  const activeWorktreePath = activeThread?.worktreePath;
+
   useEffect(() => {
     setGitActionNotice(null);
     setGitActionError(null);
-  }, [activeProject?.id]);
+  }, [activeProject?.id, activeWorktreePath]);
 
   useEffect(() => {
     let cancelled = false;
-    if (!api || !activeProject) {
+    if (!api || !gitCwd) {
       setGitStatus(null);
       return;
     }
 
     const load = async () => {
       try {
-        const nextStatus = await api.git.status({ cwd: activeProject.cwd });
+        const nextStatus = await api.git.status({ cwd: gitCwd });
         if (!cancelled) {
           setGitStatus(nextStatus);
         }
@@ -433,7 +421,12 @@ export default function ChatView() {
     return () => {
       cancelled = true;
     };
-  }, [api, activeProject]);
+  }, [api, gitCwd]);
+
+  useEffect(() => {
+    if (!activeThread?.id) return;
+    setEnvMode(activeWorktreePath ? "worktree" : "local");
+  }, [activeThread?.id, activeWorktreePath]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -474,10 +467,7 @@ export default function ChatView() {
 
     const handleClickOutside = (event: MouseEvent) => {
       if (!editorMenuRef.current) return;
-      if (
-        event.target instanceof Node &&
-        !editorMenuRef.current.contains(event.target)
-      ) {
+      if (event.target instanceof Node && !editorMenuRef.current.contains(event.target)) {
         setIsEditorMenuOpen(false);
       }
     };
@@ -510,23 +500,25 @@ export default function ChatView() {
       if (e.key === "o" && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
         if (api && activeProject) {
           e.preventDefault();
-          void api.shell.openInEditor(activeProject.cwd, lastEditor);
+          const cwd = activeThread?.worktreePath ?? activeProject.cwd;
+          void api.shell.openInEditor(cwd, lastEditor);
         }
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [api, activeProject, lastEditor]);
+  }, [api, activeProject, activeThread, lastEditor]);
 
   const openInEditor = (editorId: EditorId) => {
     if (!api || !activeProject) return;
-    void api.shell.openInEditor(activeProject.cwd, editorId);
+    const cwd = activeThread?.worktreePath ?? activeProject.cwd;
+    void api.shell.openInEditor(cwd, editorId);
     setLastEditor(editorId);
     localStorage.setItem(LAST_EDITOR_KEY, editorId);
     setIsEditorMenuOpen(false);
   };
 
-  const ensureSession = async (): Promise<EnsuredSessionInfo | null> => {
+  const ensureSession = async (cwdOverride?: string): Promise<EnsuredSessionInfo | null> => {
     if (!api || !activeThread || !activeProject) return null;
     if (activeThread.session && activeThread.session.status !== "closed") {
       const sessionThreadId = activeThread.session.threadId ?? null;
@@ -548,7 +540,7 @@ export default function ChatView() {
     try {
       const session = await api.providers.startSession({
         provider: "codex",
-        cwd: activeProject.cwd || undefined,
+        cwd: cwdOverride ?? activeThread.worktreePath ?? activeProject.cwd,
         model: selectedModel || undefined,
         resumeThreadId: priorCodexThreadId ?? undefined,
         approvalPolicy: runtimeSessionConfig.approvalPolicy,
@@ -588,6 +580,39 @@ export default function ChatView() {
     if (!api || !activeThread || isSending || isConnecting) return;
     const trimmed = prompt.trim();
     if (!trimmed) return;
+    if (!activeProject) return;
+
+    // On first message: lock in branch + create worktree if needed.
+    let sessionCwd: string | undefined;
+    if (
+      activeThread.messages.length === 0 &&
+      activeThread.branch &&
+      envMode === "worktree" &&
+      !activeThread.worktreePath
+    ) {
+      try {
+        const newBranch = `codething/${crypto.randomUUID().slice(0, 8)}`;
+        const result = await api.git.createWorktree({
+          cwd: activeProject.cwd,
+          branch: activeThread.branch,
+          newBranch,
+        });
+        sessionCwd = result.worktree.path;
+        dispatch({
+          type: "SET_THREAD_BRANCH",
+          threadId: activeThread.id,
+          branch: result.worktree.branch,
+          worktreePath: result.worktree.path,
+        });
+      } catch (err) {
+        dispatch({
+          type: "SET_ERROR",
+          threadId: activeThread.id,
+          error: err instanceof Error ? err.message : "Failed to create worktree",
+        });
+        return;
+      }
+    }
 
     // Auto-title from first message
     if (activeThread.messages.length === 0) {
@@ -613,21 +638,16 @@ export default function ChatView() {
     const previousMessages = activeThread.messages;
     setPrompt("");
 
-    const sessionInfo = await ensureSession();
+    const sessionInfo = await ensureSession(sessionCwd);
     if (!sessionInfo) return;
 
     setIsSending(true);
     try {
       const shouldBootstrap =
         previousMessages.length > 0 &&
-        (sessionInfo.continuityState === "new" ||
-          sessionInfo.continuityState === "fallback_new");
+        (sessionInfo.continuityState === "new" || sessionInfo.continuityState === "fallback_new");
       const input = shouldBootstrap
-        ? buildBootstrapInput(
-            previousMessages,
-            trimmed,
-            PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
-          ).text
+        ? buildBootstrapInput(previousMessages, trimmed, PROVIDER_SEND_TURN_MAX_INPUT_CHARS).text
         : trimmed;
       await api.providers.sendTurn({
         sessionId: sessionInfo.sessionId,
@@ -654,10 +674,7 @@ export default function ChatView() {
     });
   };
 
-  const onRespondToApproval = async (
-    requestId: string,
-    decision: ProviderApprovalDecision,
-  ) => {
+  const onRespondToApproval = async (requestId: string, decision: ProviderApprovalDecision) => {
     if (!api || !activeThread?.session) return;
 
     setRespondingRequestIds((existing) =>
@@ -673,15 +690,10 @@ export default function ChatView() {
       dispatch({
         type: "SET_ERROR",
         threadId: activeThread.id,
-        error:
-          err instanceof Error
-            ? err.message
-            : "Failed to submit approval decision.",
+        error: err instanceof Error ? err.message : "Failed to submit approval decision.",
       });
     } finally {
-      setRespondingRequestIds((existing) =>
-        existing.filter((id) => id !== requestId),
-      );
+      setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
     }
   };
 
@@ -719,11 +731,22 @@ export default function ChatView() {
   return (
     <div className="flex flex-1 flex-col bg-background">
       {/* Top bar */}
-      <header className={`flex items-center justify-between border-b border-border px-5 pb-3 ${isElectron ? "drag-region pt-[28px]" : "pt-3"}`}>
+      <header
+        className={`flex items-center justify-between border-b border-border px-5 pb-3 ${isElectron ? "drag-region pt-[28px]" : "pt-3"}`}
+      >
         <div className="flex items-center gap-3">
-          <h2 className="text-sm font-medium text-foreground">
-            {activeThread.title}
-          </h2>
+          <h2 className="text-sm font-medium text-foreground">{activeThread.title}</h2>
+          {activeProject && (
+            <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] text-muted-foreground/50">
+              {activeProject.name}
+            </span>
+          )}
+          {activeThread.branch && (
+            <span className="rounded-full bg-accent px-2 py-0.5 font-mono text-[10px] text-muted-foreground/50">
+              {activeThread.branch}
+              {activeThread.worktreePath ? " (worktree)" : ""}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3">
           {/* Open in editor */}
@@ -748,9 +771,7 @@ export default function ChatView() {
                       {editorLabel(editor)}
                       {editor.id === lastEditor && (
                         <kbd className="ml-auto text-[9px] text-muted-foreground/40">
-                          {navigator.platform.includes("Mac")
-                            ? "\u2318O"
-                            : "Ctrl+O"}
+                          {navigator.platform.includes("Mac") ? "\u2318O" : "Ctrl+O"}
                         </kbd>
                       )}
                     </button>
@@ -819,7 +840,7 @@ export default function ChatView() {
 
       {/* Error banner */}
       {activeThread.error && (
-        <div className="mx-4 mt-3 rounded-lg border border-rose-400/20 bg-rose-900/20 px-3 py-2 text-xs text-rose-200">
+        <div className="mx-4 mt-3 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {activeThread.error}
         </div>
       )}
@@ -839,9 +860,7 @@ export default function ChatView() {
       {pendingApprovals.length > 0 && (
         <div className="mx-4 mt-3 space-y-2">
           {pendingApprovals.map((approval) => {
-            const isResponding = respondingRequestIds.includes(
-              approval.requestId,
-            );
+            const isResponding = respondingRequestIds.includes(approval.requestId);
             return (
               <div
                 key={approval.requestId}
@@ -865,9 +884,7 @@ export default function ChatView() {
                     type="button"
                     className="rounded-md border border-border bg-accent px-2 py-1 text-[11px] text-foreground transition-colors duration-150 hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={isResponding}
-                    onClick={() =>
-                      void onRespondToApproval(approval.requestId, "accept")
-                    }
+                    onClick={() => void onRespondToApproval(approval.requestId, "accept")}
                   >
                     Approve once
                   </button>
@@ -875,12 +892,7 @@ export default function ChatView() {
                     type="button"
                     className="rounded-md border border-sky-300/30 bg-sky-500/[0.15] px-2 py-1 text-[11px] text-sky-100 transition-colors duration-150 hover:bg-sky-500/[0.22] disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={isResponding}
-                    onClick={() =>
-                      void onRespondToApproval(
-                        approval.requestId,
-                        "acceptForSession",
-                      )
-                    }
+                    onClick={() => void onRespondToApproval(approval.requestId, "acceptForSession")}
                   >
                     Always allow this session
                   </button>
@@ -888,9 +900,7 @@ export default function ChatView() {
                     type="button"
                     className="rounded-md border border-border px-2 py-1 text-[11px] text-foreground/90 transition-colors duration-150 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={isResponding}
-                    onClick={() =>
-                      void onRespondToApproval(approval.requestId, "decline")
-                    }
+                    onClick={() => void onRespondToApproval(approval.requestId, "decline")}
                   >
                     Decline
                   </button>
@@ -898,9 +908,7 @@ export default function ChatView() {
                     type="button"
                     className="rounded-md border border-rose-300/30 bg-rose-500/[0.12] px-2 py-1 text-[11px] text-rose-100 transition-colors duration-150 hover:bg-rose-500/[0.2] disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={isResponding}
-                    onClick={() =>
-                      void onRespondToApproval(approval.requestId, "cancel")
-                    }
+                    onClick={() => void onRespondToApproval(approval.requestId, "cancel")}
                   >
                     Cancel turn
                   </button>
@@ -915,15 +923,14 @@ export default function ChatView() {
       <div className="flex-1 overflow-y-auto px-5 py-4">
         {activeThread.messages.length === 0 && !isWorking ? (
           <div className="flex h-full items-center justify-center">
-            <p className="text-sm text-muted-foreground/30">Send a message to start the conversation.</p>
+            <p className="text-sm text-muted-foreground/30">
+              Send a message to start the conversation.
+            </p>
           </div>
         ) : (
           <div className="mx-auto max-w-3xl space-y-4">
             {timelineEntries.map((timelineEntry, index) => {
-              if (
-                timelineEntry.kind === "work" &&
-                timelineEntries[index - 1]?.kind === "work"
-              ) {
+              if (timelineEntry.kind === "work" && timelineEntries[index - 1]?.kind === "work") {
                 return null;
               }
 
@@ -944,16 +951,13 @@ export default function ChatView() {
 
                 const groupId = timelineEntry.id;
                 const isExpanded = expandedWorkGroups[groupId] ?? false;
-                const hasOverflow =
-                  groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
+                const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
                 const visibleEntries =
                   hasOverflow && !isExpanded
                     ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
                     : groupedEntries;
                 const hiddenCount = groupedEntries.length - visibleEntries.length;
-                const onlyToolEntries = groupedEntries.every(
-                  (entry) => entry.tone === "tool",
-                );
+                const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
                 const groupLabel = onlyToolEntries
                   ? groupedEntries.length === 1
                     ? "Tool call"
@@ -1039,9 +1043,7 @@ export default function ChatView() {
                     <div className="my-3 flex items-center gap-3">
                       <span className="h-px flex-1 bg-border" />
                       <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
-                        {completionSummary
-                          ? `Response • ${completionSummary}`
-                          : "Response"}
+                        {completionSummary ? `Response • ${completionSummary}` : "Response"}
                       </span>
                       <span className="h-px flex-1 bg-border" />
                     </div>
@@ -1050,24 +1052,17 @@ export default function ChatView() {
                     <ChatMarkdown
                       text={
                         timelineEntry.message.text ||
-                        (timelineEntry.message.streaming
-                          ? ""
-                          : "(empty response)")
+                        (timelineEntry.message.streaming ? "" : "(empty response)")
                       }
                     />
                     <p className="mt-1.5 text-[10px] text-muted-foreground/30">
                       {formatMessageMeta(
                         timelineEntry.message.createdAt,
                         timelineEntry.message.streaming
-                          ? formatElapsed(
-                              timelineEntry.message.createdAt,
-                              nowIso,
-                            )
+                          ? formatElapsed(timelineEntry.message.createdAt, nowIso)
                           : formatElapsed(
                               timelineEntry.message.createdAt,
-                              assistantCompletionByItemId.get(
-                                timelineEntry.message.id,
-                              ),
+                              assistantCompletionByItemId.get(timelineEntry.message.id),
                             ),
                       )}
                     </p>
@@ -1093,7 +1088,7 @@ export default function ChatView() {
       </div>
 
       {/* Input bar */}
-      <div className="px-5 pb-4 pt-2">
+      <div className="px-5 pb-1 pt-2">
         <form onSubmit={onSend} className="mx-auto max-w-3xl">
           <div className="group rounded-[20px] border border-border bg-card transition-colors duration-200 focus-within:border-ring">
             {/* Textarea area */}
@@ -1223,9 +1218,7 @@ export default function ChatView() {
                   disabled={isSwitchingRuntimeMode}
                   onClick={() =>
                     void handleRuntimeModeChange(
-                      state.runtimeMode === "full-access"
-                        ? "approval-required"
-                        : "full-access",
+                      state.runtimeMode === "full-access" ? "approval-required" : "full-access",
                     )
                   }
                   title={
@@ -1235,13 +1228,7 @@ export default function ChatView() {
                   }
                 >
                   {state.runtimeMode === "full-access" ? (
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 14 14"
-                      fill="none"
-                      aria-hidden="true"
-                    >
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
                       <rect
                         x="2"
                         y="5.5"
@@ -1259,13 +1246,7 @@ export default function ChatView() {
                       />
                     </svg>
                   ) : (
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 14 14"
-                      fill="none"
-                      aria-hidden="true"
-                    >
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
                       <rect
                         x="2"
                         y="5.5"
@@ -1283,11 +1264,7 @@ export default function ChatView() {
                       />
                     </svg>
                   )}
-                  <span>
-                    {state.runtimeMode === "full-access"
-                      ? "Full access"
-                      : "Supervised"}
-                  </span>
+                  <span>{state.runtimeMode === "full-access" ? "Full access" : "Supervised"}</span>
                 </button>
               </div>
 
@@ -1362,6 +1339,8 @@ export default function ChatView() {
           </div>
         </form>
       </div>
+
+      <BranchToolbar envMode={envMode} onEnvModeChange={setEnvMode} envLocked={envLocked} />
     </div>
   );
 }

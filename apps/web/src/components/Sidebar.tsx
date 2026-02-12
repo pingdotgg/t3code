@@ -57,6 +57,8 @@ export default function Sidebar() {
           events: [],
           error: null,
           createdAt: new Date().toISOString(),
+          branch: null,
+          worktreePath: null,
         },
       });
     },
