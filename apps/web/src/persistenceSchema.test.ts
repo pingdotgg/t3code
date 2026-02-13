@@ -278,6 +278,7 @@ describe("toPersistedState", () => {
       terminalOpen: true,
       terminalHeight: 320,
       terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+      runningTerminalIds: [],
       activeTerminalId: "term-2",
       terminalGroups: [
         { id: `group-${DEFAULT_THREAD_TERMINAL_ID}`, terminalIds: [DEFAULT_THREAD_TERMINAL_ID] },

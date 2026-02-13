@@ -1,4 +1,4 @@
-import type { ProviderEvent, ProviderSession } from "@t3tools/contracts";
+import type { ProviderEvent, ProviderSession, TerminalEvent } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import { type AppState, reducer } from "./store";
@@ -38,6 +38,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     terminalOpen: false,
     terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
     terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+    runningTerminalIds: [],
     activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
     terminalGroups: [
       {
@@ -72,6 +73,27 @@ function makeState(thread: Thread): AppState {
     activeThreadId: thread.id,
     runtimeMode: "full-access",
     diffOpen: false,
+  };
+}
+
+function makeTerminalStartedEvent(overrides: Partial<TerminalEvent> = {}): TerminalEvent {
+  return {
+    type: "started",
+    threadId: "thread-local-1",
+    terminalId: DEFAULT_THREAD_TERMINAL_ID,
+    createdAt: "2026-02-09T00:00:01.000Z",
+    snapshot: {
+      threadId: "thread-local-1",
+      terminalId: DEFAULT_THREAD_TERMINAL_ID,
+      cwd: "/tmp/project",
+      status: "running",
+      pid: 1234,
+      history: "",
+      exitCode: null,
+      exitSignal: null,
+      updatedAt: "2026-02-09T00:00:01.000Z",
+    },
+    ...overrides,
   };
 }
 
@@ -255,6 +277,7 @@ describe("store reducer thread continuity", () => {
     const state = makeState(
       makeThread({
         terminalOpen: true,
+        runningTerminalIds: [DEFAULT_THREAD_TERMINAL_ID],
       }),
     );
     const next = reducer(state, {
@@ -265,6 +288,7 @@ describe("store reducer thread continuity", () => {
 
     expect(next.threads[0]?.terminalOpen).toBe(false);
     expect(next.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+    expect(next.threads[0]?.runningTerminalIds).toEqual([]);
     expect(next.threads[0]?.activeTerminalId).toBe(DEFAULT_THREAD_TERMINAL_ID);
     expect(next.threads[0]?.terminalGroups).toEqual([
       {
@@ -272,6 +296,59 @@ describe("store reducer thread continuity", () => {
         terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
       },
     ]);
+  });
+
+  it("tracks running terminals from terminal lifecycle events", () => {
+    const state = makeState(makeThread());
+    const started = reducer(state, {
+      type: "APPLY_TERMINAL_EVENT",
+      event: makeTerminalStartedEvent(),
+    });
+    expect(started.threads[0]?.runningTerminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+
+    const exited = reducer(started, {
+      type: "APPLY_TERMINAL_EVENT",
+      event: {
+        type: "exited",
+        threadId: "thread-local-1",
+        terminalId: DEFAULT_THREAD_TERMINAL_ID,
+        createdAt: "2026-02-09T00:00:05.000Z",
+        exitCode: 0,
+        exitSignal: null,
+      },
+    });
+    expect(exited.threads[0]?.runningTerminalIds).toEqual([]);
+  });
+
+  it("keeps running status when another terminal in the thread is still running", () => {
+    const state = makeState(
+      makeThread({
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+        runningTerminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+        activeTerminalId: "term-2",
+        terminalGroups: [
+          {
+            id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+            terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+          },
+        ],
+        activeTerminalGroupId: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+      }),
+    );
+
+    const next = reducer(state, {
+      type: "APPLY_TERMINAL_EVENT",
+      event: {
+        type: "exited",
+        threadId: "thread-local-1",
+        terminalId: DEFAULT_THREAD_TERMINAL_ID,
+        createdAt: "2026-02-09T00:00:07.000Z",
+        exitCode: 0,
+        exitSignal: null,
+      },
+    });
+
+    expect(next.threads[0]?.runningTerminalIds).toEqual(["term-2"]);
   });
 
   it("backfills codexThreadId from routed provider events", () => {

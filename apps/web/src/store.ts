@@ -8,7 +8,7 @@ import {
   useReducer,
 } from "react";
 
-import type { ProviderEvent, ProviderSession } from "@t3tools/contracts";
+import type { ProviderEvent, ProviderSession, TerminalEvent } from "@t3tools/contracts";
 import { resolveModelSlug } from "./model-logic";
 import { hydratePersistedState, toPersistedState } from "./persistenceSchema";
 import { applyEventToMessages, asObject, asString, evolveSession } from "./session-logic";
@@ -43,6 +43,7 @@ type Action =
       event: ProviderEvent;
       activeAssistantItemRef: { current: string | null };
     }
+  | { type: "APPLY_TERMINAL_EVENT"; event: TerminalEvent }
   | { type: "UPDATE_SESSION"; threadId: string; session: ProviderSession }
   | {
       type: "PUSH_USER_MESSAGE";
@@ -149,6 +150,17 @@ function normalizeTerminalIds(terminalIds: string[]): string[] {
   return [DEFAULT_THREAD_TERMINAL_ID];
 }
 
+function normalizeRunningTerminalIds(
+  runningTerminalIds: string[],
+  terminalIds: string[],
+): string[] {
+  if (runningTerminalIds.length === 0) return [];
+  const validTerminalIdSet = new Set(terminalIds);
+  return [...new Set(runningTerminalIds)]
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0 && validTerminalIdSet.has(id));
+}
+
 function normalizeTerminalGroupIds(terminalIds: string[]): string[] {
   return [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];
 }
@@ -252,6 +264,7 @@ function normalizeThreadTerminals(thread: Thread): Thread {
   return {
     ...thread,
     terminalIds,
+    runningTerminalIds: normalizeRunningTerminalIds(thread.runningTerminalIds, terminalIds),
     activeTerminalId,
     terminalGroups,
     activeTerminalGroupId,
@@ -269,6 +282,7 @@ function closeThreadTerminal(thread: Thread, terminalId: string): Thread {
       ...thread,
       terminalOpen: false,
       terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+      runningTerminalIds: [],
       activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
       terminalGroups: [
         {
@@ -309,6 +323,7 @@ function closeThreadTerminal(thread: Thread, terminalId: string): Thread {
   return normalizeThreadTerminals({
     ...thread,
     terminalIds: remainingTerminalIds,
+    runningTerminalIds: thread.runningTerminalIds.filter((id) => id !== terminalId),
     activeTerminalId: nextActiveTerminalId,
     terminalGroups: nextTerminalGroups,
   });
@@ -649,6 +664,35 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case "TOGGLE_DIFF":
       return { ...state, diffOpen: !state.diffOpen };
+
+    case "APPLY_TERMINAL_EVENT":
+      if (!state.threads.some((thread) => thread.id === action.event.threadId)) {
+        return state;
+      }
+      return {
+        ...state,
+        threads: updateThread(state.threads, action.event.threadId, (thread) => {
+          const normalizedThread = normalizeThreadTerminals(thread);
+          const runningTerminalIdSet = new Set(normalizedThread.runningTerminalIds);
+          if (
+            action.event.type === "started" ||
+            action.event.type === "restarted"
+          ) {
+            if (action.event.snapshot.status === "running") {
+              runningTerminalIdSet.add(action.event.terminalId);
+            } else {
+              runningTerminalIdSet.delete(action.event.terminalId);
+            }
+          } else if (action.event.type === "exited" || action.event.type === "error") {
+            runningTerminalIdSet.delete(action.event.terminalId);
+          }
+
+          return normalizeThreadTerminals({
+            ...normalizedThread,
+            runningTerminalIds: [...runningTerminalIdSet],
+          });
+        }),
+      };
 
     case "APPLY_EVENT": {
       const { event, activeAssistantItemRef } = action;
