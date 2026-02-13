@@ -78,6 +78,13 @@ export interface WorkLogEntry {
   tone: "thinking" | "tool" | "info" | "error";
 }
 
+export interface PendingApproval {
+  requestId: string;
+  requestKind: "command" | "file-change";
+  createdAt: string;
+  detail?: string;
+}
+
 export type TimelineEntry =
   | {
       id: string;
@@ -96,6 +103,52 @@ function normalizeDetail(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function approvalDetail(event: ProviderEvent): string | undefined {
+  const payload = asObject(event.payload);
+  const command = asString(payload?.command);
+  if (command) return command;
+  return asString(payload?.reason);
+}
+
+export function derivePendingApprovals(events: ProviderEvent[]): PendingApproval[] {
+  const pending = new Map<string, PendingApproval>();
+  const ordered = [...events].toReversed();
+
+  for (const event of ordered) {
+    if (
+      event.method === "session/closed" ||
+      event.method === "session/exited" ||
+      event.method === "turn/completed"
+    ) {
+      pending.clear();
+      continue;
+    }
+
+    const requestId = event.requestId ?? asString(asObject(event.payload)?.requestId);
+    if (!requestId) continue;
+
+    if (
+      event.kind === "request" &&
+      (event.requestKind === "command" || event.requestKind === "file-change")
+    ) {
+      const detail = approvalDetail(event);
+      pending.set(requestId, {
+        requestId,
+        requestKind: event.requestKind,
+        createdAt: event.createdAt,
+        ...(detail ? { detail } : {}),
+      });
+      continue;
+    }
+
+    if (event.method === "item/requestApproval/decision") {
+      pending.delete(requestId);
+    }
+  }
+
+  return Array.from(pending.values());
 }
 
 function normalizeItemType(raw: string | undefined): string {

@@ -1,10 +1,11 @@
 import { MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { DEFAULT_MODEL } from "../model-logic";
+import { derivePendingApprovals } from "../session-logic";
 import { useStore } from "../store";
-import { DEFAULT_THREAD_TERMINAL_HEIGHT, type Project } from "../types";
+import { DEFAULT_THREAD_TERMINAL_HEIGHT, type Project, type Thread } from "../types";
 import { useNativeApi } from "../hooks/useNativeApi";
 
 const THEME_CYCLE = { system: "light", light: "dark", dark: "system" } as const;
@@ -25,11 +26,61 @@ function inferProjectName(cwd: string): string {
   return last && last.length > 0 ? last : "project";
 }
 
-function threadStatusLabel(
-  status: "connecting" | "ready" | "running" | "error" | "closed" | undefined,
-): "Working" | "Connecting" | null {
-  if (status === "running") return "Working";
-  if (status === "connecting") return "Connecting";
+interface ThreadStatusPill {
+  label: "Working" | "Connecting" | "Completed" | "Awaiting response";
+  colorClass: string;
+  dotClass: string;
+  pulse: boolean;
+}
+
+function hasUnseenCompletion(thread: Thread): boolean {
+  if (!thread.latestTurnCompletedAt) return false;
+  const completedAt = Date.parse(thread.latestTurnCompletedAt);
+  if (Number.isNaN(completedAt)) return false;
+  if (!thread.lastVisitedAt) return true;
+
+  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
+  if (Number.isNaN(lastVisitedAt)) return true;
+  return completedAt > lastVisitedAt;
+}
+
+function threadStatusPill(thread: Thread, hasPendingApprovals: boolean): ThreadStatusPill | null {
+  if (hasPendingApprovals) {
+    return {
+      label: "Awaiting response",
+      colorClass: "text-amber-600 dark:text-amber-300/90",
+      dotClass: "bg-amber-500 dark:bg-amber-300/90",
+      pulse: false,
+    };
+  }
+
+  if (thread.session?.status === "running") {
+    return {
+      label: "Working",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
+  if (thread.session?.status === "connecting") {
+    return {
+      label: "Connecting",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
+  if (hasUnseenCompletion(thread)) {
+    return {
+      label: "Completed",
+      colorClass: "text-emerald-600 dark:text-emerald-300/90",
+      dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
+      pulse: false,
+    };
+  }
+
   return null;
 }
 
@@ -41,6 +92,13 @@ export default function Sidebar() {
   const [newCwd, setNewCwd] = useState("");
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
+  const pendingApprovalByThreadId = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const thread of state.threads) {
+      map.set(thread.id, derivePendingApprovals(thread.events).length > 0);
+    }
+    return map;
+  }, [state.threads]);
 
   const handleNewThread = useCallback(
     (projectId: string) => {
@@ -312,7 +370,10 @@ export default function Sidebar() {
                 <div className="ml-2 border-l border-border/80 pl-2">
                   {threads.map((thread) => {
                     const isActive = state.activeThreadId === thread.id;
-                    const threadStatus = threadStatusLabel(thread.session?.status);
+                    const threadStatus = threadStatusPill(
+                      thread,
+                      pendingApprovalByThreadId.get(thread.id) === true,
+                    );
                     return (
                       <button
                         key={thread.id}
@@ -338,9 +399,15 @@ export default function Sidebar() {
                       >
                         <div className="flex min-w-0 flex-1 items-center gap-1.5">
                           {threadStatus && (
-                            <span className="inline-flex items-center gap-1 text-[10px] text-sky-600 dark:text-sky-300/80">
-                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sky-500 dark:bg-sky-300/80" />
-                              <span className="hidden xl:inline">{threadStatus}</span>
+                            <span
+                              className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}
+                            >
+                              <span
+                                className={`h-1.5 w-1.5 rounded-full ${threadStatus.dotClass} ${
+                                  threadStatus.pulse ? "animate-pulse" : ""
+                                }`}
+                              />
+                              <span className="hidden xl:inline">{threadStatus.label}</span>
                             </span>
                           )}
                           <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>

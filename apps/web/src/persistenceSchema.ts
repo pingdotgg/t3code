@@ -50,6 +50,7 @@ const persistedThreadSchema = z.object({
   ),
   messages: z.array(persistedMessageSchema),
   createdAt: z.string().min(1),
+  lastVisitedAt: z.string().min(1).optional(),
   branch: z.string().min(1).nullable().optional(),
   worktreePath: z.string().min(1).nullable().optional(),
 });
@@ -153,6 +154,7 @@ function hydrateThread(
     events: [],
     error: null,
     createdAt: thread.createdAt,
+    lastVisitedAt: thread.lastVisitedAt,
     branch: thread.branch ?? null,
     worktreePath: thread.worktreePath ?? null,
   };
@@ -228,6 +230,7 @@ export function toPersistedState(
         streaming: message.streaming,
       })),
       createdAt: thread.createdAt,
+      ...(thread.lastVisitedAt ? { lastVisitedAt: thread.lastVisitedAt } : {}),
       branch: thread.branch,
       worktreePath: thread.worktreePath,
     })),

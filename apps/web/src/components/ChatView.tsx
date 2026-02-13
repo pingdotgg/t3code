@@ -4,7 +4,6 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ProviderSendTurnAttachmentInput,
   type ProviderApprovalDecision,
-  type ProviderEvent,
 } from "@t3tools/contracts";
 import {
   type ClipboardEvent,
@@ -30,6 +29,7 @@ import {
   resolveModelSlug,
 } from "../model-logic";
 import {
+  derivePendingApprovals,
   derivePhase,
   deriveTimelineEntries,
   deriveWorkLogEntries,
@@ -74,13 +74,6 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   return "text-muted-foreground/40";
 }
 
-interface PendingApprovalCard {
-  requestId: string;
-  requestKind: "command" | "file-change";
-  createdAt: string;
-  detail?: string;
-}
-
 type SessionContinuityState = "resumed" | "new" | "fallback_new";
 
 interface EnsuredSessionInfo {
@@ -97,57 +90,6 @@ interface ComposerImageAttachment extends Omit<ChatImageAttachment, "previewUrl"
 interface ExpandedImagePreview {
   src: string;
   name: string;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  return value as Record<string, unknown>;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function approvalDetail(event: ProviderEvent): string | undefined {
-  const payload = asRecord(event.payload);
-  const command = asString(payload?.command);
-  if (command) return command;
-  return asString(payload?.reason);
-}
-
-function derivePendingApprovals(events: ProviderEvent[]): PendingApprovalCard[] {
-  const pending = new Map<string, PendingApprovalCard>();
-  const ordered = [...events].toReversed();
-
-  for (const event of ordered) {
-    if (event.method === "session/closed" || event.method === "session/exited") {
-      pending.clear();
-      continue;
-    }
-
-    const requestId = event.requestId ?? asString(asRecord(event.payload)?.requestId);
-    if (!requestId) continue;
-
-    if (
-      event.kind === "request" &&
-      (event.requestKind === "command" || event.requestKind === "file-change")
-    ) {
-      const detail = approvalDetail(event);
-      pending.set(requestId, {
-        requestId,
-        requestKind: event.requestKind,
-        createdAt: event.createdAt,
-        ...(detail ? { detail } : {}),
-      });
-      continue;
-    }
-
-    if (event.method === "item/requestApproval/decision") {
-      pending.delete(requestId);
-    }
-  }
-
-  return Array.from(pending.values());
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -305,9 +247,6 @@ export default function ChatView() {
     (activeThread.messages.length > 0 ||
       (activeThread.session !== null && activeThread.session.status !== "closed")),
   );
-  const terminalShortcutHint = navigator.platform.includes("Mac")
-    ? "\u2318J"
-    : "Ctrl+J";
   const revokePreviewUrls = useCallback((images: Array<{ previewUrl?: string }>) => {
     for (const image of images) {
       if (!image.previewUrl) continue;

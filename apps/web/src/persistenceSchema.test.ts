@@ -141,6 +141,7 @@ describe("hydratePersistedState", () => {
           terminalHeight: 360,
           messages: [],
           createdAt: "2026-02-08T10:00:00.000Z",
+          lastVisitedAt: "2026-02-08T10:01:00.000Z",
         },
       ],
       activeThreadId: "t-1",
@@ -149,6 +150,7 @@ describe("hydratePersistedState", () => {
     const hydrated = hydratePersistedState(payload, false);
     expect(hydrated?.threads[0]?.terminalOpen).toBe(true);
     expect(hydrated?.threads[0]?.terminalHeight).toBe(360);
+    expect(hydrated?.threads[0]?.lastVisitedAt).toBe("2026-02-08T10:01:00.000Z");
   });
 
   it("defaults terminalHeight when hydrating v5 payloads", () => {
@@ -217,6 +219,7 @@ describe("toPersistedState", () => {
       events: [],
       error: "boom",
       createdAt: "2026-02-08T10:00:00.000Z",
+      lastVisitedAt: "2026-02-08T10:02:00.000Z",
       branch: null,
       worktreePath: null,
     };
@@ -265,6 +268,7 @@ describe("toPersistedState", () => {
         },
       ],
       createdAt: thread.createdAt,
+      lastVisitedAt: thread.lastVisitedAt,
       branch: null,
       worktreePath: null,
     });

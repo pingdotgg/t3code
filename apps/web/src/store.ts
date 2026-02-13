@@ -293,13 +293,23 @@ export function reducer(state: AppState, action: Action): AppState {
           {
             ...action.thread,
             model: resolveModelSlug(action.thread.model),
+            lastVisitedAt: action.thread.lastVisitedAt ?? action.thread.createdAt,
           },
         ],
         activeThreadId: action.thread.id,
       };
 
-    case "SET_ACTIVE_THREAD":
-      return { ...state, activeThreadId: action.threadId };
+    case "SET_ACTIVE_THREAD": {
+      const visitedAt = new Date().toISOString();
+      return {
+        ...state,
+        activeThreadId: action.threadId,
+        threads: updateThread(state.threads, action.threadId, (t) => ({
+          ...t,
+          lastVisitedAt: visitedAt,
+        })),
+      };
+    }
 
     case "TOGGLE_THREAD_TERMINAL":
       return {
@@ -356,6 +366,9 @@ export function reducer(state: AppState, action: Action): AppState {
           messages: applyEventToMessages(t.messages, event, activeAssistantItemRef),
           events: [event, ...t.events],
           ...updateTurnFields(t, event),
+          ...(event.method === "turn/completed" && t.id === state.activeThreadId
+            ? { lastVisitedAt: event.createdAt }
+            : {}),
         })),
       };
     }

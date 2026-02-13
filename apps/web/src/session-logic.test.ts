@@ -4,6 +4,7 @@ import type { ProviderEvent, ProviderSession } from "@t3tools/contracts";
 import {
   type WorkLogEntry,
   applyEventToMessages,
+  derivePendingApprovals,
   deriveTimelineEntries,
   deriveWorkLogEntries,
   evolveSession,
@@ -389,6 +390,73 @@ describe("deriveWorkLogEntries", () => {
 
     expect(entries).toHaveLength(2);
     expect(entries.map((entry) => entry.detail)).toEqual(["pwd", "ls -la"]);
+  });
+});
+
+describe("derivePendingApprovals", () => {
+  it("returns pending command/file-change approvals", () => {
+    const approvals = derivePendingApprovals([
+      makeEvent({
+        id: "evt-request",
+        kind: "request",
+        method: "item/commandExecution/requestApproval",
+        requestId: "req-1",
+        requestKind: "command",
+        createdAt: "2026-02-08T10:00:00.000Z",
+        payload: { command: "git commit -m 'msg'" },
+      }),
+    ]);
+
+    expect(approvals).toEqual([
+      {
+        requestId: "req-1",
+        requestKind: "command",
+        createdAt: "2026-02-08T10:00:00.000Z",
+        detail: "git commit -m 'msg'",
+      },
+    ]);
+  });
+
+  it("removes approvals after a decision event", () => {
+    const approvals = derivePendingApprovals([
+      makeEvent({
+        id: "evt-decision",
+        method: "item/requestApproval/decision",
+        requestId: "req-1",
+        createdAt: "2026-02-08T10:00:01.000Z",
+      }),
+      makeEvent({
+        id: "evt-request",
+        kind: "request",
+        method: "item/fileChange/requestApproval",
+        requestId: "req-1",
+        requestKind: "file-change",
+        createdAt: "2026-02-08T10:00:00.000Z",
+      }),
+    ]);
+
+    expect(approvals).toHaveLength(0);
+  });
+
+  it("clears pending approvals after turn completion", () => {
+    const approvals = derivePendingApprovals([
+      makeEvent({
+        id: "evt-turn-complete",
+        method: "turn/completed",
+        createdAt: "2026-02-08T10:00:01.000Z",
+        payload: { turn: { id: "turn-1", status: "completed" } },
+      }),
+      makeEvent({
+        id: "evt-request",
+        kind: "request",
+        method: "item/commandExecution/requestApproval",
+        requestId: "req-1",
+        requestKind: "command",
+        createdAt: "2026-02-08T10:00:00.000Z",
+      }),
+    ]);
+
+    expect(approvals).toHaveLength(0);
   });
 });
 

@@ -219,4 +219,48 @@ describe("store reducer thread continuity", () => {
     expect(next.threads[0]?.projectId).toBe("project-new-a");
     expect(next.activeThreadId).toBe("thread-a");
   });
+
+  it("marks the active thread as visited when selected", () => {
+    const state = makeState(
+      makeThread({
+        lastVisitedAt: "2000-01-01T00:00:00.000Z",
+      }),
+    );
+
+    const next = reducer(state, {
+      type: "SET_ACTIVE_THREAD",
+      threadId: "thread-local-1",
+    });
+
+    expect(next.activeThreadId).toBe("thread-local-1");
+    expect(next.threads[0]?.lastVisitedAt).toBeDefined();
+    expect(next.threads[0]?.lastVisitedAt).not.toBe("2000-01-01T00:00:00.000Z");
+  });
+
+  it("marks completion as seen immediately for the active thread", () => {
+    const state = makeState(
+      makeThread({
+        session: makeSession({
+          status: "running",
+          activeTurnId: "turn-1",
+        }),
+        lastVisitedAt: "2026-02-08T10:00:00.000Z",
+      }),
+    );
+
+    const completedAt = "2026-02-08T10:00:10.000Z";
+    const next = reducer(state, {
+      type: "APPLY_EVENT",
+      event: makeEvent({
+        method: "turn/completed",
+        turnId: "turn-1",
+        createdAt: completedAt,
+        payload: { turn: { id: "turn-1", status: "completed" } },
+      }),
+      activeAssistantItemRef: { current: null },
+    });
+
+    expect(next.threads[0]?.latestTurnCompletedAt).toBe(completedAt);
+    expect(next.threads[0]?.lastVisitedAt).toBe(completedAt);
+  });
 });
