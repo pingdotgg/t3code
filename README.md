@@ -49,6 +49,9 @@ bun run dev
 # Desktop development
 bun run dev:desktop
 
+# Desktop development on an isolated port set
+T3CODE_DEV_INSTANCE=feature-xyz bun run dev:desktop
+
 # Production
 bun run build
 bun run start
@@ -66,6 +69,16 @@ npx t3
 - `bun run build` — Builds contracts, web app, and server through Turbo.
 - `bun run typecheck` — Strict TypeScript checks for all packages.
 - `bun run test` — Runs workspace tests.
+
+### Running multiple dev instances
+
+Set `T3CODE_DEV_INSTANCE` to any value to deterministically shift all dev ports together.
+
+- Default ports: server `3773`, web `5173`
+- Shifted ports: `base + offset` (offset is hashed from `T3CODE_DEV_INSTANCE`)
+- Example: `T3CODE_DEV_INSTANCE=branch-a bun run dev:desktop`
+
+If you want full control instead of hashing, set `T3CODE_PORT_OFFSET` to a numeric offset.
 
 ## Runtime modes
 
