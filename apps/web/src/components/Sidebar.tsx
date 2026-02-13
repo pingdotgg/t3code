@@ -32,7 +32,7 @@ function inferProjectName(cwd: string): string {
 }
 
 interface ThreadStatusPill {
-  label: "Working" | "Connecting" | "Completed" | "Awaiting response";
+  label: "Working" | "Connecting" | "Completed" | "Awaiting response" | "Terminal";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -89,6 +89,18 @@ function threadStatusPill(thread: Thread, hasPendingApprovals: boolean): ThreadS
   return null;
 }
 
+function terminalStatusPill(thread: Thread): ThreadStatusPill | null {
+  if (thread.runningTerminalIds.length === 0) {
+    return null;
+  }
+  return {
+    label: "Terminal",
+    colorClass: "text-teal-600 dark:text-teal-300/90",
+    dotClass: "bg-teal-500 dark:bg-teal-300/90",
+    pulse: true,
+  };
+}
+
 export default function Sidebar() {
   const { state, dispatch } = useStore();
   const api = useNativeApi();
@@ -118,6 +130,7 @@ export default function Sidebar() {
           terminalOpen: false,
           terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
           terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+          runningTerminalIds: [],
           activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
           terminalGroups: [
             {
@@ -388,6 +401,7 @@ export default function Sidebar() {
                       thread,
                       pendingApprovalByThreadId.get(thread.id) === true,
                     );
+                    const terminalStatus = terminalStatusPill(thread);
                     return (
                       <button
                         key={thread.id}
@@ -412,6 +426,18 @@ export default function Sidebar() {
                         }}
                       >
                         <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                          {terminalStatus && (
+                            <span
+                              className={`inline-flex items-center gap-1 text-[10px] ${terminalStatus.colorClass}`}
+                            >
+                              <span
+                                className={`h-1.5 w-1.5 rounded-full ${terminalStatus.dotClass} ${
+                                  terminalStatus.pulse ? "animate-pulse" : ""
+                                }`}
+                              />
+                              <span className="hidden md:inline">{terminalStatus.label}</span>
+                            </span>
+                          )}
                           {threadStatus && (
                             <span
                               className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}

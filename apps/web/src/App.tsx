@@ -27,6 +27,16 @@ function EventRouter() {
     });
   }, [api, dispatch]);
 
+  useEffect(() => {
+    if (!api) return;
+    return api.terminal.onEvent((event) => {
+      dispatch({
+        type: "APPLY_TERMINAL_EVENT",
+        event,
+      });
+    });
+  }, [api, dispatch]);
+
   return null;
 }
 
@@ -82,6 +92,7 @@ function AutoProjectBootstrap() {
           terminalOpen: false,
           terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
           terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+          runningTerminalIds: [],
           activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
           terminalGroups: [
             {
