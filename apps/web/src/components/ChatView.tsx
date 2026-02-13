@@ -262,24 +262,12 @@ export default function ChatView() {
   }, []);
   const toggleTerminalVisibility = useCallback(() => {
     if (!activeThreadId) return;
-    const isOpen = Boolean(activeThread?.terminalOpen);
-
-    if (isOpen && api) {
-      if (typeof api.terminal.close === "function") {
-        void api.terminal.close({ threadId: activeThreadId }).catch(() => {
-          void api.terminal.write({ threadId: activeThreadId, data: "exit\n" }).catch(() => undefined);
-        });
-      } else {
-        void api.terminal.write({ threadId: activeThreadId, data: "exit\n" }).catch(() => undefined);
-      }
-    }
-
     dispatch({
       type: "SET_THREAD_TERMINAL_OPEN",
       threadId: activeThreadId,
-      open: !isOpen,
+      open: !activeThread?.terminalOpen,
     });
-  }, [activeThread?.terminalOpen, activeThreadId, api, dispatch]);
+  }, [activeThread?.terminalOpen, activeThreadId, dispatch]);
   const splitTerminal = useCallback(() => {
     if (!activeThreadId) return;
     dispatch({
