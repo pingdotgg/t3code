@@ -39,8 +39,13 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
     terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
     activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
-    terminalLayout: "single",
-    splitTerminalIds: [],
+    terminalGroups: [
+      {
+        id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+      },
+    ],
+    activeTerminalGroupId: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
     session: makeSession(),
     messages: [],
     events: [],
@@ -123,10 +128,15 @@ describe("store reducer thread continuity", () => {
       terminalId: "term-2",
     });
 
-    expect(next.threads[0]?.terminalLayout).toBe("split");
     expect(next.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID, "term-2"]);
-    expect(next.threads[0]?.splitTerminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID, "term-2"]);
     expect(next.threads[0]?.activeTerminalId).toBe("term-2");
+    expect(next.threads[0]?.terminalGroups).toEqual([
+      {
+        id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+      },
+    ]);
+    expect(next.threads[0]?.activeTerminalGroupId).toBe(`group-${DEFAULT_THREAD_TERMINAL_ID}`);
   });
 
   it("creates a new full-width terminal and switches to tab mode", () => {
@@ -137,18 +147,31 @@ describe("store reducer thread continuity", () => {
       terminalId: "term-2",
     });
 
-    expect(next.threads[0]?.terminalLayout).toBe("tabs");
     expect(next.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID, "term-2"]);
     expect(next.threads[0]?.activeTerminalId).toBe("term-2");
-    expect(next.threads[0]?.splitTerminalIds).toEqual([]);
+    expect(next.threads[0]?.terminalGroups).toEqual([
+      {
+        id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+      },
+      { id: "group-term-2", terminalIds: ["term-2"] },
+    ]);
+    expect(next.threads[0]?.activeTerminalGroupId).toBe("group-term-2");
   });
 
-  it("switches the active tab terminal", () => {
+  it("switches the active terminal and restores its owning group", () => {
     const state = makeState(
       makeThread({
-        terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2", "term-3"],
         activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
-        terminalLayout: "tabs",
+        terminalGroups: [
+          {
+            id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+            terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+          },
+          { id: "group-term-3", terminalIds: ["term-3"] },
+        ],
+        activeTerminalGroupId: "group-term-3",
       }),
     );
     const next = reducer(state, {
@@ -158,14 +181,57 @@ describe("store reducer thread continuity", () => {
     });
 
     expect(next.threads[0]?.activeTerminalId).toBe("term-2");
+    expect(next.threads[0]?.activeTerminalGroupId).toBe(`group-${DEFAULT_THREAD_TERMINAL_ID}`);
   });
 
-  it("closes a terminal tab and falls back to single layout when one remains", () => {
+  it("supports splitting beyond two terminals in the same group", () => {
     const state = makeState(
       makeThread({
         terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
         activeTerminalId: "term-2",
-        terminalLayout: "tabs",
+        terminalGroups: [
+          {
+            id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+            terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+          },
+        ],
+        activeTerminalGroupId: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+      }),
+    );
+    const next = reducer(state, {
+      type: "SPLIT_THREAD_TERMINAL",
+      threadId: "thread-local-1",
+      terminalId: "term-3",
+    });
+
+    expect(next.threads[0]?.terminalIds).toEqual([
+      DEFAULT_THREAD_TERMINAL_ID,
+      "term-2",
+      "term-3",
+    ]);
+    expect(next.threads[0]?.terminalGroups).toEqual([
+      {
+        id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2", "term-3"],
+      },
+    ]);
+    expect(next.threads[0]?.activeTerminalId).toBe("term-3");
+    expect(next.threads[0]?.activeTerminalGroupId).toBe(`group-${DEFAULT_THREAD_TERMINAL_ID}`);
+  });
+
+  it("closes a terminal and keeps grouped layout coherent", () => {
+    const state = makeState(
+      makeThread({
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2", "term-3"],
+        activeTerminalId: "term-2",
+        terminalGroups: [
+          {
+            id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+            terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+          },
+          { id: "group-term-3", terminalIds: ["term-3"] },
+        ],
+        activeTerminalGroupId: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
       }),
     );
     const next = reducer(state, {
@@ -174,9 +240,15 @@ describe("store reducer thread continuity", () => {
       terminalId: "term-2",
     });
 
-    expect(next.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+    expect(next.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID, "term-3"]);
     expect(next.threads[0]?.activeTerminalId).toBe(DEFAULT_THREAD_TERMINAL_ID);
-    expect(next.threads[0]?.terminalLayout).toBe("single");
+    expect(next.threads[0]?.terminalGroups).toEqual([
+      {
+        id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+      },
+      { id: "group-term-3", terminalIds: ["term-3"] },
+    ]);
   });
 
   it("closes the final terminal and hides the drawer", () => {
@@ -193,7 +265,13 @@ describe("store reducer thread continuity", () => {
 
     expect(next.threads[0]?.terminalOpen).toBe(false);
     expect(next.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
-    expect(next.threads[0]?.terminalLayout).toBe("single");
+    expect(next.threads[0]?.activeTerminalId).toBe(DEFAULT_THREAD_TERMINAL_ID);
+    expect(next.threads[0]?.terminalGroups).toEqual([
+      {
+        id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+      },
+    ]);
   });
 
   it("backfills codexThreadId from routed provider events", () => {

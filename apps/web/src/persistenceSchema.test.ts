@@ -52,8 +52,12 @@ describe("hydratePersistedState", () => {
     expect(hydrated?.threads[0]?.terminalHeight).toBe(DEFAULT_THREAD_TERMINAL_HEIGHT);
     expect(hydrated?.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
     expect(hydrated?.threads[0]?.activeTerminalId).toBe(DEFAULT_THREAD_TERMINAL_ID);
-    expect(hydrated?.threads[0]?.terminalLayout).toBe("single");
-    expect(hydrated?.threads[0]?.splitTerminalIds).toEqual([]);
+    expect(hydrated?.threads[0]?.terminalGroups).toEqual([
+      { id: `group-${DEFAULT_THREAD_TERMINAL_ID}`, terminalIds: [DEFAULT_THREAD_TERMINAL_ID] },
+    ]);
+    expect(hydrated?.threads[0]?.activeTerminalGroupId).toBe(
+      `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+    );
     expect(hydrated?.threads[0]?.messages[0]?.streaming).toBe(false);
     expect(hydrated?.runtimeMode).toBe("full-access");
   });
@@ -98,8 +102,12 @@ describe("hydratePersistedState", () => {
     expect(hydrated?.threads[0]?.terminalHeight).toBe(DEFAULT_THREAD_TERMINAL_HEIGHT);
     expect(hydrated?.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
     expect(hydrated?.threads[0]?.activeTerminalId).toBe(DEFAULT_THREAD_TERMINAL_ID);
-    expect(hydrated?.threads[0]?.terminalLayout).toBe("single");
-    expect(hydrated?.threads[0]?.splitTerminalIds).toEqual([]);
+    expect(hydrated?.threads[0]?.terminalGroups).toEqual([
+      { id: `group-${DEFAULT_THREAD_TERMINAL_ID}`, terminalIds: [DEFAULT_THREAD_TERMINAL_ID] },
+    ]);
+    expect(hydrated?.threads[0]?.activeTerminalGroupId).toBe(
+      `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+    );
     expect(hydrated?.activeThreadId).toBe("t-1");
     expect(hydrated?.runtimeMode).toBe("full-access");
   });
@@ -125,7 +133,7 @@ describe("hydratePersistedState", () => {
     expect(hydrated?.runtimeMode).toBe("approval-required");
   });
 
-  it("hydrates terminal fields from v6 payload", () => {
+  it("hydrates terminal fields from legacy v6 payload", () => {
     const payload = JSON.stringify({
       version: 6,
       runtimeMode: "full-access",
@@ -164,9 +172,58 @@ describe("hydratePersistedState", () => {
     expect(hydrated?.threads[0]?.terminalHeight).toBe(360);
     expect(hydrated?.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID, "term-2"]);
     expect(hydrated?.threads[0]?.activeTerminalId).toBe("term-2");
-    expect(hydrated?.threads[0]?.terminalLayout).toBe("tabs");
-    expect(hydrated?.threads[0]?.splitTerminalIds).toEqual([]);
+    expect(hydrated?.threads[0]?.terminalGroups).toEqual([
+      { id: `group-${DEFAULT_THREAD_TERMINAL_ID}`, terminalIds: [DEFAULT_THREAD_TERMINAL_ID] },
+      { id: "group-term-2", terminalIds: ["term-2"] },
+    ]);
+    expect(hydrated?.threads[0]?.activeTerminalGroupId).toBe("group-term-2");
     expect(hydrated?.threads[0]?.lastVisitedAt).toBe("2026-02-08T10:01:00.000Z");
+  });
+
+  it("hydrates legacy split layout into a grouped split", () => {
+    const payload = JSON.stringify({
+      version: 6,
+      runtimeMode: "full-access",
+      projects: [
+        {
+          id: "p-1",
+          name: "Project",
+          cwd: "/tmp/project",
+          model: "gpt-5.3-codex",
+          expanded: true,
+        },
+      ],
+      threads: [
+        {
+          id: "t-1",
+          codexThreadId: null,
+          projectId: "p-1",
+          title: "Thread",
+          model: "gpt-5.3-codex",
+          terminalOpen: true,
+          terminalHeight: 360,
+          terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2", "term-3"],
+          activeTerminalId: "term-2",
+          terminalLayout: "split",
+          splitTerminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+          messages: [],
+          createdAt: "2026-02-08T10:00:00.000Z",
+        },
+      ],
+      activeThreadId: "t-1",
+    });
+
+    const hydrated = hydratePersistedState(payload, false);
+    expect(hydrated?.threads[0]?.terminalGroups).toEqual([
+      {
+        id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+      },
+      { id: "group-term-3", terminalIds: ["term-3"] },
+    ]);
+    expect(hydrated?.threads[0]?.activeTerminalGroupId).toBe(
+      `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+    );
   });
 
   it("defaults terminalHeight when hydrating v5 payloads", () => {
@@ -201,12 +258,17 @@ describe("hydratePersistedState", () => {
     expect(hydrated?.threads[0]?.terminalHeight).toBe(DEFAULT_THREAD_TERMINAL_HEIGHT);
     expect(hydrated?.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
     expect(hydrated?.threads[0]?.activeTerminalId).toBe(DEFAULT_THREAD_TERMINAL_ID);
-    expect(hydrated?.threads[0]?.terminalLayout).toBe("single");
+    expect(hydrated?.threads[0]?.terminalGroups).toEqual([
+      { id: `group-${DEFAULT_THREAD_TERMINAL_ID}`, terminalIds: [DEFAULT_THREAD_TERMINAL_ID] },
+    ]);
+    expect(hydrated?.threads[0]?.activeTerminalGroupId).toBe(
+      `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+    );
   });
 });
 
 describe("toPersistedState", () => {
-  it("writes v6 payload and strips non-persisted thread fields", () => {
+  it("writes v7 payload and strips non-persisted thread fields", () => {
     const thread: Thread = {
       id: "t-1",
       codexThreadId: "thr_1",
@@ -217,8 +279,11 @@ describe("toPersistedState", () => {
       terminalHeight: 320,
       terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
       activeTerminalId: "term-2",
-      terminalLayout: "tabs",
-      splitTerminalIds: [],
+      terminalGroups: [
+        { id: `group-${DEFAULT_THREAD_TERMINAL_ID}`, terminalIds: [DEFAULT_THREAD_TERMINAL_ID] },
+        { id: "group-term-2", terminalIds: ["term-2"] },
+      ],
+      activeTerminalGroupId: "group-term-2",
       session: null,
       messages: [
         {
@@ -262,7 +327,7 @@ describe("toPersistedState", () => {
       runtimeMode: "full-access",
     });
 
-    expect(persisted.version).toBe(6);
+    expect(persisted.version).toBe(7);
     expect(persisted.runtimeMode).toBe("full-access");
     expect(persisted.threads[0]).toEqual({
       id: "t-1",
@@ -274,8 +339,11 @@ describe("toPersistedState", () => {
       terminalHeight: 320,
       terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
       activeTerminalId: "term-2",
-      terminalLayout: "tabs",
-      splitTerminalIds: [],
+      terminalGroups: [
+        { id: `group-${DEFAULT_THREAD_TERMINAL_ID}`, terminalIds: [DEFAULT_THREAD_TERMINAL_ID] },
+        { id: "group-term-2", terminalIds: ["term-2"] },
+      ],
+      activeTerminalGroupId: "group-term-2",
       messages: [
         {
           id: "m-1",

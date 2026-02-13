@@ -19,6 +19,7 @@ import {
   type Project,
   type RuntimeMode,
   type Thread,
+  type ThreadTerminalGroup,
 } from "./types";
 
 // ── Actions ──────────────────────────────────────────────────────────
@@ -72,8 +73,9 @@ export interface AppState {
   diffOpen: boolean;
 }
 
-const PERSISTED_STATE_KEY = "t3code:renderer-state:v6";
+const PERSISTED_STATE_KEY = "t3code:renderer-state:v7";
 const LEGACY_PERSISTED_STATE_KEYS = [
+  "t3code:renderer-state:v6",
   "t3code:renderer-state:v5",
   "t3code:renderer-state:v4",
   "t3code:renderer-state:v3",
@@ -139,9 +141,7 @@ function updateThread(
 }
 
 function normalizeTerminalIds(terminalIds: string[]): string[] {
-  const ids = terminalIds
-    .map((id) => id.trim())
-    .filter((id) => id.length > 0);
+  const ids = terminalIds.map((id) => id.trim()).filter((id) => id.length > 0);
   const unique = [...new Set(ids)];
   if (unique.length > 0) {
     return unique;
@@ -149,44 +149,112 @@ function normalizeTerminalIds(terminalIds: string[]): string[] {
   return [DEFAULT_THREAD_TERMINAL_ID];
 }
 
+function normalizeTerminalGroupIds(terminalIds: string[]): string[] {
+  return [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];
+}
+
+function fallbackGroupId(terminalId: string): string {
+  return `group-${terminalId}`;
+}
+
+function assignUniqueGroupId(groupId: string, usedGroupIds: Set<string>): string {
+  if (!usedGroupIds.has(groupId)) {
+    usedGroupIds.add(groupId);
+    return groupId;
+  }
+  let suffix = 2;
+  while (usedGroupIds.has(`${groupId}-${suffix}`)) {
+    suffix += 1;
+  }
+  const uniqueGroupId = `${groupId}-${suffix}`;
+  usedGroupIds.add(uniqueGroupId);
+  return uniqueGroupId;
+}
+
+function normalizeTerminalGroups(
+  thread: Thread,
+  terminalIds: string[],
+): ThreadTerminalGroup[] {
+  const validTerminalIdSet = new Set(terminalIds);
+  const assignedTerminalIds = new Set<string>();
+  const usedGroupIds = new Set<string>();
+  const groups: ThreadTerminalGroup[] = [];
+
+  for (const group of thread.terminalGroups) {
+    const groupTerminalIds = normalizeTerminalGroupIds(group.terminalIds).filter((terminalId) => {
+      if (!validTerminalIdSet.has(terminalId)) return false;
+      if (assignedTerminalIds.has(terminalId)) return false;
+      return true;
+    });
+    if (groupTerminalIds.length === 0) continue;
+    for (const terminalId of groupTerminalIds) {
+      assignedTerminalIds.add(terminalId);
+    }
+    const baseGroupId =
+      group.id.trim().length > 0
+        ? group.id.trim()
+        : fallbackGroupId(groupTerminalIds[0] ?? DEFAULT_THREAD_TERMINAL_ID);
+    groups.push({
+      id: assignUniqueGroupId(baseGroupId, usedGroupIds),
+      terminalIds: groupTerminalIds,
+    });
+  }
+
+  for (const terminalId of terminalIds) {
+    if (assignedTerminalIds.has(terminalId)) continue;
+    groups.push({
+      id: assignUniqueGroupId(fallbackGroupId(terminalId), usedGroupIds),
+      terminalIds: [terminalId],
+    });
+  }
+
+  if (groups.length > 0) {
+    return groups;
+  }
+
+  return [
+    {
+      id: fallbackGroupId(DEFAULT_THREAD_TERMINAL_ID),
+      terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+    },
+  ];
+}
+
+function findGroupIndexByTerminalId(
+  terminalGroups: ThreadTerminalGroup[],
+  terminalId: string,
+): number {
+  return terminalGroups.findIndex((group) => group.terminalIds.includes(terminalId));
+}
+
 function normalizeThreadTerminals(thread: Thread): Thread {
   const terminalIds = normalizeTerminalIds(thread.terminalIds);
   const activeTerminalId = terminalIds.includes(thread.activeTerminalId)
     ? thread.activeTerminalId
     : (terminalIds[0] ?? DEFAULT_THREAD_TERMINAL_ID);
-
-  if (thread.terminalLayout === "split") {
-    const validSplitIds = [...new Set(thread.splitTerminalIds)].filter((id) =>
-      terminalIds.includes(id),
-    );
-    if (validSplitIds.length >= 2) {
-      const splitTerminalIds = validSplitIds.slice(0, 2);
-      const splitActiveTerminalId = splitTerminalIds.includes(activeTerminalId)
-        ? activeTerminalId
-        : (splitTerminalIds[1] ?? splitTerminalIds[0] ?? activeTerminalId);
-      return {
-        ...thread,
-        terminalIds,
-        activeTerminalId: splitActiveTerminalId,
-        terminalLayout: "split",
-        splitTerminalIds,
-      };
-    }
-  }
-
-  const terminalLayout =
-    terminalIds.length > 1 && thread.terminalLayout === "single"
-      ? "tabs"
-      : (thread.terminalLayout === "tabs" && terminalIds.length < 2
-          ? "single"
-          : thread.terminalLayout);
+  const terminalGroups = normalizeTerminalGroups(thread, terminalIds);
+  const activeGroupIndexFromId = terminalGroups.findIndex(
+    (group) => group.id === thread.activeTerminalGroupId,
+  );
+  const activeGroupIndexFromTerminal = findGroupIndexByTerminalId(
+    terminalGroups,
+    activeTerminalId,
+  );
+  const activeGroupIndex =
+    activeGroupIndexFromId >= 0
+      ? activeGroupIndexFromId
+      : (activeGroupIndexFromTerminal >= 0 ? activeGroupIndexFromTerminal : 0);
+  const activeTerminalGroupId =
+    terminalGroups[activeGroupIndex]?.id ??
+    terminalGroups[0]?.id ??
+    fallbackGroupId(activeTerminalId);
 
   return {
     ...thread,
     terminalIds,
     activeTerminalId,
-    terminalLayout,
-    splitTerminalIds: [],
+    terminalGroups,
+    activeTerminalGroupId,
   };
 }
 
@@ -202,33 +270,47 @@ function closeThreadTerminal(thread: Thread, terminalId: string): Thread {
       terminalOpen: false,
       terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
       activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
-      terminalLayout: "single",
-      splitTerminalIds: [],
+      terminalGroups: [
+        {
+          id: fallbackGroupId(DEFAULT_THREAD_TERMINAL_ID),
+          terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+        },
+      ],
+      activeTerminalGroupId: fallbackGroupId(DEFAULT_THREAD_TERMINAL_ID),
     });
   }
 
+  const closedTerminalIndex = thread.terminalIds.indexOf(terminalId);
+  const closedTerminalGroup = thread.terminalGroups.find((group) =>
+    group.terminalIds.includes(terminalId),
+  );
+  const closedTerminalGroupIndex = closedTerminalGroup
+    ? closedTerminalGroup.terminalIds.indexOf(terminalId)
+    : -1;
+  const remainingTerminalsInClosedGroup = (
+    closedTerminalGroup?.terminalIds ?? []
+  ).filter((id) => id !== terminalId);
   const nextActiveTerminalId =
     thread.activeTerminalId === terminalId
-      ? (remainingTerminalIds[0] ?? DEFAULT_THREAD_TERMINAL_ID)
+      ? (remainingTerminalsInClosedGroup[
+          Math.min(closedTerminalGroupIndex, remainingTerminalsInClosedGroup.length - 1)
+        ] ??
+        remainingTerminalIds[Math.min(closedTerminalIndex, remainingTerminalIds.length - 1)] ??
+        remainingTerminalIds[0] ??
+        DEFAULT_THREAD_TERMINAL_ID)
       : thread.activeTerminalId;
-  let nextLayout = thread.terminalLayout;
-  let nextSplitTerminalIds = thread.splitTerminalIds.filter((id) => id !== terminalId);
-
-  if (nextLayout === "split" && nextSplitTerminalIds.length < 2) {
-    nextLayout = remainingTerminalIds.length > 1 ? "tabs" : "single";
-    nextSplitTerminalIds = [];
-  }
-
-  if (nextLayout === "tabs" && remainingTerminalIds.length < 2) {
-    nextLayout = "single";
-  }
+  const nextTerminalGroups = thread.terminalGroups
+    .map((group) => ({
+      ...group,
+      terminalIds: group.terminalIds.filter((id) => id !== terminalId),
+    }))
+    .filter((group) => group.terminalIds.length > 0);
 
   return normalizeThreadTerminals({
     ...thread,
     terminalIds: remainingTerminalIds,
     activeTerminalId: nextActiveTerminalId,
-    terminalLayout: nextLayout,
-    splitTerminalIds: nextSplitTerminalIds,
+    terminalGroups: nextTerminalGroups,
   });
 }
 
@@ -440,28 +522,67 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         threads: updateThread(state.threads, action.threadId, (thread) => {
-          const terminalIds = thread.terminalIds.includes(action.terminalId)
-            ? thread.terminalIds
-            : [...thread.terminalIds, action.terminalId];
-          const firstTerminalId =
-            terminalIds.includes(thread.activeTerminalId)
-              ? thread.activeTerminalId
-              : (terminalIds[0] ?? DEFAULT_THREAD_TERMINAL_ID);
-          const secondTerminalId =
-            action.terminalId === firstTerminalId
-              ? (terminalIds.find((id) => id !== firstTerminalId) ?? firstTerminalId)
-              : action.terminalId;
-          const splitTerminalIds =
-            firstTerminalId === secondTerminalId
-              ? []
-              : [firstTerminalId, secondTerminalId];
+          const normalizedThread = normalizeThreadTerminals(thread);
+          const terminalIds = normalizedThread.terminalIds.includes(action.terminalId)
+            ? normalizedThread.terminalIds
+            : [...normalizedThread.terminalIds, action.terminalId];
+          const terminalGroups = normalizedThread.terminalGroups.map((group) => ({
+            ...group,
+            terminalIds: [...group.terminalIds],
+          }));
+          let activeGroupIndex = terminalGroups.findIndex(
+            (group) => group.id === normalizedThread.activeTerminalGroupId,
+          );
+          if (activeGroupIndex < 0) {
+            activeGroupIndex = findGroupIndexByTerminalId(
+              terminalGroups,
+              normalizedThread.activeTerminalId,
+            );
+          }
+          if (activeGroupIndex < 0) {
+            terminalGroups.push({
+              id: fallbackGroupId(normalizedThread.activeTerminalId),
+              terminalIds: [normalizedThread.activeTerminalId],
+            });
+            activeGroupIndex = terminalGroups.length - 1;
+          }
 
+          const existingGroupIndex = findGroupIndexByTerminalId(
+            terminalGroups,
+            action.terminalId,
+          );
+          if (existingGroupIndex >= 0) {
+            terminalGroups[existingGroupIndex]!.terminalIds = terminalGroups[
+              existingGroupIndex
+            ]!.terminalIds.filter((id) => id !== action.terminalId);
+            if (terminalGroups[existingGroupIndex]!.terminalIds.length === 0) {
+              terminalGroups.splice(existingGroupIndex, 1);
+              if (existingGroupIndex < activeGroupIndex) {
+                activeGroupIndex -= 1;
+              }
+            }
+          }
+
+          const destinationGroup = terminalGroups[activeGroupIndex];
+          if (!destinationGroup) {
+            return normalizedThread;
+          }
+          if (!destinationGroup.terminalIds.includes(action.terminalId)) {
+            const anchorIndex = destinationGroup.terminalIds.indexOf(
+              normalizedThread.activeTerminalId,
+            );
+            if (anchorIndex >= 0) {
+              destinationGroup.terminalIds.splice(anchorIndex + 1, 0, action.terminalId);
+            } else {
+              destinationGroup.terminalIds.push(action.terminalId);
+            }
+          }
           return normalizeThreadTerminals({
-            ...thread,
+            ...normalizedThread,
             terminalIds,
-            activeTerminalId: secondTerminalId,
-            terminalLayout: splitTerminalIds.length === 2 ? "split" : "single",
-            splitTerminalIds,
+            activeTerminalId: action.terminalId,
+            activeTerminalGroupId: destinationGroup.id,
+            terminalGroups,
           });
         }),
       };
@@ -470,15 +591,25 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         threads: updateThread(state.threads, action.threadId, (thread) => {
-          const terminalIds = thread.terminalIds.includes(action.terminalId)
-            ? thread.terminalIds
-            : [...thread.terminalIds, action.terminalId];
+          const normalizedThread = normalizeThreadTerminals(thread);
+          const terminalIds = normalizedThread.terminalIds.includes(action.terminalId)
+            ? normalizedThread.terminalIds
+            : [...normalizedThread.terminalIds, action.terminalId];
+          const terminalGroups = normalizedThread.terminalGroups
+            .map((group) => ({
+              ...group,
+              terminalIds: group.terminalIds.filter((id) => id !== action.terminalId),
+            }))
+            .filter((group) => group.terminalIds.length > 0);
+          const nextGroupId = fallbackGroupId(action.terminalId);
+          terminalGroups.push({ id: nextGroupId, terminalIds: [action.terminalId] });
+
           return normalizeThreadTerminals({
-            ...thread,
+            ...normalizedThread,
             terminalIds,
             activeTerminalId: action.terminalId,
-            terminalLayout: "tabs",
-            splitTerminalIds: [],
+            activeTerminalGroupId: nextGroupId,
+            terminalGroups,
           });
         }),
       };
@@ -487,12 +618,23 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         threads: updateThread(state.threads, action.threadId, (thread) => {
-          if (!thread.terminalIds.includes(action.terminalId)) {
+          const normalizedThread = normalizeThreadTerminals(thread);
+          if (!normalizedThread.terminalIds.includes(action.terminalId)) {
             return thread;
           }
+          const nextActiveGroupIndex = findGroupIndexByTerminalId(
+            normalizedThread.terminalGroups,
+            action.terminalId,
+          );
+          const activeTerminalGroupId =
+            nextActiveGroupIndex >= 0
+              ? (normalizedThread.terminalGroups[nextActiveGroupIndex]?.id ??
+                normalizedThread.activeTerminalGroupId)
+              : normalizedThread.activeTerminalGroupId;
           return normalizeThreadTerminals({
-            ...thread,
+            ...normalizedThread,
             activeTerminalId: action.terminalId,
+            activeTerminalGroupId,
           });
         }),
       };

@@ -119,8 +119,13 @@ export default function Sidebar() {
           terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
           terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
           activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
-          terminalLayout: "single",
-          splitTerminalIds: [],
+          terminalGroups: [
+            {
+              id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+              terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+            },
+          ],
+          activeTerminalGroupId: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
           session: null,
           messages: [],
           events: [],

@@ -1498,8 +1498,8 @@ export default function ChatView() {
           height={activeThread.terminalHeight}
           terminalIds={activeThread.terminalIds}
           activeTerminalId={activeThread.activeTerminalId}
-          terminalLayout={activeThread.terminalLayout}
-          splitTerminalIds={activeThread.splitTerminalIds}
+          terminalGroups={activeThread.terminalGroups}
+          activeTerminalGroupId={activeThread.activeTerminalGroupId}
           focusRequestId={terminalFocusRequestId}
           onSplitTerminal={splitTerminal}
           onNewTerminal={createNewTerminal}

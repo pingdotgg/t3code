@@ -8,6 +8,7 @@ import {
   type Project,
   type RuntimeMode,
   type Thread,
+  type ThreadTerminalGroup,
 } from "./types";
 
 const LEGACY_DEFAULT_MODEL = "gpt-5.2-codex";
@@ -39,6 +40,11 @@ const persistedMessageSchema = z.object({
   streaming: z.boolean(),
 });
 
+const persistedTerminalGroupSchema = z.object({
+  id: z.string().trim().min(1),
+  terminalIds: z.array(z.string().trim().min(1)),
+});
+
 const persistedThreadSchema = z.object({
   id: z.string().min(1),
   codexThreadId: z.string().min(1).nullable().default(null),
@@ -51,8 +57,11 @@ const persistedThreadSchema = z.object({
   ),
   terminalIds: z.array(z.string().trim().min(1)).default([DEFAULT_THREAD_TERMINAL_ID]),
   activeTerminalId: z.string().trim().min(1).default(DEFAULT_THREAD_TERMINAL_ID),
-  terminalLayout: z.enum(["single", "split", "tabs"]).default("single"),
-  splitTerminalIds: z.array(z.string().trim().min(1)).default([]),
+  terminalGroups: z.array(persistedTerminalGroupSchema).default([]),
+  activeTerminalGroupId: z.string().trim().min(1).optional(),
+  // Legacy v6 and older fields retained for migration.
+  terminalLayout: z.enum(["single", "split", "tabs"]).optional(),
+  splitTerminalIds: z.array(z.string().trim().min(1)).optional(),
   messages: z.array(persistedMessageSchema),
   createdAt: z.string().min(1),
   lastVisitedAt: z.string().min(1).optional(),
@@ -91,12 +100,18 @@ export const persistedStateV6Schema = persistedStateBodySchema.extend({
   version: z.literal(6).optional(),
 });
 
+export const persistedStateV7Schema = persistedStateBodySchema.extend({
+  runtimeMode: runtimeModeSchema.default(DEFAULT_RUNTIME_MODE),
+  version: z.literal(7).optional(),
+});
+
 export const persistedStateV5Schema = persistedStateBodySchema.extend({
   runtimeMode: runtimeModeSchema.default(DEFAULT_RUNTIME_MODE),
   version: z.literal(5).optional(),
 });
 
 const persistedStateSchema = z.union([
+  persistedStateV7Schema,
   persistedStateV6Schema,
   persistedStateV5Schema,
   persistedStateV4Schema,
@@ -134,32 +149,90 @@ function hydrateThread(
   thread: z.infer<typeof persistedThreadSchema>,
   isLegacyPayload: boolean,
 ): Thread {
-  const terminalIds = [...new Set(thread.terminalIds)]
-    .map((id) => id.trim())
-    .filter((id) => id.length > 0);
+  const terminalIds = [...new Set(thread.terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];
   const safeTerminalIds =
     terminalIds.length > 0 ? terminalIds : [DEFAULT_THREAD_TERMINAL_ID];
   const activeTerminalId = safeTerminalIds.includes(thread.activeTerminalId)
     ? thread.activeTerminalId
     : (safeTerminalIds[0] ?? DEFAULT_THREAD_TERMINAL_ID);
-  let terminalLayout = thread.terminalLayout;
-  let splitTerminalIds = [...new Set(thread.splitTerminalIds)].filter((id) =>
-    safeTerminalIds.includes(id),
-  );
-  if (terminalLayout === "split") {
-    splitTerminalIds = splitTerminalIds.slice(0, 2);
-    if (splitTerminalIds.length < 2) {
-      terminalLayout = safeTerminalIds.length > 1 ? "tabs" : "single";
-      splitTerminalIds = [];
+  const safeTerminalIdSet = new Set(safeTerminalIds);
+  const assignedTerminalIds = new Set<string>();
+  const usedGroupIds = new Set<string>();
+  const normalizedGroups: ThreadTerminalGroup[] = [];
+  const assignUniqueGroupId = (groupId: string): string => {
+    if (!usedGroupIds.has(groupId)) {
+      usedGroupIds.add(groupId);
+      return groupId;
     }
-  } else {
-    splitTerminalIds = [];
+    let suffix = 2;
+    while (usedGroupIds.has(`${groupId}-${suffix}`)) {
+      suffix += 1;
+    }
+    const uniqueGroupId = `${groupId}-${suffix}`;
+    usedGroupIds.add(uniqueGroupId);
+    return uniqueGroupId;
+  };
+
+  for (const terminalGroup of thread.terminalGroups) {
+    const nextTerminalIds = [
+      ...new Set(terminalGroup.terminalIds.map((id) => id.trim()).filter((id) => id.length > 0)),
+    ].filter((terminalId) => {
+      if (!safeTerminalIdSet.has(terminalId)) return false;
+      if (assignedTerminalIds.has(terminalId)) return false;
+      return true;
+    });
+    if (nextTerminalIds.length === 0) continue;
+    for (const terminalId of nextTerminalIds) {
+      assignedTerminalIds.add(terminalId);
+    }
+    const baseGroupId =
+      terminalGroup.id.trim().length > 0
+        ? terminalGroup.id.trim()
+        : `group-${nextTerminalIds[0] ?? DEFAULT_THREAD_TERMINAL_ID}`;
+    normalizedGroups.push({
+      id: assignUniqueGroupId(baseGroupId),
+      terminalIds: nextTerminalIds,
+    });
   }
-  if (terminalLayout === "single" && safeTerminalIds.length > 1) {
-    terminalLayout = "tabs";
-  } else if (terminalLayout === "tabs" && safeTerminalIds.length < 2) {
-    terminalLayout = "single";
+
+  if (normalizedGroups.length === 0 && thread.terminalLayout === "split") {
+    const splitTerminalIds = [
+      ...new Set((thread.splitTerminalIds ?? []).map((id) => id.trim()).filter((id) => id.length > 0)),
+    ].filter((terminalId) => safeTerminalIdSet.has(terminalId));
+    if (splitTerminalIds.length >= 2) {
+      const splitGroupTerminalIds = splitTerminalIds.slice(0, 2);
+      for (const terminalId of splitGroupTerminalIds) {
+        assignedTerminalIds.add(terminalId);
+      }
+      normalizedGroups.push({
+        id: assignUniqueGroupId(`group-${splitGroupTerminalIds[0] ?? DEFAULT_THREAD_TERMINAL_ID}`),
+        terminalIds: splitGroupTerminalIds,
+      });
+    }
   }
+
+  for (const terminalId of safeTerminalIds) {
+    if (assignedTerminalIds.has(terminalId)) continue;
+    normalizedGroups.push({
+      id: assignUniqueGroupId(`group-${terminalId}`),
+      terminalIds: [terminalId],
+    });
+  }
+
+  const activeGroupIndexFromId = normalizedGroups.findIndex(
+    (terminalGroup) => terminalGroup.id === thread.activeTerminalGroupId,
+  );
+  const activeGroupIndexFromTerminal = normalizedGroups.findIndex((terminalGroup) =>
+    terminalGroup.terminalIds.includes(activeTerminalId),
+  );
+  const activeGroupIndex =
+    activeGroupIndexFromId >= 0
+      ? activeGroupIndexFromId
+      : (activeGroupIndexFromTerminal >= 0 ? activeGroupIndexFromTerminal : 0);
+  const activeTerminalGroupId =
+    normalizedGroups[activeGroupIndex]?.id ??
+    normalizedGroups[0]?.id ??
+    `group-${DEFAULT_THREAD_TERMINAL_ID}`;
 
   return {
     id: thread.id,
@@ -171,8 +244,8 @@ function hydrateThread(
     terminalHeight: thread.terminalHeight ?? DEFAULT_THREAD_TERMINAL_HEIGHT,
     terminalIds: safeTerminalIds,
     activeTerminalId,
-    terminalLayout,
-    splitTerminalIds,
+    terminalGroups: normalizedGroups,
+    activeTerminalGroupId,
     session: null,
     messages: thread.messages.map((message) => {
       const hydratedAttachments = message.attachments?.map((attachment) => ({ ...attachment }));
@@ -235,9 +308,9 @@ export function hydratePersistedState(
 
 export function toPersistedState(
   state: PersistedStoreSnapshot,
-): z.infer<typeof persistedStateV6Schema> {
+): z.infer<typeof persistedStateV7Schema> {
   return {
-    version: 6,
+    version: 7,
     projects: state.projects,
     threads: state.threads.map((thread) => ({
       id: thread.id,
@@ -249,8 +322,8 @@ export function toPersistedState(
       terminalHeight: thread.terminalHeight,
       terminalIds: thread.terminalIds,
       activeTerminalId: thread.activeTerminalId,
-      terminalLayout: thread.terminalLayout,
-      splitTerminalIds: thread.splitTerminalIds,
+      terminalGroups: thread.terminalGroups,
+      activeTerminalGroupId: thread.activeTerminalGroupId,
       messages: thread.messages.map((message) => ({
         id: message.id,
         role: message.role,
