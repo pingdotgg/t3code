@@ -10,11 +10,7 @@ import type {
   PrContentGenerationResult,
   TextGenerationService,
 } from "./coreServices";
-import {
-  type ProcessRunOptions,
-  type ProcessRunResult,
-  runProcess,
-} from "./processRunner";
+import { type ProcessRunOptions, type ProcessRunResult, runProcess } from "./processRunner";
 
 type ProcessRunner = (
   command: string,
@@ -22,8 +18,8 @@ type ProcessRunner = (
   options?: ProcessRunOptions,
 ) => Promise<ProcessRunResult>;
 
-const CODEX_MODEL = "gpt-5.3-codex-spark";
-const CODEX_REASONING_EFFORT = "medium";
+const CODEX_MODEL = "gpt-5.3-codex";
+const CODEX_REASONING_EFFORT = "low";
 
 const COMMIT_OUTPUT_SCHEMA_JSON = {
   type: "object",
@@ -78,10 +74,7 @@ function limitSection(value: string, maxChars: number): string {
 }
 
 async function writeTempFile(prefix: string, content: string): Promise<string> {
-  const filePath = path.join(
-    os.tmpdir(),
-    `t3code-${prefix}-${process.pid}-${randomUUID()}.tmp`,
-  );
+  const filePath = path.join(os.tmpdir(), `t3code-${prefix}-${process.pid}-${randomUUID()}.tmp`);
   await fs.writeFile(filePath, content, "utf8");
   return filePath;
 }
@@ -128,10 +121,7 @@ async function runCodexJson<T>({
   parse: (raw: unknown) => T;
   run: ProcessRunner;
 }): Promise<T> {
-  const schemaPath = await writeTempFile(
-    "codex-schema",
-    JSON.stringify(outputSchemaJson),
-  );
+  const schemaPath = await writeTempFile("codex-schema", JSON.stringify(outputSchemaJson));
   let outputPath: string | null = null;
 
   try {
@@ -174,10 +164,7 @@ async function runCodexJson<T>({
 
     return parse(parsedJson);
   } finally {
-    await Promise.all([
-      safeUnlink(schemaPath),
-      ...(outputPath ? [safeUnlink(outputPath)] : []),
-    ]);
+    await Promise.all([safeUnlink(schemaPath), ...(outputPath ? [safeUnlink(outputPath)] : [])]);
   }
 }
 
@@ -226,9 +213,7 @@ export class CodexTextGenerator implements TextGenerationService {
     };
   }
 
-  async generatePrContent(
-    input: PrContentGenerationInput,
-  ): Promise<PrContentGenerationResult> {
+  async generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult> {
     const prompt = [
       "You write GitHub pull request content.",
       "Return a JSON object with keys: title, body.",

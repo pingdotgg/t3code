@@ -8,6 +8,12 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  extractTerminalLinks,
+  isTerminalLinkActivation,
+  preferredTerminalEditor,
+  resolvePathLinkTarget,
+} from "../terminal-links";
 import { isTerminalClearShortcut } from "../terminal-shortcuts";
 import { DEFAULT_THREAD_TERMINAL_HEIGHT } from "../types";
 
@@ -298,6 +304,67 @@ export default function ThreadTerminalDrawer({
       return false;
     });
 
+    const terminalLinksDisposable = terminal.registerLinkProvider({
+      provideLinks: (bufferLineNumber, callback) => {
+        const activeTerminal = terminalRef.current;
+        if (!activeTerminal) {
+          callback(undefined);
+          return;
+        }
+
+        const line = activeTerminal.buffer.active.getLine(bufferLineNumber - 1);
+        if (!line) {
+          callback(undefined);
+          return;
+        }
+
+        const lineText = line.translateToString(true);
+        const matches = extractTerminalLinks(lineText);
+        if (matches.length === 0) {
+          callback(undefined);
+          return;
+        }
+
+        callback(
+          matches.map((match) => ({
+            text: match.text,
+            range: {
+              start: { x: match.start + 1, y: bufferLineNumber },
+              end: { x: match.end, y: bufferLineNumber },
+            },
+            activate: (event: MouseEvent) => {
+              if (!isTerminalLinkActivation(event)) {
+                return;
+              }
+
+              const latestTerminal = terminalRef.current;
+              if (!latestTerminal) {
+                return;
+              }
+
+              if (match.kind === "url") {
+                void api.shell.openExternal(match.text).catch((error) => {
+                  writeSystemMessage(
+                    latestTerminal,
+                    error instanceof Error ? error.message : "Unable to open link",
+                  );
+                });
+                return;
+              }
+
+              const target = resolvePathLinkTarget(match.text, cwd);
+              void api.shell.openInEditor(target, preferredTerminalEditor()).catch((error) => {
+                writeSystemMessage(
+                  latestTerminal,
+                  error instanceof Error ? error.message : "Unable to open path",
+                );
+              });
+            },
+          })),
+        );
+      },
+    });
+
     const inputDisposable = terminal.onData((data) => {
       void api.terminal
         .write({ threadId, data })
@@ -393,6 +460,7 @@ export default function ThreadTerminalDrawer({
       window.clearTimeout(fitTimer);
       unsubscribe();
       inputDisposable.dispose();
+      terminalLinksDisposable.dispose();
       themeObserver.disconnect();
       terminalRef.current = null;
       fitAddonRef.current = null;
