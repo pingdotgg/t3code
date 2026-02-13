@@ -115,14 +115,18 @@ function inferHomeFromCwd(cwd: string): string | undefined {
   return undefined;
 }
 
-function splitPathAndPosition(value: string): { path: string; line?: string; column?: string } {
+function splitPathAndPosition(value: string): {
+  path: string;
+  line: string | undefined;
+  column: string | undefined;
+} {
   let path = value;
   let column: string | undefined;
   let line: string | undefined;
 
   const columnMatch = path.match(/:(\d+)$/);
   if (!columnMatch?.[1]) {
-    return { path };
+    return { path, line: undefined, column: undefined };
   }
 
   column = columnMatch[1];
@@ -176,10 +180,7 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
 }
 
 export function preferredTerminalEditor(): EditorId {
-  const fallback =
-    EDITORS.find((editor) => editor.command)?.id ??
-    EDITORS[0]?.id ??
-    "cursor";
+  const fallback = EDITORS.find((editor) => editor.command)?.id ?? EDITORS[0]?.id ?? "cursor";
 
   if (typeof window === "undefined") {
     return fallback;
