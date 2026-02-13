@@ -4,6 +4,8 @@ export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export type RuntimeMode = "approval-required" | "full-access";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
+export const DEFAULT_THREAD_TERMINAL_ID = "default";
+export type ThreadTerminalLayout = "single" | "split" | "tabs";
 
 export interface ChatImageAttachment {
   type: "image";
@@ -41,6 +43,10 @@ export interface Thread {
   model: string;
   terminalOpen: boolean;
   terminalHeight: number;
+  terminalIds: string[];
+  activeTerminalId: string;
+  terminalLayout: ThreadTerminalLayout;
+  splitTerminalIds: string[];
   session: ProviderSession | null;
   messages: ChatMessage[];
   events: ProviderEvent[];

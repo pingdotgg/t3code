@@ -3,6 +3,7 @@ import { z } from "zod";
 import { DEFAULT_MODEL, resolveModelSlug } from "./model-logic";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
+  DEFAULT_THREAD_TERMINAL_ID,
   DEFAULT_RUNTIME_MODE,
   type Project,
   type RuntimeMode,
@@ -48,6 +49,10 @@ const persistedThreadSchema = z.object({
   terminalHeight: z.number().int().min(120).max(4_096).default(
     DEFAULT_THREAD_TERMINAL_HEIGHT,
   ),
+  terminalIds: z.array(z.string().trim().min(1)).default([DEFAULT_THREAD_TERMINAL_ID]),
+  activeTerminalId: z.string().trim().min(1).default(DEFAULT_THREAD_TERMINAL_ID),
+  terminalLayout: z.enum(["single", "split", "tabs"]).default("single"),
+  splitTerminalIds: z.array(z.string().trim().min(1)).default([]),
   messages: z.array(persistedMessageSchema),
   createdAt: z.string().min(1),
   lastVisitedAt: z.string().min(1).optional(),
@@ -129,6 +134,33 @@ function hydrateThread(
   thread: z.infer<typeof persistedThreadSchema>,
   isLegacyPayload: boolean,
 ): Thread {
+  const terminalIds = [...new Set(thread.terminalIds)]
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
+  const safeTerminalIds =
+    terminalIds.length > 0 ? terminalIds : [DEFAULT_THREAD_TERMINAL_ID];
+  const activeTerminalId = safeTerminalIds.includes(thread.activeTerminalId)
+    ? thread.activeTerminalId
+    : (safeTerminalIds[0] ?? DEFAULT_THREAD_TERMINAL_ID);
+  let terminalLayout = thread.terminalLayout;
+  let splitTerminalIds = [...new Set(thread.splitTerminalIds)].filter((id) =>
+    safeTerminalIds.includes(id),
+  );
+  if (terminalLayout === "split") {
+    splitTerminalIds = splitTerminalIds.slice(0, 2);
+    if (splitTerminalIds.length < 2) {
+      terminalLayout = safeTerminalIds.length > 1 ? "tabs" : "single";
+      splitTerminalIds = [];
+    }
+  } else {
+    splitTerminalIds = [];
+  }
+  if (terminalLayout === "single" && safeTerminalIds.length > 1) {
+    terminalLayout = "tabs";
+  } else if (terminalLayout === "tabs" && safeTerminalIds.length < 2) {
+    terminalLayout = "single";
+  }
+
   return {
     id: thread.id,
     codexThreadId: thread.codexThreadId,
@@ -137,6 +169,10 @@ function hydrateThread(
     model: resolveModelSlug(maybeMigrateLegacyModel(thread.model, isLegacyPayload)),
     terminalOpen: thread.terminalOpen ?? false,
     terminalHeight: thread.terminalHeight ?? DEFAULT_THREAD_TERMINAL_HEIGHT,
+    terminalIds: safeTerminalIds,
+    activeTerminalId,
+    terminalLayout,
+    splitTerminalIds,
     session: null,
     messages: thread.messages.map((message) => {
       const hydratedAttachments = message.attachments?.map((attachment) => ({ ...attachment }));
@@ -211,6 +247,10 @@ export function toPersistedState(
       model: thread.model,
       terminalOpen: thread.terminalOpen,
       terminalHeight: thread.terminalHeight,
+      terminalIds: thread.terminalIds,
+      activeTerminalId: thread.activeTerminalId,
+      terminalLayout: thread.terminalLayout,
+      splitTerminalIds: thread.splitTerminalIds,
       messages: thread.messages.map((message) => ({
         id: message.id,
         role: message.role,

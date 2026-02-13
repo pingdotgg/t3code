@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_TERMINAL_ID,
+  terminalClearInputSchema,
   terminalCloseInputSchema,
   terminalEventSchema,
   terminalOpenInputSchema,
@@ -29,6 +31,16 @@ describe("terminalOpenInputSchema", () => {
       rows: 2,
     });
     expect(result.success).toBe(false);
+  });
+
+  it("defaults terminalId when missing", () => {
+    const parsed = terminalOpenInputSchema.parse({
+      threadId: "thread-1",
+      cwd: "/tmp/project",
+      cols: 100,
+      rows: 24,
+    });
+    expect(parsed.terminalId).toBe(DEFAULT_TERMINAL_ID);
   });
 });
 
@@ -68,6 +80,15 @@ describe("terminalResizeInputSchema", () => {
   });
 });
 
+describe("terminalClearInputSchema", () => {
+  it("defaults terminal id", () => {
+    const parsed = terminalClearInputSchema.parse({
+      threadId: "thread-1",
+    });
+    expect(parsed.terminalId).toBe(DEFAULT_TERMINAL_ID);
+  });
+});
+
 describe("terminalCloseInputSchema", () => {
   it("accepts optional deleteHistory", () => {
     const result = terminalCloseInputSchema.safeParse({
@@ -82,6 +103,7 @@ describe("terminalSessionSnapshotSchema", () => {
   it("accepts running snapshots", () => {
     const result = terminalSessionSnapshotSchema.safeParse({
       threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
       cwd: "/tmp/project",
       status: "running",
       pid: 1234,
@@ -99,6 +121,7 @@ describe("terminalEventSchema", () => {
     const result = terminalEventSchema.safeParse({
       type: "output",
       threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
       createdAt: new Date().toISOString(),
       data: "line\n",
     });
@@ -109,6 +132,7 @@ describe("terminalEventSchema", () => {
     const result = terminalEventSchema.safeParse({
       type: "exited",
       threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
       createdAt: new Date().toISOString(),
       exitCode: 0,
       exitSignal: null,

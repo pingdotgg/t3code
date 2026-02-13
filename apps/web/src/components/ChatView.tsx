@@ -269,6 +269,36 @@ export default function ChatView() {
       open: !isOpen,
     });
   }, [activeThread?.terminalOpen, activeThreadId, dispatch]);
+  const splitTerminal = useCallback(() => {
+    if (!activeThreadId) return;
+    dispatch({
+      type: "SPLIT_THREAD_TERMINAL",
+      threadId: activeThreadId,
+      terminalId: `terminal-${crypto.randomUUID()}`,
+    });
+    setTerminalFocusRequestId((value) => value + 1);
+  }, [activeThreadId, dispatch]);
+  const createNewTerminal = useCallback(() => {
+    if (!activeThreadId) return;
+    dispatch({
+      type: "NEW_THREAD_TERMINAL",
+      threadId: activeThreadId,
+      terminalId: `terminal-${crypto.randomUUID()}`,
+    });
+    setTerminalFocusRequestId((value) => value + 1);
+  }, [activeThreadId, dispatch]);
+  const activateTerminal = useCallback(
+    (terminalId: string) => {
+      if (!activeThreadId) return;
+      dispatch({
+        type: "SET_THREAD_ACTIVE_TERMINAL",
+        threadId: activeThreadId,
+        terminalId,
+      });
+      setTerminalFocusRequestId((value) => value + 1);
+    },
+    [activeThreadId, dispatch],
+  );
 
   const handleRuntimeModeChange = async (mode: "approval-required" | "full-access") => {
     if (mode === state.runtimeMode) return;
@@ -1451,19 +1481,19 @@ export default function ChatView() {
           threadId={activeThread.id}
           cwd={activeProject.cwd}
           height={activeThread.terminalHeight}
+          terminalIds={activeThread.terminalIds}
+          activeTerminalId={activeThread.activeTerminalId}
+          terminalLayout={activeThread.terminalLayout}
+          splitTerminalIds={activeThread.splitTerminalIds}
           focusRequestId={terminalFocusRequestId}
+          onSplitTerminal={splitTerminal}
+          onNewTerminal={createNewTerminal}
+          onActiveTerminalChange={activateTerminal}
           onHeightChange={(height) =>
             dispatch({
               type: "SET_THREAD_TERMINAL_HEIGHT",
               threadId: activeThread.id,
               height,
-            })
-          }
-          onThreadExited={() =>
-            dispatch({
-              type: "SET_THREAD_TERMINAL_OPEN",
-              threadId: activeThread.id,
-              open: false,
             })
           }
         />

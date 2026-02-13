@@ -7,14 +7,21 @@ import { describe, expect, it, afterEach, vi } from "vitest";
 import { createServer } from "./wsServer";
 import WebSocket from "ws";
 
-import { WS_CHANNELS, WS_METHODS, type WsPush, type WsResponse } from "@t3tools/contracts";
+import {
+  DEFAULT_TERMINAL_ID,
+  WS_CHANNELS,
+  WS_METHODS,
+  type WsPush,
+  type WsResponse,
+} from "@t3tools/contracts";
 import { ProjectRegistry } from "./projectRegistry";
 import type {
+  TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
   TerminalOpenInput,
+  TerminalResizeInput,
   TerminalSessionSnapshot,
-  TerminalThreadInput,
   TerminalWriteInput,
 } from "@t3tools/contracts";
 import type { TerminalManager } from "./terminalManager";
@@ -29,10 +36,16 @@ const pendingBySocket = new WeakMap<WebSocket, PendingMessages>();
 class MockTerminalManager extends EventEmitter<{ event: [event: TerminalEvent] }> {
   private readonly sessions = new Map<string, TerminalSessionSnapshot>();
 
+  private key(threadId: string, terminalId: string): string {
+    return `${threadId}\u0000${terminalId}`;
+  }
+
   async open(input: TerminalOpenInput): Promise<TerminalSessionSnapshot> {
     const now = new Date().toISOString();
+    const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
     const snapshot: TerminalSessionSnapshot = {
       threadId: input.threadId,
+      terminalId,
       cwd: input.cwd,
       status: "running",
       pid: 4242,
@@ -41,11 +54,12 @@ class MockTerminalManager extends EventEmitter<{ event: [event: TerminalEvent] }
       exitSignal: null,
       updatedAt: now,
     };
-    this.sessions.set(input.threadId, snapshot);
+    this.sessions.set(this.key(input.threadId, terminalId), snapshot);
     queueMicrotask(() => {
       this.emit("event", {
         type: "started",
         threadId: input.threadId,
+        terminalId,
         createdAt: now,
         snapshot,
       });
@@ -54,7 +68,8 @@ class MockTerminalManager extends EventEmitter<{ event: [event: TerminalEvent] }
   }
 
   async write(input: TerminalWriteInput): Promise<void> {
-    const existing = this.sessions.get(input.threadId);
+    const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
+    const existing = this.sessions.get(this.key(input.threadId, terminalId));
     if (!existing) {
       throw new Error(`Unknown terminal thread: ${input.threadId}`);
     }
@@ -62,19 +77,22 @@ class MockTerminalManager extends EventEmitter<{ event: [event: TerminalEvent] }
       this.emit("event", {
         type: "output",
         threadId: input.threadId,
+        terminalId,
         createdAt: new Date().toISOString(),
         data: input.data,
       });
     });
   }
 
-  async resize(_input: TerminalThreadInput & { cols: number; rows: number }): Promise<void> {}
+  async resize(_input: TerminalResizeInput): Promise<void> {}
 
-  async clear(input: TerminalThreadInput): Promise<void> {
+  async clear(input: TerminalClearInput): Promise<void> {
+    const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
     queueMicrotask(() => {
       this.emit("event", {
         type: "cleared",
         threadId: input.threadId,
+        terminalId,
         createdAt: new Date().toISOString(),
       });
     });
@@ -82,8 +100,10 @@ class MockTerminalManager extends EventEmitter<{ event: [event: TerminalEvent] }
 
   async restart(input: TerminalOpenInput): Promise<TerminalSessionSnapshot> {
     const now = new Date().toISOString();
+    const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
     const snapshot: TerminalSessionSnapshot = {
       threadId: input.threadId,
+      terminalId,
       cwd: input.cwd,
       status: "running",
       pid: 5252,
@@ -92,11 +112,12 @@ class MockTerminalManager extends EventEmitter<{ event: [event: TerminalEvent] }
       exitSignal: null,
       updatedAt: now,
     };
-    this.sessions.set(input.threadId, snapshot);
+    this.sessions.set(this.key(input.threadId, terminalId), snapshot);
     queueMicrotask(() => {
       this.emit("event", {
         type: "restarted",
         threadId: input.threadId,
+        terminalId,
         createdAt: now,
         snapshot,
       });
@@ -105,7 +126,15 @@ class MockTerminalManager extends EventEmitter<{ event: [event: TerminalEvent] }
   }
 
   async close(input: TerminalCloseInput): Promise<void> {
-    this.sessions.delete(input.threadId);
+    if (input.terminalId) {
+      this.sessions.delete(this.key(input.threadId, input.terminalId));
+      return;
+    }
+    for (const key of [...this.sessions.keys()]) {
+      if (key.startsWith(`${input.threadId}\u0000`)) {
+        this.sessions.delete(key);
+      }
+    }
   }
 
   dispose(): void {}
@@ -340,6 +369,7 @@ describe("WebSocket Server", () => {
     });
     expect(open.error).toBeUndefined();
     expect((open.result as TerminalSessionSnapshot).threadId).toBe("thread-1");
+    expect((open.result as TerminalSessionSnapshot).terminalId).toBe(DEFAULT_TERMINAL_ID);
 
     const write = await sendRequest(ws, WS_METHODS.terminalWrite, {
       threadId: "thread-1",
@@ -376,6 +406,7 @@ describe("WebSocket Server", () => {
     const manualEvent: TerminalEvent = {
       type: "output",
       threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
       createdAt: new Date().toISOString(),
       data: "manual test output\n",
     };

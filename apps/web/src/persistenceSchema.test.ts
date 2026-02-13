@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_MODEL } from "./model-logic";
 import { hydratePersistedState, toPersistedState } from "./persistenceSchema";
-import { DEFAULT_THREAD_TERMINAL_HEIGHT } from "./types";
+import { DEFAULT_THREAD_TERMINAL_HEIGHT, DEFAULT_THREAD_TERMINAL_ID } from "./types";
 import type { Thread } from "./types";
 
 describe("hydratePersistedState", () => {
@@ -50,6 +50,10 @@ describe("hydratePersistedState", () => {
     expect(hydrated?.threads[0]?.codexThreadId).toBeNull();
     expect(hydrated?.threads[0]?.terminalOpen).toBe(false);
     expect(hydrated?.threads[0]?.terminalHeight).toBe(DEFAULT_THREAD_TERMINAL_HEIGHT);
+    expect(hydrated?.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+    expect(hydrated?.threads[0]?.activeTerminalId).toBe(DEFAULT_THREAD_TERMINAL_ID);
+    expect(hydrated?.threads[0]?.terminalLayout).toBe("single");
+    expect(hydrated?.threads[0]?.splitTerminalIds).toEqual([]);
     expect(hydrated?.threads[0]?.messages[0]?.streaming).toBe(false);
     expect(hydrated?.runtimeMode).toBe("full-access");
   });
@@ -92,6 +96,10 @@ describe("hydratePersistedState", () => {
     expect(hydrated?.threads[0]?.codexThreadId).toBeNull();
     expect(hydrated?.threads[0]?.terminalOpen).toBe(false);
     expect(hydrated?.threads[0]?.terminalHeight).toBe(DEFAULT_THREAD_TERMINAL_HEIGHT);
+    expect(hydrated?.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+    expect(hydrated?.threads[0]?.activeTerminalId).toBe(DEFAULT_THREAD_TERMINAL_ID);
+    expect(hydrated?.threads[0]?.terminalLayout).toBe("single");
+    expect(hydrated?.threads[0]?.splitTerminalIds).toEqual([]);
     expect(hydrated?.activeThreadId).toBe("t-1");
     expect(hydrated?.runtimeMode).toBe("full-access");
   });
@@ -139,6 +147,10 @@ describe("hydratePersistedState", () => {
           model: "gpt-5.3-codex",
           terminalOpen: true,
           terminalHeight: 360,
+          terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+          activeTerminalId: "term-2",
+          terminalLayout: "tabs",
+          splitTerminalIds: [],
           messages: [],
           createdAt: "2026-02-08T10:00:00.000Z",
           lastVisitedAt: "2026-02-08T10:01:00.000Z",
@@ -150,6 +162,10 @@ describe("hydratePersistedState", () => {
     const hydrated = hydratePersistedState(payload, false);
     expect(hydrated?.threads[0]?.terminalOpen).toBe(true);
     expect(hydrated?.threads[0]?.terminalHeight).toBe(360);
+    expect(hydrated?.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID, "term-2"]);
+    expect(hydrated?.threads[0]?.activeTerminalId).toBe("term-2");
+    expect(hydrated?.threads[0]?.terminalLayout).toBe("tabs");
+    expect(hydrated?.threads[0]?.splitTerminalIds).toEqual([]);
     expect(hydrated?.threads[0]?.lastVisitedAt).toBe("2026-02-08T10:01:00.000Z");
   });
 
@@ -183,6 +199,9 @@ describe("hydratePersistedState", () => {
 
     const hydrated = hydratePersistedState(payload, false);
     expect(hydrated?.threads[0]?.terminalHeight).toBe(DEFAULT_THREAD_TERMINAL_HEIGHT);
+    expect(hydrated?.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+    expect(hydrated?.threads[0]?.activeTerminalId).toBe(DEFAULT_THREAD_TERMINAL_ID);
+    expect(hydrated?.threads[0]?.terminalLayout).toBe("single");
   });
 });
 
@@ -196,6 +215,10 @@ describe("toPersistedState", () => {
       model: "gpt-5.3-codex",
       terminalOpen: true,
       terminalHeight: 320,
+      terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+      activeTerminalId: "term-2",
+      terminalLayout: "tabs",
+      splitTerminalIds: [],
       session: null,
       messages: [
         {
@@ -249,6 +272,10 @@ describe("toPersistedState", () => {
       model: "gpt-5.3-codex",
       terminalOpen: true,
       terminalHeight: 320,
+      terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+      activeTerminalId: "term-2",
+      terminalLayout: "tabs",
+      splitTerminalIds: [],
       messages: [
         {
           id: "m-1",

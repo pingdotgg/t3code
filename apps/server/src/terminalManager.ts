@@ -3,17 +3,19 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  DEFAULT_TERMINAL_ID,
+  type TerminalClearInput,
   type TerminalCloseInput,
   type TerminalEvent,
   type TerminalOpenInput,
+  type TerminalResizeInput,
   type TerminalSessionSnapshot,
   type TerminalSessionStatus,
-  type TerminalThreadInput,
   type TerminalWriteInput,
+  terminalClearInputSchema,
   terminalCloseInputSchema,
   terminalOpenInputSchema,
   terminalResizeInputSchema,
-  terminalThreadInputSchema,
   terminalWriteInputSchema,
 } from "@t3tools/contracts";
 
@@ -36,6 +38,7 @@ export interface TerminalManagerOptions {
 
 interface TerminalSessionState {
   threadId: string;
+  terminalId: string;
   cwd: string;
   status: TerminalSessionStatus;
   pid: number | null;
@@ -139,6 +142,14 @@ function toSafeThreadId(threadId: string): string {
   return `terminal_${Buffer.from(threadId, "utf8").toString("base64url")}`;
 }
 
+function toSafeTerminalId(terminalId: string): string {
+  return Buffer.from(terminalId, "utf8").toString("base64url");
+}
+
+function toSessionKey(threadId: string, terminalId: string): string {
+  return `${threadId}\u0000${terminalId}`;
+}
+
 export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
   private readonly sessions = new Map<string, TerminalSessionState>();
   private readonly logsDir: string;
@@ -167,12 +178,14 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     return this.runWithThreadLock(input.threadId, async () => {
       await this.assertValidCwd(input.cwd);
 
-      const existing = this.sessions.get(input.threadId);
+      const sessionKey = toSessionKey(input.threadId, input.terminalId);
+      const existing = this.sessions.get(sessionKey);
       if (!existing) {
-        await this.flushPersistQueue(input.threadId);
-        const history = await this.readHistory(input.threadId);
+        await this.flushPersistQueue(input.threadId, input.terminalId);
+        const history = await this.readHistory(input.threadId, input.terminalId);
         const session: TerminalSessionState = {
           threadId: input.threadId,
+          terminalId: input.terminalId,
           cwd: input.cwd,
           status: "starting",
           pid: null,
@@ -186,7 +199,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
           unsubscribeData: null,
           unsubscribeExit: null,
         };
-        this.sessions.set(input.threadId, session);
+        this.sessions.set(sessionKey, session);
         this.startSession(session, input, "started");
         return this.snapshot(session);
       }
@@ -195,10 +208,10 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
         this.stopProcess(existing);
         existing.cwd = input.cwd;
         existing.history = "";
-        await this.persistHistory(existing.threadId, existing.history);
+        await this.persistHistory(existing.threadId, existing.terminalId, existing.history);
       } else if (existing.status === "exited" || existing.status === "error") {
         existing.history = "";
-        await this.persistHistory(existing.threadId, existing.history);
+        await this.persistHistory(existing.threadId, existing.terminalId, existing.history);
       }
 
       if (!existing.process) {
@@ -219,18 +232,22 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
 
   async write(raw: TerminalWriteInput): Promise<void> {
     const input = terminalWriteInputSchema.parse(raw);
-    const session = this.requireSession(input.threadId);
+    const session = this.requireSession(input.threadId, input.terminalId);
     if (!session.process || session.status !== "running") {
-      throw new Error(`Terminal is not running for thread: ${input.threadId}`);
+      throw new Error(
+        `Terminal is not running for thread: ${input.threadId}, terminal: ${input.terminalId}`,
+      );
     }
     session.process.write(input.data);
   }
 
-  async resize(raw: TerminalThreadInput & { cols: number; rows: number }): Promise<void> {
+  async resize(raw: TerminalResizeInput): Promise<void> {
     const input = terminalResizeInputSchema.parse(raw);
-    const session = this.requireSession(input.threadId);
+    const session = this.requireSession(input.threadId, input.terminalId);
     if (!session.process || session.status !== "running") {
-      throw new Error(`Terminal is not running for thread: ${input.threadId}`);
+      throw new Error(
+        `Terminal is not running for thread: ${input.threadId}, terminal: ${input.terminalId}`,
+      );
     }
     session.cols = input.cols;
     session.rows = input.rows;
@@ -238,16 +255,17 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     session.process.resize(input.cols, input.rows);
   }
 
-  async clear(raw: TerminalThreadInput): Promise<void> {
-    const input = terminalThreadInputSchema.parse(raw);
+  async clear(raw: TerminalClearInput): Promise<void> {
+    const input = terminalClearInputSchema.parse(raw);
     await this.runWithThreadLock(input.threadId, async () => {
-      const session = this.requireSession(input.threadId);
+      const session = this.requireSession(input.threadId, input.terminalId);
       session.history = "";
       session.updatedAt = new Date().toISOString();
-      await this.persistHistory(input.threadId, session.history);
+      await this.persistHistory(input.threadId, input.terminalId, session.history);
       this.emitEvent({
         type: "cleared",
         threadId: input.threadId,
+        terminalId: input.terminalId,
         createdAt: new Date().toISOString(),
       });
     });
@@ -258,10 +276,12 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     return this.runWithThreadLock(input.threadId, async () => {
       await this.assertValidCwd(input.cwd);
 
-      let session = this.sessions.get(input.threadId);
+      const sessionKey = toSessionKey(input.threadId, input.terminalId);
+      let session = this.sessions.get(sessionKey);
       if (!session) {
         session = {
           threadId: input.threadId,
+          terminalId: input.terminalId,
           cwd: input.cwd,
           status: "starting",
           pid: null,
@@ -275,14 +295,14 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
           unsubscribeData: null,
           unsubscribeExit: null,
         };
-        this.sessions.set(input.threadId, session);
+        this.sessions.set(sessionKey, session);
       } else {
         this.stopProcess(session);
         session.cwd = input.cwd;
       }
 
       session.history = "";
-      await this.persistHistory(input.threadId, session.history);
+      await this.persistHistory(input.threadId, input.terminalId, session.history);
       this.startSession(session, input, "restarted");
       return this.snapshot(session);
     });
@@ -291,14 +311,28 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
   async close(raw: TerminalCloseInput): Promise<void> {
     const input = terminalCloseInputSchema.parse(raw);
     await this.runWithThreadLock(input.threadId, async () => {
-      const session = this.sessions.get(input.threadId);
-      if (session) {
-        this.stopProcess(session);
-        this.sessions.delete(input.threadId);
+      if (input.terminalId) {
+        await this.closeSession(
+          input.threadId,
+          input.terminalId,
+          input.deleteHistory === true,
+        );
+        return;
       }
-      await this.flushPersistQueue(input.threadId);
+
+      const threadSessions = this.sessionsForThread(input.threadId);
+      for (const session of threadSessions) {
+        this.stopProcess(session);
+        this.sessions.delete(toSessionKey(session.threadId, session.terminalId));
+      }
+      await Promise.all(
+        threadSessions.map((session) =>
+          this.flushPersistQueue(session.threadId, session.terminalId),
+        ),
+      );
+
       if (input.deleteHistory) {
-        await this.deleteHistory(input.threadId);
+        await this.deleteAllHistoryForThread(input.threadId);
       }
     });
   }
@@ -382,6 +416,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
       this.emitEvent({
         type: eventType,
         threadId: session.threadId,
+        terminalId: session.terminalId,
         createdAt: new Date().toISOString(),
         snapshot: this.snapshot(session),
       });
@@ -401,11 +436,13 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
       this.emitEvent({
         type: "error",
         threadId: session.threadId,
+        terminalId: session.terminalId,
         createdAt: new Date().toISOString(),
         message,
       });
       this.logger.error("failed to start terminal", {
         threadId: session.threadId,
+        terminalId: session.terminalId,
         error: message,
         ...(startedShell ? { shell: startedShell } : {}),
       });
@@ -415,10 +452,11 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
   private onProcessData(session: TerminalSessionState, data: string): void {
     session.history = capHistory(`${session.history}${data}`, this.historyLineLimit);
     session.updatedAt = new Date().toISOString();
-    this.queuePersist(session.threadId, session.history);
+    this.queuePersist(session.threadId, session.terminalId, session.history);
     this.emitEvent({
       type: "output",
       threadId: session.threadId,
+      terminalId: session.terminalId,
       createdAt: new Date().toISOString(),
       data,
     });
@@ -435,6 +473,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     this.emitEvent({
       type: "exited",
       threadId: session.threadId,
+      terminalId: session.terminalId,
       createdAt: new Date().toISOString(),
       exitCode: session.exitCode,
       exitSignal: session.exitSignal,
@@ -455,6 +494,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn("failed to kill terminal process", {
         threadId: session.threadId,
+        terminalId: session.terminalId,
         error: message,
       });
     }
@@ -467,75 +507,97 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     session.unsubscribeExit = null;
   }
 
-  private queuePersist(threadId: string, history: string): void {
-    this.pendingPersistHistory.set(threadId, history);
-    this.schedulePersist(threadId);
+  private queuePersist(threadId: string, terminalId: string, history: string): void {
+    const persistenceKey = toSessionKey(threadId, terminalId);
+    this.pendingPersistHistory.set(persistenceKey, history);
+    this.schedulePersist(threadId, terminalId);
   }
 
-  private async persistHistory(threadId: string, history: string): Promise<void> {
-    this.clearPersistTimer(threadId);
-    this.pendingPersistHistory.delete(threadId);
-    await this.enqueuePersistWrite(threadId, history);
+  private async persistHistory(
+    threadId: string,
+    terminalId: string,
+    history: string,
+  ): Promise<void> {
+    const persistenceKey = toSessionKey(threadId, terminalId);
+    this.clearPersistTimer(threadId, terminalId);
+    this.pendingPersistHistory.delete(persistenceKey);
+    await this.enqueuePersistWrite(threadId, terminalId, history);
   }
 
-  private enqueuePersistWrite(threadId: string, history: string): Promise<void> {
+  private enqueuePersistWrite(
+    threadId: string,
+    terminalId: string,
+    history: string,
+  ): Promise<void> {
+    const persistenceKey = toSessionKey(threadId, terminalId);
     const task = async () => {
-      await fs.promises.writeFile(this.historyPath(threadId), history, "utf8");
+      await fs.promises.writeFile(this.historyPath(threadId, terminalId), history, "utf8");
     };
-    const previous = this.persistQueues.get(threadId) ?? Promise.resolve();
+    const previous = this.persistQueues.get(persistenceKey) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
       .then(task)
       .catch((error) => {
         this.logger.warn("failed to persist terminal history", {
           threadId,
+          terminalId,
           error: error instanceof Error ? error.message : String(error),
         });
       });
-    this.persistQueues.set(threadId, next);
+    this.persistQueues.set(persistenceKey, next);
     const finalized = next.finally(() => {
-      if (this.persistQueues.get(threadId) === next) {
-        this.persistQueues.delete(threadId);
+      if (this.persistQueues.get(persistenceKey) === next) {
+        this.persistQueues.delete(persistenceKey);
       }
-      if (this.pendingPersistHistory.has(threadId) && !this.persistTimers.has(threadId)) {
-        this.schedulePersist(threadId);
+      if (
+        this.pendingPersistHistory.has(persistenceKey) &&
+        !this.persistTimers.has(persistenceKey)
+      ) {
+        this.schedulePersist(threadId, terminalId);
       }
     });
     void finalized.catch(() => undefined);
     return finalized;
   }
 
-  private schedulePersist(threadId: string): void {
-    if (this.persistTimers.has(threadId)) return;
+  private schedulePersist(threadId: string, terminalId: string): void {
+    const persistenceKey = toSessionKey(threadId, terminalId);
+    if (this.persistTimers.has(persistenceKey)) return;
     const timer = setTimeout(() => {
-      this.persistTimers.delete(threadId);
-      const pendingHistory = this.pendingPersistHistory.get(threadId);
+      this.persistTimers.delete(persistenceKey);
+      const pendingHistory = this.pendingPersistHistory.get(persistenceKey);
       if (pendingHistory === undefined) return;
-      this.pendingPersistHistory.delete(threadId);
-      void this.enqueuePersistWrite(threadId, pendingHistory);
+      this.pendingPersistHistory.delete(persistenceKey);
+      void this.enqueuePersistWrite(threadId, terminalId, pendingHistory);
     }, this.persistDebounceMs);
-    this.persistTimers.set(threadId, timer);
+    this.persistTimers.set(persistenceKey, timer);
   }
 
-  private clearPersistTimer(threadId: string): void {
-    const timer = this.persistTimers.get(threadId);
+  private clearPersistTimer(threadId: string, terminalId: string): void {
+    const persistenceKey = toSessionKey(threadId, terminalId);
+    const timer = this.persistTimers.get(persistenceKey);
     if (!timer) return;
     clearTimeout(timer);
-    this.persistTimers.delete(threadId);
+    this.persistTimers.delete(persistenceKey);
   }
 
-  private async readHistory(threadId: string): Promise<string> {
+  private async readHistory(threadId: string, terminalId: string): Promise<string> {
+    const historyPath = this.historyPath(threadId, terminalId);
     try {
-      const raw = await fs.promises.readFile(this.historyPath(threadId), "utf8");
+      const raw = await fs.promises.readFile(historyPath, "utf8");
       const capped = capHistory(raw, this.historyLineLimit);
       if (capped !== raw) {
-        await fs.promises.writeFile(this.historyPath(threadId), capped, "utf8");
+        await fs.promises.writeFile(historyPath, capped, "utf8");
       }
       return capped;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw error;
       }
+    }
+
+    if (terminalId !== DEFAULT_TERMINAL_ID) {
+      return "";
     }
 
     try {
@@ -553,31 +615,34 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     }
   }
 
-  private async deleteHistory(threadId: string): Promise<void> {
+  private async deleteHistory(threadId: string, terminalId: string): Promise<void> {
+    const deletions = [fs.promises.rm(this.historyPath(threadId, terminalId), { force: true })];
+    if (terminalId === DEFAULT_TERMINAL_ID) {
+      deletions.push(fs.promises.rm(this.legacyHistoryPath(threadId), { force: true }));
+    }
     try {
-      await Promise.all([
-        fs.promises.rm(this.historyPath(threadId), { force: true }),
-        fs.promises.rm(this.legacyHistoryPath(threadId), { force: true }),
-      ]);
+      await Promise.all(deletions);
     } catch (error) {
       this.logger.warn("failed to delete terminal history", {
         threadId,
+        terminalId,
         error: error instanceof Error ? error.message : String(error),
       });
     }
   }
 
-  private async flushPersistQueue(threadId: string): Promise<void> {
-    this.clearPersistTimer(threadId);
+  private async flushPersistQueue(threadId: string, terminalId: string): Promise<void> {
+    const persistenceKey = toSessionKey(threadId, terminalId);
+    this.clearPersistTimer(threadId, terminalId);
 
     while (true) {
-      const pendingHistory = this.pendingPersistHistory.get(threadId);
+      const pendingHistory = this.pendingPersistHistory.get(persistenceKey);
       if (pendingHistory !== undefined) {
-        this.pendingPersistHistory.delete(threadId);
-        await this.enqueuePersistWrite(threadId, pendingHistory);
+        this.pendingPersistHistory.delete(persistenceKey);
+        await this.enqueuePersistWrite(threadId, terminalId, pendingHistory);
       }
 
-      const pending = this.persistQueues.get(threadId);
+      const pending = this.persistQueues.get(persistenceKey);
       if (!pending) {
         return;
       }
@@ -600,10 +665,54 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     }
   }
 
-  private requireSession(threadId: string): TerminalSessionState {
-    const session = this.sessions.get(threadId);
+  private async closeSession(
+    threadId: string,
+    terminalId: string,
+    deleteHistory: boolean,
+  ): Promise<void> {
+    const key = toSessionKey(threadId, terminalId);
+    const session = this.sessions.get(key);
+    if (session) {
+      this.stopProcess(session);
+      this.sessions.delete(key);
+    }
+    await this.flushPersistQueue(threadId, terminalId);
+    if (deleteHistory) {
+      await this.deleteHistory(threadId, terminalId);
+    }
+  }
+
+  private sessionsForThread(threadId: string): TerminalSessionState[] {
+    return [...this.sessions.values()].filter((session) => session.threadId === threadId);
+  }
+
+  private async deleteAllHistoryForThread(threadId: string): Promise<void> {
+    const threadPrefix = `${toSafeThreadId(threadId)}_`;
+    try {
+      const entries = await fs.promises.readdir(this.logsDir, { withFileTypes: true });
+      const removals = entries
+        .filter((entry) => entry.isFile())
+        .map((entry) => entry.name)
+        .filter(
+          (name) =>
+            name === `${toSafeThreadId(threadId)}.log` ||
+            name === `${legacySafeThreadId(threadId)}.log` ||
+            name.startsWith(threadPrefix),
+        )
+        .map((name) => fs.promises.rm(path.join(this.logsDir, name), { force: true }));
+      await Promise.all(removals);
+    } catch (error) {
+      this.logger.warn("failed to delete terminal histories for thread", {
+        threadId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private requireSession(threadId: string, terminalId: string): TerminalSessionState {
+    const session = this.sessions.get(toSessionKey(threadId, terminalId));
     if (!session) {
-      throw new Error(`Unknown terminal thread: ${threadId}`);
+      throw new Error(`Unknown terminal thread: ${threadId}, terminal: ${terminalId}`);
     }
     return session;
   }
@@ -611,6 +720,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
   private snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     return {
       threadId: session.threadId,
+      terminalId: session.terminalId,
       cwd: session.cwd,
       status: session.status,
       pid: session.pid,
@@ -625,8 +735,12 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     this.emit("event", event);
   }
 
-  private historyPath(threadId: string): string {
-    return path.join(this.logsDir, `${toSafeThreadId(threadId)}.log`);
+  private historyPath(threadId: string, terminalId: string): string {
+    const threadPart = toSafeThreadId(threadId);
+    if (terminalId === DEFAULT_TERMINAL_ID) {
+      return path.join(this.logsDir, `${threadPart}.log`);
+    }
+    return path.join(this.logsDir, `${threadPart}_${toSafeTerminalId(terminalId)}.log`);
   }
 
   private legacyHistoryPath(threadId: string): string {

@@ -30,12 +30,12 @@ import type {
   ProjectRemoveInput,
 } from "./project";
 import type {
+  TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
   TerminalOpenInput,
   TerminalResizeInput,
   TerminalSessionSnapshot,
-  TerminalThreadInput,
   TerminalWriteInput,
 } from "./terminal";
 import type { NewTodoInput, Todo } from "./todo";
@@ -61,7 +61,7 @@ export interface NativeApi {
     open: (input: TerminalOpenInput) => Promise<TerminalSessionSnapshot>;
     write: (input: TerminalWriteInput) => Promise<void>;
     resize: (input: TerminalResizeInput) => Promise<void>;
-    clear: (input: TerminalThreadInput) => Promise<void>;
+    clear: (input: TerminalClearInput) => Promise<void>;
     restart: (input: TerminalOpenInput) => Promise<TerminalSessionSnapshot>;
     close: (input: TerminalCloseInput) => Promise<void>;
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;

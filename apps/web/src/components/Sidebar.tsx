@@ -5,7 +5,12 @@ import { useTheme } from "../hooks/useTheme";
 import { DEFAULT_MODEL } from "../model-logic";
 import { derivePendingApprovals } from "../session-logic";
 import { useStore } from "../store";
-import { DEFAULT_THREAD_TERMINAL_HEIGHT, type Project, type Thread } from "../types";
+import {
+  DEFAULT_THREAD_TERMINAL_HEIGHT,
+  DEFAULT_THREAD_TERMINAL_ID,
+  type Project,
+  type Thread,
+} from "../types";
 import { useNativeApi } from "../hooks/useNativeApi";
 
 const THEME_CYCLE = { system: "light", light: "dark", dark: "system" } as const;
@@ -112,6 +117,10 @@ export default function Sidebar() {
           model: state.projects.find((p) => p.id === projectId)?.model ?? DEFAULT_MODEL,
           terminalOpen: false,
           terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
+          terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+          activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
+          terminalLayout: "single",
+          splitTerminalIds: [],
           session: null,
           messages: [],
           events: [],

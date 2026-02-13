@@ -7,7 +7,7 @@ import Sidebar from "./components/Sidebar";
 import { isElectron } from "./env";
 import { DEFAULT_MODEL } from "./model-logic";
 import { StoreProvider, useStore } from "./store";
-import { DEFAULT_THREAD_TERMINAL_HEIGHT } from "./types";
+import { DEFAULT_THREAD_TERMINAL_HEIGHT, DEFAULT_THREAD_TERMINAL_ID } from "./types";
 import { onServerWelcome } from "./wsNativeApi";
 import { useNativeApi } from "./hooks/useNativeApi";
 
@@ -23,18 +23,6 @@ function EventRouter() {
         type: "APPLY_EVENT",
         event,
         activeAssistantItemRef,
-      });
-    });
-  }, [api, dispatch]);
-
-  useEffect(() => {
-    if (!api) return;
-    return api.terminal.onEvent((event) => {
-      if (event.type !== "exited") return;
-      dispatch({
-        type: "SET_THREAD_TERMINAL_OPEN",
-        threadId: event.threadId,
-        open: false,
       });
     });
   }, [api, dispatch]);
@@ -93,6 +81,10 @@ function AutoProjectBootstrap() {
           model: DEFAULT_MODEL,
           terminalOpen: false,
           terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
+          terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+          activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
+          terminalLayout: "single",
+          splitTerminalIds: [],
           session: null,
           messages: [],
           events: [],

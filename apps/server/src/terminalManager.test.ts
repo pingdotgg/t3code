@@ -2,10 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type {
-  TerminalEvent,
-  TerminalOpenInput,
-} from "@t3tools/contracts";
+import { DEFAULT_TERMINAL_ID, type TerminalEvent, type TerminalOpenInput } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { PtyAdapter, PtyExitEvent, PtyProcess, PtySpawnInput } from "./ptyAdapter";
@@ -109,8 +106,24 @@ function historyLogName(threadId: string): string {
   return `terminal_${Buffer.from(threadId, "utf8").toString("base64url")}.log`;
 }
 
+function multiTerminalHistoryLogName(threadId: string, terminalId: string): string {
+  const threadPart = `terminal_${Buffer.from(threadId, "utf8").toString("base64url")}`;
+  if (terminalId === DEFAULT_TERMINAL_ID) {
+    return `${threadPart}.log`;
+  }
+  return `${threadPart}_${Buffer.from(terminalId, "utf8").toString("base64url")}.log`;
+}
+
 function historyLogPath(logsDir: string, threadId = "thread-1"): string {
   return path.join(logsDir, historyLogName(threadId));
+}
+
+function multiTerminalHistoryLogPath(
+  logsDir: string,
+  threadId = "thread-1",
+  terminalId = "default",
+): string {
+  return path.join(logsDir, multiTerminalHistoryLogName(threadId, terminalId));
 }
 
 describe("TerminalManager", () => {
@@ -144,6 +157,7 @@ describe("TerminalManager", () => {
     const third = await manager.open(openInput());
 
     expect(first.threadId).toBe("thread-1");
+    expect(first.terminalId).toBe("default");
     expect(second.threadId).toBe("thread-1");
     expect(third.threadId).toBe("thread-1");
     expect(ptyAdapter.spawnInputs).toHaveLength(1);
@@ -167,6 +181,27 @@ describe("TerminalManager", () => {
     manager.dispose();
   });
 
+  it("supports multiple terminals per thread with isolated sessions", async () => {
+    const { manager, ptyAdapter } = makeManager();
+    await manager.open(openInput({ terminalId: "default" }));
+    await manager.open(openInput({ terminalId: "term-2" }));
+
+    const first = ptyAdapter.processes[0];
+    const second = ptyAdapter.processes[1];
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    if (!first || !second) return;
+
+    await manager.write({ threadId: "thread-1", terminalId: "default", data: "pwd\n" });
+    await manager.write({ threadId: "thread-1", terminalId: "term-2", data: "ls\n" });
+
+    expect(first.writes).toEqual(["pwd\n"]);
+    expect(second.writes).toEqual(["ls\n"]);
+    expect(ptyAdapter.spawnInputs).toHaveLength(2);
+
+    manager.dispose();
+  });
+
   it("clears transcript and emits cleared event", async () => {
     const { manager, ptyAdapter, logsDir } = makeManager();
     const events: TerminalEvent[] = [];
@@ -184,6 +219,14 @@ describe("TerminalManager", () => {
     await waitFor(() => fs.readFileSync(historyLogPath(logsDir), "utf8") === "");
 
     expect(events.some((event) => event.type === "cleared")).toBe(true);
+    expect(
+      events.some(
+        (event) =>
+          event.type === "cleared" &&
+          event.threadId === "thread-1" &&
+          event.terminalId === "default",
+      ),
+    ).toBe(true);
 
     manager.dispose();
   });
@@ -258,6 +301,35 @@ describe("TerminalManager", () => {
 
     await manager.close({ threadId: "thread-1", deleteHistory: true });
     expect(fs.existsSync(historyLogPath(logsDir))).toBe(false);
+
+    manager.dispose();
+  });
+
+  it("closes all terminals for a thread when close omits terminalId", async () => {
+    const { manager, ptyAdapter, logsDir } = makeManager();
+    await manager.open(openInput({ terminalId: "default" }));
+    await manager.open(openInput({ terminalId: "sidecar" }));
+    const defaultProcess = ptyAdapter.processes[0];
+    const sidecarProcess = ptyAdapter.processes[1];
+    expect(defaultProcess).toBeDefined();
+    expect(sidecarProcess).toBeDefined();
+    if (!defaultProcess || !sidecarProcess) return;
+
+    defaultProcess.emitData("default\n");
+    sidecarProcess.emitData("sidecar\n");
+    await waitFor(() => fs.existsSync(multiTerminalHistoryLogPath(logsDir, "thread-1", "default")));
+    await waitFor(() => fs.existsSync(multiTerminalHistoryLogPath(logsDir, "thread-1", "sidecar")));
+
+    await manager.close({ threadId: "thread-1", deleteHistory: true });
+
+    expect(defaultProcess.killed).toBe(true);
+    expect(sidecarProcess.killed).toBe(true);
+    expect(fs.existsSync(multiTerminalHistoryLogPath(logsDir, "thread-1", "default"))).toBe(
+      false,
+    );
+    expect(fs.existsSync(multiTerminalHistoryLogPath(logsDir, "thread-1", "sidecar"))).toBe(
+      false,
+    );
 
     manager.dispose();
   });

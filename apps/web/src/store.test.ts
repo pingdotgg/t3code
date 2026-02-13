@@ -2,7 +2,7 @@ import type { ProviderEvent, ProviderSession } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import { type AppState, reducer } from "./store";
-import { DEFAULT_THREAD_TERMINAL_HEIGHT } from "./types";
+import { DEFAULT_THREAD_TERMINAL_HEIGHT, DEFAULT_THREAD_TERMINAL_ID } from "./types";
 import type { Thread } from "./types";
 
 function makeSession(overrides: Partial<ProviderSession> = {}): ProviderSession {
@@ -37,6 +37,10 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     model: "gpt-5.3-codex",
     terminalOpen: false,
     terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
+    terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+    activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
+    terminalLayout: "single",
+    splitTerminalIds: [],
     session: makeSession(),
     messages: [],
     events: [],
@@ -109,6 +113,51 @@ describe("store reducer thread continuity", () => {
       height: 360,
     });
     expect(next.threads[0]?.terminalHeight).toBe(360);
+  });
+
+  it("splits the active terminal into side-by-side mode", () => {
+    const state = makeState(makeThread());
+    const next = reducer(state, {
+      type: "SPLIT_THREAD_TERMINAL",
+      threadId: "thread-local-1",
+      terminalId: "term-2",
+    });
+
+    expect(next.threads[0]?.terminalLayout).toBe("split");
+    expect(next.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID, "term-2"]);
+    expect(next.threads[0]?.splitTerminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID, "term-2"]);
+    expect(next.threads[0]?.activeTerminalId).toBe("term-2");
+  });
+
+  it("creates a new full-width terminal and switches to tab mode", () => {
+    const state = makeState(makeThread());
+    const next = reducer(state, {
+      type: "NEW_THREAD_TERMINAL",
+      threadId: "thread-local-1",
+      terminalId: "term-2",
+    });
+
+    expect(next.threads[0]?.terminalLayout).toBe("tabs");
+    expect(next.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID, "term-2"]);
+    expect(next.threads[0]?.activeTerminalId).toBe("term-2");
+    expect(next.threads[0]?.splitTerminalIds).toEqual([]);
+  });
+
+  it("switches the active tab terminal", () => {
+    const state = makeState(
+      makeThread({
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+        activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
+        terminalLayout: "tabs",
+      }),
+    );
+    const next = reducer(state, {
+      type: "SET_THREAD_ACTIVE_TERMINAL",
+      threadId: "thread-local-1",
+      terminalId: "term-2",
+    });
+
+    expect(next.threads[0]?.activeTerminalId).toBe("term-2");
   });
 
   it("backfills codexThreadId from routed provider events", () => {
