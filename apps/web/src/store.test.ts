@@ -5,6 +5,9 @@ import { type AppState, reducer } from "./store";
 import { DEFAULT_THREAD_TERMINAL_HEIGHT, DEFAULT_THREAD_TERMINAL_ID } from "./types";
 import type { Thread } from "./types";
 
+type TerminalStartedEvent = Extract<TerminalEvent, { type: "started" }>;
+type TerminalActivityEvent = Extract<TerminalEvent, { type: "activity" }>;
+
 function makeSession(overrides: Partial<ProviderSession> = {}): ProviderSession {
   return {
     sessionId: "sess-1",
@@ -76,7 +79,9 @@ function makeState(thread: Thread): AppState {
   };
 }
 
-function makeTerminalStartedEvent(overrides: Partial<TerminalEvent> = {}): TerminalEvent {
+function makeTerminalStartedEvent(
+  overrides: Partial<TerminalStartedEvent> = {},
+): TerminalStartedEvent {
   return {
     type: "started",
     threadId: "thread-local-1",
@@ -97,7 +102,9 @@ function makeTerminalStartedEvent(overrides: Partial<TerminalEvent> = {}): Termi
   };
 }
 
-function makeTerminalActivityEvent(overrides: Partial<TerminalEvent> = {}): TerminalEvent {
+function makeTerminalActivityEvent(
+  overrides: Partial<TerminalActivityEvent> = {},
+): TerminalActivityEvent {
   return {
     type: "activity",
     threadId: "thread-local-1",

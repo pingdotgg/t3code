@@ -151,8 +151,10 @@ describe("TerminalManager", () => {
       ptyAdapter,
       historyLineLimit,
       shellResolver: options.shellResolver ?? (() => "/bin/bash"),
-      subprocessChecker: options.subprocessChecker,
-      subprocessPollIntervalMs: options.subprocessPollIntervalMs,
+      ...(options.subprocessChecker ? { subprocessChecker: options.subprocessChecker } : {}),
+      ...(options.subprocessPollIntervalMs
+        ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
+        : {}),
     });
     return { logsDir, ptyAdapter, manager };
   }
