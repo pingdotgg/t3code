@@ -1,4 +1,4 @@
-import { MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
+import { MonitorIcon, MoonIcon, SunIcon, TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
@@ -32,9 +32,15 @@ function inferProjectName(cwd: string): string {
 }
 
 interface ThreadStatusPill {
-  label: "Working" | "Connecting" | "Completed" | "Awaiting response" | "Terminal";
+  label: "Working" | "Connecting" | "Completed" | "Awaiting response";
   colorClass: string;
   dotClass: string;
+  pulse: boolean;
+}
+
+interface TerminalStatusIndicator {
+  label: "Terminal process running";
+  colorClass: string;
   pulse: boolean;
 }
 
@@ -89,14 +95,13 @@ function threadStatusPill(thread: Thread, hasPendingApprovals: boolean): ThreadS
   return null;
 }
 
-function terminalStatusPill(thread: Thread): ThreadStatusPill | null {
+function terminalStatusIndicator(thread: Thread): TerminalStatusIndicator | null {
   if (thread.runningTerminalIds.length === 0) {
     return null;
   }
   return {
-    label: "Terminal",
+    label: "Terminal process running",
     colorClass: "text-teal-600 dark:text-teal-300/90",
-    dotClass: "bg-teal-500 dark:bg-teal-300/90",
     pulse: true,
   };
 }
@@ -401,7 +406,7 @@ export default function Sidebar() {
                       thread,
                       pendingApprovalByThreadId.get(thread.id) === true,
                     );
-                    const terminalStatus = terminalStatusPill(thread);
+                    const terminalStatus = terminalStatusIndicator(thread);
                     return (
                       <button
                         key={thread.id}
@@ -426,18 +431,6 @@ export default function Sidebar() {
                         }}
                       >
                         <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                          {terminalStatus && (
-                            <span
-                              className={`inline-flex items-center gap-1 text-[10px] ${terminalStatus.colorClass}`}
-                            >
-                              <span
-                                className={`h-1.5 w-1.5 rounded-full ${terminalStatus.dotClass} ${
-                                  terminalStatus.pulse ? "animate-pulse" : ""
-                                }`}
-                              />
-                              <span className="hidden md:inline">{terminalStatus.label}</span>
-                            </span>
-                          )}
                           {threadStatus && (
                             <span
                               className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}
@@ -452,9 +445,23 @@ export default function Sidebar() {
                           )}
                           <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
                         </div>
-                        <span className="shrink-0 text-[10px] text-muted-foreground/40">
-                          {formatRelativeTime(thread.createdAt)}
-                        </span>
+                        <div className="ml-2 flex shrink-0 items-center gap-1.5">
+                          {terminalStatus && (
+                            <span
+                              role="img"
+                              aria-label={terminalStatus.label}
+                              title={terminalStatus.label}
+                              className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
+                            >
+                              <TerminalIcon
+                                className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`}
+                              />
+                            </span>
+                          )}
+                          <span className="text-[10px] text-muted-foreground/40">
+                            {formatRelativeTime(thread.createdAt)}
+                          </span>
+                        </div>
                       </button>
                     );
                   })}
