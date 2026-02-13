@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_THREAD_TERMINAL_HEIGHT, DEFAULT_THREAD_TERMINAL_ID, type Thread } from "./types";
-import { getOrphanedWorktreePathForThread } from "./worktreeCleanup";
+import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "./worktreeCleanup";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -67,5 +67,31 @@ describe("getOrphanedWorktreePathForThread", () => {
     ];
     const result = getOrphanedWorktreePathForThread(threads, "thread-1");
     expect(result).toBe("/tmp/repo/worktrees/feature-a");
+  });
+});
+
+describe("formatWorktreePathForDisplay", () => {
+  it("shows only the last path segment for unix-like paths", () => {
+    const result = formatWorktreePathForDisplay(
+      "/Users/julius/.t3/worktrees/codething-mvp/codething-4e609bb8",
+    );
+    expect(result).toBe("codething-4e609bb8");
+  });
+
+  it("normalizes windows separators before selecting the final segment", () => {
+    const result = formatWorktreePathForDisplay(
+      "C:\\Users\\julius\\.t3\\worktrees\\codething-mvp\\codething-4e609bb8",
+    );
+    expect(result).toBe("codething-4e609bb8");
+  });
+
+  it("uses the final segment even when outside ~/.t3/worktrees", () => {
+    const result = formatWorktreePathForDisplay("/tmp/custom-worktrees/my-worktree");
+    expect(result).toBe("my-worktree");
+  });
+
+  it("ignores trailing slashes", () => {
+    const result = formatWorktreePathForDisplay("/tmp/custom-worktrees/my-worktree/");
+    expect(result).toBe("my-worktree");
   });
 });

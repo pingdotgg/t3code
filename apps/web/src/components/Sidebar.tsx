@@ -12,7 +12,7 @@ import {
   type Thread,
 } from "../types";
 import { useNativeApi } from "../hooks/useNativeApi";
-import { getOrphanedWorktreePathForThread } from "../worktreeCleanup";
+import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 
 const THEME_CYCLE = { system: "light", light: "dark", dark: "system" } as const;
 function formatRelativeTime(iso: string): string {
@@ -265,12 +265,15 @@ export default function Sidebar() {
       if (!thread) return;
       const threadProject = state.projects.find((project) => project.id === thread.projectId);
       const orphanedWorktreePath = getOrphanedWorktreePathForThread(state.threads, threadId);
+      const displayWorktreePath = orphanedWorktreePath
+        ? formatWorktreePathForDisplay(orphanedWorktreePath)
+        : null;
       const shouldDeleteWorktree =
         orphanedWorktreePath !== null &&
         (await api.dialogs.confirm(
           [
             "This thread is the only one linked to this worktree:",
-            orphanedWorktreePath,
+            displayWorktreePath ?? orphanedWorktreePath,
             "",
             "Delete the worktree too?",
           ].join("\n"),
