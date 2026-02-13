@@ -12,6 +12,7 @@ import {
   type Thread,
 } from "../types";
 import { useNativeApi } from "../hooks/useNativeApi";
+import { getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 
 const THEME_CYCLE = { system: "light", light: "dark", dark: "system" } as const;
 function formatRelativeTime(iso: string): string {
@@ -262,6 +263,18 @@ export default function Sidebar() {
 
       const thread = state.threads.find((t) => t.id === threadId);
       if (!thread) return;
+      const threadProject = state.projects.find((project) => project.id === thread.projectId);
+      const orphanedWorktreePath = getOrphanedWorktreePathForThread(state.threads, threadId);
+      const shouldDeleteWorktree =
+        orphanedWorktreePath !== null &&
+        window.confirm(
+          [
+            "This thread is the only one linked to this worktree:",
+            orphanedWorktreePath,
+            "",
+            "Delete the worktree too?",
+          ].join("\n"),
+        );
 
       // Stop active session if running
       if (thread.session?.sessionId) {
@@ -284,8 +297,21 @@ export default function Sidebar() {
       }
 
       dispatch({ type: "DELETE_THREAD", threadId });
+
+      if (!shouldDeleteWorktree || !orphanedWorktreePath) {
+        return;
+      }
+
+      try {
+        await api.git.removeWorktree({
+          cwd: threadProject?.cwd ?? orphanedWorktreePath,
+          path: orphanedWorktreePath,
+        });
+      } catch {
+        // Worktree deletion is best-effort and should not block thread deletion.
+      }
     },
-    [api, dispatch, state.threads],
+    [api, dispatch, state.projects, state.threads],
   );
 
   useEffect(() => {
