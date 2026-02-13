@@ -582,12 +582,12 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
   }
 
   private async readHistory(threadId: string, terminalId: string): Promise<string> {
-    const historyPath = this.historyPath(threadId, terminalId);
+    const nextPath = this.historyPath(threadId, terminalId);
     try {
-      const raw = await fs.promises.readFile(historyPath, "utf8");
+      const raw = await fs.promises.readFile(nextPath, "utf8");
       const capped = capHistory(raw, this.historyLineLimit);
       if (capped !== raw) {
-        await fs.promises.writeFile(historyPath, capped, "utf8");
+        await fs.promises.writeFile(nextPath, capped, "utf8");
       }
       return capped;
     } catch (error) {
@@ -600,12 +600,22 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
       return "";
     }
 
+    const legacyPath = this.legacyHistoryPath(threadId);
     try {
-      const raw = await fs.promises.readFile(this.legacyHistoryPath(threadId), "utf8");
+      const raw = await fs.promises.readFile(legacyPath, "utf8");
       const capped = capHistory(raw, this.historyLineLimit);
-      if (capped !== raw) {
-        await fs.promises.writeFile(this.legacyHistoryPath(threadId), capped, "utf8");
+
+      // Migrate legacy transcript filename to the terminal-scoped path.
+      await fs.promises.writeFile(nextPath, capped, "utf8");
+      try {
+        await fs.promises.rm(legacyPath, { force: true });
+      } catch (cleanupError) {
+        this.logger.warn("failed to remove legacy terminal history", {
+          threadId,
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        });
       }
+
       return capped;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {

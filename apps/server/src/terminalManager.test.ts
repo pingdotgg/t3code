@@ -334,15 +334,18 @@ describe("TerminalManager", () => {
     manager.dispose();
   });
 
-  it("loads existing legacy transcript filenames and keeps new naming for writes", async () => {
+  it("migrates legacy transcript filenames to terminal-scoped history path on open", async () => {
     const { manager, logsDir } = makeManager();
     const legacyPath = path.join(logsDir, "thread-1.log");
+    const nextPath = historyLogPath(logsDir);
     fs.writeFileSync(legacyPath, "legacy-line\n", "utf8");
 
     const snapshot = await manager.open(openInput());
 
     expect(snapshot.history).toBe("legacy-line\n");
-    expect(fs.existsSync(legacyPath)).toBe(true);
+    expect(fs.existsSync(nextPath)).toBe(true);
+    expect(fs.readFileSync(nextPath, "utf8")).toBe("legacy-line\n");
+    expect(fs.existsSync(legacyPath)).toBe(false);
 
     manager.dispose();
   });
