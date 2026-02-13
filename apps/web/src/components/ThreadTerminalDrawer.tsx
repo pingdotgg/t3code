@@ -368,7 +368,7 @@ function TerminalViewport({
       fitAddonRef.current = null;
       terminal.dispose();
     };
-  }, [api, autoFocus, cwd, terminalId, threadId]);
+  }, [api, cwd, terminalId, threadId]);
 
   useEffect(() => {
     if (!autoFocus) return;
