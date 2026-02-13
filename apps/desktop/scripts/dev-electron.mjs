@@ -15,10 +15,13 @@ await waitOn({
 });
 
 const command = process.platform === "win32" ? "electronmon.cmd" : "electronmon";
+const childEnv = { ...process.env };
+delete childEnv.ELECTRON_RUN_AS_NODE;
+
 const child = spawn(command, ["dist-electron/main.js"], {
   stdio: "inherit",
   env: {
-    ...process.env,
+    ...childEnv,
     VITE_DEV_SERVER_URL: devServerUrl,
   },
 });
