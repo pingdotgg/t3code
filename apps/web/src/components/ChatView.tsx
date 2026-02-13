@@ -299,6 +299,21 @@ export default function ChatView() {
     },
     [activeThreadId, dispatch],
   );
+  const closeTerminal = useCallback(
+    (terminalId: string) => {
+      if (!activeThreadId || !api) return;
+      void api.terminal.write({ threadId: activeThreadId, terminalId, data: "exit\n" }).catch(() => {
+        // Ignore write errors so the UI can still close an uninitialized or already-exited terminal.
+      });
+      dispatch({
+        type: "CLOSE_THREAD_TERMINAL",
+        threadId: activeThreadId,
+        terminalId,
+      });
+      setTerminalFocusRequestId((value) => value + 1);
+    },
+    [activeThreadId, api, dispatch],
+  );
 
   const handleRuntimeModeChange = async (mode: "approval-required" | "full-access") => {
     if (mode === state.runtimeMode) return;
@@ -1489,6 +1504,7 @@ export default function ChatView() {
           onSplitTerminal={splitTerminal}
           onNewTerminal={createNewTerminal}
           onActiveTerminalChange={activateTerminal}
+          onCloseTerminal={closeTerminal}
           onHeightChange={(height) =>
             dispatch({
               type: "SET_THREAD_TERMINAL_HEIGHT",

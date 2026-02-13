@@ -421,6 +421,7 @@ interface ThreadTerminalDrawerProps {
   onSplitTerminal: () => void;
   onNewTerminal: () => void;
   onActiveTerminalChange: (terminalId: string) => void;
+  onCloseTerminal: (terminalId: string) => void;
   onHeightChange: (height: number) => void;
 }
 
@@ -437,6 +438,7 @@ export default function ThreadTerminalDrawer({
   onSplitTerminal,
   onNewTerminal,
   onActiveTerminalChange,
+  onCloseTerminal,
   onHeightChange,
 }: ThreadTerminalDrawerProps) {
   const [drawerHeight, setDrawerHeight] = useState(() => clampDrawerHeight(height));
@@ -482,6 +484,13 @@ export default function ThreadTerminalDrawer({
       : [resolvedActiveTerminalId];
 
   const showTabBar = terminalLayout === "tabs" && normalizedTerminalIds.length > 1;
+  const terminalLabelById = useMemo(
+    () =>
+      new Map(
+        normalizedTerminalIds.map((terminalId, index) => [terminalId, `Terminal ${index + 1}`]),
+      ),
+    [normalizedTerminalIds],
+  );
 
   useEffect(() => {
     onHeightChangeRef.current = onHeightChange;
@@ -593,21 +602,37 @@ export default function ThreadTerminalDrawer({
         {showTabBar ? (
           <div className="min-w-0 flex-1 overflow-x-auto">
             <div className="inline-flex rounded-md border border-border/80 bg-muted/40 p-0.5">
-              {normalizedTerminalIds.map((terminalId, index) => {
+              {normalizedTerminalIds.map((terminalId) => {
                 const isActive = terminalId === resolvedActiveTerminalId;
                 return (
-                  <button
+                  <div
                     key={terminalId}
-                    type="button"
-                    className={`rounded px-2.5 py-1 text-xs transition-colors ${
+                    className={`inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs transition-colors ${
                       isActive
                         ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground"
+                        : "text-muted-foreground"
                     }`}
-                    onClick={() => onActiveTerminalChange(terminalId)}
                   >
-                    {`Terminal ${index + 1}`}
-                  </button>
+                    <button
+                      type="button"
+                      className="pr-1 hover:text-foreground"
+                      onClick={() => onActiveTerminalChange(terminalId)}
+                    >
+                      {terminalLabelById.get(terminalId) ?? "Terminal"}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded px-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onCloseTerminal(terminalId);
+                      }}
+                      aria-label={`Close ${terminalLabelById.get(terminalId) ?? "terminal"}`}
+                      title={`Close ${terminalLabelById.get(terminalId) ?? "terminal"}`}
+                    >
+                      ×
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -632,6 +657,14 @@ export default function ThreadTerminalDrawer({
           >
             New Terminal
           </button>
+          <div className="h-5 w-px bg-border/80" />
+          <button
+            type="button"
+            className="px-2.5 py-1 text-xs text-foreground/90 transition-colors hover:bg-accent"
+            onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
+          >
+            Close Terminal
+          </button>
         </div>
       </div>
 
@@ -639,17 +672,45 @@ export default function ThreadTerminalDrawer({
         {terminalLayout === "split" && visibleTerminalIds.length === 2 ? (
           <div className="grid h-full w-full grid-cols-2 gap-1">
             {visibleTerminalIds.map((terminalId) => (
-              <TerminalViewport
+              <div
                 key={terminalId}
-                api={api}
-                threadId={threadId}
-                terminalId={terminalId}
-                cwd={cwd}
-                focusRequestId={focusRequestId}
-                autoFocus={terminalId === resolvedActiveTerminalId}
-                resizeEpoch={resizeEpoch}
-                drawerHeight={drawerHeight}
-              />
+                className="flex min-h-0 flex-col rounded-[4px] border border-border/70"
+              >
+                <div className="flex items-center justify-between border-b border-border/70 px-2 py-1">
+                  <button
+                    type="button"
+                    className={`text-xs ${
+                      terminalId === resolvedActiveTerminalId
+                        ? "text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    onClick={() => onActiveTerminalChange(terminalId)}
+                  >
+                    {terminalLabelById.get(terminalId) ?? "Terminal"}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded px-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    onClick={() => onCloseTerminal(terminalId)}
+                    aria-label={`Close ${terminalLabelById.get(terminalId) ?? "terminal"}`}
+                    title={`Close ${terminalLabelById.get(terminalId) ?? "terminal"}`}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1">
+                  <TerminalViewport
+                    api={api}
+                    threadId={threadId}
+                    terminalId={terminalId}
+                    cwd={cwd}
+                    focusRequestId={focusRequestId}
+                    autoFocus={terminalId === resolvedActiveTerminalId}
+                    resizeEpoch={resizeEpoch}
+                    drawerHeight={drawerHeight}
+                  />
+                </div>
+              </div>
             ))}
           </div>
         ) : (

@@ -160,6 +160,42 @@ describe("store reducer thread continuity", () => {
     expect(next.threads[0]?.activeTerminalId).toBe("term-2");
   });
 
+  it("closes a terminal tab and falls back to single layout when one remains", () => {
+    const state = makeState(
+      makeThread({
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+        activeTerminalId: "term-2",
+        terminalLayout: "tabs",
+      }),
+    );
+    const next = reducer(state, {
+      type: "CLOSE_THREAD_TERMINAL",
+      threadId: "thread-local-1",
+      terminalId: "term-2",
+    });
+
+    expect(next.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+    expect(next.threads[0]?.activeTerminalId).toBe(DEFAULT_THREAD_TERMINAL_ID);
+    expect(next.threads[0]?.terminalLayout).toBe("single");
+  });
+
+  it("closes the final terminal and hides the drawer", () => {
+    const state = makeState(
+      makeThread({
+        terminalOpen: true,
+      }),
+    );
+    const next = reducer(state, {
+      type: "CLOSE_THREAD_TERMINAL",
+      threadId: "thread-local-1",
+      terminalId: DEFAULT_THREAD_TERMINAL_ID,
+    });
+
+    expect(next.threads[0]?.terminalOpen).toBe(false);
+    expect(next.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+    expect(next.threads[0]?.terminalLayout).toBe("single");
+  });
+
   it("backfills codexThreadId from routed provider events", () => {
     const state = makeState(makeThread({ codexThreadId: null }));
     const next = reducer(state, {

@@ -35,6 +35,7 @@ type Action =
   | { type: "SPLIT_THREAD_TERMINAL"; threadId: string; terminalId: string }
   | { type: "NEW_THREAD_TERMINAL"; threadId: string; terminalId: string }
   | { type: "SET_THREAD_ACTIVE_TERMINAL"; threadId: string; terminalId: string }
+  | { type: "CLOSE_THREAD_TERMINAL"; threadId: string; terminalId: string }
   | { type: "TOGGLE_DIFF" }
   | {
       type: "APPLY_EVENT";
@@ -187,6 +188,48 @@ function normalizeThreadTerminals(thread: Thread): Thread {
     terminalLayout,
     splitTerminalIds: [],
   };
+}
+
+function closeThreadTerminal(thread: Thread, terminalId: string): Thread {
+  if (!thread.terminalIds.includes(terminalId)) {
+    return thread;
+  }
+
+  const remainingTerminalIds = thread.terminalIds.filter((id) => id !== terminalId);
+  if (remainingTerminalIds.length === 0) {
+    return normalizeThreadTerminals({
+      ...thread,
+      terminalOpen: false,
+      terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+      activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
+      terminalLayout: "single",
+      splitTerminalIds: [],
+    });
+  }
+
+  const nextActiveTerminalId =
+    thread.activeTerminalId === terminalId
+      ? (remainingTerminalIds[0] ?? DEFAULT_THREAD_TERMINAL_ID)
+      : thread.activeTerminalId;
+  let nextLayout = thread.terminalLayout;
+  let nextSplitTerminalIds = thread.splitTerminalIds.filter((id) => id !== terminalId);
+
+  if (nextLayout === "split" && nextSplitTerminalIds.length < 2) {
+    nextLayout = remainingTerminalIds.length > 1 ? "tabs" : "single";
+    nextSplitTerminalIds = [];
+  }
+
+  if (nextLayout === "tabs" && remainingTerminalIds.length < 2) {
+    nextLayout = "single";
+  }
+
+  return normalizeThreadTerminals({
+    ...thread,
+    terminalIds: remainingTerminalIds,
+    activeTerminalId: nextActiveTerminalId,
+    terminalLayout: nextLayout,
+    splitTerminalIds: nextSplitTerminalIds,
+  });
 }
 
 function findThreadBySessionId(threads: Thread[], sessionId: string): Thread | undefined {
@@ -452,6 +495,14 @@ export function reducer(state: AppState, action: Action): AppState {
             activeTerminalId: action.terminalId,
           });
         }),
+      };
+
+    case "CLOSE_THREAD_TERMINAL":
+      return {
+        ...state,
+        threads: updateThread(state.threads, action.threadId, (thread) =>
+          closeThreadTerminal(thread, action.terminalId),
+        ),
       };
 
     case "TOGGLE_DIFF":
