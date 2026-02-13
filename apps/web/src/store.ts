@@ -678,7 +678,9 @@ export function reducer(state: AppState, action: Action): AppState {
             action.event.type === "started" ||
             action.event.type === "restarted"
           ) {
-            if (action.event.snapshot.status === "running") {
+            runningTerminalIdSet.delete(action.event.terminalId);
+          } else if (action.event.type === "activity") {
+            if (action.event.hasRunningSubprocess) {
               runningTerminalIdSet.add(action.event.terminalId);
             } else {
               runningTerminalIdSet.delete(action.event.terminalId);

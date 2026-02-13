@@ -97,6 +97,17 @@ function makeTerminalStartedEvent(overrides: Partial<TerminalEvent> = {}): Termi
   };
 }
 
+function makeTerminalActivityEvent(overrides: Partial<TerminalEvent> = {}): TerminalEvent {
+  return {
+    type: "activity",
+    threadId: "thread-local-1",
+    terminalId: DEFAULT_THREAD_TERMINAL_ID,
+    createdAt: "2026-02-09T00:00:02.000Z",
+    hasRunningSubprocess: true,
+    ...overrides,
+  };
+}
+
 describe("store reducer thread continuity", () => {
   it("stores codexThreadId from UPDATE_SESSION", () => {
     const state = makeState(
@@ -298,15 +309,27 @@ describe("store reducer thread continuity", () => {
     ]);
   });
 
-  it("tracks running terminals from terminal lifecycle events", () => {
+  it("tracks running terminals from subprocess activity events", () => {
     const state = makeState(makeThread());
     const started = reducer(state, {
       type: "APPLY_TERMINAL_EVENT",
       event: makeTerminalStartedEvent(),
     });
-    expect(started.threads[0]?.runningTerminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+    expect(started.threads[0]?.runningTerminalIds).toEqual([]);
 
-    const exited = reducer(started, {
+    const active = reducer(started, {
+      type: "APPLY_TERMINAL_EVENT",
+      event: makeTerminalActivityEvent(),
+    });
+    expect(active.threads[0]?.runningTerminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+
+    const idle = reducer(active, {
+      type: "APPLY_TERMINAL_EVENT",
+      event: makeTerminalActivityEvent({ hasRunningSubprocess: false }),
+    });
+    expect(idle.threads[0]?.runningTerminalIds).toEqual([]);
+
+    const exited = reducer(active, {
       type: "APPLY_TERMINAL_EVENT",
       event: {
         type: "exited",

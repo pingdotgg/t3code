@@ -139,4 +139,15 @@ describe("terminalEventSchema", () => {
     });
     expect(result.success).toBe(true);
   });
+
+  it("accepts activity events", () => {
+    const result = terminalEventSchema.safeParse({
+      type: "activity",
+      threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
+      createdAt: new Date().toISOString(),
+      hasRunningSubprocess: true,
+    });
+    expect(result.success).toBe(true);
+  });
 });

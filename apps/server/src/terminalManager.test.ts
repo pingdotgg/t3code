@@ -137,7 +137,11 @@ describe("TerminalManager", () => {
 
   function makeManager(
     historyLineLimit = 5,
-    options: { shellResolver?: () => string } = {},
+    options: {
+      shellResolver?: () => string;
+      subprocessChecker?: (terminalPid: number) => Promise<boolean>;
+      subprocessPollIntervalMs?: number;
+    } = {},
   ) {
     const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-terminal-"));
     tempDirs.push(logsDir);
@@ -147,6 +151,8 @@ describe("TerminalManager", () => {
       ptyAdapter,
       historyLineLimit,
       shellResolver: options.shellResolver ?? (() => "/bin/bash"),
+      subprocessChecker: options.subprocessChecker,
+      subprocessPollIntervalMs: options.subprocessPollIntervalMs,
     });
     return { logsDir, ptyAdapter, manager };
   }
@@ -269,6 +275,42 @@ describe("TerminalManager", () => {
     expect(reopened.history).toBe("");
     expect(ptyAdapter.spawnInputs).toHaveLength(2);
     expect(fs.readFileSync(historyLogPath(logsDir), "utf8")).toBe("");
+
+    manager.dispose();
+  });
+
+  it("emits subprocess activity events when child-process state changes", async () => {
+    let hasRunningSubprocess = false;
+    const { manager } = makeManager(5, {
+      subprocessChecker: async () => hasRunningSubprocess,
+      subprocessPollIntervalMs: 20,
+    });
+    const events: TerminalEvent[] = [];
+    manager.on("event", (event) => {
+      events.push(event);
+    });
+
+    await manager.open(openInput());
+    await waitFor(() => events.some((event) => event.type === "started"));
+    expect(events.some((event) => event.type === "activity")).toBe(false);
+
+    hasRunningSubprocess = true;
+    await waitFor(
+      () =>
+        events.some(
+          (event) => event.type === "activity" && event.hasRunningSubprocess === true,
+        ),
+      1_200,
+    );
+
+    hasRunningSubprocess = false;
+    await waitFor(
+      () =>
+        events.some(
+          (event) => event.type === "activity" && event.hasRunningSubprocess === false,
+        ),
+      1_200,
+    );
 
     manager.dispose();
   });

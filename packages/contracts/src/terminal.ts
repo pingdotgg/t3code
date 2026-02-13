@@ -91,6 +91,11 @@ export const terminalRestartedEventSchema = terminalEventBaseSchema.extend({
   snapshot: terminalSessionSnapshotSchema,
 });
 
+export const terminalActivityEventSchema = terminalEventBaseSchema.extend({
+  type: z.literal("activity"),
+  hasRunningSubprocess: z.boolean(),
+});
+
 export const terminalEventSchema = z.discriminatedUnion("type", [
   terminalStartedEventSchema,
   terminalOutputEventSchema,
@@ -98,6 +103,7 @@ export const terminalEventSchema = z.discriminatedUnion("type", [
   terminalErrorEventSchema,
   terminalClearedEventSchema,
   terminalRestartedEventSchema,
+  terminalActivityEventSchema,
 ]);
 
 export type TerminalThreadInput = z.input<typeof terminalThreadInputSchema>;
