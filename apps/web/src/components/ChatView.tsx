@@ -303,13 +303,21 @@ export default function ChatView() {
     (terminalId: string) => {
       if (!activeThreadId || !api) return;
       const fallbackExitWrite = () =>
-        api.terminal.write({ threadId: activeThreadId, terminalId, data: "exit\n" }).catch(() => {
-          // Ignore write errors so the UI can still close an uninitialized or already-exited terminal.
-        });
+        api.terminal
+          .write({ threadId: activeThreadId, terminalId, data: "exit\n" })
+          .catch(() => undefined);
+      const fallbackClearAndExit = () =>
+        api.terminal
+          .clear({ threadId: activeThreadId, terminalId })
+          .catch(() => undefined)
+          .then(() => fallbackExitWrite())
+          .catch(() => undefined);
       if ("close" in api.terminal && typeof api.terminal.close === "function") {
-        void api.terminal.close({ threadId: activeThreadId, terminalId }).catch(() => fallbackExitWrite());
+        void api.terminal
+          .close({ threadId: activeThreadId, terminalId, deleteHistory: true })
+          .catch(() => fallbackClearAndExit());
       } else {
-        void fallbackExitWrite();
+        void fallbackClearAndExit();
       }
       dispatch({
         type: "CLOSE_THREAD_TERMINAL",
@@ -1500,7 +1508,7 @@ export default function ChatView() {
           key={activeThread.id}
           api={api}
           threadId={activeThread.id}
-          cwd={activeProject.cwd}
+          cwd={gitCwd ?? activeProject.cwd}
           height={activeThread.terminalHeight}
           terminalIds={activeThread.terminalIds}
           activeTerminalId={activeThread.activeTerminalId}
