@@ -263,12 +263,23 @@ export default function ChatView() {
   const toggleTerminalVisibility = useCallback(() => {
     if (!activeThreadId) return;
     const isOpen = Boolean(activeThread?.terminalOpen);
+
+    if (isOpen && api) {
+      if (typeof api.terminal.close === "function") {
+        void api.terminal.close({ threadId: activeThreadId }).catch(() => {
+          void api.terminal.write({ threadId: activeThreadId, data: "exit\n" }).catch(() => undefined);
+        });
+      } else {
+        void api.terminal.write({ threadId: activeThreadId, data: "exit\n" }).catch(() => undefined);
+      }
+    }
+
     dispatch({
       type: "SET_THREAD_TERMINAL_OPEN",
       threadId: activeThreadId,
       open: !isOpen,
     });
-  }, [activeThread?.terminalOpen, activeThreadId, dispatch]);
+  }, [activeThread?.terminalOpen, activeThreadId, api, dispatch]);
   const splitTerminal = useCallback(() => {
     if (!activeThreadId) return;
     dispatch({
@@ -303,21 +314,13 @@ export default function ChatView() {
     (terminalId: string) => {
       if (!activeThreadId || !api) return;
       const fallbackExitWrite = () =>
-        api.terminal
-          .write({ threadId: activeThreadId, terminalId, data: "exit\n" })
-          .catch(() => undefined);
-      const fallbackClearAndExit = () =>
-        api.terminal
-          .clear({ threadId: activeThreadId, terminalId })
-          .catch(() => undefined)
-          .then(() => fallbackExitWrite())
-          .catch(() => undefined);
+        api.terminal.write({ threadId: activeThreadId, terminalId, data: "exit\n" }).catch(() => undefined);
       if ("close" in api.terminal && typeof api.terminal.close === "function") {
         void api.terminal
-          .close({ threadId: activeThreadId, terminalId, deleteHistory: true })
-          .catch(() => fallbackClearAndExit());
+          .close({ threadId: activeThreadId, terminalId })
+          .catch(() => fallbackExitWrite());
       } else {
-        void fallbackClearAndExit();
+        void fallbackExitWrite();
       }
       dispatch({
         type: "CLOSE_THREAD_TERMINAL",
