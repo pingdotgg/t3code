@@ -13,6 +13,7 @@ import {
   type KeyboardEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -131,6 +132,7 @@ export default function ChatView() {
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
@@ -345,6 +347,12 @@ export default function ChatView() {
   // Auto-scroll on new messages
   const messageCount = activeThread?.messages.length ?? 0;
   const workLogCount = workLogEntries.length;
+  useLayoutEffect(() => {
+    if (!activeThread?.id) return;
+    const scrollContainer = messagesScrollRef.current;
+    if (!scrollContainer) return;
+    scrollContainer.scrollTop = scrollContainer.scrollHeight;
+  }, [activeThread?.id]);
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messageCount]);
@@ -1014,7 +1022,7 @@ export default function ChatView() {
       )}
 
       {/* Messages */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+      <div ref={messagesScrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         {activeThread.messages.length === 0 && !isWorking ? (
           <div className="flex h-full items-center justify-center">
             <p className="text-sm text-muted-foreground/30">
