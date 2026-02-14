@@ -18,7 +18,10 @@ import {
   preferredTerminalEditor,
   resolvePathLinkTarget,
 } from "../terminal-links";
-import { isTerminalClearShortcut } from "../keybindings";
+import {
+  isTerminalClearShortcut,
+  terminalNavigationShortcutData,
+} from "../keybindings";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
@@ -152,24 +155,32 @@ function TerminalViewport({
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
 
-    const sendClearShortcut = async () => {
+    const sendTerminalInput = async (data: string, fallbackError: string) => {
       const activeTerminal = terminalRef.current;
       if (!activeTerminal) return;
       try {
-        await api.terminal.write({ threadId, terminalId, data: "\u000c" });
+        await api.terminal.write({ threadId, terminalId, data });
       } catch (error) {
         writeSystemMessage(
           activeTerminal,
-          error instanceof Error ? error.message : "Failed to clear terminal",
+          error instanceof Error ? error.message : fallbackError,
         );
       }
     };
 
     terminal.attachCustomKeyEventHandler((event) => {
+      const navigationData = terminalNavigationShortcutData(event);
+      if (navigationData !== null) {
+        event.preventDefault();
+        event.stopPropagation();
+        void sendTerminalInput(navigationData, "Failed to move cursor");
+        return false;
+      }
+
       if (!isTerminalClearShortcut(event)) return true;
       event.preventDefault();
       event.stopPropagation();
-      void sendClearShortcut();
+      void sendTerminalInput("\u000c", "Failed to clear terminal");
       return false;
     });
 

@@ -15,6 +15,7 @@ import {
   isTerminalSplitShortcut,
   isTerminalToggleShortcut,
   shortcutLabelForCommand,
+  terminalNavigationShortcutData,
   type ShortcutEventLike,
 } from "./keybindings";
 
@@ -323,6 +324,52 @@ describe("isTerminalClearShortcut", () => {
 
   it("matches Cmd+K on macOS", () => {
     assert.isTrue(isTerminalClearShortcut(event({ key: "k", metaKey: true }), "MacIntel"));
+  });
+});
+
+describe("terminalNavigationShortcutData", () => {
+  it("maps Option+Arrow on macOS to word movement", () => {
+    assert.strictEqual(
+      terminalNavigationShortcutData(event({ key: "ArrowLeft", altKey: true }), "MacIntel"),
+      "\u001bb",
+    );
+    assert.strictEqual(
+      terminalNavigationShortcutData(event({ key: "ArrowRight", altKey: true }), "MacIntel"),
+      "\u001bf",
+    );
+  });
+
+  it("maps Cmd+Arrow on macOS to line movement", () => {
+    assert.strictEqual(
+      terminalNavigationShortcutData(event({ key: "ArrowLeft", metaKey: true }), "MacIntel"),
+      "\u0001",
+    );
+    assert.strictEqual(
+      terminalNavigationShortcutData(event({ key: "ArrowRight", metaKey: true }), "MacIntel"),
+      "\u0005",
+    );
+  });
+
+  it("maps Ctrl+Arrow on non-macOS to word movement", () => {
+    assert.strictEqual(
+      terminalNavigationShortcutData(event({ key: "ArrowLeft", ctrlKey: true }), "Win32"),
+      "\u001bb",
+    );
+    assert.strictEqual(
+      terminalNavigationShortcutData(event({ key: "ArrowRight", ctrlKey: true }), "Linux"),
+      "\u001bf",
+    );
+  });
+
+  it("rejects unsupported combinations", () => {
+    assert.isNull(
+      terminalNavigationShortcutData(
+        event({ key: "ArrowLeft", shiftKey: true, altKey: true }),
+        "MacIntel",
+      ),
+    );
+    assert.isNull(terminalNavigationShortcutData(event({ key: "ArrowLeft", metaKey: true }), "Linux"));
+    assert.isNull(terminalNavigationShortcutData(event({ key: "a", altKey: true }), "MacIntel"));
   });
 });
 
