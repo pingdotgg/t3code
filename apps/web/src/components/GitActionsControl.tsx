@@ -252,9 +252,8 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
   return (
     <Group aria-label="Git actions">
       <Button
-        variant="ghost"
+        variant="outline"
         size="xs"
-        className="text-muted-foreground/70 hover:text-foreground/80"
         disabled={!selectedGitActionItem || selectedGitActionItem.disabled || isGitActionRunning}
         onClick={runSelectedAction}
       >
@@ -267,7 +266,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
         }}
       >
         <MenuTrigger
-          render={<Button aria-label="Git action options" size="icon-xs" variant="ghost" />}
+          render={<Button aria-label="Git action options" size="icon-xs" variant="outline" />}
           disabled={!gitStatus || isGitActionRunning}
         >
           <ChevronDownIcon aria-hidden="true" className="size-4" />
