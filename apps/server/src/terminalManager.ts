@@ -26,6 +26,11 @@ import { runProcess } from "./processRunner";
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
+const TERMINAL_ENV_BLOCKLIST = new Set([
+  "PORT",
+  "ELECTRON_RENDERER_PORT",
+  "ELECTRON_RUN_AS_NODE",
+]);
 
 type TerminalSubprocessChecker = (terminalPid: number) => Promise<boolean>;
 
@@ -232,6 +237,27 @@ function toSafeTerminalId(terminalId: string): string {
 
 function toSessionKey(threadId: string, terminalId: string): string {
   return `${threadId}\u0000${terminalId}`;
+}
+
+function shouldExcludeTerminalEnvKey(key: string): boolean {
+  const normalizedKey = key.toUpperCase();
+  if (normalizedKey.startsWith("T3CODE_")) {
+    return true;
+  }
+  if (normalizedKey.startsWith("VITE_")) {
+    return true;
+  }
+  return TERMINAL_ENV_BLOCKLIST.has(normalizedKey);
+}
+
+function createTerminalSpawnEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const spawnEnv: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(baseEnv)) {
+    if (value === undefined) continue;
+    if (shouldExcludeTerminalEnvKey(key)) continue;
+    spawnEnv[key] = value;
+  }
+  return spawnEnv;
 }
 
 export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
@@ -467,6 +493,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     let startedShell: string | null = null;
     try {
       const shellCandidates = resolveShellCandidates(this.shellResolver);
+      const terminalEnv = createTerminalSpawnEnv(process.env);
       let lastSpawnError: unknown = null;
 
       for (const shell of shellCandidates) {
@@ -476,7 +503,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
             cwd: session.cwd,
             cols: session.cols,
             rows: session.rows,
-            env: process.env,
+            env: terminalEnv,
           });
           startedShell = shell;
           break;

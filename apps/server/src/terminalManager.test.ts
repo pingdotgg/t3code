@@ -424,4 +424,49 @@ describe("TerminalManager", () => {
 
     manager.dispose();
   });
+
+  it("filters app runtime env variables from terminal sessions", async () => {
+    const originalValues = new Map<string, string | undefined>();
+    const setEnv = (key: string, value: string | undefined) => {
+      if (!originalValues.has(key)) {
+        originalValues.set(key, process.env[key]);
+      }
+      if (value === undefined) {
+        delete process.env[key];
+        return;
+      }
+      process.env[key] = value;
+    };
+    const restoreEnv = () => {
+      for (const [key, value] of originalValues) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    };
+
+    setEnv("PORT", "5173");
+    setEnv("T3CODE_PORT", "3773");
+    setEnv("VITE_DEV_SERVER_URL", "http://localhost:5173");
+    setEnv("TEST_TERMINAL_KEEP", "keep-me");
+
+    try {
+      const { manager, ptyAdapter } = makeManager();
+      await manager.open(openInput());
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+
+      expect(spawnInput.env.PORT).toBeUndefined();
+      expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
+      expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
+      expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
+
+      manager.dispose();
+    } finally {
+      restoreEnv();
+    }
+  });
 });
