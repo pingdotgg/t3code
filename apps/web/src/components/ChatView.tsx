@@ -358,6 +358,16 @@ export default function ChatView() {
   }, [activeThread?.id]);
 
   useEffect(() => {
+    if (!activeThread?.id || activeThread.terminalOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      focusComposer();
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [activeThread?.id, activeThread?.terminalOpen, focusComposer]);
+
+  useEffect(() => {
     composerImagesRef.current = composerImages;
   }, [composerImages]);
 

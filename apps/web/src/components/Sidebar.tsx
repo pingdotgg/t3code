@@ -328,19 +328,6 @@ export default function Sidebar() {
         event.key.toLowerCase() === "o";
       if (!isNewThreadShortcut) return;
 
-      const target = event.target;
-      if (target instanceof HTMLElement) {
-        const tagName = target.tagName;
-        if (
-          target.isContentEditable ||
-          tagName === "INPUT" ||
-          tagName === "TEXTAREA" ||
-          tagName === "SELECT"
-        ) {
-          return;
-        }
-      }
-
       const activeThread = state.threads.find((t) => t.id === state.activeThreadId);
       const projectId = activeThread?.projectId ?? state.projects[0]?.id;
       if (!projectId) return;
