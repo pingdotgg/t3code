@@ -324,6 +324,55 @@ describe("git integration", () => {
       expect(await git(source.path, "branch --show-current")).toBe(featureBranch);
     });
 
+    it("refresh fetch is scoped to the checked out branch upstream refspec", async () => {
+      await using remote = await makeTmpDir();
+      await using source = await makeTmpDir();
+      await git(remote.path, "init --bare");
+
+      await initRepoWithCommit(source.path);
+      const defaultBranch = (await listGitBranches({ cwd: source.path })).branches.find(
+        (branch) => branch.current,
+      )!.name;
+      await git(source.path, `remote add origin ${JSON.stringify(remote.path)}`);
+      await git(source.path, `push -u origin ${defaultBranch}`);
+
+      const featureBranch = "feature/scoped-fetch";
+      await git(source.path, `checkout -b ${featureBranch}`);
+      await writeFile(path.join(source.path, "feature.txt"), "feature base\n");
+      await git(source.path, "add feature.txt");
+      await git(source.path, "commit -m 'feature base'");
+      await git(source.path, `push -u origin ${featureBranch}`);
+      await git(source.path, `checkout ${defaultBranch}`);
+
+      class FetchRecordingGitCoreService extends GitCoreService {
+        fetchArgs: readonly string[] | null = null;
+
+        override async git(
+          cwd: string,
+          args: readonly string[],
+          allowNonZeroExit = false,
+        ): Promise<void> {
+          if (args[0] === "fetch") {
+            this.fetchArgs = args;
+            return;
+          }
+          await super.git(cwd, args, allowNonZeroExit);
+        }
+      }
+
+      const core = new FetchRecordingGitCoreService();
+      await core.checkoutBranch({ cwd: source.path, branch: featureBranch });
+
+      expect(await git(source.path, "branch --show-current")).toBe(featureBranch);
+      expect(core.fetchArgs).toEqual([
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "origin",
+        `+refs/heads/${featureBranch}:refs/remotes/origin/${featureBranch}`,
+      ]);
+    });
+
     it("throws when branch does not exist", async () => {
       await using tmp = await makeTmpDir();
       await initRepoWithCommit(tmp.path);

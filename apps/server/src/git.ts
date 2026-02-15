@@ -570,11 +570,16 @@ export class GitCoreService {
       return;
     }
     const remoteName = upstreamRef.slice(0, separatorIndex);
+    const upstreamBranch = upstreamRef.slice(separatorIndex + 1);
     if (remoteName.length === 0) {
       return;
     }
+    if (upstreamBranch.length === 0) {
+      return;
+    }
 
-    await this.git(cwd, ["fetch", "--quiet", "--no-tags", remoteName], true);
+    const refspec = `+refs/heads/${upstreamBranch}:refs/remotes/${upstreamRef}`;
+    await this.git(cwd, ["fetch", "--quiet", "--no-tags", remoteName, refspec], true);
   }
 
   async checkoutBranch(input: GitCheckoutInput): Promise<void> {
