@@ -553,11 +553,39 @@ export class GitCoreService {
     });
   }
 
+  private async refreshCheckedOutBranchUpstream(cwd: string): Promise<void> {
+    const upstreamRef = trimStdout(
+      await this.gitStdout(
+        cwd,
+        ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+        true,
+      ),
+    );
+    if (upstreamRef.length === 0 || upstreamRef === "@{upstream}") {
+      return;
+    }
+
+    const separatorIndex = upstreamRef.indexOf("/");
+    if (separatorIndex <= 0) {
+      return;
+    }
+    const remoteName = upstreamRef.slice(0, separatorIndex);
+    if (remoteName.length === 0) {
+      return;
+    }
+
+    await executeGit(cwd, ["fetch", "--quiet", "--no-tags", remoteName], {
+      timeoutMs: 20_000,
+      allowNonZeroExit: true,
+    });
+  }
+
   async checkoutBranch(input: GitCheckoutInput): Promise<void> {
     await executeGit(input.cwd, ["checkout", input.branch], {
       timeoutMs: 10_000,
       fallbackErrorMessage: "git checkout failed",
     });
+    await this.refreshCheckedOutBranchUpstream(input.cwd);
   }
 
   async initRepo(input: GitInitInput): Promise<void> {

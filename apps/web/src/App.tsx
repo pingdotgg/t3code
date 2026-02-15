@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 
 import ChatView from "./components/ChatView";
@@ -11,22 +11,27 @@ import { DEFAULT_THREAD_TERMINAL_HEIGHT, DEFAULT_THREAD_TERMINAL_ID } from "./ty
 import { onServerWelcome } from "./wsNativeApi";
 import { useNativeApi } from "./hooks/useNativeApi";
 import { AnchoredToastProvider, ToastProvider } from "./components/ui/toast";
+import { invalidateGitQueries } from "./lib/gitReactQuery";
 
 function EventRouter() {
   const api = useNativeApi();
   const { dispatch } = useStore();
+  const queryClient = useQueryClient();
   const activeAssistantItemRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!api) return;
     return api.providers.onEvent((event) => {
+      if (event.method === "turn/completed") {
+        void invalidateGitQueries(queryClient);
+      }
       dispatch({
         type: "APPLY_EVENT",
         event,
         activeAssistantItemRef,
       });
     });
-  }, [api, dispatch]);
+  }, [api, dispatch, queryClient]);
 
   useEffect(() => {
     if (!api) return;

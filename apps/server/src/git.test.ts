@@ -239,6 +239,46 @@ describe("git integration", () => {
       expect(current!.name).toBe("feature");
     });
 
+    it("refreshes upstream behind count after checkout when remote branch advanced", async () => {
+      await using remote = await makeTmpDir();
+      await using source = await makeTmpDir();
+      await using clone = await makeTmpDir();
+      await git(remote.path, "init --bare");
+
+      await initRepoWithCommit(source.path);
+      const defaultBranch = (await listGitBranches({ cwd: source.path })).branches.find(
+        (branch) => branch.current,
+      )!.name;
+      await git(source.path, `remote add origin ${JSON.stringify(remote.path)}`);
+      await git(source.path, `push -u origin ${defaultBranch}`);
+
+      const featureBranch = "feature-behind";
+      await createGitBranch({ cwd: source.path, branch: featureBranch });
+      await checkoutGitBranch({ cwd: source.path, branch: featureBranch });
+      await writeFile(path.join(source.path, "feature.txt"), "feature base\n");
+      await git(source.path, "add feature.txt");
+      await git(source.path, "commit -m 'feature base'");
+      await git(source.path, `push -u origin ${featureBranch}`);
+      await checkoutGitBranch({ cwd: source.path, branch: defaultBranch });
+
+      await git(clone.path, `clone ${JSON.stringify(remote.path)} .`);
+      await git(clone.path, "config user.email 'test@test.com'");
+      await git(clone.path, "config user.name 'Test'");
+      await git(clone.path, `checkout -b ${featureBranch} --track origin/${featureBranch}`);
+      await writeFile(path.join(clone.path, "feature.txt"), "feature from remote\n");
+      await git(clone.path, "add feature.txt");
+      await git(clone.path, "commit -m 'remote feature update'");
+      await git(clone.path, `push origin ${featureBranch}`);
+
+      await checkoutGitBranch({ cwd: source.path, branch: featureBranch });
+      const core = new GitCoreService();
+      const details = await core.statusDetails(source.path);
+
+      expect(details.branch).toBe(featureBranch);
+      expect(details.aheadCount).toBe(0);
+      expect(details.behindCount).toBe(1);
+    });
+
     it("throws when branch does not exist", async () => {
       await using tmp = await makeTmpDir();
       await initRepoWithCommit(tmp.path);
