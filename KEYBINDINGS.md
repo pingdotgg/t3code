@@ -6,12 +6,12 @@ T3 Code reads keybindings from:
 
 Schema source of truth:
 
-- `packages/contracts/src/keybindings.ts`
-- `packages/contracts/src/server.ts`
+- [`packages/contracts/src/keybindings.ts`](packages/contracts/src/keybindings.ts)
+- [`packages/contracts/src/server.ts`](packages/contracts/src/server.ts)
 
 Server-side default resolution/merging:
 
-- `apps/server/src/wsServer.ts`
+- [`apps/server/src/wsServer.ts`](apps/server/src/wsServer.ts)
 
 The file must be a JSON array of rules:
 
