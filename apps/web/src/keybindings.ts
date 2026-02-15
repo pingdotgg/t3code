@@ -78,7 +78,7 @@ function evaluateWhenNode(node: KeybindingWhenNode, context: ShortcutMatchContex
 }
 
 function matchesWhenClause(
-  whenAst: ResolvedKeybindingsConfig[number]["whenAst"],
+  whenAst: KeybindingWhenNode | undefined,
   context: ShortcutMatchContext,
 ): boolean {
   if (!whenAst) return true;
