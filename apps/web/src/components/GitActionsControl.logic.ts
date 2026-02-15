@@ -231,7 +231,7 @@ export function resolveQuickAction(
     label: "Commit",
     disabled: true,
     kind: "show_hint",
-    hint: "Branch is up to date. Nothing to commit, push, pull, or open as a PR.",
+    hint: "Branch is up to date. No action needed.",
   };
 }
 
