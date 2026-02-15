@@ -124,10 +124,14 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
 function buildGitActionProgressStages(input: {
   action: GitStackedAction;
   hasCustomCommitMessage: boolean;
+  hasWorkingTreeChanges: boolean;
 }): string[] {
-  const commitStages = input.hasCustomCommitMessage
-    ? ["Committing..."]
-    : ["Generating commit message...", "Committing..."];
+  const shouldIncludeCommitStages = input.action === "commit" || input.hasWorkingTreeChanges;
+  const commitStages = !shouldIncludeCommitStages
+    ? []
+    : input.hasCustomCommitMessage
+      ? ["Committing..."]
+      : ["Generating commit message...", "Committing..."];
   if (input.action === "commit") {
     return commitStages;
   }
@@ -229,6 +233,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
       const progressStages = buildGitActionProgressStages({
         action,
         hasCustomCommitMessage: !!commitMessage?.trim(),
+        hasWorkingTreeChanges: !!gitStatus?.hasWorkingTreeChanges,
       });
       const progressToastId = toastManager.add({
         type: "loading",
@@ -306,6 +311,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
     },
     [
       api,
+      gitStatus?.hasWorkingTreeChanges,
       gitStatus?.openPr?.url,
       maybeConfirmPushToDefaultBranch,
       runImmediateGitActionMutation,
