@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, it } from "vitest";
 
 import {
   keybindingRuleSchema,
@@ -13,16 +13,18 @@ describe("keybindings contracts", () => {
       key: "mod+j",
       command: "terminal.toggle",
     });
-    expect(parsed.command).toBe("terminal.toggle");
+    assert.strictEqual(parsed.command, "terminal.toggle");
   });
 
   it("rejects invalid command values", () => {
-    expect(() =>
-      keybindingRuleSchema.parse({
-        key: "mod+j",
-        command: "invalid.command" as unknown as "terminal.toggle",
-      }),
-    ).toThrow();
+    assert.throws(() =>
+      keybindingRuleSchema.parse(
+        {
+          key: "mod+j",
+          command: "invalid.command" as unknown as "terminal.toggle",
+        },
+      ),
+    );
   });
 
   it("parses keybindings array payload", () => {
@@ -30,7 +32,7 @@ describe("keybindings contracts", () => {
       { key: "mod+j", command: "terminal.toggle" },
       { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
     ]);
-    expect(parsed).toHaveLength(2);
+    assert.lengthOf(parsed, 2);
   });
 
   it("parses resolved keybinding rules", () => {
@@ -55,7 +57,7 @@ describe("keybindings contracts", () => {
         },
       },
     });
-    expect(parsed.shortcut.key).toBe("d");
+    assert.strictEqual(parsed.shortcut.key, "d");
   });
 
   it("parses resolved keybindings arrays", () => {
@@ -73,6 +75,6 @@ describe("keybindings contracts", () => {
         },
       },
     ]);
-    expect(parsed).toHaveLength(1);
+    assert.lengthOf(parsed, 1);
   });
 });

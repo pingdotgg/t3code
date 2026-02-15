@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, it } from "vitest";
 
 import { compileResolvedKeybindingRule, parseKeybindingShortcut } from "./keybindings";
 
 describe("server keybindings", () => {
   it("parses shortcuts including plus key", () => {
-    expect(parseKeybindingShortcut("mod+j")).toEqual({
+    assert.deepEqual(parseKeybindingShortcut("mod+j"), {
       key: "j",
       metaKey: false,
       ctrlKey: false,
@@ -12,7 +12,7 @@ describe("server keybindings", () => {
       altKey: false,
       modKey: true,
     });
-    expect(parseKeybindingShortcut("mod++")).toEqual({
+    assert.deepEqual(parseKeybindingShortcut("mod++"), {
       key: "+",
       metaKey: false,
       ctrlKey: false,
@@ -29,7 +29,7 @@ describe("server keybindings", () => {
       when: "terminalOpen && !terminalFocus",
     });
 
-    expect(compiled).toEqual({
+    assert.deepEqual(compiled, {
       key: "mod+d",
       command: "terminal.split",
       when: "terminalOpen && !terminalFocus",
@@ -53,19 +53,19 @@ describe("server keybindings", () => {
   });
 
   it("rejects invalid rules", () => {
-    expect(
+    assert.isNull(
       compileResolvedKeybindingRule({
         key: "mod+shift+d+o",
         command: "terminal.new",
       }),
-    ).toBeNull();
+    );
 
-    expect(
+    assert.isNull(
       compileResolvedKeybindingRule({
         key: "mod+d",
         command: "terminal.split",
         when: "terminalFocus && (",
       }),
-    ).toBeNull();
+    );
   });
 });
