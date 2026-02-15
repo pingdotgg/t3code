@@ -615,7 +615,7 @@ describe("summarizeGitResult", () => {
     });
 
     assert.deepEqual(result, {
-      title: "Pushed abcdef0 to foo",
+      title: "Pushed abcdef0 to origin/foo",
       description: "fix: tighten quick action tooltip hover handling",
     });
   });

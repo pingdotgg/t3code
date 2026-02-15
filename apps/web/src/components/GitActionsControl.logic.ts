@@ -50,7 +50,7 @@ export function summarizeGitResult(
 
   if (result.push.status === "pushed") {
     const shortSha = shortenSha(result.commit.commitSha);
-    const branch = result.push.branch ?? result.push.upstreamBranch;
+    const branch = result.push.upstreamBranch ?? result.push.branch;
     const pushedCommitPart = shortSha ? ` ${shortSha}` : "";
     const branchPart = branch ? ` to ${branch}` : "";
     return withDescription(
