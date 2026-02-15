@@ -38,6 +38,7 @@ import {
   gitStatusQueryOptions,
   invalidateGitQueries,
 } from "~/lib/gitReactQuery";
+import { useStore } from "~/store";
 import { preferredTerminalEditor, resolvePathLinkTarget } from "~/terminal-links";
 
 interface GitActionsControlProps {
@@ -136,6 +137,12 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
 }
 
 export default function GitActionsControl({ api, gitCwd }: GitActionsControlProps) {
+  const { state } = useStore();
+  const activeThreadId = state.activeThreadId;
+  const threadToastData = useMemo(
+    () => (activeThreadId ? { threadId: activeThreadId } : undefined),
+    [activeThreadId],
+  );
   const queryClient = useQueryClient();
   const [activeDialogAction, setActiveDialogAction] = useState<GitDialogAction | null>(null);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
@@ -190,25 +197,34 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
 
   const openExistingPr = useCallback(async () => {
     if (!api) {
-      toastManager.add({ type: "error", title: "Link opening is unavailable." });
+      toastManager.add({
+        type: "error",
+        title: "Link opening is unavailable.",
+        data: threadToastData,
+      });
       return;
     }
     const prUrl = gitStatus?.openPr?.url ?? null;
     if (!prUrl) {
-      toastManager.add({ type: "error", title: "No open PR found." });
+      toastManager.add({
+        type: "error",
+        title: "No open PR found.",
+        data: threadToastData,
+      });
       return;
     }
     const promise = api.shell.openExternal(prUrl);
     toastManager.promise(promise, {
-      loading: { title: "Opening PR..." },
-      success: { title: "PR opened" },
+      loading: { title: "Opening PR...", data: threadToastData },
+      success: { title: "PR opened", data: threadToastData },
       error: (err) => ({
         title: "Unable to open PR link",
         description: err instanceof Error ? err.message : "An error occurred.",
+        data: threadToastData,
       }),
     });
     void promise.catch(() => undefined);
-  }, [api, gitStatus?.openPr?.url]);
+  }, [api, gitStatus?.openPr?.url, threadToastData]);
 
   const runGitActionWithToast = useCallback(
     async ({
@@ -238,6 +254,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
         type: "loading",
         title: progressStages[0] ?? "Running git action...",
         timeout: 0,
+        data: threadToastData,
       });
 
       let stageIndex = 0;
@@ -247,6 +264,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
           title: progressStages[stageIndex] ?? "Running git action...",
           type: "loading",
           timeout: 0,
+          data: threadToastData,
         });
       }, 1100);
 
@@ -279,6 +297,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
           title: resultToast.title,
           description: resultToast.description,
           timeout: 0,
+          data: threadToastData,
           ...(shouldOfferPushCta
             ? {
                 actionProps: {
@@ -320,6 +339,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
           type: "error",
           title: "Action failed",
           description: err instanceof Error ? err.message : "An error occurred.",
+          data: threadToastData,
         });
       }
     },
@@ -332,6 +352,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
       maybeConfirmPushToDefaultBranch,
       runImmediateGitActionMutation,
       setActiveDialogAction,
+      threadToastData,
     ],
   );
 
@@ -343,17 +364,19 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
     if (quickAction.kind === "run_pull") {
       const promise = pullMutation.mutateAsync();
       toastManager.promise(promise, {
-        loading: { title: "Pulling..." },
+        loading: { title: "Pulling...", data: threadToastData },
         success: (result) => ({
           title: result.status === "pulled" ? "Pulled" : "Already up to date",
           description:
             result.status === "pulled"
               ? `Updated ${result.branch} from ${result.upstreamBranch ?? "upstream"}`
               : `${result.branch} is already synchronized.`,
+          data: threadToastData,
         }),
         error: (err) => ({
           title: "Pull failed",
           description: err instanceof Error ? err.message : "An error occurred.",
+          data: threadToastData,
         }),
       });
       void promise.catch(() => undefined);
@@ -364,13 +387,14 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
         type: "info",
         title: quickAction.label,
         description: quickAction.hint,
+        data: threadToastData,
       });
       return;
     }
     if (quickAction.action) {
       void runGitActionWithToast({ action: quickAction.action });
     }
-  }, [openExistingPr, pullMutation, quickAction, runGitActionWithToast]);
+  }, [openExistingPr, pullMutation, quickAction, runGitActionWithToast, threadToastData]);
 
   const openDialogForMenuItem = useCallback(
     (item: GitActionMenuItem) => {
@@ -414,6 +438,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
         toastManager.add({
           type: "error",
           title: "Editor opening is unavailable.",
+          data: threadToastData,
         });
         return;
       }
@@ -423,10 +448,11 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
           type: "error",
           title: "Unable to open file",
           description: error instanceof Error ? error.message : "An error occurred.",
+          data: threadToastData,
         });
       });
     },
-    [api, gitCwd],
+    [api, gitCwd, threadToastData],
   );
 
   if (!gitCwd) return null;
