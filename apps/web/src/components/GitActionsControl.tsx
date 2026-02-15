@@ -1,6 +1,6 @@
 import { type GitStatusResult, type GitStackedAction, type NativeApi } from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
 import { GitHubIcon } from "./Icons";
 import {
@@ -154,6 +154,16 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
   const { data: branchList = null } = useQuery(gitBranchesQueryOptions(api, gitCwd));
   // Default to true while loading so we don't flash init controls.
   const isRepo = branchList?.isRepo ?? true;
+  const currentBranch = branchList?.branches.find((branch) => branch.current)?.name ?? null;
+  const isGitStatusOutOfSync =
+    !!gitStatus?.branch && !!currentBranch && gitStatus.branch !== currentBranch;
+
+  useEffect(() => {
+    if (!isGitStatusOutOfSync) return;
+    void invalidateGitQueries(queryClient);
+  }, [isGitStatusOutOfSync, queryClient]);
+
+  const gitStatusForActions = isGitStatusOutOfSync ? null : gitStatus;
 
   const initMutation = useMutation(gitInitMutationOptions({ api, cwd: gitCwd, queryClient }));
 
@@ -164,19 +174,19 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
 
   const isGitActionRunning = runImmediateGitActionMutation.isPending || pullMutation.isPending;
   const isDefaultBranch = useMemo(() => {
-    const currentBranch = gitStatus?.branch;
-    if (!currentBranch) return false;
-    const current = branchList?.branches.find((branch) => branch.name === currentBranch);
-    return current?.isDefault ?? (currentBranch === "main" || currentBranch === "master");
-  }, [branchList?.branches, gitStatus?.branch]);
+    const branchName = gitStatusForActions?.branch;
+    if (!branchName) return false;
+    const current = branchList?.branches.find((branch) => branch.name === branchName);
+    return current?.isDefault ?? (branchName === "main" || branchName === "master");
+  }, [branchList?.branches, gitStatusForActions?.branch]);
 
   const gitActionMenuItems = useMemo(
-    () => buildMenuItems(gitStatus, isGitActionRunning),
-    [gitStatus, isGitActionRunning],
+    () => buildMenuItems(gitStatusForActions, isGitActionRunning),
+    [gitStatusForActions, isGitActionRunning],
   );
   const quickAction = useMemo(
-    () => resolveQuickAction(gitStatus, isGitActionRunning, isDefaultBranch),
-    [gitStatus, isDefaultBranch, isGitActionRunning],
+    () => resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultBranch),
+    [gitStatusForActions, isDefaultBranch, isGitActionRunning],
   );
   const quickActionDisabledReason = quickAction.disabled
     ? (quickAction.hint ?? "This action is currently unavailable.")
@@ -185,14 +195,17 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
   const maybeConfirmPushToDefaultBranch = useCallback(
     async (action: GitStackedAction): Promise<boolean> => {
       if (!api) return false;
-      if (!requiresDefaultBranchConfirmation(action, isDefaultBranch) || !gitStatus?.branch) {
+      if (
+        !requiresDefaultBranchConfirmation(action, isDefaultBranch) ||
+        !gitStatusForActions?.branch
+      ) {
         return true;
       }
       return api.dialogs.confirm(
-        `You're about to push to the default branch "${gitStatus.branch}". Continue?`,
+        `You're about to push to the default branch "${gitStatusForActions.branch}". Continue?`,
       );
     },
-    [api, gitStatus?.branch, isDefaultBranch],
+    [api, gitStatusForActions?.branch, isDefaultBranch],
   );
 
   const openExistingPr = useCallback(async () => {
@@ -204,7 +217,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
       });
       return;
     }
-    const prUrl = gitStatus?.openPr?.url ?? null;
+    const prUrl = gitStatusForActions?.openPr?.url ?? null;
     if (!prUrl) {
       toastManager.add({
         type: "error",
@@ -224,7 +237,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
       }),
     });
     void promise.catch(() => undefined);
-  }, [api, gitStatus?.openPr?.url, threadToastData]);
+  }, [api, gitStatusForActions?.openPr?.url, threadToastData]);
 
   const runGitActionWithToast = useCallback(
     async ({
@@ -242,11 +255,13 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
       if (!confirmed) return;
       onConfirmed?.();
 
-      const pushTarget = gitStatus?.branch ? `origin/${gitStatus.branch}` : undefined;
+      const pushTarget = gitStatusForActions?.branch
+        ? `origin/${gitStatusForActions.branch}`
+        : undefined;
       const progressStages = buildGitActionProgressStages({
         action,
         hasCustomCommitMessage: !!commitMessage?.trim(),
-        hasWorkingTreeChanges: !!gitStatus?.hasWorkingTreeChanges,
+        hasWorkingTreeChanges: !!gitStatusForActions?.hasWorkingTreeChanges,
         forcePushOnly: forcePushOnlyProgress,
         ...(pushTarget ? { pushTarget } : {}),
       });
@@ -282,7 +297,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
         stopProgressUpdates();
         const resultToast = summarizeGitResult(result);
 
-        const prUrl = result.pr.url ?? gitStatus?.openPr?.url;
+        const prUrl = result.pr.url ?? gitStatusForActions?.openPr?.url;
         const shouldOfferPushCta = action === "commit" && result.commit.status === "created";
         const shouldOfferOpenPrCta =
           (action === "commit_push" || action === "commit_push_pr") && !!prUrl && !isDefaultBranch;
@@ -345,9 +360,9 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
     },
     [
       api,
-      gitStatus?.branch,
-      gitStatus?.hasWorkingTreeChanges,
-      gitStatus?.openPr?.url,
+      gitStatusForActions?.branch,
+      gitStatusForActions?.hasWorkingTreeChanges,
+      gitStatusForActions?.openPr?.url,
       isDefaultBranch,
       maybeConfirmPushToDefaultBranch,
       runImmediateGitActionMutation,
@@ -517,7 +532,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
               {gitActionMenuItems.map((item) => {
                 const disabledReason = getMenuActionDisabledReason(
                   item,
-                  gitStatus,
+                  gitStatusForActions,
                   isGitActionRunning,
                 );
                 if (item.disabled && disabledReason) {
@@ -553,19 +568,25 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
                   </MenuItem>
                 );
               })}
-              {gitStatus?.branch === null && (
+              {gitStatusForActions?.branch === null && (
                 <p className="px-2 py-1.5 text-xs text-warning">
                   Detached HEAD: create and checkout a branch to enable push and PR actions.
                 </p>
               )}
-              {gitStatus &&
-                gitStatus.branch !== null &&
-                !gitStatus.hasWorkingTreeChanges &&
-                gitStatus.behindCount > 0 && (
+              {gitStatusForActions &&
+                gitStatusForActions.branch !== null &&
+                !gitStatusForActions.hasWorkingTreeChanges &&
+                gitStatusForActions.behindCount > 0 &&
+                gitStatusForActions.aheadCount === 0 && (
                   <p className="px-2 py-1.5 text-xs text-warning">
                     Behind upstream. Pull/rebase first.
                   </p>
                 )}
+              {isGitStatusOutOfSync && (
+                <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                  Refreshing git status...
+                </p>
+              )}
               {gitStatusError && (
                 <p className="px-2 py-1.5 text-xs text-destructive">{gitStatusError.message}</p>
               )}
@@ -594,37 +615,42 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
             <div className="space-y-3 rounded-lg border border-input bg-muted/40 p-3 text-xs">
               <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
                 <span className="text-muted-foreground">Branch</span>
-                <span className="font-medium">{gitStatus?.branch ?? "(detached HEAD)"}</span>
+                <span className="font-medium">
+                  {gitStatusForActions?.branch ?? "(detached HEAD)"}
+                </span>
                 {activeDialogAction !== "commit" && (
                   <>
                     <span className="text-muted-foreground">Upstream</span>
                     <span className="font-medium">
-                      {!gitStatus || !gitStatus.hasUpstream
+                      {!gitStatusForActions || !gitStatusForActions.hasUpstream
                         ? "No upstream configured"
-                        : gitStatus.aheadCount === 0 && gitStatus.behindCount === 0
+                        : gitStatusForActions.aheadCount === 0 &&
+                            gitStatusForActions.behindCount === 0
                           ? "Up to date"
-                          : gitStatus.aheadCount > 0 && gitStatus.behindCount > 0
-                            ? `Diverged (+${gitStatus.aheadCount} / -${gitStatus.behindCount})`
-                            : gitStatus.aheadCount > 0
-                              ? `Ahead by ${gitStatus.aheadCount}`
-                              : `Behind by ${gitStatus.behindCount}`}
+                          : gitStatusForActions.aheadCount > 0 && gitStatusForActions.behindCount > 0
+                            ? `Diverged (+${gitStatusForActions.aheadCount} / -${gitStatusForActions.behindCount})`
+                            : gitStatusForActions.aheadCount > 0
+                              ? `Ahead by ${gitStatusForActions.aheadCount}`
+                              : `Behind by ${gitStatusForActions.behindCount}`}
                     </span>
                     <span className="text-muted-foreground">Working tree</span>
                     <span className="font-medium">
-                      {!gitStatus || !gitStatus.hasWorkingTreeChanges
+                      {!gitStatusForActions || !gitStatusForActions.hasWorkingTreeChanges
                         ? "Clean"
-                        : `${gitStatus.workingTree.files.length} file(s)`}
+                        : `${gitStatusForActions.workingTree.files.length} file(s)`}
                     </span>
                     <span className="text-muted-foreground">Diff</span>
                     <span className="font-mono">
-                      {!gitStatus || !gitStatus.hasWorkingTreeChanges ? (
+                      {!gitStatusForActions || !gitStatusForActions.hasWorkingTreeChanges ? (
                         "none"
                       ) : (
                         <>
-                          <span className="text-success">+{gitStatus.workingTree.insertions}</span>
+                          <span className="text-success">
+                            +{gitStatusForActions.workingTree.insertions}
+                          </span>
                           <span className="text-muted-foreground"> / </span>
                           <span className="text-destructive">
-                            -{gitStatus.workingTree.deletions}
+                            -{gitStatusForActions.workingTree.deletions}
                           </span>
                         </>
                       )}
@@ -634,13 +660,13 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
               </div>
               <div className="space-y-1">
                 <p className="text-muted-foreground">Files</p>
-                {!gitStatus || gitStatus.workingTree.files.length === 0 ? (
+                {!gitStatusForActions || gitStatusForActions.workingTree.files.length === 0 ? (
                   <p className="font-medium">none</p>
                 ) : (
                   <div className="space-y-2">
                     <ScrollArea className="h-44 rounded-md border border-input bg-background">
                       <div className="space-y-1 p-1">
-                        {gitStatus.workingTree.files.map((file) => (
+                        {gitStatusForActions.workingTree.files.map((file) => (
                           <button
                             type="button"
                             key={file.path}
@@ -658,9 +684,13 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
                       </div>
                     </ScrollArea>
                     <div className="flex justify-end font-mono">
-                      <span className="text-success">+{gitStatus.workingTree.insertions}</span>
+                      <span className="text-success">
+                        +{gitStatusForActions.workingTree.insertions}
+                      </span>
                       <span className="text-muted-foreground"> / </span>
-                      <span className="text-destructive">-{gitStatus.workingTree.deletions}</span>
+                      <span className="text-destructive">
+                        -{gitStatusForActions.workingTree.deletions}
+                      </span>
                     </div>
                   </div>
                 )}

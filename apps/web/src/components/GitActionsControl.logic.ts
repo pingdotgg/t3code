@@ -181,6 +181,7 @@ export function resolveQuickAction(
   const hasOpenPr = gitStatus.openPr !== null;
   const isAhead = gitStatus.aheadCount > 0;
   const isBehind = gitStatus.behindCount > 0;
+  const isDiverged = isAhead && isBehind;
 
   if (!hasBranch) {
     return {
@@ -200,6 +201,15 @@ export function resolveQuickAction(
       disabled: false,
       kind: "run_action",
       action: "commit_push_pr",
+    };
+  }
+
+  if (isDiverged) {
+    return {
+      label: "Sync branch",
+      disabled: true,
+      kind: "show_hint",
+      hint: "Branch has diverged from upstream. Rebase/merge first.",
     };
   }
 

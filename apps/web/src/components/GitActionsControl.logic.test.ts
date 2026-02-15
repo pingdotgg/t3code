@@ -320,6 +320,18 @@ describe("when: branch is behind upstream", () => {
   });
 });
 
+describe("when: branch has diverged from upstream", () => {
+  it("resolveQuickAction returns a disabled sync hint", () => {
+    const quick = resolveQuickAction(status({ aheadCount: 2, behindCount: 1 }), false);
+    assert.deepEqual(quick, {
+      label: "Sync branch",
+      disabled: true,
+      kind: "show_hint",
+      hint: "Branch has diverged from upstream. Rebase/merge first.",
+    });
+  });
+});
+
 describe("when: working tree has local changes", () => {
   it("resolveQuickAction returns commit, push, and create PR", () => {
     const quick = resolveQuickAction(status({ hasWorkingTreeChanges: true }), false);
