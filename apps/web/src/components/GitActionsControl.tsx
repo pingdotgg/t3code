@@ -232,7 +232,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
         hasCustomCommitMessage: !!commitMessage?.trim(),
         hasWorkingTreeChanges: !!gitStatus?.hasWorkingTreeChanges,
         forcePushOnly: forcePushOnlyProgress,
-        pushTarget,
+        ...(pushTarget ? { pushTarget } : {}),
       });
       const progressToastId = toastManager.add({
         type: "loading",
@@ -325,6 +325,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
     },
     [
       api,
+      gitStatus?.branch,
       gitStatus?.hasWorkingTreeChanges,
       gitStatus?.openPr?.url,
       isDefaultBranch,
