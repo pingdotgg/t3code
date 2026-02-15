@@ -18,12 +18,10 @@ describe("keybindings contracts", () => {
 
   it("rejects invalid command values", () => {
     assert.throws(() =>
-      keybindingRuleSchema.parse(
-        {
-          key: "mod+j",
-          command: "invalid.command" as unknown as "terminal.toggle",
-        },
-      ),
+      keybindingRuleSchema.parse({
+        key: "mod+j",
+        command: "invalid.command",
+      }),
     );
   });
 
