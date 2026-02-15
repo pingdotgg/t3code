@@ -103,6 +103,18 @@ function getMenuActionDisabledReason(
   return "Create PR is currently unavailable.";
 }
 
+const DIALOG_TITLE_BY_ACTION = {
+  commit: "Commit changes",
+  push: "Push branch",
+  create_pr: "Create pull request",
+};
+
+const DIALOG_DESCRIPTION_BY_ACTION = {
+  commit: "Review and confirm your commit. Leave the message blank to auto-generate one.",
+  push: "Push this branch now.",
+  create_pr: "Create a pull request using generated title/body content.",
+};
+
 function GitActionItemIcon({ icon }: { icon: GitActionIconName }) {
   if (icon === "commit") return <GitCommitIcon />;
   if (icon === "push") return <CloudUploadIcon />;
@@ -423,19 +435,6 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
     [api, gitCwd],
   );
 
-  const dialogTitle =
-    activeDialogAction === "commit"
-      ? "Commit changes"
-      : activeDialogAction === "push"
-        ? "Push branch"
-        : "Create pull request";
-  const dialogDescription =
-    activeDialogAction === "commit"
-      ? "Review and confirm your commit. Leave the message blank to auto-generate one."
-      : activeDialogAction === "push"
-        ? "Push this branch now."
-        : "Create a pull request using generated title/body content.";
-
   if (!gitCwd) return null;
 
   return (
@@ -576,8 +575,10 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
       >
         <DialogPopup>
           <DialogHeader>
-            <DialogTitle>{dialogTitle}</DialogTitle>
-            <DialogDescription>{dialogDescription}</DialogDescription>
+            <DialogTitle>{DIALOG_TITLE_BY_ACTION[activeDialogAction ?? "commit"]}</DialogTitle>
+            <DialogDescription>
+              {DIALOG_DESCRIPTION_BY_ACTION[activeDialogAction ?? "commit"]}
+            </DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-4">
             <div className="space-y-3 rounded-lg border border-input bg-muted/40 p-3 text-xs">
