@@ -4,6 +4,7 @@ import {
   buildMenuItems,
   requiresDefaultBranchConfirmation,
   resolveQuickAction,
+  summarizeGitResult,
 } from "./GitActionsControl.logic";
 
 function status(overrides: Partial<GitStatusResult> = {}): GitStatusResult {
@@ -575,5 +576,95 @@ describe("requiresDefaultBranchConfirmation", () => {
     assert.isTrue(requiresDefaultBranchConfirmation("commit_push", true));
     assert.isTrue(requiresDefaultBranchConfirmation("commit_push_pr", true));
     assert.isFalse(requiresDefaultBranchConfirmation("commit_push", false));
+  });
+});
+
+describe("summarizeGitResult", () => {
+  it("returns commit-focused toast for commit action", () => {
+    const result = summarizeGitResult({
+      action: "commit",
+      commit: {
+        status: "created",
+        commitSha: "0123456789abcdef",
+        subject: "feat: add optimistic UI for git action button",
+      },
+      push: { status: "skipped_not_requested" },
+      pr: { status: "skipped_not_requested" },
+    });
+
+    assert.deepEqual(result, {
+      title: "Committed 0123456",
+      description: "feat: add optimistic UI for git action button",
+    });
+  });
+
+  it("returns push-focused toast for push action", () => {
+    const result = summarizeGitResult({
+      action: "commit_push",
+      commit: {
+        status: "created",
+        commitSha: "abcdef0123456789",
+        subject: "fix: tighten quick action tooltip hover handling",
+      },
+      push: {
+        status: "pushed",
+        branch: "foo",
+        upstreamBranch: "origin/foo",
+      },
+      pr: { status: "skipped_not_requested" },
+    });
+
+    assert.deepEqual(result, {
+      title: "Pushed abcdef0 to foo",
+      description: "fix: tighten quick action tooltip hover handling",
+    });
+  });
+
+  it("returns PR-focused toast for created PR action", () => {
+    const result = summarizeGitResult({
+      action: "commit_push_pr",
+      commit: {
+        status: "created",
+        commitSha: "89abcdef01234567",
+        subject: "feat: ship github shortcuts",
+      },
+      push: {
+        status: "pushed",
+        branch: "foo",
+      },
+      pr: {
+        status: "created",
+        number: 42,
+        title: "feat: ship github shortcuts and improve PR CTA in success toast",
+      },
+    });
+
+    assert.deepEqual(result, {
+      title: "Created PR #42",
+      description: "feat: ship github shortcuts and improve PR CTA in success toast",
+    });
+  });
+
+  it("truncates long description text", () => {
+    const result = summarizeGitResult({
+      action: "commit_push_pr",
+      commit: {
+        status: "created",
+        commitSha: "89abcdef01234567",
+        subject: "short subject",
+      },
+      push: { status: "pushed", branch: "foo" },
+      pr: {
+        status: "created",
+        number: 99,
+        title:
+          "feat: this title is intentionally extremely long so we can validate that toast descriptions are truncated with an ellipsis suffix",
+      },
+    });
+
+    assert.deepEqual(result, {
+      title: "Created PR #99",
+      description: "feat: this title is intentionally extremely long so we can validate t...",
+    });
   });
 });

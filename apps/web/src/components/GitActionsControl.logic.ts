@@ -21,28 +21,51 @@ export interface GitQuickAction {
   hint?: string;
 }
 
-export function describeGitResult(result: GitRunStackedActionResult): string {
-  const parts: string[] = [];
+const SHORT_SHA_LENGTH = 7;
+const TOAST_DESCRIPTION_MAX = 72;
 
-  if (result.commit.status === "created") {
-    parts.push(result.commit.subject ?? "Committed changes");
+function shortenSha(sha: string | undefined): string | null {
+  if (!sha) return null;
+  return sha.slice(0, SHORT_SHA_LENGTH);
+}
+
+function truncateText(value: string | undefined, maxLength = TOAST_DESCRIPTION_MAX): string | undefined {
+  if (!value) return undefined;
+  if (value.length <= maxLength) return value;
+  if (maxLength <= 3) return "...".slice(0, maxLength);
+  return `${value.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+export function summarizeGitResult(
+  result: GitRunStackedActionResult,
+): { title: string; description?: string } {
+  const withDescription = (title: string, description: string | undefined) =>
+    description ? { title, description } : { title };
+
+  if (result.pr.status === "created" || result.pr.status === "opened_existing") {
+    const prNumber = result.pr.number ? ` #${result.pr.number}` : "";
+    const title = `${result.pr.status === "created" ? "Created PR" : "Opened PR"}${prNumber}`;
+    return withDescription(title, truncateText(result.pr.title));
   }
 
   if (result.push.status === "pushed") {
-    parts.push(
-      result.push.upstreamBranch
-        ? `Pushed to ${result.push.upstreamBranch}`
-        : "Pushed",
+    const shortSha = shortenSha(result.commit.commitSha);
+    const branch = result.push.branch ?? result.push.upstreamBranch;
+    const pushedCommitPart = shortSha ? ` ${shortSha}` : "";
+    const branchPart = branch ? ` to ${branch}` : "";
+    return withDescription(
+      `Pushed${pushedCommitPart}${branchPart}`,
+      truncateText(result.commit.subject),
     );
   }
 
-  if (result.pr.status === "created") {
-    parts.push(result.pr.number ? `Created PR #${result.pr.number}` : "Created PR");
-  } else if (result.pr.status === "opened_existing") {
-    parts.push(result.pr.number ? `PR #${result.pr.number}` : "Opened existing PR");
+  if (result.commit.status === "created") {
+    const shortSha = shortenSha(result.commit.commitSha);
+    const title = shortSha ? `Committed ${shortSha}` : "Committed changes";
+    return withDescription(title, truncateText(result.commit.subject));
   }
 
-  return parts.join(" · ") || "No changes needed.";
+  return { title: "Done" };
 }
 
 export function buildMenuItems(

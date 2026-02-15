@@ -13,9 +13,9 @@ import {
   type GitActionMenuItem,
   type GitDialogAction,
   type GitQuickAction,
-  describeGitResult,
   requiresDefaultBranchConfirmation,
   resolveQuickAction,
+  summarizeGitResult,
 } from "./GitActionsControl.logic";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -282,6 +282,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
       try {
         const result = await promise;
         stopProgressUpdates();
+        const resultToast = summarizeGitResult(result);
 
         const prUrl = result.pr.url ?? gitStatus?.openPr?.url;
         const shouldOfferPushCta = action === "commit" && result.commit.status === "created";
@@ -292,8 +293,8 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
 
         toastManager.update(progressToastId, {
           type: "success",
-          title: "Done",
-          description: describeGitResult(result),
+          title: resultToast.title,
+          description: resultToast.description,
           timeout: 10_000,
           ...(shouldOfferPushCta
             ? {
