@@ -23,10 +23,7 @@ import {
   useState,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  gitBranchesQueryOptions,
-  gitCreateWorktreeMutationOptions,
-} from "~/lib/gitReactQuery";
+import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
@@ -79,7 +76,7 @@ import { Separator } from "./ui/separator";
 import { Group, GroupSeparator } from "./ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { CursorIcon, Icon } from "./Icons";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { Badge } from "./ui/badge";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
@@ -140,7 +137,9 @@ export default function ChatView() {
   const { state, dispatch } = useStore();
   const api = useNativeApi();
   const queryClient = useQueryClient();
-  const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ api, queryClient }));
+  const createWorktreeMutation = useMutation(
+    gitCreateWorktreeMutationOptions({ api, queryClient }),
+  );
   const [prompt, setPrompt] = useState("");
   const [composerImages, setComposerImages] = useState<ComposerImageAttachment[]>([]);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
@@ -1533,9 +1532,9 @@ function OpenInPicker({ keybindings }: { keybindings: ResolvedKeybindingsConfig 
       value: "cursor",
     },
     {
-      label: navigator.platform.includes("Mac")
+      label: isMacPlatform(navigator.platform)
         ? "Finder"
-        : navigator.platform.includes("Win")
+        : isWindowsPlatform(navigator.platform)
           ? "Explorer"
           : "Files",
       Icon: FolderClosedIcon,

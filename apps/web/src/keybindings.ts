@@ -4,6 +4,7 @@ import {
   type KeybindingWhenNode,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { isMacPlatform } from "./lib/utils";
 
 export interface ShortcutEventLike {
   key: string;
@@ -19,15 +20,9 @@ export interface ShortcutMatchContext {
   [key: string]: boolean;
 }
 
-export type ResolvedKeybindings = ResolvedKeybindingsConfig;
-
 interface ShortcutMatchOptions {
   platform?: string;
   context?: Partial<ShortcutMatchContext>;
-}
-
-function isMacPlatform(platform: string): boolean {
-  return /mac|iphone|ipad|ipod/i.test(platform);
 }
 
 function normalizeEventKey(key: string): string {
@@ -83,7 +78,7 @@ function evaluateWhenNode(node: KeybindingWhenNode, context: ShortcutMatchContex
 }
 
 function matchesWhenClause(
-  whenAst: ResolvedKeybindings[number]["whenAst"],
+  whenAst: ResolvedKeybindingsConfig[number]["whenAst"],
   context: ShortcutMatchContext,
 ): boolean {
   if (!whenAst) return true;
@@ -92,7 +87,7 @@ function matchesWhenClause(
 
 function matchesCommandShortcut(
   event: ShortcutEventLike,
-  keybindings: ResolvedKeybindings,
+  keybindings: ResolvedKeybindingsConfig,
   command: KeybindingCommand,
   options?: ShortcutMatchOptions,
 ): boolean {
@@ -101,7 +96,7 @@ function matchesCommandShortcut(
 
 function resolveShortcutCommand(
   event: ShortcutEventLike,
-  keybindings: ResolvedKeybindings,
+  keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): KeybindingCommand | null {
   const platform = resolvePlatform(options);
@@ -128,7 +123,10 @@ function formatShortcutKeyLabel(key: string): string {
   return key.slice(0, 1).toUpperCase() + key.slice(1);
 }
 
-export function formatShortcutLabel(shortcut: KeybindingShortcut, platform = navigator.platform): string {
+export function formatShortcutLabel(
+  shortcut: KeybindingShortcut,
+  platform = navigator.platform,
+): string {
   const keyLabel = formatShortcutKeyLabel(shortcut.key);
   const useMetaForMod = isMacPlatform(platform);
   const showMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
@@ -150,7 +148,7 @@ export function formatShortcutLabel(shortcut: KeybindingShortcut, platform = nav
 }
 
 export function shortcutLabelForCommand(
-  keybindings: ResolvedKeybindings,
+  keybindings: ResolvedKeybindingsConfig,
   command: KeybindingCommand,
   platform = navigator.platform,
 ): string | null {
@@ -164,7 +162,7 @@ export function shortcutLabelForCommand(
 
 export function isTerminalToggleShortcut(
   event: ShortcutEventLike,
-  keybindings: ResolvedKeybindings,
+  keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "terminal.toggle", options);
@@ -172,7 +170,7 @@ export function isTerminalToggleShortcut(
 
 export function isTerminalSplitShortcut(
   event: ShortcutEventLike,
-  keybindings: ResolvedKeybindings,
+  keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "terminal.split", options);
@@ -180,7 +178,7 @@ export function isTerminalSplitShortcut(
 
 export function isTerminalNewShortcut(
   event: ShortcutEventLike,
-  keybindings: ResolvedKeybindings,
+  keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "terminal.new", options);
@@ -188,7 +186,7 @@ export function isTerminalNewShortcut(
 
 export function isChatNewShortcut(
   event: ShortcutEventLike,
-  keybindings: ResolvedKeybindings,
+  keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "chat.new", options);
@@ -196,7 +194,7 @@ export function isChatNewShortcut(
 
 export function isOpenFavoriteEditorShortcut(
   event: ShortcutEventLike,
-  keybindings: ResolvedKeybindings,
+  keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "editor.openFavorite", options);
