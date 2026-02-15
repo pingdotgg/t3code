@@ -604,8 +604,9 @@ describe("buildGitActionProgressStages", () => {
       hasCustomCommitMessage: false,
       hasWorkingTreeChanges: true,
       forcePushOnly: true,
+      pushTarget: "origin/feature/test",
     });
-    assert.deepEqual(stages, ["Pushing..."]);
+    assert.deepEqual(stages, ["Pushing to origin/feature/test..."]);
   });
 
   it("includes commit stages for commit+push when working tree is dirty", () => {
@@ -613,8 +614,13 @@ describe("buildGitActionProgressStages", () => {
       action: "commit_push",
       hasCustomCommitMessage: false,
       hasWorkingTreeChanges: true,
+      pushTarget: "origin/feature/test",
     });
-    assert.deepEqual(stages, ["Generating commit message...", "Committing...", "Pushing..."]);
+    assert.deepEqual(stages, [
+      "Generating commit message...",
+      "Committing...",
+      "Pushing to origin/feature/test...",
+    ]);
   });
 });
 

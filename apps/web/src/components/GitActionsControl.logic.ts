@@ -48,6 +48,7 @@ export function buildGitActionProgressStages(input: {
   hasCustomCommitMessage: boolean;
   hasWorkingTreeChanges: boolean;
   forcePushOnly?: boolean;
+  pushTarget?: string;
 }): string[] {
   const shouldIncludeCommitStages =
     !input.forcePushOnly && (input.action === "commit" || input.hasWorkingTreeChanges);
@@ -56,13 +57,14 @@ export function buildGitActionProgressStages(input: {
     : input.hasCustomCommitMessage
       ? ["Committing..."]
       : ["Generating commit message...", "Committing..."];
+  const pushStage = input.pushTarget ? `Pushing to ${input.pushTarget}...` : "Pushing...";
   if (input.action === "commit") {
     return commitStages;
   }
   if (input.action === "commit_push") {
-    return [...commitStages, "Pushing..."];
+    return [...commitStages, pushStage];
   }
-  return [...commitStages, "Pushing...", "Creating PR..."];
+  return [...commitStages, pushStage, "Creating PR..."];
 }
 
 export function summarizeGitResult(result: GitRunStackedActionResult): {

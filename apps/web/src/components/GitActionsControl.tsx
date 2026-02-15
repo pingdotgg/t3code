@@ -226,11 +226,13 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
       if (!confirmed) return;
       onConfirmed?.();
 
+      const pushTarget = gitStatus?.branch ? `origin/${gitStatus.branch}` : undefined;
       const progressStages = buildGitActionProgressStages({
         action,
         hasCustomCommitMessage: !!commitMessage?.trim(),
         hasWorkingTreeChanges: !!gitStatus?.hasWorkingTreeChanges,
         forcePushOnly: forcePushOnlyProgress,
+        pushTarget,
       });
       const progressToastId = toastManager.add({
         type: "loading",
