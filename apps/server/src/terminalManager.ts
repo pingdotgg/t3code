@@ -1,6 +1,5 @@
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
-import { request as httpRequest } from "node:http";
 import path from "node:path";
 
 import {
@@ -22,26 +21,22 @@ import {
 
 import { createLogger } from "./logger";
 import { NodePtyAdapter, type PtyAdapter, type PtyExitEvent, type PtyProcess } from "./ptyAdapter";
-import { runProcess } from "./processRunner";
+import {
+  arePortListsEqual,
+  defaultSubprocessInspector,
+  normalizeRunningPorts,
+  subprocessCheckerToInspector,
+  type TerminalSubprocessActivity,
+  type TerminalSubprocessChecker,
+  type TerminalSubprocessInspector,
+  type TerminalWebPortInspector,
+} from "./terminalProcessInspector";
+import { DEFAULT_WEB_PORT_PROBE_TTL_MS, defaultWebPortInspector } from "./webPortInspector";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
 const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
-const DEFAULT_WEB_PORT_PROBE_TIMEOUT_MS = 500;
-const DEFAULT_WEB_PORT_PROBE_TTL_MS = 10_000;
-const WEB_PORT_PROBE_MAX_BODY_BYTES = 8_192;
-const MAX_PORT_NUMBER = 65_535;
-
-type TerminalSubprocessChecker = (terminalPid: number) => Promise<boolean>;
-type TerminalWebPortInspector = (port: number) => Promise<boolean>;
-interface TerminalSubprocessActivity {
-  hasRunningSubprocess: boolean;
-  runningPorts: number[];
-}
-type TerminalSubprocessInspector = (
-  terminalPid: number,
-) => Promise<TerminalSubprocessActivity>;
 
 export interface TerminalManagerEvents {
   event: [event: TerminalEvent];
@@ -142,362 +137,6 @@ function isRetryableShellSpawnError(error: unknown): boolean {
   );
 }
 
-function normalizeRunningPorts(ports: number[]): number[] {
-  if (ports.length === 0) return [];
-  return [...new Set(ports)]
-    .filter((port) => Number.isInteger(port) && port > 0 && port <= MAX_PORT_NUMBER)
-    .toSorted((left, right) => left - right);
-}
-
-function parsePidList(stdout: string): number[] {
-  const pids: number[] = [];
-  for (const line of stdout.split(/\r?\n/g)) {
-    const pid = Number(line.trim());
-    if (!Number.isInteger(pid) || pid <= 0) {
-      continue;
-    }
-    pids.push(pid);
-  }
-  return [...new Set(pids)];
-}
-
-function parsePortList(stdout: string): number[] {
-  const ports: number[] = [];
-  for (const line of stdout.split(/\r?\n/g)) {
-    const port = Number(line.trim());
-    if (!Number.isInteger(port)) {
-      continue;
-    }
-    ports.push(port);
-  }
-  return normalizeRunningPorts(ports);
-}
-
-function portFromAddress(address: string): number | null {
-  const match = address.match(/:(\d+)$/);
-  if (!match?.[1]) return null;
-  const port = Number(match[1]);
-  if (!Number.isInteger(port) || port <= 0 || port > MAX_PORT_NUMBER) {
-    return null;
-  }
-  return port;
-}
-
-function arePortListsEqual(left: number[], right: number[]): boolean {
-  if (left.length !== right.length) return false;
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-async function collectWindowsChildPids(terminalPid: number): Promise<number[]> {
-  const command = [
-    `$children = Get-CimInstance Win32_Process -Filter "ParentProcessId = ${terminalPid}" -ErrorAction SilentlyContinue`,
-    "if (-not $children) { exit 0 }",
-    "$children | Select-Object -ExpandProperty ProcessId",
-  ].join("; ");
-  try {
-    const result = await runProcess(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", command],
-      {
-        timeoutMs: 1_500,
-        allowNonZeroExit: true,
-        maxBufferBytes: 32_768,
-        outputMode: "truncate",
-      },
-    );
-    if (result.code !== 0) {
-      return [];
-    }
-    return parsePidList(result.stdout);
-  } catch {
-    return [];
-  }
-}
-
-async function checkWindowsListeningPorts(processIds: number[]): Promise<number[]> {
-  if (processIds.length === 0) return [];
-  const processFilter = processIds
-    .map((pid) => `$_.OwningProcess -eq ${pid}`)
-    .join(" -or ");
-  const command = [
-    "$connections = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue",
-    `$matching = $connections | Where-Object { ${processFilter} }`,
-    "if (-not $matching) { exit 0 }",
-    "$matching | Select-Object -ExpandProperty LocalPort -Unique",
-  ].join("; ");
-  try {
-    const result = await runProcess(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", command],
-      {
-        timeoutMs: 1_500,
-        allowNonZeroExit: true,
-        maxBufferBytes: 65_536,
-        outputMode: "truncate",
-      },
-    );
-    if (result.code !== 0) {
-      return [];
-    }
-    return parsePortList(result.stdout);
-  } catch {
-    return [];
-  }
-}
-
-async function collectPosixProcessFamilyPids(terminalPid: number): Promise<number[]> {
-  try {
-    const psResult = await runProcess("ps", ["-eo", "pid=,ppid="], {
-      timeoutMs: 1_000,
-      allowNonZeroExit: true,
-      maxBufferBytes: 262_144,
-      outputMode: "truncate",
-    });
-    if (psResult.code !== 0) {
-      return [];
-    }
-
-    const childrenByParentPid = new Map<number, number[]>();
-    for (const line of psResult.stdout.split(/\r?\n/g)) {
-      const [pidRaw, ppidRaw] = line.trim().split(/\s+/g);
-      const pid = Number(pidRaw);
-      const ppid = Number(ppidRaw);
-      if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
-      const children = childrenByParentPid.get(ppid);
-      if (children) {
-        children.push(pid);
-      } else {
-        childrenByParentPid.set(ppid, [pid]);
-      }
-    }
-
-    const processFamily = new Set<number>([terminalPid]);
-    const pendingParents = [terminalPid];
-    while (pendingParents.length > 0) {
-      const parentPid = pendingParents.shift();
-      if (!parentPid) continue;
-      const childPids = childrenByParentPid.get(parentPid);
-      if (!childPids || childPids.length === 0) continue;
-      for (const childPid of childPids) {
-        if (processFamily.has(childPid)) continue;
-        processFamily.add(childPid);
-        pendingParents.push(childPid);
-      }
-    }
-
-    return [...processFamily];
-  } catch {
-    return [];
-  }
-}
-
-async function checkPosixListeningPorts(processIds: number[]): Promise<number[]> {
-  if (processIds.length === 0) return [];
-
-  const ports = new Set<number>();
-  const pidFilter = new Set(processIds);
-
-  try {
-    const result = await runProcess(
-      "lsof",
-      ["-nP", "-a", "-iTCP", "-sTCP:LISTEN", "-p", processIds.join(",")],
-      {
-        timeoutMs: 1_500,
-        allowNonZeroExit: true,
-        maxBufferBytes: 262_144,
-        outputMode: "truncate",
-      },
-    );
-    if (result.code === 0) {
-      for (const line of result.stdout.split(/\r?\n/g)) {
-        const match = line.match(/:(\d+)\s+\(LISTEN\)$/);
-        if (!match?.[1]) continue;
-        const port = Number(match[1]);
-        if (Number.isInteger(port) && port > 0 && port <= MAX_PORT_NUMBER) {
-          ports.add(port);
-        }
-      }
-      return [...ports].toSorted((left, right) => left - right);
-    }
-  } catch {
-    // Fall back to ss if lsof is unavailable.
-  }
-
-  try {
-    const result = await runProcess("ss", ["-ltnp"], {
-      timeoutMs: 1_500,
-      allowNonZeroExit: true,
-      maxBufferBytes: 524_288,
-      outputMode: "truncate",
-    });
-    if (result.code !== 0) {
-      return [];
-    }
-
-    for (const line of result.stdout.split(/\r?\n/g)) {
-      if (!line.includes("pid=")) continue;
-      const localAddress = line.trim().split(/\s+/g)[3];
-      if (!localAddress) continue;
-      const port = portFromAddress(localAddress);
-      if (port === null) continue;
-
-      const pidMatches = [...line.matchAll(/pid=(\d+)/g)];
-      if (pidMatches.length === 0) continue;
-      if (
-        pidMatches.some((match) => {
-          const pid = Number(match[1]);
-          return Number.isInteger(pid) && pidFilter.has(pid);
-        })
-      ) {
-        ports.add(port);
-      }
-    }
-    return [...ports].toSorted((left, right) => left - right);
-  } catch {
-    return [];
-  }
-}
-
-async function defaultSubprocessInspector(
-  terminalPid: number,
-): Promise<TerminalSubprocessActivity> {
-  if (!Number.isInteger(terminalPid) || terminalPid <= 0) {
-    return { hasRunningSubprocess: false, runningPorts: [] };
-  }
-
-  if (process.platform === "win32") {
-    const childPids = await collectWindowsChildPids(terminalPid);
-    if (childPids.length === 0) {
-      return { hasRunningSubprocess: false, runningPorts: [] };
-    }
-    const runningPorts = await checkWindowsListeningPorts(childPids);
-    return { hasRunningSubprocess: true, runningPorts };
-  }
-
-  const processFamilyPids = await collectPosixProcessFamilyPids(terminalPid);
-  const subprocessPids = processFamilyPids.filter((pid) => pid !== terminalPid);
-  if (subprocessPids.length === 0) {
-    return { hasRunningSubprocess: false, runningPorts: [] };
-  }
-
-  const runningPorts = await checkPosixListeningPorts(subprocessPids);
-  return { hasRunningSubprocess: true, runningPorts };
-}
-
-interface WebProbeResult {
-  status: number;
-  contentType: string;
-  body: string;
-  location: string;
-}
-
-function normalizeHeaderValue(value: string | string[] | undefined): string {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value[0] ?? "";
-  return "";
-}
-
-function isLikelyWebProbe(result: WebProbeResult | null): boolean {
-  if (!result) return false;
-  if (result.status === 404) return false;
-  if (result.status >= 300 && result.status < 400 && result.location.length > 0) {
-    return true;
-  }
-  const contentType = result.contentType.toLowerCase();
-  if (contentType.includes("text/html") || contentType.includes("application/xhtml+xml")) {
-    return true;
-  }
-  const body = result.body.toLowerCase();
-  return (
-    body.includes("<!doctype") ||
-    body.includes("<html") ||
-    body.includes("<head")
-  );
-}
-
-async function probeWebPortOnHost(
-  port: number,
-  host: string,
-): Promise<WebProbeResult | null> {
-  return new Promise((resolve) => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let settled = false;
-    const settle = (result: WebProbeResult | null) => {
-      if (settled) return;
-      settled = true;
-      if (timer) {
-        clearTimeout(timer);
-      }
-      resolve(result);
-    };
-
-    const req = httpRequest(
-      {
-        host,
-        port,
-        method: "GET",
-        path: "/",
-        timeout: DEFAULT_WEB_PORT_PROBE_TIMEOUT_MS,
-      },
-      (res) => {
-        const chunks: string[] = [];
-        let received = 0;
-        res.setEncoding("utf8");
-        res.on("data", (chunk: string) => {
-          if (received >= WEB_PORT_PROBE_MAX_BODY_BYTES) return;
-          const remaining = WEB_PORT_PROBE_MAX_BODY_BYTES - received;
-          const fragment = chunk.slice(0, remaining);
-          received += fragment.length;
-          chunks.push(fragment);
-          if (received >= WEB_PORT_PROBE_MAX_BODY_BYTES) {
-            res.destroy();
-          }
-        });
-        res.on("end", () => {
-          settle({
-            status: res.statusCode ?? 0,
-            contentType: normalizeHeaderValue(res.headers["content-type"]),
-            location: normalizeHeaderValue(res.headers.location),
-            body: chunks.join(""),
-          });
-        });
-        res.on("error", () => {
-          settle(null);
-        });
-      },
-    );
-
-    req.on("timeout", () => {
-      req.destroy();
-      settle(null);
-    });
-    req.on("error", () => {
-      settle(null);
-    });
-
-    timer = setTimeout(() => {
-      req.destroy();
-      settle(null);
-    }, DEFAULT_WEB_PORT_PROBE_TIMEOUT_MS + 50);
-
-    req.end();
-  });
-}
-
-async function defaultWebPortInspector(port: number): Promise<boolean> {
-  const ipv4Result = await probeWebPortOnHost(port, "127.0.0.1");
-  if (isLikelyWebProbe(ipv4Result)) {
-    return true;
-  }
-  const ipv6Result = await probeWebPortOnHost(port, "::1");
-  return isLikelyWebProbe(ipv6Result);
-}
-
 function capHistory(history: string, maxLines: number): string {
   if (history.length === 0) return history;
   const hasTrailingNewline = history.endsWith("\n");
@@ -581,10 +220,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     this.subprocessInspector =
       options.subprocessInspector ??
       (options.subprocessChecker
-        ? async (terminalPid: number) => ({
-            hasRunningSubprocess: await options.subprocessChecker!(terminalPid),
-            runningPorts: [],
-          })
+        ? subprocessCheckerToInspector(options.subprocessChecker)
         : defaultSubprocessInspector);
     this.webPortInspector = options.webPortInspector ?? defaultWebPortInspector;
     this.webPortProbeCacheTtlMs =
