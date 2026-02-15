@@ -125,7 +125,6 @@ function compile(bindings: TestBinding[]): ResolvedKeybindingsConfig {
     }
     if (binding.whenAst) {
       resolved.push({
-        key: binding.key.trim(),
         command: binding.command,
         shortcut: parsedShortcut,
         whenAst: binding.whenAst,
@@ -133,7 +132,6 @@ function compile(bindings: TestBinding[]): ResolvedKeybindingsConfig {
       continue;
     }
     resolved.push({
-      key: binding.key.trim(),
       command: binding.command,
       shortcut: parsedShortcut,
     });

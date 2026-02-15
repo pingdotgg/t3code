@@ -30,9 +30,7 @@ describe("server keybindings", () => {
     });
 
     assert.deepEqual(compiled, {
-      key: "mod+d",
       command: "terminal.split",
-      when: "terminalOpen && !terminalFocus",
       shortcut: {
         key: "d",
         metaKey: false,

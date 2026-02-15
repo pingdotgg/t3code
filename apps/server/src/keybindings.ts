@@ -216,16 +216,13 @@ export function compileResolvedKeybindingRule(
     const whenAst = parseKeybindingWhenExpression(when);
     if (!whenAst) return null;
     return {
-      key,
       command: rule.command,
-      when,
       shortcut,
       whenAst,
     };
   }
 
   return {
-    key,
     command: rule.command,
     shortcut,
   };

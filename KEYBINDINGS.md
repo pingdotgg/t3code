@@ -97,7 +97,13 @@ If you define any rules for a command, the default rule for that command is remo
 
 ## Server-Resolved Payload
 
-`~/.t3/keybindings.json` is parsed and compiled on the server. The web client receives resolved rules (including parsed shortcut/when fields) and does not parse raw keybinding strings.
+`~/.t3/keybindings.json` is parsed and compiled on the server. The web client receives resolved rules and does not parse raw keybinding strings.
+
+Resolved rule payload fields:
+
+- `command`
+- `shortcut`
+- `whenAst` (optional)
 
 See:
 

@@ -58,9 +58,7 @@ export const keybindingWhenNodeSchema: z.ZodType<KeybindingWhenNode> = z.lazy(()
 );
 
 export const resolvedKeybindingRuleSchema = z.object({
-  key: keybindingValueSchema,
   command: keybindingCommandSchema,
-  when: keybindingWhenSchema.optional(),
   shortcut: keybindingShortcutSchema,
   whenAst: keybindingWhenNodeSchema.optional(),
 });

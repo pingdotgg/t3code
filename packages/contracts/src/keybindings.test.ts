@@ -37,9 +37,7 @@ describe("keybindings contracts", () => {
 
   it("parses resolved keybinding rules", () => {
     const parsed = resolvedKeybindingRuleSchema.parse({
-      key: "mod+d",
       command: "terminal.split",
-      when: "terminalOpen && !terminalFocus",
       shortcut: {
         key: "d",
         metaKey: false,
