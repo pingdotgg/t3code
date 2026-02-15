@@ -31,6 +31,7 @@ import type {
   ProjectListResult,
   ProjectRemoveInput,
 } from "./project";
+import type { ServerConfig } from "./server";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -112,5 +113,8 @@ export interface NativeApi {
       items: readonly { id: T; label: string }[],
       position?: { x: number; y: number },
     ) => Promise<T | null>;
+  };
+  server: {
+    getConfig: () => Promise<ServerConfig>;
   };
 }

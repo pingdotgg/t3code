@@ -1,10 +1,12 @@
 import {
+  EDITORS,
+  type EditorId,
+  ModelSlug,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
-  type ProviderSendTurnAttachmentInput,
   type ProviderApprovalDecision,
-  ModelSlug,
+  type ProviderSendTurnAttachmentInput,
 } from "@t3tools/contracts";
 import {
   type ClipboardEvent,
@@ -25,7 +27,6 @@ import {
   gitCreateWorktreeMutationOptions,
 } from "~/lib/gitReactQuery";
 
-import { EDITORS, type EditorId } from "@t3tools/contracts";
 import { isElectron } from "../env";
 import { buildBootstrapInput } from "../historyBootstrap";
 import {
@@ -50,7 +51,14 @@ import { useStore } from "../store";
 import type { ChatImageAttachment } from "../types";
 import BranchToolbar from "./BranchToolbar";
 import GitActionsControl from "./GitActionsControl";
-import { isTerminalToggleShortcut } from "../terminal-shortcuts";
+import {
+  DEFAULT_TERMINAL_KEYBINDINGS,
+  isTerminalNewShortcut,
+  isTerminalSplitShortcut,
+  isTerminalToggleShortcut,
+  resolveTerminalKeybindings,
+  shortcutLabelForCommand,
+} from "../terminal-shortcuts";
 import ChatMarkdown from "./ChatMarkdown";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { useNativeApi } from "../hooks/useNativeApi";
@@ -144,6 +152,7 @@ export default function ChatView() {
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
+  const [terminalKeybindings, setTerminalKeybindings] = useState(DEFAULT_TERMINAL_KEYBINDINGS);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
@@ -256,12 +265,45 @@ export default function ChatView() {
   const branchesQuery = useQuery(gitBranchesQueryOptions(api, gitCwd));
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = branchesQuery.data?.isRepo ?? true;
+  const splitTerminalShortcutLabel = useMemo(
+    () => shortcutLabelForCommand(terminalKeybindings, "terminal.split"),
+    [terminalKeybindings],
+  );
+  const newTerminalShortcutLabel = useMemo(
+    () => shortcutLabelForCommand(terminalKeybindings, "terminal.new"),
+    [terminalKeybindings],
+  );
 
   const envLocked = Boolean(
     activeThread &&
     (activeThread.messages.length > 0 ||
       (activeThread.session !== null && activeThread.session.status !== "closed")),
   );
+
+  useEffect(() => {
+    if (!api || !api.server || typeof api.server.getConfig !== "function") {
+      setTerminalKeybindings(DEFAULT_TERMINAL_KEYBINDINGS);
+      return;
+    }
+
+    let disposed = false;
+
+    void api.server
+      .getConfig()
+      .then((config) => {
+        if (disposed) return;
+        setTerminalKeybindings(resolveTerminalKeybindings(config.keybindings));
+      })
+      .catch(() => {
+        if (disposed) return;
+        setTerminalKeybindings(DEFAULT_TERMINAL_KEYBINDINGS);
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [api]);
+
   const revokePreviewUrls = useCallback((images: Array<{ previewUrl?: string }>) => {
     for (const image of images) {
       if (!image.previewUrl) continue;
@@ -490,15 +532,64 @@ export default function ChatView() {
   }, [activeThread?.terminalOpen, activeThreadId, focusComposer]);
 
   useEffect(() => {
+    const isTerminalFocused = (): boolean => {
+      const activeElement = document.activeElement;
+      if (!(activeElement instanceof HTMLElement)) return false;
+      if (activeElement.classList.contains("xterm-helper-textarea")) return true;
+      return activeElement.closest(".thread-terminal-drawer .xterm") !== null;
+    };
+
     const handler = (event: globalThis.KeyboardEvent) => {
-      if (!activeThreadId) return;
-      if (!isTerminalToggleShortcut(event)) return;
+      if (!activeThreadId || event.defaultPrevented) return;
+      const shortcutContext = {
+        terminalFocus: isTerminalFocused(),
+        terminalOpen: Boolean(activeThread?.terminalOpen),
+      };
+
+      if (isTerminalToggleShortcut(event, terminalKeybindings, { context: shortcutContext })) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleTerminalVisibility();
+        return;
+      }
+
+      if (isTerminalSplitShortcut(event, terminalKeybindings, { context: shortcutContext })) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!activeThread?.terminalOpen) {
+          dispatch({
+            type: "SET_THREAD_TERMINAL_OPEN",
+            threadId: activeThreadId,
+            open: true,
+          });
+        }
+        splitTerminal();
+        return;
+      }
+
+      if (!isTerminalNewShortcut(event, terminalKeybindings, { context: shortcutContext })) return;
       event.preventDefault();
-      toggleTerminalVisibility();
+      event.stopPropagation();
+      if (!activeThread?.terminalOpen) {
+        dispatch({
+          type: "SET_THREAD_TERMINAL_OPEN",
+          threadId: activeThreadId,
+          open: true,
+        });
+      }
+      createNewTerminal();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeThreadId, toggleTerminalVisibility]);
+  }, [
+    activeThread?.terminalOpen,
+    activeThreadId,
+    createNewTerminal,
+    dispatch,
+    splitTerminal,
+    terminalKeybindings,
+    toggleTerminalVisibility,
+  ]);
 
   const setThreadError = (threadId: string | null, error: string | null) => {
     if (!threadId) return;
@@ -1350,6 +1441,8 @@ export default function ChatView() {
           focusRequestId={terminalFocusRequestId}
           onSplitTerminal={splitTerminal}
           onNewTerminal={createNewTerminal}
+          splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+          newShortcutLabel={newTerminalShortcutLabel ?? undefined}
           onActiveTerminalChange={activateTerminal}
           onCloseTerminal={closeTerminal}
           onHeightChange={(height) =>

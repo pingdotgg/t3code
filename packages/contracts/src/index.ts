@@ -5,5 +5,6 @@ export * from "./terminal";
 export * from "./provider";
 export * from "./model";
 export * from "./ws";
+export * from "./server";
 export * from "./project";
 export * from "./git";

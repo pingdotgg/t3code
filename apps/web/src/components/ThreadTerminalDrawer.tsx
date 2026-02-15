@@ -416,6 +416,8 @@ interface ThreadTerminalDrawerProps {
   focusRequestId: number;
   onSplitTerminal: () => void;
   onNewTerminal: () => void;
+  splitShortcutLabel?: string | undefined;
+  newShortcutLabel?: string | undefined;
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
   onHeightChange: (height: number) => void;
@@ -468,6 +470,8 @@ export default function ThreadTerminalDrawer({
   focusRequestId,
   onSplitTerminal,
   onNewTerminal,
+  splitShortcutLabel,
+  newShortcutLabel,
   onActiveTerminalChange,
   onCloseTerminal,
   onHeightChange,
@@ -694,7 +698,7 @@ export default function ThreadTerminalDrawer({
             <TerminalActionButton
               className="p-1 text-foreground/90 transition-colors hover:bg-accent"
               onClick={onSplitTerminal}
-              label="Split Terminal"
+              label={splitShortcutLabel ? `Split Terminal (${splitShortcutLabel})` : "Split Terminal"}
             >
               <SquareSplitHorizontal className="size-3.25" />
             </TerminalActionButton>
@@ -702,7 +706,7 @@ export default function ThreadTerminalDrawer({
             <TerminalActionButton
               className="p-1 text-foreground/90 transition-colors hover:bg-accent"
               onClick={onNewTerminal}
-              label="New Terminal"
+              label={newShortcutLabel ? `New Terminal (${newShortcutLabel})` : "New Terminal"}
             >
               <Plus className="size-3.25" />
             </TerminalActionButton>
@@ -779,14 +783,20 @@ export default function ThreadTerminalDrawer({
                   <TerminalActionButton
                     className="inline-flex h-full items-center px-1 text-foreground/90 transition-colors hover:bg-accent/70"
                     onClick={onSplitTerminal}
-                    label="Split Terminal"
+                    label={
+                      splitShortcutLabel
+                        ? `Split Terminal (${splitShortcutLabel})`
+                        : "Split Terminal"
+                    }
                   >
                     <SquareSplitHorizontal className="size-3.25" />
                   </TerminalActionButton>
                   <TerminalActionButton
                     className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
                     onClick={onNewTerminal}
-                    label="New Terminal"
+                    label={
+                      newShortcutLabel ? `New Terminal (${newShortcutLabel})` : "New Terminal"
+                    }
                   >
                     <Plus className="size-3.25" />
                   </TerminalActionButton>

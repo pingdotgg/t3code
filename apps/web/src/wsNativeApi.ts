@@ -139,6 +139,9 @@ export function createWsNativeApi(): NativeApi {
         return showContextMenuFallback(items, position);
       },
     },
+    server: {
+      getConfig: () => transport.request(WS_METHODS.serverGetConfig),
+    },
   };
 
   instance = { api, transport };

@@ -9,6 +9,8 @@ import {
   EDITORS,
   WS_CHANNELS,
   WS_METHODS,
+  keybindingRuleSchema,
+  type KeybindingsConfig,
   type TerminalEvent,
   type WsPush,
   type WsRequest,
@@ -66,6 +68,55 @@ function parseBooleanEnv(value: string | undefined): boolean | undefined {
   if (["1", "true", "yes", "on"].includes(normalized)) return true;
   if (["0", "false", "no", "off"].includes(normalized)) return false;
   return undefined;
+}
+
+function readKeybindingsConfig(logger: ReturnType<typeof createLogger>): KeybindingsConfig {
+  const configPath = path.join(os.homedir(), ".t3", "keybindings.json");
+  try {
+    const raw = fs.readFileSync(configPath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      logger.warn("ignoring keybindings config with unsupported format; expected array", {
+        path: configPath,
+      });
+      return [];
+    }
+
+    const sanitized: KeybindingsConfig = [];
+    let invalidEntries = 0;
+    for (const entry of parsed) {
+      const result = keybindingRuleSchema.safeParse(entry);
+      if (result.success) {
+        sanitized.push(result.data);
+        if (sanitized.length >= 256) {
+          logger.warn("truncating keybindings config to max entries", {
+            path: configPath,
+            maxEntries: 256,
+          });
+          break;
+        }
+        continue;
+      }
+      invalidEntries += 1;
+    }
+    if (invalidEntries > 0) {
+      logger.warn("ignoring invalid keybinding entries", {
+        path: configPath,
+        invalidEntries,
+        totalEntries: parsed.length,
+      });
+    }
+    return sanitized;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return [];
+    }
+    logger.warn("ignoring malformed keybindings config", {
+      path: configPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return [];
 }
 
 export function createServer(options: ServerOptions) {
@@ -410,7 +461,10 @@ export function createServer(options: ServerOptions) {
         return undefined;
 
       case WS_METHODS.serverGetConfig:
-        return { cwd };
+        return {
+          cwd,
+          keybindings: readKeybindingsConfig(logger),
+        };
 
       default:
         throw new Error(`Unknown method: ${request.method}`);
