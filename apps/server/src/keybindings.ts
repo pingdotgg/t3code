@@ -27,7 +27,7 @@ type WhenToken =
 export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+j", command: "terminal.toggle" },
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
-  { key: "mod+shift+d", command: "terminal.new", when: "terminalFocus" },
+  { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
   { key: "mod+shift+o", command: "chat.new" },
   { key: "mod+o", command: "editor.openFavorite" },
 ];
@@ -39,7 +39,10 @@ function normalizeKeyToken(token: string): string {
 }
 
 export function parseKeybindingShortcut(value: string): KeybindingShortcut | null {
-  const rawTokens = value.toLowerCase().split("+").map((token) => token.trim());
+  const rawTokens = value
+    .toLowerCase()
+    .split("+")
+    .map((token) => token.trim());
   const tokens = [...rawTokens];
   let trailingEmptyCount = 0;
   while (tokens[tokens.length - 1] === "") {
@@ -220,9 +223,7 @@ export function parseKeybindingWhenExpression(expression: string): KeybindingWhe
   return ast;
 }
 
-export function compileResolvedKeybindingRule(
-  rule: KeybindingRule,
-): ResolvedKeybindingRule | null {
+export function compileResolvedKeybindingRule(rule: KeybindingRule): ResolvedKeybindingRule | null {
   const key = rule.key.trim();
   if (key.length === 0) return null;
   const shortcut = parseKeybindingShortcut(key);
@@ -271,9 +272,7 @@ function compileDefaultKeybindings(): ResolvedKeybindingsConfig {
 
 const DEFAULT_RESOLVED_KEYBINDINGS = compileDefaultKeybindings();
 
-function mergeWithDefaultKeybindings(
-  custom: ResolvedKeybindingsConfig,
-): ResolvedKeybindingsConfig {
+function mergeWithDefaultKeybindings(custom: ResolvedKeybindingsConfig): ResolvedKeybindingsConfig {
   if (custom.length === 0) {
     return [...DEFAULT_RESOLVED_KEYBINDINGS];
   }

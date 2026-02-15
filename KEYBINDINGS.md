@@ -21,7 +21,7 @@ See the full schema for more details: [`packages/contracts/src/keybindings.ts`](
 [
   { "key": "mod+j", "command": "terminal.toggle" },
   { "key": "mod+d", "command": "terminal.split", "when": "terminalFocus" },
-  { "key": "mod+shift+d", "command": "terminal.new", "when": "terminalFocus" },
+  { "key": "mod+n", "command": "terminal.new", "when": "terminalFocus" },
   { "key": "mod+shift+o", "command": "chat.new" },
   { "key": "mod+o", "command": "editor.openFavorite" }
 ]

@@ -351,7 +351,7 @@ describe("WebSocket Server", () => {
       JSON.stringify([
         { key: "cmd+j", command: "terminal.toggle" },
         { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
-        { key: "mod+shift+d", command: "terminal.new", when: "terminalFocus" },
+        { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
       ]),
       "utf8",
     );
@@ -374,7 +374,7 @@ describe("WebSocket Server", () => {
       keybindings: mergeWithDefaultsForTest([
         { key: "cmd+j", command: "terminal.toggle" },
         { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
-        { key: "mod+shift+d", command: "terminal.new", when: "terminalFocus" },
+        { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
       ]),
     });
   });
@@ -408,9 +408,7 @@ describe("WebSocket Server", () => {
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual({
       cwd: "/my/workspace",
-      keybindings: mergeWithDefaultsForTest([
-        { key: "mod+j", command: "terminal.toggle" },
-      ]),
+      keybindings: mergeWithDefaultsForTest([{ key: "mod+j", command: "terminal.toggle" }]),
     });
     expect(
       warnSpy.mock.calls.some(([message]) =>
@@ -479,9 +477,7 @@ describe("WebSocket Server", () => {
     expect(firstResponse.error).toBeUndefined();
     expect(firstResponse.result).toEqual({
       cwd: "/my/workspace",
-      keybindings: mergeWithDefaultsForTest([
-        { key: "cmd+j", command: "terminal.toggle" },
-      ]),
+      keybindings: mergeWithDefaultsForTest([{ key: "cmd+j", command: "terminal.toggle" }]),
     });
 
     fs.writeFileSync(
