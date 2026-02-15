@@ -298,6 +298,11 @@ export default function ChatView() {
     const cursor = textarea.value.length;
     textarea.setSelectionRange(cursor, cursor);
   }, []);
+  const scheduleComposerFocus = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      focusComposer();
+    });
+  }, [focusComposer]);
   const toggleTerminalVisibility = useCallback(() => {
     if (!activeThreadId) return;
     dispatch({
@@ -369,6 +374,7 @@ export default function ChatView() {
   const handleRuntimeModeChange = async (mode: "approval-required" | "full-access") => {
     if (mode === state.runtimeMode) return;
     dispatch({ type: "SET_RUNTIME_MODE", mode });
+    scheduleComposerFocus();
     if (!api) return;
 
     const sessionIds = state.threads
@@ -898,7 +904,19 @@ export default function ChatView() {
       threadId: activeThread.id,
       model: resolveModelSlug(model),
     });
+    scheduleComposerFocus();
   };
+  const onEffortSelect = (effort: ReasoningEffort) => {
+    setSelectedEffort(effort);
+    scheduleComposerFocus();
+  };
+  const onEnvModeChange = useCallback(
+    (mode: "local" | "worktree") => {
+      setEnvMode(mode);
+      scheduleComposerFocus();
+    },
+    [scheduleComposerFocus],
+  );
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1302,7 +1320,7 @@ export default function ChatView() {
                 <Separator orientation="vertical" className="mx-0.5 h-4" />
 
                 {/* Reasoning effort */}
-                <ReasoningEffortPicker effort={selectedEffort} onEffortChange={setSelectedEffort} />
+                <ReasoningEffortPicker effort={selectedEffort} onEffortChange={onEffortSelect} />
 
                 {/* Divider */}
                 <Separator orientation="vertical" className="mx-0.5 h-4" />
@@ -1405,7 +1423,12 @@ export default function ChatView() {
       </div>
 
       {isGitRepo && (
-        <BranchToolbar envMode={envMode} onEnvModeChange={setEnvMode} envLocked={envLocked} />
+        <BranchToolbar
+          envMode={envMode}
+          onEnvModeChange={onEnvModeChange}
+          envLocked={envLocked}
+          onComposerFocusRequest={scheduleComposerFocus}
+        />
       )}
 
       {activeThread.terminalOpen && api && activeProject && (

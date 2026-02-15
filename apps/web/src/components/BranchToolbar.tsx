@@ -25,9 +25,15 @@ interface BranchToolbarProps {
   envMode: "local" | "worktree";
   onEnvModeChange: (mode: "local" | "worktree") => void;
   envLocked: boolean;
+  onComposerFocusRequest?: () => void;
 }
 
-export default function BranchToolbar({ envMode, onEnvModeChange, envLocked }: BranchToolbarProps) {
+export default function BranchToolbar({
+  envMode,
+  onEnvModeChange,
+  envLocked,
+  onComposerFocusRequest,
+}: BranchToolbarProps) {
   const { state, dispatch } = useStore();
   const api = useNativeApi();
   const queryClient = useQueryClient();
@@ -123,6 +129,7 @@ export default function BranchToolbar({ envMode, onEnvModeChange, envLocked }: B
       setThreadError(null);
       setThreadBranch(branch.name, null);
       setIsBranchMenuOpen(false);
+      onComposerFocusRequest?.();
       return;
     }
 
@@ -135,6 +142,7 @@ export default function BranchToolbar({ envMode, onEnvModeChange, envLocked }: B
       // Secondary worktree → point the thread at that worktree path.
       setThreadBranch(branch.name, isMainWorktree ? null : branch.worktreePath);
       setIsBranchMenuOpen(false);
+      onComposerFocusRequest?.();
       return;
     }
 
@@ -143,6 +151,7 @@ export default function BranchToolbar({ envMode, onEnvModeChange, envLocked }: B
         setThreadError(null);
         setThreadBranch(branch.name, activeWorktreePath);
         setIsBranchMenuOpen(false);
+        onComposerFocusRequest?.();
       },
     });
   };
@@ -156,6 +165,7 @@ export default function BranchToolbar({ envMode, onEnvModeChange, envLocked }: B
         setThreadBranch(name, activeWorktreePath);
         setBranchQuery("");
         setIsBranchMenuOpen(false);
+        onComposerFocusRequest?.();
       },
     });
   };
