@@ -43,6 +43,28 @@ function truncateText(
   return `${value.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
+export function buildGitActionProgressStages(input: {
+  action: GitStackedAction;
+  hasCustomCommitMessage: boolean;
+  hasWorkingTreeChanges: boolean;
+  forcePushOnly?: boolean;
+}): string[] {
+  const shouldIncludeCommitStages =
+    !input.forcePushOnly && (input.action === "commit" || input.hasWorkingTreeChanges);
+  const commitStages = !shouldIncludeCommitStages
+    ? []
+    : input.hasCustomCommitMessage
+      ? ["Committing..."]
+      : ["Generating commit message...", "Committing..."];
+  if (input.action === "commit") {
+    return commitStages;
+  }
+  if (input.action === "commit_push") {
+    return [...commitStages, "Pushing..."];
+  }
+  return [...commitStages, "Pushing...", "Creating PR..."];
+}
+
 export function summarizeGitResult(result: GitRunStackedActionResult): {
   title: string;
   description?: string;

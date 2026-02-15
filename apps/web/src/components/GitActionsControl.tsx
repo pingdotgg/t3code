@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
 import { GitHubIcon } from "./Icons";
 import {
+  buildGitActionProgressStages,
   buildMenuItems,
   type GitActionIconName,
   type GitActionMenuItem,
@@ -134,26 +135,6 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   return <InfoIcon className={iconClassName} />;
 }
 
-function buildGitActionProgressStages(input: {
-  action: GitStackedAction;
-  hasCustomCommitMessage: boolean;
-  hasWorkingTreeChanges: boolean;
-}): string[] {
-  const shouldIncludeCommitStages = input.action === "commit" || input.hasWorkingTreeChanges;
-  const commitStages = !shouldIncludeCommitStages
-    ? []
-    : input.hasCustomCommitMessage
-      ? ["Committing..."]
-      : ["Generating commit message...", "Committing..."];
-  if (input.action === "commit") {
-    return commitStages;
-  }
-  if (input.action === "commit_push") {
-    return [...commitStages, "Pushing..."];
-  }
-  return [...commitStages, "Pushing...", "Creating PR..."];
-}
-
 export default function GitActionsControl({ api, gitCwd }: GitActionsControlProps) {
   const queryClient = useQueryClient();
   const [activeDialogAction, setActiveDialogAction] = useState<GitDialogAction | null>(null);
@@ -230,7 +211,15 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
   }, [api, gitStatus?.openPr?.url]);
 
   const runGitActionWithToast = useCallback(
-    async ({ action, commitMessage }: { action: GitStackedAction; commitMessage?: string }) => {
+    async ({
+      action,
+      commitMessage,
+      forcePushOnlyProgress = false,
+    }: {
+      action: GitStackedAction;
+      commitMessage?: string;
+      forcePushOnlyProgress?: boolean;
+    }) => {
       const confirmed = await maybeConfirmPushToDefaultBranch(action);
       if (!confirmed) return;
 
@@ -238,6 +227,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
         action,
         hasCustomCommitMessage: !!commitMessage?.trim(),
         hasWorkingTreeChanges: !!gitStatus?.hasWorkingTreeChanges,
+        forcePushOnly: forcePushOnlyProgress,
       });
       const progressToastId = toastManager.add({
         type: "loading",
@@ -290,7 +280,10 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
                   children: "Push",
                   onClick: () => {
                     closeResultToast();
-                    void runGitActionWithToast({ action: "commit_push" });
+                    void runGitActionWithToast({
+                      action: "commit_push",
+                      forcePushOnlyProgress: true,
+                    });
                   },
                 },
               }
@@ -381,7 +374,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
         return;
       }
       if (item.dialogAction === "push") {
-        void runGitActionWithToast({ action: "commit_push" });
+        void runGitActionWithToast({ action: "commit_push", forcePushOnlyProgress: true });
         return;
       }
       if (item.dialogAction) {
@@ -400,10 +393,12 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
           ? "commit_push"
           : "commit_push_pr";
     const commitMessage = activeDialogAction === "commit" ? dialogCommitMessage.trim() : "";
+    const forcePushOnlyProgress = activeDialogAction === "push";
     setActiveDialogAction(null);
     void runGitActionWithToast({
       action,
       ...(commitMessage ? { commitMessage } : {}),
+      ...(forcePushOnlyProgress ? { forcePushOnlyProgress } : {}),
     });
   }, [activeDialogAction, dialogCommitMessage, runGitActionWithToast]);
 

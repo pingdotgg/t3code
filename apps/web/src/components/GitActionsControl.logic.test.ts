@@ -1,6 +1,7 @@
 import type { GitStatusResult } from "@t3tools/contracts";
 import { assert, describe, it } from "vitest";
 import {
+  buildGitActionProgressStages,
   buildMenuItems,
   requiresDefaultBranchConfirmation,
   resolveQuickAction,
@@ -593,6 +594,27 @@ describe("requiresDefaultBranchConfirmation", () => {
     assert.isTrue(requiresDefaultBranchConfirmation("commit_push", true));
     assert.isTrue(requiresDefaultBranchConfirmation("commit_push_pr", true));
     assert.isFalse(requiresDefaultBranchConfirmation("commit_push", false));
+  });
+});
+
+describe("buildGitActionProgressStages", () => {
+  it("shows only push progress when push-only is forced", () => {
+    const stages = buildGitActionProgressStages({
+      action: "commit_push",
+      hasCustomCommitMessage: false,
+      hasWorkingTreeChanges: true,
+      forcePushOnly: true,
+    });
+    assert.deepEqual(stages, ["Pushing..."]);
+  });
+
+  it("includes commit stages for commit+push when working tree is dirty", () => {
+    const stages = buildGitActionProgressStages({
+      action: "commit_push",
+      hasCustomCommitMessage: false,
+      hasWorkingTreeChanges: true,
+    });
+    assert.deepEqual(stages, ["Generating commit message...", "Committing...", "Pushing..."]);
   });
 });
 
