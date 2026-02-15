@@ -574,10 +574,7 @@ export class GitCoreService {
       return;
     }
 
-    await executeGit(cwd, ["fetch", "--quiet", "--no-tags", remoteName], {
-      timeoutMs: 20_000,
-      allowNonZeroExit: true,
-    });
+    await this.git(cwd, ["fetch", "--quiet", "--no-tags", remoteName], true);
   }
 
   async checkoutBranch(input: GitCheckoutInput): Promise<void> {
@@ -585,7 +582,11 @@ export class GitCoreService {
       timeoutMs: 10_000,
       fallbackErrorMessage: "git checkout failed",
     });
-    await this.refreshCheckedOutBranchUpstream(input.cwd);
+    try {
+      await this.refreshCheckedOutBranchUpstream(input.cwd);
+    } catch {
+      // Best effort: checkout already succeeded, so avoid surfacing refresh failures.
+    }
   }
 
   async initRepo(input: GitInitInput): Promise<void> {

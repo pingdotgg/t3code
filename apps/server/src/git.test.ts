@@ -279,6 +279,51 @@ describe("git integration", () => {
       expect(details.behindCount).toBe(1);
     });
 
+    it("keeps checkout successful when upstream refresh fails", async () => {
+      await using remote = await makeTmpDir();
+      await using source = await makeTmpDir();
+      await git(remote.path, "init --bare");
+
+      await initRepoWithCommit(source.path);
+      const defaultBranch = (await listGitBranches({ cwd: source.path })).branches.find(
+        (branch) => branch.current,
+      )!.name;
+      await git(source.path, `remote add origin ${JSON.stringify(remote.path)}`);
+      await git(source.path, `push -u origin ${defaultBranch}`);
+
+      const featureBranch = "feature-refresh-failure";
+      await git(source.path, `branch ${featureBranch}`);
+      await git(source.path, `checkout ${featureBranch}`);
+      await writeFile(path.join(source.path, "feature.txt"), "feature base\n");
+      await git(source.path, "add feature.txt");
+      await git(source.path, "commit -m 'feature base'");
+      await git(source.path, `push -u origin ${featureBranch}`);
+      await git(source.path, `checkout ${defaultBranch}`);
+
+      class RefreshFailingGitCoreService extends GitCoreService {
+        refreshFetchAttempts = 0;
+
+        override async git(
+          cwd: string,
+          args: readonly string[],
+          allowNonZeroExit = false,
+        ): Promise<void> {
+          if (args[0] === "fetch") {
+            this.refreshFetchAttempts += 1;
+            throw new Error("simulated fetch timeout");
+          }
+          await super.git(cwd, args, allowNonZeroExit);
+        }
+      }
+
+      const core = new RefreshFailingGitCoreService();
+      await expect(core.checkoutBranch({ cwd: source.path, branch: featureBranch })).resolves.toBe(
+        undefined,
+      );
+      expect(core.refreshFetchAttempts).toBe(1);
+      expect(await git(source.path, "branch --show-current")).toBe(featureBranch);
+    });
+
     it("throws when branch does not exist", async () => {
       await using tmp = await makeTmpDir();
       await initRepoWithCommit(tmp.path);
