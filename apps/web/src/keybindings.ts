@@ -1,4 +1,5 @@
 import type { KeybindingCommand, KeybindingsConfig } from "@t3tools/contracts";
+import { LruCache } from "./lib/lru";
 
 export interface ShortcutEventLike {
   key: string;
@@ -44,8 +45,7 @@ type WhenToken =
   | { type: "lparen" }
   | { type: "rparen" };
 
-const WHEN_AST_CACHE = new Map<string, WhenNode | null>();
-const MAX_WHEN_AST_CACHE_ENTRIES = 512;
+const WHEN_AST_CACHE = new LruCache<string, WhenNode | null>(512);
 
 function isMacPlatform(platform: string): boolean {
   return /mac|iphone|ipad|ipod/i.test(platform);
@@ -290,15 +290,15 @@ function matchesWhenExpression(when: string | undefined, context: ShortcutMatchC
   const normalized = when.trim();
   if (normalized.length === 0) return true;
 
-  if (!WHEN_AST_CACHE.has(normalized)) {
-    if (WHEN_AST_CACHE.size >= MAX_WHEN_AST_CACHE_ENTRIES) {
-      WHEN_AST_CACHE.clear();
-    }
-    WHEN_AST_CACHE.set(normalized, parseWhenExpression(normalized));
+  const cached = WHEN_AST_CACHE.get(normalized);
+  if (cached === undefined) {
+    const parsed = parseWhenExpression(normalized);
+    WHEN_AST_CACHE.set(normalized, parsed);
+    if (!parsed) return false;
+    return evaluateWhenNode(parsed, context);
   }
-  const ast = WHEN_AST_CACHE.get(normalized);
-  if (!ast) return false;
-  return evaluateWhenNode(ast, context);
+  if (!cached) return false;
+  return evaluateWhenNode(cached, context);
 }
 
 function resolvePlatform(options: ShortcutMatchOptions | undefined): string {
