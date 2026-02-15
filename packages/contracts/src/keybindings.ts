@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type { KeybindingWhenNode } from "./keybindingsWhen";
 
 export const keybindingCommandSchema = z.enum([
   "terminal.toggle",
@@ -28,6 +27,12 @@ export const keybindingShortcutSchema = z.object({
   altKey: z.boolean(),
   modKey: z.boolean(),
 });
+
+export type KeybindingWhenNode =
+  | { type: "identifier"; name: string }
+  | { type: "not"; node: KeybindingWhenNode }
+  | { type: "and"; left: KeybindingWhenNode; right: KeybindingWhenNode }
+  | { type: "or"; left: KeybindingWhenNode; right: KeybindingWhenNode };
 
 export const keybindingWhenNodeSchema: z.ZodType<KeybindingWhenNode> = z.lazy(() =>
   z.union([

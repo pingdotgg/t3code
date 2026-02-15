@@ -1,8 +1,8 @@
 import { assert, describe, it } from "vitest";
 
 import {
+  type KeybindingCommand,
   type KeybindingShortcut,
-  type KeybindingsConfig,
   type KeybindingWhenNode,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
@@ -17,14 +17,6 @@ import {
   shortcutLabelForCommand,
   type ShortcutEventLike,
 } from "./keybindings";
-
-type WhenToken =
-  | { type: "identifier"; value: string }
-  | { type: "not" }
-  | { type: "and" }
-  | { type: "or" }
-  | { type: "lparen" }
-  | { type: "rparen" };
 
 function event(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
   return {
@@ -106,144 +98,37 @@ function shortcut(value: string): KeybindingShortcut {
   return parsed;
 }
 
-function tokenizeWhenExpression(expression: string): WhenToken[] | null {
-  const tokens: WhenToken[] = [];
-  let index = 0;
-
-  while (index < expression.length) {
-    const current = expression[index];
-    if (!current) break;
-
-    if (/\s/.test(current)) {
-      index += 1;
-      continue;
-    }
-    if (expression.startsWith("&&", index)) {
-      tokens.push({ type: "and" });
-      index += 2;
-      continue;
-    }
-    if (expression.startsWith("||", index)) {
-      tokens.push({ type: "or" });
-      index += 2;
-      continue;
-    }
-    if (current === "!") {
-      tokens.push({ type: "not" });
-      index += 1;
-      continue;
-    }
-    if (current === "(") {
-      tokens.push({ type: "lparen" });
-      index += 1;
-      continue;
-    }
-    if (current === ")") {
-      tokens.push({ type: "rparen" });
-      index += 1;
-      continue;
-    }
-
-    const identifier = /^[A-Za-z_][A-Za-z0-9_.-]*/.exec(expression.slice(index));
-    if (!identifier) return null;
-    tokens.push({ type: "identifier", value: identifier[0] });
-    index += identifier[0].length;
-  }
-
-  return tokens;
+function whenIdentifier(name: string): KeybindingWhenNode {
+  return { type: "identifier", name };
 }
 
-function parseWhenExpression(expression: string): KeybindingWhenNode | null {
-  const tokens = tokenizeWhenExpression(expression);
-  if (!tokens || tokens.length === 0) return null;
-  let index = 0;
-
-  const parsePrimary = (): KeybindingWhenNode | null => {
-    const token = tokens[index];
-    if (!token) return null;
-
-    if (token.type === "identifier") {
-      index += 1;
-      return { type: "identifier", name: token.value };
-    }
-
-    if (token.type === "lparen") {
-      index += 1;
-      const expressionNode = parseOr();
-      const closeToken = tokens[index];
-      if (!expressionNode || !closeToken || closeToken.type !== "rparen") {
-        return null;
-      }
-      index += 1;
-      return expressionNode;
-    }
-
-    return null;
-  };
-
-  const parseUnary = (): KeybindingWhenNode | null => {
-    const token = tokens[index];
-    if (token?.type === "not") {
-      index += 1;
-      const node = parseUnary();
-      if (!node) return null;
-      return { type: "not", node };
-    }
-    return parsePrimary();
-  };
-
-  const parseAnd = (): KeybindingWhenNode | null => {
-    let left = parseUnary();
-    if (!left) return null;
-
-    while (tokens[index]?.type === "and") {
-      index += 1;
-      const right = parseUnary();
-      if (!right) return null;
-      left = { type: "and", left, right };
-    }
-
-    return left;
-  };
-
-  const parseOr = (): KeybindingWhenNode | null => {
-    let left = parseAnd();
-    if (!left) return null;
-
-    while (tokens[index]?.type === "or") {
-      index += 1;
-      const right = parseAnd();
-      if (!right) return null;
-      left = { type: "or", left, right };
-    }
-
-    return left;
-  };
-
-  const ast = parseOr();
-  if (!ast || index !== tokens.length) return null;
-  return ast;
+function whenNot(node: KeybindingWhenNode): KeybindingWhenNode {
+  return { type: "not", node };
 }
 
-function compile(bindings: KeybindingsConfig): ResolvedKeybindingsConfig {
+function whenAnd(left: KeybindingWhenNode, right: KeybindingWhenNode): KeybindingWhenNode {
+  return { type: "and", left, right };
+}
+
+interface TestBinding {
+  key: string;
+  command: KeybindingCommand;
+  whenAst?: KeybindingWhenNode;
+}
+
+function compile(bindings: TestBinding[]): ResolvedKeybindingsConfig {
   const resolved: ResolvedKeybindingsConfig = [];
   for (const binding of bindings) {
     const parsedShortcut = parseShortcut(binding.key);
     if (!parsedShortcut) {
       throw new Error(`invalid shortcut in test fixture: ${binding.key}`);
     }
-    const when = binding.when?.trim();
-    if (when && when.length > 0) {
-      const whenAst = parseWhenExpression(when);
-      if (!whenAst) {
-        throw new Error(`invalid when expression in test fixture: ${when}`);
-      }
+    if (binding.whenAst) {
       resolved.push({
         key: binding.key.trim(),
         command: binding.command,
-        when,
         shortcut: parsedShortcut,
-        whenAst,
+        whenAst: binding.whenAst,
       });
       continue;
     }
@@ -258,8 +143,16 @@ function compile(bindings: KeybindingsConfig): ResolvedKeybindingsConfig {
 
 const DEFAULT_BINDINGS = compile([
   { key: "mod+j", command: "terminal.toggle" },
-  { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
-  { key: "mod+shift+d", command: "terminal.new", when: "terminalFocus" },
+  {
+    key: "mod+d",
+    command: "terminal.split",
+    whenAst: whenIdentifier("terminalFocus"),
+  },
+  {
+    key: "mod+shift+d",
+    command: "terminal.new",
+    whenAst: whenIdentifier("terminalFocus"),
+  },
   { key: "mod+shift+o", command: "chat.new" },
   { key: "mod+o", command: "editor.openFavorite" },
 ]);
@@ -314,12 +207,12 @@ describe("split/new terminal shortcuts", () => {
       {
         key: "mod+\\",
         command: "terminal.split",
-        when: "terminalOpen && !terminalFocus",
+        whenAst: whenAnd(whenIdentifier("terminalOpen"), whenNot(whenIdentifier("terminalFocus"))),
       },
       {
         key: "mod+shift+n",
         command: "terminal.new",
-        when: "terminalOpen && !terminalFocus",
+        whenAst: whenAnd(whenIdentifier("terminalOpen"), whenNot(whenIdentifier("terminalFocus"))),
       },
       { key: "mod+j", command: "terminal.toggle" },
     ]);
@@ -345,8 +238,8 @@ describe("split/new terminal shortcuts", () => {
 
   it("supports when boolean literals", () => {
     const keybindings = compile([
-      { key: "mod+n", command: "terminal.new", when: "true" },
-      { key: "mod+m", command: "terminal.new", when: "false" },
+      { key: "mod+n", command: "terminal.new", whenAst: whenIdentifier("true") },
+      { key: "mod+m", command: "terminal.new", whenAst: whenIdentifier("false") },
     ]);
 
     assert.isTrue(
@@ -365,8 +258,16 @@ describe("split/new terminal shortcuts", () => {
 describe("shortcutLabelForCommand", () => {
   it("returns the most recent binding label", () => {
     const bindings = compile([
-      { key: "mod+\\", command: "terminal.split", when: "terminalFocus" },
-      { key: "mod+shift+\\", command: "terminal.split", when: "!terminalFocus" },
+      {
+        key: "mod+\\",
+        command: "terminal.split",
+        whenAst: whenIdentifier("terminalFocus"),
+      },
+      {
+        key: "mod+shift+\\",
+        command: "terminal.split",
+        whenAst: whenNot(whenIdentifier("terminalFocus")),
+      },
     ]);
     assert.strictEqual(shortcutLabelForCommand(bindings, "terminal.split", "Linux"), "Ctrl+Shift+\\");
   });
@@ -412,7 +313,11 @@ describe("cross-command precedence", () => {
   it("uses when + order so a later focused rule overrides a global rule", () => {
     const keybindings = compile([
       { key: "mod+n", command: "chat.new" },
-      { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
+      {
+        key: "mod+n",
+        command: "terminal.new",
+        whenAst: whenIdentifier("terminalFocus"),
+      },
     ]);
 
     assert.isTrue(
@@ -443,7 +348,11 @@ describe("cross-command precedence", () => {
 
   it("still lets a later global rule win when both rules match", () => {
     const keybindings = compile([
-      { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
+      {
+        key: "mod+n",
+        command: "terminal.new",
+        whenAst: whenIdentifier("terminalFocus"),
+      },
       { key: "mod+n", command: "chat.new" },
     ]);
 
