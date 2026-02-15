@@ -13,7 +13,6 @@ import {
   resolveQuickAction,
   summarizeGitResult,
 } from "./GitActionsControl.logic";
-import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
   Dialog,
@@ -27,6 +26,7 @@ import {
 import { Group, GroupSeparator } from "~/components/ui/group";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
+import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
 import { toastManager } from "~/components/ui/toast";
 import {
@@ -101,20 +101,6 @@ function getMenuActionDisabledReason(
     return "Branch is behind upstream. Pull/rebase before creating a PR.";
   }
   return "Create PR is currently unavailable.";
-}
-
-function formatUpstreamStatus(input: {
-  hasUpstream: boolean;
-  aheadCount: number;
-  behindCount: number;
-}): string {
-  if (!input.hasUpstream) return "No upstream configured";
-  if (input.aheadCount === 0 && input.behindCount === 0) return "Up to date";
-  if (input.aheadCount > 0 && input.behindCount > 0) {
-    return `Diverged (+${input.aheadCount} / -${input.behindCount})`;
-  }
-  if (input.aheadCount > 0) return `Ahead by ${input.aheadCount}`;
-  return `Behind by ${input.behindCount}`;
 }
 
 function GitActionItemIcon({ icon }: { icon: GitActionIconName }) {
@@ -207,7 +193,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
         return true;
       }
       return api.dialogs.confirm(
-        `Push to default branch "${gitStatus.branch}"? This will update the shared base branch.`,
+        `You're about to push to the default branch "${gitStatus.branch}". Continue?`,
       );
     },
     [api, gitStatus?.branch, isDefaultBranch],
@@ -290,7 +276,7 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
             ? {
                 actionProps: {
                   children: "Push",
-                  onClick: () => setActiveDialogAction("push"),
+                  onClick: () => void runGitActionWithToast({ action: "commit_push" }),
                 },
               }
             : shouldOfferOpenPrCta
@@ -371,11 +357,15 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
         void openExistingPr();
         return;
       }
+      if (item.dialogAction === "push") {
+        void runGitActionWithToast({ action: "commit_push" });
+        return;
+      }
       if (item.dialogAction) {
         setActiveDialogAction(item.dialogAction);
       }
     },
-    [openExistingPr],
+    [openExistingPr, runGitActionWithToast],
   );
 
   const runDialogAction = useCallback(() => {
@@ -425,10 +415,8 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
     activeDialogAction === "commit"
       ? "Review and confirm your commit. Leave the message blank to auto-generate one."
       : activeDialogAction === "push"
-        ? "Push this branch now. If this is the default branch, you'll be asked to confirm."
+        ? "Push this branch now."
         : "Create a pull request using generated title/body content.";
-  const showCompactStatusCard =
-    !!gitStatus && gitStatus.hasWorkingTreeChanges && !gitStatus.hasUpstream;
 
   if (!gitCwd) return null;
 
@@ -578,17 +566,19 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
               <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
                 <span className="text-muted-foreground">Branch</span>
                 <span className="font-medium">{gitStatus?.branch ?? "(detached HEAD)"}</span>
-                {!showCompactStatusCard && (
+                {activeDialogAction !== "commit" && (
                   <>
                     <span className="text-muted-foreground">Upstream</span>
                     <span className="font-medium">
-                      {gitStatus
-                        ? formatUpstreamStatus({
-                            hasUpstream: gitStatus.hasUpstream,
-                            aheadCount: gitStatus.aheadCount,
-                            behindCount: gitStatus.behindCount,
-                          })
-                        : "unknown"}
+                      {!gitStatus || !gitStatus.hasUpstream
+                        ? "No upstream configured"
+                        : gitStatus.aheadCount === 0 && gitStatus.behindCount === 0
+                          ? "Up to date"
+                          : gitStatus.aheadCount > 0 && gitStatus.behindCount > 0
+                            ? `Diverged (+${gitStatus.aheadCount} / -${gitStatus.behindCount})`
+                            : gitStatus.aheadCount > 0
+                              ? `Ahead by ${gitStatus.aheadCount}`
+                              : `Behind by ${gitStatus.behindCount}`}
                     </span>
                     <span className="text-muted-foreground">Working tree</span>
                     <span className="font-medium">
@@ -618,27 +608,31 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
                 {!gitStatus || gitStatus.workingTree.files.length === 0 ? (
                   <p className="font-medium">none</p>
                 ) : (
-                  <div className="space-y-1">
-                    {gitStatus.workingTree.files.slice(0, 6).map((file) => (
-                      <button
-                        type="button"
-                        key={file.path}
-                        className="flex w-full items-center justify-between gap-3 rounded-md border border-input bg-background px-2 py-1 font-mono text-left transition-colors hover:bg-accent/50"
-                        onClick={() => openChangedFileInEditor(file.path)}
-                      >
-                        <span className="truncate">{file.path}</span>
-                        <span className="shrink-0">
-                          <span className="text-success">+{file.insertions}</span>
-                          <span className="text-muted-foreground"> / </span>
-                          <span className="text-destructive">-{file.deletions}</span>
-                        </span>
-                      </button>
-                    ))}
-                    {gitStatus.workingTree.files.length > 6 && (
-                      <Badge variant="outline" size="sm">
-                        +{gitStatus.workingTree.files.length - 6} more
-                      </Badge>
-                    )}
+                  <div className="space-y-2">
+                    <ScrollArea className="h-44 rounded-md border border-input bg-background">
+                      <div className="space-y-1 p-1">
+                        {gitStatus.workingTree.files.map((file) => (
+                          <button
+                            type="button"
+                            key={file.path}
+                            className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1 font-mono text-left transition-colors hover:bg-accent/50"
+                            onClick={() => openChangedFileInEditor(file.path)}
+                          >
+                            <span className="truncate">{file.path}</span>
+                            <span className="shrink-0">
+                              <span className="text-success">+{file.insertions}</span>
+                              <span className="text-muted-foreground"> / </span>
+                              <span className="text-destructive">-{file.deletions}</span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                    <div className="flex justify-end font-mono">
+                      <span className="text-success">+{gitStatus.workingTree.insertions}</span>
+                      <span className="text-muted-foreground"> / </span>
+                      <span className="text-destructive">-{gitStatus.workingTree.deletions}</span>
+                    </div>
                   </div>
                 )}
               </div>
