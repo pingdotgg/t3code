@@ -18,7 +18,7 @@ import {
   preferredTerminalEditor,
   resolvePathLinkTarget,
 } from "../terminal-links";
-import { isTerminalClearShortcut } from "../terminal-shortcuts";
+import { isTerminalClearShortcut } from "../keybindings";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,

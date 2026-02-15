@@ -58,7 +58,7 @@ import {
   isTerminalToggleShortcut,
   resolveTerminalKeybindings,
   shortcutLabelForCommand,
-} from "../terminal-shortcuts";
+} from "../keybindings";
 import ChatMarkdown from "./ChatMarkdown";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { useNativeApi } from "../hooks/useNativeApi";

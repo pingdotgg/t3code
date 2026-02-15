@@ -10,7 +10,7 @@ import {
   resolveTerminalKeybindings,
   shortcutLabelForCommand,
   type ShortcutEventLike,
-} from "./terminal-shortcuts";
+} from "./keybindings";
 
 function event(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
   return {
