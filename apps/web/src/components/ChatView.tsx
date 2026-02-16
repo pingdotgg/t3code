@@ -51,7 +51,7 @@ import {
 } from "../session-logic";
 import { isScrollContainerNearBottom } from "../chat-scroll";
 import { useStore } from "../store";
-import type { ChatImageAttachment, Thread } from "../types";
+import type { ChatImageAttachment } from "../types";
 import BranchToolbar from "./BranchToolbar";
 import GitActionsControl from "./GitActionsControl";
 import {
@@ -168,6 +168,7 @@ export default function ChatView() {
 
   const activeThread = state.threads.find((t) => t.id === state.activeThreadId);
   const activeThreadId = activeThread?.id ?? null;
+  const activeSessionId = activeThread?.session?.sessionId;
   const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
   const selectedModel = resolveModelSlug(
     activeThread?.model ?? activeProject?.model ?? DEFAULT_MODEL,
@@ -895,28 +896,28 @@ export default function ChatView() {
 
   const onRespondToApproval = useCallback(
     async (requestId: string, decision: ProviderApprovalDecision) => {
-      if (!api || !activeThread?.session) return;
+      if (!api || !activeSessionId || !activeThreadId) return;
 
       setRespondingRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
       try {
         await api.providers.respondToRequest({
-          sessionId: activeThread.session.sessionId,
+          sessionId: activeSessionId,
           requestId,
           decision,
         });
       } catch (err) {
         dispatch({
           type: "SET_ERROR",
-          threadId: activeThread.id,
+          threadId: activeThreadId,
           error: err instanceof Error ? err.message : "Failed to submit approval decision.",
         });
       } finally {
         setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
       }
     },
-    [activeThread?.id, activeThread?.session, api, dispatch],
+    [activeSessionId, activeThreadId, api, dispatch],
   );
 
   const onModelSelect = useCallback(
@@ -1015,7 +1016,7 @@ export default function ChatView() {
         onScroll={onMessagesScroll}
       >
         <MessagesTimeline
-          activeThread={activeThread}
+          hasMessages={activeThread.messages.length > 0}
           isWorking={isWorking}
           timelineEntries={timelineEntries}
           completionDividerBeforeEntryId={completionDividerBeforeEntryId}
@@ -1413,7 +1414,7 @@ const PendingApprovalsPanel = memo(function PendingApprovalsPanel({
 });
 
 interface MessagesTimelineProps {
-  activeThread: Thread;
+  hasMessages: boolean;
   isWorking: boolean;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   completionDividerBeforeEntryId: string | null;
@@ -1427,7 +1428,7 @@ interface MessagesTimelineProps {
 }
 
 const MessagesTimeline = memo(function MessagesTimeline({
-  activeThread,
+  hasMessages,
   isWorking,
   timelineEntries,
   completionDividerBeforeEntryId,
@@ -1439,7 +1440,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   onImageExpand,
   messagesEndRef,
 }: MessagesTimelineProps) {
-  if (activeThread.messages.length === 0 && !isWorking) {
+  if (!hasMessages && !isWorking) {
     return (
       <div className="flex h-full items-center justify-center">
         <p className="text-sm text-muted-foreground/30">Send a message to start the conversation.</p>
