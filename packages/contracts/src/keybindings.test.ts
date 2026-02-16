@@ -14,6 +14,12 @@ describe("keybindings contracts", () => {
       command: "terminal.toggle",
     });
     assert.strictEqual(parsed.command, "terminal.toggle");
+
+    const parsedClose = keybindingRuleSchema.parse({
+      key: "mod+w",
+      command: "terminal.close",
+    });
+    assert.strictEqual(parsedClose.command, "terminal.close");
   });
 
   it("rejects invalid command values", () => {

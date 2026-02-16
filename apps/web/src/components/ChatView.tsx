@@ -52,6 +52,7 @@ import BranchToolbar from "./BranchToolbar";
 import GitActionsControl from "./GitActionsControl";
 import {
   isOpenFavoriteEditorShortcut,
+  isTerminalCloseShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   isTerminalToggleShortcut,
@@ -554,6 +555,14 @@ export default function ChatView() {
         return;
       }
 
+      if (isTerminalCloseShortcut(event, keybindings, { context: shortcutContext })) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!activeThread?.terminalOpen) return;
+        closeTerminal(activeThread.activeTerminalId);
+        return;
+      }
+
       if (!isTerminalNewShortcut(event, keybindings, { context: shortcutContext })) return;
       event.preventDefault();
       event.stopPropagation();
@@ -570,7 +579,9 @@ export default function ChatView() {
     return () => window.removeEventListener("keydown", handler);
   }, [
     activeThread?.terminalOpen,
+    activeThread?.activeTerminalId,
     activeThreadId,
+    closeTerminal,
     createNewTerminal,
     dispatch,
     splitTerminal,

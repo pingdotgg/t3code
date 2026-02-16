@@ -190,12 +190,28 @@ export function isTerminalNewShortcut(
   return matchesCommandShortcut(event, keybindings, "terminal.new", options);
 }
 
+export function isTerminalCloseShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "terminal.close", options);
+}
+
 export function isChatNewShortcut(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "chat.new", options);
+}
+
+export function isChatNewSameGitStateShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "chat.newSameGitState", options);
 }
 
 export function isOpenFavoriteEditorShortcut(

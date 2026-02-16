@@ -22,7 +22,9 @@ See the full schema for more details: [`packages/contracts/src/keybindings.ts`](
   { "key": "mod+j", "command": "terminal.toggle" },
   { "key": "mod+d", "command": "terminal.split", "when": "terminalFocus" },
   { "key": "mod+n", "command": "terminal.new", "when": "terminalFocus" },
+  { "key": "mod+w", "command": "terminal.close", "when": "terminalFocus" },
   { "key": "mod+shift+o", "command": "chat.new" },
+  { "key": "mod+shift+n", "command": "chat.newSameGitState" },
   { "key": "mod+o", "command": "editor.openFavorite" }
 ]
 ```
@@ -46,7 +48,9 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 - `terminal.toggle`: open/close terminal drawer
 - `terminal.split`: split terminal (in focused terminal context by default)
 - `terminal.new`: create new terminal (in focused terminal context by default)
+- `terminal.close`: close/kill the focused terminal (in focused terminal context by default)
 - `chat.new`: create a new chat thread for the active project
+- `chat.newSameGitState`: create a new chat thread preserving the active thread's branch/worktree state
 - `editor.openFavorite`: open current project/worktree in the last-used editor
 
 ### Key Syntax

@@ -7,10 +7,12 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import {
+  isChatNewSameGitStateShortcut,
   formatShortcutLabel,
   isChatNewShortcut,
   isOpenFavoriteEditorShortcut,
   isTerminalClearShortcut,
+  isTerminalCloseShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   isTerminalToggleShortcut,
@@ -83,7 +85,13 @@ const DEFAULT_BINDINGS = compile([
     command: "terminal.new",
     whenAst: whenIdentifier("terminalFocus"),
   },
+  {
+    shortcut: modShortcut("w"),
+    command: "terminal.close",
+    whenAst: whenIdentifier("terminalFocus"),
+  },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
+  { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newSameGitState" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
 ]);
 
@@ -101,8 +109,8 @@ describe("isTerminalToggleShortcut", () => {
   });
 });
 
-describe("split/new terminal shortcuts", () => {
-  it("requires terminalFocus for default split/new bindings", () => {
+describe("split/new/close terminal shortcuts", () => {
+  it("requires terminalFocus for default split/new/close bindings", () => {
     assert.isFalse(
       isTerminalSplitShortcut(event({ key: "d", metaKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
@@ -111,6 +119,12 @@ describe("split/new terminal shortcuts", () => {
     );
     assert.isFalse(
       isTerminalNewShortcut(event({ key: "d", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+    );
+    assert.isFalse(
+      isTerminalCloseShortcut(event({ key: "w", ctrlKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
         context: { terminalFocus: false },
       }),
@@ -126,6 +140,12 @@ describe("split/new terminal shortcuts", () => {
     );
     assert.isTrue(
       isTerminalNewShortcut(event({ key: "d", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+    );
+    assert.isTrue(
+      isTerminalCloseShortcut(event({ key: "w", ctrlKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
         context: { terminalFocus: true },
       }),
@@ -222,6 +242,27 @@ describe("chat/editor shortcuts", () => {
       isChatNewShortcut(event({ key: "o", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
       }),
+    );
+  });
+
+  it("matches chat.newSameGitState shortcut", () => {
+    assert.isTrue(
+      isChatNewSameGitStateShortcut(
+        event({ key: "n", metaKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "MacIntel",
+        },
+      ),
+    );
+    assert.isTrue(
+      isChatNewSameGitStateShortcut(
+        event({ key: "n", ctrlKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "Linux",
+        },
+      ),
     );
   });
 
