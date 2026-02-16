@@ -312,7 +312,10 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
           title: resultToast.title,
           description: resultToast.description,
           timeout: 0,
-          data: threadToastData,
+          data: {
+            ...threadToastData,
+            dismissAfterVisibleMs: 10_000,
+          },
           ...(shouldOfferPushCta
             ? {
                 actionProps: {
