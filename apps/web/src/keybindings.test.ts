@@ -16,6 +16,7 @@ import {
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   isTerminalToggleShortcut,
+  resolveShortcutCommand,
   shortcutLabelForCommand,
   terminalNavigationShortcutData,
   type ShortcutEventLike,
@@ -335,6 +336,21 @@ describe("cross-command precedence", () => {
         platform: "Linux",
         context: { terminalFocus: true },
       }),
+    );
+  });
+});
+
+describe("resolveShortcutCommand", () => {
+  it("returns dynamic script commands", () => {
+    const keybindings = compile([
+      { shortcut: modShortcut("r"), command: "script.setup.run" },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "r", ctrlKey: true }), keybindings, {
+        platform: "Linux",
+      }),
+      "script.setup.run",
     );
   });
 });

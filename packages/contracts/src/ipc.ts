@@ -32,6 +32,8 @@ import type {
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
   ProjectRemoveInput,
+  ProjectUpdateScriptsInput,
+  ProjectUpdateScriptsResult,
 } from "./project";
 import type { ServerConfig } from "./server";
 import type {
@@ -93,6 +95,7 @@ export interface NativeApi {
     add: (input: ProjectAddInput) => Promise<ProjectAddResult>;
     remove: (input: ProjectRemoveInput) => Promise<void>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
+    updateScripts: (input: ProjectUpdateScriptsInput) => Promise<ProjectUpdateScriptsResult>;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;

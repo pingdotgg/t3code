@@ -756,6 +756,42 @@ describe("WebSocket Server", () => {
     expect(projectId).toBeTruthy();
     if (!projectId) return;
 
+    const updatedScripts = await sendRequest(ws, WS_METHODS.projectsUpdateScripts, {
+      id: projectId,
+      scripts: [
+        {
+          id: "setup",
+          name: "Setup",
+          command: "bun install",
+          icon: "configure",
+          runOnWorktreeCreate: true,
+        },
+      ],
+    });
+    expect(updatedScripts.error).toBeUndefined();
+    const scriptPayload = (
+      updatedScripts.result as {
+        project: {
+          scripts: Array<{
+            id: string;
+            name: string;
+            command: string;
+            icon: string;
+            runOnWorktreeCreate: boolean;
+          }>;
+        };
+      }
+    ).project.scripts;
+    expect(scriptPayload).toEqual([
+      {
+        id: "setup",
+        name: "Setup",
+        command: "bun install",
+        icon: "configure",
+        runOnWorktreeCreate: true,
+      },
+    ]);
+
     const removed = await sendRequest(ws, WS_METHODS.projectsRemove, {
       id: projectId,
     });

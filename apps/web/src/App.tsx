@@ -85,6 +85,7 @@ function AutoProjectBootstrap() {
           cwd: payload.cwd,
           model: DEFAULT_MODEL,
           expanded: true,
+          scripts: [],
         },
       });
       dispatch({
@@ -146,6 +147,7 @@ function DesktopProjectBootstrap() {
             cwd: project.cwd,
             model: DEFAULT_MODEL,
             expanded: true,
+            scripts: project.scripts,
           })),
         });
         bootstrappedRef.current = true;

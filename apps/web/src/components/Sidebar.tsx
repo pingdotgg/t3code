@@ -214,6 +214,7 @@ export default function Sidebar() {
             cwd: result.project.cwd,
             model: DEFAULT_MODEL,
             expanded: true,
+            scripts: result.project.scripts,
           };
           const existingById = state.projects.find((p) => p.id === project.id);
           const existingByCwd = state.projects.find((p) => p.cwd === project.cwd);
@@ -241,6 +242,7 @@ export default function Sidebar() {
             cwd,
             model: DEFAULT_MODEL,
             expanded: true,
+            scripts: [],
           };
           dispatch({ type: "ADD_PROJECT", project });
           handleNewThread(project.id);

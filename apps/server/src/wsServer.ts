@@ -322,6 +322,8 @@ export function createServer(options: ServerOptions) {
 
       case WS_METHODS.projectsSearchEntries:
         return searchWorkspaceEntries(request.params as never);
+      case WS_METHODS.projectsUpdateScripts:
+        return projectRegistry.updateScripts(request.params as never);
 
       case WS_METHODS.shellOpenInEditor: {
         const params = request.params as {

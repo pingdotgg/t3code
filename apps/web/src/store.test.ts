@@ -74,6 +74,7 @@ function makeState(thread: Thread): AppState {
         cwd: "/tmp/project",
         model: "gpt-5.3-codex",
         expanded: true,
+        scripts: [],
       },
     ],
     threads: [thread],
@@ -507,6 +508,7 @@ describe("store reducer thread continuity", () => {
           cwd: "/tmp/a",
           model: "gpt-5.3-codex",
           expanded: false,
+          scripts: [],
         },
         {
           id: "project-old-b",
@@ -514,6 +516,7 @@ describe("store reducer thread continuity", () => {
           cwd: "/tmp/b",
           model: "gpt-5.3-codex",
           expanded: true,
+          scripts: [],
         },
       ],
       threads: [
@@ -540,6 +543,7 @@ describe("store reducer thread continuity", () => {
           cwd: "/tmp/a",
           model: "gpt-5.3-codex",
           expanded: true,
+          scripts: [],
         },
       ],
     });
@@ -554,6 +558,33 @@ describe("store reducer thread continuity", () => {
     expect(next.activeThreadId).toBe("thread-a");
   });
 
+  it("updates project scripts", () => {
+    const state = makeState(makeThread());
+    const next = reducer(state, {
+      type: "SET_PROJECT_SCRIPTS",
+      projectId: "project-1",
+      scripts: [
+        {
+          id: "test",
+          name: "Test",
+          command: "bun test",
+          icon: "test",
+          runOnWorktreeCreate: false,
+        },
+      ],
+    });
+
+    expect(next.projects[0]?.scripts).toEqual([
+      {
+        id: "test",
+        name: "Test",
+        command: "bun test",
+        icon: "test",
+        runOnWorktreeCreate: false,
+      },
+    ]);
+  });
+
   it("deletes a project and all of its threads", () => {
     const state: AppState = {
       projects: [
@@ -563,6 +594,7 @@ describe("store reducer thread continuity", () => {
           cwd: "/tmp/one",
           model: "gpt-5.3-codex",
           expanded: true,
+          scripts: [],
         },
         {
           id: "project-2",
@@ -570,6 +602,7 @@ describe("store reducer thread continuity", () => {
           cwd: "/tmp/two",
           model: "gpt-5.3-codex",
           expanded: true,
+          scripts: [],
         },
       ],
       threads: [

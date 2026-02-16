@@ -8,10 +8,29 @@ import {
   type ProjectListResult,
   type ProjectRecord,
   type ProjectRemoveInput,
+  type ProjectScript,
+  type ProjectUpdateScriptsInput,
+  type ProjectUpdateScriptsResult,
   projectAddInputSchema,
   projectRecordSchema,
   projectRemoveInputSchema,
+  projectScriptsSchema,
+  projectUpdateScriptsInputSchema,
 } from "@t3tools/contracts";
+
+function cloneScripts(scripts: readonly ProjectScript[]): ProjectScript[] {
+  const cloned: ProjectScript[] = [];
+  for (const script of scripts) {
+    cloned.push({
+      id: script.id,
+      name: script.name,
+      command: script.command,
+      icon: script.icon,
+      runOnWorktreeCreate: script.runOnWorktreeCreate,
+    });
+  }
+  return cloned;
+}
 
 function normalizeCwd(rawCwd: string): string {
   const resolved = path.resolve(rawCwd.trim());
@@ -48,7 +67,10 @@ export class ProjectRegistry {
   }
 
   list(): ProjectListResult {
-    return this.projects.map((project) => ({ ...project }));
+    return this.projects.map((project) => ({
+      ...project,
+      scripts: cloneScripts(project.scripts),
+    }));
   }
 
   add(raw: ProjectAddInput): ProjectAddResult {
@@ -60,7 +82,13 @@ export class ProjectRegistry {
 
     const existing = this.projects.find((project) => normalizeCwd(project.cwd) === normalizedCwd);
     if (existing) {
-      return { project: { ...existing }, created: false };
+      return {
+        project: {
+          ...existing,
+          scripts: cloneScripts(existing.scripts),
+        },
+        created: false,
+      };
     }
 
     const now = new Date().toISOString();
@@ -68,13 +96,20 @@ export class ProjectRegistry {
       id: randomUUID(),
       cwd: normalizedCwd,
       name: inferProjectName(normalizedCwd),
+      scripts: [],
       createdAt: now,
       updatedAt: now,
     };
 
     this.projects = [project, ...this.projects];
     this.persist();
-    return { project: { ...project }, created: true };
+    return {
+      project: {
+        ...project,
+        scripts: cloneScripts(project.scripts),
+      },
+      created: true,
+    };
   }
 
   remove(raw: ProjectRemoveInput): void {
@@ -86,6 +121,31 @@ export class ProjectRegistry {
 
     this.projects = next;
     this.persist();
+  }
+
+  updateScripts(raw: ProjectUpdateScriptsInput): ProjectUpdateScriptsResult {
+    const input = projectUpdateScriptsInputSchema.parse(raw);
+    const index = this.projects.findIndex((project) => project.id === input.id);
+    if (index < 0) {
+      throw new Error(`Project not found: ${input.id}`);
+    }
+
+    const nextScripts = dedupeScriptsById(projectScriptsSchema.parse(input.scripts));
+    const nextUpdatedAt = new Date().toISOString();
+    const nextProject: ProjectRecord = {
+      ...this.projects[index]!,
+      scripts: nextScripts,
+      updatedAt: nextUpdatedAt,
+    };
+
+    const nextProjects = [...this.projects];
+    nextProjects[index] = nextProject;
+    this.projects = nextProjects;
+    this.persist();
+
+    return {
+      project: { ...nextProject, scripts: cloneScripts(nextProject.scripts) },
+    };
   }
 
   private loadFromDisk(): ProjectRecord[] {
@@ -107,6 +167,7 @@ export class ProjectRegistry {
         cwd: normalizedCwd,
         name:
           project.name.trim().length > 0 ? project.name.trim() : inferProjectName(normalizedCwd),
+        scripts: dedupeScriptsById(project.scripts),
       };
       deduped.set(normalizedCwd, normalizedProject);
       normalizedProjects.push(normalizedProject);
@@ -121,6 +182,7 @@ export class ProjectRegistry {
           source.id !== project.id ||
           source.cwd !== project.cwd ||
           source.name !== project.name ||
+          JSON.stringify(source.scripts) !== JSON.stringify(project.scripts) ||
           source.createdAt !== project.createdAt ||
           source.updatedAt !== project.updatedAt
         );
@@ -169,4 +231,36 @@ export class ProjectRegistry {
     fs.writeFileSync(tempFile, payload);
     fs.renameSync(tempFile, this.filePath);
   }
+}
+
+function dedupeScriptsById(scripts: readonly ProjectScript[]): ProjectScript[] {
+  const seenIds = new Set<string>();
+  const deduped: ProjectScript[] = [];
+  for (const script of scripts) {
+    if (seenIds.has(script.id)) continue;
+    seenIds.add(script.id);
+    deduped.push({
+      id: script.id,
+      name: script.name,
+      command: script.command,
+      icon: script.icon,
+      runOnWorktreeCreate: script.runOnWorktreeCreate,
+    });
+  }
+
+  let setupAssigned = false;
+  const normalized: ProjectScript[] = [];
+  for (const script of deduped) {
+    if (!script.runOnWorktreeCreate) {
+      normalized.push(script);
+      continue;
+    }
+    if (!setupAssigned) {
+      setupAssigned = true;
+      normalized.push(script);
+      continue;
+    }
+    normalized.push({ ...script, runOnWorktreeCreate: false });
+  }
+  return normalized;
 }

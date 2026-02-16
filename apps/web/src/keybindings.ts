@@ -100,11 +100,11 @@ function matchesCommandShortcut(
   return resolveShortcutCommand(event, keybindings, options) === command;
 }
 
-function resolveShortcutCommand(
+export function resolveShortcutCommand(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
-): KeybindingCommand | null {
+): string | null {
   const platform = resolvePlatform(options);
   const context = resolveContext(options);
 

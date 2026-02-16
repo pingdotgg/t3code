@@ -20,6 +20,7 @@ describe("hydratePersistedState", () => {
           cwd: "/tmp/project",
           model: "gpt-5.2-codex",
           expanded: true,
+          scripts: [],
         },
       ],
       threads: [
@@ -69,6 +70,7 @@ describe("hydratePersistedState", () => {
           cwd: "/tmp/project",
           model: "gpt-5.3-codex",
           expanded: false,
+          scripts: [],
         },
       ],
       threads: [
@@ -119,6 +121,7 @@ describe("hydratePersistedState", () => {
           cwd: "/tmp/project",
           model: "gpt-5.3-codex",
           expanded: false,
+          scripts: [],
         },
       ],
       threads: [],
@@ -140,6 +143,7 @@ describe("hydratePersistedState", () => {
           cwd: "/tmp/project",
           model: "gpt-5.3-codex",
           expanded: true,
+          scripts: [],
         },
       ],
       threads: [
@@ -187,6 +191,7 @@ describe("hydratePersistedState", () => {
           cwd: "/tmp/project",
           model: "gpt-5.3-codex",
           expanded: true,
+          scripts: [],
         },
       ],
       threads: [
@@ -231,6 +236,7 @@ describe("hydratePersistedState", () => {
           cwd: "/tmp/project",
           model: "gpt-5.3-codex",
           expanded: true,
+          scripts: [],
         },
       ],
       threads: [
@@ -313,6 +319,7 @@ describe("toPersistedState", () => {
           cwd: "/tmp/project",
           model: "gpt-5.3-codex",
           expanded: true,
+          scripts: [],
         },
       ],
       threads: [thread],

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { projectScriptSchema } from "@t3tools/contracts";
 
 import { DEFAULT_MODEL, resolveModelSlug } from "./model-logic";
 import {
@@ -19,6 +20,7 @@ const persistedProjectSchema = z.object({
   cwd: z.string().min(1),
   model: z.string().min(1),
   expanded: z.boolean(),
+  scripts: z.array(projectScriptSchema).default([]),
 });
 
 const persistedMessageSchema = z.object({
@@ -140,6 +142,7 @@ function hydrateProject(
   return {
     ...project,
     model: resolveModelSlug(maybeMigrateLegacyModel(project.model, isLegacyPayload)),
+    scripts: project.scripts,
   };
 }
 

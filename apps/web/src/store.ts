@@ -17,6 +17,7 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   DEFAULT_RUNTIME_MODE,
   MAX_THREAD_TERMINAL_COUNT,
+  type ProjectScript,
   type Project,
   type RuntimeMode,
   type Thread,
@@ -27,6 +28,7 @@ import {
 
 type Action =
   | { type: "ADD_PROJECT"; project: Project }
+  | { type: "SET_PROJECT_SCRIPTS"; projectId: string; scripts: ProjectScript[] }
   | { type: "SYNC_PROJECTS"; projects: Project[] }
   | { type: "TOGGLE_PROJECT"; projectId: string }
   | { type: "DELETE_PROJECT"; projectId: string }
@@ -161,6 +163,38 @@ function normalizeRunningTerminalIds(
   return [...new Set(runningTerminalIds)]
     .map((id) => id.trim())
     .filter((id) => id.length > 0 && validTerminalIdSet.has(id));
+}
+
+function normalizeProjectScripts(scripts: ProjectScript[]): ProjectScript[] {
+  const deduped: ProjectScript[] = [];
+  const seenIds = new Set<string>();
+  for (const script of scripts) {
+    const id = script.id.trim();
+    if (id.length === 0 || seenIds.has(id)) continue;
+    seenIds.add(id);
+    deduped.push({
+      ...script,
+      id,
+      name: script.name.trim(),
+      command: script.command.trim(),
+    });
+  }
+
+  let setupAssigned = false;
+  const normalized: ProjectScript[] = [];
+  for (const script of deduped) {
+    if (!script.runOnWorktreeCreate) {
+      normalized.push(script);
+      continue;
+    }
+    if (!setupAssigned) {
+      setupAssigned = true;
+      normalized.push(script);
+      continue;
+    }
+    normalized.push({ ...script, runOnWorktreeCreate: false });
+  }
+  return normalized;
 }
 
 function normalizeTerminalGroupIds(terminalIds: string[]): string[] {
@@ -426,8 +460,19 @@ export function reducer(state: AppState, action: Action): AppState {
           {
             ...action.project,
             model: resolveModelSlug(action.project.model),
+            scripts: normalizeProjectScripts(action.project.scripts),
           },
         ],
+      };
+
+    case "SET_PROJECT_SCRIPTS":
+      return {
+        ...state,
+        projects: state.projects.map((project) =>
+          project.id === action.projectId
+            ? { ...project, scripts: normalizeProjectScripts(action.scripts) }
+            : project,
+        ),
       };
 
     case "SYNC_PROJECTS": {
@@ -436,10 +481,15 @@ export function reducer(state: AppState, action: Action): AppState {
       );
       const nextProjects = action.projects.map((project) => {
         const previous = previousByCwd.get(project.cwd);
+        const scripts =
+          project.scripts.length > 0
+            ? normalizeProjectScripts(project.scripts)
+            : normalizeProjectScripts(previous?.scripts ?? []);
         return {
           ...project,
           model: resolveModelSlug(previous?.model ?? project.model),
           expanded: previous?.expanded ?? project.expanded,
+          scripts,
         };
       });
       const previousProjectById = new Map(

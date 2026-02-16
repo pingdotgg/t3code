@@ -1,9 +1,10 @@
 import {
   EDITORS,
   type EditorId,
-  type ProjectEntry,
-  ModelSlug,
   type NativeApi,
+  type ProjectEntry,
+  type ProjectScript,
+  ModelSlug,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -66,10 +67,7 @@ import BranchToolbar from "./BranchToolbar";
 import GitActionsControl from "./GitActionsControl";
 import {
   isOpenFavoriteEditorShortcut,
-  isTerminalCloseShortcut,
-  isTerminalNewShortcut,
-  isTerminalSplitShortcut,
-  isTerminalToggleShortcut,
+  resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../keybindings";
 import ChatMarkdown from "./ChatMarkdown";
@@ -97,6 +95,13 @@ import { CursorIcon, Icon } from "./Icons";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { Badge } from "./ui/badge";
 import { Command, CommandInput, CommandItem, CommandList } from "./ui/command";
+import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
+import {
+  injectEnvIntoShellCommand,
+  nextProjectScriptId,
+  projectScriptIdFromCommand,
+  setupProjectScript,
+} from "~/projectScripts";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
   if (!duration) return formatTimestamp(createdAt);
@@ -117,6 +122,8 @@ const SEARCHABLE_MODEL_OPTIONS = MODEL_OPTIONS.map(({ slug, name }) => ({
   searchSlug: slug.toLowerCase(),
   searchName: name.toLowerCase(),
 }));
+const SCRIPT_TERMINAL_COLS = 120;
+const SCRIPT_TERMINAL_ROWS = 30;
 
 function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   if (tone === "error") return "text-rose-300/50 dark:text-rose-300/50";
@@ -618,6 +625,125 @@ export default function ChatView() {
     },
     [activeThread?.terminalIds.length, activeThreadId, api, dispatch],
   );
+  const runProjectScript = useCallback(
+    async (
+      script: ProjectScript,
+      options?: {
+        cwd?: string;
+        env?: Record<string, string>;
+        preferNewTerminal?: boolean;
+      },
+    ) => {
+      if (!api || !activeThreadId || !activeProject || !activeThread) return;
+      const targetCwd = options?.cwd ?? gitCwd ?? activeProject.cwd;
+      const baseTerminalId = activeThread.activeTerminalId;
+      const isBaseTerminalBusy = activeThread.runningTerminalIds.includes(baseTerminalId);
+      const shouldCreateNewTerminal = Boolean(options?.preferNewTerminal) || isBaseTerminalBusy;
+      const targetTerminalId = shouldCreateNewTerminal
+        ? `terminal-${crypto.randomUUID()}`
+        : baseTerminalId;
+
+      dispatch({
+        type: "SET_THREAD_TERMINAL_OPEN",
+        threadId: activeThreadId,
+        open: true,
+      });
+      if (shouldCreateNewTerminal) {
+        dispatch({
+          type: "NEW_THREAD_TERMINAL",
+          threadId: activeThreadId,
+          terminalId: targetTerminalId,
+        });
+      } else {
+        dispatch({
+          type: "SET_THREAD_ACTIVE_TERMINAL",
+          threadId: activeThreadId,
+          terminalId: targetTerminalId,
+        });
+      }
+      setTerminalFocusRequestId((value) => value + 1);
+
+      const scriptEnv =
+        options?.env ??
+        (script.runOnWorktreeCreate ? { T3CODE_PROJECT_ROOT: activeProject.cwd } : undefined);
+      const resolvedCommand = scriptEnv
+        ? injectEnvIntoShellCommand(script.command, scriptEnv)
+        : script.command;
+
+      try {
+        await api.terminal.open({
+          threadId: activeThreadId,
+          terminalId: targetTerminalId,
+          cwd: targetCwd,
+          cols: SCRIPT_TERMINAL_COLS,
+          rows: SCRIPT_TERMINAL_ROWS,
+        });
+        await api.terminal.write({
+          threadId: activeThreadId,
+          terminalId: targetTerminalId,
+          data: `${resolvedCommand}\n`,
+        });
+      } catch (error) {
+        dispatch({
+          type: "SET_ERROR",
+          threadId: activeThreadId,
+          error: error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+        });
+      }
+    },
+    [activeProject, activeThread, activeThreadId, api, dispatch, gitCwd],
+  );
+  const saveProjectScript = useCallback(
+    async (input: NewProjectScriptInput) => {
+      if (!activeProject) return;
+      const nextId = nextProjectScriptId(
+        input.name,
+        activeProject.scripts.map((script) => script.id),
+      );
+      const nextScript: ProjectScript = {
+        id: nextId,
+        name: input.name,
+        command: input.command,
+        icon: input.icon,
+        runOnWorktreeCreate: input.runOnWorktreeCreate,
+      };
+      const nextScripts = input.runOnWorktreeCreate
+        ? [
+            ...activeProject.scripts.map((script) =>
+              script.runOnWorktreeCreate ? { ...script, runOnWorktreeCreate: false } : script,
+            ),
+            nextScript,
+          ]
+        : [...activeProject.scripts, nextScript];
+
+      dispatch({
+        type: "SET_PROJECT_SCRIPTS",
+        projectId: activeProject.id,
+        scripts: nextScripts,
+      });
+
+      if (!isElectron || !api) return;
+      try {
+        const updated = await api.projects.updateScripts({
+          id: activeProject.id,
+          scripts: nextScripts,
+        });
+        dispatch({
+          type: "SET_PROJECT_SCRIPTS",
+          projectId: updated.project.id,
+          scripts: updated.project.scripts,
+        });
+      } catch (error) {
+        dispatch({
+          type: "SET_PROJECT_SCRIPTS",
+          projectId: activeProject.id,
+          scripts: activeProject.scripts,
+        });
+        throw error;
+      }
+    },
+    [activeProject, api, dispatch],
+  );
 
   const handleRuntimeModeChange = async (mode: "approval-required" | "full-access") => {
     if (mode === state.runtimeMode) return;
@@ -793,14 +919,17 @@ export default function ChatView() {
         terminalOpen: Boolean(activeThread?.terminalOpen),
       };
 
-      if (isTerminalToggleShortcut(event, keybindings, { context: shortcutContext })) {
+      const command = resolveShortcutCommand(event, keybindings, { context: shortcutContext });
+      if (!command) return;
+
+      if (command === "terminal.toggle") {
         event.preventDefault();
         event.stopPropagation();
         toggleTerminalVisibility();
         return;
       }
 
-      if (isTerminalSplitShortcut(event, keybindings, { context: shortcutContext })) {
+      if (command === "terminal.split") {
         event.preventDefault();
         event.stopPropagation();
         if (!activeThread?.terminalOpen) {
@@ -814,7 +943,7 @@ export default function ChatView() {
         return;
       }
 
-      if (isTerminalCloseShortcut(event, keybindings, { context: shortcutContext })) {
+      if (command === "terminal.close") {
         event.preventDefault();
         event.stopPropagation();
         if (!activeThread?.terminalOpen) return;
@@ -822,27 +951,39 @@ export default function ChatView() {
         return;
       }
 
-      if (!isTerminalNewShortcut(event, keybindings, { context: shortcutContext })) return;
+      if (command === "terminal.new") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!activeThread?.terminalOpen) {
+          dispatch({
+            type: "SET_THREAD_TERMINAL_OPEN",
+            threadId: activeThreadId,
+            open: true,
+          });
+        }
+        createNewTerminal();
+        return;
+      }
+
+      const scriptId = projectScriptIdFromCommand(command);
+      if (!scriptId || !activeProject) return;
+      const script = activeProject.scripts.find((entry) => entry.id === scriptId);
+      if (!script) return;
       event.preventDefault();
       event.stopPropagation();
-      if (!activeThread?.terminalOpen) {
-        dispatch({
-          type: "SET_THREAD_TERMINAL_OPEN",
-          threadId: activeThreadId,
-          open: true,
-        });
-      }
-      createNewTerminal();
+      void runProjectScript(script);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [
+    activeProject,
     activeThread?.terminalOpen,
     activeThread?.activeTerminalId,
     activeThreadId,
     closeTerminal,
     createNewTerminal,
     dispatch,
+    runProjectScript,
     splitTerminal,
     keybindings,
     toggleTerminalVisibility,
@@ -1047,6 +1188,13 @@ export default function ChatView() {
           branch: result.worktree.branch,
           worktreePath: result.worktree.path,
         });
+        const setupScript = setupProjectScript(activeProject.scripts);
+        if (setupScript) {
+          void runProjectScript(setupScript, {
+            cwd: result.worktree.path,
+            env: { T3CODE_PROJECT_ROOT: activeProject.cwd },
+          });
+        }
       } catch (err) {
         dispatch({
           type: "SET_ERROR",
@@ -1325,10 +1473,15 @@ export default function ChatView() {
         <ChatHeader
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
+          activeProjectScripts={activeProject?.scripts}
           keybindings={keybindings}
           api={api}
           gitCwd={gitCwd}
           diffOpen={state.diffOpen}
+          onRunProjectScript={(script) => {
+            void runProjectScript(script);
+          }}
+          onAddProjectScript={saveProjectScript}
           onToggleDiff={onToggleDiff}
         />
       </header>
@@ -1652,20 +1805,26 @@ export default function ChatView() {
 interface ChatHeaderProps {
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  activeProjectScripts: ProjectScript[] | undefined;
   keybindings: ResolvedKeybindingsConfig;
   api: NativeApi | undefined;
   gitCwd: string | null;
   diffOpen: boolean;
+  onRunProjectScript: (script: ProjectScript) => void;
+  onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onToggleDiff: () => void;
 }
 
 const ChatHeader = memo(function ChatHeader({
   activeThreadTitle,
   activeProjectName,
+  activeProjectScripts,
   keybindings,
   api,
   gitCwd,
   diffOpen,
+  onRunProjectScript,
+  onAddProjectScript,
   onToggleDiff,
 }: ChatHeaderProps) {
   return (
@@ -1677,6 +1836,14 @@ const ChatHeader = memo(function ChatHeader({
         {activeProjectName && <Badge variant="outline">{activeProjectName}</Badge>}
       </div>
       <div className="shrink-0 flex items-center gap-3">
+        {activeProjectScripts && (
+          <ProjectScriptsControl
+            scripts={activeProjectScripts}
+            keybindings={keybindings}
+            onRunScript={onRunProjectScript}
+            onAddScript={onAddProjectScript}
+          />
+        )}
         {activeProjectName && <OpenInPicker keybindings={keybindings} />}
         {activeProjectName && <GitActionsControl api={api} gitCwd={gitCwd} />}
         <Button

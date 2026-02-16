@@ -1,9 +1,31 @@
 import { z } from "zod";
 
+export const PROJECT_SCRIPT_ICON_VALUES = ["play", "test", "lint", "configure", "build"] as const;
+
+export const projectScriptIconSchema = z.enum(PROJECT_SCRIPT_ICON_VALUES);
+
+export const projectScriptSchema = z
+  .object({
+    id: z
+      .string()
+      .trim()
+      .min(1)
+      .max(64)
+      .regex(/^[a-z0-9][a-z0-9-]*$/),
+    name: z.string().trim().min(1).max(64),
+    command: z.string().trim().min(1).max(10_000),
+    icon: projectScriptIconSchema,
+    runOnWorktreeCreate: z.boolean().default(false),
+  })
+  .strict();
+
+export const projectScriptsSchema = z.array(projectScriptSchema).max(64);
+
 export const projectRecordSchema = z.object({
   id: z.string().min(1),
   cwd: z.string().min(1),
   name: z.string().min(1),
+  scripts: projectScriptsSchema.default([]),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -44,6 +66,17 @@ export const projectSearchEntriesResultSchema = z.object({
   truncated: z.boolean(),
 });
 
+export const projectUpdateScriptsInputSchema = z.object({
+  id: z.string().min(1),
+  scripts: projectScriptsSchema,
+});
+
+export const projectUpdateScriptsResultSchema = z.object({
+  project: projectRecordSchema,
+});
+
+export type ProjectScriptIcon = z.infer<typeof projectScriptIconSchema>;
+export type ProjectScript = z.infer<typeof projectScriptSchema>;
 export type ProjectRecord = z.infer<typeof projectRecordSchema>;
 export type ProjectListResult = z.infer<typeof projectListResultSchema>;
 export type ProjectAddInput = z.input<typeof projectAddInputSchema>;
@@ -53,3 +86,5 @@ export type ProjectSearchEntriesInput = z.input<typeof projectSearchEntriesInput
 export type ProjectEntryKind = z.infer<typeof projectEntryKindSchema>;
 export type ProjectEntry = z.infer<typeof projectEntrySchema>;
 export type ProjectSearchEntriesResult = z.infer<typeof projectSearchEntriesResultSchema>;
+export type ProjectUpdateScriptsInput = z.input<typeof projectUpdateScriptsInputSchema>;
+export type ProjectUpdateScriptsResult = z.infer<typeof projectUpdateScriptsResultSchema>;

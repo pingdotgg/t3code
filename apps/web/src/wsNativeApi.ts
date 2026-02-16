@@ -99,6 +99,7 @@ export function createWsNativeApi(): NativeApi {
       add: (input) => transport.request(WS_METHODS.projectsAdd, input),
       remove: (input) => transport.request(WS_METHODS.projectsRemove, input),
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
+      updateScripts: (input) => transport.request(WS_METHODS.projectsUpdateScripts, input),
     },
     shell: {
       openInEditor: (cwd, editor) =>

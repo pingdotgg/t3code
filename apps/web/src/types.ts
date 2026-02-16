@@ -1,4 +1,8 @@
-import type { ProviderEvent, ProviderSession } from "@t3tools/contracts";
+import type {
+  ProjectScript as ContractProjectScript,
+  ProviderEvent,
+  ProviderSession,
+} from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export type RuntimeMode = "approval-required" | "full-access";
@@ -6,6 +10,7 @@ export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
 export const DEFAULT_THREAD_TERMINAL_ID = "default";
 export const MAX_THREAD_TERMINAL_COUNT = 4;
+export type ProjectScript = ContractProjectScript;
 
 export interface ThreadTerminalGroup {
   id: string;
@@ -38,6 +43,7 @@ export interface Project {
   cwd: string;
   model: string;
   expanded: boolean;
+  scripts: ProjectScript[];
 }
 
 export interface Thread {

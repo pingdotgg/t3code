@@ -7,6 +7,8 @@ import {
   projectSearchEntriesResultSchema,
   projectListResultSchema,
   projectRemoveInputSchema,
+  projectUpdateScriptsInputSchema,
+  projectUpdateScriptsResultSchema,
 } from "./project";
 
 describe("project contracts", () => {
@@ -16,6 +18,7 @@ describe("project contracts", () => {
         id: "project-1",
         cwd: "/tmp/project",
         name: "project",
+        scripts: [],
         createdAt: "2026-02-10T00:00:00.000Z",
         updatedAt: "2026-02-10T00:00:00.000Z",
       },
@@ -36,6 +39,7 @@ describe("project contracts", () => {
         id: "project-1",
         cwd: "/tmp/project",
         name: "project",
+        scripts: [],
         createdAt: "2026-02-10T00:00:00.000Z",
         updatedAt: "2026-02-10T00:00:00.000Z",
       },
@@ -81,5 +85,46 @@ describe("project contracts", () => {
 
     expect(parsed.entries).toHaveLength(2);
     expect(parsed.entries[0]?.kind).toBe("directory");
+  });
+
+  it("parses update scripts input", () => {
+    const parsed = projectUpdateScriptsInputSchema.parse({
+      id: "project-1",
+      scripts: [
+        {
+          id: "test",
+          name: "Test",
+          command: "bun test",
+          icon: "test",
+          runOnWorktreeCreate: false,
+        },
+      ],
+    });
+
+    expect(parsed.scripts).toHaveLength(1);
+    expect(parsed.scripts[0]?.id).toBe("test");
+  });
+
+  it("parses update scripts result", () => {
+    const parsed = projectUpdateScriptsResultSchema.parse({
+      project: {
+        id: "project-1",
+        cwd: "/tmp/project",
+        name: "project",
+        scripts: [
+          {
+            id: "setup",
+            name: "Setup",
+            command: "bun install",
+            icon: "configure",
+            runOnWorktreeCreate: true,
+          },
+        ],
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+    });
+
+    expect(parsed.project.scripts[0]?.id).toBe("setup");
   });
 });

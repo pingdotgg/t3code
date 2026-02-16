@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const keybindingCommandSchema = z.enum([
+export const STATIC_KEYBINDING_COMMANDS = [
   "terminal.toggle",
   "terminal.split",
   "terminal.new",
@@ -8,6 +8,16 @@ export const keybindingCommandSchema = z.enum([
   "chat.new",
   "chat.newLocal",
   "editor.openFavorite",
+] as const;
+
+export const keybindingCommandSchema = z.union([
+  z.enum(STATIC_KEYBINDING_COMMANDS),
+  z
+    .string()
+    .trim()
+    .min(1)
+    .max(96)
+    .regex(/^script\.[a-z0-9][a-z0-9-]*\.run$/),
 ]);
 
 const keybindingValueSchema = z.string().trim().min(1).max(64);

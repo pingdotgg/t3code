@@ -32,9 +32,17 @@ describe("keybindings contracts", () => {
     assert.throws(() =>
       keybindingRuleSchema.parse({
         key: "mod+j",
-        command: "invalid.command",
+        command: "script.Test.run",
       }),
     );
+  });
+
+  it("accepts dynamic script run commands", () => {
+    const parsed = keybindingRuleSchema.parse({
+      key: "mod+r",
+      command: "script.setup.run",
+    });
+    assert.strictEqual(parsed.command, "script.setup.run");
   });
 
   it("parses keybindings array payload", () => {
