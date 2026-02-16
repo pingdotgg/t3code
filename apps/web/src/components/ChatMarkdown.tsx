@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
@@ -13,7 +14,7 @@ const markdownComponents: Components = {
   },
 };
 
-export default function ChatMarkdown({ text }: ChatMarkdownProps) {
+function ChatMarkdown({ text }: ChatMarkdownProps) {
   return (
     <div className="chat-markdown text-sm leading-relaxed text-foreground/80">
       <ReactMarkdown
@@ -26,3 +27,5 @@ export default function ChatMarkdown({ text }: ChatMarkdownProps) {
     </div>
   );
 }
+
+export default memo(ChatMarkdown);
