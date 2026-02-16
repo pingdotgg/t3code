@@ -2,6 +2,7 @@ import {
   EDITORS,
   type EditorId,
   ModelSlug,
+  type NativeApi,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -15,6 +16,8 @@ import {
   type FormEvent,
   Fragment,
   type KeyboardEvent,
+  memo,
+  type RefObject,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -40,6 +43,7 @@ import {
   derivePendingApprovals,
   derivePhase,
   deriveTimelineEntries,
+  type PendingApproval,
   deriveWorkLogEntries,
   formatDuration,
   formatElapsed,
@@ -47,7 +51,7 @@ import {
 } from "../session-logic";
 import { isScrollContainerNearBottom } from "../chat-scroll";
 import { useStore } from "../store";
-import type { ChatImageAttachment } from "../types";
+import type { ChatImageAttachment, Thread } from "../types";
 import BranchToolbar from "./BranchToolbar";
 import GitActionsControl from "./GitActionsControl";
 import {
@@ -497,7 +501,7 @@ export default function ChatView() {
     if (phase !== "running") return;
     const timer = window.setInterval(() => {
       setNowTick(Date.now());
-    }, 250);
+    }, 1000);
     return () => {
       window.clearInterval(timer);
     };
@@ -889,28 +893,31 @@ export default function ChatView() {
     });
   };
 
-  const onRespondToApproval = async (requestId: string, decision: ProviderApprovalDecision) => {
-    if (!api || !activeThread?.session) return;
+  const onRespondToApproval = useCallback(
+    async (requestId: string, decision: ProviderApprovalDecision) => {
+      if (!api || !activeThread?.session) return;
 
-    setRespondingRequestIds((existing) =>
-      existing.includes(requestId) ? existing : [...existing, requestId],
-    );
-    try {
-      await api.providers.respondToRequest({
-        sessionId: activeThread.session.sessionId,
-        requestId,
-        decision,
-      });
-    } catch (err) {
-      dispatch({
-        type: "SET_ERROR",
-        threadId: activeThread.id,
-        error: err instanceof Error ? err.message : "Failed to submit approval decision.",
-      });
-    } finally {
-      setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
-    }
-  };
+      setRespondingRequestIds((existing) =>
+        existing.includes(requestId) ? existing : [...existing, requestId],
+      );
+      try {
+        await api.providers.respondToRequest({
+          sessionId: activeThread.session.sessionId,
+          requestId,
+          decision,
+        });
+      } catch (err) {
+        dispatch({
+          type: "SET_ERROR",
+          threadId: activeThread.id,
+          error: err instanceof Error ? err.message : "Failed to submit approval decision.",
+        });
+      } finally {
+        setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
+      }
+    },
+    [activeThread?.id, activeThread?.session, api, dispatch],
+  );
 
   const onModelSelect = useCallback(
     (model: ModelSlug) => {
@@ -945,6 +952,18 @@ export default function ChatView() {
       void onSend(e as unknown as FormEvent);
     }
   };
+  const onToggleWorkGroup = useCallback((groupId: string) => {
+    setExpandedWorkGroups((existing) => ({
+      ...existing,
+      [groupId]: !existing[groupId],
+    }));
+  }, []);
+  const onExpandTimelineImage = useCallback((image: ExpandedImagePreview) => {
+    setExpandedImage(image);
+  }, []);
+  const onToggleDiff = useCallback(() => {
+    dispatch({ type: "TOGGLE_DIFF" });
+  }, [dispatch]);
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -970,101 +989,24 @@ export default function ChatView() {
       <header
         className={`flex items-center justify-between border-b border-border px-5 ${isElectron ? "drag-region h-[52px]" : "py-3"}`}
       >
-        <div className="flex items-center gap-3">
-          <h2 className="text-sm font-medium text-foreground">{activeThread.title}</h2>
-          {activeProject && <Badge variant="outline">{activeProject.name}</Badge>}
-        </div>
-        <div className="flex items-center gap-3">
-          {/* Open in editor */}
-          {activeProject && <OpenInPicker keybindings={keybindings} />}
-          {/* Git actions */}
-          {activeProject && <GitActionsControl api={api} gitCwd={gitCwd} />}
-
-          {/* Diff toggle */}
-          <Button
-            size="xs"
-            variant="ghost"
-            className={cn(
-              "text-muted-foreground/70 hover:text-foreground/80",
-              state.diffOpen && "bg-accent text-accent-foreground",
-            )}
-            onClick={() => dispatch({ type: "TOGGLE_DIFF" })}
-          >
-            Diff
-          </Button>
-        </div>
+        <ChatHeader
+          activeThreadTitle={activeThread.title}
+          activeProjectName={activeProject?.name}
+          keybindings={keybindings}
+          api={api}
+          gitCwd={gitCwd}
+          diffOpen={state.diffOpen}
+          onToggleDiff={onToggleDiff}
+        />
       </header>
 
       {/* Error banner */}
-      {activeThread.error && (
-        <div className="pt-3 mx-auto max-w-3xl">
-          <Alert variant="error">
-            <CircleAlertIcon />
-            <AlertDescription className="line-clamp-3" title={activeThread.error}>
-              {activeThread.error}
-            </AlertDescription>
-          </Alert>
-        </div>
-      )}
-
-      {pendingApprovals.length > 0 && (
-        <div className="pt-3 mx-auto max-w-3xl space-y-2">
-          {pendingApprovals.map((approval) => {
-            const isResponding = respondingRequestIds.includes(approval.requestId);
-
-            return (
-              <Alert variant="warning" key={approval.requestId}>
-                <InfoIcon />
-                <AlertTitle className="text-xs">
-                  {approval.requestKind === "command"
-                    ? "Command approval requested"
-                    : "File-change approval requested"}
-                </AlertTitle>
-                <AlertDescription
-                  className="truncate block font-mono text-[11px]"
-                  title={approval.detail}
-                >
-                  {approval.detail}
-                </AlertDescription>
-                <AlertAction className="col-start-2! -col-end-1! mt-1.5 sm:row-start-auto sm:row-end-auto">
-                  <Button
-                    size="xs"
-                    variant="default"
-                    disabled={isResponding}
-                    onClick={() => void onRespondToApproval(approval.requestId, "accept")}
-                  >
-                    Approve once
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={isResponding}
-                    onClick={() => void onRespondToApproval(approval.requestId, "acceptForSession")}
-                  >
-                    Always allow this session
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="destructive-outline"
-                    disabled={isResponding}
-                    onClick={() => void onRespondToApproval(approval.requestId, "decline")}
-                  >
-                    Decline
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    disabled={isResponding}
-                    onClick={() => void onRespondToApproval(approval.requestId, "cancel")}
-                  >
-                    Cancel turn
-                  </Button>
-                </AlertAction>
-              </Alert>
-            );
-          })}
-        </div>
-      )}
+      <ThreadErrorBanner error={activeThread.error} />
+      <PendingApprovalsPanel
+        pendingApprovals={pendingApprovals}
+        respondingRequestIds={respondingRequestIds}
+        onRespondToApproval={onRespondToApproval}
+      />
 
       {/* Messages */}
       <div
@@ -1072,198 +1014,19 @@ export default function ChatView() {
         className="min-h-0 flex-1 overflow-y-auto px-5 py-4"
         onScroll={onMessagesScroll}
       >
-        {activeThread.messages.length === 0 && !isWorking ? (
-          <div className="flex h-full items-center justify-center">
-            <p className="text-sm text-muted-foreground/30">
-              Send a message to start the conversation.
-            </p>
-          </div>
-        ) : (
-          <div className="mx-auto max-w-3xl space-y-4">
-            {timelineEntries.map((timelineEntry, index) => {
-              if (timelineEntry.kind === "work" && timelineEntries[index - 1]?.kind === "work") {
-                return null;
-              }
-
-              const showCompletionDivider =
-                timelineEntry.kind === "message" &&
-                timelineEntry.message.role === "assistant" &&
-                completionDividerBeforeEntryId === timelineEntry.id;
-
-              if (timelineEntry.kind === "work") {
-                const groupedEntries = [timelineEntry.entry];
-                let cursor = index + 1;
-                while (cursor < timelineEntries.length) {
-                  const nextEntry = timelineEntries[cursor];
-                  if (!nextEntry || nextEntry.kind !== "work") break;
-                  groupedEntries.push(nextEntry.entry);
-                  cursor += 1;
-                }
-
-                const groupId = timelineEntry.id;
-                const isExpanded = expandedWorkGroups[groupId] ?? false;
-                const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
-                const visibleEntries =
-                  hasOverflow && !isExpanded
-                    ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
-                    : groupedEntries;
-                const hiddenCount = groupedEntries.length - visibleEntries.length;
-                const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
-                const groupLabel = onlyToolEntries
-                  ? groupedEntries.length === 1
-                    ? "Tool call"
-                    : `Tool calls (${groupedEntries.length})`
-                  : groupedEntries.length === 1
-                    ? "Work event"
-                    : `Work log (${groupedEntries.length})`;
-
-                return (
-                  <Fragment key={timelineEntry.id}>
-                    <div className="rounded-lg border border-border/80 bg-card/45 px-3 py-2">
-                      <div className="mb-1.5 flex items-center justify-between gap-3">
-                        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
-                          {groupLabel}
-                        </p>
-                        {hasOverflow && (
-                          <button
-                            type="button"
-                            className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-muted-foreground/80"
-                            onClick={() =>
-                              setExpandedWorkGroups((existing) => ({
-                                ...existing,
-                                [groupId]: !existing[groupId],
-                              }))
-                            }
-                          >
-                            {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
-                          </button>
-                        )}
-                      </div>
-                      <div className="space-y-1">
-                        {visibleEntries.map((workEntry) => (
-                          <div
-                            key={`work-row:${workEntry.id}`}
-                            className="flex items-start gap-2 py-0.5"
-                          >
-                            <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
-                            <p
-                              className={`py-[2px] text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}
-                            >
-                              {workEntry.detail ? (
-                                <>
-                                  {workEntry.label}
-                                  <span
-                                    className="ml-1.5 inline-block max-w-[70ch] truncate align-bottom font-mono text-[11px] opacity-60"
-                                    title={workEntry.detail}
-                                  >
-                                    {workEntry.detail}
-                                  </span>
-                                </>
-                              ) : (
-                                workEntry.label
-                              )}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </Fragment>
-                );
-              }
-
-              if (timelineEntry.message.role === "user") {
-                const userImages = timelineEntry.message.attachments ?? [];
-                return (
-                  <Fragment key={timelineEntry.id}>
-                    <div className="flex justify-end">
-                      <div className="max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
-                        {userImages.length > 0 && (
-                          <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-                            {userImages.map((image) => (
-                              <div
-                                key={image.id}
-                                className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
-                              >
-                                {image.previewUrl ? (
-                                  <img
-                                    src={image.previewUrl}
-                                    alt={image.name}
-                                    className="h-full max-h-[220px] w-full cursor-zoom-in object-cover"
-                                    onClick={() =>
-                                      setExpandedImage({ src: image.previewUrl!, name: image.name })
-                                    }
-                                  />
-                                ) : (
-                                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
-                                    {image.name}
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {timelineEntry.message.text && (
-                          <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
-                            {timelineEntry.message.text}
-                          </pre>
-                        )}
-                        <p className="mt-1.5 text-right text-[10px] text-muted-foreground/30">
-                          {formatTimestamp(timelineEntry.message.createdAt)}
-                        </p>
-                      </div>
-                    </div>
-                  </Fragment>
-                );
-              }
-
-              return (
-                <Fragment key={timelineEntry.id}>
-                  {showCompletionDivider && (
-                    <div className="my-3 flex items-center gap-3">
-                      <span className="h-px flex-1 bg-border" />
-                      <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
-                        {completionSummary ? `Response • ${completionSummary}` : "Response"}
-                      </span>
-                      <span className="h-px flex-1 bg-border" />
-                    </div>
-                  )}
-                  <div className="px-1 py-0.5">
-                    <ChatMarkdown
-                      text={
-                        timelineEntry.message.text ||
-                        (timelineEntry.message.streaming ? "" : "(empty response)")
-                      }
-                    />
-                    <p className="mt-1.5 text-[10px] text-muted-foreground/30">
-                      {formatMessageMeta(
-                        timelineEntry.message.createdAt,
-                        timelineEntry.message.streaming
-                          ? formatElapsed(timelineEntry.message.createdAt, nowIso)
-                          : formatElapsed(
-                              timelineEntry.message.createdAt,
-                              assistantCompletionByItemId.get(timelineEntry.message.id),
-                            ),
-                      )}
-                    </p>
-                  </div>
-                </Fragment>
-              );
-            })}
-            {isWorking && (
-              <div className="flex items-center gap-2 py-0.5 pl-1.5">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
-                <div className="flex items-center pt-1">
-                  <span className="inline-flex items-center gap-[3px]">
-                    <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
-                    <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
-                    <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
-                  </span>
-                </div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-        )}
+        <MessagesTimeline
+          activeThread={activeThread}
+          isWorking={isWorking}
+          timelineEntries={timelineEntries}
+          completionDividerBeforeEntryId={completionDividerBeforeEntryId}
+          completionSummary={completionSummary}
+          assistantCompletionByItemId={assistantCompletionByItemId}
+          nowIso={nowIso}
+          expandedWorkGroups={expandedWorkGroups}
+          onToggleWorkGroup={onToggleWorkGroup}
+          onImageExpand={onExpandTimelineImage}
+          messagesEndRef={messagesEndRef}
+        />
       </div>
 
       {/* Input bar */}
@@ -1519,7 +1282,355 @@ export default function ChatView() {
   );
 }
 
-function ModelPicker(props: { model: ModelSlug; onModelChange: (model: ModelSlug) => void }) {
+interface ChatHeaderProps {
+  activeThreadTitle: string;
+  activeProjectName: string | undefined;
+  keybindings: ResolvedKeybindingsConfig;
+  api: NativeApi | undefined;
+  gitCwd: string | null;
+  diffOpen: boolean;
+  onToggleDiff: () => void;
+}
+
+const ChatHeader = memo(function ChatHeader({
+  activeThreadTitle,
+  activeProjectName,
+  keybindings,
+  api,
+  gitCwd,
+  diffOpen,
+  onToggleDiff,
+}: ChatHeaderProps) {
+  return (
+    <>
+      <div className="flex items-center gap-3">
+        <h2 className="text-sm font-medium text-foreground">{activeThreadTitle}</h2>
+        {activeProjectName && <Badge variant="outline">{activeProjectName}</Badge>}
+      </div>
+      <div className="flex items-center gap-3">
+        {activeProjectName && <OpenInPicker keybindings={keybindings} />}
+        {activeProjectName && <GitActionsControl api={api} gitCwd={gitCwd} />}
+        <Button
+          size="xs"
+          variant="ghost"
+          className={cn(
+            "text-muted-foreground/70 hover:text-foreground/80",
+            diffOpen && "bg-accent text-accent-foreground",
+          )}
+          onClick={onToggleDiff}
+        >
+          Diff
+        </Button>
+      </div>
+    </>
+  );
+});
+
+const ThreadErrorBanner = memo(function ThreadErrorBanner({ error }: { error: string | null }) {
+  if (!error) return null;
+  return (
+    <div className="pt-3 mx-auto max-w-3xl">
+      <Alert variant="error">
+        <CircleAlertIcon />
+        <AlertDescription className="line-clamp-3" title={error}>
+          {error}
+        </AlertDescription>
+      </Alert>
+    </div>
+  );
+});
+
+interface PendingApprovalsPanelProps {
+  pendingApprovals: PendingApproval[];
+  respondingRequestIds: string[];
+  onRespondToApproval: (requestId: string, decision: ProviderApprovalDecision) => Promise<void>;
+}
+
+const PendingApprovalsPanel = memo(function PendingApprovalsPanel({
+  pendingApprovals,
+  respondingRequestIds,
+  onRespondToApproval,
+}: PendingApprovalsPanelProps) {
+  if (pendingApprovals.length === 0) return null;
+  return (
+    <div className="pt-3 mx-auto max-w-3xl space-y-2">
+      {pendingApprovals.map((approval) => {
+        const isResponding = respondingRequestIds.includes(approval.requestId);
+
+        return (
+          <Alert variant="warning" key={approval.requestId}>
+            <InfoIcon />
+            <AlertTitle className="text-xs">
+              {approval.requestKind === "command"
+                ? "Command approval requested"
+                : "File-change approval requested"}
+            </AlertTitle>
+            <AlertDescription
+              className="truncate block font-mono text-[11px]"
+              title={approval.detail}
+            >
+              {approval.detail}
+            </AlertDescription>
+            <AlertAction className="col-start-2! -col-end-1! mt-1.5 sm:row-start-auto sm:row-end-auto">
+              <Button
+                size="xs"
+                variant="default"
+                disabled={isResponding}
+                onClick={() => void onRespondToApproval(approval.requestId, "accept")}
+              >
+                Approve once
+              </Button>
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={isResponding}
+                onClick={() => void onRespondToApproval(approval.requestId, "acceptForSession")}
+              >
+                Always allow this session
+              </Button>
+              <Button
+                size="xs"
+                variant="destructive-outline"
+                disabled={isResponding}
+                onClick={() => void onRespondToApproval(approval.requestId, "decline")}
+              >
+                Decline
+              </Button>
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={isResponding}
+                onClick={() => void onRespondToApproval(approval.requestId, "cancel")}
+              >
+                Cancel turn
+              </Button>
+            </AlertAction>
+          </Alert>
+        );
+      })}
+    </div>
+  );
+});
+
+interface MessagesTimelineProps {
+  activeThread: Thread;
+  isWorking: boolean;
+  timelineEntries: ReturnType<typeof deriveTimelineEntries>;
+  completionDividerBeforeEntryId: string | null;
+  completionSummary: string | null;
+  assistantCompletionByItemId: Map<string, string>;
+  nowIso: string;
+  expandedWorkGroups: Record<string, boolean>;
+  onToggleWorkGroup: (groupId: string) => void;
+  onImageExpand: (image: ExpandedImagePreview) => void;
+  messagesEndRef: RefObject<HTMLDivElement | null>;
+}
+
+const MessagesTimeline = memo(function MessagesTimeline({
+  activeThread,
+  isWorking,
+  timelineEntries,
+  completionDividerBeforeEntryId,
+  completionSummary,
+  assistantCompletionByItemId,
+  nowIso,
+  expandedWorkGroups,
+  onToggleWorkGroup,
+  onImageExpand,
+  messagesEndRef,
+}: MessagesTimelineProps) {
+  if (activeThread.messages.length === 0 && !isWorking) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <p className="text-sm text-muted-foreground/30">Send a message to start the conversation.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-4">
+      {timelineEntries.map((timelineEntry, index) => {
+        if (timelineEntry.kind === "work" && timelineEntries[index - 1]?.kind === "work") {
+          return null;
+        }
+
+        const showCompletionDivider =
+          timelineEntry.kind === "message" &&
+          timelineEntry.message.role === "assistant" &&
+          completionDividerBeforeEntryId === timelineEntry.id;
+
+        if (timelineEntry.kind === "work") {
+          const groupedEntries = [timelineEntry.entry];
+          let cursor = index + 1;
+          while (cursor < timelineEntries.length) {
+            const nextEntry = timelineEntries[cursor];
+            if (!nextEntry || nextEntry.kind !== "work") break;
+            groupedEntries.push(nextEntry.entry);
+            cursor += 1;
+          }
+
+          const groupId = timelineEntry.id;
+          const isExpanded = expandedWorkGroups[groupId] ?? false;
+          const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
+          const visibleEntries =
+            hasOverflow && !isExpanded
+              ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
+              : groupedEntries;
+          const hiddenCount = groupedEntries.length - visibleEntries.length;
+          const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
+          const groupLabel = onlyToolEntries
+            ? groupedEntries.length === 1
+              ? "Tool call"
+              : `Tool calls (${groupedEntries.length})`
+            : groupedEntries.length === 1
+              ? "Work event"
+              : `Work log (${groupedEntries.length})`;
+
+          return (
+            <Fragment key={timelineEntry.id}>
+              <div className="rounded-lg border border-border/80 bg-card/45 px-3 py-2">
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+                    {groupLabel}
+                  </p>
+                  {hasOverflow && (
+                    <button
+                      type="button"
+                      className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-muted-foreground/80"
+                      onClick={() => onToggleWorkGroup(groupId)}
+                    >
+                      {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
+                    </button>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  {visibleEntries.map((workEntry) => (
+                    <div key={`work-row:${workEntry.id}`} className="flex items-start gap-2 py-0.5">
+                      <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
+                      <p
+                        className={`py-[2px] text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}
+                      >
+                        {workEntry.detail ? (
+                          <>
+                            {workEntry.label}
+                            <span
+                              className="ml-1.5 inline-block max-w-[70ch] truncate align-bottom font-mono text-[11px] opacity-60"
+                              title={workEntry.detail}
+                            >
+                              {workEntry.detail}
+                            </span>
+                          </>
+                        ) : (
+                          workEntry.label
+                        )}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Fragment>
+          );
+        }
+
+        if (timelineEntry.message.role === "user") {
+          const userImages = timelineEntry.message.attachments ?? [];
+          return (
+            <Fragment key={timelineEntry.id}>
+              <div className="flex justify-end">
+                <div className="max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
+                  {userImages.length > 0 && (
+                    <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+                      {userImages.map((image) => (
+                        <div
+                          key={image.id}
+                          className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                        >
+                          {image.previewUrl ? (
+                            <img
+                              src={image.previewUrl}
+                              alt={image.name}
+                              className="h-full max-h-[220px] w-full cursor-zoom-in object-cover"
+                              onClick={() =>
+                                onImageExpand({ src: image.previewUrl!, name: image.name })
+                              }
+                            />
+                          ) : (
+                            <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
+                              {image.name}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {timelineEntry.message.text && (
+                    <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+                      {timelineEntry.message.text}
+                    </pre>
+                  )}
+                  <p className="mt-1.5 text-right text-[10px] text-muted-foreground/30">
+                    {formatTimestamp(timelineEntry.message.createdAt)}
+                  </p>
+                </div>
+              </div>
+            </Fragment>
+          );
+        }
+
+        return (
+          <Fragment key={timelineEntry.id}>
+            {showCompletionDivider && (
+              <div className="my-3 flex items-center gap-3">
+                <span className="h-px flex-1 bg-border" />
+                <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
+                  {completionSummary ? `Response • ${completionSummary}` : "Response"}
+                </span>
+                <span className="h-px flex-1 bg-border" />
+              </div>
+            )}
+            <div className="px-1 py-0.5">
+              <ChatMarkdown
+                text={
+                  timelineEntry.message.text ||
+                  (timelineEntry.message.streaming ? "" : "(empty response)")
+                }
+              />
+              <p className="mt-1.5 text-[10px] text-muted-foreground/30">
+                {formatMessageMeta(
+                  timelineEntry.message.createdAt,
+                  timelineEntry.message.streaming
+                    ? formatElapsed(timelineEntry.message.createdAt, nowIso)
+                    : formatElapsed(
+                        timelineEntry.message.createdAt,
+                        assistantCompletionByItemId.get(timelineEntry.message.id),
+                      ),
+                )}
+              </p>
+            </div>
+          </Fragment>
+        );
+      })}
+      {isWorking && (
+        <div className="flex items-center gap-2 py-0.5 pl-1.5">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
+          <div className="flex items-center pt-1">
+            <span className="inline-flex items-center gap-[3px]">
+              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
+              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
+              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
+            </span>
+          </div>
+        </div>
+      )}
+      <div ref={messagesEndRef} />
+    </div>
+  );
+});
+
+const ModelPicker = memo(function ModelPicker(props: {
+  model: ModelSlug;
+  onModelChange: (model: ModelSlug) => void;
+}) {
   return (
     <Select
       items={MODEL_OPTIONS.map((option) => ({ label: option.name, value: option.slug }))}
@@ -1538,9 +1649,9 @@ function ModelPicker(props: { model: ModelSlug; onModelChange: (model: ModelSlug
       </SelectPopup>
     </Select>
   );
-}
+});
 
-function ReasoningEffortPicker(props: {
+const ReasoningEffortPicker = memo(function ReasoningEffortPicker(props: {
   effort: ReasoningEffort;
   onEffortChange: (effort: ReasoningEffort) => void;
 }) {
@@ -1562,9 +1673,13 @@ function ReasoningEffortPicker(props: {
       </SelectPopup>
     </Select>
   );
-}
+});
 
-function OpenInPicker({ keybindings }: { keybindings: ResolvedKeybindingsConfig }) {
+const OpenInPicker = memo(function OpenInPicker({
+  keybindings,
+}: {
+  keybindings: ResolvedKeybindingsConfig;
+}) {
   const [lastEditor, setLastEditor] = useState<EditorId>(() => {
     const stored = localStorage.getItem(LAST_EDITOR_KEY);
     return EDITORS.some((e) => e.id === stored) ? (stored as EditorId) : EDITORS[0].id;
@@ -1648,4 +1763,4 @@ function OpenInPicker({ keybindings }: { keybindings: ResolvedKeybindingsConfig 
       </Menu>
     </Group>
   );
-}
+});
