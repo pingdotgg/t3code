@@ -897,23 +897,32 @@ export default function ChatView() {
     }
   };
 
-  const onModelSelect = (model: ModelSlug) => {
-    if (!activeThread) return;
-    dispatch({
-      type: "SET_THREAD_MODEL",
-      threadId: activeThread.id,
-      model: resolveModelSlug(model),
-    });
-    scheduleComposerFocus();
-  };
-  const onEffortSelect = (effort: ReasoningEffort) => {
-    setSelectedEffort(effort);
-    scheduleComposerFocus();
-  };
-  const onEnvModeChange = (mode: "local" | "worktree") => {
-    setEnvMode(mode);
-    scheduleComposerFocus();
-  };
+  const onModelSelect = useCallback(
+    (model: ModelSlug) => {
+      if (!activeThread) return;
+      dispatch({
+        type: "SET_THREAD_MODEL",
+        threadId: activeThread.id,
+        model: resolveModelSlug(model),
+      });
+      scheduleComposerFocus();
+    },
+    [activeThread, dispatch, scheduleComposerFocus],
+  );
+  const onEffortSelect = useCallback(
+    (effort: ReasoningEffort) => {
+      setSelectedEffort(effort);
+      scheduleComposerFocus();
+    },
+    [scheduleComposerFocus],
+  );
+  const onEnvModeChange = useCallback(
+    (mode: "local" | "worktree") => {
+      setEnvMode(mode);
+      scheduleComposerFocus();
+    },
+    [scheduleComposerFocus],
+  );
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
