@@ -147,6 +147,7 @@ describe("terminalEventSchema", () => {
       terminalId: DEFAULT_TERMINAL_ID,
       createdAt: new Date().toISOString(),
       hasRunningSubprocess: true,
+      runningPorts: [3000],
     });
     expect(result.success).toBe(true);
   });

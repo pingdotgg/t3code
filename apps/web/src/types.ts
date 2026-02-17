@@ -49,6 +49,7 @@ export interface Thread {
   terminalHeight: number;
   terminalIds: string[];
   runningTerminalIds: string[];
+  runningTerminalPorts: Record<string, number[]>;
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
   activeTerminalGroupId: string;

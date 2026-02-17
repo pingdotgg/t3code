@@ -247,6 +247,7 @@ function hydrateThread(
     terminalHeight: thread.terminalHeight ?? DEFAULT_THREAD_TERMINAL_HEIGHT,
     terminalIds: safeTerminalIds,
     runningTerminalIds: [],
+    runningTerminalPorts: {},
     activeTerminalId,
     terminalGroups: normalizedGroups,
     activeTerminalGroupId,

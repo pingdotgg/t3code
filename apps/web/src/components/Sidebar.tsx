@@ -1,5 +1,5 @@
-import { MonitorIcon, MoonIcon, SunIcon, TerminalIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { GlobeIcon, MonitorIcon, MoonIcon, SunIcon, TerminalIcon, TerminalSquareIcon } from "lucide-react";
+import { type MouseEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isElectron } from "../env";
@@ -47,11 +47,7 @@ interface ThreadStatusPill {
   pulse: boolean;
 }
 
-interface TerminalStatusIndicator {
-  label: "Terminal process running";
-  colorClass: string;
-  pulse: boolean;
-}
+
 
 function hasUnseenCompletion(thread: Thread): boolean {
   if (!thread.latestTurnCompletedAt) return false;
@@ -104,14 +100,29 @@ function threadStatusPill(thread: Thread, hasPendingApprovals: boolean): ThreadS
   return null;
 }
 
-function terminalStatusIndicator(thread: Thread): TerminalStatusIndicator | null {
+function terminalStatusIndicator(thread: Thread){
   if (thread.runningTerminalIds.length === 0) {
     return null;
   }
+
+  const runningPorts = [...new Set(
+    thread.runningTerminalIds.flatMap(
+      (terminalId) => thread.runningTerminalPorts[terminalId] ?? [],
+    ),
+  )]
+    .filter((port) => Number.isInteger(port) && port > 0 && port <= 65_535)
+    .toSorted((left, right) => left - right);
+
+  const label =
+    runningPorts.length === 0
+      ? "Terminal process running"
+      : runningPorts.length === 1
+        ? `Open web server: http://localhost:${runningPorts[0]}`
+        : `Open web server: http://localhost:${runningPorts[0]} (detected web ports: ${runningPorts.join(", ")})`;
+
   return {
-    label: "Terminal process running",
-    colorClass: "text-teal-600 dark:text-teal-300/90",
-    pulse: true,
+    label,
+    primaryWebPort: runningPorts[0] ?? null,
   };
 }
 
@@ -159,6 +170,7 @@ export default function Sidebar() {
           terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
           terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
           runningTerminalIds: [],
+          runningTerminalPorts: {},
           activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
           terminalGroups: [
             {
@@ -385,6 +397,16 @@ export default function Sidebar() {
     [api, dispatch, state.projects, state.threads],
   );
 
+  const openWebPort = useCallback(
+    (event: MouseEvent<HTMLElement>, port: number) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!api) return;
+      void api.shell.openExternal(`http://localhost:${port}`).catch(() => undefined);
+    },
+    [api],
+  );
+
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       const activeThread = state.threads.find((t) => t.id === state.activeThreadId);
@@ -502,9 +524,10 @@ export default function Sidebar() {
                     );
                     const terminalStatus = terminalStatusIndicator(thread);
                     return (
-                      <button
+                      <div
                         key={thread.id}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors duration-150 ${
                           isActive
                             ? "bg-accent text-foreground"
@@ -516,6 +539,14 @@ export default function Sidebar() {
                             threadId: thread.id,
                           })
                         }
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          dispatch({
+                            type: "SET_ACTIVE_THREAD",
+                            threadId: thread.id,
+                          });
+                        }}
                         onContextMenu={(e) => {
                           e.preventDefault();
                           void handleThreadContextMenu(thread.id, {
@@ -541,22 +572,35 @@ export default function Sidebar() {
                         </div>
                         <div className="ml-2 flex shrink-0 items-center gap-1.5">
                           {terminalStatus && (
-                            <span
-                              role="img"
-                              aria-label={terminalStatus.label}
-                              title={terminalStatus.label}
-                              className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
-                            >
-                              <TerminalIcon
-                                className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`}
-                              />
-                            </span>
+                            terminalStatus.primaryWebPort !== null ? (
+                              <button
+                                type="button"
+                                aria-label={terminalStatus.label}
+                                title={terminalStatus.label}
+className="inline-flex items-center justify-center rounded p-0.5 text-sky-600 transition-colors hover:bg-accent hover:text-sky-700 dark:text-sky-300/90 dark:hover:text-sky-200"
+                                onClick={(event) => openWebPort(event, terminalStatus.primaryWebPort!)}
+                                onKeyDown={(event) => 
+                                  event.stopPropagation()
+                                }
+                              >
+                                <GlobeIcon className="size-2.5 shrink-0" />
+                              </button>
+                            ) : (
+                              <span
+                                role="img"
+                                aria-label={terminalStatus.label}
+                                title={terminalStatus.label}
+className="inline-flex items-center justify-center text-teal-600 dark:text-teal-300/90"
+                              >
+                                <TerminalSquareIcon className="size-2.5 animate-pulse" />
+                              </span>
+                            )
                           )}
                           <span className="text-[10px] text-muted-foreground/40">
                             {formatRelativeTime(thread.createdAt)}
                           </span>
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
 

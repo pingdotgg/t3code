@@ -21,14 +21,22 @@ import {
 
 import { createLogger } from "./logger";
 import { NodePtyAdapter, type PtyAdapter, type PtyExitEvent, type PtyProcess } from "./ptyAdapter";
-import { runProcess } from "./processRunner";
+import {
+  arePortListsEqual,
+  defaultSubprocessInspector,
+  normalizeRunningPorts,
+  subprocessCheckerToInspector,
+  type TerminalSubprocessActivity,
+  type TerminalSubprocessChecker,
+  type TerminalSubprocessInspector,
+  type TerminalWebPortInspector,
+} from "./terminalProcessInspector";
+import { DEFAULT_WEB_PORT_PROBE_TTL_MS, defaultWebPortInspector } from "./webPortInspector";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
 const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
-
-type TerminalSubprocessChecker = (terminalPid: number) => Promise<boolean>;
 
 export interface TerminalManagerEvents {
   event: [event: TerminalEvent];
@@ -40,6 +48,9 @@ export interface TerminalManagerOptions {
   ptyAdapter?: PtyAdapter;
   shellResolver?: () => string;
   subprocessChecker?: TerminalSubprocessChecker;
+  subprocessInspector?: TerminalSubprocessInspector;
+  webPortInspector?: TerminalWebPortInspector;
+  webPortProbeCacheTtlMs?: number;
   subprocessPollIntervalMs?: number;
 }
 
@@ -59,6 +70,7 @@ interface TerminalSessionState {
   unsubscribeData: (() => void) | null;
   unsubscribeExit: (() => void) | null;
   hasRunningSubprocess: boolean;
+  runningSubprocessPorts: number[];
 }
 
 function defaultShellResolver(): string {
@@ -125,83 +137,6 @@ function isRetryableShellSpawnError(error: unknown): boolean {
   );
 }
 
-async function checkWindowsSubprocessActivity(terminalPid: number): Promise<boolean> {
-  const command = [
-    `$children = Get-CimInstance Win32_Process -Filter "ParentProcessId = ${terminalPid}" -ErrorAction SilentlyContinue`,
-    "if ($children) { exit 0 }",
-    "exit 1",
-  ].join("; ");
-  try {
-    const result = await runProcess(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", command],
-      {
-        timeoutMs: 1_500,
-        allowNonZeroExit: true,
-        maxBufferBytes: 32_768,
-        outputMode: "truncate",
-      },
-    );
-    return result.code === 0;
-  } catch {
-    return false;
-  }
-}
-
-async function checkPosixSubprocessActivity(terminalPid: number): Promise<boolean> {
-  try {
-    const pgrepResult = await runProcess("pgrep", ["-P", String(terminalPid)], {
-      timeoutMs: 1_000,
-      allowNonZeroExit: true,
-      maxBufferBytes: 32_768,
-      outputMode: "truncate",
-    });
-    if (pgrepResult.code === 0) {
-      return pgrepResult.stdout.trim().length > 0;
-    }
-    if (pgrepResult.code === 1) {
-      return false;
-    }
-  } catch {
-    // Fall back to ps when pgrep is unavailable.
-  }
-
-  try {
-    const psResult = await runProcess("ps", ["-eo", "pid=,ppid="], {
-      timeoutMs: 1_000,
-      allowNonZeroExit: true,
-      maxBufferBytes: 262_144,
-      outputMode: "truncate",
-    });
-    if (psResult.code !== 0) {
-      return false;
-    }
-
-    for (const line of psResult.stdout.split(/\r?\n/g)) {
-      const [pidRaw, ppidRaw] = line.trim().split(/\s+/g);
-      const pid = Number(pidRaw);
-      const ppid = Number(ppidRaw);
-      if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
-      if (ppid === terminalPid) {
-        return true;
-      }
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-async function defaultSubprocessChecker(terminalPid: number): Promise<boolean> {
-  if (!Number.isInteger(terminalPid) || terminalPid <= 0) {
-    return false;
-  }
-  if (process.platform === "win32") {
-    return checkWindowsSubprocessActivity(terminalPid);
-  }
-  return checkPosixSubprocessActivity(terminalPid);
-}
-
 function capHistory(history: string, maxLines: number): string {
   if (history.length === 0) return history;
   const hasTrailingNewline = history.endsWith("\n");
@@ -262,7 +197,14 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
   private readonly pendingPersistHistory = new Map<string, string>();
   private readonly threadLocks = new Map<string, Promise<void>>();
   private readonly persistDebounceMs: number;
-  private readonly subprocessChecker: TerminalSubprocessChecker;
+  private readonly subprocessInspector: TerminalSubprocessInspector;
+  private readonly webPortInspector: TerminalWebPortInspector;
+  private readonly webPortProbeCacheTtlMs: number;
+  private readonly webPortProbeCache = new Map<
+    number,
+    { isWeb: boolean; checkedAt: number }
+  >();
+  private readonly webPortProbeInFlight = new Map<number, Promise<boolean>>();
   private readonly subprocessPollIntervalMs: number;
   private subprocessPollTimer: ReturnType<typeof setInterval> | null = null;
   private subprocessPollInFlight = false;
@@ -275,7 +217,14 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     this.ptyAdapter = options.ptyAdapter ?? new NodePtyAdapter();
     this.shellResolver = options.shellResolver ?? defaultShellResolver;
     this.persistDebounceMs = DEFAULT_PERSIST_DEBOUNCE_MS;
-    this.subprocessChecker = options.subprocessChecker ?? defaultSubprocessChecker;
+    this.subprocessInspector =
+      options.subprocessInspector ??
+      (options.subprocessChecker
+        ? subprocessCheckerToInspector(options.subprocessChecker)
+        : defaultSubprocessInspector);
+    this.webPortInspector = options.webPortInspector ?? defaultWebPortInspector;
+    this.webPortProbeCacheTtlMs =
+      options.webPortProbeCacheTtlMs ?? DEFAULT_WEB_PORT_PROBE_TTL_MS;
     this.subprocessPollIntervalMs =
       options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
     fs.mkdirSync(this.logsDir, { recursive: true });
@@ -307,6 +256,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
           unsubscribeData: null,
           unsubscribeExit: null,
           hasRunningSubprocess: false,
+          runningSubprocessPorts: [],
         };
         this.sessions.set(sessionKey, session);
         this.startSession(session, input, "started");
@@ -404,6 +354,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
           unsubscribeData: null,
           unsubscribeExit: null,
           hasRunningSubprocess: false,
+          runningSubprocessPorts: [],
         };
         this.sessions.set(sessionKey, session);
       } else {
@@ -458,6 +409,8 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     this.pendingPersistHistory.clear();
     this.threadLocks.clear();
     this.persistQueues.clear();
+    this.webPortProbeCache.clear();
+    this.webPortProbeInFlight.clear();
   }
 
   private startSession(
@@ -474,6 +427,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     session.exitCode = null;
     session.exitSignal = null;
     session.hasRunningSubprocess = false;
+    session.runningSubprocessPorts = [];
     session.updatedAt = new Date().toISOString();
 
     let ptyProcess: PtyProcess | null = null;
@@ -540,6 +494,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
       session.pid = null;
       session.process = null;
       session.hasRunningSubprocess = false;
+      session.runningSubprocessPorts = [];
       session.updatedAt = new Date().toISOString();
       this.updateSubprocessPollingState();
       const message = error instanceof Error ? error.message : "Terminal start failed";
@@ -577,6 +532,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     session.process = null;
     session.pid = null;
     session.hasRunningSubprocess = false;
+    session.runningSubprocessPorts = [];
     session.status = "exited";
     session.exitCode = Number.isInteger(event.exitCode) ? event.exitCode : null;
     session.exitSignal = Number.isInteger(event.signal) ? event.signal : null;
@@ -599,6 +555,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     session.process = null;
     session.pid = null;
     session.hasRunningSubprocess = false;
+    session.runningSubprocessPorts = [];
     session.status = "exited";
     session.updatedAt = new Date().toISOString();
     try {
@@ -800,6 +757,48 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
     this.subprocessPollTimer = null;
   }
 
+  private async inspectWebPortCached(port: number): Promise<boolean> {
+    const now = Date.now();
+    const cached = this.webPortProbeCache.get(port);
+    if (cached && now - cached.checkedAt <= this.webPortProbeCacheTtlMs) {
+      return cached.isWeb;
+    }
+
+    const inFlight = this.webPortProbeInFlight.get(port);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const probe = this.webPortInspector(port)
+      .then((isWeb) => {
+        this.webPortProbeCache.set(port, {
+          isWeb,
+          checkedAt: Date.now(),
+        });
+        return isWeb;
+      })
+      .catch(() => false)
+      .finally(() => {
+        this.webPortProbeInFlight.delete(port);
+      });
+    this.webPortProbeInFlight.set(port, probe);
+    return probe;
+  }
+
+  private async detectWebPorts(runningPorts: number[]): Promise<number[]> {
+    if (runningPorts.length === 0) return [];
+    const checks = await Promise.all(
+      runningPorts.map(async (port) => ({
+        port,
+        isWeb: await this.inspectWebPortCached(port),
+      })),
+    );
+    return checks
+      .filter((entry) => entry.isWeb)
+      .map((entry) => entry.port)
+      .toSorted((left, right) => left - right);
+  }
+
   private async pollSubprocessActivity(): Promise<void> {
     if (this.subprocessPollInFlight) return;
 
@@ -817,9 +816,12 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
       await Promise.all(
         runningSessions.map(async (session) => {
           const terminalPid = session.pid;
-          let hasRunningSubprocess = false;
+          let activity: TerminalSubprocessActivity = {
+            hasRunningSubprocess: false,
+            runningPorts: [],
+          };
           try {
-            hasRunningSubprocess = await this.subprocessChecker(terminalPid);
+            activity = await this.subprocessInspector(terminalPid);
           } catch (error) {
             this.logger.warn("failed to check terminal subprocess activity", {
               threadId: session.threadId,
@@ -834,11 +836,21 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
           if (!liveSession || liveSession.status !== "running" || liveSession.pid !== terminalPid) {
             return;
           }
-          if (liveSession.hasRunningSubprocess === hasRunningSubprocess) {
+          const hasRunningSubprocess = activity.hasRunningSubprocess === true;
+          const runningPorts = hasRunningSubprocess
+            ? normalizeRunningPorts(
+                await this.detectWebPorts(normalizeRunningPorts(activity.runningPorts)),
+              )
+            : [];
+          if (
+            liveSession.hasRunningSubprocess === hasRunningSubprocess &&
+            arePortListsEqual(liveSession.runningSubprocessPorts, runningPorts)
+          ) {
             return;
           }
 
           liveSession.hasRunningSubprocess = hasRunningSubprocess;
+          liveSession.runningSubprocessPorts = runningPorts;
           liveSession.updatedAt = new Date().toISOString();
           this.emitEvent({
             type: "activity",
@@ -846,6 +858,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
             terminalId: liveSession.terminalId,
             createdAt: new Date().toISOString(),
             hasRunningSubprocess,
+            runningPorts,
           });
         }),
       );

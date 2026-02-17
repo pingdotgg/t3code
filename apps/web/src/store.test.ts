@@ -42,6 +42,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
     terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
     runningTerminalIds: [],
+    runningTerminalPorts: {},
     activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
     terminalGroups: [
       {
@@ -111,6 +112,7 @@ function makeTerminalActivityEvent(
     terminalId: DEFAULT_THREAD_TERMINAL_ID,
     createdAt: "2026-02-09T00:00:02.000Z",
     hasRunningSubprocess: true,
+    runningPorts: [3000],
     ...overrides,
   };
 }
@@ -303,6 +305,7 @@ describe("store reducer thread continuity", () => {
     expect(next.threads[0]?.terminalOpen).toBe(false);
     expect(next.threads[0]?.terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
     expect(next.threads[0]?.runningTerminalIds).toEqual([]);
+    expect(next.threads[0]?.runningTerminalPorts).toEqual({});
     expect(next.threads[0]?.activeTerminalId).toBe(DEFAULT_THREAD_TERMINAL_ID);
     expect(next.threads[0]?.terminalGroups).toEqual([
       {
@@ -325,14 +328,26 @@ describe("store reducer thread continuity", () => {
       event: makeTerminalActivityEvent(),
     });
     expect(active.threads[0]?.runningTerminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+    expect(active.threads[0]?.runningTerminalPorts).toEqual({
+      [DEFAULT_THREAD_TERMINAL_ID]: [3000],
+    });
 
-    const idle = reducer(active, {
+    const activeWithPortChange = reducer(active, {
+      type: "APPLY_TERMINAL_EVENT",
+      event: makeTerminalActivityEvent({ runningPorts: [5173, 3000] }),
+    });
+    expect(activeWithPortChange.threads[0]?.runningTerminalPorts).toEqual({
+      [DEFAULT_THREAD_TERMINAL_ID]: [3000, 5173],
+    });
+
+    const idle = reducer(activeWithPortChange, {
       type: "APPLY_TERMINAL_EVENT",
       event: makeTerminalActivityEvent({ hasRunningSubprocess: false }),
     });
     expect(idle.threads[0]?.runningTerminalIds).toEqual([]);
+    expect(idle.threads[0]?.runningTerminalPorts).toEqual({});
 
-    const exited = reducer(active, {
+    const exited = reducer(activeWithPortChange, {
       type: "APPLY_TERMINAL_EVENT",
       event: {
         type: "exited",
@@ -344,6 +359,7 @@ describe("store reducer thread continuity", () => {
       },
     });
     expect(exited.threads[0]?.runningTerminalIds).toEqual([]);
+    expect(exited.threads[0]?.runningTerminalPorts).toEqual({});
   });
 
   it("keeps running status when another terminal in the thread is still running", () => {
@@ -351,6 +367,10 @@ describe("store reducer thread continuity", () => {
       makeThread({
         terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
         runningTerminalIds: [DEFAULT_THREAD_TERMINAL_ID, "term-2"],
+        runningTerminalPorts: {
+          [DEFAULT_THREAD_TERMINAL_ID]: [3000],
+          "term-2": [5173],
+        },
         activeTerminalId: "term-2",
         terminalGroups: [
           {
@@ -375,6 +395,7 @@ describe("store reducer thread continuity", () => {
     });
 
     expect(next.threads[0]?.runningTerminalIds).toEqual(["term-2"]);
+    expect(next.threads[0]?.runningTerminalPorts).toEqual({ "term-2": [5173] });
   });
 
   it("backfills codexThreadId from routed provider events", () => {

@@ -157,6 +157,29 @@ function normalizeRunningTerminalIds(
     .filter((id) => id.length > 0 && validTerminalIdSet.has(id));
 }
 
+function normalizeRunningPorts(ports: number[]): number[] {
+  if (ports.length === 0) return [];
+  return [...new Set(ports)]
+    .filter((port) => Number.isInteger(port) && port > 0 && port <= 65_535)
+    .toSorted((left, right) => left - right);
+}
+
+function normalizeRunningTerminalPorts(
+  runningTerminalPorts: Record<string, number[]>,
+  terminalIds: string[],
+): Record<string, number[]> {
+  const validTerminalIdSet = new Set(terminalIds);
+  const normalizedEntries: Array<[string, number[]]> = [];
+  for (const [rawTerminalId, ports] of Object.entries(runningTerminalPorts)) {
+    const terminalId = rawTerminalId.trim();
+    if (terminalId.length === 0 || !validTerminalIdSet.has(terminalId)) {
+      continue;
+    }
+    normalizedEntries.push([terminalId, normalizeRunningPorts(ports)]);
+  }
+  return Object.fromEntries(normalizedEntries);
+}
+
 function normalizeTerminalGroupIds(terminalIds: string[]): string[] {
   return [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];
 }
@@ -257,6 +280,10 @@ function normalizeThreadTerminals(thread: Thread): Thread {
     ...thread,
     terminalIds,
     runningTerminalIds: normalizeRunningTerminalIds(thread.runningTerminalIds, terminalIds),
+    runningTerminalPorts: normalizeRunningTerminalPorts(
+      thread.runningTerminalPorts,
+      terminalIds,
+    ),
     activeTerminalId,
     terminalGroups,
     activeTerminalGroupId,
@@ -276,6 +303,7 @@ function closeThreadTerminal(thread: Thread, terminalId: string): Thread {
       terminalOpen: false,
       terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
       runningTerminalIds: [],
+      runningTerminalPorts: {},
       activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
       terminalGroups: [
         {
@@ -317,6 +345,9 @@ function closeThreadTerminal(thread: Thread, terminalId: string): Thread {
     ...thread,
     terminalIds: remainingTerminalIds,
     runningTerminalIds: thread.runningTerminalIds.filter((id) => id !== terminalId),
+    runningTerminalPorts: Object.fromEntries(
+      Object.entries(thread.runningTerminalPorts).filter(([key]) => key !== terminalId),
+    ),
     activeTerminalId: nextActiveTerminalId,
     terminalGroups: nextTerminalGroups,
   });
@@ -683,21 +714,32 @@ export function reducer(state: AppState, action: Action): AppState {
         threads: updateThread(state.threads, action.event.threadId, (thread) => {
           const normalizedThread = normalizeThreadTerminals(thread);
           const runningTerminalIdSet = new Set(normalizedThread.runningTerminalIds);
-          if (action.event.type === "started" || action.event.type === "restarted") {
+          const runningTerminalPorts = { ...normalizedThread.runningTerminalPorts };
+          if (
+            action.event.type === "started" ||
+            action.event.type === "restarted"
+          ) {
             runningTerminalIdSet.delete(action.event.terminalId);
+            delete runningTerminalPorts[action.event.terminalId];
           } else if (action.event.type === "activity") {
             if (action.event.hasRunningSubprocess) {
               runningTerminalIdSet.add(action.event.terminalId);
+              runningTerminalPorts[action.event.terminalId] = normalizeRunningPorts(
+                action.event.runningPorts,
+              );
             } else {
               runningTerminalIdSet.delete(action.event.terminalId);
+              delete runningTerminalPorts[action.event.terminalId];
             }
           } else if (action.event.type === "exited" || action.event.type === "error") {
             runningTerminalIdSet.delete(action.event.terminalId);
+            delete runningTerminalPorts[action.event.terminalId];
           }
 
           return normalizeThreadTerminals({
             ...normalizedThread,
             runningTerminalIds: [...runningTerminalIdSet],
+            runningTerminalPorts,
           });
         }),
       };

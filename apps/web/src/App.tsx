@@ -99,6 +99,7 @@ function AutoProjectBootstrap() {
           terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
           terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
           runningTerminalIds: [],
+          runningTerminalPorts: {},
           activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
           terminalGroups: [
             {

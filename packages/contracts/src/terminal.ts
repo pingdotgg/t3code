@@ -89,6 +89,7 @@ export const terminalRestartedEventSchema = terminalEventBaseSchema.extend({
 export const terminalActivityEventSchema = terminalEventBaseSchema.extend({
   type: z.literal("activity"),
   hasRunningSubprocess: z.boolean(),
+  runningPorts: z.array(z.number().int().min(1).max(65_535)).default([]),
 });
 
 export const terminalEventSchema = z.discriminatedUnion("type", [
