@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   projectAddInputSchema,
   projectAddResultSchema,
+  projectSearchEntriesInputSchema,
+  projectSearchEntriesResultSchema,
   projectListResultSchema,
   projectRemoveInputSchema,
 } from "./project";
@@ -45,5 +47,39 @@ describe("project contracts", () => {
   it("parses remove input", () => {
     const parsed = projectRemoveInputSchema.parse({ id: "project-1" });
     expect(parsed.id).toBe("project-1");
+  });
+
+  it("parses workspace entry search input with defaults", () => {
+    const parsed = projectSearchEntriesInputSchema.parse({
+      cwd: "  /tmp/project  ",
+      query: "  src  ",
+    });
+
+    expect(parsed).toEqual({
+      cwd: "/tmp/project",
+      query: "src",
+      limit: 80,
+    });
+  });
+
+  it("parses workspace entry search result", () => {
+    const parsed = projectSearchEntriesResultSchema.parse({
+      entries: [
+        {
+          path: "src/components",
+          kind: "directory",
+          parentPath: "src",
+        },
+        {
+          path: "src/components/Button.tsx",
+          kind: "file",
+          parentPath: "src/components",
+        },
+      ],
+      truncated: false,
+    });
+
+    expect(parsed.entries).toHaveLength(2);
+    expect(parsed.entries[0]?.kind).toBe("directory");
   });
 });

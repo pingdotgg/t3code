@@ -15,6 +15,7 @@ export const WS_METHODS = {
   projectsList: "projects.list",
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
+  projectsSearchEntries: "projects.searchEntries",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",

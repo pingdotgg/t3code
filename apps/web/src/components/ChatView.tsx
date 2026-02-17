@@ -1,6 +1,7 @@
 import {
   EDITORS,
   type EditorId,
+  type ProjectEntry,
   ModelSlug,
   type NativeApi,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
@@ -31,6 +32,12 @@ import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
 import { buildBootstrapInput } from "../historyBootstrap";
+import {
+  buildPromptInput,
+  buildUserVisiblePrompt,
+  detectComposerTrigger,
+  replaceTextRange,
+} from "../composer-logic";
 import {
   DEFAULT_MODEL,
   DEFAULT_REASONING,
@@ -69,6 +76,8 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import {
   ChevronDownIcon,
   CircleAlertIcon,
+  FileIcon,
+  FolderIcon,
   FolderClosedIcon,
   InfoIcon,
   LockIcon,
@@ -83,6 +92,7 @@ import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu"
 import { CursorIcon, Icon } from "./Icons";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { Badge } from "./ui/badge";
+import { Command, CommandItem, CommandList, CommandPanel } from "./ui/command";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
   if (!duration) return formatTimestamp(createdAt);
@@ -103,6 +113,12 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   return "text-muted-foreground/40";
 }
 
+function basenameOfPath(pathValue: string): string {
+  const slashIndex = pathValue.lastIndexOf("/");
+  if (slashIndex === -1) return pathValue;
+  return pathValue.slice(slashIndex + 1);
+}
+
 type SessionContinuityState = "resumed" | "new" | "fallback_new";
 
 interface EnsuredSessionInfo {
@@ -120,6 +136,29 @@ interface ExpandedImagePreview {
   src: string;
   name: string;
 }
+
+type ComposerCommandItem =
+  | {
+      id: string;
+      type: "path";
+      path: string;
+      pathKind: ProjectEntry["kind"];
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "slash-command";
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "model";
+      model: ModelSlug;
+      label: string;
+      description: string;
+    };
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -146,6 +185,7 @@ export default function ChatView() {
     gitCreateWorktreeMutationOptions({ api, queryClient }),
   );
   const [prompt, setPrompt] = useState("");
+  const [taggedPaths, setTaggedPaths] = useState<string[]>([]);
   const [composerImages, setComposerImages] = useState<ComposerImageAttachment[]>([]);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
@@ -158,6 +198,8 @@ export default function ChatView() {
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
+  const [composerCursor, setComposerCursor] = useState(0);
+  const [composerMenuIndex, setComposerMenuIndex] = useState(0);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
@@ -268,11 +310,79 @@ export default function ChatView() {
           sandboxMode: "workspace-write",
         } as const);
   const gitCwd = activeThread?.worktreePath ?? activeProject?.cwd ?? null;
+  const composerTrigger = useMemo(
+    () => detectComposerTrigger(prompt, composerCursor),
+    [prompt, composerCursor],
+  );
   const branchesQuery = useQuery(gitBranchesQueryOptions(api, gitCwd));
   const keybindingsQuery = useQuery({
     ...serverConfigQueryOptions(api),
     select: (config) => config.keybindings,
   });
+  const workspaceEntriesQuery = useQuery({
+    queryKey: [
+      "composer-workspace-entries",
+      gitCwd,
+      composerTrigger?.kind === "path" ? composerTrigger.query : "",
+    ],
+    enabled: Boolean(api && gitCwd && composerTrigger?.kind === "path"),
+    staleTime: 15_000,
+    queryFn: async () => {
+      if (!api || !gitCwd || composerTrigger?.kind !== "path") {
+        return { entries: [], truncated: false };
+      }
+      return api.projects.searchEntries({
+        cwd: gitCwd,
+        query: composerTrigger.query,
+        limit: 80,
+      });
+    },
+  });
+  const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
+    if (!composerTrigger) return [];
+    if (composerTrigger.kind === "path") {
+      return (workspaceEntriesQuery.data?.entries ?? [])
+        .filter((entry) => !taggedPaths.includes(entry.path))
+        .map((entry) => ({
+          id: `path:${entry.kind}:${entry.path}`,
+          type: "path",
+          path: entry.path,
+          pathKind: entry.kind,
+          label: basenameOfPath(entry.path),
+          description: entry.parentPath ?? (entry.kind === "directory" ? "Folder" : "File"),
+        }));
+    }
+
+    if (composerTrigger.kind === "slash-command") {
+      if (!"model".includes(composerTrigger.query.toLowerCase())) {
+        return [];
+      }
+      return [
+        {
+          id: "slash:model",
+          type: "slash-command",
+          label: "/model",
+          description: "Switch response model for this thread",
+        },
+      ];
+    }
+
+    return MODEL_OPTIONS.filter(({ slug, name }) => {
+      const query = composerTrigger.query.trim().toLowerCase();
+      if (!query) return true;
+      return slug.toLowerCase().includes(query) || name.toLowerCase().includes(query);
+    }).map(({ slug, name }) => ({
+      id: `model:${slug}`,
+      type: "model",
+      model: slug,
+      label: name,
+      description: slug,
+    }));
+  }, [composerTrigger, taggedPaths, workspaceEntriesQuery.data?.entries]);
+  const composerMenuOpen = Boolean(composerTrigger);
+  const activeComposerMenuItem =
+    composerMenuItems[Math.min(composerMenuIndex, Math.max(0, composerMenuItems.length - 1))] ??
+    null;
   const keybindings = keybindingsQuery.data ?? EMPTY_KEYBINDINGS;
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = branchesQuery.data?.isRepo ?? true;
@@ -439,6 +549,10 @@ export default function ChatView() {
   }, [activeThread?.id]);
 
   useEffect(() => {
+    setComposerMenuIndex(0);
+  }, [composerTrigger?.kind, composerTrigger?.query, composerMenuItems.length]);
+
+  useEffect(() => {
     if (!activeThread?.id || activeThread.terminalOpen) return;
     const frame = window.requestAnimationFrame(() => {
       focusComposer();
@@ -457,6 +571,9 @@ export default function ChatView() {
       revokePreviewUrls(existing);
       return [];
     });
+    setTaggedPaths([]);
+    setComposerCursor(0);
+    setComposerMenuIndex(0);
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     setExpandedImage(null);
@@ -773,7 +890,10 @@ export default function ChatView() {
     e.preventDefault();
     if (!api || !activeThread || isSending || isConnecting) return;
     const trimmed = prompt.trim();
-    if (!trimmed && composerImages.length === 0) return;
+    const taggedPathsSnapshot = [...taggedPaths];
+    const promptForModel = buildPromptInput(trimmed, taggedPathsSnapshot);
+    const userVisiblePrompt = buildUserVisiblePrompt(trimmed, taggedPathsSnapshot);
+    if (!promptForModel && composerImages.length === 0) return;
     if (!activeProject) return;
     const composerImagesSnapshot = [...composerImages];
 
@@ -813,6 +933,7 @@ export default function ChatView() {
     if (activeThread.messages.length === 0) {
       const titleSeed =
         trimmed ||
+        (taggedPathsSnapshot.length > 0 ? `Paths: ${taggedPathsSnapshot[0]}` : "") ||
         (composerImagesSnapshot.length > 0
           ? `Image: ${composerImagesSnapshot[0]?.name ?? "attachment"}`
           : "New thread");
@@ -837,12 +958,15 @@ export default function ChatView() {
       type: "PUSH_USER_MESSAGE",
       threadId: activeThread.id,
       id: crypto.randomUUID(),
-      text: trimmed,
+      text: userVisiblePrompt,
       ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
     });
     const previousMessages = activeThread.messages;
     setPrompt("");
     setComposerImages([]);
+    setTaggedPaths([]);
+    setComposerCursor(0);
+    setComposerMenuIndex(0);
 
     const sessionInfo = await ensureSession(sessionCwd);
     if (!sessionInfo) return;
@@ -863,14 +987,14 @@ export default function ChatView() {
       const shouldBootstrap =
         previousMessages.length > 0 &&
         (sessionInfo.continuityState === "new" || sessionInfo.continuityState === "fallback_new");
-      const latestPromptForBootstrap = trimmed || IMAGE_ONLY_BOOTSTRAP_PROMPT;
+      const latestPromptForBootstrap = promptForModel || IMAGE_ONLY_BOOTSTRAP_PROMPT;
       const input = shouldBootstrap
         ? buildBootstrapInput(
             previousMessages,
             latestPromptForBootstrap,
             PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
           ).text
-        : trimmed || undefined;
+        : promptForModel || undefined;
       await api.providers.sendTurn({
         sessionId: sessionInfo.sessionId,
         ...(input ? { input } : {}),
@@ -949,7 +1073,74 @@ export default function ChatView() {
     [scheduleComposerFocus],
   );
 
+  const applyPromptReplacement = useCallback(
+    (rangeStart: number, rangeEnd: number, replacement: string) => {
+      setPrompt((existing) => {
+        const next = replaceTextRange(existing, rangeStart, rangeEnd, replacement);
+        window.requestAnimationFrame(() => {
+          const textarea = textareaRef.current;
+          if (!textarea) return;
+          textarea.focus();
+          textarea.setSelectionRange(next.cursor, next.cursor);
+          setComposerCursor(next.cursor);
+        });
+        return next.text;
+      });
+    },
+    [],
+  );
+
+  const onSelectComposerItem = useCallback(
+    (item: ComposerCommandItem) => {
+      if (!composerTrigger) return;
+      if (item.type === "path") {
+        setTaggedPaths((existing) =>
+          existing.includes(item.path) ? existing : [...existing, item.path],
+        );
+        applyPromptReplacement(composerTrigger.rangeStart, composerTrigger.rangeEnd, "");
+        return;
+      }
+      if (item.type === "slash-command") {
+        applyPromptReplacement(composerTrigger.rangeStart, composerTrigger.rangeEnd, "/model ");
+        return;
+      }
+      onModelSelect(item.model);
+      applyPromptReplacement(composerTrigger.rangeStart, composerTrigger.rangeEnd, "");
+    },
+    [applyPromptReplacement, composerTrigger, onModelSelect],
+  );
+
+  const onRemoveTaggedPath = useCallback((pathToRemove: string) => {
+    setTaggedPaths((existing) => existing.filter((entry) => entry !== pathToRemove));
+  }, []);
+
+  const onPromptChange = useCallback((nextPrompt: string, nextCursor: number) => {
+    setPrompt(nextPrompt);
+    setComposerCursor(nextCursor);
+  }, []);
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (composerMenuOpen && composerMenuItems.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setComposerMenuIndex((existing) => Math.min(existing + 1, composerMenuItems.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setComposerMenuIndex((existing) => Math.max(existing - 1, 0));
+        return;
+      }
+      if (e.key === "Tab" || e.key === "Enter") {
+        const selectedItem = activeComposerMenuItem ?? composerMenuItems[0];
+        if (selectedItem) {
+          e.preventDefault();
+          onSelectComposerItem(selectedItem);
+          return;
+        }
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void onSend(e as unknown as FormEvent);
@@ -1045,7 +1236,81 @@ export default function ChatView() {
             onDrop={onComposerDrop}
           >
             {/* Textarea area */}
-            <div className="px-4 pt-4 pb-2">
+            <div className="relative px-4 pt-4 pb-2">
+              {composerMenuOpen && (
+                <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
+                  <Command>
+                    <CommandPanel className="rounded-xl border border-border/80 bg-popover/96 backdrop-blur-xs">
+                      <CommandList className="max-h-64">
+                        {composerMenuItems.map((item, index) => (
+                          <CommandItem
+                            key={item.id}
+                            value={item.id}
+                            className={cn(
+                              "gap-2",
+                              index === composerMenuIndex && "bg-accent text-accent-foreground",
+                            )}
+                            onMouseEnter={() => setComposerMenuIndex(index)}
+                            onMouseDown={(event) => {
+                              event.preventDefault();
+                              onSelectComposerItem(item);
+                            }}
+                          >
+                            {item.type === "path" ? (
+                              item.pathKind === "directory" ? (
+                                <FolderIcon className="size-4 text-muted-foreground/80" />
+                              ) : (
+                                <FileIcon className="size-4 text-muted-foreground/80" />
+                              )
+                            ) : null}
+                            {item.type === "slash-command" ? (
+                              <CursorIcon className="size-4 text-muted-foreground/80" />
+                            ) : null}
+                            {item.type === "model" ? (
+                              <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+                                model
+                              </Badge>
+                            ) : null}
+                            <span className="truncate">{item.label}</span>
+                            <span className="truncate text-muted-foreground/70 text-xs">
+                              {item.description}
+                            </span>
+                          </CommandItem>
+                        ))}
+                      </CommandList>
+                      {composerMenuItems.length === 0 && (
+                        <p className="px-3 py-2 text-muted-foreground/70 text-xs">
+                          {workspaceEntriesQuery.isLoading
+                            ? "Searching workspace files..."
+                            : composerTrigger?.kind === "path"
+                              ? "No matching files or folders."
+                              : "No matching command."}
+                        </p>
+                      )}
+                    </CommandPanel>
+                  </Command>
+                </div>
+              )}
+
+              {taggedPaths.length > 0 && (
+                <div className="mb-3 flex flex-wrap gap-1.5">
+                  {taggedPaths.map((taggedPath) => (
+                    <button
+                      key={taggedPath}
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded-md border border-border/80 bg-secondary/65 px-2 py-1 text-[11px] text-foreground/85 transition-colors hover:bg-secondary"
+                      onClick={() => onRemoveTaggedPath(taggedPath)}
+                      aria-label={`Remove ${taggedPath}`}
+                      title={taggedPath}
+                    >
+                      <span className="text-muted-foreground/70">@</span>
+                      <span className="max-w-64 truncate">{taggedPath}</span>
+                      <XIcon className="size-3 text-muted-foreground/70" />
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {composerImages.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-2">
                   {composerImages.map((image) => (
@@ -1085,13 +1350,33 @@ export default function ChatView() {
                 className="w-full resize-none bg-transparent text-[14px] leading-relaxed text-foreground placeholder:text-muted-foreground/35 focus:outline-none"
                 rows={2}
                 value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
+                onChange={(event) =>
+                  onPromptChange(
+                    event.target.value,
+                    event.target.selectionStart ?? event.target.value.length,
+                  )
+                }
                 onKeyDown={onKeyDown}
+                onKeyUp={(event) =>
+                  setComposerCursor(
+                    event.currentTarget.selectionStart ?? event.currentTarget.value.length,
+                  )
+                }
+                onClick={(event) =>
+                  setComposerCursor(
+                    event.currentTarget.selectionStart ?? event.currentTarget.value.length,
+                  )
+                }
+                onSelect={(event) =>
+                  setComposerCursor(
+                    event.currentTarget.selectionStart ?? event.currentTarget.value.length,
+                  )
+                }
                 onPaste={onComposerPaste}
                 placeholder={
                   phase === "disconnected"
                     ? "Ask for follow-up changes or attach images"
-                    : "Ask anything, or attach images..."
+                    : "Ask anything, @tag files/folders, or use /model"
                 }
                 disabled={isSending || isConnecting}
               />
@@ -1159,7 +1444,9 @@ export default function ChatView() {
                     type="submit"
                     className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:opacity-30 disabled:hover:scale-100"
                     disabled={
-                      isSending || isConnecting || (!prompt.trim() && composerImages.length === 0)
+                      isSending ||
+                      isConnecting ||
+                      (!prompt.trim() && composerImages.length === 0 && taggedPaths.length === 0)
                     }
                     aria-label={
                       isConnecting ? "Connecting" : isSending ? "Sending" : "Send message"

@@ -766,6 +766,38 @@ describe("WebSocket Server", () => {
     expect(afterRemove.result).toEqual([]);
   });
 
+  it("supports projects.searchEntries", async () => {
+    const workspace = makeTempDir("t3code-ws-workspace-entries-");
+    fs.mkdirSync(path.join(workspace, "src", "components"), { recursive: true });
+    fs.writeFileSync(path.join(workspace, "src", "components", "Composer.tsx"), "export {};", "utf8");
+    fs.writeFileSync(path.join(workspace, "README.md"), "# test", "utf8");
+    fs.mkdirSync(path.join(workspace, ".git"), { recursive: true });
+    fs.writeFileSync(path.join(workspace, ".git", "HEAD"), "ref: refs/heads/main\n", "utf8");
+
+    server = createTestServer({ cwd: "/test" });
+    await server.start();
+    const addr = server.httpServer.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.projectsSearchEntries, {
+      cwd: workspace,
+      query: "comp",
+      limit: 10,
+    });
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({
+      entries: expect.arrayContaining([
+        expect.objectContaining({ path: "src/components", kind: "directory" }),
+        expect.objectContaining({ path: "src/components/Composer.tsx", kind: "file" }),
+      ]),
+      truncated: false,
+    });
+  });
+
   it("supports git methods over websocket", async () => {
     const repoCwd = makeTempDir("t3code-ws-git-project-");
 

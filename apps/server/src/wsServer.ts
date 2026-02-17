@@ -32,6 +32,7 @@ import {
 } from "./git";
 import { TerminalManager } from "./terminalManager";
 import { loadResolvedKeybindingsConfig } from "./keybindings";
+import { searchWorkspaceEntries } from "./workspaceEntries";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -318,6 +319,9 @@ export function createServer(options: ServerOptions) {
       case WS_METHODS.projectsRemove:
         projectRegistry.remove(request.params as never);
         return undefined;
+
+      case WS_METHODS.projectsSearchEntries:
+        return searchWorkspaceEntries(request.params as never);
 
       case WS_METHODS.shellOpenInEditor: {
         const params = request.params as {
