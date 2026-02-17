@@ -32,10 +32,7 @@ import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
 import { buildBootstrapInput } from "../historyBootstrap";
-import {
-  detectComposerTrigger,
-  replaceTextRange,
-} from "../composer-logic";
+import { detectComposerTrigger, replaceTextRange } from "../composer-logic";
 import {
   DEFAULT_MODEL,
   DEFAULT_REASONING,
@@ -57,6 +54,8 @@ import {
 import { isScrollContainerNearBottom } from "../chat-scroll";
 import { useStore } from "../store";
 import { MAX_THREAD_TERMINAL_COUNT, type ChatImageAttachment } from "../types";
+import { getVscodeIconUrlForEntry } from "../vscode-icons";
+import { useTheme } from "../hooks/useTheme";
 import BranchToolbar from "./BranchToolbar";
 import GitActionsControl from "./GitActionsControl";
 import {
@@ -175,9 +174,45 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
+  pathValue: string;
+  kind: "file" | "directory";
+  theme: "light" | "dark";
+}) {
+  const [failed, setFailed] = useState(false);
+  const iconUrl = useMemo(
+    () => getVscodeIconUrlForEntry(props.pathValue, props.kind, props.theme),
+    [props.kind, props.pathValue, props.theme],
+  );
+
+  useEffect(() => {
+    setFailed(false);
+  }, [iconUrl]);
+
+  if (failed) {
+    return props.kind === "directory" ? (
+      <FolderIcon className="size-4 text-muted-foreground/80" />
+    ) : (
+      <FileIcon className="size-4 text-muted-foreground/80" />
+    );
+  }
+
+  return (
+    <img
+      src={iconUrl}
+      alt=""
+      aria-hidden="true"
+      className="size-4 shrink-0"
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  );
+});
+
 export default function ChatView() {
   const { state, dispatch } = useStore();
   const api = useNativeApi();
+  const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
   const createWorktreeMutation = useMutation(
     gitCreateWorktreeMutationOptions({ api, queryClient }),
@@ -197,6 +232,7 @@ export default function ChatView() {
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerCursor, setComposerCursor] = useState(0);
   const [composerMenuIndex, setComposerMenuIndex] = useState(0);
+  const [composerKeyboardHighlight, setComposerKeyboardHighlight] = useState(false);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
@@ -341,13 +377,13 @@ export default function ChatView() {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
       return (workspaceEntriesQuery.data?.entries ?? []).map((entry) => ({
-          id: `path:${entry.kind}:${entry.path}`,
-          type: "path",
-          path: entry.path,
-          pathKind: entry.kind,
-          label: basenameOfPath(entry.path),
-          description: entry.parentPath ?? (entry.kind === "directory" ? "Folder" : "File"),
-        }));
+        id: `path:${entry.kind}:${entry.path}`,
+        type: "path",
+        path: entry.path,
+        pathKind: entry.kind,
+        label: basenameOfPath(entry.path),
+        description: entry.parentPath ?? "",
+      }));
     }
 
     if (composerTrigger.kind === "slash-command") {
@@ -548,6 +584,12 @@ export default function ChatView() {
   useEffect(() => {
     setComposerMenuIndex(0);
   }, [composerTrigger?.kind, composerTrigger?.query, composerMenuItems.length]);
+
+  useEffect(() => {
+    if (!composerMenuOpen) return;
+    setComposerKeyboardHighlight(false);
+    setComposerMenuIndex(0);
+  }, [composerMenuOpen]);
 
   useEffect(() => {
     if (!composerMenuOpen || composerMenuItems.length === 0) {
@@ -1133,11 +1175,13 @@ export default function ChatView() {
     if (composerMenuOpen && composerMenuItems.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
+        setComposerKeyboardHighlight(true);
         setComposerMenuIndex((existing) => Math.min(existing + 1, composerMenuItems.length - 1));
         return;
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
+        setComposerKeyboardHighlight(true);
         setComposerMenuIndex((existing) => Math.max(existing - 1, 0));
         return;
       }
@@ -1261,21 +1305,28 @@ export default function ChatView() {
                             value={item.id}
                             data-composer-menu-index={index}
                             className={cn(
-                              "gap-2",
+                              "cursor-pointer gap-2",
+                              composerKeyboardHighlight &&
+                                "data-highlighted:bg-transparent data-highlighted:text-inherit",
                               index === composerMenuIndex && "bg-accent text-accent-foreground",
                             )}
-                            onMouseEnter={() => setComposerMenuIndex(index)}
+                            onMouseEnter={() => {
+                              setComposerKeyboardHighlight(false);
+                              setComposerMenuIndex(index);
+                            }}
                             onMouseDown={(event) => {
                               event.preventDefault();
+                            }}
+                            onClick={() => {
                               onSelectComposerItem(item);
                             }}
                           >
                             {item.type === "path" ? (
-                              item.pathKind === "directory" ? (
-                                <FolderIcon className="size-4 text-muted-foreground/80" />
-                              ) : (
-                                <FileIcon className="size-4 text-muted-foreground/80" />
-                              )
+                              <VscodeEntryIcon
+                                pathValue={item.path}
+                                kind={item.pathKind}
+                                theme={resolvedTheme}
+                              />
                             ) : null}
                             {item.type === "slash-command" ? (
                               <CursorIcon className="size-4 text-muted-foreground/80" />
@@ -1439,9 +1490,7 @@ export default function ChatView() {
                     type="submit"
                     className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:opacity-30 disabled:hover:scale-100"
                     disabled={
-                      isSending ||
-                      isConnecting ||
-                      (!prompt.trim() && composerImages.length === 0)
+                      isSending || isConnecting || (!prompt.trim() && composerImages.length === 0)
                     }
                     aria-label={
                       isConnecting ? "Connecting" : isSending ? "Sending" : "Send message"

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, assert, describe, it } from "vitest";
 
 import { searchWorkspaceEntries } from "./workspaceEntries";
 
@@ -46,13 +46,13 @@ describe("searchWorkspaceEntries", () => {
     const result = await searchWorkspaceEntries({ cwd, query: "", limit: 100 });
     const paths = result.entries.map((entry) => entry.path);
 
-    expect(paths).toContain("src");
-    expect(paths).toContain("src/components");
-    expect(paths).toContain("src/components/Composer.tsx");
-    expect(paths).toContain("README.md");
-    expect(paths.some((entryPath) => entryPath.startsWith(".git"))).toBe(false);
-    expect(paths.some((entryPath) => entryPath.startsWith("node_modules"))).toBe(false);
-    expect(result.truncated).toBe(false);
+    assert.include(paths, "src");
+    assert.include(paths, "src/components");
+    assert.include(paths, "src/components/Composer.tsx");
+    assert.include(paths, "README.md");
+    assert.isFalse(paths.some((entryPath) => entryPath.startsWith(".git")));
+    assert.isFalse(paths.some((entryPath) => entryPath.startsWith("node_modules")));
+    assert.isFalse(result.truncated);
   });
 
   it("filters and ranks entries by query", async () => {
@@ -63,25 +63,56 @@ describe("searchWorkspaceEntries", () => {
 
     const result = await searchWorkspaceEntries({ cwd, query: "compo", limit: 5 });
 
-    expect(result.entries.length).toBeGreaterThan(0);
-    expect(result.entries.some((entry) => entry.path === "src/components")).toBe(true);
-    expect(result.entries.every((entry) => entry.path.toLowerCase().includes("compo"))).toBe(true);
+    assert.isAbove(result.entries.length, 0);
+    assert.isTrue(result.entries.some((entry) => entry.path === "src/components"));
+    assert.isTrue(result.entries.every((entry) => entry.path.toLowerCase().includes("compo")));
   });
 
   it("excludes gitignored paths for git repositories", async () => {
     const cwd = makeTempDir("t3code-workspace-gitignore-");
     runGit(cwd, ["init"]);
-    writeFile(cwd, ".gitignore", ".convex/\nignored.txt\n");
+    writeFile(cwd, ".gitignore", ".convex/\nconvex/\nignored.txt\n");
     writeFile(cwd, "src/keep.ts", "export {};");
     writeFile(cwd, "ignored.txt", "ignore me");
     writeFile(cwd, ".convex/local-storage/data.json", "{}");
+    writeFile(cwd, "convex/UOoS-l/convex_local_storage/modules/data.json", "{}");
 
     const result = await searchWorkspaceEntries({ cwd, query: "", limit: 100 });
     const paths = result.entries.map((entry) => entry.path);
 
-    expect(paths).toContain("src");
-    expect(paths).toContain("src/keep.ts");
-    expect(paths).not.toContain("ignored.txt");
-    expect(paths.some((entryPath) => entryPath.startsWith(".convex/"))).toBe(false);
+    assert.include(paths, "src");
+    assert.include(paths, "src/keep.ts");
+    assert.notInclude(paths, "ignored.txt");
+    assert.isFalse(paths.some((entryPath) => entryPath.startsWith(".convex/")));
+    assert.isFalse(paths.some((entryPath) => entryPath.startsWith("convex/")));
+  });
+
+  it("excludes tracked paths that match ignore rules", async () => {
+    const cwd = makeTempDir("t3code-workspace-tracked-gitignore-");
+    runGit(cwd, ["init"]);
+    writeFile(cwd, ".convex/local-storage/data.json", "{}");
+    writeFile(cwd, "src/keep.ts", "export {};");
+    runGit(cwd, ["add", ".convex/local-storage/data.json", "src/keep.ts"]);
+    writeFile(cwd, ".gitignore", ".convex/\n");
+
+    const result = await searchWorkspaceEntries({ cwd, query: "", limit: 100 });
+    const paths = result.entries.map((entry) => entry.path);
+
+    assert.include(paths, "src");
+    assert.include(paths, "src/keep.ts");
+    assert.isFalse(paths.some((entryPath) => entryPath.startsWith(".convex/")));
+  });
+
+  it("excludes .convex in non-git workspaces", async () => {
+    const cwd = makeTempDir("t3code-workspace-non-git-convex-");
+    writeFile(cwd, ".convex/local-storage/data.json", "{}");
+    writeFile(cwd, "src/keep.ts", "export {};");
+
+    const result = await searchWorkspaceEntries({ cwd, query: "", limit: 100 });
+    const paths = result.entries.map((entry) => entry.path);
+
+    assert.include(paths, "src");
+    assert.include(paths, "src/keep.ts");
+    assert.isFalse(paths.some((entryPath) => entryPath.startsWith(".convex/")));
   });
 });

@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import path from "node:path";
 import { runProcess } from "./processRunner";
 
@@ -14,6 +15,7 @@ const WORKSPACE_CACHE_MAX_KEYS = 4;
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const IGNORED_DIRECTORY_NAMES = new Set([
   ".git",
+  ".convex",
   "node_modules",
   ".next",
   ".turbo",
@@ -99,14 +101,52 @@ function directoryAncestorsOf(relativePath: string): string[] {
   return directories;
 }
 
-async function buildWorkspaceIndexFromGit(cwd: string): Promise<WorkspaceIndex | null> {
+async function isInsideGitWorkTree(cwd: string): Promise<boolean> {
   const insideWorkTree = await runProcess("git", ["rev-parse", "--is-inside-work-tree"], {
     cwd,
     allowNonZeroExit: true,
     timeoutMs: 5_000,
     maxBufferBytes: 4_096,
   }).catch(() => null);
-  if (!insideWorkTree || insideWorkTree.code !== 0 || insideWorkTree.stdout.trim() !== "true") {
+  return Boolean(
+    insideWorkTree && insideWorkTree.code === 0 && insideWorkTree.stdout.trim() === "true",
+  );
+}
+
+async function filterGitIgnoredPaths(cwd: string, relativePaths: string[]): Promise<string[]> {
+  if (relativePaths.length === 0) {
+    return relativePaths;
+  }
+
+  const checkIgnore = await runProcess("git", ["check-ignore", "--no-index", "-z", "--stdin"], {
+    cwd,
+    allowNonZeroExit: true,
+    timeoutMs: 20_000,
+    maxBufferBytes: 16 * 1024 * 1024,
+    outputMode: "truncate",
+    stdin: `${relativePaths.join("\0")}\0`,
+  }).catch(() => null);
+  if (!checkIgnore) {
+    return relativePaths;
+  }
+
+  // git-check-ignore exits with 1 when no paths match.
+  if (checkIgnore.code !== 0 && checkIgnore.code !== 1) {
+    return relativePaths;
+  }
+
+  const ignoredPaths = new Set(
+    splitNullSeparatedPaths(checkIgnore.stdout, Boolean(checkIgnore.stdoutTruncated)),
+  );
+  if (ignoredPaths.size === 0) {
+    return relativePaths;
+  }
+
+  return relativePaths.filter((relativePath) => !ignoredPaths.has(relativePath));
+}
+
+async function buildWorkspaceIndexFromGit(cwd: string): Promise<WorkspaceIndex | null> {
+  if (!(await isInsideGitWorkTree(cwd))) {
     return null;
   }
 
@@ -125,9 +165,13 @@ async function buildWorkspaceIndexFromGit(cwd: string): Promise<WorkspaceIndex |
     return null;
   }
 
-  const filePaths = splitNullSeparatedPaths(listedFiles.stdout, Boolean(listedFiles.stdoutTruncated))
+  const listedPaths = splitNullSeparatedPaths(
+    listedFiles.stdout,
+    Boolean(listedFiles.stdoutTruncated),
+  )
     .map((entry) => toPosixPath(entry))
     .filter((entry) => entry.length > 0 && !isPathInIgnoredDirectory(entry));
+  const filePaths = await filterGitIgnoredPaths(cwd, listedPaths);
 
   const directorySet = new Set<string>();
   for (const filePath of filePaths) {
@@ -167,6 +211,7 @@ async function buildWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
   if (gitIndexed) {
     return gitIndexed;
   }
+  const shouldFilterWithGitIgnore = await isInsideGitWorkTree(cwd);
 
   let pendingDirectories: string[] = [""];
   const entries: ProjectEntry[] = [];
@@ -193,13 +238,12 @@ async function buildWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
       }),
     );
 
-    for (const directoryEntry of directoryEntries) {
+    const candidateEntriesByDirectory = directoryEntries.map((directoryEntry) => {
       const { relativeDir, dirents } = directoryEntry;
-      if (!dirents) {
-        continue;
-      }
+      if (!dirents) return [] as Array<{ dirent: Dirent; relativePath: string }>;
 
       dirents.sort((left, right) => left.name.localeCompare(right.name));
+      const candidates: Array<{ dirent: Dirent; relativePath: string }> = [];
       for (const dirent of dirents) {
         if (!dirent.name || dirent.name === "." || dirent.name === "..") {
           continue;
@@ -217,15 +261,33 @@ async function buildWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
         if (isPathInIgnoredDirectory(relativePath)) {
           continue;
         }
+        candidates.push({ dirent, relativePath });
+      }
+      return candidates;
+    });
+
+    const candidatePaths = candidateEntriesByDirectory.flatMap((candidateEntries) =>
+      candidateEntries.map((entry) => entry.relativePath),
+    );
+    const allowedPathSet = shouldFilterWithGitIgnore
+      ? new Set(await filterGitIgnoredPaths(cwd, candidatePaths))
+      : null;
+
+    for (const candidateEntries of candidateEntriesByDirectory) {
+      for (const candidate of candidateEntries) {
+        if (allowedPathSet && !allowedPathSet.has(candidate.relativePath)) {
+          continue;
+        }
+
         const entry: ProjectEntry = {
-          path: relativePath,
-          kind: dirent.isDirectory() ? "directory" : "file",
-          parentPath: parentPathOf(relativePath),
+          path: candidate.relativePath,
+          kind: candidate.dirent.isDirectory() ? "directory" : "file",
+          parentPath: parentPathOf(candidate.relativePath),
         };
         entries.push(entry);
 
-        if (dirent.isDirectory()) {
-          pendingDirectories.push(relativePath);
+        if (candidate.dirent.isDirectory()) {
+          pendingDirectories.push(candidate.relativePath);
         }
 
         if (entries.length >= WORKSPACE_INDEX_MAX_ENTRIES) {
