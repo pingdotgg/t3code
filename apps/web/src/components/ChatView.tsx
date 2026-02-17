@@ -329,6 +329,7 @@ export default function ChatView() {
     gitCreateWorktreeMutationOptions({ api, queryClient }),
   );
   const [prompt, setPrompt] = useState("");
+  const promptRef = useRef(prompt);
   const [composerImages, setComposerImages] = useState<ComposerImageAttachment[]>([]);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
@@ -1126,6 +1127,7 @@ export default function ChatView() {
       ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
     });
     const previousMessages = activeThread.messages;
+    promptRef.current = "";
     setPrompt("");
     setComposerImages([]);
     setComposerCursor(0);
@@ -1238,16 +1240,15 @@ export default function ChatView() {
 
   const applyPromptReplacement = useCallback(
     (rangeStart: number, rangeEnd: number, replacement: string) => {
-      setPrompt((existing) => {
-        const next = replaceTextRange(existing, rangeStart, rangeEnd, replacement);
-        window.requestAnimationFrame(() => {
-          const textarea = textareaRef.current;
-          if (!textarea) return;
-          textarea.focus();
-          textarea.setSelectionRange(next.cursor, next.cursor);
-          setComposerCursor(next.cursor);
-        });
-        return next.text;
+      const next = replaceTextRange(promptRef.current, rangeStart, rangeEnd, replacement);
+      promptRef.current = next.text;
+      setPrompt(next.text);
+      window.requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        textarea.focus();
+        textarea.setSelectionRange(next.cursor, next.cursor);
+        setComposerCursor(next.cursor);
       });
     },
     [],
@@ -1284,6 +1285,7 @@ export default function ChatView() {
       workspaceEntriesQuery.isFetching);
 
   const onPromptChange = useCallback((nextPrompt: string, nextCursor: number) => {
+    promptRef.current = nextPrompt;
     setPrompt(nextPrompt);
     setComposerCursor(nextCursor);
   }, []);

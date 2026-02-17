@@ -13,6 +13,7 @@ import {
 const WORKSPACE_CACHE_TTL_MS = 15_000;
 const WORKSPACE_CACHE_MAX_KEYS = 4;
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
+const WORKSPACE_SCAN_READDIR_CONCURRENCY = 32;
 const IGNORED_DIRECTORY_NAMES = new Set([
   ".git",
   ".convex",
@@ -32,6 +33,7 @@ interface WorkspaceIndex {
 }
 
 const workspaceIndexCache = new Map<string, WorkspaceIndex>();
+const inFlightWorkspaceIndexBuilds = new Map<string, Promise<WorkspaceIndex>>();
 
 function toPosixPath(input: string): string {
   return input.split(path.sep).join("/");
@@ -99,6 +101,31 @@ function directoryAncestorsOf(relativePath: string): string[] {
     directories.push(segments.slice(0, index).join("/"));
   }
   return directories;
+}
+
+async function mapWithConcurrency<TInput, TOutput>(
+  items: readonly TInput[],
+  concurrency: number,
+  mapper: (item: TInput, index: number) => Promise<TOutput>,
+): Promise<TOutput[]> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const boundedConcurrency = Math.max(1, Math.min(concurrency, items.length));
+  const results = Array.from({ length: items.length }) as TOutput[];
+  let nextIndex = 0;
+
+  const workers = Array.from({ length: boundedConcurrency }, async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await mapper(items[currentIndex] as TInput, currentIndex);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
 }
 
 async function isInsideGitWorkTree(cwd: string): Promise<boolean> {
@@ -220,8 +247,10 @@ async function buildWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
   while (pendingDirectories.length > 0 && !truncated) {
     const currentDirectories = pendingDirectories;
     pendingDirectories = [];
-    const directoryEntries = await Promise.all(
-      currentDirectories.map(async (relativeDir) => {
+    const directoryEntries = await mapWithConcurrency(
+      currentDirectories,
+      WORKSPACE_SCAN_READDIR_CONCURRENCY,
+      async (relativeDir) => {
         const absoluteDir = relativeDir ? path.join(cwd, relativeDir) : cwd;
         try {
           const dirents = await fs.readdir(absoluteDir, { withFileTypes: true });
@@ -235,7 +264,7 @@ async function buildWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
           }
           return { relativeDir, dirents: null };
         }
-      }),
+      },
     );
 
     const candidateEntriesByDirectory = directoryEntries.map((directoryEntry) => {
@@ -315,14 +344,26 @@ async function getWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
     return cached;
   }
 
-  const next = await buildWorkspaceIndex(cwd);
-  workspaceIndexCache.set(cwd, next);
-  while (workspaceIndexCache.size > WORKSPACE_CACHE_MAX_KEYS) {
-    const oldestKey = workspaceIndexCache.keys().next().value;
-    if (!oldestKey) break;
-    workspaceIndexCache.delete(oldestKey);
+  const inFlight = inFlightWorkspaceIndexBuilds.get(cwd);
+  if (inFlight) {
+    return inFlight;
   }
-  return next;
+
+  const nextPromise = buildWorkspaceIndex(cwd)
+    .then((next) => {
+      workspaceIndexCache.set(cwd, next);
+      while (workspaceIndexCache.size > WORKSPACE_CACHE_MAX_KEYS) {
+        const oldestKey = workspaceIndexCache.keys().next().value;
+        if (!oldestKey) break;
+        workspaceIndexCache.delete(oldestKey);
+      }
+      return next;
+    })
+    .finally(() => {
+      inFlightWorkspaceIndexBuilds.delete(cwd);
+    });
+  inFlightWorkspaceIndexBuilds.set(cwd, nextPromise);
+  return nextPromise;
 }
 
 export async function searchWorkspaceEntries(

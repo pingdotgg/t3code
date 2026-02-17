@@ -1,9 +1,10 @@
 import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { afterEach, assert, describe, it } from "vitest";
+import { afterEach, assert, describe, it, vi } from "vitest";
 
 import { searchWorkspaceEntries } from "./workspaceEntries";
 
@@ -30,6 +31,7 @@ function runGit(cwd: string, args: string[]): void {
 
 describe("searchWorkspaceEntries", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     for (const dir of tempDirs.splice(0, tempDirs.length)) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -114,5 +116,61 @@ describe("searchWorkspaceEntries", () => {
     assert.include(paths, "src");
     assert.include(paths, "src/keep.ts");
     assert.isFalse(paths.some((entryPath) => entryPath.startsWith(".convex/")));
+  });
+
+  it("deduplicates concurrent index builds for the same cwd", async () => {
+    const cwd = makeTempDir("t3code-workspace-concurrent-build-");
+    writeFile(cwd, "src/components/Composer.tsx");
+
+    let rootReadCount = 0;
+    const originalReaddir = fsPromises.readdir.bind(fsPromises);
+    vi.spyOn(fsPromises, "readdir").mockImplementation(
+      (async (...args: Parameters<typeof fsPromises.readdir>) => {
+        if (args[0] === cwd) {
+          rootReadCount += 1;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        return originalReaddir(...args);
+      }) as typeof fsPromises.readdir,
+    );
+
+    await Promise.all([
+      searchWorkspaceEntries({ cwd, query: "", limit: 100 }),
+      searchWorkspaceEntries({ cwd, query: "comp", limit: 100 }),
+      searchWorkspaceEntries({ cwd, query: "src", limit: 100 }),
+    ]);
+
+    assert.equal(rootReadCount, 1);
+  });
+
+  it("limits concurrent directory reads while walking the filesystem", async () => {
+    const cwd = makeTempDir("t3code-workspace-read-concurrency-");
+    for (let index = 0; index < 80; index += 1) {
+      writeFile(cwd, `group-${index}/entry-${index}.ts`, "export {};");
+    }
+
+    let activeReads = 0;
+    let peakReads = 0;
+    const originalReaddir = fsPromises.readdir.bind(fsPromises);
+    vi.spyOn(fsPromises, "readdir").mockImplementation(
+      (async (...args: Parameters<typeof fsPromises.readdir>) => {
+        const target = args[0];
+        if (typeof target === "string" && target.startsWith(cwd)) {
+          activeReads += 1;
+          peakReads = Math.max(peakReads, activeReads);
+          await new Promise((resolve) => setTimeout(resolve, 4));
+          try {
+            return await originalReaddir(...args);
+          } finally {
+            activeReads -= 1;
+          }
+        }
+        return originalReaddir(...args);
+      }) as typeof fsPromises.readdir,
+    );
+
+    await searchWorkspaceEntries({ cwd, query: "", limit: 200 });
+
+    assert.isAtMost(peakReads, 32);
   });
 });
