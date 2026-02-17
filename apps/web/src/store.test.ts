@@ -81,6 +81,9 @@ function makeState(thread: Thread): AppState {
     activeThreadId: thread.id,
     runtimeMode: "full-access",
     diffOpen: false,
+    diffThreadId: null,
+    diffTurnId: null,
+    diffFilePath: null,
   };
 }
 
@@ -143,6 +146,21 @@ describe("store reducer thread continuity", () => {
       threadId: "thread-local-1",
     });
     expect(next.threads[0]?.terminalOpen).toBe(true);
+  });
+
+  it("opens diff panel with an explicit turn/file target", () => {
+    const state = makeState(makeThread());
+    const next = reducer(state, {
+      type: "OPEN_DIFF",
+      threadId: "thread-local-1",
+      turnId: "turn-1",
+      filePath: "src/app.ts",
+    });
+
+    expect(next.diffOpen).toBe(true);
+    expect(next.diffThreadId).toBe("thread-local-1");
+    expect(next.diffTurnId).toBe("turn-1");
+    expect(next.diffFilePath).toBe("src/app.ts");
   });
 
   it("sets terminal open state per thread", () => {
@@ -532,6 +550,9 @@ describe("store reducer thread continuity", () => {
       activeThreadId: "thread-b",
       runtimeMode: "full-access",
       diffOpen: false,
+      diffThreadId: null,
+      diffTurnId: null,
+      diffFilePath: null,
     };
 
     const next = reducer(state, {
@@ -661,6 +682,9 @@ describe("store reducer thread continuity", () => {
       activeThreadId: "thread-a",
       runtimeMode: "full-access",
       diffOpen: false,
+      diffThreadId: null,
+      diffTurnId: null,
+      diffFilePath: null,
     };
 
     const next = reducer(state, {

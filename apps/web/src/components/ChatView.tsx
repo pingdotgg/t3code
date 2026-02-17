@@ -52,7 +52,9 @@ import {
 import {
   derivePendingApprovals,
   derivePhase,
+  deriveTurnDiffSummaries,
   deriveTimelineEntries,
+  type TurnDiffSummary,
   type PendingApproval,
   deriveWorkLogEntries,
   formatDuration,
@@ -406,6 +408,18 @@ export default function ChatView() {
     () => deriveTimelineEntries(activeThread?.messages ?? [], workLogEntries),
     [activeThread?.messages, workLogEntries],
   );
+  const turnDiffSummaries = useMemo(
+    () => deriveTurnDiffSummaries(activeThread?.events ?? []),
+    [activeThread?.events],
+  );
+  const turnDiffSummaryByAssistantMessageId = useMemo(() => {
+    const byMessageId = new Map<string, TurnDiffSummary>();
+    for (const summary of turnDiffSummaries) {
+      if (!summary.assistantMessageId) continue;
+      byMessageId.set(summary.assistantMessageId, summary);
+    }
+    return byMessageId;
+  }, [turnDiffSummaries]);
   const completionSummary = useMemo(() => {
     if (!activeThread?.latestTurnStartedAt) return null;
     if (!activeThread.latestTurnCompletedAt) return null;
@@ -1685,8 +1699,36 @@ export default function ChatView() {
     setExpandedImage(image);
   }, []);
   const onToggleDiff = useCallback(() => {
-    dispatch({ type: "TOGGLE_DIFF" });
-  }, [dispatch]);
+    if (state.diffOpen) {
+      dispatch({ type: "CLOSE_DIFF" });
+      return;
+    }
+
+    const latestSummary = turnDiffSummaries[0];
+    if (!activeThread || !latestSummary) {
+      dispatch({ type: "TOGGLE_DIFF" });
+      return;
+    }
+
+    dispatch({
+      type: "OPEN_DIFF",
+      threadId: activeThread.id,
+      turnId: latestSummary.turnId,
+      ...(latestSummary.files[0]?.path ? { filePath: latestSummary.files[0].path } : {}),
+    });
+  }, [activeThread, dispatch, state.diffOpen, turnDiffSummaries]);
+  const onOpenTurnDiff = useCallback(
+    (turnId: string, filePath?: string) => {
+      if (!activeThread) return;
+      dispatch({
+        type: "OPEN_DIFF",
+        threadId: activeThread.id,
+        turnId,
+        ...(filePath ? { filePath } : {}),
+      });
+    },
+    [activeThread, dispatch],
+  );
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -1761,9 +1803,11 @@ export default function ChatView() {
           completionDividerBeforeEntryId={completionDividerBeforeEntryId}
           completionSummary={completionSummary}
           assistantCompletionByItemId={assistantCompletionByItemId}
+          turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
           nowIso={nowIso}
           expandedWorkGroups={expandedWorkGroups}
           onToggleWorkGroup={onToggleWorkGroup}
+          onOpenTurnDiff={onOpenTurnDiff}
           onImageExpand={onExpandTimelineImage}
           messagesEndRef={messagesEndRef}
         />
@@ -2268,9 +2312,11 @@ interface MessagesTimelineProps {
   completionDividerBeforeEntryId: string | null;
   completionSummary: string | null;
   assistantCompletionByItemId: Map<string, string>;
+  turnDiffSummaryByAssistantMessageId: Map<string, TurnDiffSummary>;
   nowIso: string;
   expandedWorkGroups: Record<string, boolean>;
   onToggleWorkGroup: (groupId: string) => void;
+  onOpenTurnDiff: (turnId: string, filePath?: string) => void;
   onImageExpand: (image: ExpandedImagePreview) => void;
   messagesEndRef: RefObject<HTMLDivElement | null>;
 }
@@ -2282,9 +2328,11 @@ const MessagesTimeline = memo(function MessagesTimeline({
   completionDividerBeforeEntryId,
   completionSummary,
   assistantCompletionByItemId,
+  turnDiffSummaryByAssistantMessageId,
   nowIso,
   expandedWorkGroups,
   onToggleWorkGroup,
+  onOpenTurnDiff,
   onImageExpand,
   messagesEndRef,
 }: MessagesTimelineProps) {
@@ -2446,6 +2494,39 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   (timelineEntry.message.streaming ? "" : "(empty response)")
                 }
               />
+              {(() => {
+                const turnSummary = turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id);
+                if (!turnSummary) return null;
+                return (
+                  <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
+                    <div className="mb-1.5 flex items-center justify-between gap-2">
+                      <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+                        Changed files ({turnSummary.files.length})
+                      </p>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        onClick={() => onOpenTurnDiff(turnSummary.turnId, turnSummary.files[0]?.path)}
+                      >
+                        View diff
+                      </Button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {turnSummary.files.map((file) => (
+                        <button
+                          key={`${turnSummary.turnId}:${file.path}`}
+                          type="button"
+                          className="rounded-md border border-border/70 bg-background/70 px-2 py-1 font-mono text-[11px] text-muted-foreground/80 transition-colors hover:border-border hover:text-foreground/90"
+                          onClick={() => onOpenTurnDiff(turnSummary.turnId, file.path)}
+                        >
+                          {file.path}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
               <p className="mt-1.5 text-[10px] text-muted-foreground/30">
                 {formatMessageMeta(
                   timelineEntry.message.createdAt,

@@ -1,8 +1,7 @@
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { Suspense, lazy, useEffect, useRef } from "react";
 
 import ChatView from "./components/ChatView";
-import DiffPanel from "./components/DiffPanel";
 import Sidebar from "./components/Sidebar";
 import { isElectron } from "./env";
 import { DEFAULT_MODEL } from "./model-logic";
@@ -12,6 +11,8 @@ import { onServerWelcome } from "./wsNativeApi";
 import { useNativeApi } from "./hooks/useNativeApi";
 import { AnchoredToastProvider, ToastProvider } from "./components/ui/toast";
 import { invalidateGitQueries } from "./lib/gitReactQuery";
+
+const DiffPanel = lazy(() => import("./components/DiffPanel"));
 
 function EventRouter() {
   const api = useNativeApi();
@@ -195,7 +196,17 @@ function Layout() {
       <DesktopProjectBootstrap />
       <Sidebar />
       <ChatView />
-      {state.diffOpen && <DiffPanel />}
+      {state.diffOpen && (
+        <Suspense
+          fallback={
+            <aside className="flex h-full w-[560px] shrink-0 items-center justify-center border-l border-border bg-card px-4 text-center text-xs text-muted-foreground/70">
+              Loading diff viewer...
+            </aside>
+          }
+        >
+          <DiffPanel />
+        </Suspense>
+      )}
     </div>
   );
 }

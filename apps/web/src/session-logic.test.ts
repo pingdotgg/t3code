@@ -5,6 +5,7 @@ import {
   type WorkLogEntry,
   applyEventToMessages,
   derivePendingApprovals,
+  deriveTurnDiffSummaries,
   deriveTimelineEntries,
   deriveWorkLogEntries,
   evolveSession,
@@ -390,6 +391,109 @@ describe("deriveWorkLogEntries", () => {
 
     expect(entries).toHaveLength(2);
     expect(entries.map((entry) => entry.detail)).toEqual(["pwd", "ls -la"]);
+  });
+});
+
+describe("deriveTurnDiffSummaries", () => {
+  it("collects per-turn file changes and links them to assistant message completion", () => {
+    const summaries = deriveTurnDiffSummaries([
+      makeEvent({
+        id: "evt-turn-start",
+        method: "turn/started",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:00.000Z",
+      }),
+      makeEvent({
+        id: "evt-file-change",
+        method: "item/completed",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:01.000Z",
+        payload: {
+          item: {
+            id: "item-file-change",
+            type: "fileChange",
+            status: "completed",
+            changes: [
+              {
+                path: "src/a.ts",
+                kind: "modified",
+                diff: "diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n",
+              },
+            ],
+          },
+        },
+      }),
+      makeEvent({
+        id: "evt-turn-diff-updated",
+        method: "turn/diff/updated",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:02.000Z",
+        payload: {
+          threadId: "thr-1",
+          turnId: "turn-1",
+          diff: [
+            "diff --git a/src/a.ts b/src/a.ts",
+            "@@ -1 +1 @@",
+            "-old",
+            "+new",
+            "diff --git a/src/b.ts b/src/b.ts",
+            "@@ -0,0 +1 @@",
+            "+created",
+          ].join("\n"),
+        },
+      }),
+      makeEvent({
+        id: "evt-agent-msg",
+        method: "item/completed",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:03.000Z",
+        payload: {
+          item: {
+            id: "msg-1",
+            type: "agentMessage",
+            text: "Done",
+          },
+        },
+      }),
+      makeEvent({
+        id: "evt-turn-completed",
+        method: "turn/completed",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:04.000Z",
+        payload: {
+          turn: {
+            id: "turn-1",
+            status: "completed",
+          },
+        },
+      }),
+      makeEvent({
+        id: "evt-turn-2-file-change",
+        method: "item/completed",
+        turnId: "turn-2",
+        createdAt: "2026-02-08T10:00:05.000Z",
+        payload: {
+          item: {
+            id: "item-file-change-2",
+            type: "fileChange",
+            status: "completed",
+            changes: [
+              {
+                path: "src/unfinished.ts",
+                kind: "modified",
+                diff: "diff --git a/src/unfinished.ts b/src/unfinished.ts",
+              },
+            ],
+          },
+        },
+      }),
+    ]);
+
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.turnId).toBe("turn-1");
+    expect(summaries[0]?.assistantMessageId).toBe("msg-1");
+    expect(summaries[0]?.files.map((file) => file.path)).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(summaries[0]?.files[0]?.kind).toBe("modified");
   });
 });
 
