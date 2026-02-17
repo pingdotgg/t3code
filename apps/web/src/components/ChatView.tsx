@@ -32,7 +32,11 @@ import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
 import { buildBootstrapInput } from "../historyBootstrap";
-import { detectComposerTrigger, replaceTextRange } from "../composer-logic";
+import {
+  type ComposerTriggerKind,
+  detectComposerTrigger,
+  replaceTextRange,
+} from "../composer-logic";
 import {
   DEFAULT_MODEL,
   DEFAULT_REASONING,
@@ -102,6 +106,14 @@ const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
+const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
+const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
+const SEARCHABLE_MODEL_OPTIONS = MODEL_OPTIONS.map(({ slug, name }) => ({
+  slug,
+  name,
+  searchSlug: slug.toLowerCase(),
+  searchName: name.toLowerCase(),
+}));
 
 function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   if (tone === "error") return "text-rose-300/50 dark:text-rose-300/50";
@@ -209,6 +221,102 @@ const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
   );
 });
 
+const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
+  item: ComposerCommandItem;
+  index: number;
+  isHighlighted: boolean;
+  keyboardHighlight: boolean;
+  resolvedTheme: "light" | "dark";
+  onHighlight: (index: number) => void;
+  onSelect: (item: ComposerCommandItem) => void;
+}) {
+  return (
+    <CommandItem
+      value={props.item.id}
+      data-composer-menu-index={props.index}
+      className={cn(
+        "cursor-pointer gap-2",
+        props.keyboardHighlight &&
+          !props.isHighlighted &&
+          "data-highlighted:bg-transparent data-highlighted:text-inherit",
+        props.isHighlighted && "bg-accent text-accent-foreground",
+      )}
+      onMouseEnter={() => {
+        props.onHighlight(props.index);
+      }}
+      onMouseDown={(event) => {
+        event.preventDefault();
+      }}
+      onClick={() => {
+        props.onSelect(props.item);
+      }}
+    >
+      {props.item.type === "path" ? (
+        <VscodeEntryIcon
+          pathValue={props.item.path}
+          kind={props.item.pathKind}
+          theme={props.resolvedTheme}
+        />
+      ) : null}
+      {props.item.type === "slash-command" ? (
+        <CursorIcon className="size-4 text-muted-foreground/80" />
+      ) : null}
+      {props.item.type === "model" ? (
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          model
+        </Badge>
+      ) : null}
+      <span className="truncate">{props.item.label}</span>
+      <span className="truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
+    </CommandItem>
+  );
+});
+
+const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
+  items: ComposerCommandItem[];
+  selectedIndex: number;
+  keyboardHighlight: boolean;
+  resolvedTheme: "light" | "dark";
+  isLoading: boolean;
+  triggerKind: ComposerTriggerKind | null;
+  onHighlight: (index: number) => void;
+  onSelect: (item: ComposerCommandItem) => void;
+  menuRef: RefObject<HTMLDivElement | null>;
+}) {
+  return (
+    <Command>
+      <div
+        ref={props.menuRef}
+        className="overflow-hidden rounded-xl border border-border/80 bg-popover/96 shadow-lg/8 backdrop-blur-xs"
+      >
+        <CommandList className="max-h-64">
+          {props.items.map((item, index) => (
+            <ComposerCommandMenuItem
+              key={item.id}
+              item={item}
+              index={index}
+              isHighlighted={index === props.selectedIndex}
+              keyboardHighlight={props.keyboardHighlight}
+              resolvedTheme={props.resolvedTheme}
+              onHighlight={props.onHighlight}
+              onSelect={props.onSelect}
+            />
+          ))}
+        </CommandList>
+        {props.items.length === 0 && (
+          <p className="px-3 py-2 text-muted-foreground/70 text-xs">
+            {props.isLoading
+              ? "Searching workspace files..."
+              : props.triggerKind === "path"
+                ? "No matching files or folders."
+                : "No matching command."}
+          </p>
+        )}
+      </div>
+    </Command>
+  );
+});
+
 export default function ChatView() {
   const { state, dispatch } = useStore();
   const api = useNativeApi();
@@ -231,6 +339,7 @@ export default function ChatView() {
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerCursor, setComposerCursor] = useState(0);
+  const [debouncedPathQuery, setDebouncedPathQuery] = useState("");
   const [composerMenuIndex, setComposerMenuIndex] = useState(0);
   const [composerKeyboardHighlight, setComposerKeyboardHighlight] = useState(false);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
@@ -349,34 +458,55 @@ export default function ChatView() {
     () => detectComposerTrigger(prompt, composerCursor),
     [prompt, composerCursor],
   );
+  const composerTriggerKind = composerTrigger?.kind ?? null;
+  const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
+  const isPathTrigger = composerTriggerKind === "path";
   const branchesQuery = useQuery(gitBranchesQueryOptions(api, gitCwd));
   const keybindingsQuery = useQuery({
     ...serverConfigQueryOptions(api),
     select: (config) => config.keybindings,
   });
+  useEffect(() => {
+    if (!isPathTrigger) {
+      setDebouncedPathQuery("");
+      return;
+    }
+    if (pathTriggerQuery.length === 0) {
+      setDebouncedPathQuery("");
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setDebouncedPathQuery(pathTriggerQuery);
+    }, COMPOSER_PATH_QUERY_DEBOUNCE_MS);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [isPathTrigger, pathTriggerQuery]);
   const workspaceEntriesQuery = useQuery({
     queryKey: [
       "composer-workspace-entries",
       gitCwd,
-      composerTrigger?.kind === "path" ? composerTrigger.query : "",
+      debouncedPathQuery,
     ],
-    enabled: Boolean(api && gitCwd && composerTrigger?.kind === "path"),
+    enabled: Boolean(api && gitCwd && isPathTrigger),
     staleTime: 15_000,
+    placeholderData: (previous) => previous,
     queryFn: async () => {
-      if (!api || !gitCwd || composerTrigger?.kind !== "path") {
+      if (!api || !gitCwd || !isPathTrigger) {
         return { entries: [], truncated: false };
       }
       return api.projects.searchEntries({
         cwd: gitCwd,
-        query: composerTrigger.query,
+        query: debouncedPathQuery,
         limit: 80,
       });
     },
   });
+  const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
-      return (workspaceEntriesQuery.data?.entries ?? []).map((entry) => ({
+      return workspaceEntries.map((entry) => ({
         id: `path:${entry.kind}:${entry.path}`,
         type: "path",
         path: entry.path,
@@ -400,10 +530,10 @@ export default function ChatView() {
       ];
     }
 
-    return MODEL_OPTIONS.filter(({ slug, name }) => {
+    return SEARCHABLE_MODEL_OPTIONS.filter(({ searchSlug, searchName }) => {
       const query = composerTrigger.query.trim().toLowerCase();
       if (!query) return true;
-      return slug.toLowerCase().includes(query) || name.toLowerCase().includes(query);
+      return searchSlug.includes(query) || searchName.includes(query);
     }).map(({ slug, name }) => ({
       id: `model:${slug}`,
       type: "model",
@@ -411,7 +541,7 @@ export default function ChatView() {
       label: name,
       description: slug,
     }));
-  }, [composerTrigger, workspaceEntriesQuery.data?.entries]);
+  }, [composerTrigger, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem =
     composerMenuItems[Math.min(composerMenuIndex, Math.max(0, composerMenuItems.length - 1))] ??
@@ -611,7 +741,7 @@ export default function ChatView() {
       `[data-composer-menu-index="${aheadIndex}"]`,
     );
     node?.scrollIntoView({ block: "nearest" });
-  }, [composerMenuIndex, composerMenuItems, composerMenuOpen]);
+  }, [composerMenuIndex, composerMenuItems.length, composerMenuOpen]);
 
   useEffect(() => {
     if (!activeThread?.id || activeThread.terminalOpen) return;
@@ -1165,6 +1295,12 @@ export default function ChatView() {
     },
     [applyPromptReplacement, composerTrigger, onModelSelect],
   );
+  const onHighlightComposerMenuItem = useCallback((index: number) => {
+    setComposerKeyboardHighlight(false);
+    setComposerMenuIndex(index);
+  }, []);
+  const isComposerMenuLoading =
+    composerTriggerKind === "path" && (workspaceEntriesQuery.isLoading || workspaceEntriesQuery.isFetching);
 
   const onPromptChange = useCallback((nextPrompt: string, nextCursor: number) => {
     setPrompt(nextPrompt);
@@ -1293,67 +1429,17 @@ export default function ChatView() {
             <div className="relative px-4 pt-4 pb-2">
               {composerMenuOpen && (
                 <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
-                  <Command>
-                    <div
-                      ref={composerMenuRef}
-                      className="overflow-hidden rounded-xl border border-border/80 bg-popover/96 shadow-lg/8 backdrop-blur-xs"
-                    >
-                      <CommandList className="max-h-64">
-                        {composerMenuItems.map((item, index) => (
-                          <CommandItem
-                            key={item.id}
-                            value={item.id}
-                            data-composer-menu-index={index}
-                            className={cn(
-                              "cursor-pointer gap-2",
-                              composerKeyboardHighlight &&
-                                "data-highlighted:bg-transparent data-highlighted:text-inherit",
-                              index === composerMenuIndex && "bg-accent text-accent-foreground",
-                            )}
-                            onMouseEnter={() => {
-                              setComposerKeyboardHighlight(false);
-                              setComposerMenuIndex(index);
-                            }}
-                            onMouseDown={(event) => {
-                              event.preventDefault();
-                            }}
-                            onClick={() => {
-                              onSelectComposerItem(item);
-                            }}
-                          >
-                            {item.type === "path" ? (
-                              <VscodeEntryIcon
-                                pathValue={item.path}
-                                kind={item.pathKind}
-                                theme={resolvedTheme}
-                              />
-                            ) : null}
-                            {item.type === "slash-command" ? (
-                              <CursorIcon className="size-4 text-muted-foreground/80" />
-                            ) : null}
-                            {item.type === "model" ? (
-                              <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
-                                model
-                              </Badge>
-                            ) : null}
-                            <span className="truncate">{item.label}</span>
-                            <span className="truncate text-muted-foreground/70 text-xs">
-                              {item.description}
-                            </span>
-                          </CommandItem>
-                        ))}
-                      </CommandList>
-                      {composerMenuItems.length === 0 && (
-                        <p className="px-3 py-2 text-muted-foreground/70 text-xs">
-                          {workspaceEntriesQuery.isLoading
-                            ? "Searching workspace files..."
-                            : composerTrigger?.kind === "path"
-                              ? "No matching files or folders."
-                              : "No matching command."}
-                        </p>
-                      )}
-                    </div>
-                  </Command>
+                  <ComposerCommandMenu
+                    items={composerMenuItems}
+                    selectedIndex={composerMenuIndex}
+                    keyboardHighlight={composerKeyboardHighlight}
+                    resolvedTheme={resolvedTheme}
+                    isLoading={isComposerMenuLoading}
+                    triggerKind={composerTriggerKind}
+                    onHighlight={onHighlightComposerMenuItem}
+                    onSelect={onSelectComposerItem}
+                    menuRef={composerMenuRef}
+                  />
                 </div>
               )}
 
