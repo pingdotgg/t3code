@@ -79,6 +79,8 @@ jobs:
         env:
           ELECTRON_DISABLE_SANDBOX: "1"
           T3CODE_PERF_TIMEOUT_MS: "420000"
+          T3CODE_PERF_MAX_KEYPRESS_AVG_MS: "12"
+          T3CODE_PERF_MAX_KEYPRESS_MAX_MS: "24"
           T3CODE_PERF_MAX_LONG_DISPATCH_COUNT: "5"
           # Terminal PTY scripting is flaky in CI VMs; renderer perf checks remain enforced.
           T3CODE_DESKTOP_PERF_RUN_TERMINAL: "0"
@@ -96,6 +98,8 @@ jobs:
         env:
           ELECTRON_DISABLE_SANDBOX: "1"
           T3CODE_PERF_TIMEOUT_MS: "420000"
+          T3CODE_PERF_MAX_KEYPRESS_AVG_MS: "12"
+          T3CODE_PERF_MAX_KEYPRESS_MAX_MS: "24"
           T3CODE_PERF_MAX_LONG_DISPATCH_COUNT: "5"
           T3CODE_DESKTOP_PERF_RUN_TERMINAL: "0"
           T3CODE_DESKTOP_PERF_RUN_OPTIONAL_RENDERER: "0"
@@ -110,6 +114,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ELECTRON_DISABLE_SANDBOX: "1"
           T3CODE_PERF_TIMEOUT_MS: "420000"
+          T3CODE_PERF_MAX_KEYPRESS_AVG_MS: "12"
+          T3CODE_PERF_MAX_KEYPRESS_MAX_MS: "24"
           T3CODE_PERF_MAX_LONG_DISPATCH_COUNT: "5"
           T3CODE_DESKTOP_PERF_RUN_TERMINAL: "0"
           T3CODE_DESKTOP_PERF_RUN_OPTIONAL_RENDERER: "0"
