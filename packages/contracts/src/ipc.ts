@@ -18,6 +18,10 @@ import type {
 import type {
   ProviderEvent,
   ProviderInterruptTurnInput,
+  ProviderListCheckpointsInput,
+  ProviderListCheckpointsResult,
+  ProviderRevertToCheckpointInput,
+  ProviderRevertToCheckpointResult,
   ProviderRespondToRequestInput,
   ProviderSendTurnInput,
   ProviderSession,
@@ -89,6 +93,10 @@ export interface NativeApi {
     respondToRequest: (input: ProviderRespondToRequestInput) => Promise<void>;
     stopSession: (input: ProviderStopSessionInput) => Promise<void>;
     listSessions: () => Promise<ProviderSession[]>;
+    listCheckpoints: (input: ProviderListCheckpointsInput) => Promise<ProviderListCheckpointsResult>;
+    revertToCheckpoint: (
+      input: ProviderRevertToCheckpointInput,
+    ) => Promise<ProviderRevertToCheckpointResult>;
     onEvent: (callback: (event: ProviderEvent) => void) => () => void;
   };
   projects: {

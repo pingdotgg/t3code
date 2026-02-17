@@ -10,6 +10,8 @@ export const WS_METHODS = {
   providersRespondToRequest: "providers.respondToRequest",
   providersStopSession: "providers.stopSession",
   providersListSessions: "providers.listSessions",
+  providersListCheckpoints: "providers.listCheckpoints",
+  providersRevertToCheckpoint: "providers.revertToCheckpoint",
 
   // Project registry methods
   projectsList: "projects.list",

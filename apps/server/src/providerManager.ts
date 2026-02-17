@@ -3,8 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  type ProviderCheckpoint,
   type ProviderEvent,
   type ProviderInterruptTurnInput,
+  type ProviderListCheckpointsInput,
+  type ProviderListCheckpointsResult,
+  type ProviderRevertToCheckpointInput,
+  type ProviderRevertToCheckpointResult,
   type ProviderRespondToRequestInput,
   type ProviderSendTurnInput,
   type ProviderSession,
@@ -12,15 +17,142 @@ import {
   type ProviderStopSessionInput,
   type ProviderTurnStartResult,
   providerInterruptTurnInputSchema,
+  providerListCheckpointsInputSchema,
+  providerRevertToCheckpointInputSchema,
   providerRespondToRequestInputSchema,
   providerSendTurnInputSchema,
   providerSessionStartInputSchema,
   providerStopSessionInputSchema,
 } from "@t3tools/contracts";
+import type { CodexThreadTurnSnapshot } from "./codexAppServerManager";
 import { CodexAppServerManager } from "./codexAppServerManager";
 
 export interface ProviderManagerEvents {
   event: [event: ProviderEvent];
+}
+
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function trimToPreview(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 120) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 117)}...`;
+}
+
+function summarizeUserMessageContent(content: unknown[]): string | undefined {
+  const segments: string[] = [];
+
+  for (const part of content) {
+    const record = asObject(part);
+    const type = asString(record?.type);
+    if (!type) continue;
+
+    if (type === "text") {
+      const text = asString(record?.text);
+      if (text && text.trim().length > 0) {
+        segments.push(text.trim());
+      }
+      continue;
+    }
+
+    if (type === "image") {
+      segments.push("[Image attachment]");
+      continue;
+    }
+
+    if (type === "localImage") {
+      segments.push("[Local image attachment]");
+      continue;
+    }
+  }
+
+  if (segments.length === 0) {
+    return undefined;
+  }
+  return trimToPreview(segments.join(" "));
+}
+
+function summarizeTurn(turn: CodexThreadTurnSnapshot): {
+  messageCountDelta: number;
+  preview?: string;
+} {
+  let messageCountDelta = 0;
+  let preview: string | undefined;
+
+  for (const item of turn.items) {
+    const record = asObject(item);
+    const type = asString(record?.type);
+    if (!type) continue;
+
+    if (type === "userMessage") {
+      messageCountDelta += 1;
+      if (!preview) {
+        const content = asArray(record?.content);
+        preview = summarizeUserMessageContent(content);
+      }
+      continue;
+    }
+
+    if (type === "agentMessage") {
+      messageCountDelta += 1;
+      if (!preview) {
+        const text = asString(record?.text);
+        if (text && text.trim().length > 0) {
+          preview = trimToPreview(text);
+        }
+      }
+    }
+  }
+
+  return {
+    messageCountDelta,
+    ...(preview ? { preview } : {}),
+  };
+}
+
+function buildCheckpoints(turns: CodexThreadTurnSnapshot[]): ProviderCheckpoint[] {
+  const checkpoints: ProviderCheckpoint[] = [];
+  let messageCount = 0;
+  const isEmpty = turns.length === 0;
+  checkpoints.push({
+    id: "root",
+    turnCount: 0,
+    messageCount: 0,
+    label: "Start of conversation",
+    isCurrent: isEmpty,
+  });
+
+  for (let index = 0; index < turns.length; index += 1) {
+    const turn = turns[index];
+    if (!turn) continue;
+    const turnSummary = summarizeTurn(turn);
+    messageCount += turnSummary.messageCountDelta;
+    checkpoints.push({
+      id: turn.id,
+      turnCount: index + 1,
+      messageCount,
+      label: `Turn ${index + 1}`,
+      ...(turnSummary.preview ? { preview: turnSummary.preview } : {}),
+      isCurrent: index === turns.length - 1,
+    });
+  }
+
+  return checkpoints;
 }
 
 export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
@@ -99,6 +231,56 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
 
   listSessions(): ProviderSession[] {
     return this.codex.listSessions();
+  }
+
+  async listCheckpoints(raw: ProviderListCheckpointsInput): Promise<ProviderListCheckpointsResult> {
+    const input = providerListCheckpointsInputSchema.parse(raw);
+    if (!this.codex.hasSession(input.sessionId)) {
+      throw new Error(`Unknown provider session: ${input.sessionId}`);
+    }
+
+    const snapshot = await this.codex.readThread(input.sessionId);
+    return {
+      threadId: snapshot.threadId,
+      checkpoints: buildCheckpoints(snapshot.turns),
+    };
+  }
+
+  async revertToCheckpoint(
+    raw: ProviderRevertToCheckpointInput,
+  ): Promise<ProviderRevertToCheckpointResult> {
+    const input = providerRevertToCheckpointInputSchema.parse(raw);
+    if (!this.codex.hasSession(input.sessionId)) {
+      throw new Error(`Unknown provider session: ${input.sessionId}`);
+    }
+
+    const beforeSnapshot = await this.codex.readThread(input.sessionId);
+    const currentTurnCount = beforeSnapshot.turns.length;
+    if (input.turnCount > currentTurnCount) {
+      throw new Error(
+        `Checkpoint turn count ${input.turnCount} exceeds current turn count ${currentTurnCount}.`,
+      );
+    }
+
+    const requestedRollbackTurns = currentTurnCount - input.turnCount;
+    const afterSnapshot =
+      requestedRollbackTurns > 0
+        ? await this.codex.rollbackThread(input.sessionId, requestedRollbackTurns)
+        : beforeSnapshot;
+    const checkpoints = buildCheckpoints(afterSnapshot.turns);
+    const currentCheckpoint =
+      checkpoints.find((checkpoint) => checkpoint.isCurrent) ??
+      checkpoints[checkpoints.length - 1] ??
+      checkpoints[0];
+    const rolledBackTurns = Math.max(0, currentTurnCount - afterSnapshot.turns.length);
+
+    return {
+      threadId: afterSnapshot.threadId,
+      turnCount: currentCheckpoint?.turnCount ?? 0,
+      messageCount: currentCheckpoint?.messageCount ?? 0,
+      rolledBackTurns,
+      checkpoints,
+    };
   }
 
   stopAll(): void {

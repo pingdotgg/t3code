@@ -91,6 +91,9 @@ export function createWsNativeApi(): NativeApi {
       respondToRequest: (input) => transport.request(WS_METHODS.providersRespondToRequest, input),
       stopSession: (input) => transport.request(WS_METHODS.providersStopSession, input),
       listSessions: () => transport.request(WS_METHODS.providersListSessions),
+      listCheckpoints: (input) => transport.request(WS_METHODS.providersListCheckpoints, input),
+      revertToCheckpoint: (input) =>
+        transport.request(WS_METHODS.providersRevertToCheckpoint, input),
       onEvent: (callback) =>
         transport.subscribe(WS_CHANNELS.providerEvent, callback as (data: unknown) => void),
     },

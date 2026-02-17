@@ -65,6 +65,16 @@ interface JsonRpcNotification {
   params?: unknown;
 }
 
+export interface CodexThreadTurnSnapshot {
+  id: string;
+  items: unknown[];
+}
+
+export interface CodexThreadSnapshot {
+  threadId: string;
+  turns: CodexThreadTurnSnapshot[];
+}
+
 const ANSI_ESCAPE_CHAR = String.fromCharCode(27);
 const ANSI_ESCAPE_REGEX = new RegExp(`${ANSI_ESCAPE_CHAR}\\[[0-9;]*m`, "g");
 const CODEX_STDERR_LOG_REGEX =
@@ -329,6 +339,41 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       threadId: context.session.threadId,
       turnId: effectiveTurnId,
     });
+  }
+
+  async readThread(sessionId: string): Promise<CodexThreadSnapshot> {
+    const context = this.requireSession(sessionId);
+    const threadId = context.session.threadId;
+    if (!threadId) {
+      throw new Error("Session is missing a thread id.");
+    }
+
+    const response = await this.sendRequest(context, "thread/read", {
+      threadId,
+      includeTurns: true,
+    });
+    return this.parseThreadSnapshot("thread/read", response);
+  }
+
+  async rollbackThread(sessionId: string, numTurns: number): Promise<CodexThreadSnapshot> {
+    const context = this.requireSession(sessionId);
+    const threadId = context.session.threadId;
+    if (!threadId) {
+      throw new Error("Session is missing a thread id.");
+    }
+    if (!Number.isInteger(numTurns) || numTurns < 1) {
+      throw new Error("numTurns must be an integer >= 1.");
+    }
+
+    const response = await this.sendRequest(context, "thread/rollback", {
+      threadId,
+      numTurns,
+    });
+    this.updateSession(context, {
+      status: "ready",
+      activeTurnId: undefined,
+    });
+    return this.parseThreadSnapshot("thread/rollback", response);
   }
 
   async respondToRequest(
@@ -742,6 +787,31 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     return undefined;
   }
 
+  private parseThreadSnapshot(method: string, response: unknown): CodexThreadSnapshot {
+    const responseRecord = this.readObject(response);
+    const thread = this.readObject(responseRecord, "thread");
+    const threadId = this.readString(thread, "id") ?? this.readString(responseRecord, "threadId");
+    if (!threadId) {
+      throw new Error(`${method} response did not include a thread id.`);
+    }
+
+    const turnsRaw = this.readArray(thread, "turns") ?? [];
+    const turns = turnsRaw.map((turnValue, index) => {
+      const turn = this.readObject(turnValue);
+      const turnId = this.readString(turn, "id") ?? `${threadId}:turn:${index + 1}`;
+      const items = this.readArray(turn, "items") ?? [];
+      return {
+        id: turnId,
+        items,
+      };
+    });
+
+    return {
+      threadId,
+      turns,
+    };
+  }
+
   private isServerRequest(value: unknown): value is JsonRpcRequest {
     if (!value || typeof value !== "object") {
       return false;
@@ -821,6 +891,16 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     return target as Record<string, unknown>;
+  }
+
+  private readArray(value: unknown, key?: string): unknown[] | undefined {
+    const target =
+      key === undefined
+        ? value
+        : value && typeof value === "object"
+          ? (value as Record<string, unknown>)[key]
+          : undefined;
+    return Array.isArray(target) ? target : undefined;
   }
 
   private readString(value: unknown, key: string): string | undefined {

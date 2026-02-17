@@ -43,6 +43,36 @@ function createSendTurnHarness() {
   return { manager, context, requireSession, sendRequest, updateSession };
 }
 
+function createThreadControlHarness() {
+  const manager = new CodexAppServerManager();
+  const context = {
+    session: {
+      sessionId: "sess_1",
+      provider: "codex",
+      status: "ready",
+      threadId: "thread_1",
+      createdAt: "2026-02-10T00:00:00.000Z",
+      updatedAt: "2026-02-10T00:00:00.000Z",
+    },
+  };
+
+  const requireSession = vi
+    .spyOn(
+      manager as unknown as { requireSession: (sessionId: string) => unknown },
+      "requireSession",
+    )
+    .mockReturnValue(context);
+  const sendRequest = vi.spyOn(
+    manager as unknown as { sendRequest: (...args: unknown[]) => Promise<unknown> },
+    "sendRequest",
+  );
+  const updateSession = vi
+    .spyOn(manager as unknown as { updateSession: (...args: unknown[]) => void }, "updateSession")
+    .mockImplementation(() => {});
+
+  return { manager, context, requireSession, sendRequest, updateSession };
+}
+
 describe("classifyCodexStderrLine", () => {
   it("ignores empty lines", () => {
     expect(classifyCodexStderrLine("   ")).toBeNull();
@@ -196,5 +226,64 @@ describe("sendTurn", () => {
         sessionId: "sess_1",
       }),
     ).rejects.toThrow("Turn input must include text or attachments.");
+  });
+});
+
+describe("thread checkpoint control", () => {
+  it("reads thread turns from thread/read", async () => {
+    const { manager, context, requireSession, sendRequest } = createThreadControlHarness();
+    sendRequest.mockResolvedValue({
+      thread: {
+        id: "thread_1",
+        turns: [
+          {
+            id: "turn_1",
+            items: [{ type: "userMessage", content: [{ type: "text", text: "hello" }] }],
+          },
+        ],
+      },
+    });
+
+    const result = await manager.readThread("sess_1");
+
+    expect(requireSession).toHaveBeenCalledWith("sess_1");
+    expect(sendRequest).toHaveBeenCalledWith(context, "thread/read", {
+      threadId: "thread_1",
+      includeTurns: true,
+    });
+    expect(result).toEqual({
+      threadId: "thread_1",
+      turns: [
+        {
+          id: "turn_1",
+          items: [{ type: "userMessage", content: [{ type: "text", text: "hello" }] }],
+        },
+      ],
+    });
+  });
+
+  it("rolls back turns via thread/rollback and resets session running state", async () => {
+    const { manager, context, sendRequest, updateSession } = createThreadControlHarness();
+    sendRequest.mockResolvedValue({
+      thread: {
+        id: "thread_1",
+        turns: [],
+      },
+    });
+
+    const result = await manager.rollbackThread("sess_1", 2);
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "thread/rollback", {
+      threadId: "thread_1",
+      numTurns: 2,
+    });
+    expect(updateSession).toHaveBeenCalledWith(context, {
+      status: "ready",
+      activeTurnId: undefined,
+    });
+    expect(result).toEqual({
+      threadId: "thread_1",
+      turns: [],
+    });
   });
 });

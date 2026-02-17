@@ -60,6 +60,13 @@ type Action =
   | { type: "SET_THREAD_TITLE"; threadId: string; title: string }
   | { type: "SET_THREAD_MODEL"; threadId: string; model: string }
   | {
+      type: "REVERT_TO_CHECKPOINT";
+      threadId: string;
+      sessionId: string;
+      threadRuntimeId: string;
+      messageCount: number;
+    }
+  | {
       type: "SET_THREAD_BRANCH";
       threadId: string;
       branch: string | null;
@@ -832,6 +839,38 @@ export function reducer(state: AppState, action: Action): AppState {
           ...t,
           model: resolveModelSlug(action.model),
         })),
+      };
+
+    case "REVERT_TO_CHECKPOINT":
+      return {
+        ...state,
+        threads: updateThread(state.threads, action.threadId, (t) => {
+          const nextMessageCount = Math.max(0, Math.floor(action.messageCount));
+          const now = new Date().toISOString();
+          return {
+            ...t,
+            codexThreadId: action.threadRuntimeId,
+            session:
+              t.session?.sessionId === action.sessionId
+                ? {
+                    ...t.session,
+                    status: "ready",
+                    threadId: action.threadRuntimeId,
+                    activeTurnId: undefined,
+                    updatedAt: now,
+                    lastError: undefined,
+                  }
+                : t.session,
+            messages: t.messages.slice(0, nextMessageCount),
+            events: [],
+            error: null,
+            latestTurnId: undefined,
+            latestTurnStartedAt: undefined,
+            latestTurnCompletedAt: undefined,
+            latestTurnDurationMs: undefined,
+            lastVisitedAt: now,
+          };
+        }),
       };
 
     case "SET_THREAD_BRANCH": {

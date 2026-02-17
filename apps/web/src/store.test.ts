@@ -718,4 +718,66 @@ describe("store reducer thread continuity", () => {
     expect(next.threads[0]?.latestTurnCompletedAt).toBe(completedAt);
     expect(next.threads[0]?.lastVisitedAt).toBe(completedAt);
   });
+
+  it("reverts thread state to a checkpoint snapshot", () => {
+    const state = makeState(
+      makeThread({
+        codexThreadId: "thr_before",
+        session: makeSession({
+          status: "running",
+          threadId: "thr_before",
+          activeTurnId: "turn-live",
+        }),
+        messages: [
+          {
+            id: "m-1",
+            role: "user",
+            text: "First",
+            createdAt: "2026-02-08T10:00:00.000Z",
+            streaming: false,
+          },
+          {
+            id: "m-2",
+            role: "assistant",
+            text: "First reply",
+            createdAt: "2026-02-08T10:00:01.000Z",
+            streaming: false,
+          },
+          {
+            id: "m-3",
+            role: "user",
+            text: "Second",
+            createdAt: "2026-02-08T10:00:02.000Z",
+            streaming: false,
+          },
+        ],
+        events: [
+          makeEvent({
+            method: "turn/started",
+            turnId: "turn-live",
+          }),
+        ],
+        error: "temporary failure",
+        latestTurnId: "turn-live",
+        latestTurnStartedAt: "2026-02-08T10:00:03.000Z",
+      }),
+    );
+
+    const next = reducer(state, {
+      type: "REVERT_TO_CHECKPOINT",
+      threadId: "thread-local-1",
+      sessionId: "sess-1",
+      threadRuntimeId: "thr_after",
+      messageCount: 2,
+    });
+
+    expect(next.threads[0]?.codexThreadId).toBe("thr_after");
+    expect(next.threads[0]?.messages.map((message) => message.id)).toEqual(["m-1", "m-2"]);
+    expect(next.threads[0]?.events).toEqual([]);
+    expect(next.threads[0]?.error).toBeNull();
+    expect(next.threads[0]?.session?.status).toBe("ready");
+    expect(next.threads[0]?.session?.activeTurnId).toBeUndefined();
+    expect(next.threads[0]?.session?.threadId).toBe("thr_after");
+    expect(next.threads[0]?.latestTurnId).toBeUndefined();
+  });
 });

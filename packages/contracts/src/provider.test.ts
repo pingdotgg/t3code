@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  providerCheckpointSchema,
   providerEventSchema,
+  providerListCheckpointsInputSchema,
+  providerListCheckpointsResultSchema,
+  providerRevertToCheckpointInputSchema,
+  providerRevertToCheckpointResultSchema,
   providerRespondToRequestInputSchema,
   providerSendTurnInputSchema,
   providerSessionStartInputSchema,
@@ -153,6 +158,74 @@ describe("providerRespondToRequestInputSchema", () => {
         sessionId: "sess_1",
         requestId: "req_1",
         decision: "always",
+      }),
+    ).toThrow();
+  });
+});
+
+describe("provider checkpoint schemas", () => {
+  it("accepts list checkpoint inputs", () => {
+    const parsed = providerListCheckpointsInputSchema.parse({
+      sessionId: "sess_1",
+    });
+    expect(parsed.sessionId).toBe("sess_1");
+  });
+
+  it("accepts checkpoint records and list results", () => {
+    const checkpoint = providerCheckpointSchema.parse({
+      id: "turn_1",
+      turnCount: 1,
+      messageCount: 2,
+      label: "Turn 1",
+      preview: "Summarize this file",
+      isCurrent: true,
+    });
+    expect(checkpoint.turnCount).toBe(1);
+
+    const listResult = providerListCheckpointsResultSchema.parse({
+      threadId: "thr_1",
+      checkpoints: [checkpoint],
+    });
+    expect(listResult.checkpoints).toHaveLength(1);
+  });
+
+  it("accepts revert checkpoint input/result", () => {
+    const input = providerRevertToCheckpointInputSchema.parse({
+      sessionId: "sess_1",
+      turnCount: 2,
+    });
+    expect(input.turnCount).toBe(2);
+
+    const result = providerRevertToCheckpointResultSchema.parse({
+      threadId: "thr_1",
+      turnCount: 2,
+      messageCount: 4,
+      rolledBackTurns: 1,
+      checkpoints: [
+        {
+          id: "root",
+          turnCount: 0,
+          messageCount: 0,
+          label: "Start of conversation",
+          isCurrent: false,
+        },
+        {
+          id: "turn_2",
+          turnCount: 2,
+          messageCount: 4,
+          label: "Turn 2",
+          isCurrent: true,
+        },
+      ],
+    });
+    expect(result.rolledBackTurns).toBe(1);
+  });
+
+  it("rejects negative turn counts", () => {
+    expect(() =>
+      providerRevertToCheckpointInputSchema.parse({
+        sessionId: "sess_1",
+        turnCount: -1,
       }),
     ).toThrow();
   });

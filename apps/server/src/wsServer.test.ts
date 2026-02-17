@@ -646,6 +646,30 @@ describe("WebSocket Server", () => {
     expect(response.result).toEqual([]);
   });
 
+  it("returns unknown-session errors for checkpoint RPCs without an active provider session", async () => {
+    server = createTestServer({ cwd: "/test" });
+    await server.start();
+    const addr = server.httpServer.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const listResponse = await sendRequest(ws, WS_METHODS.providersListCheckpoints, {
+      sessionId: "missing-session",
+    });
+    expect(listResponse.result).toBeUndefined();
+    expect(listResponse.error?.message).toContain("Unknown provider session");
+
+    const revertResponse = await sendRequest(ws, WS_METHODS.providersRevertToCheckpoint, {
+      sessionId: "missing-session",
+      turnCount: 0,
+    });
+    expect(revertResponse.result).toBeUndefined();
+    expect(revertResponse.error?.message).toContain("Unknown provider session");
+  });
+
   it("routes terminal RPC methods and broadcasts terminal events", async () => {
     const cwd = makeTempDir("t3code-ws-terminal-cwd-");
     const terminalManager = new MockTerminalManager();

@@ -59,4 +59,136 @@ describe("ProviderManager", () => {
 
     manager.dispose();
   });
+
+  it("rejects checkpoint operations for unknown sessions", async () => {
+    const manager = new ProviderManager();
+
+    await expect(
+      manager.listCheckpoints({
+        sessionId: "missing-session",
+      }),
+    ).rejects.toThrow("Unknown provider session: missing-session");
+
+    await expect(
+      manager.revertToCheckpoint({
+        sessionId: "missing-session",
+        turnCount: 0,
+      }),
+    ).rejects.toThrow("Unknown provider session: missing-session");
+
+    manager.dispose();
+  });
+
+  it("derives checkpoints from thread turns", async () => {
+    const manager = new ProviderManager();
+    const codex = (
+      manager as unknown as {
+        codex: {
+          hasSession: (sessionId: string) => boolean;
+          readThread: (sessionId: string) => Promise<{
+            threadId: string;
+            turns: Array<{ id: string; items: unknown[] }>;
+          }>;
+        };
+      }
+    ).codex;
+
+    codex.hasSession = () => true;
+    codex.readThread = async () => ({
+      threadId: "thr_1",
+      turns: [
+        {
+          id: "turn_1",
+          items: [
+            {
+              type: "userMessage",
+              content: [{ type: "text", text: "Refactor the logger" }],
+            },
+            {
+              type: "agentMessage",
+              text: "I refactored it.",
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await manager.listCheckpoints({
+      sessionId: "sess_1",
+    });
+
+    expect(result).toEqual({
+      threadId: "thr_1",
+      checkpoints: [
+        {
+          id: "root",
+          turnCount: 0,
+          messageCount: 0,
+          label: "Start of conversation",
+          isCurrent: false,
+        },
+        {
+          id: "turn_1",
+          turnCount: 1,
+          messageCount: 2,
+          label: "Turn 1",
+          preview: "Refactor the logger",
+          isCurrent: true,
+        },
+      ],
+    });
+
+    manager.dispose();
+  });
+
+  it("rolls back from a selected checkpoint turn count", async () => {
+    const manager = new ProviderManager();
+    const codex = (
+      manager as unknown as {
+        codex: {
+          hasSession: (sessionId: string) => boolean;
+          readThread: (sessionId: string) => Promise<{
+            threadId: string;
+            turns: Array<{ id: string; items: unknown[] }>;
+          }>;
+          rollbackThread: (sessionId: string, numTurns: number) => Promise<{
+            threadId: string;
+            turns: Array<{ id: string; items: unknown[] }>;
+          }>;
+        };
+      }
+    ).codex;
+
+    const rollbackCalls: Array<{ sessionId: string; numTurns: number }> = [];
+    codex.hasSession = () => true;
+    codex.readThread = async () => ({
+      threadId: "thr_1",
+      turns: [
+        { id: "turn_1", items: [] },
+        { id: "turn_2", items: [] },
+        { id: "turn_3", items: [] },
+      ],
+    });
+    codex.rollbackThread = async (sessionId, numTurns) => {
+      rollbackCalls.push({ sessionId, numTurns });
+      return {
+        threadId: "thr_1",
+        turns: [{ id: "turn_1", items: [] }],
+      };
+    };
+
+    const result = await manager.revertToCheckpoint({
+      sessionId: "sess_1",
+      turnCount: 1,
+    });
+
+    expect(rollbackCalls).toEqual([{ sessionId: "sess_1", numTurns: 2 }]);
+    expect(result.threadId).toBe("thr_1");
+    expect(result.turnCount).toBe(1);
+    expect(result.messageCount).toBe(0);
+    expect(result.rolledBackTurns).toBe(2);
+    expect(result.checkpoints).toHaveLength(2);
+
+    manager.dispose();
+  });
 });
