@@ -9,6 +9,7 @@ import {
   gitCreateBranchAndCheckoutMutationOptions,
 } from "../lib/gitReactQuery";
 import { useStore } from "../store";
+import { deriveSyncedLocalBranch } from "./BranchToolbar.logic";
 import { Button } from "./ui/button";
 import {
   Combobox,
@@ -86,17 +87,22 @@ export default function BranchToolbar({
   // Keep thread branch synced to git current branch for local threads.
   const queryBranches = branchesQuery.data?.branches;
   useEffect(() => {
-    if (!activeThreadId || activeWorktreePath) return;
-    const current = queryBranches?.find((branch) => branch.current);
-    if (!current) return;
-    if (current.name === activeThreadBranch) return;
+    const syncedBranch = deriveSyncedLocalBranch({
+      activeThreadId,
+      activeWorktreePath,
+      envMode,
+      activeThreadBranch,
+      queryBranches,
+    });
+    if (!syncedBranch) return;
+
     dispatch({
       type: "SET_THREAD_BRANCH",
       threadId: activeThreadId,
-      branch: current.name,
+      branch: syncedBranch,
       worktreePath: null,
     });
-  }, [activeThreadId, activeWorktreePath, activeThreadBranch, queryBranches, dispatch]);
+  }, [activeThreadId, activeWorktreePath, activeThreadBranch, queryBranches, envMode, dispatch]);
 
   useEffect(() => {
     if (isBranchMenuOpen) return;
