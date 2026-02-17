@@ -94,7 +94,7 @@ export default function BranchToolbar({
       activeThreadBranch,
       queryBranches,
     });
-    if (!syncedBranch) return;
+    if (!activeThreadId || !syncedBranch) return;
 
     dispatch({
       type: "SET_THREAD_BRANCH",
