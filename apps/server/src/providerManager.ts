@@ -425,7 +425,9 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
       return existingCwd;
     }
 
-    const session = this.codex.listSessions().find((candidate) => candidate.sessionId === sessionId);
+    const session = this.codex
+      .listSessions()
+      .find((candidate) => candidate.sessionId === sessionId);
     const candidateCwds = Array.from(
       new Set([session?.cwd, process.cwd()].filter((value): value is string => Boolean(value))),
     );

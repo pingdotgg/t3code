@@ -880,7 +880,12 @@ describe("store reducer thread continuity", () => {
           {
             turnId: "turn-1",
             completedAt: "2026-02-09T00:00:03.000Z",
-            files: [{ path: "src/from-checkpoint.ts", diff: "diff --git a/src/from-checkpoint.ts b/src/from-checkpoint.ts" }],
+            files: [
+              {
+                path: "src/from-checkpoint.ts",
+                diff: "diff --git a/src/from-checkpoint.ts b/src/from-checkpoint.ts",
+              },
+            ],
             unifiedDiff: "diff --git a/src/from-checkpoint.ts b/src/from-checkpoint.ts",
             checkpointDiffLoaded: true,
           },

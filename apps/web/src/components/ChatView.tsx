@@ -27,10 +27,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer/debouncer";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
+import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
@@ -373,12 +374,11 @@ export default function ChatView() {
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
-  const checkpointDiffRequestsRef = useRef(new Set<string>());
   const checkpointHydrationSessionRequestRef = useRef(new Set<string>());
 
   const activeThread = state.threads.find((t) => t.id === state.activeThreadId);
   const activeThreadId = activeThread?.id ?? null;
-  const activeSessionId = activeThread?.session?.sessionId;
+  const activeSessionId = activeThread?.session?.sessionId ?? null;
   const activeThreadRuntimeId =
     activeThread?.codexThreadId ?? activeThread?.session?.threadId ?? null;
   const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
@@ -433,6 +433,7 @@ export default function ChatView() {
     () => inferCheckpointTurnCountByTurnId(turnDiffSummaries),
     [turnDiffSummaries],
   );
+
   const revertTurnCountByUserMessageId = useMemo(() => {
     const byUserMessageId = new Map<string, number>();
     for (let index = 0; index < timelineEntries.length; index += 1) {
@@ -496,67 +497,66 @@ export default function ChatView() {
     });
   }, [activeThreadId, dispatch, inferredCheckpointTurnCountByTurnId, turnDiffSummaries]);
 
-  useEffect(() => {
+  const checkpointDiffHydrationTargets = useMemo(() => {
     if (!api || !activeThreadId || !activeSessionId || turnDiffSummaries.length === 0) {
-      return;
+      return [];
     }
-
-    const turnSummariesNeedingDiff = turnDiffSummaries.filter(
-      (summary) =>
-        !summary.checkpointDiffLoaded && inferredCheckpointTurnCountByTurnId[summary.turnId],
-    );
-    const requestedSummaries = turnSummariesNeedingDiff.filter((summary) => {
-      const requestKey = `${activeThreadId}:${summary.turnId}`;
-      if (checkpointDiffRequestsRef.current.has(requestKey)) {
-        return false;
+    return turnDiffSummaries.flatMap((summary) => {
+      const turnCount = inferredCheckpointTurnCountByTurnId[summary.turnId];
+      if (summary.checkpointDiffLoaded || typeof turnCount !== "number") {
+        return [];
       }
-      checkpointDiffRequestsRef.current.add(requestKey);
-      return true;
-    });
-    if (requestedSummaries.length === 0) {
-      return;
-    }
-
-    let cancelled = false;
-    void Promise.all(
-      requestedSummaries.map(async (summary) => {
-        const turnCount = inferredCheckpointTurnCountByTurnId[summary.turnId] ?? 0;
-        const result = await api.providers.getCheckpointDiff({
-          sessionId: activeSessionId,
+      return [
+        {
+          turnId: summary.turnId,
           fromTurnCount: Math.max(0, turnCount - 1),
           toTurnCount: turnCount,
-        });
-        return [summary.turnId, result.diff] as const;
-      }),
-    )
-      .then((entries) => {
-        if (cancelled) return;
-        dispatch({
-          type: "SET_THREAD_TURN_CHECKPOINT_DIFFS",
-          threadId: activeThreadId,
-          checkpointDiffByTurnId: Object.fromEntries(entries),
-        });
-      })
-      .catch(() => {
-        if (cancelled) return;
-      })
-      .finally(() => {
-        for (const summary of requestedSummaries) {
-          checkpointDiffRequestsRef.current.delete(`${activeThreadId}:${summary.turnId}`);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
+        },
+      ];
+    });
   }, [
     activeSessionId,
     activeThreadId,
     api,
-    dispatch,
     inferredCheckpointTurnCountByTurnId,
     turnDiffSummaries,
   ]);
+
+  const checkpointDiffHydrationQueries = useQueries({
+    queries: checkpointDiffHydrationTargets.map((target) =>
+      checkpointDiffQueryOptions(api, {
+        sessionId: activeSessionId,
+        threadRuntimeId: activeThreadRuntimeId,
+        fromTurnCount: target.fromTurnCount,
+        toTurnCount: target.toTurnCount,
+      }),
+    ),
+  });
+
+  useEffect(() => {
+    if (!activeThreadId || checkpointDiffHydrationTargets.length === 0) {
+      return;
+    }
+
+    const checkpointDiffByTurnId: Record<string, string> = {};
+    for (let index = 0; index < checkpointDiffHydrationTargets.length; index += 1) {
+      const target = checkpointDiffHydrationTargets[index];
+      const query = checkpointDiffHydrationQueries[index];
+      const diff = query?.data?.diff;
+      if (!target || !diff) {
+        continue;
+      }
+      checkpointDiffByTurnId[target.turnId] = diff;
+    }
+    if (Object.keys(checkpointDiffByTurnId).length === 0) {
+      return;
+    }
+    dispatch({
+      type: "SET_THREAD_TURN_CHECKPOINT_DIFFS",
+      threadId: activeThreadId,
+      checkpointDiffByTurnId,
+    });
+  }, [activeThreadId, checkpointDiffHydrationQueries, checkpointDiffHydrationTargets, dispatch]);
 
   const completionSummary = useMemo(() => {
     if (!activeThread?.latestTurnStartedAt) return null;

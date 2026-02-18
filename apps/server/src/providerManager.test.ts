@@ -159,7 +159,10 @@ describe("ProviderManager", () => {
             threadId: string;
             turns: Array<{ id: string; items: unknown[] }>;
           }>;
-          rollbackThread: (sessionId: string, numTurns: number) => Promise<{
+          rollbackThread: (
+            sessionId: string,
+            numTurns: number,
+          ) => Promise<{
             threadId: string;
             turns: Array<{ id: string; items: unknown[] }>;
           }>;
@@ -253,7 +256,10 @@ describe("ProviderManager", () => {
     internals.codex.hasSession = () => true;
     internals.codex.readThread = async () => ({
       threadId: "thr_1",
-      turns: [{ id: "turn_1", items: [] }, { id: "turn_2", items: [] }],
+      turns: [
+        { id: "turn_1", items: [] },
+        { id: "turn_2", items: [] },
+      ],
     });
     const diffCheckpoints = vi.fn(async () => "diff --git a/a.ts b/a.ts");
     internals.filesystemCheckpointStore.diffCheckpoints = diffCheckpoints;
@@ -330,7 +336,10 @@ describe("ProviderManager", () => {
     ];
     internals.codex.readThread = async () => ({
       threadId: "thr_1",
-      turns: [{ id: "turn_1", items: [] }, { id: "turn_2", items: [] }],
+      turns: [
+        { id: "turn_1", items: [] },
+        { id: "turn_2", items: [] },
+      ],
     });
     const isGitRepository = vi.fn(async () => true);
     const ensureRootCheckpoint = vi.fn(async () => true);
@@ -471,19 +480,30 @@ describe("ProviderManager", () => {
           threadId: string;
           turns: Array<{ id: string; items: unknown[] }>;
         }>;
-        rollbackThread: (sessionId: string, numTurns: number) => Promise<{
+        rollbackThread: (
+          sessionId: string,
+          numTurns: number,
+        ) => Promise<{
           threadId: string;
           turns: Array<{ id: string; items: unknown[] }>;
         }>;
       };
       filesystemCheckpointStore: {
-        hasCheckpoint: (input: { cwd: string; threadId: string; turnCount: number }) => Promise<boolean>;
+        hasCheckpoint: (input: {
+          cwd: string;
+          threadId: string;
+          turnCount: number;
+        }) => Promise<boolean>;
         restoreCheckpoint: (input: {
           cwd: string;
           threadId: string;
           turnCount: number;
         }) => Promise<boolean>;
-        pruneAfterTurn: (input: { cwd: string; threadId: string; maxTurnCount: number }) => Promise<void>;
+        pruneAfterTurn: (input: {
+          cwd: string;
+          threadId: string;
+          maxTurnCount: number;
+        }) => Promise<void>;
       };
       sessionCheckpointCwds: Map<string, string>;
     };
@@ -542,19 +562,30 @@ describe("ProviderManager", () => {
           threadId: string;
           turns: Array<{ id: string; items: unknown[] }>;
         }>;
-        rollbackThread: (sessionId: string, numTurns: number) => Promise<{
+        rollbackThread: (
+          sessionId: string,
+          numTurns: number,
+        ) => Promise<{
           threadId: string;
           turns: Array<{ id: string; items: unknown[] }>;
         }>;
       };
       filesystemCheckpointStore: {
-        hasCheckpoint: (input: { cwd: string; threadId: string; turnCount: number }) => Promise<boolean>;
+        hasCheckpoint: (input: {
+          cwd: string;
+          threadId: string;
+          turnCount: number;
+        }) => Promise<boolean>;
         restoreCheckpoint: (input: {
           cwd: string;
           threadId: string;
           turnCount: number;
         }) => Promise<boolean>;
-        pruneAfterTurn: (input: { cwd: string; threadId: string; maxTurnCount: number }) => Promise<void>;
+        pruneAfterTurn: (input: {
+          cwd: string;
+          threadId: string;
+          maxTurnCount: number;
+        }) => Promise<void>;
       };
       sessionCheckpointCwds: Map<string, string>;
     };
@@ -609,13 +640,20 @@ describe("ProviderManager", () => {
           threadId: string;
           turns: Array<{ id: string; items: unknown[] }>;
         }>;
-        rollbackThread: (sessionId: string, numTurns: number) => Promise<{
+        rollbackThread: (
+          sessionId: string,
+          numTurns: number,
+        ) => Promise<{
           threadId: string;
           turns: Array<{ id: string; items: unknown[] }>;
         }>;
       };
       filesystemCheckpointStore: {
-        hasCheckpoint: (input: { cwd: string; threadId: string; turnCount: number }) => Promise<boolean>;
+        hasCheckpoint: (input: {
+          cwd: string;
+          threadId: string;
+          turnCount: number;
+        }) => Promise<boolean>;
       };
       sessionCheckpointCwds: Map<string, string>;
     };

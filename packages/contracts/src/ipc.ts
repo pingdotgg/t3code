@@ -95,7 +95,9 @@ export interface NativeApi {
     respondToRequest: (input: ProviderRespondToRequestInput) => Promise<void>;
     stopSession: (input: ProviderStopSessionInput) => Promise<void>;
     listSessions: () => Promise<ProviderSession[]>;
-    listCheckpoints: (input: ProviderListCheckpointsInput) => Promise<ProviderListCheckpointsResult>;
+    listCheckpoints: (
+      input: ProviderListCheckpointsInput,
+    ) => Promise<ProviderListCheckpointsResult>;
     getCheckpointDiff: (
       input: ProviderGetCheckpointDiffInput,
     ) => Promise<ProviderGetCheckpointDiffResult>;

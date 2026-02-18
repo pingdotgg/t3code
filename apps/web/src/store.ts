@@ -1075,7 +1075,11 @@ export function reducer(state: AppState, action: Action): AppState {
                   existing.deletions === file.deletions
                 );
               });
-            if (summary.unifiedDiff === checkpointDiff && filesUnchanged && summary.checkpointDiffLoaded) {
+            if (
+              summary.unifiedDiff === checkpointDiff &&
+              filesUnchanged &&
+              summary.checkpointDiffLoaded
+            ) {
               return summary;
             }
 

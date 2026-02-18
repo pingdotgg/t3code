@@ -38,7 +38,11 @@ export class FilesystemCheckpointStore {
     return result.code === 0 && result.stdout.trim() === "true";
   }
 
-  async captureCheckpoint(input: { cwd: string; threadId: string; turnCount: number }): Promise<void> {
+  async captureCheckpoint(input: {
+    cwd: string;
+    threadId: string;
+    turnCount: number;
+  }): Promise<void> {
     const { cwd, threadId, turnCount } = input;
     const ref = checkpointRefForThreadTurn(threadId, turnCount);
 
@@ -84,7 +88,11 @@ export class FilesystemCheckpointStore {
     }
   }
 
-  async hasCheckpoint(input: { cwd: string; threadId: string; turnCount: number }): Promise<boolean> {
+  async hasCheckpoint(input: {
+    cwd: string;
+    threadId: string;
+    turnCount: number;
+  }): Promise<boolean> {
     const { cwd, threadId, turnCount } = input;
     const ref = checkpointRefForThreadTurn(threadId, turnCount);
     const commit = await this.resolveCheckpointCommit(cwd, ref);
@@ -108,7 +116,11 @@ export class FilesystemCheckpointStore {
     return true;
   }
 
-  async restoreCheckpoint(input: { cwd: string; threadId: string; turnCount: number }): Promise<boolean> {
+  async restoreCheckpoint(input: {
+    cwd: string;
+    threadId: string;
+    turnCount: number;
+  }): Promise<boolean> {
     const { cwd, threadId, turnCount } = input;
     const ref = checkpointRefForThreadTurn(threadId, turnCount);
     let commitOid = await this.resolveCheckpointCommit(cwd, ref);
@@ -158,7 +170,9 @@ export class FilesystemCheckpointStore {
       );
     }
     if (!toCommitOid) {
-      throw new Error(`Filesystem checkpoint is unavailable for turn ${toTurnCount} in thread ${threadId}.`);
+      throw new Error(
+        `Filesystem checkpoint is unavailable for turn ${toTurnCount} in thread ${threadId}.`,
+      );
     }
 
     const result = await this.runGit(cwd, [
@@ -183,16 +197,24 @@ export class FilesystemCheckpointStore {
     return commit.length > 0 ? commit : null;
   }
 
-  async pruneAfterTurn(input: { cwd: string; threadId: string; maxTurnCount: number }): Promise<void> {
+  async pruneAfterTurn(input: {
+    cwd: string;
+    threadId: string;
+    maxTurnCount: number;
+  }): Promise<void> {
     const { cwd, threadId, maxTurnCount } = input;
     if (!Number.isInteger(maxTurnCount) || maxTurnCount < 0) {
       throw new Error(`Invalid max turn count: ${maxTurnCount}`);
     }
 
     const threadRefPrefix = `${CHECKPOINT_REFS_PREFIX}/${checkpointRefThreadSegment(threadId)}/turn/`;
-    const result = await this.runGit(cwd, ["for-each-ref", "--format=%(refname)", threadRefPrefix], {
-      allowNonZeroExit: true,
-    });
+    const result = await this.runGit(
+      cwd,
+      ["for-each-ref", "--format=%(refname)", threadRefPrefix],
+      {
+        allowNonZeroExit: true,
+      },
+    );
     if (result.code !== 0) {
       return;
     }

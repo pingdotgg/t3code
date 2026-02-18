@@ -1,7 +1,10 @@
 import { parsePatchFiles } from "@pierre/diffs";
 import { FileDiff, type FileDiffMetadata } from "@pierre/diffs/react";
-import { Columns2Icon, Rows3Icon, XIcon } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Columns2Icon, Rows3Icon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { checkpointDiffQueryOptions, providerQueryKeys } from "~/lib/providerReactQuery";
+import { cn } from "~/lib/utils";
 import { isElectron } from "../env";
 import { useNativeApi } from "../hooks/useNativeApi";
 import { useTheme } from "../hooks/useTheme";
@@ -11,9 +14,6 @@ import {
   inferCheckpointTurnCountByTurnId,
 } from "../session-logic";
 import { useStore } from "../store";
-import { Button } from "./ui/button";
-import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
-import { cn } from "~/lib/utils";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
 type DiffRenderMode = "stacked" | "split";
@@ -63,14 +63,6 @@ function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
   return raw;
 }
 
-function buildCheckpointDiffKey(
-  sessionId: string,
-  fromTurnCount: number,
-  toTurnCount: number,
-): string {
-  return `${sessionId}:${fromTurnCount}-${toTurnCount}`;
-}
-
 interface DiffPanelProps {
   mode?: "inline" | "sheet";
 }
@@ -79,12 +71,13 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const api = useNativeApi();
   const { resolvedTheme } = useTheme();
   const { state, dispatch } = useStore();
-  const [checkpointDiffByKey, setCheckpointDiffByKey] = useState<Record<string, string>>({});
-  const [isLoadingCheckpointDiff, setIsLoadingCheckpointDiff] = useState(false);
-  const [checkpointDiffError, setCheckpointDiffError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const activeThread = state.threads.find((thread) => thread.id === state.activeThreadId);
+  const activeThreadRuntimeId =
+    activeThread?.codexThreadId ?? activeThread?.session?.threadId ?? null;
+  const activeSessionId = activeThread?.session?.sessionId ?? null;
   const turnDiffSummaries = useMemo(
     () =>
       activeThread?.turnDiffSummaries.length
@@ -96,11 +89,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     () => inferCheckpointTurnCountByTurnId(turnDiffSummaries),
     [turnDiffSummaries],
   );
-
-  useEffect(() => {
-    setCheckpointDiffByKey({});
-    setCheckpointDiffError(null);
-  }, [activeThread?.id]);
 
   const canApplyStoredTarget = Boolean(activeThread && state.diffThreadId === activeThread.id);
   const selectedTurnId = canApplyStoredTarget ? state.diffTurnId : null;
@@ -147,41 +135,57 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         : null,
     [conversationCheckpointTurnCount, selectedTurn],
   );
-  const selectedCheckpointDiffKey =
-    activeThread?.session?.sessionId && selectedCheckpointRange
-      ? buildCheckpointDiffKey(
-          activeThread.session.sessionId,
-          selectedCheckpointRange.fromTurnCount,
-          selectedCheckpointRange.toTurnCount,
-        )
-      : null;
-  const conversationCheckpointDiffKey =
-    activeThread?.session?.sessionId && conversationCheckpointRange
-      ? buildCheckpointDiffKey(
-          activeThread.session.sessionId,
-          conversationCheckpointRange.fromTurnCount,
-          conversationCheckpointRange.toTurnCount,
-        )
-      : null;
-  const selectedTurnCheckpointDiff =
-    selectedCheckpointDiffKey === null ? undefined : checkpointDiffByKey[selectedCheckpointDiffKey];
-  const conversationCheckpointDiff =
-    conversationCheckpointDiffKey === null
-      ? undefined
-      : checkpointDiffByKey[conversationCheckpointDiffKey];
+  const activeCheckpointRange = selectedTurn
+    ? selectedCheckpointRange
+    : conversationCheckpointRange;
+  const activeCheckpointDiffQuery = useQuery(
+    checkpointDiffQueryOptions(api, {
+      sessionId: activeSessionId,
+      threadRuntimeId: activeThreadRuntimeId,
+      fromTurnCount: activeCheckpointRange?.fromTurnCount ?? null,
+      toTurnCount: activeCheckpointRange?.toTurnCount ?? null,
+    }),
+  );
+  const selectedTurnCheckpointDiff = selectedTurn
+    ? activeCheckpointDiffQuery.data?.diff
+    : undefined;
+  const conversationCheckpointDiff = selectedTurn
+    ? undefined
+    : activeCheckpointDiffQuery.data?.diff;
+  const isLoadingCheckpointDiff = activeCheckpointDiffQuery.isPending;
+  const checkpointDiffError =
+    activeCheckpointDiffQuery.error instanceof Error
+      ? activeCheckpointDiffQuery.error.message
+      : activeCheckpointDiffQuery.error
+        ? "Failed to load checkpoint diff."
+        : null;
+
+  useEffect(() => {
+    if (!activeThread?.id || !selectedTurn || !selectedTurnCheckpointDiff) {
+      return;
+    }
+    dispatch({
+      type: "SET_THREAD_TURN_CHECKPOINT_DIFFS",
+      threadId: activeThread.id,
+      checkpointDiffByTurnId: {
+        [selectedTurn.turnId]: selectedTurnCheckpointDiff,
+      },
+    });
+  }, [activeThread?.id, dispatch, selectedTurn, selectedTurnCheckpointDiff]);
+
   const selectedPatch = useMemo(() => {
     const patchForSummary = (summary: (typeof turnDiffSummaries)[number]): string | undefined => {
       const checkpointTurnCount =
         summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
-      if (activeThread?.session?.sessionId && typeof checkpointTurnCount === "number") {
-        const checkpointPatch =
-          checkpointDiffByKey[
-            buildCheckpointDiffKey(
-              activeThread.session.sessionId,
-              Math.max(0, checkpointTurnCount - 1),
-              checkpointTurnCount,
-            )
-          ];
+      if (activeSessionId && typeof checkpointTurnCount === "number") {
+        const checkpointPatch = queryClient.getQueryData<{ diff: string }>(
+          providerQueryKeys.checkpointDiff({
+            sessionId: activeSessionId,
+            threadRuntimeId: activeThreadRuntimeId,
+            fromTurnCount: Math.max(0, checkpointTurnCount - 1),
+            toTurnCount: checkpointTurnCount,
+          }),
+        )?.diff;
         if (checkpointPatch) {
           return checkpointPatch;
         }
@@ -239,10 +243,11 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     }
     return patches.join("\n\n");
   }, [
-    activeThread?.session?.sessionId,
-    checkpointDiffByKey,
+    activeSessionId,
+    activeThreadRuntimeId,
     conversationCheckpointDiff,
     inferredCheckpointTurnCountByTurnId,
+    queryClient,
     selectedTurn,
     selectedTurnCheckpointDiff,
     turnDiffSummaries,
@@ -259,72 +264,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       }),
     );
   }, [renderablePatch]);
-
-  useEffect(() => {
-    const checkpointFetchRange = selectedTurn
-      ? selectedCheckpointRange
-      : conversationCheckpointRange;
-    const checkpointFetchKey = selectedTurn
-      ? selectedCheckpointDiffKey
-      : conversationCheckpointDiffKey;
-    if (!api || !activeThread?.session?.sessionId || !checkpointFetchRange || !checkpointFetchKey) {
-      return;
-    }
-    if (checkpointDiffByKey[checkpointFetchKey] !== undefined) {
-      return;
-    }
-
-    let cancelled = false;
-    setIsLoadingCheckpointDiff(true);
-    setCheckpointDiffError(null);
-    void api.providers
-      .getCheckpointDiff({
-        sessionId: activeThread.session.sessionId,
-        fromTurnCount: checkpointFetchRange.fromTurnCount,
-        toTurnCount: checkpointFetchRange.toTurnCount,
-      })
-      .then((result) => {
-        if (cancelled) return;
-        setCheckpointDiffByKey((previous) => ({
-          ...previous,
-          [checkpointFetchKey]: result.diff,
-        }));
-        if (selectedTurn) {
-          dispatch({
-            type: "SET_THREAD_TURN_CHECKPOINT_DIFFS",
-            threadId: activeThread.id,
-            checkpointDiffByTurnId: {
-              [selectedTurn.turnId]: result.diff,
-            },
-          });
-        }
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setCheckpointDiffError(
-          error instanceof Error ? error.message : "Failed to load checkpoint diff.",
-        );
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setIsLoadingCheckpointDiff(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    activeThread?.id,
-    activeThread?.session?.sessionId,
-    api,
-    checkpointDiffByKey,
-    conversationCheckpointDiffKey,
-    conversationCheckpointRange,
-    dispatch,
-    selectedCheckpointDiffKey,
-    selectedCheckpointRange,
-    selectedTurn,
-  ]);
 
   useEffect(() => {
     if (!selectedFilePath || !patchViewportRef.current) {
