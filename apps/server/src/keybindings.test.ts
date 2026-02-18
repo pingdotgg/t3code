@@ -91,6 +91,14 @@ describe("server keybindings", () => {
         when: "terminalFocus && (",
       }),
     );
+
+    assert.isNull(
+      compileResolvedKeybindingRule({
+        key: "mod+d",
+        command: "terminal.split",
+        when: `${"!".repeat(300)}terminalFocus`,
+      }),
+    );
   });
 
   it("upserts custom keybindings to ~/.t3/keybindings.json", () => {
