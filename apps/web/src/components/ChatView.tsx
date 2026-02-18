@@ -63,6 +63,7 @@ import {
 } from "../session-logic";
 import { isScrollContainerNearBottom } from "../chat-scroll";
 import { useStore } from "../store";
+import { truncateTitle } from "../truncateTitle";
 import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_THREAD_TERMINAL_COUNT,
@@ -1129,6 +1130,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       revokePreviewUrls(existing);
       return [];
     });
+    setPrompt("");
+    promptRef.current = "";
+    setIsSending(false);
     setComposerCursor(0);
     setComposerHighlightedItemId(null);
     dragDepthRef.current = 0;
@@ -1650,7 +1654,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         (composerImagesSnapshot.length > 0
           ? `Image: ${composerImagesSnapshot[0]?.name ?? "attachment"}`
           : "New thread");
-      const title = titleSeed.length > 50 ? `${titleSeed.slice(0, 50)}...` : titleSeed;
+      const title = truncateTitle(titleSeed);
       dispatch({
         type: "SET_THREAD_TITLE",
         threadId: activeThread.id,
@@ -1944,6 +1948,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         className={`flex items-center justify-between border-b border-border px-5 ${isElectron ? "drag-region h-[52px]" : "py-3"}`}
       >
         <ChatHeader
+          activeThreadId={activeThread.id}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
           activeProjectScripts={activeProject?.scripts}
@@ -2210,6 +2215,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       {isGitRepo && (
         <BranchToolbar
+          threadId={activeThread.id}
           envMode={envMode}
           onEnvModeChange={onEnvModeChange}
           envLocked={envLocked}
@@ -2286,6 +2292,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 }
 
 interface ChatHeaderProps {
+  activeThreadId: string;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
   activeProjectScripts: ProjectScript[] | undefined;
@@ -2301,6 +2308,7 @@ interface ChatHeaderProps {
 }
 
 const ChatHeader = memo(function ChatHeader({
+  activeThreadId,
   activeThreadTitle,
   activeProjectName,
   activeProjectScripts,
@@ -2333,8 +2341,12 @@ const ChatHeader = memo(function ChatHeader({
             onUpdateScript={onUpdateProjectScript}
           />
         )}
-        {activeProjectName && <OpenInPicker keybindings={keybindings} />}
-        {activeProjectName && <GitActionsControl api={api} gitCwd={gitCwd} />}
+        {activeProjectName && (
+          <OpenInPicker keybindings={keybindings} activeThreadId={activeThreadId} />
+        )}
+        {activeProjectName && (
+          <GitActionsControl api={api} gitCwd={gitCwd} activeThreadId={activeThreadId} />
+        )}
         <Toggle
           pressed={diffOpen}
           onPressedChange={onToggleDiff}
@@ -2827,8 +2839,10 @@ const ReasoningEffortPicker = memo(function ReasoningEffortPicker(props: {
 
 const OpenInPicker = memo(function OpenInPicker({
   keybindings,
+  activeThreadId,
 }: {
   keybindings: ResolvedKeybindingsConfig;
+  activeThreadId: string | null;
 }) {
   const [lastEditor, setLastEditor] = useState<EditorId>(() => {
     const stored = localStorage.getItem(LAST_EDITOR_KEY);
@@ -2855,7 +2869,7 @@ const OpenInPicker = memo(function OpenInPicker({
 
   const api = useNativeApi();
   const { state } = useStore();
-  const activeThread = state.threads.find((t) => t.id === state.activeThreadId);
+  const activeThread = state.threads.find((t) => t.id === activeThreadId);
   const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
 
   const openInEditor = useCallback(

@@ -1,8 +1,15 @@
-import { createRouter } from "@tanstack/react-router";
+import { createHashHistory, createRouter } from "@tanstack/react-router";
 
+import { isElectron } from "./env";
 import { routeTree } from "./routeTree.gen";
 
-export const router = createRouter({ routeTree });
+const useHashHistory =
+  isElectron && typeof window !== "undefined" && window.location.protocol === "file:";
+
+export const router = createRouter({
+  routeTree,
+  ...(useHashHistory ? { history: createHashHistory() } : {}),
+});
 
 declare module "@tanstack/react-router" {
   interface Register {

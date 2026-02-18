@@ -38,6 +38,7 @@ type Action =
   | { type: "ADD_PROJECT"; project: Project }
   | { type: "SET_PROJECT_SCRIPTS"; projectId: string; scripts: ProjectScript[] }
   | { type: "SYNC_PROJECTS"; projects: Project[] }
+  | { type: "SET_THREADS_HYDRATED"; hydrated: boolean }
   | { type: "TOGGLE_PROJECT"; projectId: string }
   | { type: "DELETE_PROJECT"; projectId: string }
   | { type: "ADD_THREAD"; thread: Thread }
@@ -113,6 +114,7 @@ export interface AppState {
   projects: Project[];
   threads: Thread[];
   activeThreadId: string | null;
+  threadsHydrated: boolean;
   runtimeMode: RuntimeMode;
   diffOpen: boolean;
   diffThreadId: string | null;
@@ -136,6 +138,7 @@ const initialState: AppState = {
   projects: [],
   threads: [],
   activeThreadId: null,
+  threadsHydrated: false,
   runtimeMode: DEFAULT_RUNTIME_MODE,
   diffOpen: false,
   diffThreadId: null,
@@ -167,6 +170,7 @@ function readPersistedState(): AppState {
       ...hydrated,
       threads,
       activeThreadId,
+      threadsHydrated: threads.length > 0,
       diffOpen: false,
       diffThreadId: null,
       diffTurnId: null,
@@ -591,6 +595,15 @@ export function reducer(state: AppState, action: Action): AppState {
             ? { ...project, scripts: normalizeProjectScripts(action.scripts) }
             : project,
         ),
+      };
+
+    case "SET_THREADS_HYDRATED":
+      if (state.threadsHydrated === action.hydrated) {
+        return state;
+      }
+      return {
+        ...state,
+        threadsHydrated: action.hydrated,
       };
 
     case "SYNC_PROJECTS": {

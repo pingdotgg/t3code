@@ -397,7 +397,9 @@ export default function Sidebar() {
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
-      const activeThread = state.threads.find((t) => t.id === state.activeThreadId);
+      const activeThread = routeThreadId
+        ? state.threads.find((thread) => thread.id === routeThreadId)
+        : undefined;
       if (isChatNewLocalShortcut(event, keybindings)) {
         const projectId = activeThread?.projectId ?? state.projects[0]?.id;
         if (!projectId) return;
@@ -420,7 +422,7 @@ export default function Sidebar() {
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
-  }, [handleNewThread, keybindings, state.activeThreadId, state.projects, state.threads]);
+  }, [handleNewThread, keybindings, routeThreadId, state.projects, state.threads]);
 
   return (
     <aside className="sidebar flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-card">

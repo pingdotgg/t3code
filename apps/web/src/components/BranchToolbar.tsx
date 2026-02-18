@@ -23,6 +23,7 @@ import {
 import { ChevronDownIcon } from "lucide-react";
 
 interface BranchToolbarProps {
+  threadId: string;
   envMode: "local" | "worktree";
   onEnvModeChange: (mode: "local" | "worktree") => void;
   envLocked: boolean;
@@ -30,6 +31,7 @@ interface BranchToolbarProps {
 }
 
 export default function BranchToolbar({
+  threadId,
   envMode,
   onEnvModeChange,
   envLocked,
@@ -42,7 +44,7 @@ export default function BranchToolbar({
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
 
-  const activeThread = state.threads.find((thread) => thread.id === state.activeThreadId);
+  const activeThread = state.threads.find((thread) => thread.id === threadId);
   const activeProject = state.projects.find((project) => project.id === activeThread?.projectId);
   const activeThreadId = activeThread?.id;
   const activeThreadBranch = activeThread?.branch ?? null;

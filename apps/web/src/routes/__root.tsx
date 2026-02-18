@@ -67,6 +67,7 @@ function AutoProjectBootstrap() {
             threadId: existingThread.id,
           });
         }
+        dispatch({ type: "SET_THREADS_HYDRATED", hydrated: true });
         return;
       }
 
@@ -82,12 +83,14 @@ function AutoProjectBootstrap() {
           cwd: payload.cwd,
           model: DEFAULT_MODEL,
           expanded: true,
+          scripts: [],
         },
       });
       dispatch({
         type: "ADD_THREAD",
         thread: createThread(projectId),
       });
+      dispatch({ type: "SET_THREADS_HYDRATED", hydrated: true });
     });
   }, [state.projects, state.threads, state.activeThreadId, dispatch]);
 
@@ -118,8 +121,10 @@ function DesktopProjectBootstrap() {
             cwd: project.cwd,
             model: DEFAULT_MODEL,
             expanded: true,
+            scripts: project.scripts,
           })),
         });
+        dispatch({ type: "SET_THREADS_HYDRATED", hydrated: true });
         bootstrappedRef.current = true;
       } catch {
         if (disposed) return;

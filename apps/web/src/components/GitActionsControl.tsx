@@ -38,12 +38,12 @@ import {
   gitStatusQueryOptions,
   invalidateGitQueries,
 } from "~/lib/gitReactQuery";
-import { useStore } from "~/store";
 import { preferredTerminalEditor, resolvePathLinkTarget } from "~/terminal-links";
 
 interface GitActionsControlProps {
   api: NativeApi | undefined;
   gitCwd: string | null;
+  activeThreadId: string | null;
 }
 
 function getMenuActionDisabledReason(
@@ -136,9 +136,11 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   return <InfoIcon className={iconClassName} />;
 }
 
-export default function GitActionsControl({ api, gitCwd }: GitActionsControlProps) {
-  const { state } = useStore();
-  const activeThreadId = state.activeThreadId;
+export default function GitActionsControl({
+  api,
+  gitCwd,
+  activeThreadId,
+}: GitActionsControlProps) {
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],

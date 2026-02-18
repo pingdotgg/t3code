@@ -16,6 +16,10 @@ function ChatThreadRouteView() {
       return;
     }
 
+    if (!state.threadsHydrated) {
+      return;
+    }
+
     if (!threadExists) {
       void navigate({ to: "/", replace: true });
       return;
@@ -26,9 +30,9 @@ function ChatThreadRouteView() {
     }
 
     dispatch({ type: "SET_ACTIVE_THREAD", threadId });
-  }, [dispatch, navigate, state.activeThreadId, threadExists, threadId]);
+  }, [dispatch, navigate, state.activeThreadId, state.threadsHydrated, threadExists, threadId]);
 
-  if (!threadId || !threadExists) {
+  if (!threadId || !state.threadsHydrated || !threadExists) {
     return null;
   }
 

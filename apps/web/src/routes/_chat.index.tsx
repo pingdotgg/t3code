@@ -4,6 +4,7 @@ import { type FormEvent, useMemo, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Textarea } from "../components/ui/textarea";
 import { createThread } from "../threadFactory";
+import { truncateTitle } from "../truncateTitle";
 import { useStore } from "../store";
 
 function ChatIndexRouteView() {
@@ -24,11 +25,7 @@ function ChatIndexRouteView() {
     event.preventDefault();
     if (!defaultProject) return;
 
-    const titleSeed = draft.trim();
-    const threadTitle =
-      titleSeed.length > 0
-        ? (titleSeed.length > 50 ? `${titleSeed.slice(0, 50)}...` : titleSeed)
-        : undefined;
+    const threadTitle = truncateTitle(draft);
     const thread = createThread(
       defaultProject.id,
       threadTitle
