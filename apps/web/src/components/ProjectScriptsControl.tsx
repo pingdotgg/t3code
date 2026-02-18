@@ -225,13 +225,7 @@ export default function ProjectScriptsControl({
         await onAddScript(payload);
       }
       setDialogOpen(false);
-      setEditingScriptId(null);
-      setName("");
-      setCommand("");
-      setIcon("play");
       setIconPickerOpen(false);
-      setRunOnWorktreeCreate(false);
-      setKeybinding("");
     } catch (error) {
       setValidationError(error instanceof Error ? error.message : "Failed to save action.");
     }
@@ -339,7 +333,25 @@ export default function ProjectScriptsControl({
         </Button>
       )}
 
-      <Dialog onOpenChange={setDialogOpen} open={dialogOpen}>
+      <Dialog
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          if (!open) {
+            setIconPickerOpen(false);
+          }
+        }}
+        onOpenChangeComplete={(open) => {
+          if (open) return;
+          setEditingScriptId(null);
+          setName("");
+          setCommand("");
+          setIcon("play");
+          setRunOnWorktreeCreate(false);
+          setKeybinding("");
+          setValidationError(null);
+        }}
+        open={dialogOpen}
+      >
         <DialogPopup>
           <DialogHeader>
             <DialogTitle>{isEditing ? "Edit Action" : "Add Action"}</DialogTitle>
@@ -437,7 +449,6 @@ export default function ProjectScriptsControl({
               variant="outline"
               onClick={() => {
                 setDialogOpen(false);
-                setEditingScriptId(null);
               }}
             >
               Cancel
