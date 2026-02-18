@@ -17,12 +17,12 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@t3tools/contracts": "workspace:*",
     "node-pty": "^1.1.0",
     "open": "^10.1.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@t3tools/contracts": "workspace:*",
     "@t3tools/web": "workspace:*",
     "@types/node": "^22.10.2",
     "@types/ws": "^8.5.13",

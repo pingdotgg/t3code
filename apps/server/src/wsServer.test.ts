@@ -133,7 +133,7 @@ class MockTerminalManager extends EventEmitter<{ event: [event: TerminalEvent] }
       this.sessions.delete(this.key(input.threadId, input.terminalId));
       return;
     }
-    for (const key of [...this.sessions.keys()]) {
+    for (const key of this.sessions.keys()) {
       if (key.startsWith(`${input.threadId}\u0000`)) {
         this.sessions.delete(key);
       }
@@ -188,6 +188,7 @@ async function sendRequest(ws: WebSocket, method: string, params?: unknown): Pro
 
   // Wait for response with matching id
   while (true) {
+    // oxlint-disable-next-line no-await-in-loop
     const parsed = (await waitForMessage(ws)) as Record<string, unknown>;
     if (parsed.id === id) {
       return parsed as WsResponse;

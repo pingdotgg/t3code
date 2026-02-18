@@ -6,7 +6,6 @@ export default defineConfig({
   outDir: "dist",
   sourcemap: true,
   clean: true,
-  noExternal: ["@t3tools/contracts", "zod"],
   inlineOnly: false,
   banner: {
     js: "#!/usr/bin/env node\n",

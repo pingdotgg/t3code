@@ -2,7 +2,6 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { fixPath } from "./fixPath";
 import { createLogger } from "./logger";
@@ -72,11 +71,9 @@ async function findAvailablePort(preferred: number): Promise<number> {
 }
 
 function resolveStaticDir(): string | undefined {
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
   // Check for bundled client (npm publish / npx scenario):
   // dist/client/ lives alongside dist/index.js
-  const bundledClient = path.resolve(__dirname, "client");
+  const bundledClient = path.resolve(import.meta.dirname, "client");
   try {
     const stat = fs.statSync(path.join(bundledClient, "index.html"));
     if (stat.isFile()) return bundledClient;
@@ -85,7 +82,7 @@ function resolveStaticDir(): string | undefined {
   }
 
   // Monorepo layout: apps/server/dist/index.js → apps/web/dist/
-  const monorepoClient = path.resolve(__dirname, "../../web/dist");
+  const monorepoClient = path.resolve(import.meta.dirname, "../../web/dist");
   try {
     const stat = fs.statSync(path.join(monorepoClient, "index.html"));
     if (stat.isFile()) return monorepoClient;

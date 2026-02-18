@@ -6,6 +6,10 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   quality:
     name: Lint, Typecheck, Test, Build
@@ -46,5 +50,84 @@ jobs:
 
       - name: Verify preload bundle output
         run: |
-          test -f apps/desktop/dist-electron/preload.js
-          grep -nE "desktopBridge|getWsUrl|PICK_FOLDER_CHANNEL|wsUrl" apps/desktop/dist-electron/preload.js
+          test -f apps/desktop/dist-electron/preload.cjs
+          grep -nE "desktopBridge|getWsUrl|PICK_FOLDER_CHANNEL|wsUrl" apps/desktop/dist-electron/preload.cjs
+
+      - name: Install desktop runtime deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb \
+            xauth \
+            libgtk-3-0 \
+            libnotify4 \
+            libnss3 \
+            libxss1 \
+            libxtst6 \
+            libatspi2.0-0 \
+            libdrm2 \
+            libgbm1 \
+            libxrandr2 \
+            libxshmfence1 \
+            libxi6 \
+            xdg-utils
+          sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2
+
+      - name: Desktop perf trace test
+        if: github.event_name != 'pull_request'
+        env:
+          ELECTRON_DISABLE_SANDBOX: "1"
+          T3CODE_PERF_TIMEOUT_MS: "420000"
+          T3CODE_PERF_MAX_KEYPRESS_AVG_MS: "12"
+          T3CODE_PERF_MAX_KEYPRESS_MAX_MS: "24"
+          T3CODE_PERF_MAX_LONG_DISPATCH_COUNT: "5"
+          # Terminal PTY scripting is flaky in CI VMs; renderer perf checks remain enforced.
+          T3CODE_DESKTOP_PERF_RUN_TERMINAL: "0"
+          # Keep only core renderer interactions in CI perf runs for lower variance.
+          T3CODE_DESKTOP_PERF_RUN_OPTIONAL_RENDERER: "0"
+          # Skip benchmark sweep loops in CI to reduce EventDispatch variance.
+          T3CODE_DESKTOP_PERF_RUN_BENCHMARK_SWEEP: "0"
+          # Keep benchmark follow-up passes disabled in CI by default.
+          T3CODE_DESKTOP_PERF_BENCHMARK_FOLLOW_UP_PASSES: "0"
+          T3CODE_ELECTRON_STARTUP_TIMEOUT_MS: "180000"
+        run: xvfb-run -a bun run test:desktop-perf
+
+      - name: Desktop perf trace test (fork PR)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        env:
+          ELECTRON_DISABLE_SANDBOX: "1"
+          T3CODE_PERF_TIMEOUT_MS: "420000"
+          T3CODE_PERF_MAX_KEYPRESS_AVG_MS: "12"
+          T3CODE_PERF_MAX_KEYPRESS_MAX_MS: "24"
+          T3CODE_PERF_MAX_LONG_DISPATCH_COUNT: "5"
+          T3CODE_DESKTOP_PERF_RUN_TERMINAL: "0"
+          T3CODE_DESKTOP_PERF_RUN_OPTIONAL_RENDERER: "0"
+          T3CODE_DESKTOP_PERF_RUN_BENCHMARK_SWEEP: "0"
+          T3CODE_DESKTOP_PERF_BENCHMARK_FOLLOW_UP_PASSES: "0"
+          T3CODE_ELECTRON_STARTUP_TIMEOUT_MS: "180000"
+        run: xvfb-run -a bun run test:desktop-perf
+
+      - name: Desktop perf trace test and PR summary
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ELECTRON_DISABLE_SANDBOX: "1"
+          T3CODE_PERF_TIMEOUT_MS: "420000"
+          T3CODE_PERF_MAX_KEYPRESS_AVG_MS: "12"
+          T3CODE_PERF_MAX_KEYPRESS_MAX_MS: "24"
+          T3CODE_PERF_MAX_LONG_DISPATCH_COUNT: "5"
+          T3CODE_DESKTOP_PERF_RUN_TERMINAL: "0"
+          T3CODE_DESKTOP_PERF_RUN_OPTIONAL_RENDERER: "0"
+          T3CODE_DESKTOP_PERF_RUN_BENCHMARK_SWEEP: "0"
+          T3CODE_DESKTOP_PERF_BENCHMARK_FOLLOW_UP_PASSES: "0"
+          T3CODE_ELECTRON_STARTUP_TIMEOUT_MS: "180000"
+        run: xvfb-run -a bun run test:desktop-perf:post
+
+      - name: Upload desktop perf artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-perf-artifacts
+          path: /tmp/t3code-perf-artifacts
+          if-no-files-found: ignore

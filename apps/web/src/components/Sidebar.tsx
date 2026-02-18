@@ -505,6 +505,7 @@ export default function Sidebar() {
                       <button
                         key={thread.id}
                         type="button"
+                        data-perf-thread-id={thread.id}
                         className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors duration-150 ${
                           isActive
                             ? "bg-accent text-foreground"

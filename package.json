@@ -18,6 +18,8 @@
     "lint": "oxlint --report-unused-disable-directives",
     "test": "turbo run test",
     "test:desktop-smoke": "turbo run smoke-test --filter=@t3tools/desktop",
+    "test:desktop-perf": "node scripts/desktop-perf-trace.mjs",
+    "test:desktop-perf:post": "node scripts/desktop-perf-trace.mjs --post-pr",
     "fmt": "oxfmt",
     "build:contracts": "turbo run build --filter=@t3tools/contracts",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",

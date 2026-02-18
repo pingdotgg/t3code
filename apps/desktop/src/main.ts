@@ -16,11 +16,13 @@ const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
-const ROOT_DIR = path.resolve(__dirname, "../../..");
+const ROOT_DIR = path.resolve(import.meta.dirname, "../../..");
 const BACKEND_ENTRY = path.join(ROOT_DIR, "apps/server/dist/index.mjs");
 const WEB_ENTRY = path.join(ROOT_DIR, "apps/web/dist/index.html");
-const STATE_DIR = path.join(os.homedir(), ".t3", "userdata");
+const STATE_DIR =
+  process.env.T3CODE_STATE_DIR?.trim() || path.join(os.homedir(), ".t3", "userdata");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
+const PERF_AUTOMATION_ENABLED = process.env.T3CODE_DESKTOP_PERF_AUTOMATION === "1";
 
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess | null = null;
@@ -30,6 +32,32 @@ let backendWsUrl = "";
 let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
+
+async function runPerfAutomationIfEnabled(window: BrowserWindow): Promise<void> {
+  if (!PERF_AUTOMATION_ENABLED) return;
+  try {
+    const { runDesktopPerfAutomation } = await import("./desktopPerfAutomation");
+    await runDesktopPerfAutomation(window);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[desktop-perf] failed to load automation module:", message);
+    const doneOutPath = process.env.T3CODE_DESKTOP_PERF_DONE_OUT?.trim() ?? "";
+    if (doneOutPath.length > 0) {
+      fs.mkdirSync(path.dirname(doneOutPath), { recursive: true });
+      fs.writeFileSync(
+        doneOutPath,
+        JSON.stringify(
+          {
+            status: "error",
+            error: `Failed to load desktop perf automation module: ${message}`,
+          },
+          null,
+          2,
+        ),
+      );
+    }
+  }
+}
 
 async function reserveLoopbackPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -215,7 +243,7 @@ function createWindow(): BrowserWindow {
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 16, y: 18 },
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      preload: path.join(import.meta.dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -228,13 +256,25 @@ function createWindow(): BrowserWindow {
   });
 
   if (isDevelopment) {
-    void window.loadURL(process.env.VITE_DEV_SERVER_URL as string);
-    window.webContents.openDevTools({ mode: "detach" });
+    const devUrl = new URL(process.env.VITE_DEV_SERVER_URL as string);
+    if (PERF_AUTOMATION_ENABLED) {
+      devUrl.searchParams.set("t3code_perf_automation", "1");
+    }
+    void window.loadURL(devUrl.toString());
+    if (!PERF_AUTOMATION_ENABLED) {
+      window.webContents.openDevTools({ mode: "detach" });
+    }
   } else {
     if (!fs.existsSync(WEB_ENTRY)) {
       throw new Error(`Web bundle missing at ${WEB_ENTRY}`);
     }
-    void window.loadFile(WEB_ENTRY);
+    if (PERF_AUTOMATION_ENABLED) {
+      void window.loadFile(WEB_ENTRY, {
+        query: { t3code_perf_automation: "1" },
+      });
+    } else {
+      void window.loadFile(WEB_ENTRY);
+    }
   }
 
   window.on("closed", () => {
@@ -255,6 +295,9 @@ async function bootstrap(): Promise<void> {
   registerIpcHandlers();
   startBackend();
   mainWindow = createWindow();
+  if (mainWindow && PERF_AUTOMATION_ENABLED) {
+    void runPerfAutomationIfEnabled(mainWindow);
+  }
 }
 
 app.on("before-quit", () => {

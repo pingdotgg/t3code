@@ -763,6 +763,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
       const pendingHistory = this.pendingPersistHistory.get(persistenceKey);
       if (pendingHistory !== undefined) {
         this.pendingPersistHistory.delete(persistenceKey);
+        // oxlint-disable-next-line no-await-in-loop
         await this.enqueuePersistWrite(threadId, terminalId, pendingHistory);
       }
 
@@ -770,6 +771,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
       if (!pending) {
         return;
       }
+      // oxlint-disable-next-line no-await-in-loop
       await pending.catch(() => undefined);
     }
   }
@@ -954,6 +956,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
 
   private async runWithThreadLock<T>(threadId: string, task: () => Promise<T>): Promise<T> {
     const previous = this.threadLocks.get(threadId) ?? Promise.resolve();
+    // oxlint-disable-next-line unicorn/consistent-function-scoping
     let release: () => void = () => {};
     const current = new Promise<void>((resolve) => {
       release = resolve;

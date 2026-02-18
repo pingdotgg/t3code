@@ -124,11 +124,18 @@ function AutoProjectBootstrap() {
 
 function DesktopProjectBootstrap() {
   const api = useNativeApi();
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const bootstrappedRef = useRef(false);
 
   useEffect(() => {
     if (!isElectron || !api || bootstrappedRef.current) return;
+
+    const perfAutomationSession =
+      new URLSearchParams(window.location.search).get("t3code_perf_automation") === "1";
+    if (perfAutomationSession) {
+      bootstrappedRef.current = true;
+      return;
+    }
 
     let disposed = false;
     let retryDelayMs = 500;
@@ -138,6 +145,16 @@ function DesktopProjectBootstrap() {
       try {
         const projects = await api.projects.list();
         if (disposed) return;
+        if (projects.length === 0 && (state.projects.length > 0 || state.threads.length > 0)) {
+          // Avoid wiping hydrated renderer state if the initial projects.list races
+          // backend startup and transiently returns no projects.
+          retryTimer = setTimeout(() => {
+            retryTimer = null;
+            void attemptBootstrap();
+          }, retryDelayMs);
+          retryDelayMs = Math.min(retryDelayMs * 2, 5_000);
+          return;
+        }
         dispatch({
           type: "SYNC_PROJECTS",
           projects: projects.map((project) => ({
@@ -167,7 +184,7 @@ function DesktopProjectBootstrap() {
         clearTimeout(retryTimer);
       }
     };
-  }, [api, dispatch]);
+  }, [api, dispatch, state.projects.length, state.threads.length]);
 
   return null;
 }

@@ -70,6 +70,26 @@ function parseBooleanEnv(value: string | undefined): boolean | undefined {
   return undefined;
 }
 
+function rejectUpgrade(socket: Duplex, statusCode: number, message: string): void {
+  socket.write(
+    `HTTP/1.1 ${statusCode} ${statusCode === 401 ? "Unauthorized" : "Bad Request"}\r\n` +
+      "Connection: close\r\n" +
+      "Content-Type: text/plain\r\n" +
+      `Content-Length: ${Buffer.byteLength(message)}\r\n` +
+      "\r\n" +
+      message,
+  );
+  socket.destroy();
+}
+
+const isServerNotRunningError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false;
+  const maybeCode = (error as NodeJS.ErrnoException).code;
+  return (
+    maybeCode === "ERR_SERVER_NOT_RUNNING" || error.message.toLowerCase().includes("not running")
+  );
+};
+
 export function createServer(options: ServerOptions) {
   const {
     port,
@@ -197,18 +217,6 @@ export function createServer(options: ServerOptions) {
 
   // WebSocket server — upgrades from the HTTP server
   const wss = new WebSocketServer({ noServer: true });
-
-  function rejectUpgrade(socket: Duplex, statusCode: number, message: string): void {
-    socket.write(
-      `HTTP/1.1 ${statusCode} ${statusCode === 401 ? "Unauthorized" : "Bad Request"}\r\n` +
-        "Connection: close\r\n" +
-        "Content-Type: text/plain\r\n" +
-        `Content-Length: ${Buffer.byteLength(message)}\r\n` +
-        "\r\n" +
-        message,
-    );
-    socket.destroy();
-  }
 
   httpServer.on("upgrade", (request, socket, head) => {
     if (authToken) {
@@ -455,15 +463,6 @@ export function createServer(options: ServerOptions) {
       client.close();
     }
     clients.clear();
-
-    const isServerNotRunningError = (error: unknown): boolean => {
-      if (!(error instanceof Error)) return false;
-      const maybeCode = (error as NodeJS.ErrnoException).code;
-      return (
-        maybeCode === "ERR_SERVER_NOT_RUNNING" ||
-        error.message.toLowerCase().includes("not running")
-      );
-    };
 
     const closeWebSocketServer = new Promise<void>((resolve, reject) => {
       wss.close((error) => {

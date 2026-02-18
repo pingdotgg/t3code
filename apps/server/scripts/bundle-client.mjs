@@ -4,11 +4,9 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const webDist = path.resolve(__dirname, "../../web/dist");
-const target = path.resolve(__dirname, "../dist/client");
+const webDist = path.resolve(import.meta.dirname, "../../web/dist");
+const target = path.resolve(import.meta.dirname, "../dist/client");
 
 if (!fs.existsSync(webDist)) {
   console.log(
