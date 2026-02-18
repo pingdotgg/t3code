@@ -1,3 +1,5 @@
+import { getHotkeyManager } from "@tanstack/react-hotkeys";
+
 /**
  * Imperative DOM-based context menu for non-Electron environments.
  * Shows a positioned dropdown and returns a promise that resolves
@@ -10,6 +12,7 @@ export function showContextMenuFallback<T extends string>(
   return new Promise<T | null>((resolve) => {
     const overlay = document.createElement("div");
     overlay.style.cssText = "position:fixed;inset:0;z-index:9999";
+    let cleanedUp = false;
 
     const menu = document.createElement("div");
     menu.className =
@@ -19,23 +22,31 @@ export function showContextMenuFallback<T extends string>(
     const y = position?.y ?? 0;
     menu.style.top = `${y}px`;
     menu.style.left = `${x}px`;
+    const escapeHandle = getHotkeyManager().register(
+      "Escape",
+      (event) => {
+        event.preventDefault();
+        cleanup(null);
+      },
+      {
+        conflictBehavior: "allow",
+        ignoreInputs: false,
+        preventDefault: false,
+        stopPropagation: false,
+        target: document,
+      },
+    );
 
     function cleanup(result: T | null) {
-      document.removeEventListener("keydown", onKeyDown);
+      if (cleanedUp) return;
+      cleanedUp = true;
+      escapeHandle.unregister();
       overlay.remove();
       menu.remove();
       resolve(result);
     }
 
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        cleanup(null);
-      }
-    }
-
     overlay.addEventListener("mousedown", () => cleanup(null));
-    document.addEventListener("keydown", onKeyDown);
 
     for (const item of items) {
       const btn = document.createElement("button");

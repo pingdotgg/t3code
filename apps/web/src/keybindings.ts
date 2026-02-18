@@ -1,4 +1,8 @@
 import {
+  type RawHotkey,
+  normalizeKeyName,
+} from "@tanstack/react-hotkeys";
+import {
   type KeybindingCommand,
   type KeybindingShortcut,
   type KeybindingWhenNode,
@@ -24,6 +28,17 @@ export interface ShortcutMatchContext {
 interface ShortcutMatchOptions {
   platform?: string;
   context?: Partial<ShortcutMatchContext>;
+}
+
+function shortcutSignature(shortcut: KeybindingShortcut): string {
+  return [
+    shortcut.key,
+    shortcut.metaKey ? "1" : "0",
+    shortcut.ctrlKey ? "1" : "0",
+    shortcut.shiftKey ? "1" : "0",
+    shortcut.altKey ? "1" : "0",
+    shortcut.modKey ? "1" : "0",
+  ].join("|");
 }
 
 const TERMINAL_WORD_BACKWARD = "\u001bb";
@@ -164,6 +179,40 @@ export function shortcutLabelForCommand(
     return formatShortcutLabel(binding.shortcut, platform);
   }
   return null;
+}
+
+export function shortcutToRawHotkey(shortcut: KeybindingShortcut): RawHotkey {
+  return {
+    key: normalizeKeyName(shortcut.key),
+    ...(shortcut.modKey ? { mod: true } : {}),
+    ...(shortcut.metaKey ? { meta: true } : {}),
+    ...(shortcut.ctrlKey ? { ctrl: true } : {}),
+    ...(shortcut.shiftKey ? { shift: true } : {}),
+    ...(shortcut.altKey ? { alt: true } : {}),
+  };
+}
+
+export function shortcutsForCommands(
+  keybindings: ResolvedKeybindingsConfig,
+  commands: readonly KeybindingCommand[],
+): RawHotkey[] {
+  if (commands.length === 0 || keybindings.length === 0) {
+    return [];
+  }
+
+  const commandSet = new Set(commands);
+  const seen = new Set<string>();
+  const hotkeys: RawHotkey[] = [];
+
+  for (const binding of keybindings) {
+    if (!commandSet.has(binding.command)) continue;
+    const signature = shortcutSignature(binding.shortcut);
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    hotkeys.push(shortcutToRawHotkey(binding.shortcut));
+  }
+
+  return hotkeys;
 }
 
 export function isTerminalToggleShortcut(

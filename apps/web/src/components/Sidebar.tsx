@@ -1,13 +1,14 @@
 import { MonitorIcon, MoonIcon, SunIcon, TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { getHotkeyManager } from "@tanstack/react-hotkeys";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { DEFAULT_MODEL } from "../model-logic";
 import { derivePendingApprovals } from "../session-logic";
 import { useStore } from "../store";
-import { isChatNewLocalShortcut, isChatNewShortcut } from "../keybindings";
+import { isChatNewLocalShortcut, isChatNewShortcut, shortcutsForCommands } from "../keybindings";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
@@ -385,32 +386,50 @@ export default function Sidebar() {
     [api, dispatch, state.projects, state.threads],
   );
 
+  const chatHotkeys = useMemo(
+    () => shortcutsForCommands(keybindings, ["chat.new", "chat.newLocal"]),
+    [keybindings],
+  );
+
   useEffect(() => {
-    const onWindowKeyDown = (event: KeyboardEvent) => {
-      const activeThread = state.threads.find((t) => t.id === state.activeThreadId);
-      if (isChatNewLocalShortcut(event, keybindings)) {
-        const projectId = activeThread?.projectId ?? state.projects[0]?.id;
-        if (!projectId) return;
-        event.preventDefault();
-        handleNewThread(projectId);
-        return;
-      }
+    const manager = getHotkeyManager();
+    const handles = chatHotkeys.map((hotkey) =>
+      manager.register(
+        hotkey,
+        (event) => {
+          const activeThread = state.threads.find((t) => t.id === state.activeThreadId);
+          if (isChatNewLocalShortcut(event, keybindings)) {
+            const projectId = activeThread?.projectId ?? state.projects[0]?.id;
+            if (!projectId) return;
+            event.preventDefault();
+            handleNewThread(projectId);
+            return;
+          }
 
-      if (!isChatNewShortcut(event, keybindings)) return;
-      const projectId = activeThread?.projectId ?? state.projects[0]?.id;
-      if (!projectId) return;
-      event.preventDefault();
-      handleNewThread(projectId, {
-        branch: activeThread?.branch ?? null,
-        worktreePath: activeThread?.worktreePath ?? null,
-      });
-    };
-
-    window.addEventListener("keydown", onWindowKeyDown);
+          if (!isChatNewShortcut(event, keybindings)) return;
+          const projectId = activeThread?.projectId ?? state.projects[0]?.id;
+          if (!projectId) return;
+          event.preventDefault();
+          handleNewThread(projectId, {
+            branch: activeThread?.branch ?? null,
+            worktreePath: activeThread?.worktreePath ?? null,
+          });
+        },
+        {
+          conflictBehavior: "allow",
+          ignoreInputs: false,
+          preventDefault: false,
+          stopPropagation: false,
+          target: window,
+        },
+      ),
+    );
     return () => {
-      window.removeEventListener("keydown", onWindowKeyDown);
+      for (const handle of handles) {
+        handle.unregister();
+      }
     };
-  }, [handleNewThread, keybindings, state.activeThreadId, state.projects, state.threads]);
+  }, [chatHotkeys, handleNewThread, keybindings, state.activeThreadId, state.projects, state.threads]);
 
   return (
     <aside className="sidebar flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-card">

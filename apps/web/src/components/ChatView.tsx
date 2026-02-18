@@ -26,6 +26,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { getHotkeyManager, useHotkey } from "@tanstack/react-hotkeys";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer/debouncer";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
@@ -66,6 +67,7 @@ import BranchToolbar from "./BranchToolbar";
 import GitActionsControl from "./GitActionsControl";
 import {
   isOpenFavoriteEditorShortcut,
+  shortcutsForCommands,
   isTerminalCloseShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
@@ -524,6 +526,16 @@ export default function ChatView() {
     () => shortcutLabelForCommand(keybindings, "terminal.close"),
     [keybindings],
   );
+  const terminalHotkeys = useMemo(
+    () =>
+      shortcutsForCommands(keybindings, [
+        "terminal.toggle",
+        "terminal.split",
+        "terminal.close",
+        "terminal.new",
+      ]),
+    [keybindings],
+  );
 
   const envLocked = Boolean(
     activeThread &&
@@ -716,22 +728,19 @@ export default function ChatView() {
     };
   }, [revokePreviewUrls]);
 
-  /**
-   * Close expanded image on Escape key
-   */
-  useEffect(() => {
-    if (!expandedImage) {
-      return;
-    }
-
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+  useHotkey(
+    "Escape",
+    () => {
       setExpandedImage(null);
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [expandedImage]);
+    },
+    {
+      enabled: expandedImage !== null,
+      ignoreInputs: false,
+      preventDefault: false,
+      stopPropagation: false,
+      target: typeof window === "undefined" ? null : window,
+    },
+  );
 
   const activeWorktreePath = activeThread?.worktreePath;
 
@@ -786,56 +795,74 @@ export default function ChatView() {
       return activeElement.closest(".thread-terminal-drawer .xterm") !== null;
     };
 
-    const handler = (event: globalThis.KeyboardEvent) => {
-      if (!activeThreadId || event.defaultPrevented) return;
-      const shortcutContext = {
-        terminalFocus: isTerminalFocused(),
-        terminalOpen: Boolean(activeThread?.terminalOpen),
-      };
+    const manager = getHotkeyManager();
+    const handles = terminalHotkeys.map((hotkey) =>
+      manager.register(
+        hotkey,
+        (event) => {
+          if (!activeThreadId || event.defaultPrevented) return;
+          const shortcutContext = {
+            terminalFocus: isTerminalFocused(),
+            terminalOpen: Boolean(activeThread?.terminalOpen),
+          };
 
-      if (isTerminalToggleShortcut(event, keybindings, { context: shortcutContext })) {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleTerminalVisibility();
-        return;
-      }
+          if (isTerminalToggleShortcut(event, keybindings, { context: shortcutContext })) {
+            event.preventDefault();
+            event.stopPropagation();
+            toggleTerminalVisibility();
+            return;
+          }
 
-      if (isTerminalSplitShortcut(event, keybindings, { context: shortcutContext })) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!activeThread?.terminalOpen) {
-          dispatch({
-            type: "SET_THREAD_TERMINAL_OPEN",
-            threadId: activeThreadId,
-            open: true,
-          });
-        }
-        splitTerminal();
-        return;
-      }
+          if (isTerminalSplitShortcut(event, keybindings, { context: shortcutContext })) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!activeThread?.terminalOpen) {
+              dispatch({
+                type: "SET_THREAD_TERMINAL_OPEN",
+                threadId: activeThreadId,
+                open: true,
+              });
+            }
+            splitTerminal();
+            return;
+          }
 
-      if (isTerminalCloseShortcut(event, keybindings, { context: shortcutContext })) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!activeThread?.terminalOpen) return;
-        closeTerminal(activeThread.activeTerminalId);
-        return;
-      }
+          if (isTerminalCloseShortcut(event, keybindings, { context: shortcutContext })) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!activeThread?.terminalOpen) return;
+            closeTerminal(activeThread.activeTerminalId);
+            return;
+          }
 
-      if (!isTerminalNewShortcut(event, keybindings, { context: shortcutContext })) return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (!activeThread?.terminalOpen) {
-        dispatch({
-          type: "SET_THREAD_TERMINAL_OPEN",
-          threadId: activeThreadId,
-          open: true,
-        });
+          if (!isTerminalNewShortcut(event, keybindings, { context: shortcutContext })) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (!activeThread?.terminalOpen) {
+            dispatch({
+              type: "SET_THREAD_TERMINAL_OPEN",
+              threadId: activeThreadId,
+              open: true,
+            });
+          }
+          createNewTerminal();
+        },
+        {
+          enabled: Boolean(activeThreadId),
+          conflictBehavior: "allow",
+          ignoreInputs: false,
+          preventDefault: false,
+          stopPropagation: false,
+          target: window,
+        },
+      ),
+    );
+
+    return () => {
+      for (const handle of handles) {
+        handle.unregister();
       }
-      createNewTerminal();
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
   }, [
     activeThread?.terminalOpen,
     activeThread?.activeTerminalId,
@@ -845,6 +872,7 @@ export default function ChatView() {
     dispatch,
     splitTerminal,
     keybindings,
+    terminalHotkeys,
     toggleTerminalVisibility,
   ]);
 
@@ -2095,19 +2123,39 @@ const OpenInPicker = memo(function OpenInPicker({
     () => shortcutLabelForCommand(keybindings, "editor.openFavorite"),
     [keybindings],
   );
+  const openFavoriteHotkeys = useMemo(
+    () => shortcutsForCommands(keybindings, ["editor.openFavorite"]),
+    [keybindings],
+  );
 
   useEffect(() => {
-    const handler = (e: globalThis.KeyboardEvent) => {
-      if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
-      if (!api || !activeProject) return;
+    const manager = getHotkeyManager();
+    const handles = openFavoriteHotkeys.map((hotkey) =>
+      manager.register(
+        hotkey,
+        (event) => {
+          if (!isOpenFavoriteEditorShortcut(event, keybindings)) return;
+          if (!api || !activeProject) return;
 
-      e.preventDefault();
-      const cwd = activeThread?.worktreePath ?? activeProject.cwd;
-      void api.shell.openInEditor(cwd, lastEditor);
+          event.preventDefault();
+          const cwd = activeThread?.worktreePath ?? activeProject.cwd;
+          void api.shell.openInEditor(cwd, lastEditor);
+        },
+        {
+          conflictBehavior: "allow",
+          ignoreInputs: false,
+          preventDefault: false,
+          stopPropagation: false,
+          target: window,
+        },
+      ),
+    );
+    return () => {
+      for (const handle of handles) {
+        handle.unregister();
+      }
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [api, activeProject, activeThread, keybindings, lastEditor]);
+  }, [activeProject, activeThread, api, keybindings, lastEditor, openFavoriteHotkeys]);
 
   return (
     <Group aria-label="Subscription actions">

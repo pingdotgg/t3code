@@ -16,6 +16,8 @@ import {
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   isTerminalToggleShortcut,
+  shortcutToRawHotkey,
+  shortcutsForCommands,
   shortcutLabelForCommand,
   terminalNavigationShortcutData,
   type ShortcutEventLike,
@@ -357,6 +359,36 @@ describe("formatShortcutLabel", () => {
   it("formats labels for plus key", () => {
     assert.strictEqual(formatShortcutLabel(modShortcut("+"), "MacIntel"), "⌘+");
     assert.strictEqual(formatShortcutLabel(modShortcut("+"), "Linux"), "Ctrl++");
+  });
+});
+
+describe("shortcutToRawHotkey", () => {
+  it("normalizes special key aliases and preserves modifiers", () => {
+    assert.deepStrictEqual(shortcutToRawHotkey(modShortcut("esc", { shiftKey: true })), {
+      key: "Escape",
+      mod: true,
+      shift: true,
+    });
+    assert.deepStrictEqual(shortcutToRawHotkey(modShortcut("arrowleft")), {
+      key: "ArrowLeft",
+      mod: true,
+    });
+  });
+});
+
+describe("shortcutsForCommands", () => {
+  it("returns filtered deduplicated hotkeys in config order", () => {
+    const keybindings = compile([
+      { shortcut: modShortcut("n"), command: "chat.new" },
+      { shortcut: modShortcut("n"), command: "chat.new" },
+      { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
+      { shortcut: modShortcut("o"), command: "editor.openFavorite" },
+    ]);
+
+    assert.deepStrictEqual(shortcutsForCommands(keybindings, ["chat.new", "chat.newLocal"]), [
+      { key: "N", mod: true },
+      { key: "N", mod: true, shift: true },
+    ]);
   });
 });
 

@@ -13,6 +13,7 @@
   "dependencies": {
     "@base-ui/react": "^1.2.0",
     "@t3tools/contracts": "workspace:*",
+    "@tanstack/react-hotkeys": "^0.1.0",
     "@tanstack/react-pacer": "^0.19.4",
     "@tanstack/react-query": "^5.90.0",
     "@xterm/addon-fit": "^0.11.0",
