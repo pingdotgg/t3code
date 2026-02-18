@@ -5,6 +5,7 @@ import {
   type WorkLogEntry,
   applyEventToMessages,
   derivePendingApprovals,
+  deriveTurnDiffFilesFromUnifiedDiff,
   deriveTurnDiffSummaries,
   deriveTimelineEntries,
   deriveWorkLogEntries,
@@ -395,7 +396,7 @@ describe("deriveWorkLogEntries", () => {
 });
 
 describe("deriveTurnDiffSummaries", () => {
-  it("collects per-turn file changes and links them to assistant message completion", () => {
+  it("tracks completed turns and links them to assistant message completion", () => {
     const summaries = deriveTurnDiffSummaries([
       makeEvent({
         id: "evt-turn-start",
@@ -492,8 +493,57 @@ describe("deriveTurnDiffSummaries", () => {
     expect(summaries).toHaveLength(1);
     expect(summaries[0]?.turnId).toBe("turn-1");
     expect(summaries[0]?.assistantMessageId).toBe("msg-1");
-    expect(summaries[0]?.files.map((file) => file.path)).toEqual(["src/a.ts", "src/b.ts"]);
-    expect(summaries[0]?.files[0]?.kind).toBe("modified");
+    expect(summaries[0]?.files).toEqual([]);
+  });
+
+  it("includes completed turns even when no fileChange tool events were emitted", () => {
+    const summaries = deriveTurnDiffSummaries([
+      makeEvent({
+        id: "evt-turn-start",
+        method: "turn/started",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:00.000Z",
+      }),
+      makeEvent({
+        id: "evt-turn-completed",
+        method: "turn/completed",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:01.000Z",
+        payload: {
+          turn: {
+            id: "turn-1",
+            status: "completed",
+          },
+        },
+      }),
+    ]);
+
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.turnId).toBe("turn-1");
+    expect(summaries[0]?.files).toEqual([]);
+  });
+});
+
+describe("deriveTurnDiffFilesFromUnifiedDiff", () => {
+  it("splits a multi-file patch into sorted per-file entries", () => {
+    const files = deriveTurnDiffFilesFromUnifiedDiff(
+      [
+        "diff --git a/src/b.ts b/src/b.ts",
+        "@@ -1 +1 @@",
+        "-old-b",
+        "+new-b",
+        "diff --git a/src/a.ts b/src/a.ts",
+        "@@ -1 +1 @@",
+        "-old-a",
+        "+new-a",
+      ].join("\n"),
+    );
+
+    expect(files.map((file) => file.path)).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(files[0]?.diff).toContain("diff --git a/src/a.ts b/src/a.ts");
+    expect(files[1]?.diff).toContain("diff --git a/src/b.ts b/src/b.ts");
+    expect(files[0]?.additions).toBe(1);
+    expect(files[0]?.deletions).toBe(1);
   });
 });
 

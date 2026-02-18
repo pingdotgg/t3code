@@ -11,6 +11,7 @@ export const WS_METHODS = {
   providersStopSession: "providers.stopSession",
   providersListSessions: "providers.listSessions",
   providersListCheckpoints: "providers.listCheckpoints",
+  providersGetCheckpointDiff: "providers.getCheckpointDiff",
   providersRevertToCheckpoint: "providers.revertToCheckpoint",
 
   // Project registry methods

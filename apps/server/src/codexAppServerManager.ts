@@ -148,19 +148,20 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   async startSession(input: ProviderSessionStartInput): Promise<ProviderSession> {
     const sessionId = randomUUID();
     const now = new Date().toISOString();
+    const resolvedCwd = input.cwd ?? process.cwd();
 
     const session: ProviderSession = {
       sessionId,
       provider: "codex",
       status: "connecting",
       model: normalizeCodexModelSlug(input.model),
-      cwd: input.cwd,
+      cwd: resolvedCwd,
       createdAt: now,
       updatedAt: now,
     };
 
     const child = spawn("codex", ["app-server"], {
-      cwd: input.cwd,
+      cwd: resolvedCwd,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -198,7 +199,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const normalizedModel = normalizeCodexModelSlug(input.model);
       const sessionOverrides = {
         model: normalizedModel ?? null,
-        cwd: input.cwd ?? null,
+        cwd: resolvedCwd,
         approvalPolicy: input.approvalPolicy,
         sandbox: input.sandboxMode,
       };

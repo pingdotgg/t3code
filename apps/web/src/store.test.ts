@@ -57,6 +57,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     session: makeSession(),
     messages: [],
     events: [],
+    turnDiffSummaries: [],
     error: null,
     createdAt: "2026-02-09T00:00:00.000Z",
     branch: null,
@@ -517,6 +518,57 @@ describe("store reducer thread continuity", () => {
     expect(next.threads[0]?.session?.threadId).toBe("thr_new");
   });
 
+  it("preserves persisted turn diffs when events were reset and appends new completed turn diffs", () => {
+    const state = makeState(
+      makeThread({
+        events: [],
+        turnDiffSummaries: [
+          {
+            turnId: "turn-1",
+            completedAt: "2026-02-09T00:00:01.000Z",
+            files: [{ path: "src/existing.ts", kind: "modified" }],
+          },
+        ],
+      }),
+    );
+
+    const withFileChange = reducer(state, {
+      type: "APPLY_EVENT",
+      event: makeEvent({
+        method: "item/completed",
+        turnId: "turn-2",
+        createdAt: "2026-02-09T00:00:02.000Z",
+        payload: {
+          item: {
+            type: "fileChange",
+            changes: [{ path: "src/new.ts", kind: "added" }],
+          },
+        },
+      }),
+      activeAssistantItemRef: { current: null },
+    });
+
+    expect(withFileChange.threads[0]?.turnDiffSummaries.map((summary) => summary.turnId)).toEqual([
+      "turn-1",
+    ]);
+
+    const completed = reducer(withFileChange, {
+      type: "APPLY_EVENT",
+      event: makeEvent({
+        method: "turn/completed",
+        turnId: "turn-2",
+        createdAt: "2026-02-09T00:00:03.000Z",
+        payload: { turn: { id: "turn-2", status: "completed" } },
+      }),
+      activeAssistantItemRef: { current: null },
+    });
+
+    expect(completed.threads[0]?.turnDiffSummaries.map((summary) => summary.turnId)).toEqual([
+      "turn-2",
+      "turn-1",
+    ]);
+  });
+
   it("reconciles project ids by cwd when syncing backend projects", () => {
     const state: AppState = {
       projects: [
@@ -781,6 +833,20 @@ describe("store reducer thread continuity", () => {
             turnId: "turn-live",
           }),
         ],
+        turnDiffSummaries: [
+          {
+            turnId: "turn_1",
+            completedAt: "2026-02-08T10:00:01.000Z",
+            files: [{ path: "src/first.ts", kind: "modified" }],
+            checkpointTurnCount: 1,
+          },
+          {
+            turnId: "turn_2",
+            completedAt: "2026-02-08T10:00:03.000Z",
+            files: [{ path: "src/second.ts", kind: "modified" }],
+            checkpointTurnCount: 2,
+          },
+        ],
         error: "temporary failure",
         latestTurnId: "turn-live",
         latestTurnStartedAt: "2026-02-08T10:00:03.000Z",
@@ -792,6 +858,7 @@ describe("store reducer thread continuity", () => {
       threadId: "thread-local-1",
       sessionId: "sess-1",
       threadRuntimeId: "thr_after",
+      turnCount: 1,
       messageCount: 2,
     });
 
@@ -803,5 +870,77 @@ describe("store reducer thread continuity", () => {
     expect(next.threads[0]?.session?.activeTurnId).toBeUndefined();
     expect(next.threads[0]?.session?.threadId).toBe("thr_after");
     expect(next.threads[0]?.latestTurnId).toBeUndefined();
+    expect(next.threads[0]?.turnDiffSummaries.map((summary) => summary.turnId)).toEqual(["turn_1"]);
+  });
+
+  it("keeps checkpoint-derived turn files when later events for the same turn arrive", () => {
+    const state = makeState(
+      makeThread({
+        turnDiffSummaries: [
+          {
+            turnId: "turn-1",
+            completedAt: "2026-02-09T00:00:03.000Z",
+            files: [{ path: "src/from-checkpoint.ts", diff: "diff --git a/src/from-checkpoint.ts b/src/from-checkpoint.ts" }],
+            unifiedDiff: "diff --git a/src/from-checkpoint.ts b/src/from-checkpoint.ts",
+            checkpointDiffLoaded: true,
+          },
+        ],
+      }),
+    );
+
+    const next = reducer(state, {
+      type: "APPLY_EVENT",
+      event: makeEvent({
+        method: "turn/completed",
+        turnId: "turn-1",
+        createdAt: "2026-02-09T00:00:04.000Z",
+        payload: { turn: { id: "turn-1", status: "completed" } },
+      }),
+      activeAssistantItemRef: { current: null },
+    });
+
+    expect(next.threads[0]?.turnDiffSummaries[0]?.files.map((file) => file.path)).toEqual([
+      "src/from-checkpoint.ts",
+    ]);
+    expect(next.threads[0]?.turnDiffSummaries[0]?.checkpointDiffLoaded).toBe(true);
+    expect(next.threads[0]?.turnDiffSummaries[0]?.unifiedDiff).toContain("from-checkpoint.ts");
+  });
+
+  it("updates turn summaries from checkpoint diffs and marks them as loaded", () => {
+    const state = makeState(
+      makeThread({
+        turnDiffSummaries: [
+          {
+            turnId: "turn-1",
+            completedAt: "2026-02-09T00:00:03.000Z",
+            files: [],
+            checkpointTurnCount: 1,
+          },
+        ],
+      }),
+    );
+
+    const next = reducer(state, {
+      type: "SET_THREAD_TURN_CHECKPOINT_DIFFS",
+      threadId: "thread-local-1",
+      checkpointDiffByTurnId: {
+        "turn-1": [
+          "diff --git a/src/a.ts b/src/a.ts",
+          "@@ -1 +1 @@",
+          "-old-a",
+          "+new-a",
+          "diff --git a/src/b.ts b/src/b.ts",
+          "@@ -1 +1 @@",
+          "-old-b",
+          "+new-b",
+        ].join("\n"),
+      },
+    });
+
+    expect(next.threads[0]?.turnDiffSummaries[0]?.files.map((file) => file.path)).toEqual([
+      "src/a.ts",
+      "src/b.ts",
+    ]);
+    expect(next.threads[0]?.turnDiffSummaries[0]?.checkpointDiffLoaded).toBe(true);
   });
 });

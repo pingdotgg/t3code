@@ -17,6 +17,8 @@ import type {
 } from "./git";
 import type {
   ProviderEvent,
+  ProviderGetCheckpointDiffInput,
+  ProviderGetCheckpointDiffResult,
   ProviderInterruptTurnInput,
   ProviderListCheckpointsInput,
   ProviderListCheckpointsResult,
@@ -94,6 +96,9 @@ export interface NativeApi {
     stopSession: (input: ProviderStopSessionInput) => Promise<void>;
     listSessions: () => Promise<ProviderSession[]>;
     listCheckpoints: (input: ProviderListCheckpointsInput) => Promise<ProviderListCheckpointsResult>;
+    getCheckpointDiff: (
+      input: ProviderGetCheckpointDiffInput,
+    ) => Promise<ProviderGetCheckpointDiffResult>;
     revertToCheckpoint: (
       input: ProviderRevertToCheckpointInput,
     ) => Promise<ProviderRevertToCheckpointResult>;

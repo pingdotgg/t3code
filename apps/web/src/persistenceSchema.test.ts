@@ -263,6 +263,68 @@ describe("hydratePersistedState", () => {
     ]);
     expect(hydrated?.threads[0]?.activeTerminalGroupId).toBe(`group-${DEFAULT_THREAD_TERMINAL_ID}`);
   });
+
+  it("hydrates persisted turn diff summaries", () => {
+    const payload = JSON.stringify({
+      version: 7,
+      runtimeMode: "full-access",
+      projects: [
+        {
+          id: "p-1",
+          name: "Project",
+          cwd: "/tmp/project",
+          model: "gpt-5.3-codex",
+          expanded: true,
+        },
+      ],
+      threads: [
+        {
+          id: "t-1",
+          codexThreadId: "thr_1",
+          projectId: "p-1",
+          title: "Thread",
+          model: "gpt-5.3-codex",
+          messages: [],
+          createdAt: "2026-02-08T10:00:00.000Z",
+          turnDiffSummaries: [
+            {
+              turnId: "turn-1",
+              completedAt: "2026-02-08T10:05:00.000Z",
+              checkpointTurnCount: 1,
+              checkpointDiffLoaded: true,
+              files: [
+                {
+                  path: "src/app.ts",
+                  kind: "modified",
+                  additions: 3,
+                  deletions: 1,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      activeThreadId: "t-1",
+    });
+
+    const hydrated = hydratePersistedState(payload, false);
+    expect(hydrated?.threads[0]?.turnDiffSummaries).toEqual([
+      {
+        turnId: "turn-1",
+        completedAt: "2026-02-08T10:05:00.000Z",
+        checkpointTurnCount: 1,
+        checkpointDiffLoaded: true,
+        files: [
+          {
+            path: "src/app.ts",
+            kind: "modified",
+            additions: 3,
+            deletions: 1,
+          },
+        ],
+      },
+    ]);
+  });
 });
 
 describe("toPersistedState", () => {
@@ -309,6 +371,25 @@ describe("toPersistedState", () => {
       lastVisitedAt: "2026-02-08T10:02:00.000Z",
       branch: null,
       worktreePath: null,
+      turnDiffSummaries: [
+        {
+          turnId: "turn-1",
+          completedAt: "2026-02-08T10:05:00.000Z",
+          status: "completed",
+          checkpointTurnCount: 1,
+          checkpointDiffLoaded: true,
+          files: [
+            {
+              path: "src/app.ts",
+              kind: "modified",
+              additions: 3,
+              deletions: 1,
+              diff: "diff --git a/src/app.ts b/src/app.ts",
+            },
+          ],
+          unifiedDiff: "diff --git a/src/app.ts b/src/app.ts",
+        },
+      ],
     };
 
     const persisted = toPersistedState({
@@ -366,6 +447,23 @@ describe("toPersistedState", () => {
       lastVisitedAt: thread.lastVisitedAt,
       branch: null,
       worktreePath: null,
+      turnDiffSummaries: [
+        {
+          turnId: "turn-1",
+          completedAt: "2026-02-08T10:05:00.000Z",
+          status: "completed",
+          checkpointTurnCount: 1,
+          checkpointDiffLoaded: true,
+          files: [
+            {
+              path: "src/app.ts",
+              kind: "modified",
+              additions: 3,
+              deletions: 1,
+            },
+          ],
+        },
+      ],
     });
     const persistedThread = persisted.threads[0];
     expect(persistedThread).toBeDefined();

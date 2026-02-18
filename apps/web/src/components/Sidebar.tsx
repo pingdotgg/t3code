@@ -170,6 +170,7 @@ export default function Sidebar() {
           session: null,
           messages: [],
           events: [],
+          turnDiffSummaries: [],
           error: null,
           createdAt: new Date().toISOString(),
           branch: options?.branch ?? null,

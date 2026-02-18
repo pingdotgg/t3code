@@ -93,6 +93,32 @@ describe("FilesystemCheckpointStore", () => {
     }
   });
 
+  it("falls back to HEAD when restoring turn 0 and root checkpoint ref is missing", async () => {
+    const cwd = await createRepo();
+    const store = new FilesystemCheckpointStore();
+    const threadId = "thr_2b";
+
+    try {
+      await writeFile(path.join(cwd, "README.md"), "v2\n");
+      await store.captureCheckpoint({ cwd, threadId, turnCount: 1 });
+
+      await writeFile(path.join(cwd, "README.md"), "v3\n");
+      await writeFile(path.join(cwd, "scratch.txt"), "scratch\n");
+
+      const restored = await store.restoreCheckpoint({
+        cwd,
+        threadId,
+        turnCount: 0,
+      });
+
+      expect(restored).toBe(true);
+      expect(await readFile(path.join(cwd, "README.md"), "utf8")).toBe("v1\n");
+      expect(exists(path.join(cwd, "scratch.txt"))).toBe(false);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("prunes refs newer than the retained turn", async () => {
     const cwd = await createRepo();
     const store = new FilesystemCheckpointStore();
@@ -114,6 +140,55 @@ describe("FilesystemCheckpointStore", () => {
       expect(await store.hasCheckpoint({ cwd, threadId, turnCount: 0 })).toBe(true);
       expect(await store.hasCheckpoint({ cwd, threadId, turnCount: 1 })).toBe(true);
       expect(await store.hasCheckpoint({ cwd, threadId, turnCount: 2 })).toBe(false);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("returns a unified patch between checkpoint turns", async () => {
+    const cwd = await createRepo();
+    const store = new FilesystemCheckpointStore();
+    const threadId = "thr_4";
+
+    try {
+      await store.captureCheckpoint({ cwd, threadId, turnCount: 0 });
+      await writeFile(path.join(cwd, "README.md"), "v2\n");
+      await writeFile(path.join(cwd, "new.txt"), "new file\n");
+      await store.captureCheckpoint({ cwd, threadId, turnCount: 1 });
+
+      const diff = await store.diffCheckpoints({
+        cwd,
+        threadId,
+        fromTurnCount: 0,
+        toTurnCount: 1,
+      });
+
+      expect(diff).toContain("diff --git a/README.md b/README.md");
+      expect(diff).toContain("diff --git a/new.txt b/new.txt");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to HEAD as diff base when turn 0 checkpoint is missing", async () => {
+    const cwd = await createRepo();
+    const store = new FilesystemCheckpointStore();
+    const threadId = "thr_5";
+
+    try {
+      await writeFile(path.join(cwd, "README.md"), "v2\n");
+      await writeFile(path.join(cwd, "new.txt"), "new file\n");
+      await store.captureCheckpoint({ cwd, threadId, turnCount: 1 });
+
+      const diff = await store.diffCheckpoints({
+        cwd,
+        threadId,
+        fromTurnCount: 0,
+        toTurnCount: 1,
+      });
+
+      expect(diff).toContain("diff --git a/README.md b/README.md");
+      expect(diff).toContain("diff --git a/new.txt b/new.txt");
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

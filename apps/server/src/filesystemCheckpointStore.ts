@@ -91,10 +91,30 @@ export class FilesystemCheckpointStore {
     return commit !== null;
   }
 
+  async ensureRootCheckpoint(input: { cwd: string; threadId: string }): Promise<boolean> {
+    const { cwd, threadId } = input;
+    const rootRef = checkpointRefForThreadTurn(threadId, 0);
+    const existing = await this.resolveCheckpointCommit(cwd, rootRef);
+    if (existing) {
+      return true;
+    }
+
+    const headCommit = await this.resolveHeadCommit(cwd);
+    if (!headCommit) {
+      return false;
+    }
+
+    await this.runGit(cwd, ["update-ref", rootRef, headCommit]);
+    return true;
+  }
+
   async restoreCheckpoint(input: { cwd: string; threadId: string; turnCount: number }): Promise<boolean> {
     const { cwd, threadId, turnCount } = input;
     const ref = checkpointRefForThreadTurn(threadId, turnCount);
-    const commitOid = await this.resolveCheckpointCommit(cwd, ref);
+    let commitOid = await this.resolveCheckpointCommit(cwd, ref);
+    if (!commitOid && turnCount === 0) {
+      commitOid = await this.resolveHeadCommit(cwd);
+    }
     if (!commitOid) {
       return false;
     }
@@ -103,6 +123,64 @@ export class FilesystemCheckpointStore {
     await this.runGit(cwd, ["clean", "-fd", "--", "."]);
     await this.runGit(cwd, ["reset", "--quiet", "--", "."], { allowNonZeroExit: true });
     return true;
+  }
+
+  async diffCheckpoints(input: {
+    cwd: string;
+    threadId: string;
+    fromTurnCount: number;
+    toTurnCount: number;
+  }): Promise<string> {
+    const { cwd, threadId, fromTurnCount, toTurnCount } = input;
+    if (!Number.isInteger(fromTurnCount) || fromTurnCount < 0) {
+      throw new Error(`Invalid from turn count: ${fromTurnCount}`);
+    }
+    if (!Number.isInteger(toTurnCount) || toTurnCount < 0) {
+      throw new Error(`Invalid to turn count: ${toTurnCount}`);
+    }
+    if (fromTurnCount > toTurnCount) {
+      throw new Error(`Invalid checkpoint range: ${fromTurnCount}..${toTurnCount}`);
+    }
+
+    const fromRef = checkpointRefForThreadTurn(threadId, fromTurnCount);
+    const toRef = checkpointRefForThreadTurn(threadId, toTurnCount);
+    let fromCommitOid = await this.resolveCheckpointCommit(cwd, fromRef);
+    const toCommitOid = await this.resolveCheckpointCommit(cwd, toRef);
+    if (!fromCommitOid && fromTurnCount === 0) {
+      const headCommit = await this.resolveHeadCommit(cwd);
+      if (headCommit) {
+        fromCommitOid = headCommit;
+      }
+    }
+    if (!fromCommitOid) {
+      throw new Error(
+        `Filesystem checkpoint is unavailable for turn ${fromTurnCount} in thread ${threadId}.`,
+      );
+    }
+    if (!toCommitOid) {
+      throw new Error(`Filesystem checkpoint is unavailable for turn ${toTurnCount} in thread ${threadId}.`);
+    }
+
+    const result = await this.runGit(cwd, [
+      "diff",
+      "--patch",
+      "--minimal",
+      "--no-color",
+      fromCommitOid,
+      toCommitOid,
+    ]);
+    return result.stdout;
+  }
+
+  private async resolveHeadCommit(cwd: string): Promise<string | null> {
+    const result = await this.runGit(cwd, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], {
+      allowNonZeroExit: true,
+    });
+    if (result.code !== 0) {
+      return null;
+    }
+    const commit = result.stdout.trim();
+    return commit.length > 0 ? commit : null;
   }
 
   async pruneAfterTurn(input: { cwd: string; threadId: string; maxTurnCount: number }): Promise<void> {

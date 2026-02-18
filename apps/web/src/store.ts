@@ -11,7 +11,15 @@ import {
 import { type ProviderEvent, type ProviderSession, type TerminalEvent, normalizeProjectScripts } from "@t3tools/contracts";
 import { resolveModelSlug } from "./model-logic";
 import { hydratePersistedState, toPersistedState } from "./persistenceSchema";
-import { applyEventToMessages, asObject, asString, evolveSession } from "./session-logic";
+import {
+  applyEventToMessages,
+  asObject,
+  asString,
+  deriveTurnDiffFilesFromUnifiedDiff,
+  deriveTurnDiffSummaries,
+  inferCheckpointTurnCountByTurnId,
+  evolveSession,
+} from "./session-logic";
 import {
   type ChatAttachment,
   DEFAULT_THREAD_TERMINAL_ID,
@@ -77,7 +85,18 @@ type Action =
       threadId: string;
       sessionId: string;
       threadRuntimeId: string;
+      turnCount: number;
       messageCount: number;
+    }
+  | {
+      type: "SET_THREAD_TURN_CHECKPOINT_COUNTS";
+      threadId: string;
+      checkpointTurnCountByTurnId: Record<string, number>;
+    }
+  | {
+      type: "SET_THREAD_TURN_CHECKPOINT_DIFFS";
+      threadId: string;
+      checkpointDiffByTurnId: Record<string, string>;
     }
   | {
       type: "SET_THREAD_BRANCH";
@@ -177,6 +196,77 @@ function updateThread(
   updater: (t: Thread) => Thread,
 ): Thread[] {
   return threads.map((t) => (t.id === threadId ? updater(t) : t));
+}
+
+function mergeTurnDiffSummaries(
+  existing: Thread["turnDiffSummaries"],
+  next: Thread["turnDiffSummaries"],
+): Thread["turnDiffSummaries"] {
+  if (existing.length === 0) return next;
+  if (next.length === 0) return existing;
+
+  const existingByTurnId = new Map(existing.map((summary) => [summary.turnId, summary] as const));
+  const merged = next.map((summary) => {
+    const previous = existingByTurnId.get(summary.turnId);
+    if (!previous) {
+      return summary;
+    }
+
+    const prefersCheckpointDiff = previous.checkpointDiffLoaded || summary.checkpointDiffLoaded;
+    const files =
+      prefersCheckpointDiff ||
+      (summary.files.length === 0 && previous.files.length > 0 && summary.unifiedDiff === undefined)
+        ? previous.files
+        : summary.files;
+    const unifiedDiff =
+      prefersCheckpointDiff || summary.unifiedDiff === undefined
+        ? (previous.unifiedDiff ?? summary.unifiedDiff)
+        : summary.unifiedDiff;
+
+    return {
+      ...summary,
+      files,
+      ...(unifiedDiff !== undefined ? { unifiedDiff } : {}),
+      ...(summary.assistantMessageId
+        ? {}
+        : previous.assistantMessageId
+          ? { assistantMessageId: previous.assistantMessageId }
+          : {}),
+      ...(typeof summary.checkpointTurnCount === "number"
+        ? {}
+        : typeof previous.checkpointTurnCount === "number"
+          ? { checkpointTurnCount: previous.checkpointTurnCount }
+          : {}),
+      ...(summary.checkpointDiffLoaded || previous.checkpointDiffLoaded
+        ? { checkpointDiffLoaded: true }
+        : {}),
+    };
+  });
+
+  const mergedTurnIds = new Set(merged.map((summary) => summary.turnId));
+  for (const summary of existing) {
+    if (!mergedTurnIds.has(summary.turnId)) {
+      merged.push(summary);
+    }
+  }
+
+  const sorted = merged.toSorted((a, b) => {
+    const aTime = Date.parse(a.completedAt);
+    const bTime = Date.parse(b.completedAt);
+    if (Number.isNaN(aTime) || Number.isNaN(bTime)) {
+      return b.completedAt.localeCompare(a.completedAt);
+    }
+    return bTime - aTime;
+  });
+
+  const inferredTurnCountByTurnId = inferCheckpointTurnCountByTurnId(sorted);
+  return sorted.map((summary) =>
+    typeof summary.checkpointTurnCount === "number"
+      ? summary
+      : Object.assign({}, summary, {
+          checkpointTurnCount: inferredTurnCountByTurnId[summary.turnId],
+        }),
+  );
 }
 
 function normalizeTerminalIds(terminalIds: string[]): string[] {
@@ -554,6 +644,7 @@ export function reducer(state: AppState, action: Action): AppState {
         ...action.thread,
         model: resolveModelSlug(action.thread.model),
         lastVisitedAt: action.thread.lastVisitedAt ?? action.thread.createdAt,
+        turnDiffSummaries: action.thread.turnDiffSummaries ?? [],
       });
       return {
         ...state,
@@ -800,27 +891,32 @@ export function reducer(state: AppState, action: Action): AppState {
 
       return {
         ...state,
-        threads: updateThread(state.threads, target.id, (t) => ({
-          ...t,
-          ...(() => {
-            const eventThreadId = getEventThreadId(event);
-            const shouldRebindIdentity =
-              event.method === "thread/started" && t.session?.status === "connecting";
-            return {
-              codexThreadId: shouldRebindIdentity
-                ? (eventThreadId ?? t.codexThreadId)
-                : (t.codexThreadId ?? eventThreadId ?? null),
-              error: event.kind === "error" && event.message ? event.message : t.error,
-            };
-          })(),
-          session: t.session ? evolveSession(t.session, event) : t.session,
-          messages: applyEventToMessages(t.messages, event, activeAssistantItemRef),
-          events: [event, ...t.events],
-          ...updateTurnFields(t, event),
-          ...(event.method === "turn/completed" && t.id === state.activeThreadId
-            ? { lastVisitedAt: event.createdAt }
-            : {}),
-        })),
+        threads: updateThread(state.threads, target.id, (t) => {
+          const nextEvents = [event, ...t.events];
+          const derivedTurnDiffSummaries = deriveTurnDiffSummaries(nextEvents);
+          const turnDiffSummaries = mergeTurnDiffSummaries(
+            t.turnDiffSummaries,
+            derivedTurnDiffSummaries,
+          );
+          const eventThreadId = getEventThreadId(event);
+          const shouldRebindIdentity =
+            event.method === "thread/started" && t.session?.status === "connecting";
+          return {
+            ...t,
+            codexThreadId: shouldRebindIdentity
+              ? (eventThreadId ?? t.codexThreadId)
+              : (t.codexThreadId ?? eventThreadId ?? null),
+            error: event.kind === "error" && event.message ? event.message : t.error,
+            session: t.session ? evolveSession(t.session, event) : t.session,
+            messages: applyEventToMessages(t.messages, event, activeAssistantItemRef),
+            events: nextEvents,
+            turnDiffSummaries,
+            ...updateTurnFields(t, event),
+            ...(event.method === "turn/completed" && t.id === state.activeThreadId
+              ? { lastVisitedAt: event.createdAt }
+              : {}),
+          };
+        }),
       };
     }
 
@@ -893,6 +989,7 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         threads: updateThread(state.threads, action.threadId, (t) => {
           const nextMessageCount = Math.max(0, Math.floor(action.messageCount));
+          const nextTurnCount = Math.max(0, Math.floor(action.turnCount));
           const now = new Date().toISOString();
           return {
             ...t,
@@ -910,12 +1007,94 @@ export function reducer(state: AppState, action: Action): AppState {
                 : t.session,
             messages: t.messages.slice(0, nextMessageCount),
             events: [],
+            turnDiffSummaries: t.turnDiffSummaries.filter(
+              (summary) =>
+                typeof summary.checkpointTurnCount === "number" &&
+                summary.checkpointTurnCount <= nextTurnCount,
+            ),
             error: null,
             latestTurnId: undefined,
             latestTurnStartedAt: undefined,
             latestTurnCompletedAt: undefined,
             latestTurnDurationMs: undefined,
             lastVisitedAt: now,
+          };
+        }),
+      };
+
+    case "SET_THREAD_TURN_CHECKPOINT_COUNTS":
+      return {
+        ...state,
+        threads: updateThread(state.threads, action.threadId, (t) => {
+          const hasUpdates = t.turnDiffSummaries.some(
+            (summary) =>
+              action.checkpointTurnCountByTurnId[summary.turnId] !== undefined &&
+              action.checkpointTurnCountByTurnId[summary.turnId] !== summary.checkpointTurnCount,
+          );
+          if (!hasUpdates) {
+            return t;
+          }
+          return {
+            ...t,
+            turnDiffSummaries: t.turnDiffSummaries.map((summary) => {
+              const turnCount = action.checkpointTurnCountByTurnId[summary.turnId];
+              if (turnCount === undefined) {
+                return summary;
+              }
+              return {
+                ...summary,
+                checkpointTurnCount: turnCount,
+              };
+            }),
+          };
+        }),
+      };
+
+    case "SET_THREAD_TURN_CHECKPOINT_DIFFS":
+      return {
+        ...state,
+        threads: updateThread(state.threads, action.threadId, (t) => {
+          let hasUpdates = false;
+          const updatedSummaries = t.turnDiffSummaries.map((summary) => {
+            const checkpointDiff = action.checkpointDiffByTurnId[summary.turnId];
+            if (checkpointDiff === undefined) {
+              return summary;
+            }
+
+            const files = deriveTurnDiffFilesFromUnifiedDiff(checkpointDiff);
+            const filesUnchanged =
+              files.length === summary.files.length &&
+              files.every((file, index) => {
+                const existing = summary.files[index];
+                return (
+                  existing !== undefined &&
+                  existing.path === file.path &&
+                  existing.diff === file.diff &&
+                  existing.kind === file.kind &&
+                  existing.additions === file.additions &&
+                  existing.deletions === file.deletions
+                );
+              });
+            if (summary.unifiedDiff === checkpointDiff && filesUnchanged && summary.checkpointDiffLoaded) {
+              return summary;
+            }
+
+            hasUpdates = true;
+            return {
+              ...summary,
+              unifiedDiff: checkpointDiff,
+              files,
+              checkpointDiffLoaded: true,
+            };
+          });
+
+          if (!hasUpdates) {
+            return t;
+          }
+
+          return {
+            ...t,
+            turnDiffSummaries: updatedSummaries,
           };
         }),
       };

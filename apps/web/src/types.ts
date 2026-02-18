@@ -37,6 +37,25 @@ export interface ChatMessage {
   streaming: boolean;
 }
 
+export interface TurnDiffFileChange {
+  path: string;
+  kind?: string | undefined;
+  diff?: string | undefined;
+  additions?: number | undefined;
+  deletions?: number | undefined;
+}
+
+export interface TurnDiffSummary {
+  turnId: string;
+  completedAt: string;
+  status?: string | undefined;
+  files: TurnDiffFileChange[];
+  unifiedDiff?: string | undefined;
+  assistantMessageId?: string | undefined;
+  checkpointTurnCount?: number | undefined;
+  checkpointDiffLoaded?: boolean | undefined;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -71,4 +90,5 @@ export interface Thread {
   lastVisitedAt?: string | undefined;
   branch: string | null;
   worktreePath: string | null;
+  turnDiffSummaries: TurnDiffSummary[];
 }

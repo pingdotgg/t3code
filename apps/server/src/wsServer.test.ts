@@ -668,6 +668,14 @@ describe("WebSocket Server", () => {
     });
     expect(revertResponse.result).toBeUndefined();
     expect(revertResponse.error?.message).toContain("Unknown provider session");
+
+    const diffResponse = await sendRequest(ws, WS_METHODS.providersGetCheckpointDiff, {
+      sessionId: "missing-session",
+      fromTurnCount: 0,
+      toTurnCount: 1,
+    });
+    expect(diffResponse.result).toBeUndefined();
+    expect(diffResponse.error?.message).toContain("Unknown provider session");
   });
 
   it("routes terminal RPC methods and broadcasts terminal events", async () => {

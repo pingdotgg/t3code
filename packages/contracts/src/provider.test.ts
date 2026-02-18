@@ -4,6 +4,8 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   providerCheckpointSchema,
   providerEventSchema,
+  providerGetCheckpointDiffInputSchema,
+  providerGetCheckpointDiffResultSchema,
   providerListCheckpointsInputSchema,
   providerListCheckpointsResultSchema,
   providerRevertToCheckpointInputSchema,
@@ -226,6 +228,33 @@ describe("provider checkpoint schemas", () => {
       providerRevertToCheckpointInputSchema.parse({
         sessionId: "sess_1",
         turnCount: -1,
+      }),
+    ).toThrow();
+  });
+
+  it("accepts checkpoint diff input/result", () => {
+    const input = providerGetCheckpointDiffInputSchema.parse({
+      sessionId: "sess_1",
+      fromTurnCount: 1,
+      toTurnCount: 2,
+    });
+    expect(input.fromTurnCount).toBe(1);
+
+    const result = providerGetCheckpointDiffResultSchema.parse({
+      threadId: "thr_1",
+      fromTurnCount: 1,
+      toTurnCount: 2,
+      diff: "diff --git a/src/app.ts b/src/app.ts",
+    });
+    expect(result.toTurnCount).toBe(2);
+  });
+
+  it("rejects checkpoint diff ranges where start is after end", () => {
+    expect(() =>
+      providerGetCheckpointDiffInputSchema.parse({
+        sessionId: "sess_1",
+        fromTurnCount: 3,
+        toTurnCount: 2,
       }),
     ).toThrow();
   });

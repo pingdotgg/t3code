@@ -1,5 +1,5 @@
 import type { NativeApi, ProviderEvent, ProviderKind, ProviderSession } from "@t3tools/contracts";
-import type { ChatMessage, SessionPhase } from "./types";
+import type { ChatMessage, SessionPhase, TurnDiffFileChange, TurnDiffSummary } from "./types";
 import { createWsNativeApi } from "./wsNativeApi";
 
 export const PROVIDER_OPTIONS: Array<{
@@ -99,29 +99,12 @@ export type TimelineEntry =
       entry: WorkLogEntry;
     };
 
-export interface TurnDiffFileChange {
-  path: string;
-  kind?: string;
-  diff?: string;
-}
-
-export interface TurnDiffSummary {
-  turnId: string;
-  completedAt: string;
-  status?: string;
-  files: TurnDiffFileChange[];
-  unifiedDiff?: string;
-  assistantMessageId?: string;
-}
+export type { TurnDiffFileChange, TurnDiffSummary } from "./types";
 
 function normalizeDetail(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function asArray(value: unknown): unknown[] | undefined {
-  return Array.isArray(value) ? value : undefined;
 }
 
 function approvalDetail(event: ProviderEvent): string | undefined {
@@ -457,19 +440,11 @@ export function deriveWorkLogEntries(
   return entries;
 }
 
-interface MutableTurnDiffFileChange {
-  path: string;
-  kind: string | undefined;
-  diff: string | undefined;
-}
-
 interface MutableTurnDiffSummary {
   turnId: string;
   completedAt: string | undefined;
   status: string | undefined;
-  unifiedDiff: string | undefined;
   assistantMessageId: string | undefined;
-  filesByPath: Map<string, MutableTurnDiffFileChange>;
 }
 
 function parsePathFromDiff(diff: string): string | undefined {
@@ -485,7 +460,7 @@ function parsePathFromDiff(diff: string): string | undefined {
   return direct[1];
 }
 
-function splitUnifiedDiffByFile(diff: string): Map<string, string> {
+export function splitUnifiedDiffByFile(diff: string): Map<string, string> {
   const normalized = diff.replace(/\r\n/g, "\n");
   const byPath = new Map<string, string>();
   const headerMatches = [...normalized.matchAll(/^diff --git a\/(.+) b\/(.+)$/gm)];
@@ -512,38 +487,71 @@ function splitUnifiedDiffByFile(diff: string): Map<string, string> {
   return byPath;
 }
 
-function parseFileChangeEntriesFromEvent(event: ProviderEvent): TurnDiffFileChange[] {
-  if (event.method !== "item/started" && event.method !== "item/completed") {
-    return [];
+export function deriveTurnDiffFilesFromUnifiedDiff(diff: string): TurnDiffFileChange[] {
+  const fileDiffsByPath = splitUnifiedDiffByFile(diff);
+  return Array.from(fileDiffsByPath.entries())
+    .map(([path, fileDiff]) => {
+      const stat = countDiffStat(fileDiff);
+      return {
+        path,
+        diff: fileDiff,
+        additions: stat.additions,
+        deletions: stat.deletions,
+      };
+    })
+    .toSorted((a, b) => a.path.localeCompare(b.path));
+}
+
+export function inferCheckpointTurnCountByTurnId(
+  summaries: TurnDiffSummary[],
+): Record<string, number> {
+  if (summaries.length === 0) {
+    return {};
   }
 
-  const payload = asObject(event.payload);
-  const item = asObject(payload?.item);
-  if (asString(item?.type) !== "fileChange") {
-    return [];
+  const sorted = [...summaries].toSorted((a, b) => {
+    const aTime = Date.parse(a.completedAt);
+    const bTime = Date.parse(b.completedAt);
+    if (Number.isNaN(aTime) || Number.isNaN(bTime)) {
+      return a.completedAt.localeCompare(b.completedAt);
+    }
+    return aTime - bTime;
+  });
+
+  const next: Record<string, number> = {};
+  let fallbackTurnCount = 1;
+  for (const summary of sorted) {
+    if (typeof summary.checkpointTurnCount === "number") {
+      next[summary.turnId] = summary.checkpointTurnCount;
+      fallbackTurnCount = Math.max(fallbackTurnCount, summary.checkpointTurnCount + 1);
+      continue;
+    }
+    next[summary.turnId] = fallbackTurnCount;
+    fallbackTurnCount += 1;
   }
 
-  const changes = asArray(item?.changes);
-  if (!changes || changes.length === 0) {
-    return [];
+  return next;
+}
+
+export function countDiffStat(patch: string | undefined): { additions: number; deletions: number } {
+  if (!patch) {
+    return { additions: 0, deletions: 0 };
   }
 
-  const files: TurnDiffFileChange[] = [];
-  for (const rawChange of changes) {
-    const change = asObject(rawChange);
-    if (!change) continue;
-    const diff = normalizeDetail(asString(change.diff));
-    const path = normalizeDetail(asString(change.path)) ?? (diff ? parsePathFromDiff(diff) : undefined);
-    if (!path) continue;
-    const kind = normalizeDetail(asString(change.kind));
-    files.push({
-      path,
-      ...(kind ? { kind } : {}),
-      ...(diff ? { diff } : {}),
-    });
+  let additions = 0;
+  let deletions = 0;
+  for (const line of patch.replace(/\r\n/g, "\n").split("\n")) {
+    if (line.startsWith("+++ ") || line.startsWith("--- ")) continue;
+    if (line.startsWith("+")) {
+      additions += 1;
+      continue;
+    }
+    if (line.startsWith("-")) {
+      deletions += 1;
+    }
   }
 
-  return files;
+  return { additions, deletions };
 }
 
 export function deriveTurnDiffSummaries(events: ProviderEvent[]): TurnDiffSummary[] {
@@ -557,9 +565,7 @@ export function deriveTurnDiffSummaries(events: ProviderEvent[]): TurnDiffSummar
       turnId,
       completedAt: undefined,
       status: undefined,
-      unifiedDiff: undefined,
       assistantMessageId: undefined,
-      filesByPath: new Map(),
     };
     byTurnId.set(turnId, next);
     return next;
@@ -577,12 +583,6 @@ export function deriveTurnDiffSummaries(events: ProviderEvent[]): TurnDiffSummar
       continue;
     }
 
-    if (event.method === "turn/diff/updated") {
-      const diff = normalizeDetail(asString(asObject(event.payload)?.diff));
-      if (diff) summary.unifiedDiff = diff;
-      continue;
-    }
-
     if (event.method === "item/completed") {
       const item = asObject(asObject(event.payload)?.item);
       if (asString(item?.type) === "agentMessage") {
@@ -592,66 +592,17 @@ export function deriveTurnDiffSummaries(events: ProviderEvent[]): TurnDiffSummar
         }
       }
     }
-
-    for (const change of parseFileChangeEntriesFromEvent(event)) {
-      const existing = summary.filesByPath.get(change.path);
-      if (!existing) {
-        summary.filesByPath.set(change.path, {
-          path: change.path,
-          kind: change.kind,
-          diff: change.diff,
-        });
-        continue;
-      }
-      summary.filesByPath.set(change.path, {
-        path: change.path,
-        kind: change.kind ?? existing.kind,
-        diff: change.diff ?? existing.diff,
-      });
-    }
   }
 
   const summaries: TurnDiffSummary[] = [];
   for (const summary of byTurnId.values()) {
     if (!summary.completedAt) continue;
 
-    const filesByPath = new Map(summary.filesByPath);
-    if (summary.unifiedDiff) {
-      const fileDiffs = splitUnifiedDiffByFile(summary.unifiedDiff);
-      for (const [path, diff] of fileDiffs) {
-        const existing = filesByPath.get(path);
-        if (!existing) {
-          filesByPath.set(path, { path, kind: undefined, diff });
-          continue;
-        }
-        if (!existing.diff) {
-          filesByPath.set(path, { ...existing, diff });
-        }
-      }
-    }
-
-    const files: TurnDiffFileChange[] = [];
-    for (const file of Array.from(filesByPath.values()).toSorted((a, b) =>
-      a.path.localeCompare(b.path),
-    )) {
-      const nextFile: TurnDiffFileChange = { path: file.path };
-      if (file.kind) {
-        nextFile.kind = file.kind;
-      }
-      if (file.diff) {
-        nextFile.diff = file.diff;
-      }
-      files.push(nextFile);
-    }
-
-    if (files.length === 0) continue;
-
     summaries.push({
       turnId: summary.turnId,
       completedAt: summary.completedAt,
       ...(summary.status ? { status: summary.status } : {}),
-      files,
-      ...(summary.unifiedDiff ? { unifiedDiff: summary.unifiedDiff } : {}),
+      files: [],
       ...(summary.assistantMessageId ? { assistantMessageId: summary.assistantMessageId } : {}),
     });
   }

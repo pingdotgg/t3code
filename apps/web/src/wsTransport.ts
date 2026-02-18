@@ -37,6 +37,9 @@ export class WsTransport {
   }
 
   async request<T = unknown>(method: string, params?: unknown): Promise<T> {
+    if (typeof method !== "string" || method.length === 0) {
+      throw new Error("Request method is required");
+    }
     const id = String(this.nextId++);
     const message: WsRequest = { id, method, ...(params !== undefined ? { params } : {}) };
 

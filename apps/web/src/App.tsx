@@ -9,10 +9,13 @@ import { StoreProvider, useStore } from "./store";
 import { DEFAULT_THREAD_TERMINAL_HEIGHT, DEFAULT_THREAD_TERMINAL_ID } from "./types";
 import { onServerWelcome } from "./wsNativeApi";
 import { useNativeApi } from "./hooks/useNativeApi";
+import { useMediaQuery } from "./hooks/useMediaQuery";
 import { AnchoredToastProvider, ToastProvider } from "./components/ui/toast";
+import { Sheet, SheetPopup } from "./components/ui/sheet";
 import { invalidateGitQueries } from "./lib/gitReactQuery";
 
 const DiffPanel = lazy(() => import("./components/DiffPanel"));
+const DIFF_INLINE_LAYOUT_MEDIA_QUERY = "(max-width: 1180px)";
 
 function EventRouter() {
   const api = useNativeApi();
@@ -112,6 +115,7 @@ function AutoProjectBootstrap() {
           session: null,
           messages: [],
           events: [],
+          turnDiffSummaries: [],
           error: null,
           createdAt: new Date().toISOString(),
           branch: null,
@@ -177,7 +181,8 @@ function DesktopProjectBootstrap() {
 
 function Layout() {
   const api = useNativeApi();
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
+  const shouldUseDiffSheet = useMediaQuery(DIFF_INLINE_LAYOUT_MEDIA_QUERY);
 
   if (!api) {
     return (
@@ -196,7 +201,7 @@ function Layout() {
       <DesktopProjectBootstrap />
       <Sidebar />
       <ChatView />
-      {state.diffOpen && (
+      {state.diffOpen && !shouldUseDiffSheet && (
         <Suspense
           fallback={
             <aside className="flex h-full w-[560px] shrink-0 items-center justify-center border-l border-border bg-card px-4 text-center text-xs text-muted-foreground/70">
@@ -204,8 +209,34 @@ function Layout() {
             </aside>
           }
         >
-          <DiffPanel />
+          <DiffPanel mode="inline" />
         </Suspense>
+      )}
+      {state.diffOpen && shouldUseDiffSheet && (
+        <Sheet
+          open={state.diffOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              dispatch({ type: "CLOSE_DIFF" });
+            }
+          }}
+        >
+          <SheetPopup
+            side="right"
+            showCloseButton={false}
+            className="w-[min(88vw,820px)] max-w-[820px] p-0"
+          >
+            <Suspense
+              fallback={
+                <div className="flex h-full min-h-0 items-center justify-center px-4 text-center text-xs text-muted-foreground/70">
+                  Loading diff viewer...
+                </div>
+              }
+            >
+              <DiffPanel mode="sheet" />
+            </Suspense>
+          </SheetPopup>
+        </Sheet>
       )}
     </div>
   );

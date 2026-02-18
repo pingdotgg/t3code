@@ -142,6 +142,29 @@ export const providerRevertToCheckpointResultSchema = z.object({
   checkpoints: z.array(providerCheckpointSchema),
 });
 
+export const providerGetCheckpointDiffInputSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    fromTurnCount: z.number().int().min(0),
+    toTurnCount: z.number().int().min(0),
+  })
+  .superRefine((value, ctx) => {
+    if (value.fromTurnCount > value.toTurnCount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "fromTurnCount must be less than or equal to toTurnCount",
+        path: ["fromTurnCount"],
+      });
+    }
+  });
+
+export const providerGetCheckpointDiffResultSchema = z.object({
+  threadId: z.string().min(1),
+  fromTurnCount: z.number().int().min(0),
+  toTurnCount: z.number().int().min(0),
+  diff: z.string(),
+});
+
 export const providerRespondToRequestInputSchema = z.object({
   sessionId: z.string().min(1),
   requestId: z.string().min(1),
@@ -189,6 +212,8 @@ export type ProviderRevertToCheckpointInput = z.input<typeof providerRevertToChe
 export type ProviderRevertToCheckpointResult = z.infer<
   typeof providerRevertToCheckpointResultSchema
 >;
+export type ProviderGetCheckpointDiffInput = z.input<typeof providerGetCheckpointDiffInputSchema>;
+export type ProviderGetCheckpointDiffResult = z.infer<typeof providerGetCheckpointDiffResultSchema>;
 export type ProviderRespondToRequestInput = z.input<typeof providerRespondToRequestInputSchema>;
 export type ProviderEventKind = z.infer<typeof providerEventKindSchema>;
 export type ProviderEvent = z.infer<typeof providerEventSchema>;
