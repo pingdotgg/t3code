@@ -35,7 +35,7 @@ export function projectSearchEntriesQueryOptions(input: {
         limit,
       });
     },
-    enabled: input.enabled ?? Boolean(input.api && input.cwd),
+    enabled: (input.enabled ?? true) && Boolean(input.api && input.cwd),
     staleTime: input.staleTime ?? DEFAULT_SEARCH_ENTRIES_STALE_TIME,
     placeholderData: (previous) => previous ?? EMPTY_SEARCH_ENTRIES_RESULT,
   });
