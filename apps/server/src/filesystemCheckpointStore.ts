@@ -32,10 +32,14 @@ interface GitOptions {
 
 export class FilesystemCheckpointStore {
   async isGitRepository(cwd: string): Promise<boolean> {
-    const result = await this.runGit(cwd, ["rev-parse", "--is-inside-work-tree"], {
-      allowNonZeroExit: true,
-    });
-    return result.code === 0 && result.stdout.trim() === "true";
+    try {
+      const result = await this.runGit(cwd, ["rev-parse", "--is-inside-work-tree"], {
+        allowNonZeroExit: true,
+      });
+      return result.code === 0 && result.stdout.trim() === "true";
+    } catch {
+      return false;
+    }
   }
 
   async captureCheckpoint(input: {

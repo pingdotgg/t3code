@@ -143,6 +143,40 @@ describe("isRecoverableThreadResumeError", () => {
   });
 });
 
+describe("startSession", () => {
+  it("emits session/startFailed when resolving cwd throws before process launch", async () => {
+    const manager = new CodexAppServerManager();
+    const events: Array<{ method: string; kind: string; message?: string }> = [];
+    manager.on("event", (event) => {
+      events.push({
+        method: event.method,
+        kind: event.kind,
+        ...(event.message ? { message: event.message } : {}),
+      });
+    });
+
+    const processCwd = vi.spyOn(process, "cwd").mockImplementation(() => {
+      throw new Error("cwd missing");
+    });
+    try {
+      await expect(
+        manager.startSession({
+          provider: "codex",
+        }),
+      ).rejects.toThrow("cwd missing");
+      expect(events).toHaveLength(1);
+      expect(events[0]).toEqual({
+        method: "session/startFailed",
+        kind: "error",
+        message: "cwd missing",
+      });
+    } finally {
+      processCwd.mockRestore();
+      manager.stopAll();
+    }
+  });
+});
+
 describe("sendTurn", () => {
   it("sends text and image user input items to turn/start", async () => {
     const { manager, context, requireSession, sendRequest, updateSession } =

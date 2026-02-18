@@ -204,4 +204,11 @@ describe("FilesystemCheckpointStore", () => {
       await rm(cwd, { recursive: true, force: true });
     }
   });
+
+  it("returns false when repository path does not exist", async () => {
+    const store = new FilesystemCheckpointStore();
+    const cwd = path.join(os.tmpdir(), `t3-fs-checkpoints-missing-${Date.now()}`);
+
+    expect(await store.isGitRepository(cwd)).toBe(false);
+  });
 });

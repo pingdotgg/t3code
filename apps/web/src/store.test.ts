@@ -618,10 +618,10 @@ describe("store reducer thread continuity", () => {
       ],
       activeThreadId: "thread-b",
       runtimeMode: "full-access",
-      diffOpen: false,
-      diffThreadId: null,
-      diffTurnId: null,
-      diffFilePath: null,
+      diffOpen: true,
+      diffThreadId: "thread-b",
+      diffTurnId: "turn-b",
+      diffFilePath: "src/removed.ts",
     };
 
     const next = reducer(state, {
@@ -646,6 +646,10 @@ describe("store reducer thread continuity", () => {
     expect(next.threads[0]?.id).toBe("thread-a");
     expect(next.threads[0]?.projectId).toBe("project-new-a");
     expect(next.activeThreadId).toBe("thread-a");
+    expect(next.diffOpen).toBe(false);
+    expect(next.diffThreadId).toBeNull();
+    expect(next.diffTurnId).toBeNull();
+    expect(next.diffFilePath).toBeNull();
   });
 
   it("treats empty scripts from sync as authoritative", () => {
@@ -753,10 +757,10 @@ describe("store reducer thread continuity", () => {
       ],
       activeThreadId: "thread-a",
       runtimeMode: "full-access",
-      diffOpen: false,
-      diffThreadId: null,
-      diffTurnId: null,
-      diffFilePath: null,
+      diffOpen: true,
+      diffThreadId: "thread-a",
+      diffTurnId: "turn-a",
+      diffFilePath: "src/a.ts",
     };
 
     const next = reducer(state, {
@@ -769,6 +773,10 @@ describe("store reducer thread continuity", () => {
     expect(next.threads).toHaveLength(1);
     expect(next.threads[0]?.id).toBe("thread-b");
     expect(next.activeThreadId).toBe("thread-b");
+    expect(next.diffOpen).toBe(false);
+    expect(next.diffThreadId).toBeNull();
+    expect(next.diffTurnId).toBeNull();
+    expect(next.diffFilePath).toBeNull();
   });
 
   it("marks the active thread as visited when selected", () => {

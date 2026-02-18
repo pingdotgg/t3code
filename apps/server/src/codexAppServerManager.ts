@@ -148,41 +148,43 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   async startSession(input: ProviderSessionStartInput): Promise<ProviderSession> {
     const sessionId = randomUUID();
     const now = new Date().toISOString();
-    const resolvedCwd = input.cwd ?? process.cwd();
-
-    const session: ProviderSession = {
-      sessionId,
-      provider: "codex",
-      status: "connecting",
-      model: normalizeCodexModelSlug(input.model),
-      cwd: resolvedCwd,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const child = spawn("codex", ["app-server"], {
-      cwd: resolvedCwd,
-      env: process.env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const output = readline.createInterface({ input: child.stdout });
-
-    const context: CodexSessionContext = {
-      session,
-      child,
-      output,
-      pending: new Map(),
-      pendingApprovals: new Map(),
-      nextRequestId: 1,
-      stopping: false,
-    };
-
-    this.sessions.set(sessionId, context);
-    this.attachProcessListeners(context);
-
-    this.emitLifecycleEvent(context, "session/connecting", "Starting codex app-server");
+    let context: CodexSessionContext | undefined;
 
     try {
+      const resolvedCwd = input.cwd ?? process.cwd();
+
+      const session: ProviderSession = {
+        sessionId,
+        provider: "codex",
+        status: "connecting",
+        model: normalizeCodexModelSlug(input.model),
+        cwd: resolvedCwd,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const child = spawn("codex", ["app-server"], {
+        cwd: resolvedCwd,
+        env: process.env,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      const output = readline.createInterface({ input: child.stdout });
+
+      context = {
+        session,
+        child,
+        output,
+        pending: new Map(),
+        pendingApprovals: new Map(),
+        nextRequestId: 1,
+        stopping: false,
+      };
+
+      this.sessions.set(sessionId, context);
+      this.attachProcessListeners(context);
+
+      this.emitLifecycleEvent(context, "session/connecting", "Starting codex app-server");
+
       await this.sendRequest(context, "initialize", {
         clientInfo: {
           name: "t3code_desktop",
@@ -252,12 +254,24 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       return { ...context.session };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start Codex session.";
-      this.updateSession(context, {
-        status: "error",
-        lastError: message,
-      });
-      this.emitErrorEvent(context, "session/startFailed", message);
-      this.stopSession(sessionId);
+      if (context) {
+        this.updateSession(context, {
+          status: "error",
+          lastError: message,
+        });
+        this.emitErrorEvent(context, "session/startFailed", message);
+        this.stopSession(sessionId);
+      } else {
+        this.emitEvent({
+          id: randomUUID(),
+          kind: "error",
+          provider: "codex",
+          sessionId,
+          createdAt: new Date().toISOString(),
+          method: "session/startFailed",
+          message,
+        });
+      }
       throw new Error(message, { cause: error });
     }
   }

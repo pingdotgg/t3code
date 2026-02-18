@@ -198,6 +198,32 @@ function updateThread(
   return threads.map((t) => (t.id === threadId ? updater(t) : t));
 }
 
+function resetDiffTargetIfMissing(state: AppState, threads: Thread[]) {
+  if (!state.diffThreadId) {
+    return {
+      diffOpen: state.diffOpen,
+      diffThreadId: state.diffThreadId,
+      diffTurnId: state.diffTurnId,
+      diffFilePath: state.diffFilePath,
+    };
+  }
+  const hasThread = threads.some((thread) => thread.id === state.diffThreadId);
+  if (hasThread) {
+    return {
+      diffOpen: state.diffOpen,
+      diffThreadId: state.diffThreadId,
+      diffTurnId: state.diffTurnId,
+      diffFilePath: state.diffFilePath,
+    };
+  }
+  return {
+    diffOpen: false,
+    diffThreadId: null,
+    diffTurnId: null,
+    diffFilePath: null,
+  };
+}
+
 function mergeTurnDiffSummaries(
   existing: Thread["turnDiffSummaries"],
   next: Thread["turnDiffSummaries"],
@@ -602,12 +628,14 @@ export function reducer(state: AppState, action: Action): AppState {
       const activeThreadId = nextThreads.some((thread) => thread.id === state.activeThreadId)
         ? state.activeThreadId
         : (nextThreads[0]?.id ?? null);
+      const diffState = resetDiffTargetIfMissing(state, nextThreads);
 
       return {
         ...state,
         projects: nextProjects,
         threads: nextThreads,
         activeThreadId,
+        ...diffState,
       };
     }
 
@@ -629,12 +657,14 @@ export function reducer(state: AppState, action: Action): AppState {
       const activeThreadId = threads.some((thread) => thread.id === state.activeThreadId)
         ? state.activeThreadId
         : (threads[0]?.id ?? null);
+      const diffState = resetDiffTargetIfMissing(state, threads);
 
       return {
         ...state,
         projects,
         threads,
         activeThreadId,
+        ...diffState,
       };
     }
 
