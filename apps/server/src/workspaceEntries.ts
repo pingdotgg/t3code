@@ -15,7 +15,17 @@ const WORKSPACE_CACHE_MAX_KEYS = 4;
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_SCAN_READDIR_CONCURRENCY = 32;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
-const IGNORED_DIRECTORY_NAMES = new Set([".git", "node_modules"]);
+const IGNORED_DIRECTORY_NAMES = new Set([
+  ".git",
+  ".convex",
+  "node_modules",
+  ".next",
+  ".turbo",
+  "dist",
+  "build",
+  "out",
+  ".cache",
+]);
 
 interface WorkspaceIndex {
   scannedAt: number;
