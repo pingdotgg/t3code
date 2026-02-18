@@ -171,6 +171,31 @@ describe("server keybindings", () => {
     expect(fs.readFileSync(configPath, "utf8")).toBe("{ not-json");
   });
 
+  it("reports non-array config parse errors without duplicate prefix", () => {
+    const fakeHome = makeTempDir("t3code-keybindings-non-array-");
+    const configDir = path.join(fakeHome, ".t3");
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, "keybindings.json");
+    fs.writeFileSync(configPath, JSON.stringify({ key: "mod+j", command: "terminal.toggle" }), "utf8");
+    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+
+    expect(() =>
+      upsertKeybindingRule(logger, {
+        key: "mod+shift+r",
+        command: "script.run-tests.run",
+      }),
+    ).toThrow(new RegExp(`Unable to parse keybindings config at ${configPath}: expected JSON array`));
+
+    expect(() =>
+      upsertKeybindingRule(logger, {
+        key: "mod+shift+r",
+        command: "script.run-tests.run",
+      }),
+    ).not.toThrow(
+      new RegExp(`Unable to parse keybindings config at ${configPath}: Unable to parse keybindings config at`),
+    );
+  });
+
   it("cleans up temp files when atomic keybinding write fails", () => {
     const fakeHome = makeTempDir("t3code-keybindings-atomic-");
     const configDir = path.join(fakeHome, ".t3");

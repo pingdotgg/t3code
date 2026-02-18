@@ -292,6 +292,12 @@ const DEFAULT_RESOLVED_KEYBINDINGS = compileDefaultKeybindings();
 const KEYBINDINGS_CONFIG_PATH = path.join(".t3", "keybindings.json");
 const MAX_KEYBINDINGS = 256;
 
+class KeybindingsConfigParseError extends Error {
+  constructor(configPath: string, detail: string, options?: { cause?: unknown }) {
+    super(`Unable to parse keybindings config at ${configPath}: ${detail}`, options);
+  }
+}
+
 function resolveKeybindingsConfigPath(): string {
   return path.join(os.homedir(), KEYBINDINGS_CONFIG_PATH);
 }
@@ -308,7 +314,7 @@ function loadCustomKeybindingsConfig(
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) {
       if (options?.throwOnUnreadableConfig) {
-        throw new Error(`Unable to parse keybindings config at ${configPath}: expected JSON array`);
+        throw new KeybindingsConfigParseError(configPath, "expected JSON array");
       }
       logger.warn("ignoring keybindings config with unsupported format; expected array", {
         path: configPath,
@@ -343,10 +349,12 @@ function loadCustomKeybindingsConfig(
       return [];
     }
     if (options?.throwOnUnreadableConfig) {
-      throw new Error(
-        `Unable to parse keybindings config at ${configPath}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+      if (error instanceof KeybindingsConfigParseError) {
+        throw error;
+      }
+      throw new KeybindingsConfigParseError(
+        configPath,
+        error instanceof Error ? error.message : String(error),
         { cause: error },
       );
     }
