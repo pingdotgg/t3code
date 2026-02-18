@@ -14,17 +14,8 @@ const WORKSPACE_CACHE_TTL_MS = 15_000;
 const WORKSPACE_CACHE_MAX_KEYS = 4;
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_SCAN_READDIR_CONCURRENCY = 32;
-const IGNORED_DIRECTORY_NAMES = new Set([
-  ".git",
-  ".convex",
-  "node_modules",
-  ".next",
-  ".turbo",
-  "dist",
-  "build",
-  "out",
-  ".cache",
-]);
+const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
+const IGNORED_DIRECTORY_NAMES = new Set([".git", "node_modules"]);
 
 interface WorkspaceIndex {
   scannedAt: number;
@@ -56,7 +47,10 @@ function basenameOf(input: string): string {
 }
 
 function normalizeQuery(input: string): string {
-  return input.trim().replace(/^[@./]+/, "").toLowerCase();
+  return input
+    .trim()
+    .replace(/^[@./]+/, "")
+    .toLowerCase();
 }
 
 function scoreEntry(entry: ProjectEntry, query: string): number {
@@ -145,26 +139,67 @@ async function filterGitIgnoredPaths(cwd: string, relativePaths: string[]): Prom
     return relativePaths;
   }
 
-  const checkIgnore = await runProcess("git", ["check-ignore", "--no-index", "-z", "--stdin"], {
-    cwd,
-    allowNonZeroExit: true,
-    timeoutMs: 20_000,
-    maxBufferBytes: 16 * 1024 * 1024,
-    outputMode: "truncate",
-    stdin: `${relativePaths.join("\0")}\0`,
-  }).catch(() => null);
-  if (!checkIgnore) {
+  const ignoredPaths = new Set<string>();
+  let chunk: string[] = [];
+  let chunkBytes = 0;
+
+  const flushChunk = async (): Promise<boolean> => {
+    if (chunk.length === 0) {
+      return true;
+    }
+
+    const checkIgnore = await runProcess("git", ["check-ignore", "--no-index", "-z", "--stdin"], {
+      cwd,
+      allowNonZeroExit: true,
+      timeoutMs: 20_000,
+      maxBufferBytes: 16 * 1024 * 1024,
+      outputMode: "truncate",
+      stdin: `${chunk.join("\0")}\0`,
+    }).catch(() => null);
+    chunk = [];
+    chunkBytes = 0;
+
+    if (!checkIgnore) {
+      return false;
+    }
+
+    // git-check-ignore exits with 1 when no paths match.
+    if (checkIgnore.code !== 0 && checkIgnore.code !== 1) {
+      return false;
+    }
+
+    const matchedIgnoredPaths = splitNullSeparatedPaths(
+      checkIgnore.stdout,
+      Boolean(checkIgnore.stdoutTruncated),
+    );
+    for (const ignoredPath of matchedIgnoredPaths) {
+      ignoredPaths.add(ignoredPath);
+    }
+    return true;
+  };
+
+  for (const relativePath of relativePaths) {
+    const relativePathBytes = Buffer.byteLength(relativePath) + 1;
+    if (
+      chunk.length > 0 &&
+      chunkBytes + relativePathBytes > GIT_CHECK_IGNORE_MAX_STDIN_BYTES &&
+      !(await flushChunk())
+    ) {
+      return relativePaths;
+    }
+
+    chunk.push(relativePath);
+    chunkBytes += relativePathBytes;
+
+    if (chunkBytes >= GIT_CHECK_IGNORE_MAX_STDIN_BYTES && !(await flushChunk())) {
+      return relativePaths;
+    }
+  }
+
+  if (!(await flushChunk())) {
     return relativePaths;
   }
 
-  // git-check-ignore exits with 1 when no paths match.
-  if (checkIgnore.code !== 0 && checkIgnore.code !== 1) {
-    return relativePaths;
-  }
-
-  const ignoredPaths = new Set(
-    splitNullSeparatedPaths(checkIgnore.stdout, Boolean(checkIgnore.stdoutTruncated)),
-  );
   if (ignoredPaths.size === 0) {
     return relativePaths;
   }
@@ -210,14 +245,14 @@ async function buildWorkspaceIndexFromGit(cwd: string): Promise<WorkspaceIndex |
   }
 
   const directoryEntries: ProjectEntry[] = [...directorySet]
-    .sort((left, right) => left.localeCompare(right))
+    .toSorted((left, right) => left.localeCompare(right))
     .map((directoryPath) => ({
       path: directoryPath,
       kind: "directory",
       parentPath: parentPathOf(directoryPath),
     }));
   const fileEntries: ProjectEntry[] = [...new Set(filePaths)]
-    .sort((left, right) => left.localeCompare(right))
+    .toSorted((left, right) => left.localeCompare(right))
     .map((filePath) => ({
       path: filePath,
       kind: "file",
@@ -228,8 +263,7 @@ async function buildWorkspaceIndexFromGit(cwd: string): Promise<WorkspaceIndex |
   return {
     scannedAt: Date.now(),
     entries: entries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES),
-    truncated:
-      Boolean(listedFiles.stdoutTruncated) || entries.length > WORKSPACE_INDEX_MAX_ENTRIES,
+    truncated: Boolean(listedFiles.stdoutTruncated) || entries.length > WORKSPACE_INDEX_MAX_ENTRIES,
   };
 }
 
