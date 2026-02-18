@@ -40,7 +40,7 @@ describe("projectScripts helpers", () => {
       { T3CODE_PROJECT_ROOT: '%USERPROFILE%^"repo"' },
       "Win32",
     );
-    expect(command).toBe('set "T3CODE_PROJECT_ROOT=%%USERPROFILE%%^^""repo""" && bun install');
+    expect(command).toBe('set "T3CODE_PROJECT_ROOT=^%USERPROFILE^%^^""repo""" && bun install');
   });
 
   it("resolves primary and setup scripts", () => {
