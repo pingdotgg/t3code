@@ -93,6 +93,7 @@ import {
   InfoIcon,
   LockIcon,
   LockOpenIcon,
+  Undo2Icon,
   XIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
@@ -2601,7 +2602,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                         disabled={isRevertingCheckpoint || isWorking}
                         onClick={() => onRevertUserMessage(timelineEntry.message.id)}
                       >
-                        {isRevertingCheckpoint ? "Reverting..." : "Revert agent work"}
+                        <Undo2Icon className="size-3" />
                       </Button>
                     )}
                     <p className="text-right text-[10px] text-muted-foreground/30">
