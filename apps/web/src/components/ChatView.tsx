@@ -96,7 +96,7 @@ import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu"
 import { CursorIcon, Icon } from "./Icons";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { Badge } from "./ui/badge";
-import { Command, CommandItem, CommandList } from "./ui/command";
+import { Command, CommandInput, CommandItem, CommandList } from "./ui/command";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
   if (!duration) return formatTimestamp(createdAt);
@@ -220,27 +220,13 @@ const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
 
 const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   item: ComposerCommandItem;
-  index: number;
-  isHighlighted: boolean;
-  keyboardHighlight: boolean;
   resolvedTheme: "light" | "dark";
-  onHighlight: (index: number) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
   return (
     <CommandItem
       value={props.item.id}
-      data-composer-menu-index={props.index}
-      className={cn(
-        "cursor-pointer gap-2",
-        props.keyboardHighlight &&
-          !props.isHighlighted &&
-          "data-highlighted:bg-transparent data-highlighted:text-inherit",
-        props.isHighlighted && "bg-accent text-accent-foreground",
-      )}
-      onMouseEnter={() => {
-        props.onHighlight(props.index);
-      }}
+      className="cursor-pointer gap-2"
       onMouseDown={(event) => {
         event.preventDefault();
       }}
@@ -271,31 +257,30 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
 
 const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   items: ComposerCommandItem[];
-  selectedIndex: number;
-  keyboardHighlight: boolean;
   resolvedTheme: "light" | "dark";
   isLoading: boolean;
   triggerKind: ComposerTriggerKind | null;
-  onHighlight: (index: number) => void;
+  onHighlightedItemChange: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
-  menuRef: RefObject<HTMLDivElement | null>;
+  commandInputRef: RefObject<HTMLInputElement | null>;
 }) {
   return (
-    <Command>
-      <div
-        ref={props.menuRef}
-        className="overflow-hidden rounded-xl border border-border/80 bg-popover/96 shadow-lg/8 backdrop-blur-xs"
-      >
+    <Command
+      mode="none"
+      onItemHighlighted={(highlightedValue) => {
+        props.onHighlightedItemChange(typeof highlightedValue === "string" ? highlightedValue : null);
+      }}
+    >
+      <div className="relative overflow-hidden rounded-xl border border-border/80 bg-popover/96 shadow-lg/8 backdrop-blur-xs">
+        <div className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0">
+          <CommandInput autoFocus={false} ref={props.commandInputRef} />
+        </div>
         <CommandList className="max-h-64">
-          {props.items.map((item, index) => (
+          {props.items.map((item) => (
             <ComposerCommandMenuItem
               key={item.id}
               item={item}
-              index={index}
-              isHighlighted={index === props.selectedIndex}
-              keyboardHighlight={props.keyboardHighlight}
               resolvedTheme={props.resolvedTheme}
-              onHighlight={props.onHighlight}
               onSelect={props.onSelect}
             />
           ))}
@@ -337,14 +322,12 @@ export default function ChatView() {
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerCursor, setComposerCursor] = useState(0);
-  const [composerMenuIndex, setComposerMenuIndex] = useState(0);
-  const [composerKeyboardHighlight, setComposerKeyboardHighlight] = useState(false);
+  const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const composerMenuRef = useRef<HTMLDivElement>(null);
-  const previousComposerMenuIndexRef = useRef(0);
+  const composerCommandInputRef = useRef<HTMLInputElement>(null);
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
@@ -519,9 +502,13 @@ export default function ChatView() {
     }));
   }, [composerTrigger, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
-  const activeComposerMenuItem =
-    composerMenuItems[Math.min(composerMenuIndex, Math.max(0, composerMenuItems.length - 1))] ??
-    null;
+  const activeComposerMenuItem = useMemo(
+    () =>
+      composerMenuItems.find((item) => item.id === composerHighlightedItemId) ??
+      composerMenuItems[0] ??
+      null,
+    [composerHighlightedItemId, composerMenuItems],
+  );
   const keybindings = keybindingsQuery.data ?? EMPTY_KEYBINDINGS;
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = branchesQuery.data?.isRepo ?? true;
@@ -688,36 +675,14 @@ export default function ChatView() {
   }, [activeThread?.id]);
 
   useEffect(() => {
-    setComposerMenuIndex(0);
-  }, [composerTrigger?.kind, composerTrigger?.query, composerMenuItems.length]);
-
-  useEffect(() => {
-    if (!composerMenuOpen) return;
-    setComposerKeyboardHighlight(false);
-    setComposerMenuIndex(0);
-  }, [composerMenuOpen]);
-
-  useEffect(() => {
-    if (!composerMenuOpen || composerMenuItems.length === 0) {
+    if (!composerMenuOpen) {
+      setComposerHighlightedItemId(null);
       return;
     }
-    const clampedIndex = Math.min(composerMenuIndex, composerMenuItems.length - 1);
-    const previousIndex = previousComposerMenuIndexRef.current;
-    const direction = clampedIndex - previousIndex;
-    previousComposerMenuIndexRef.current = clampedIndex;
-
-    const aheadIndex =
-      direction > 0
-        ? Math.min(clampedIndex + 1, composerMenuItems.length - 1)
-        : direction < 0
-          ? Math.max(clampedIndex - 1, 0)
-          : clampedIndex;
-
-    const node = composerMenuRef.current?.querySelector<HTMLElement>(
-      `[data-composer-menu-index="${aheadIndex}"]`,
+    setComposerHighlightedItemId((existing) =>
+      existing && composerMenuItems.some((item) => item.id === existing) ? existing : null,
     );
-    node?.scrollIntoView({ block: "nearest" });
-  }, [composerMenuIndex, composerMenuItems.length, composerMenuOpen]);
+  }, [composerMenuItems, composerMenuOpen]);
 
   useEffect(() => {
     if (!activeThread?.id || activeThread.terminalOpen) return;
@@ -739,7 +704,7 @@ export default function ChatView() {
       return [];
     });
     setComposerCursor(0);
-    setComposerMenuIndex(0);
+    setComposerHighlightedItemId(null);
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     setExpandedImage(null);
@@ -1128,7 +1093,7 @@ export default function ChatView() {
     setPrompt("");
     setComposerImages([]);
     setComposerCursor(0);
-    setComposerMenuIndex(0);
+    setComposerHighlightedItemId(null);
 
     const sessionInfo = await ensureSession(sessionCwd);
     if (!sessionInfo) return;
@@ -1271,9 +1236,15 @@ export default function ChatView() {
     },
     [applyPromptReplacement, composerTrigger, onModelSelect],
   );
-  const onHighlightComposerMenuItem = useCallback((index: number) => {
-    setComposerKeyboardHighlight(false);
-    setComposerMenuIndex(index);
+  const onComposerMenuItemHighlighted = useCallback((itemId: string | null) => {
+    setComposerHighlightedItemId(itemId);
+  }, []);
+  const nudgeComposerMenuHighlight = useCallback((key: "ArrowDown" | "ArrowUp") => {
+    const commandInput = composerCommandInputRef.current;
+    if (!commandInput) return;
+    commandInput.dispatchEvent(
+      new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+    );
   }, []);
   const isComposerMenuLoading =
     composerTriggerKind === "path" &&
@@ -1291,14 +1262,12 @@ export default function ChatView() {
     if (composerMenuOpen && composerMenuItems.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setComposerKeyboardHighlight(true);
-        setComposerMenuIndex((existing) => Math.min(existing + 1, composerMenuItems.length - 1));
+        nudgeComposerMenuHighlight("ArrowDown");
         return;
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        setComposerKeyboardHighlight(true);
-        setComposerMenuIndex((existing) => Math.max(existing - 1, 0));
+        nudgeComposerMenuHighlight("ArrowUp");
         return;
       }
       if (e.key === "Tab" || e.key === "Enter") {
@@ -1411,14 +1380,12 @@ export default function ChatView() {
                 <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
                   <ComposerCommandMenu
                     items={composerMenuItems}
-                    selectedIndex={composerMenuIndex}
-                    keyboardHighlight={composerKeyboardHighlight}
                     resolvedTheme={resolvedTheme}
                     isLoading={isComposerMenuLoading}
                     triggerKind={composerTriggerKind}
-                    onHighlight={onHighlightComposerMenuItem}
+                    onHighlightedItemChange={onComposerMenuItemHighlighted}
                     onSelect={onSelectComposerItem}
-                    menuRef={composerMenuRef}
+                    commandInputRef={composerCommandInputRef}
                   />
                 </div>
               )}
