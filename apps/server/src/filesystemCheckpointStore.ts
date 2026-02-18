@@ -136,7 +136,9 @@ export class FilesystemCheckpointStore {
 
     await this.runGit(cwd, ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."]);
     await this.runGit(cwd, ["clean", "-fd", "--", "."]);
-    await this.runGit(cwd, ["reset", "--quiet", "--", "."]);
+    if (await this.hasHeadCommit(cwd)) {
+      await this.runGit(cwd, ["reset", "--quiet", "--", "."]);
+    }
     return true;
   }
 

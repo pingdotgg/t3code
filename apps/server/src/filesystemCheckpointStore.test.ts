@@ -35,6 +35,12 @@ async function createRepo(): Promise<string> {
   return cwd;
 }
 
+async function createRepoWithoutHead(): Promise<string> {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "t3-fs-checkpoints-empty-test-"));
+  await runGit(cwd, ["init", "--initial-branch=main"]);
+  return cwd;
+}
+
 describe("FilesystemCheckpointStore", () => {
   it("captures refs without mutating branch history and restores workspace state", async () => {
     const cwd = await createRepo();
@@ -210,5 +216,28 @@ describe("FilesystemCheckpointStore", () => {
     const cwd = path.join(os.tmpdir(), `t3-fs-checkpoints-missing-${Date.now()}`);
 
     expect(await store.isGitRepository(cwd)).toBe(false);
+  });
+
+  it("restores checkpoint without reset when repository has no HEAD commit", async () => {
+    const cwd = await createRepoWithoutHead();
+    const store = new FilesystemCheckpointStore();
+    const threadId = "thr-no-head";
+
+    try {
+      await writeFile(path.join(cwd, "README.md"), "first\n");
+      await store.captureCheckpoint({ cwd, threadId, turnCount: 0 });
+
+      await writeFile(path.join(cwd, "README.md"), "second\n");
+      const restored = await store.restoreCheckpoint({
+        cwd,
+        threadId,
+        turnCount: 0,
+      });
+
+      expect(restored).toBe(true);
+      expect(await readFile(path.join(cwd, "README.md"), "utf8")).toBe("first\n");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 });

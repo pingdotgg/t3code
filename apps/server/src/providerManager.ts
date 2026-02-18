@@ -433,9 +433,6 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
       .listSessions()
       .find((candidate) => candidate.sessionId === sessionId);
     const candidateCwds = session?.cwd ? [session.cwd] : [process.cwd()];
-    if (candidateCwds.length === 0) {
-      return null;
-    }
 
     await this.withFilesystemLock(sessionId, async () => {
       const currentCwd = this.sessionCheckpointCwds.get(sessionId);
