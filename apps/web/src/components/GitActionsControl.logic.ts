@@ -67,13 +67,13 @@ export function buildGitActionProgressStages(input: {
   return [...commitStages, pushStage, "Creating PR..."];
 }
 
+const withDescription = (title: string, description: string | undefined) =>
+  description ? { title, description } : { title };
+
 export function summarizeGitResult(result: GitRunStackedActionResult): {
   title: string;
   description?: string;
 } {
-  const withDescription = (title: string, description: string | undefined) =>
-    description ? { title, description } : { title };
-
   if (result.pr.status === "created" || result.pr.status === "opened_existing") {
     const prNumber = result.pr.number ? ` #${result.pr.number}` : "";
     const title = `${result.pr.status === "created" ? "Created PR" : "Opened PR"}${prNumber}`;

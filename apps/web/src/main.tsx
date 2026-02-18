@@ -2,7 +2,6 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
-import { AnchoredToastProvider, ToastProvider } from "./components/ui/toast";
 import { createHashHistory, createRouter, createBrowserHistory } from "@tanstack/react-router";
 import { StoreProvider } from "./store";
 
@@ -23,24 +22,21 @@ const router = createRouter({
   context: {
     queryClient,
   },
+  Wrap: ({ children }) => (
+    <QueryClientProvider client={queryClient}>
+      <StoreProvider>{children}</StoreProvider>
+    </QueryClientProvider>
+  ),
 });
 
-function App() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <StoreProvider>
-        <ToastProvider>
-          <AnchoredToastProvider>
-            <RouterProvider router={router} />
-          </AnchoredToastProvider>
-        </ToastProvider>
-      </StoreProvider>
-    </QueryClientProvider>
-  );
+declare module "@tanstack/react-router" {
+  interface Register {
+    router: typeof router;
+  }
 }
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    <RouterProvider router={router} />
   </React.StrictMode>,
 );

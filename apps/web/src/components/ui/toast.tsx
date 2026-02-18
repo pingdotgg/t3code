@@ -2,6 +2,7 @@
 
 import { Toast } from "@base-ui/react/toast";
 import { useEffect } from "react";
+import { useRouterState } from "@tanstack/react-router";
 import {
   CircleAlertIcon,
   CircleCheckIcon,
@@ -12,7 +13,6 @@ import {
 
 import { cn } from "~/lib/utils";
 import { buttonVariants } from "~/components/ui/button";
-import { useStore } from "~/store";
 import { shouldHideCollapsedToastContent } from "./toast.logic";
 
 type ThreadToastData = {
@@ -53,6 +53,21 @@ function shouldRenderForActiveThread(
   const toastThreadId = data?.threadId;
   if (!toastThreadId) return true;
   return toastThreadId === activeThreadId;
+}
+
+function useActiveThreadIdFromRoute(): string | null {
+  return useRouterState({
+    select: (routerState) => {
+      for (let index = routerState.matches.length - 1; index >= 0; index -= 1) {
+        const params = routerState.matches[index]?.params as Record<string, unknown> | undefined;
+        const threadId = params?.threadId;
+        if (typeof threadId === "string" && threadId.length > 0) {
+          return threadId;
+        }
+      }
+      return null;
+    },
+  });
 }
 
 function ThreadToastVisibleAutoDismiss({
@@ -143,9 +158,8 @@ function ToastProvider({ children, position = "top-right", ...props }: ToastProv
 }
 
 function Toasts({ position = "top-right" }: { position: ToastPosition }) {
-  const { state } = useStore();
   const { toasts } = Toast.useToastManager<ThreadToastData>();
-  const activeThreadId = state.activeThreadId;
+  const activeThreadId = useActiveThreadIdFromRoute();
   const isTop = position.startsWith("top");
   const visibleToasts = toasts.filter((toast) =>
     shouldRenderForActiveThread(toast.data, activeThreadId),
@@ -292,9 +306,8 @@ function AnchoredToastProvider({ children, ...props }: Toast.Provider.Props) {
 }
 
 function AnchoredToasts() {
-  const { state } = useStore();
   const { toasts } = Toast.useToastManager<ThreadToastData>();
-  const activeThreadId = state.activeThreadId;
+  const activeThreadId = useActiveThreadIdFromRoute();
 
   return (
     <Toast.Portal data-slot="toast-portal-anchored">

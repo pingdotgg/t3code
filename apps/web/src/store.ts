@@ -42,7 +42,6 @@ type Action =
   | { type: "TOGGLE_PROJECT"; projectId: string }
   | { type: "DELETE_PROJECT"; projectId: string }
   | { type: "ADD_THREAD"; thread: Thread }
-  | { type: "SET_ACTIVE_THREAD"; threadId: string }
   | { type: "TOGGLE_THREAD_TERMINAL"; threadId: string }
   | { type: "SET_THREAD_TERMINAL_OPEN"; threadId: string; open: boolean }
   | { type: "SET_THREAD_TERMINAL_HEIGHT"; threadId: string; height: number }
@@ -68,6 +67,7 @@ type Action =
       type: "APPLY_EVENT";
       event: ProviderEvent;
       activeAssistantItemRef: { current: string | null };
+      activeThreadId?: string | null;
     }
   | { type: "APPLY_TERMINAL_EVENT"; event: TerminalEvent }
   | { type: "UPDATE_SESSION"; threadId: string; session: ProviderSession }
@@ -113,7 +113,6 @@ type Action =
 export interface AppState {
   projects: Project[];
   threads: Thread[];
-  activeThreadId: string | null;
   threadsHydrated: boolean;
   runtimeMode: RuntimeMode;
   diffOpen: boolean;
@@ -137,7 +136,6 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 const initialState: AppState = {
   projects: [],
   threads: [],
-  activeThreadId: null,
   threadsHydrated: false,
   runtimeMode: DEFAULT_RUNTIME_MODE,
   diffOpen: false,
@@ -162,14 +160,10 @@ function readPersistedState(): AppState {
     if (!hydrated) return initialState;
 
     const threads = hydrated.threads.map((thread) => normalizeThreadTerminals(thread));
-    const activeThreadId = threads.some((thread) => thread.id === hydrated.activeThreadId)
-      ? hydrated.activeThreadId
-      : (threads[0]?.id ?? null);
 
     return {
       ...hydrated,
       threads,
-      activeThreadId,
       threadsHydrated: threads.length > 0,
       diffOpen: false,
       diffThreadId: null,
@@ -638,16 +632,12 @@ export function reducer(state: AppState, action: Action): AppState {
           });
         })
         .filter((thread): thread is Thread => thread !== null);
-      const activeThreadId = nextThreads.some((thread) => thread.id === state.activeThreadId)
-        ? state.activeThreadId
-        : (nextThreads[0]?.id ?? null);
       const diffState = resetDiffTargetIfMissing(state, nextThreads);
 
       return {
         ...state,
         projects: nextProjects,
         threads: nextThreads,
-        activeThreadId,
         ...diffState,
       };
     }
@@ -667,16 +657,12 @@ export function reducer(state: AppState, action: Action): AppState {
       }
 
       const threads = state.threads.filter((thread) => thread.projectId !== action.projectId);
-      const activeThreadId = threads.some((thread) => thread.id === state.activeThreadId)
-        ? state.activeThreadId
-        : (threads[0]?.id ?? null);
       const diffState = resetDiffTargetIfMissing(state, threads);
 
       return {
         ...state,
         projects,
         threads,
-        activeThreadId,
         ...diffState,
       };
     }
@@ -691,19 +677,6 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         threads: [...state.threads, nextThread],
-        activeThreadId: action.thread.id,
-      };
-    }
-
-    case "SET_ACTIVE_THREAD": {
-      const visitedAt = new Date().toISOString();
-      return {
-        ...state,
-        activeThreadId: action.threadId,
-        threads: updateThread(state.threads, action.threadId, (t) => ({
-          ...t,
-          lastVisitedAt: visitedAt,
-        })),
       };
     }
 
@@ -926,7 +899,7 @@ export function reducer(state: AppState, action: Action): AppState {
       };
 
     case "APPLY_EVENT": {
-      const { event, activeAssistantItemRef } = action;
+      const { event, activeAssistantItemRef, activeThreadId } = action;
       const target = findThreadBySessionId(state.threads, event.sessionId);
       if (!target) return state;
       if (shouldIgnoreForeignThreadEvent(target, event)) return state;
@@ -959,7 +932,7 @@ export function reducer(state: AppState, action: Action): AppState {
             events: nextEvents,
             turnDiffSummaries,
             ...updateTurnFields(t, event),
-            ...(event.method === "turn/completed" && t.id === state.activeThreadId
+            ...(event.method === "turn/completed" && t.id === activeThreadId
               ? { lastVisitedAt: event.createdAt }
               : {}),
           };
@@ -1176,21 +1149,11 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case "DELETE_THREAD": {
       const threads = state.threads.filter((t) => t.id !== action.threadId);
-      const activeThreadId =
-        state.activeThreadId === action.threadId ? (threads[0]?.id ?? null) : state.activeThreadId;
-      const shouldClearDiffTarget = state.diffThreadId === action.threadId;
+      const diffState = resetDiffTargetIfMissing(state, threads);
       return {
         ...state,
         threads,
-        activeThreadId,
-        ...(shouldClearDiffTarget
-          ? {
-              diffOpen: false,
-              diffThreadId: null,
-              diffTurnId: null,
-              diffFilePath: null,
-            }
-          : {}),
+        ...diffState,
       };
     }
 

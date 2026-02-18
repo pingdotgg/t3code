@@ -79,7 +79,6 @@ function makeState(thread: Thread): AppState {
       },
     ],
     threads: [thread],
-    activeThreadId: thread.id,
     threadsHydrated: true,
     runtimeMode: "full-access",
     diffOpen: false,
@@ -617,7 +616,6 @@ describe("store reducer thread continuity", () => {
           projectId: "project-old-b",
         }),
       ],
-      activeThreadId: "thread-b",
       threadsHydrated: true,
       runtimeMode: "full-access",
       diffOpen: true,
@@ -647,7 +645,6 @@ describe("store reducer thread continuity", () => {
     expect(next.threads).toHaveLength(1);
     expect(next.threads[0]?.id).toBe("thread-a");
     expect(next.threads[0]?.projectId).toBe("project-new-a");
-    expect(next.activeThreadId).toBe("thread-a");
     expect(next.diffOpen).toBe(false);
     expect(next.diffThreadId).toBeNull();
     expect(next.diffTurnId).toBeNull();
@@ -675,7 +672,6 @@ describe("store reducer thread continuity", () => {
         },
       ],
       threads: [makeThread({ id: "thread-a", projectId: "project-old-a" })],
-      activeThreadId: "thread-a",
       threadsHydrated: true,
       runtimeMode: "full-access",
       diffOpen: false,
@@ -768,7 +764,6 @@ describe("store reducer thread continuity", () => {
           projectId: "project-2",
         }),
       ],
-      activeThreadId: "thread-a",
       threadsHydrated: true,
       runtimeMode: "full-access",
       diffOpen: true,
@@ -786,28 +781,10 @@ describe("store reducer thread continuity", () => {
     expect(next.projects[0]?.id).toBe("project-2");
     expect(next.threads).toHaveLength(1);
     expect(next.threads[0]?.id).toBe("thread-b");
-    expect(next.activeThreadId).toBe("thread-b");
     expect(next.diffOpen).toBe(false);
     expect(next.diffThreadId).toBeNull();
     expect(next.diffTurnId).toBeNull();
     expect(next.diffFilePath).toBeNull();
-  });
-
-  it("marks the active thread as visited when selected", () => {
-    const state = makeState(
-      makeThread({
-        lastVisitedAt: "2000-01-01T00:00:00.000Z",
-      }),
-    );
-
-    const next = reducer(state, {
-      type: "SET_ACTIVE_THREAD",
-      threadId: "thread-local-1",
-    });
-
-    expect(next.activeThreadId).toBe("thread-local-1");
-    expect(next.threads[0]?.lastVisitedAt).toBeDefined();
-    expect(next.threads[0]?.lastVisitedAt).not.toBe("2000-01-01T00:00:00.000Z");
   });
 
   it("marks completion as seen immediately for the active thread", () => {
@@ -831,6 +808,7 @@ describe("store reducer thread continuity", () => {
         payload: { turn: { id: "turn-1", status: "completed" } },
       }),
       activeAssistantItemRef: { current: null },
+      activeThreadId: "thread-local-1",
     });
 
     expect(next.threads[0]?.latestTurnCompletedAt).toBe(completedAt);

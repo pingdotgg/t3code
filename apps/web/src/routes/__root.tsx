@@ -1,12 +1,12 @@
-import { Outlet, createRootRouteWithContext } from "@tanstack/react-router";
+import { Outlet, createRootRouteWithContext, useParams } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 
+import { AnchoredToastProvider, ToastProvider } from "../components/ui/toast";
 import { isElectron } from "../env";
 import { useNativeApi } from "../hooks/useNativeApi";
 import { invalidateGitQueries } from "../lib/gitReactQuery";
 import { DEFAULT_MODEL } from "../model-logic";
-import { createThread } from "../threadFactory";
 import { useStore } from "../store";
 import { onServerWelcome } from "../wsNativeApi";
 
@@ -30,12 +30,14 @@ function RootRouteView() {
   }
 
   return (
-    <>
-      <EventRouter />
-      <AutoProjectBootstrap />
-      <DesktopProjectBootstrap />
-      <Outlet />
-    </>
+    <ToastProvider>
+      <AnchoredToastProvider>
+        <EventRouter />
+        <AutoProjectBootstrap />
+        <DesktopProjectBootstrap />
+        <Outlet />
+      </AnchoredToastProvider>
+    </ToastProvider>
   );
 }
 
@@ -44,6 +46,10 @@ function EventRouter() {
   const { dispatch } = useStore();
   const queryClient = useQueryClient();
   const activeAssistantItemRef = useRef<string | null>(null);
+  const activeThreadId = useParams({
+    strict: false,
+    select: (params) => params.threadId,
+  });
 
   useEffect(() => {
     if (!api) return;
@@ -51,13 +57,15 @@ function EventRouter() {
       if (event.method === "turn/completed") {
         void invalidateGitQueries(queryClient);
       }
+      if (!activeThreadId) return;
       dispatch({
         type: "APPLY_EVENT",
         event,
         activeAssistantItemRef,
+        activeThreadId,
       });
     });
-  }, [api, dispatch, queryClient]);
+  }, [activeThreadId, api, dispatch, queryClient]);
 
   useEffect(() => {
     if (!api) return;
@@ -88,14 +96,6 @@ function AutoProjectBootstrap() {
       const existing = state.projects.find((project) => project.cwd === payload.cwd);
       if (existing) {
         bootstrappedRef.current = true;
-        // Ensure a thread is active
-        const existingThread = state.threads.find((thread) => thread.projectId === existing.id);
-        if (existingThread && !state.activeThreadId) {
-          dispatch({
-            type: "SET_ACTIVE_THREAD",
-            threadId: existingThread.id,
-          });
-        }
         dispatch({ type: "SET_THREADS_HYDRATED", hydrated: true });
         return;
       }
@@ -115,13 +115,9 @@ function AutoProjectBootstrap() {
           scripts: [],
         },
       });
-      dispatch({
-        type: "ADD_THREAD",
-        thread: createThread(projectId),
-      });
       dispatch({ type: "SET_THREADS_HYDRATED", hydrated: true });
     });
-  }, [state.projects, state.threads, state.activeThreadId, dispatch]);
+  }, [state.projects, dispatch]);
 
   return null;
 }

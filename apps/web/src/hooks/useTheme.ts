@@ -28,6 +28,7 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
   document.documentElement.classList.toggle("dark", isDark);
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
+    // oxlint-disable-next-line no-unused-expressions
     document.documentElement.offsetHeight;
     requestAnimationFrame(() => {
       document.documentElement.classList.remove("no-transitions");
