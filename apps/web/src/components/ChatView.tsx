@@ -30,7 +30,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer/debouncer";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
-import { serverKeybindingsQueryOptions } from "~/lib/serverReactQuery";
+import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
 import { buildBootstrapInput } from "../historyBootstrap";
@@ -471,7 +471,10 @@ export default function ChatView() {
   );
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(api, gitCwd));
-  const keybindingsQuery = useQuery(serverKeybindingsQueryOptions(api));
+  const keybindingsQuery = useQuery({
+    ...serverConfigQueryOptions(api),
+    select: (config) => config.keybindings,
+  });
   const workspaceEntriesQuery = useQuery(
     projectSearchEntriesQueryOptions({
       api,

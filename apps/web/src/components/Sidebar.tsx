@@ -16,7 +16,7 @@ import {
 } from "../types";
 import { useNativeApi } from "../hooks/useNativeApi";
 import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
-import { serverKeybindingsQueryOptions } from "../lib/serverReactQuery";
+import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { toastManager } from "./ui/toast";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 
@@ -118,7 +118,10 @@ function terminalStatusIndicator(thread: Thread): TerminalStatusIndicator | null
 export default function Sidebar() {
   const { state, dispatch } = useStore();
   const api = useNativeApi();
-  const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery(serverKeybindingsQueryOptions(api));
+  const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery({
+    ...serverConfigQueryOptions(api),
+    select: (config) => config.keybindings,
+  });
   const queryClient = useQueryClient();
   const removeWorktreeMutation = useMutation(
     gitRemoveWorktreeMutationOptions({ api, queryClient }),
