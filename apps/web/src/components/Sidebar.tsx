@@ -2,23 +2,20 @@ import { MonitorIcon, MoonIcon, SunIcon, TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { DEFAULT_MODEL } from "../model-logic";
 import { derivePendingApprovals } from "../session-logic";
 import { useStore } from "../store";
 import { isChatNewLocalShortcut, isChatNewShortcut } from "../keybindings";
-import {
-  DEFAULT_THREAD_TERMINAL_HEIGHT,
-  DEFAULT_THREAD_TERMINAL_ID,
-  type Project,
-  type Thread,
-} from "../types";
+import { type Project, type Thread } from "../types";
 import { useNativeApi } from "../hooks/useNativeApi";
 import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { toastManager } from "./ui/toast";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
+import { createThread } from "../threadFactory";
 
 const THEME_CYCLE = { system: "light", light: "dark", dark: "system" } as const;
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
@@ -118,6 +115,9 @@ function terminalStatusIndicator(thread: Thread): TerminalStatusIndicator | null
 export default function Sidebar() {
   const { state, dispatch } = useStore();
   const api = useNativeApi();
+  const navigate = useNavigate();
+  const params = useParams({ strict: false });
+  const routeThreadId = typeof params.threadId === "string" ? params.threadId : null;
   const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery({
     ...serverConfigQueryOptions(api),
     select: (config) => config.keybindings,
@@ -147,38 +147,21 @@ export default function Sidebar() {
         worktreePath?: string | null;
       },
     ) => {
+      const thread = createThread(projectId, {
+        model: state.projects.find((project) => project.id === projectId)?.model ?? DEFAULT_MODEL,
+        branch: options?.branch ?? null,
+        worktreePath: options?.worktreePath ?? null,
+      });
       dispatch({
         type: "ADD_THREAD",
-        thread: {
-          id: crypto.randomUUID(),
-          codexThreadId: null,
-          projectId,
-          title: "New thread",
-          model: state.projects.find((p) => p.id === projectId)?.model ?? DEFAULT_MODEL,
-          terminalOpen: false,
-          terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
-          terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
-          runningTerminalIds: [],
-          activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
-          terminalGroups: [
-            {
-              id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
-              terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
-            },
-          ],
-          activeTerminalGroupId: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
-          session: null,
-          messages: [],
-          events: [],
-          turnDiffSummaries: [],
-          error: null,
-          createdAt: new Date().toISOString(),
-          branch: options?.branch ?? null,
-          worktreePath: options?.worktreePath ?? null,
-        },
+        thread,
+      });
+      void navigate({
+        to: "/$threadId",
+        params: { threadId: thread.id },
       });
     },
-    [dispatch, state.projects],
+    [dispatch, navigate, state.projects],
   );
 
   const focusMostRecentThreadForProject = useCallback(
@@ -192,12 +175,12 @@ export default function Sidebar() {
         })[0];
       if (!latestThread) return;
 
-      dispatch({
-        type: "SET_ACTIVE_THREAD",
-        threadId: latestThread.id,
+      void navigate({
+        to: "/$threadId",
+        params: { threadId: latestThread.id },
       });
     },
-    [dispatch, state.threads],
+    [navigate, state.threads],
   );
 
   const addProjectFromPath = useCallback(
@@ -325,7 +308,20 @@ export default function Sidebar() {
         // Terminal may already be closed
       }
 
+      const shouldNavigateToFallback = routeThreadId === threadId;
+      const fallbackThreadId = state.threads.find((entry) => entry.id !== threadId)?.id ?? null;
       dispatch({ type: "DELETE_THREAD", threadId });
+      if (shouldNavigateToFallback) {
+        if (fallbackThreadId) {
+          void navigate({
+            to: "/$threadId",
+            params: { threadId: fallbackThreadId },
+            replace: true,
+          });
+        } else {
+          void navigate({ to: "/", replace: true });
+        }
+      }
 
       if (!shouldDeleteWorktree || !orphanedWorktreePath || !threadProject) {
         return;
@@ -351,7 +347,7 @@ export default function Sidebar() {
         });
       }
     },
-    [api, dispatch, removeWorktreeMutation, state.projects, state.threads],
+    [api, dispatch, navigate, removeWorktreeMutation, routeThreadId, state.projects, state.threads],
   );
 
   const handleProjectContextMenu = useCallback(
@@ -509,7 +505,7 @@ export default function Sidebar() {
               {project.expanded && (
                 <div className="ml-2 border-l border-border/80 pl-2">
                   {threads.map((thread) => {
-                    const isActive = state.activeThreadId === thread.id;
+                    const isActive = routeThreadId === thread.id;
                     const threadStatus = threadStatusPill(
                       thread,
                       pendingApprovalByThreadId.get(thread.id) === true,
@@ -524,12 +520,12 @@ export default function Sidebar() {
                             ? "bg-accent text-foreground"
                             : "text-muted-foreground hover:bg-secondary"
                         }`}
-                        onClick={() =>
-                          dispatch({
-                            type: "SET_ACTIVE_THREAD",
-                            threadId: thread.id,
-                          })
-                        }
+                        onClick={() => {
+                          void navigate({
+                            to: "/$threadId",
+                            params: { threadId: thread.id },
+                          });
+                        }}
                         onContextMenu={(e) => {
                           e.preventDefault();
                           void handleThreadContextMenu(thread.id, {
