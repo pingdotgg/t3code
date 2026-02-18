@@ -487,7 +487,7 @@ export default function ChatView() {
   }, [activeThreadId, dispatch, inferredCheckpointTurnCountByTurnId, turnDiffSummaries]);
 
   const checkpointDiffHydrationTargets = useMemo(() => {
-    if (!api || !activeThreadId || !activeSessionId || turnDiffSummaries.length === 0) {
+    if (!api || !activeThreadId || !activeSessionId || turnDiffSummaries.length === 0 || !state.diffOpen) {
       return [];
     }
     return turnDiffSummaries.flatMap((summary) => {
@@ -508,6 +508,7 @@ export default function ChatView() {
     activeThreadId,
     api,
     inferredCheckpointTurnCountByTurnId,
+    state.diffOpen,
     turnDiffSummaries,
   ]);
 

@@ -531,7 +531,7 @@ function parsePathFromDiff(diff: string): string | undefined {
   return direct[1];
 }
 
-export function splitUnifiedDiffByFile(diff: string): Map<string, string> {
+function splitUnifiedDiffByFile(diff: string): Map<string, string> {
   const normalized = diff.replace(/\r\n/g, "\n");
   const byPath = new Map<string, string>();
   const headerMatches = [...normalized.matchAll(/^diff --git .+$/gm)];
