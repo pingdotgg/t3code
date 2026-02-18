@@ -11,6 +11,7 @@ import {
   type ProjectScript,
   type ProjectUpdateScriptsInput,
   type ProjectUpdateScriptsResult,
+  normalizeProjectScripts,
   projectAddInputSchema,
   projectRecordSchema,
   projectRemoveInputSchema,
@@ -130,7 +131,7 @@ export class ProjectRegistry {
       throw new Error(`Project not found: ${input.id}`);
     }
 
-    const nextScripts = dedupeScriptsById(projectScriptsSchema.parse(input.scripts));
+    const nextScripts = normalizeProjectScripts(projectScriptsSchema.parse(input.scripts));
     const nextUpdatedAt = new Date().toISOString();
     const nextProject: ProjectRecord = {
       ...this.projects[index]!,
@@ -167,7 +168,7 @@ export class ProjectRegistry {
         cwd: normalizedCwd,
         name:
           project.name.trim().length > 0 ? project.name.trim() : inferProjectName(normalizedCwd),
-        scripts: dedupeScriptsById(project.scripts),
+        scripts: normalizeProjectScripts(project.scripts),
       };
       deduped.set(normalizedCwd, normalizedProject);
       normalizedProjects.push(normalizedProject);
@@ -231,36 +232,4 @@ export class ProjectRegistry {
     fs.writeFileSync(tempFile, payload);
     fs.renameSync(tempFile, this.filePath);
   }
-}
-
-function dedupeScriptsById(scripts: readonly ProjectScript[]): ProjectScript[] {
-  const seenIds = new Set<string>();
-  const deduped: ProjectScript[] = [];
-  for (const script of scripts) {
-    if (seenIds.has(script.id)) continue;
-    seenIds.add(script.id);
-    deduped.push({
-      id: script.id,
-      name: script.name,
-      command: script.command,
-      icon: script.icon,
-      runOnWorktreeCreate: script.runOnWorktreeCreate,
-    });
-  }
-
-  let setupAssigned = false;
-  const normalized: ProjectScript[] = [];
-  for (const script of deduped) {
-    if (!script.runOnWorktreeCreate) {
-      normalized.push(script);
-      continue;
-    }
-    if (!setupAssigned) {
-      setupAssigned = true;
-      normalized.push(script);
-      continue;
-    }
-    normalized.push({ ...script, runOnWorktreeCreate: false });
-  }
-  return normalized;
 }

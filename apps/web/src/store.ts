@@ -8,7 +8,7 @@ import {
   useReducer,
 } from "react";
 
-import type { ProviderEvent, ProviderSession, TerminalEvent } from "@t3tools/contracts";
+import { type ProviderEvent, type ProviderSession, type TerminalEvent, normalizeProjectScripts } from "@t3tools/contracts";
 import { resolveModelSlug } from "./model-logic";
 import { hydratePersistedState, toPersistedState } from "./persistenceSchema";
 import { applyEventToMessages, asObject, asString, evolveSession } from "./session-logic";
@@ -165,37 +165,6 @@ function normalizeRunningTerminalIds(
     .filter((id) => id.length > 0 && validTerminalIdSet.has(id));
 }
 
-function normalizeProjectScripts(scripts: ProjectScript[]): ProjectScript[] {
-  const deduped: ProjectScript[] = [];
-  const seenIds = new Set<string>();
-  for (const script of scripts) {
-    const id = script.id.trim();
-    if (id.length === 0 || seenIds.has(id)) continue;
-    seenIds.add(id);
-    deduped.push({
-      ...script,
-      id,
-      name: script.name.trim(),
-      command: script.command.trim(),
-    });
-  }
-
-  let setupAssigned = false;
-  const normalized: ProjectScript[] = [];
-  for (const script of deduped) {
-    if (!script.runOnWorktreeCreate) {
-      normalized.push(script);
-      continue;
-    }
-    if (!setupAssigned) {
-      setupAssigned = true;
-      normalized.push(script);
-      continue;
-    }
-    normalized.push({ ...script, runOnWorktreeCreate: false });
-  }
-  return normalized;
-}
 
 function normalizeTerminalGroupIds(terminalIds: string[]): string[] {
   return [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];

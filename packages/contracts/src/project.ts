@@ -84,6 +84,43 @@ export const projectUpdateScriptsResultSchema = z.object({
 
 export type ProjectScriptIcon = z.infer<typeof projectScriptIconSchema>;
 export type ProjectScript = z.infer<typeof projectScriptSchema>;
+
+/**
+ * Deduplicate scripts by ID and enforce at most one `runOnWorktreeCreate: true`
+ * flag (the first one wins). Fields are trimmed defensively so this is safe to
+ * call on data that hasn't been through Zod parsing.
+ */
+export function normalizeProjectScripts(scripts: readonly ProjectScript[]): ProjectScript[] {
+  const seenIds = new Set<string>();
+  const deduped: ProjectScript[] = [];
+  for (const script of scripts) {
+    const id = script.id.trim();
+    if (id.length === 0 || seenIds.has(id)) continue;
+    seenIds.add(id);
+    deduped.push({
+      ...script,
+      id,
+      name: script.name.trim(),
+      command: script.command.trim(),
+    });
+  }
+
+  let setupAssigned = false;
+  const normalized: ProjectScript[] = [];
+  for (const script of deduped) {
+    if (!script.runOnWorktreeCreate) {
+      normalized.push(script);
+      continue;
+    }
+    if (!setupAssigned) {
+      setupAssigned = true;
+      normalized.push(script);
+      continue;
+    }
+    normalized.push({ ...script, runOnWorktreeCreate: false });
+  }
+  return normalized;
+}
 export type ProjectRecord = z.infer<typeof projectRecordSchema>;
 export type ProjectListResult = z.infer<typeof projectListResultSchema>;
 export type ProjectAddInput = z.input<typeof projectAddInputSchema>;
