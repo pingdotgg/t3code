@@ -305,7 +305,6 @@ function hydrateThread(
       ...(typeof summary.checkpointTurnCount === "number"
         ? { checkpointTurnCount: summary.checkpointTurnCount }
         : {}),
-      ...(summary.checkpointDiffLoaded ? { checkpointDiffLoaded: true } : {}),
     })),
   };
 }
@@ -401,7 +400,6 @@ export function toPersistedState(
         ...(typeof summary.checkpointTurnCount === "number"
           ? { checkpointTurnCount: summary.checkpointTurnCount }
           : {}),
-        ...(summary.checkpointDiffLoaded ? { checkpointDiffLoaded: true } : {}),
       })),
     })),
     activeThreadId: state.activeThreadId,
