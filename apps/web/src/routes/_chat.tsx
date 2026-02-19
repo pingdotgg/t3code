@@ -1,9 +1,15 @@
-import { Outlet, createFileRoute } from "@tanstack/react-router";
-import { Activity, Suspense, lazy, type ReactNode } from "react";
+import {
+  Outlet,
+  createFileRoute,
+  useNavigate,
+  useParams,
+  useSearch,
+} from "@tanstack/react-router";
+import { Activity, Suspense, lazy, type ReactNode, useCallback, useMemo } from "react";
 
 import Sidebar from "../components/Sidebar";
+import { parseDiffRouteSearch } from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import { useStore } from "../store";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
@@ -14,15 +20,19 @@ const DiffWorkerPoolProvider = lazy(() =>
 );
 const DIFF_INLINE_LAYOUT_MEDIA_QUERY = "(max-width: 1180px)";
 
-const DiffPanelWrapper = (props: { children: ReactNode; sheet: boolean }) => {
-  const { state, dispatch } = useStore();
+const DiffPanelWrapper = (props: {
+  children: ReactNode;
+  sheet: boolean;
+  diffOpen: boolean;
+  onCloseDiff: () => void;
+}) => {
   if (props.sheet) {
     return (
       <Sheet
-        open={state.diffOpen}
+        open={props.diffOpen}
         onOpenChange={(open) => {
           if (!open) {
-            dispatch({ type: "CLOSE_DIFF" });
+            props.onCloseDiff();
           }
         }}
       >
@@ -39,18 +49,42 @@ const DiffPanelWrapper = (props: { children: ReactNode; sheet: boolean }) => {
   }
 
   return (
-    <aside className={state.diffOpen ? undefined : "hidden"} aria-hidden={!state.diffOpen}>
+    <aside className={props.diffOpen ? undefined : "hidden"} aria-hidden={!props.diffOpen}>
       {props.children}
     </aside>
   );
 };
 
 function ChatRouteLayout() {
-  const { state } = useStore();
+  const navigate = useNavigate();
+  const params = useParams({ strict: false });
+  const routeThreadId = typeof params.threadId === "string" ? params.threadId : null;
+  const rawSearch = useSearch({ strict: false });
+  const diffSearch = useMemo(
+    () => parseDiffRouteSearch(rawSearch as Record<string, unknown>),
+    [rawSearch],
+  );
+  const diffOpen = routeThreadId !== null && diffSearch.diff === "1";
   const shouldUseDiffSheet = useMediaQuery(DIFF_INLINE_LAYOUT_MEDIA_QUERY);
+  const closeDiff = useCallback(() => {
+    if (!routeThreadId) return;
+    void navigate({
+      to: "/$threadId",
+      params: { threadId: routeThreadId },
+      search: (previous) => {
+        const {
+          diff: _diff,
+          diffTurnId: _diffTurnId,
+          diffFilePath: _diffFilePath,
+          ...rest
+        } = previous;
+        return rest;
+      },
+    });
+  }, [navigate, routeThreadId]);
 
   const diffLoadingFallback =
-    !state.diffOpen || shouldUseDiffSheet ? (
+    !diffOpen || shouldUseDiffSheet ? (
       <div className="flex h-full min-h-0 items-center justify-center px-4 text-center text-xs text-muted-foreground/70">
         Loading diff viewer...
       </div>
@@ -64,8 +98,8 @@ function ChatRouteLayout() {
     <div className="flex h-screen overflow-hidden bg-background text-foreground isolate">
       <Sidebar />
       <Outlet />
-      <Activity mode={state.diffOpen ? "visible" : "hidden"}>
-        <DiffPanelWrapper sheet={shouldUseDiffSheet}>
+      <Activity mode={diffOpen ? "visible" : "hidden"}>
+        <DiffPanelWrapper sheet={shouldUseDiffSheet} diffOpen={diffOpen} onCloseDiff={closeDiff}>
           <Suspense fallback={diffLoadingFallback}>
             <DiffWorkerPoolProvider>
               <DiffPanel mode={shouldUseDiffSheet ? "sheet" : "inline"} />

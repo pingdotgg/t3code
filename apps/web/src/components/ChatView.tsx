@@ -28,6 +28,7 @@ import {
 } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { type VirtualItem, useVirtualizer } from "@tanstack/react-virtual";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
@@ -35,6 +36,7 @@ import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
+import { parseDiffRouteSearch } from "../diffRouteSearch";
 import { buildBootstrapInput } from "../historyBootstrap";
 import {
   type ComposerTriggerKind,
@@ -374,6 +376,8 @@ interface ChatViewProps {
 
 export default function ChatView({ threadId }: ChatViewProps) {
   const { state, dispatch } = useStore();
+  const navigate = useNavigate();
+  const rawSearch = useSearch({ strict: false });
   const api = useNativeApi();
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
@@ -411,6 +415,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const checkpointTurnCountSyncFingerprintRef = useRef(new Map<string, string>());
 
   const activeThread = state.threads.find((t) => t.id === threadId);
+  const diffSearch = useMemo(
+    () => parseDiffRouteSearch(rawSearch as Record<string, unknown>),
+    [rawSearch],
+  );
+  const diffOpen = diffSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeSessionId = activeThread?.session?.sessionId ?? null;
   const activeThreadRuntimeId =
@@ -1954,32 +1963,39 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setExpandedImage(image);
   }, []);
   const onToggleDiff = useCallback(() => {
-    if (state.diffOpen) {
-      dispatch({ type: "CLOSE_DIFF" });
-      return;
-    }
-
-    if (!activeThread) {
-      dispatch({ type: "TOGGLE_DIFF" });
-      return;
-    }
-
-    dispatch({
-      type: "OPEN_DIFF",
-      threadId: activeThread.id,
+    void navigate({
+      to: "/$threadId",
+      params: { threadId },
+      search: (previous) => {
+        const {
+          diff: _diff,
+          diffTurnId: _diffTurnId,
+          diffFilePath: _diffFilePath,
+          ...rest
+        } = previous;
+        return diffOpen ? rest : { ...rest, diff: "1" };
+      },
     });
-  }, [activeThread, dispatch, state.diffOpen]);
+  }, [diffOpen, navigate, threadId]);
   const onOpenTurnDiff = useCallback(
     (turnId: string, filePath?: string) => {
-      if (!activeThread) return;
-      dispatch({
-        type: "OPEN_DIFF",
-        threadId: activeThread.id,
-        turnId,
-        ...(filePath ? { filePath } : {}),
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+        search: (previous) => {
+          const {
+            diff: _diff,
+            diffTurnId: _diffTurnId,
+            diffFilePath: _diffFilePath,
+            ...rest
+          } = previous;
+          return filePath
+            ? { ...rest, diff: "1", diffTurnId: turnId, diffFilePath: filePath }
+            : { ...rest, diff: "1", diffTurnId: turnId };
+        },
       });
     },
-    [activeThread, dispatch],
+    [navigate, threadId],
   );
   const onRevertUserMessage = useCallback(
     (messageId: string) => {
@@ -2027,7 +2043,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           keybindings={keybindings}
           api={api}
           gitCwd={gitCwd}
-          diffOpen={state.diffOpen}
+          diffOpen={diffOpen}
           onRunProjectScript={(script) => {
             void runProjectScript(script);
           }}

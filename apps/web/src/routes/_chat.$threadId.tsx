@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import ChatView from "../components/ChatView";
+import { parseDiffRouteSearch } from "../diffRouteSearch";
 import { useStore } from "../store";
 
 function ChatThreadRouteView() {
@@ -34,5 +35,6 @@ function ChatThreadRouteView() {
 }
 
 export const Route = createFileRoute("/_chat/$threadId")({
+  validateSearch: (search) => parseDiffRouteSearch(search),
   component: ChatThreadRouteView,
 });
