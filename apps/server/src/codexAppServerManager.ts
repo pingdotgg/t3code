@@ -163,9 +163,14 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         updatedAt: now,
       };
 
-      const child = spawn("codex", ["app-server"], {
+      const codexBinaryPath = input.codexBinaryPath?.trim() || "codex";
+      const codexHomePath = input.codexHomePath?.trim();
+      const child = spawn(codexBinaryPath, ["app-server"], {
         cwd: resolvedCwd,
-        env: process.env,
+        env: {
+          ...process.env,
+          ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
+        },
         stdio: ["pipe", "pipe", "pipe"],
       });
       const output = readline.createInterface({ input: child.stdout });

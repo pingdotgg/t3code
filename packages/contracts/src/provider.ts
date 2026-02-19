@@ -50,6 +50,8 @@ export const providerSessionStartInputSchema = z.object({
   cwd: z.string().min(1).optional(),
   model: z.string().trim().min(1).optional(),
   resumeThreadId: z.string().trim().min(1).optional(),
+  codexBinaryPath: z.string().trim().min(1).optional(),
+  codexHomePath: z.string().trim().min(1).optional(),
   approvalPolicy: providerApprovalPolicySchema.default("never"),
   sandboxMode: providerSandboxModeSchema.default("workspace-write"),
 });

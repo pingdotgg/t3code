@@ -37,6 +37,28 @@ describe("providerSessionStartInputSchema", () => {
       }),
     ).toThrow();
   });
+
+  it("accepts optional codex binary and home path overrides", () => {
+    const parsed = providerSessionStartInputSchema.parse({
+      codexBinaryPath: "/opt/codex/bin/codex",
+      codexHomePath: "/Users/theo/.codex",
+    });
+    expect(parsed.codexBinaryPath).toBe("/opt/codex/bin/codex");
+    expect(parsed.codexHomePath).toBe("/Users/theo/.codex");
+  });
+
+  it("rejects blank codex overrides", () => {
+    expect(() =>
+      providerSessionStartInputSchema.parse({
+        codexBinaryPath: "   ",
+      }),
+    ).toThrow();
+    expect(() =>
+      providerSessionStartInputSchema.parse({
+        codexHomePath: "   ",
+      }),
+    ).toThrow();
+  });
 });
 
 describe("providerSendTurnInputSchema", () => {

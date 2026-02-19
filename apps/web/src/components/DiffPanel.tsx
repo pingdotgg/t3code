@@ -1,15 +1,9 @@
 import { parsePatchFiles } from "@pierre/diffs";
-import {
-  FileDiff,
-  type FileDiffMetadata,
-  Virtualizer,
-  WorkerPoolContextProvider,
-} from "@pierre/diffs/react";
+import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
 import { useQuery } from "@tanstack/react-query";
-import { useParams } from "@tanstack/react-router";
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ChevronLeftIcon, ChevronRightIcon, Columns2Icon, Rows3Icon } from "lucide-react";
 import {
-  type ReactNode,
   type WheelEvent as ReactWheelEvent,
   useCallback,
   useEffect,
@@ -19,6 +13,7 @@ import {
 } from "react";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
+import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { isElectron } from "../env";
 import { useNativeApi } from "../hooks/useNativeApi";
 import { useTheme } from "../hooks/useTheme";
@@ -90,41 +85,26 @@ interface DiffPanelProps {
   mode?: "inline" | "sheet";
 }
 
-export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
-  const workerPoolSize = useMemo(() => {
-    const cores = typeof navigator === "undefined" ? 4 : Math.max(1, navigator.hardwareConcurrency || 4);
-    return Math.max(2, Math.min(6, Math.floor(cores / 2)));
-  }, []);
-
-  return (
-    <WorkerPoolContextProvider
-      poolOptions={{
-        workerFactory: () =>
-          new Worker(new URL("../workers/diffs.worker.ts", import.meta.url), { type: "module" }),
-        poolSize: workerPoolSize,
-        totalASTLRUCacheSize: 240,
-      }}
-      highlighterOptions={{
-        tokenizeMaxLineLength: 1_000,
-      }}
-    >
-      {children}
-    </WorkerPoolContextProvider>
-  );
-}
+export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const api = useNativeApi();
+  const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
-  const { state, dispatch } = useStore();
+  const { state } = useStore();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
   const [canScrollTurnStripLeft, setCanScrollTurnStripLeft] = useState(false);
   const [canScrollTurnStripRight, setCanScrollTurnStripRight] = useState(false);
   const params = useParams({ strict: false });
+  const rawSearch = useSearch({ strict: false });
   const routeThreadId = typeof params.threadId === "string" ? params.threadId : null;
-  const activeThreadId = state.diffThreadId ?? routeThreadId;
+  const diffSearch = useMemo(
+    () => parseDiffRouteSearch(rawSearch as Record<string, unknown>),
+    [rawSearch],
+  );
+  const activeThreadId = routeThreadId;
   const activeThread = state.threads.find((thread) => thread.id === activeThreadId);
   const activeThreadRuntimeId =
     activeThread?.codexThreadId ?? activeThread?.session?.threadId ?? null;
@@ -132,10 +112,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
 
-  const canApplyStoredTarget = Boolean(activeThread && state.diffThreadId === activeThread.id);
-  const selectedTurnId = canApplyStoredTarget ? state.diffTurnId : null;
-  const selectedFilePath =
-    canApplyStoredTarget && selectedTurnId !== null ? state.diffFilePath : null;
+  const selectedTurnId = diffSearch.diffTurnId ?? null;
+  const selectedFilePath = selectedTurnId !== null ? (diffSearch.diffFilePath ?? null) : null;
   const selectedTurn =
     selectedTurnId === null
       ? undefined
@@ -235,17 +213,24 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
 
   const selectTurn = (turnId: string) => {
     if (!activeThread) return;
-    dispatch({
-      type: "SET_DIFF_TARGET",
-      threadId: activeThread.id,
-      turnId,
+    void navigate({
+      to: "/$threadId",
+      params: { threadId: activeThread.id },
+      search: (previous) => {
+        const rest = stripDiffSearchParams(previous);
+        return { ...rest, diff: "1", diffTurnId: turnId };
+      },
     });
   };
   const selectWholeConversation = () => {
     if (!activeThread) return;
-    dispatch({
-      type: "SET_DIFF_TARGET",
-      threadId: activeThread.id,
+    void navigate({
+      to: "/$threadId",
+      params: { threadId: activeThread.id },
+      search: (previous) => {
+        const rest = stripDiffSearchParams(previous);
+        return { ...rest, diff: "1" };
+      },
     });
   };
   const updateTurnStripScrollState = useCallback(() => {
@@ -440,13 +425,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       ) : (
         <>
           <div ref={patchViewportRef} className="min-h-0 min-w-0 flex-1 overflow-hidden">
-            {!canApplyStoredTarget && state.diffThreadId && (
-              <div className="px-3 pt-2">
-                <p className="mb-2 text-[11px] text-muted-foreground/65">
-                  Showing diffs for the active thread.
-                </p>
-              </div>
-            )}
             {checkpointDiffError && !renderablePatch && (
               <div className="px-3">
                 <p className="mb-2 text-[11px] text-red-500/80">{checkpointDiffError}</p>

@@ -9,6 +9,7 @@ import { invalidateGitQueries } from "../lib/gitReactQuery";
 import { DEFAULT_MODEL } from "../model-logic";
 import { useStore } from "../store";
 import { onServerWelcome } from "../wsNativeApi";
+import { APP_DISPLAY_NAME } from "../branding";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -23,7 +24,9 @@ function RootRouteView() {
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">
         <div className="flex flex-1 items-center justify-center">
-          <p className="text-sm text-muted-foreground">Connecting to T3 Code server...</p>
+          <p className="text-sm text-muted-foreground">
+            Connecting to {APP_DISPLAY_NAME} server...
+          </p>
         </div>
       </div>
     );

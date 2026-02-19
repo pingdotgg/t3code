@@ -56,6 +56,9 @@ T3CODE_DEV_INSTANCE=feature-xyz bun run dev:desktop
 bun run build
 bun run start
 
+# Build a shareable macOS .dmg (arm64 by default)
+bun run dist:desktop:dmg
+
 # Or from any project directory after publishing:
 npx t3
 ```
@@ -69,6 +72,17 @@ npx t3
 - `bun run build` — Builds contracts, web app, and server through Turbo.
 - `bun run typecheck` — Strict TypeScript checks for all packages.
 - `bun run test` — Runs workspace tests.
+- `bun run dist:desktop:dmg` — Builds a shareable macOS `.dmg` into `./release`.
+- `bun run dist:desktop:dmg:x64` — Builds an Intel macOS `.dmg`.
+
+### Desktop `.dmg` packaging notes
+
+- Default build is unsigned/not notarized for local sharing.
+- The DMG build uses `assets/macos-icon-1024.png` as the production app icon source.
+- Desktop production windows load the bundled UI from `t3://app/index.html` (not a `127.0.0.1` document URL).
+- Desktop packaging includes `apps/server/dist` (the `t3` backend) and starts it on loopback with an auth token for WebSocket/API traffic.
+- Your tester can still open it on macOS by right-clicking the app and choosing **Open** on first launch.
+- To keep staging files for debugging package contents, run: `bun run dist:desktop:dmg -- --keep-stage`
 
 ### Running multiple dev instances
 

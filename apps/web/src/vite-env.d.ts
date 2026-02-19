@@ -8,6 +8,7 @@ interface DesktopBridge {
   confirm: (message: string) => Promise<boolean>;
   showContextMenu: (items: readonly { id: string; label: string }[]) => Promise<string | null>;
   openExternal: (url: string) => Promise<boolean>;
+  onMenuAction: (listener: (action: string) => void) => () => void;
 }
 
 declare global {
