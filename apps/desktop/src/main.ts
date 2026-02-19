@@ -204,6 +204,12 @@ function registerIpcHandlers(): void {
   });
 }
 
+function getIconOption(): { icon: string } | Record<string, never> {
+  if (process.platform === "darwin") return {}; // macOS uses .icns from app bundle
+  const ext = process.platform === "win32" ? "ico" : "png";
+  return { icon: path.join(__dirname, `../resources/icon.${ext}`) };
+}
+
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1100,
@@ -212,6 +218,7 @@ function createWindow(): BrowserWindow {
     minHeight: 620,
     show: false,
     autoHideMenuBar: true,
+    ...getIconOption(),
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 16, y: 18 },
     webPreferences: {
