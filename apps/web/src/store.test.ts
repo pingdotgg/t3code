@@ -815,6 +815,24 @@ describe("store reducer thread continuity", () => {
     expect(next.threads[0]?.lastVisitedAt).toBe(completedAt);
   });
 
+  it("marks a thread as visited when selected", () => {
+    const state = makeState(
+      makeThread({
+        latestTurnCompletedAt: "2026-02-08T10:00:10.000Z",
+        lastVisitedAt: "2026-02-08T10:00:00.000Z",
+      }),
+    );
+
+    const nextVisitedAt = "2026-02-08T10:00:20.000Z";
+    const next = reducer(state, {
+      type: "MARK_THREAD_VISITED",
+      threadId: "thread-local-1",
+      visitedAt: nextVisitedAt,
+    });
+
+    expect(next.threads[0]?.lastVisitedAt).toBe(nextVisitedAt);
+  });
+
   it("reverts thread state to a checkpoint snapshot", () => {
     const state = makeState(
       makeThread({

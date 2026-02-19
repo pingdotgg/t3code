@@ -68,6 +68,15 @@ function EventRouter() {
   }, [activeThreadId, api, dispatch, queryClient]);
 
   useEffect(() => {
+    if (!activeThreadId) return;
+    dispatch({
+      type: "MARK_THREAD_VISITED",
+      threadId: activeThreadId,
+      visitedAt: new Date().toISOString(),
+    });
+  }, [activeThreadId, dispatch]);
+
+  useEffect(() => {
     if (!api) return;
     return api.terminal.onEvent((event) => {
       dispatch({

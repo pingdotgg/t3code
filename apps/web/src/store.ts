@@ -105,6 +105,7 @@ type Action =
       branch: string | null;
       worktreePath: string | null;
     }
+  | { type: "MARK_THREAD_VISITED"; threadId: string; visitedAt?: string }
   | { type: "SET_RUNTIME_MODE"; mode: RuntimeMode }
   | { type: "DELETE_THREAD"; threadId: string };
 
@@ -1138,6 +1139,17 @@ export function reducer(state: AppState, action: Action): AppState {
             ...(cwdChanged ? { session: null } : {}),
           };
         }),
+      };
+    }
+
+    case "MARK_THREAD_VISITED": {
+      const visitedAt = action.visitedAt ?? new Date().toISOString();
+      return {
+        ...state,
+        threads: updateThread(state.threads, action.threadId, (t) => ({
+          ...t,
+          lastVisitedAt: visitedAt,
+        })),
       };
     }
 
