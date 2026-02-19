@@ -522,8 +522,8 @@ function parsePathFromDiff(diff: string): string | undefined {
   const normalized = diff.replace(/\r\n/g, "\n");
   const bPath = normalized.match(/^\+\+\+ b\/(.+)$/m);
   if (bPath && bPath[1]) return bPath[1];
-  const gitHeader = normalized.match(/^diff --git a\/(.+) b\/(.+)$/m);
-  if (gitHeader && gitHeader[2]) return gitHeader[2];
+  const gitHeader = normalized.match(/^diff --git a\/(.+) b\/\1$/m);
+  if (gitHeader && gitHeader[1]) return gitHeader[1];
   const direct = normalized.match(/^\+\+\+ (.+)$/m);
   if (!direct || !direct[1] || direct[1] === "/dev/null") {
     return undefined;

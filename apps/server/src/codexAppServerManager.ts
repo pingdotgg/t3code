@@ -201,7 +201,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const normalizedModel = normalizeCodexModelSlug(input.model);
       const sessionOverrides = {
         model: normalizedModel ?? null,
-        cwd: resolvedCwd,
+        cwd: input.cwd ?? null,
         approvalPolicy: input.approvalPolicy,
         sandbox: input.sandboxMode,
       };

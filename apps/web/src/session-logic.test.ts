@@ -614,6 +614,18 @@ describe("deriveTurnDiffFilesFromUnifiedDiff", () => {
     expect(files).toHaveLength(1);
     expect(files[0]?.path).toBe("subdir b/example.ts");
   });
+
+  it("parses git header fallback for binary diffs with ` b/` in path", () => {
+    const files = deriveTurnDiffFilesFromUnifiedDiff(
+      [
+        "diff --git a/subdir b/image.png b/subdir b/image.png",
+        "Binary files a/subdir b/image.png and b/subdir b/image.png differ",
+      ].join("\n"),
+    );
+
+    expect(files).toHaveLength(1);
+    expect(files[0]?.path).toBe("subdir b/image.png");
+  });
 });
 
 describe("derivePendingApprovals", () => {
