@@ -1078,12 +1078,16 @@ export function reducer(state: AppState, action: Action): AppState {
 
     case "MARK_THREAD_VISITED": {
       const visitedAt = action.visitedAt ?? new Date().toISOString();
+      const shouldRetargetOpenDiff = state.diffOpen && state.diffThreadId !== action.threadId;
       return {
         ...state,
         threads: updateThread(state.threads, action.threadId, (t) => ({
           ...t,
           lastVisitedAt: visitedAt,
         })),
+        diffThreadId: shouldRetargetOpenDiff ? action.threadId : state.diffThreadId,
+        diffTurnId: shouldRetargetOpenDiff ? null : state.diffTurnId,
+        diffFilePath: shouldRetargetOpenDiff ? null : state.diffFilePath,
       };
     }
 

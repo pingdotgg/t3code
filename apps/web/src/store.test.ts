@@ -833,6 +833,48 @@ describe("store reducer thread continuity", () => {
     expect(next.threads[0]?.lastVisitedAt).toBe(nextVisitedAt);
   });
 
+  it("retargets open diff state to the visited thread", () => {
+    const state: AppState = {
+      ...makeState(
+        makeThread({
+          id: "thread-local-1",
+          latestTurnCompletedAt: "2026-02-08T10:00:10.000Z",
+          lastVisitedAt: "2026-02-08T10:00:00.000Z",
+        }),
+      ),
+      threads: [
+        makeThread({
+          id: "thread-local-1",
+          latestTurnCompletedAt: "2026-02-08T10:00:10.000Z",
+          lastVisitedAt: "2026-02-08T10:00:00.000Z",
+        }),
+        makeThread({
+          id: "thread-local-2",
+          session: makeSession({ sessionId: "sess-2" }),
+          latestTurnCompletedAt: "2026-02-08T09:00:10.000Z",
+          lastVisitedAt: "2026-02-08T09:00:00.000Z",
+        }),
+      ],
+      diffOpen: true,
+      diffThreadId: "thread-local-1",
+      diffTurnId: "turn-1",
+      diffFilePath: "src/old.ts",
+    };
+
+    const nextVisitedAt = "2026-02-08T10:00:20.000Z";
+    const next = reducer(state, {
+      type: "MARK_THREAD_VISITED",
+      threadId: "thread-local-2",
+      visitedAt: nextVisitedAt,
+    });
+
+    expect(next.threads[1]?.lastVisitedAt).toBe(nextVisitedAt);
+    expect(next.diffOpen).toBe(true);
+    expect(next.diffThreadId).toBe("thread-local-2");
+    expect(next.diffTurnId).toBeNull();
+    expect(next.diffFilePath).toBeNull();
+  });
+
   it("reverts thread state to a checkpoint snapshot", () => {
     const state = makeState(
       makeThread({

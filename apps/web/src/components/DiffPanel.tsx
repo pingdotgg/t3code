@@ -107,7 +107,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const params = useParams({ strict: false });
   const routeThreadId = typeof params.threadId === "string" ? params.threadId : null;
-  const activeThreadId = state.diffThreadId ?? routeThreadId;
+  const activeThreadId = routeThreadId ?? state.diffThreadId;
   const activeThread = state.threads.find((thread) => thread.id === activeThreadId);
   const activeThreadRuntimeId =
     activeThread?.codexThreadId ?? activeThread?.session?.threadId ?? null;
@@ -215,6 +215,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     ).find((element) => element.dataset.diffFilePath === selectedFilePath);
     target?.scrollIntoView({ block: "nearest" });
   }, [selectedFilePath, renderableFiles]);
+
+  useEffect(() => {
+    if (!state.diffOpen) return;
+    if (!routeThreadId) return;
+    if (state.diffThreadId === routeThreadId) return;
+
+    dispatch({
+      type: "SET_DIFF_TARGET",
+      threadId: routeThreadId,
+    });
+  }, [dispatch, routeThreadId, state.diffOpen, state.diffThreadId]);
 
   const selectTurn = (turnId: string) => {
     if (!activeThread) return;
