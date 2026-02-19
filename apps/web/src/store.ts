@@ -15,7 +15,6 @@ import {
   applyEventToMessages,
   asObject,
   asString,
-  deriveTurnDiffFilesFromUnifiedDiff,
   deriveTurnDiffSummaries,
   inferCheckpointTurnCountByTurnId,
   evolveSession,
@@ -93,11 +92,6 @@ type Action =
       type: "SET_THREAD_TURN_CHECKPOINT_COUNTS";
       threadId: string;
       checkpointTurnCountByTurnId: Record<string, number>;
-    }
-  | {
-      type: "SET_THREAD_TURN_CHECKPOINT_DIFFS";
-      threadId: string;
-      checkpointDiffByTurnId: Record<string, string>;
     }
   | {
       type: "SET_THREAD_BRANCH";
@@ -236,21 +230,12 @@ function mergeTurnDiffSummaries(
       return summary;
     }
 
-    const prefersCheckpointDiff = previous.checkpointDiffLoaded || summary.checkpointDiffLoaded;
     const files =
-      prefersCheckpointDiff ||
-      (summary.files.length === 0 && previous.files.length > 0 && summary.unifiedDiff === undefined)
-        ? previous.files
-        : summary.files;
-    const unifiedDiff =
-      prefersCheckpointDiff || summary.unifiedDiff === undefined
-        ? (previous.unifiedDiff ?? summary.unifiedDiff)
-        : summary.unifiedDiff;
+      summary.files.length === 0 && previous.files.length > 0 ? previous.files : summary.files;
 
     return {
       ...summary,
       files,
-      ...(unifiedDiff !== undefined ? { unifiedDiff } : {}),
       ...(summary.assistantMessageId
         ? {}
         : previous.assistantMessageId
@@ -261,9 +246,6 @@ function mergeTurnDiffSummaries(
         : typeof previous.checkpointTurnCount === "number"
           ? { checkpointTurnCount: previous.checkpointTurnCount }
           : {}),
-      ...(summary.checkpointDiffLoaded || previous.checkpointDiffLoaded
-        ? { checkpointDiffLoaded: true }
-        : {}),
     };
   });
 
@@ -1067,59 +1049,6 @@ export function reducer(state: AppState, action: Action): AppState {
                 checkpointTurnCount: turnCount,
               };
             }),
-          };
-        }),
-      };
-
-    case "SET_THREAD_TURN_CHECKPOINT_DIFFS":
-      return {
-        ...state,
-        threads: updateThread(state.threads, action.threadId, (t) => {
-          let hasUpdates = false;
-          const updatedSummaries = t.turnDiffSummaries.map((summary) => {
-            const checkpointDiff = action.checkpointDiffByTurnId[summary.turnId];
-            if (checkpointDiff === undefined) {
-              return summary;
-            }
-
-            const files = deriveTurnDiffFilesFromUnifiedDiff(checkpointDiff);
-            const filesUnchanged =
-              files.length === summary.files.length &&
-              files.every((file, index) => {
-                const existing = summary.files[index];
-                return (
-                  existing !== undefined &&
-                  existing.path === file.path &&
-                  existing.diff === file.diff &&
-                  existing.kind === file.kind &&
-                  existing.additions === file.additions &&
-                  existing.deletions === file.deletions
-                );
-              });
-            if (
-              summary.unifiedDiff === checkpointDiff &&
-              filesUnchanged &&
-              summary.checkpointDiffLoaded
-            ) {
-              return summary;
-            }
-
-            hasUpdates = true;
-            return {
-              ...summary,
-              unifiedDiff: checkpointDiff,
-              files,
-              checkpointDiffLoaded: true,
-            };
-          });
-
-          if (!hasUpdates) {
-            return t;
-          }
-
-          return {
-            ...t,
-            turnDiffSummaries: updatedSummaries,
           };
         }),
       };

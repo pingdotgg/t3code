@@ -26,12 +26,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { type VirtualItem, useVirtualizer } from "@tanstack/react-virtual";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
-import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
@@ -50,7 +49,6 @@ import {
   resolveModelSlug,
 } from "../model-logic";
 import {
-  countDiffStat,
   derivePendingApprovals,
   derivePhase,
   deriveTimelineEntries,
@@ -380,6 +378,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const checkpointHydrationSessionRequestRef = useRef(new Set<string>());
+  const checkpointTurnCountSyncFingerprintRef = useRef(new Map<string, string>());
 
   const activeThread = state.threads.find((t) => t.id === threadId);
   const activeThreadId = activeThread?.id ?? null;
@@ -491,68 +490,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       checkpointTurnCountByTurnId: inferredMissingTurnCounts,
     });
   }, [activeThreadId, dispatch, inferredCheckpointTurnCountByTurnId, turnDiffSummaries]);
-
-  const checkpointDiffHydrationTargets = useMemo(() => {
-    if (!api || !activeThreadId || !activeSessionId || turnDiffSummaries.length === 0) {
-      return [];
-    }
-    return turnDiffSummaries.flatMap((summary) => {
-      const turnCount = inferredCheckpointTurnCountByTurnId[summary.turnId];
-      if (summary.checkpointDiffLoaded || typeof turnCount !== "number") {
-        return [];
-      }
-      return [
-        {
-          turnId: summary.turnId,
-          fromTurnCount: Math.max(0, turnCount - 1),
-          toTurnCount: turnCount,
-        },
-      ];
-    });
-  }, [
-    activeSessionId,
-    activeThreadId,
-    api,
-    inferredCheckpointTurnCountByTurnId,
-    turnDiffSummaries,
-  ]);
-
-  const checkpointDiffHydrationQueries = useQueries({
-    queries: checkpointDiffHydrationTargets.map((target) =>
-      checkpointDiffQueryOptions(api, {
-        sessionId: activeSessionId,
-        threadRuntimeId: activeThreadRuntimeId,
-        fromTurnCount: target.fromTurnCount,
-        toTurnCount: target.toTurnCount,
-        cacheScope: `turn:${target.turnId}`,
-      }),
-    ),
-  });
-
-  useEffect(() => {
-    if (!activeThreadId || checkpointDiffHydrationTargets.length === 0) {
-      return;
-    }
-
-    const checkpointDiffByTurnId: Record<string, string> = {};
-    for (let index = 0; index < checkpointDiffHydrationTargets.length; index += 1) {
-      const target = checkpointDiffHydrationTargets[index];
-      const query = checkpointDiffHydrationQueries[index];
-      const diff = query?.data?.diff;
-      if (!target || !diff) {
-        continue;
-      }
-      checkpointDiffByTurnId[target.turnId] = diff;
-    }
-    if (Object.keys(checkpointDiffByTurnId).length === 0) {
-      return;
-    }
-    dispatch({
-      type: "SET_THREAD_TURN_CHECKPOINT_DIFFS",
-      threadId: activeThreadId,
-      checkpointDiffByTurnId,
-    });
-  }, [activeThreadId, checkpointDiffHydrationQueries, checkpointDiffHydrationTargets, dispatch]);
 
   const completionSummary = useMemo(() => {
     if (!activeThread?.latestTurnStartedAt) return null;
@@ -1407,6 +1344,53 @@ export default function ChatView({ threadId }: ChatViewProps) {
     focusComposer();
   };
 
+  const syncCheckpointTurnCounts = useCallback(
+    async (input: {
+      threadId: string;
+      sessionId: string;
+      threadRuntimeId: string | null;
+    }): Promise<void> => {
+      if (!api || turnDiffSummaries.length === 0) {
+        return;
+      }
+
+      const turnIds = turnDiffSummaries.map((summary) => summary.turnId);
+      if (turnIds.length === 0) {
+        return;
+      }
+
+      const syncKey = `${input.threadId}:${input.sessionId}:${input.threadRuntimeId ?? "none"}`;
+      const turnFingerprint = turnIds.join(",");
+      if (checkpointTurnCountSyncFingerprintRef.current.get(syncKey) === turnFingerprint) {
+        return;
+      }
+      checkpointTurnCountSyncFingerprintRef.current.set(syncKey, turnFingerprint);
+
+      try {
+        const result = await api.providers.listCheckpoints({
+          sessionId: input.sessionId,
+        });
+        const turnIdSet = new Set(turnIds);
+        const checkpointTurnCountByTurnId = Object.fromEntries(
+          result.checkpoints
+            .filter((checkpoint) => checkpoint.turnCount > 0 && turnIdSet.has(checkpoint.id))
+            .map((checkpoint) => [checkpoint.id, checkpoint.turnCount] as const),
+        );
+        if (Object.keys(checkpointTurnCountByTurnId).length === 0) {
+          return;
+        }
+        dispatch({
+          type: "SET_THREAD_TURN_CHECKPOINT_COUNTS",
+          threadId: input.threadId,
+          checkpointTurnCountByTurnId,
+        });
+      } catch {
+        checkpointTurnCountSyncFingerprintRef.current.delete(syncKey);
+      }
+    },
+    [api, dispatch, turnDiffSummaries],
+  );
+
   const ensureSession = useCallback(
     async (cwdOverride?: string): Promise<EnsuredSessionInfo | null> => {
       if (!api || !activeThread || !activeProject) return null;
@@ -1418,6 +1402,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
             : sessionThreadId === activeThread.codexThreadId
               ? "resumed"
               : "fallback_new";
+        await syncCheckpointTurnCounts({
+          threadId: activeThread.id,
+          sessionId: activeThread.session.sessionId,
+          threadRuntimeId: sessionThreadId,
+        });
         return {
           sessionId: activeThread.session.sessionId,
           resolvedThreadId: sessionThreadId,
@@ -1448,6 +1437,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
             : resolvedThreadId === priorCodexThreadId
               ? "resumed"
               : "fallback_new";
+        await syncCheckpointTurnCounts({
+          threadId: activeThread.id,
+          sessionId: session.sessionId,
+          threadRuntimeId: resolvedThreadId,
+        });
         return {
           sessionId: session.sessionId,
           resolvedThreadId,
@@ -1472,6 +1466,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       runtimeApprovalPolicy,
       runtimeSandboxMode,
       selectedModel,
+      syncCheckpointTurnCounts,
     ],
   );
 
@@ -1480,22 +1475,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (phase === "running" || isSending || isConnecting || isRevertingCheckpoint) return;
     const hasThreadIdentity = Boolean(activeThreadRuntimeId);
     if (!hasThreadIdentity) return;
-    const selectedDiffTurnId =
-      state.diffOpen && state.diffThreadId === activeThreadId ? state.diffTurnId : null;
-    const selectedDiffTurn =
-      selectedDiffTurnId === null
-        ? undefined
-        : (turnDiffSummaries.find((summary) => summary.turnId === selectedDiffTurnId) ??
-          turnDiffSummaries[0]);
-    const selectedTurnMissingPatchBody = Boolean(
-      selectedDiffTurn &&
-      !selectedDiffTurn.unifiedDiff &&
-      selectedDiffTurn.files.every((file) => !file.diff),
-    );
-    const hasPendingDiffHydration =
-      turnDiffSummaries.some((summary) => !summary.checkpointDiffLoaded) ||
-      selectedTurnMissingPatchBody;
-    if (!hasPendingDiffHydration) return;
+    if (turnDiffSummaries.length === 0) return;
 
     const requestKey = `${activeThreadId}:${activeThreadRuntimeId ?? "none"}`;
     if (checkpointHydrationSessionRequestRef.current.has(requestKey)) {
@@ -1522,9 +1502,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     isSending,
     phase,
     setThreadError,
-    state.diffOpen,
-    state.diffThreadId,
-    state.diffTurnId,
     turnDiffSummaries,
   ]);
 
@@ -2739,50 +2716,32 @@ const MessagesTimeline = memo(function MessagesTimeline({
                             row.message.id,
                           );
                           if (!turnSummary) return null;
-                          const isCheckpointDiffLoading =
-                            !turnSummary.checkpointDiffLoaded && turnSummary.files.length === 0;
-                          const summaryStat = turnSummary.unifiedDiff
-                            ? countDiffStat(turnSummary.unifiedDiff)
-                            : turnSummary.files.reduce(
-                                (acc, file) => {
-                                  const next =
-                                    typeof file.additions === "number" &&
-                                    typeof file.deletions === "number"
-                                      ? { additions: file.additions, deletions: file.deletions }
-                                      : file.diff
-                                        ? countDiffStat(file.diff)
-                                        : null;
-                                  if (!next) {
-                                    return acc;
-                                  }
-                                  return {
-                                    additions: acc.additions + next.additions,
-                                    deletions: acc.deletions + next.deletions,
-                                  };
-                                },
-                                { additions: 0, deletions: 0 },
-                              );
-                          const changedFileCountLabel = isCheckpointDiffLoading
-                            ? "..."
-                            : String(turnSummary.files.length);
+                          const summaryStat = turnSummary.files.reduce(
+                            (acc, file) => {
+                              if (typeof file.additions !== "number" || typeof file.deletions !== "number") {
+                                return acc;
+                              }
+                              return {
+                                additions: acc.additions + file.additions,
+                                deletions: acc.deletions + file.deletions,
+                              };
+                            },
+                            { additions: 0, deletions: 0 },
+                          );
+                          const changedFileCountLabel = String(turnSummary.files.length);
                           return (
                             <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
                               <div className="mb-1.5 flex items-center justify-between gap-2">
                                 <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
                                   <span>Changed files ({changedFileCountLabel})</span>
-                                  {!isCheckpointDiffLoading &&
-                                    (summaryStat.additions > 0 || summaryStat.deletions > 0) && (
-                                      <>
-                                        <span className="mx-1">•</span>
-                                        <span className="text-success">
-                                          +{summaryStat.additions}
-                                        </span>
-                                        <span className="mx-0.5 text-muted-foreground/70">/</span>
-                                        <span className="text-destructive">
-                                          -{summaryStat.deletions}
-                                        </span>
-                                      </>
-                                    )}
+                                  {(summaryStat.additions > 0 || summaryStat.deletions > 0) && (
+                                    <>
+                                      <span className="mx-1">•</span>
+                                      <span className="text-success">+{summaryStat.additions}</span>
+                                      <span className="mx-0.5 text-muted-foreground/70">/</span>
+                                      <span className="text-destructive">-{summaryStat.deletions}</span>
+                                    </>
+                                  )}
                                 </p>
                                 <Button
                                   type="button"
@@ -2795,11 +2754,6 @@ const MessagesTimeline = memo(function MessagesTimeline({
                                   View diff
                                 </Button>
                               </div>
-                              {isCheckpointDiffLoading && (
-                                <p className="mb-1.5 text-[11px] text-muted-foreground/70">
-                                  Loading checkpoint diff...
-                                </p>
-                              )}
                               {turnSummary.files.length > 0 ? (
                                 <div className="flex flex-wrap gap-1.5">
                                   {turnSummary.files.map((file) => (
@@ -2817,9 +2771,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                                                 additions: file.additions,
                                                 deletions: file.deletions,
                                               }
-                                            : file.diff
-                                              ? countDiffStat(file.diff)
-                                              : null;
+                                            : null;
                                         if (!stat) {
                                           return file.path;
                                         }
@@ -2841,11 +2793,11 @@ const MessagesTimeline = memo(function MessagesTimeline({
                                     </button>
                                   ))}
                                 </div>
-                              ) : !isCheckpointDiffLoading ? (
+                              ) : (
                                 <p className="text-[11px] text-muted-foreground/70">
                                   No changed files.
                                 </p>
-                              ) : null}
+                              )}
                             </div>
                           );
                         })()}

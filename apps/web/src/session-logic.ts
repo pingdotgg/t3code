@@ -453,7 +453,7 @@ interface MutableTurnDiffSummary {
   completedAt: string | undefined;
   status: string | undefined;
   assistantMessageId: string | undefined;
-  unifiedDiff: string | undefined;
+  hasTurnDiffUpdate: boolean;
   filesByPath: Map<string, TurnDiffFileChange>;
 }
 
@@ -485,7 +485,6 @@ function parseFileChangeEntriesFromEvent(event: ProviderEvent): TurnDiffFileChan
     parsed.push({
       path,
       ...(kind ? { kind } : {}),
-      ...(diff ? { diff } : {}),
       ...(additions !== undefined ? { additions } : stat ? { additions: stat.additions } : {}),
       ...(deletions !== undefined ? { deletions } : stat ? { deletions: stat.deletions } : {}),
     });
@@ -565,7 +564,6 @@ export function deriveTurnDiffFilesFromUnifiedDiff(diff: string): TurnDiffFileCh
       const stat = countDiffStat(fileDiff);
       return {
         path,
-        diff: fileDiff,
         additions: stat.additions,
         deletions: stat.deletions,
       };
@@ -645,7 +643,7 @@ export function deriveTurnDiffSummaries(events: ProviderEvent[]): TurnDiffSummar
       completedAt: undefined,
       status: undefined,
       assistantMessageId: undefined,
-      unifiedDiff: undefined,
+      hasTurnDiffUpdate: false,
       filesByPath: new Map<string, TurnDiffFileChange>(),
     };
     byTurnId.set(turnId, next);
@@ -677,10 +675,10 @@ export function deriveTurnDiffSummaries(events: ProviderEvent[]): TurnDiffSummar
       }
     }
 
-    if (event.method === "turn/diff/updated" && summary.unifiedDiff === undefined) {
+    if (event.method === "turn/diff/updated" && !summary.hasTurnDiffUpdate) {
+      summary.hasTurnDiffUpdate = true;
       const diff = normalizeDetail(asString(asObject(event.payload)?.diff));
       if (diff) {
-        summary.unifiedDiff = diff;
         for (const file of deriveTurnDiffFilesFromUnifiedDiff(diff)) {
           mergeTurnDiffFileChange(summary.filesByPath, file);
         }
@@ -703,7 +701,6 @@ export function deriveTurnDiffSummaries(events: ProviderEvent[]): TurnDiffSummar
       files: Array.from(summary.filesByPath.values()).toSorted((a, b) =>
         a.path.localeCompare(b.path),
       ),
-      ...(summary.unifiedDiff ? { unifiedDiff: summary.unifiedDiff } : {}),
       ...(summary.assistantMessageId ? { assistantMessageId: summary.assistantMessageId } : {}),
     });
   }

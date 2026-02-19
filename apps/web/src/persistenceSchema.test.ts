@@ -263,7 +263,7 @@ describe("hydratePersistedState", () => {
     expect(hydrated?.threads[0]?.activeTerminalGroupId).toBe(`group-${DEFAULT_THREAD_TERMINAL_ID}`);
   });
 
-  it("hydrates persisted turn diff summaries and clears persisted loaded flags", () => {
+  it("hydrates persisted turn diff summaries as metadata-only entries", () => {
     const payload = JSON.stringify({
       version: 7,
       runtimeMode: "full-access",
@@ -290,7 +290,6 @@ describe("hydratePersistedState", () => {
               turnId: "turn-1",
               completedAt: "2026-02-08T10:05:00.000Z",
               checkpointTurnCount: 1,
-              checkpointDiffLoaded: true,
               files: [
                 {
                   path: "src/app.ts",
@@ -421,10 +420,8 @@ describe("toPersistedState", () => {
               kind: "modified",
               additions: 3,
               deletions: 1,
-              diff: "diff --git a/src/app.ts b/src/app.ts",
             },
           ],
-          unifiedDiff: "diff --git a/src/app.ts b/src/app.ts",
         },
       ],
     };

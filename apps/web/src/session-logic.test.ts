@@ -493,11 +493,11 @@ describe("deriveTurnDiffSummaries", () => {
     expect(summaries).toHaveLength(1);
     expect(summaries[0]?.turnId).toBe("turn-1");
     expect(summaries[0]?.assistantMessageId).toBe("msg-1");
-    expect(summaries[0]?.unifiedDiff).toContain("diff --git a/src/a.ts b/src/a.ts");
     expect(summaries[0]?.files.map((file) => file.path)).toEqual(["src/a.ts", "src/b.ts"]);
     expect(summaries[0]?.files[0]?.kind).toBe("modified");
     expect(summaries[0]?.files[0]?.additions).toBe(1);
     expect(summaries[0]?.files[0]?.deletions).toBe(1);
+    expect("unifiedDiff" in (summaries[0] as Record<string, unknown>)).toBe(false);
   });
 
   it("includes completed turns even when no fileChange tool events were emitted", () => {
@@ -537,9 +537,10 @@ describe("deriveTurnDiffSummaries", () => {
         payload: {
           diff: [
             "diff --git a/src/example.ts b/src/example.ts",
-            "@@ -1 +1 @@",
+            "@@ -1 +1,2 @@",
             "-old",
             "+older",
+            "+extra",
           ].join("\n"),
         },
       }),
@@ -572,8 +573,9 @@ describe("deriveTurnDiffSummaries", () => {
     ]);
 
     expect(summaries).toHaveLength(1);
-    expect(summaries[0]?.unifiedDiff).toContain("+newest");
-    expect(summaries[0]?.unifiedDiff).not.toContain("+older");
+    expect(summaries[0]?.files[0]?.path).toBe("src/example.ts");
+    expect(summaries[0]?.files[0]?.additions).toBe(1);
+    expect(summaries[0]?.files[0]?.deletions).toBe(1);
   });
 });
 
@@ -593,8 +595,6 @@ describe("deriveTurnDiffFilesFromUnifiedDiff", () => {
     );
 
     expect(files.map((file) => file.path)).toEqual(["src/a.ts", "src/b.ts"]);
-    expect(files[0]?.diff).toContain("diff --git a/src/a.ts b/src/a.ts");
-    expect(files[1]?.diff).toContain("diff --git a/src/b.ts b/src/b.ts");
     expect(files[0]?.additions).toBe(1);
     expect(files[0]?.deletions).toBe(1);
   });

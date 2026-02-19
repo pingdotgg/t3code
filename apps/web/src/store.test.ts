@@ -911,7 +911,7 @@ describe("store reducer thread continuity", () => {
     expect(next.threads[0]?.turnDiffSummaries.map((summary) => summary.turnId)).toEqual(["turn_1"]);
   });
 
-  it("keeps checkpoint-derived turn files when later events for the same turn arrive", () => {
+  it("keeps existing turn file metadata when later events for the same turn arrive", () => {
     const state = makeState(
       makeThread({
         turnDiffSummaries: [
@@ -921,11 +921,10 @@ describe("store reducer thread continuity", () => {
             files: [
               {
                 path: "src/from-checkpoint.ts",
-                diff: "diff --git a/src/from-checkpoint.ts b/src/from-checkpoint.ts",
+                additions: 1,
+                deletions: 1,
               },
             ],
-            unifiedDiff: "diff --git a/src/from-checkpoint.ts b/src/from-checkpoint.ts",
-            checkpointDiffLoaded: true,
           },
         ],
       }),
@@ -945,11 +944,11 @@ describe("store reducer thread continuity", () => {
     expect(next.threads[0]?.turnDiffSummaries[0]?.files.map((file) => file.path)).toEqual([
       "src/from-checkpoint.ts",
     ]);
-    expect(next.threads[0]?.turnDiffSummaries[0]?.checkpointDiffLoaded).toBe(true);
-    expect(next.threads[0]?.turnDiffSummaries[0]?.unifiedDiff).toContain("from-checkpoint.ts");
+    expect(next.threads[0]?.turnDiffSummaries[0]?.files[0]?.additions).toBe(1);
+    expect(next.threads[0]?.turnDiffSummaries[0]?.files[0]?.deletions).toBe(1);
   });
 
-  it("updates turn summaries from checkpoint diffs and marks them as loaded", () => {
+  it("updates checkpoint turn counts from authoritative checkpoint mappings", () => {
     const state = makeState(
       makeThread({
         turnDiffSummaries: [
@@ -959,31 +958,26 @@ describe("store reducer thread continuity", () => {
             files: [],
             checkpointTurnCount: 1,
           },
+          {
+            turnId: "turn-2",
+            completedAt: "2026-02-09T00:00:04.000Z",
+            files: [],
+            checkpointTurnCount: 2,
+          },
         ],
       }),
     );
 
     const next = reducer(state, {
-      type: "SET_THREAD_TURN_CHECKPOINT_DIFFS",
+      type: "SET_THREAD_TURN_CHECKPOINT_COUNTS",
       threadId: "thread-local-1",
-      checkpointDiffByTurnId: {
-        "turn-1": [
-          "diff --git a/src/a.ts b/src/a.ts",
-          "@@ -1 +1 @@",
-          "-old-a",
-          "+new-a",
-          "diff --git a/src/b.ts b/src/b.ts",
-          "@@ -1 +1 @@",
-          "-old-b",
-          "+new-b",
-        ].join("\n"),
+      checkpointTurnCountByTurnId: {
+        "turn-1": 2,
+        "turn-2": 3,
       },
     });
 
-    expect(next.threads[0]?.turnDiffSummaries[0]?.files.map((file) => file.path)).toEqual([
-      "src/a.ts",
-      "src/b.ts",
-    ]);
-    expect(next.threads[0]?.turnDiffSummaries[0]?.checkpointDiffLoaded).toBe(true);
+    expect(next.threads[0]?.turnDiffSummaries[0]?.checkpointTurnCount).toBe(2);
+    expect(next.threads[0]?.turnDiffSummaries[1]?.checkpointTurnCount).toBe(3);
   });
 });

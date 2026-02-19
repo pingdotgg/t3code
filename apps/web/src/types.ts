@@ -40,7 +40,6 @@ export interface ChatMessage {
 export interface TurnDiffFileChange {
   path: string;
   kind?: string | undefined;
-  diff?: string | undefined;
   additions?: number | undefined;
   deletions?: number | undefined;
 }
@@ -50,10 +49,8 @@ export interface TurnDiffSummary {
   completedAt: string;
   status?: string | undefined;
   files: TurnDiffFileChange[];
-  unifiedDiff?: string | undefined;
   assistantMessageId?: string | undefined;
   checkpointTurnCount?: number | undefined;
-  checkpointDiffLoaded?: boolean | undefined;
 }
 
 export interface Project {

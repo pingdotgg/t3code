@@ -61,7 +61,6 @@ const persistedTurnDiffSummarySchema = z.object({
   files: z.array(persistedTurnDiffFileChangeSchema),
   assistantMessageId: z.string().min(1).optional(),
   checkpointTurnCount: z.number().int().min(0).optional(),
-  checkpointDiffLoaded: z.boolean().optional(),
 });
 
 const persistedThreadSchema = z.object({

@@ -5,11 +5,11 @@ import {
   Virtualizer,
   WorkerPoolContextProvider,
 } from "@pierre/diffs/react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
 import { Columns2Icon, Rows3Icon } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { checkpointDiffQueryOptions, providerQueryKeys } from "~/lib/providerReactQuery";
+import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { isElectron } from "../env";
 import { useNativeApi } from "../hooks/useNativeApi";
@@ -103,7 +103,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const api = useNativeApi();
   const { resolvedTheme } = useTheme();
   const { state, dispatch } = useStore();
-  const queryClient = useQueryClient();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const params = useParams({ strict: false });
@@ -193,99 +192,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         ? "Failed to load checkpoint diff."
         : null;
 
-  useEffect(() => {
-    if (!activeThread?.id || !selectedTurn || !selectedTurnCheckpointDiff) {
-      return;
-    }
-    dispatch({
-      type: "SET_THREAD_TURN_CHECKPOINT_DIFFS",
-      threadId: activeThread.id,
-      checkpointDiffByTurnId: {
-        [selectedTurn.turnId]: selectedTurnCheckpointDiff,
-      },
-    });
-  }, [activeThread?.id, dispatch, selectedTurn, selectedTurnCheckpointDiff]);
-
-  const selectedPatch = useMemo(() => {
-    const patchForSummary = (summary: (typeof turnDiffSummaries)[number]): string | undefined => {
-      const checkpointTurnCount =
-        summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
-      if (activeSessionId && typeof checkpointTurnCount === "number") {
-        const checkpointPatch = queryClient.getQueryData<{ diff: string }>(
-          providerQueryKeys.checkpointDiff({
-            sessionId: activeSessionId,
-            threadRuntimeId: activeThreadRuntimeId,
-            fromTurnCount: Math.max(0, checkpointTurnCount - 1),
-            toTurnCount: checkpointTurnCount,
-            cacheScope: `turn:${summary.turnId}`,
-          }),
-        )?.diff;
-        if (checkpointPatch) {
-          return checkpointPatch;
-        }
-      }
-      if (summary.unifiedDiff) {
-        return summary.unifiedDiff;
-      }
-      const filePatches = summary.files
-        .map((file) => file.diff?.trim())
-        .filter((patch): patch is string => Boolean(patch));
-      if (filePatches.length === 0) {
-        return undefined;
-      }
-      return filePatches.join("\n\n");
-    };
-
-    if (selectedTurn) {
-      return selectedTurnCheckpointDiff ?? patchForSummary(selectedTurn);
-    }
-
-    if (conversationCheckpointDiff) {
-      return conversationCheckpointDiff;
-    }
-
-    // Fallback when a conversation checkpoint diff isn't available yet:
-    // keep one patch per file path (latest change wins) so files aren't duplicated.
-    const latestPatchByPath = new Map<string, string>();
-    for (const summary of turnDiffSummaries) {
-      for (const file of summary.files) {
-        if (latestPatchByPath.has(file.path)) {
-          continue;
-        }
-        const patch = file.diff?.trim();
-        if (!patch) {
-          continue;
-        }
-        latestPatchByPath.set(file.path, patch);
-      }
-    }
-    if (latestPatchByPath.size > 0) {
-      return Array.from(latestPatchByPath.entries())
-        .toSorted(([leftPath], [rightPath]) =>
-          leftPath.localeCompare(rightPath, undefined, { numeric: true, sensitivity: "base" }),
-        )
-        .map(([, patch]) => patch)
-        .join("\n\n");
-    }
-
-    const patches = turnDiffSummaries
-      .toReversed()
-      .map((summary) => patchForSummary(summary)?.trim())
-      .filter((patch): patch is string => Boolean(patch));
-    if (patches.length === 0) {
-      return undefined;
-    }
-    return patches.join("\n\n");
-  }, [
-    activeSessionId,
-    activeThreadRuntimeId,
-    conversationCheckpointDiff,
-    inferredCheckpointTurnCountByTurnId,
-    queryClient,
-    selectedTurn,
-    selectedTurnCheckpointDiff,
-    turnDiffSummaries,
-  ]);
+  const selectedPatch = selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff;
   const renderablePatch = useMemo(() => getRenderablePatch(selectedPatch), [selectedPatch]);
   const renderableFiles = useMemo(() => {
     if (!renderablePatch || renderablePatch.kind !== "files") {

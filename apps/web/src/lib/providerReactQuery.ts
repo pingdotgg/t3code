@@ -23,6 +23,25 @@ export const providerQueryKeys = {
     ] as const,
 };
 
+function asCheckpointErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  return "";
+}
+
+function isCheckpointTemporarilyUnavailable(error: unknown): boolean {
+  const message = asCheckpointErrorMessage(error).toLowerCase();
+  return (
+    message.includes("exceeds current turn count") ||
+    message.includes("checkpoint is unavailable for turn") ||
+    message.includes("filesystem checkpoint is unavailable")
+  );
+}
+
 export function checkpointDiffQueryOptions(
   api: NativeApi | undefined,
   input: CheckpointDiffQueryInput,
@@ -54,7 +73,15 @@ export function checkpointDiffQueryOptions(
     },
     enabled: !!api && !!input.sessionId && hasValidRange,
     staleTime: Infinity,
-    retry: 8,
-    retryDelay: (attempt) => Math.min(2_000, 150 * 2 ** (attempt - 1)),
+    retry: (failureCount, error) => {
+      if (isCheckpointTemporarilyUnavailable(error)) {
+        return failureCount < 12;
+      }
+      return failureCount < 3;
+    },
+    retryDelay: (attempt, error) =>
+      isCheckpointTemporarilyUnavailable(error)
+        ? Math.min(5_000, 250 * 2 ** (attempt - 1))
+        : Math.min(1_000, 100 * 2 ** (attempt - 1)),
   });
 }
