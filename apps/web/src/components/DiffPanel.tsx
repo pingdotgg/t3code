@@ -1,16 +1,12 @@
 import { parsePatchFiles } from "@pierre/diffs";
-import {
-  FileDiff,
-  type FileDiffMetadata,
-  Virtualizer,
-} from "@pierre/diffs/react";
+import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { Columns2Icon, Rows3Icon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
-import { parseDiffRouteSearch } from "../diffRouteSearch";
+import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { isElectron } from "../env";
 import { useNativeApi } from "../hooks/useNativeApi";
 import { useTheme } from "../hooks/useTheme";
@@ -101,7 +97,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     useTurnDiffSummaries(activeThread);
 
   const selectedTurnId = diffSearch.diffTurnId ?? null;
-  const selectedFilePath = selectedTurnId !== null ? diffSearch.diffFilePath ?? null : null;
+  const selectedFilePath = selectedTurnId !== null ? (diffSearch.diffFilePath ?? null) : null;
   const selectedTurn =
     selectedTurnId === null
       ? undefined
@@ -205,12 +201,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       to: "/$threadId",
       params: { threadId: activeThread.id },
       search: (previous) => {
-        const {
-          diff: _diff,
-          diffTurnId: _diffTurnId,
-          diffFilePath: _diffFilePath,
-          ...rest
-        } = previous;
+        const rest = stripDiffSearchParams(previous);
         return { ...rest, diff: "1", diffTurnId: turnId };
       },
     });
@@ -221,12 +212,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       to: "/$threadId",
       params: { threadId: activeThread.id },
       search: (previous) => {
-        const {
-          diff: _diff,
-          diffTurnId: _diffTurnId,
-          diffFilePath: _diffFilePath,
-          ...rest
-        } = previous;
+        const rest = stripDiffSearchParams(previous);
         return { ...rest, diff: "1" };
       },
     });

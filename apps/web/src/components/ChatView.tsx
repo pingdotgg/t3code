@@ -36,7 +36,7 @@ import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
-import { parseDiffRouteSearch } from "../diffRouteSearch";
+import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { buildBootstrapInput } from "../historyBootstrap";
 import {
   type ComposerTriggerKind,
@@ -1967,12 +1967,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       to: "/$threadId",
       params: { threadId },
       search: (previous) => {
-        const {
-          diff: _diff,
-          diffTurnId: _diffTurnId,
-          diffFilePath: _diffFilePath,
-          ...rest
-        } = previous;
+        const rest = stripDiffSearchParams(previous);
         return diffOpen ? rest : { ...rest, diff: "1" };
       },
     });
@@ -1983,12 +1978,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         to: "/$threadId",
         params: { threadId },
         search: (previous) => {
-          const {
-            diff: _diff,
-            diffTurnId: _diffTurnId,
-            diffFilePath: _diffFilePath,
-            ...rest
-          } = previous;
+          const rest = stripDiffSearchParams(previous);
           return filePath
             ? { ...rest, diff: "1", diffTurnId: turnId, diffFilePath: filePath }
             : { ...rest, diff: "1", diffTurnId: turnId };
@@ -2828,11 +2818,16 @@ const MessagesTimeline = memo(function MessagesTimeline({
                             row.message.id,
                           );
                           if (!turnSummary) return null;
-                          const checkpointFilesState = turnCheckpointFilesByTurnId.get(turnSummary.turnId);
+                          const checkpointFilesState = turnCheckpointFilesByTurnId.get(
+                            turnSummary.turnId,
+                          );
                           const checkpointFiles = checkpointFilesState?.files ?? [];
                           const summaryStat = checkpointFiles.reduce(
                             (acc, file) => {
-                              if (typeof file.additions !== "number" || typeof file.deletions !== "number") {
+                              if (
+                                typeof file.additions !== "number" ||
+                                typeof file.deletions !== "number"
+                              ) {
                                 return acc;
                               }
                               return {
@@ -2843,7 +2838,9 @@ const MessagesTimeline = memo(function MessagesTimeline({
                             { additions: 0, deletions: 0 },
                           );
                           const changedFileCountLabel =
-                            checkpointFilesState?.status === "ready" ? String(checkpointFiles.length) : "...";
+                            checkpointFilesState?.status === "ready"
+                              ? String(checkpointFiles.length)
+                              : "...";
                           return (
                             <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
                               <div className="mb-1.5 flex items-center justify-between gap-2">
@@ -2854,7 +2851,9 @@ const MessagesTimeline = memo(function MessagesTimeline({
                                       <span className="mx-1">•</span>
                                       <span className="text-success">+{summaryStat.additions}</span>
                                       <span className="mx-0.5 text-muted-foreground/70">/</span>
-                                      <span className="text-destructive">-{summaryStat.deletions}</span>
+                                      <span className="text-destructive">
+                                        -{summaryStat.deletions}
+                                      </span>
                                     </>
                                   )}
                                 </p>
@@ -2862,12 +2861,15 @@ const MessagesTimeline = memo(function MessagesTimeline({
                                   type="button"
                                   size="xs"
                                   variant="outline"
-                                  onClick={() => onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)}
+                                  onClick={() =>
+                                    onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)
+                                  }
                                 >
                                   View diff
                                 </Button>
                               </div>
-                              {!checkpointFilesState || checkpointFilesState.status === "pending" ? (
+                              {!checkpointFilesState ||
+                              checkpointFilesState.status === "pending" ? (
                                 <p className="text-[11px] text-muted-foreground/70">
                                   Waiting for checkpoint metadata...
                                 </p>

@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Activity, Suspense, lazy, type ReactNode, useCallback, useEffect } from "react";
 
 import ChatView from "../components/ChatView";
-import { parseDiffRouteSearch } from "../diffRouteSearch";
+import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useStore } from "../store";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
@@ -58,13 +58,7 @@ function ChatThreadRouteView() {
       to: "/$threadId",
       params: { threadId },
       search: (previous) => {
-        const {
-          diff: _diff,
-          diffTurnId: _diffTurnId,
-          diffFilePath: _diffFilePath,
-          ...rest
-        } = previous;
-        return rest;
+        return stripDiffSearchParams(previous);
       },
     });
   }, [navigate, threadId]);
@@ -118,4 +112,3 @@ export const Route = createFileRoute("/_chat/$threadId")({
   validateSearch: (search) => parseDiffRouteSearch(search),
   component: ChatThreadRouteView,
 });
-
