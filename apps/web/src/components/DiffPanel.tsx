@@ -3,14 +3,7 @@ import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/reac
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ChevronLeftIcon, ChevronRightIcon, Columns2Icon, Rows3Icon } from "lucide-react";
-import {
-  type WheelEvent as ReactWheelEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -250,7 +243,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     if (!element) return;
     element.scrollBy({ left: offset, behavior: "smooth" });
   }, []);
-  const onTurnStripWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
+  const onTurnStripWheel = useCallback((event: WheelEvent) => {
     const element = turnStripRef.current;
     if (!element) return;
     if (element.scrollWidth <= element.clientWidth + 1) return;
@@ -267,15 +260,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     updateTurnStripScrollState();
     const onScroll = () => updateTurnStripScrollState();
     element.addEventListener("scroll", onScroll, { passive: true });
+    element.addEventListener("wheel", onTurnStripWheel, { passive: false });
 
     const resizeObserver = new ResizeObserver(() => updateTurnStripScrollState());
     resizeObserver.observe(element);
 
     return () => {
       element.removeEventListener("scroll", onScroll);
+      element.removeEventListener("wheel", onTurnStripWheel);
       resizeObserver.disconnect();
     };
-  }, [updateTurnStripScrollState]);
+  }, [onTurnStripWheel, updateTurnStripScrollState]);
 
   useEffect(() => {
     updateTurnStripScrollState();
@@ -344,7 +339,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           <div
             ref={turnStripRef}
             className="turn-chip-strip flex gap-1 overflow-x-auto px-8 py-0.5"
-            onWheel={onTurnStripWheel}
           >
             <button
               type="button"
