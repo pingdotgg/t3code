@@ -2,7 +2,7 @@
 
 import { Toast } from "@base-ui/react/toast";
 import { useEffect } from "react";
-import { useRouterState } from "@tanstack/react-router";
+import { useParams } from "@tanstack/react-router";
 import {
   CircleAlertIcon,
   CircleCheckIcon,
@@ -56,17 +56,9 @@ function shouldRenderForActiveThread(
 }
 
 function useActiveThreadIdFromRoute(): string | null {
-  return useRouterState({
-    select: (routerState) => {
-      for (let index = routerState.matches.length - 1; index >= 0; index -= 1) {
-        const params = routerState.matches[index]?.params as Record<string, unknown> | undefined;
-        const threadId = params?.threadId;
-        if (typeof threadId === "string" && threadId.length > 0) {
-          return threadId;
-        }
-      }
-      return null;
-    },
+  return useParams({
+    strict: false,
+    select: (params) => params.threadId ?? null,
   });
 }
 
