@@ -81,10 +81,6 @@ function makeState(thread: Thread): AppState {
     threads: [thread],
     threadsHydrated: true,
     runtimeMode: "full-access",
-    diffOpen: false,
-    diffThreadId: null,
-    diffTurnId: null,
-    diffFilePath: null,
   };
 }
 
@@ -147,21 +143,6 @@ describe("store reducer thread continuity", () => {
       threadId: "thread-local-1",
     });
     expect(next.threads[0]?.terminalOpen).toBe(true);
-  });
-
-  it("opens diff panel with an explicit turn/file target", () => {
-    const state = makeState(makeThread());
-    const next = reducer(state, {
-      type: "OPEN_DIFF",
-      threadId: "thread-local-1",
-      turnId: "turn-1",
-      filePath: "src/app.ts",
-    });
-
-    expect(next.diffOpen).toBe(true);
-    expect(next.diffThreadId).toBe("thread-local-1");
-    expect(next.diffTurnId).toBe("turn-1");
-    expect(next.diffFilePath).toBe("src/app.ts");
   });
 
   it("sets terminal open state per thread", () => {
@@ -618,10 +599,6 @@ describe("store reducer thread continuity", () => {
       ],
       threadsHydrated: true,
       runtimeMode: "full-access",
-      diffOpen: true,
-      diffThreadId: "thread-b",
-      diffTurnId: "turn-b",
-      diffFilePath: "src/removed.ts",
     };
 
     const next = reducer(state, {
@@ -645,10 +622,6 @@ describe("store reducer thread continuity", () => {
     expect(next.threads).toHaveLength(1);
     expect(next.threads[0]?.id).toBe("thread-a");
     expect(next.threads[0]?.projectId).toBe("project-new-a");
-    expect(next.diffOpen).toBe(false);
-    expect(next.diffThreadId).toBeNull();
-    expect(next.diffTurnId).toBeNull();
-    expect(next.diffFilePath).toBeNull();
   });
 
   it("treats empty scripts from sync as authoritative", () => {
@@ -674,10 +647,6 @@ describe("store reducer thread continuity", () => {
       threads: [makeThread({ id: "thread-a", projectId: "project-old-a" })],
       threadsHydrated: true,
       runtimeMode: "full-access",
-      diffOpen: false,
-      diffThreadId: null,
-      diffTurnId: null,
-      diffFilePath: null,
     };
 
     const next = reducer(state, {
@@ -766,10 +735,6 @@ describe("store reducer thread continuity", () => {
       ],
       threadsHydrated: true,
       runtimeMode: "full-access",
-      diffOpen: true,
-      diffThreadId: "thread-a",
-      diffTurnId: "turn-a",
-      diffFilePath: "src/a.ts",
     };
 
     const next = reducer(state, {
@@ -781,10 +746,6 @@ describe("store reducer thread continuity", () => {
     expect(next.projects[0]?.id).toBe("project-2");
     expect(next.threads).toHaveLength(1);
     expect(next.threads[0]?.id).toBe("thread-b");
-    expect(next.diffOpen).toBe(false);
-    expect(next.diffThreadId).toBeNull();
-    expect(next.diffTurnId).toBeNull();
-    expect(next.diffFilePath).toBeNull();
   });
 
   it("marks completion as seen immediately for the active thread", () => {

@@ -48,20 +48,6 @@ type Action =
   | { type: "NEW_THREAD_TERMINAL"; threadId: string; terminalId: string }
   | { type: "SET_THREAD_ACTIVE_TERMINAL"; threadId: string; terminalId: string }
   | { type: "CLOSE_THREAD_TERMINAL"; threadId: string; terminalId: string }
-  | { type: "TOGGLE_DIFF" }
-  | {
-      type: "OPEN_DIFF";
-      threadId: string;
-      turnId?: string;
-      filePath?: string;
-    }
-  | {
-      type: "SET_DIFF_TARGET";
-      threadId: string;
-      turnId?: string;
-      filePath?: string;
-    }
-  | { type: "CLOSE_DIFF" }
   | {
       type: "APPLY_EVENT";
       event: ProviderEvent;
@@ -110,10 +96,6 @@ export interface AppState {
   threads: Thread[];
   threadsHydrated: boolean;
   runtimeMode: RuntimeMode;
-  diffOpen: boolean;
-  diffThreadId: string | null;
-  diffTurnId: string | null;
-  diffFilePath: string | null;
 }
 
 const PERSISTED_STATE_KEY = "t3code:renderer-state:v7";
@@ -133,10 +115,6 @@ const initialState: AppState = {
   threads: [],
   threadsHydrated: false,
   runtimeMode: DEFAULT_RUNTIME_MODE,
-  diffOpen: false,
-  diffThreadId: null,
-  diffTurnId: null,
-  diffFilePath: null,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -160,10 +138,6 @@ function readPersistedState(): AppState {
       ...hydrated,
       threads,
       threadsHydrated: threads.length > 0,
-      diffOpen: false,
-      diffThreadId: null,
-      diffTurnId: null,
-      diffFilePath: null,
     };
   } catch {
     return initialState;
@@ -189,32 +163,6 @@ function updateThread(
   updater: (t: Thread) => Thread,
 ): Thread[] {
   return threads.map((t) => (t.id === threadId ? updater(t) : t));
-}
-
-function resetDiffTargetIfMissing(state: AppState, threads: Thread[]) {
-  if (!state.diffThreadId) {
-    return {
-      diffOpen: state.diffOpen,
-      diffThreadId: state.diffThreadId,
-      diffTurnId: state.diffTurnId,
-      diffFilePath: state.diffFilePath,
-    };
-  }
-  const hasThread = threads.some((thread) => thread.id === state.diffThreadId);
-  if (hasThread) {
-    return {
-      diffOpen: state.diffOpen,
-      diffThreadId: state.diffThreadId,
-      diffTurnId: state.diffTurnId,
-      diffFilePath: state.diffFilePath,
-    };
-  }
-  return {
-    diffOpen: false,
-    diffThreadId: null,
-    diffTurnId: null,
-    diffFilePath: null,
-  };
 }
 
 function mergeTurnDiffSummaries(
@@ -615,13 +563,11 @@ export function reducer(state: AppState, action: Action): AppState {
           });
         })
         .filter((thread): thread is Thread => thread !== null);
-      const diffState = resetDiffTargetIfMissing(state, nextThreads);
 
       return {
         ...state,
         projects: nextProjects,
         threads: nextThreads,
-        ...diffState,
       };
     }
 
@@ -640,13 +586,11 @@ export function reducer(state: AppState, action: Action): AppState {
       }
 
       const threads = state.threads.filter((thread) => thread.projectId !== action.projectId);
-      const diffState = resetDiffTargetIfMissing(state, threads);
 
       return {
         ...state,
         projects,
         threads,
-        ...diffState,
       };
     }
 
@@ -829,29 +773,6 @@ export function reducer(state: AppState, action: Action): AppState {
           closeThreadTerminal(thread, action.terminalId),
         ),
       };
-
-    case "TOGGLE_DIFF":
-      return { ...state, diffOpen: !state.diffOpen };
-
-    case "OPEN_DIFF":
-      return {
-        ...state,
-        diffOpen: true,
-        diffThreadId: action.threadId,
-        diffTurnId: action.turnId ?? null,
-        diffFilePath: action.filePath ?? null,
-      };
-
-    case "SET_DIFF_TARGET":
-      return {
-        ...state,
-        diffThreadId: action.threadId,
-        diffTurnId: action.turnId ?? null,
-        diffFilePath: action.filePath ?? null,
-      };
-
-    case "CLOSE_DIFF":
-      return { ...state, diffOpen: false };
 
     case "APPLY_TERMINAL_EVENT":
       if (!state.threads.some((thread) => thread.id === action.event.threadId)) {
@@ -1093,15 +1014,11 @@ export function reducer(state: AppState, action: Action): AppState {
         runtimeMode: action.mode,
       };
 
-    case "DELETE_THREAD": {
-      const threads = state.threads.filter((t) => t.id !== action.threadId);
-      const diffState = resetDiffTargetIfMissing(state, threads);
+    case "DELETE_THREAD":
       return {
         ...state,
-        threads,
-        ...diffState,
+        threads: state.threads.filter((t) => t.id !== action.threadId),
       };
-    }
 
     default:
       return state;
