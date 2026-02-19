@@ -164,10 +164,10 @@ function stopBackend(): void {
   backendProcess = null;
   if (!child) return;
 
-  if (!child.killed) {
+  if (child.exitCode === null && child.signalCode === null) {
     child.kill("SIGTERM");
     setTimeout(() => {
-      if (!child.killed) {
+      if (child.exitCode === null && child.signalCode === null) {
         child.kill("SIGKILL");
       }
     }, 2_000).unref();
@@ -336,3 +336,19 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
+
+if (process.platform !== "win32") {
+  process.on("SIGINT", () => {
+    if (isQuitting) return;
+    isQuitting = true;
+    stopBackend();
+    app.quit();
+  });
+
+  process.on("SIGTERM", () => {
+    if (isQuitting) return;
+    isQuitting = true;
+    stopBackend();
+    app.quit();
+  });
+}
