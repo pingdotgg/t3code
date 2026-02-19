@@ -1,11 +1,11 @@
-import { MonitorIcon, MoonIcon, SunIcon, TerminalIcon } from "lucide-react";
+import { TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
+import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL } from "../branding";
-import { useTheme } from "../hooks/useTheme";
 import { DEFAULT_MODEL } from "../model-logic";
 import { derivePendingApprovals } from "../session-logic";
 import { useStore } from "../store";
@@ -18,7 +18,6 @@ import { toastManager } from "./ui/toast";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { createThread } from "../threadFactory";
 
-const THEME_CYCLE = { system: "light", light: "dark", dark: "system" } as const;
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 
 function formatRelativeTime(iso: string): string {
@@ -117,6 +116,7 @@ export default function Sidebar() {
   const { state, dispatch } = useStore();
   const api = useNativeApi();
   const navigate = useNavigate();
+  const { settings: appSettings } = useAppSettings();
   const params = useParams({ strict: false });
   const routeThreadId = typeof params.threadId === "string" ? params.threadId : null;
   const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery({
@@ -127,7 +127,6 @@ export default function Sidebar() {
   const removeWorktreeMutation = useMutation(
     gitRemoveWorktreeMutationOptions({ api, queryClient }),
   );
-  const { theme, setTheme } = useTheme();
   const [addingProject, setAddingProject] = useState(false);
   const [newCwd, setNewCwd] = useState("");
   const [isPickingFolder, setIsPickingFolder] = useState(false);
@@ -272,6 +271,17 @@ export default function Sidebar() {
 
       const thread = state.threads.find((t) => t.id === threadId);
       if (!thread) return;
+      if (appSettings.confirmThreadDelete) {
+        const confirmed = await api.dialogs.confirm(
+          [
+            `Delete thread \"${thread.title}\"?`,
+            "This permanently clears conversation history for this thread.",
+          ].join("\n"),
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
       const threadProject = state.projects.find((project) => project.id === thread.projectId);
       const orphanedWorktreePath = getOrphanedWorktreePathForThread(state.threads, threadId);
       const displayWorktreePath = orphanedWorktreePath
@@ -349,7 +359,16 @@ export default function Sidebar() {
         });
       }
     },
-    [api, dispatch, navigate, removeWorktreeMutation, routeThreadId, state.projects, state.threads],
+    [
+      api,
+      appSettings.confirmThreadDelete,
+      dispatch,
+      navigate,
+      removeWorktreeMutation,
+      routeThreadId,
+      state.projects,
+      state.threads,
+    ],
   );
 
   const handleProjectContextMenu = useCallback(
@@ -436,25 +455,10 @@ export default function Sidebar() {
           <span className="truncate text-sm font-semibold tracking-tight text-foreground">
             T3 <span className="font-normal text-muted-foreground">Code</span>
           </span>
-          <span className="rounded border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-widest text-muted-foreground/60">
             {APP_STAGE_LABEL}
           </span>
         </div>
-        <button
-          type="button"
-          className="rounded-md p-1.5 text-muted-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-muted-foreground"
-          onClick={() => setTheme(THEME_CYCLE[theme])}
-          aria-label={`Theme: ${theme}`}
-          title={`Theme: ${theme}`}
-        >
-          {theme === "system" ? (
-            <MonitorIcon className="size-3.5" />
-          ) : theme === "light" ? (
-            <SunIcon className="size-3.5" />
-          ) : (
-            <MoonIcon className="size-3.5" />
-          )}
-        </button>
       </div>
 
       {/* New thread (global) */}

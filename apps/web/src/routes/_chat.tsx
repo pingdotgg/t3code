@@ -1,5 +1,5 @@
-import { Outlet, createFileRoute } from "@tanstack/react-router";
-import { Activity, Suspense, lazy, type ReactNode } from "react";
+import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Activity, Suspense, lazy, type ReactNode, useEffect } from "react";
 
 import Sidebar from "../components/Sidebar";
 import { useMediaQuery } from "../hooks/useMediaQuery";
@@ -48,6 +48,23 @@ const DiffPanelWrapper = (props: { children: ReactNode; sheet: boolean }) => {
 function ChatRouteLayout() {
   const { state } = useStore();
   const shouldUseDiffSheet = useMediaQuery(DIFF_INLINE_LAYOUT_MEDIA_QUERY);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const onMenuAction = window.desktopBridge?.onMenuAction;
+    if (typeof onMenuAction !== "function") {
+      return;
+    }
+
+    const unsubscribe = onMenuAction((action) => {
+      if (action !== "open-settings") return;
+      void navigate({ to: "/settings" });
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [navigate]);
 
   const diffLoadingFallback =
     !state.diffOpen || shouldUseDiffSheet ? (

@@ -5,7 +5,15 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  type MenuItemConstructorOptions,
+  shell,
+} from "electron";
 
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { fixPath } from "./fixPath";
@@ -16,6 +24,7 @@ const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
+const MENU_ACTION_CHANNEL = "desktop:menu-action";
 const ROOT_DIR = path.resolve(__dirname, "../../..");
 const BACKEND_ENTRY = path.join(ROOT_DIR, "apps/server/dist/index.mjs");
 const WEB_ENTRY = path.join(ROOT_DIR, "apps/web/dist/index.html");
@@ -32,6 +41,80 @@ let backendWsUrl = "";
 let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
+
+function dispatchMenuAction(action: string): void {
+  const existingWindow = BrowserWindow.getFocusedWindow() ?? mainWindow ?? BrowserWindow.getAllWindows()[0];
+  const targetWindow = existingWindow ?? createWindow();
+  if (!existingWindow) {
+    mainWindow = targetWindow;
+  }
+
+  const send = () => {
+    if (targetWindow.isDestroyed()) return;
+    targetWindow.webContents.send(MENU_ACTION_CHANNEL, action);
+    if (!targetWindow.isVisible()) {
+      targetWindow.show();
+    }
+    targetWindow.focus();
+  };
+
+  if (targetWindow.webContents.isLoadingMainFrame()) {
+    targetWindow.webContents.once("did-finish-load", send);
+    return;
+  }
+
+  send();
+}
+
+function configureApplicationMenu(): void {
+  const template: MenuItemConstructorOptions[] = [];
+
+  if (process.platform === "darwin") {
+    template.push({
+      label: app.name,
+      submenu: [
+        { role: "about" },
+        {
+          label: "Settings...",
+          accelerator: "CmdOrCtrl+,",
+          click: () => dispatchMenuAction("open-settings"),
+        },
+        { type: "separator" },
+        { role: "services" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    });
+  }
+
+  template.push(
+    {
+      label: "File",
+      submenu: [
+        ...(process.platform === "darwin"
+          ? []
+          : [
+              {
+                label: "Settings...",
+                accelerator: "CmdOrCtrl+,",
+                click: () => dispatchMenuAction("open-settings"),
+              },
+              { type: "separator" as const },
+            ]),
+        { role: process.platform === "darwin" ? "close" : "quit" },
+      ],
+    },
+    { role: "editMenu" },
+    { role: "viewMenu" },
+    { role: "windowMenu" },
+  );
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 function resolveResourcePath(fileName: string): string | null {
   const candidates = [
@@ -322,6 +405,7 @@ app.on("before-quit", () => {
 
 app.whenReady().then(() => {
   configureAppIdentity();
+  configureApplicationMenu();
   void bootstrap();
 
   app.on("activate", () => {
