@@ -296,6 +296,82 @@ describe("ProviderManager", () => {
     manager.dispose();
   });
 
+  it("emits checkpoint/captured after turn completion checkpoint capture", async () => {
+    const manager = new ProviderManager();
+    const events: Array<{ method: string; payload?: unknown; threadId?: string }> = [];
+    manager.on("event", (event) => {
+      events.push({
+        method: event.method,
+        ...(event.payload !== undefined ? { payload: event.payload } : {}),
+        ...(event.threadId ? { threadId: event.threadId } : {}),
+      });
+    });
+
+    const internals = manager as unknown as {
+      onCodexEvent: (event: {
+        id: string;
+        kind: "notification";
+        provider: "codex";
+        sessionId: string;
+        createdAt: string;
+        method: string;
+        threadId: string;
+      }) => void;
+      codex: {
+        hasSession: (sessionId: string) => boolean;
+        readThread: (sessionId: string) => Promise<{
+          threadId: string;
+          turns: Array<{ id: string; items: unknown[] }>;
+        }>;
+      };
+      filesystemCheckpointStore: {
+        captureCheckpoint: (input: {
+          cwd: string;
+          threadId: string;
+          turnCount: number;
+        }) => Promise<void>;
+      };
+      sessionCheckpointCwds: Map<string, string>;
+    };
+
+    internals.codex.hasSession = () => true;
+    internals.codex.readThread = async () => ({
+      threadId: "thr_1",
+      turns: [{ id: "turn_1", items: [] }],
+    });
+    const captureCheckpoint = vi.fn(async () => undefined);
+    internals.filesystemCheckpointStore.captureCheckpoint = captureCheckpoint;
+    internals.sessionCheckpointCwds.set("sess_1", "/repo");
+
+    internals.onCodexEvent({
+      id: "evt-turn-complete",
+      kind: "notification",
+      provider: "codex",
+      sessionId: "sess_1",
+      createdAt: "2026-02-19T00:00:00.000Z",
+      method: "turn/completed",
+      threadId: "thr_1",
+    });
+
+    await vi.waitFor(() => {
+      expect(captureCheckpoint).toHaveBeenCalledWith({
+        cwd: "/repo",
+        threadId: "thr_1",
+        turnCount: 1,
+      });
+      expect(events.some((event) => event.method === "checkpoint/captured")).toBe(true);
+    });
+
+    const checkpointCapturedEvent = events.find((event) => event.method === "checkpoint/captured");
+    expect(checkpointCapturedEvent?.threadId).toBe("thr_1");
+    expect(checkpointCapturedEvent?.payload).toEqual({
+      threadId: "thr_1",
+      turnCount: 1,
+    });
+
+    manager.dispose();
+  });
+
   it("lazily initializes filesystem checkpoints before diffing when cache is missing", async () => {
     const manager = new ProviderManager();
     const internals = manager as unknown as {

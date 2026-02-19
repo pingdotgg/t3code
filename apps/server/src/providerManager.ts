@@ -477,11 +477,19 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
 
     const checkpointCwd = this.sessionCheckpointCwds.get(event.sessionId);
     if (!checkpointCwd) {
-      void this.getOrInitializeFilesystemCheckpointCwd(event.sessionId).catch((error) => {
-        const message =
-          error instanceof Error ? error.message : "Failed to initialize filesystem checkpoints.";
-        this.emitFilesystemCheckpointError(event.sessionId, message, event.threadId);
-      });
+      void this.getOrInitializeFilesystemCheckpointCwd(event.sessionId)
+        .then(async (initializedCwd) => {
+          if (!initializedCwd || !this.codex.hasSession(event.sessionId)) {
+            return;
+          }
+          const snapshot = await this.codex.readThread(event.sessionId);
+          this.emitCheckpointCaptured(event.sessionId, snapshot.threadId, snapshot.turns.length);
+        })
+        .catch((error) => {
+          const message =
+            error instanceof Error ? error.message : "Failed to initialize filesystem checkpoints.";
+          this.emitFilesystemCheckpointError(event.sessionId, message, event.threadId);
+        });
       return;
     }
 
@@ -496,9 +504,26 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
         threadId: snapshot.threadId,
         turnCount: snapshot.turns.length,
       });
+      this.emitCheckpointCaptured(event.sessionId, snapshot.threadId, snapshot.turns.length);
     }).catch((error) => {
       const message = error instanceof Error ? error.message : "Failed to capture checkpoint.";
       this.emitFilesystemCheckpointError(event.sessionId, message, event.threadId);
+    });
+  }
+
+  private emitCheckpointCaptured(sessionId: string, threadId: string, turnCount: number): void {
+    this.emit("event", {
+      id: randomUUID(),
+      kind: "notification",
+      provider: "codex",
+      sessionId,
+      createdAt: new Date().toISOString(),
+      method: "checkpoint/captured",
+      threadId,
+      payload: {
+        threadId,
+        turnCount,
+      },
     });
   }
 

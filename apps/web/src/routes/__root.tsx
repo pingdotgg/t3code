@@ -6,6 +6,7 @@ import { AnchoredToastProvider, ToastProvider } from "../components/ui/toast";
 import { isElectron } from "../env";
 import { useNativeApi } from "../hooks/useNativeApi";
 import { invalidateGitQueries } from "../lib/gitReactQuery";
+import { providerQueryKeys } from "../lib/providerReactQuery";
 import { DEFAULT_MODEL } from "../model-logic";
 import { useStore } from "../store";
 import { onServerWelcome } from "../wsNativeApi";
@@ -56,6 +57,9 @@ function EventRouter() {
     return api.providers.onEvent((event) => {
       if (event.method === "turn/completed") {
         void invalidateGitQueries(queryClient);
+      }
+      if (event.method === "checkpoint/captured") {
+        void queryClient.invalidateQueries({ queryKey: providerQueryKeys.all });
       }
       if (!activeThreadId) return;
       dispatch({
