@@ -6,7 +6,6 @@ import { AnchoredToastProvider, ToastProvider } from "../components/ui/toast";
 import { isElectron } from "../env";
 import { useNativeApi } from "../hooks/useNativeApi";
 import { invalidateGitQueries } from "../lib/gitReactQuery";
-import { providerQueryKeys } from "../lib/providerReactQuery";
 import { DEFAULT_MODEL } from "../model-logic";
 import { useStore } from "../store";
 import { onServerWelcome } from "../wsNativeApi";
@@ -59,7 +58,15 @@ function EventRouter() {
         void invalidateGitQueries(queryClient);
       }
       if (event.method === "checkpoint/captured") {
-        void queryClient.invalidateQueries({ queryKey: providerQueryKeys.all });
+        const payload = event.payload as { turnCount?: number } | undefined;
+        const turnCount = payload?.turnCount;
+        void queryClient.invalidateQueries({
+          queryKey: ["providers", "checkpointDiff"] as const,
+          predicate: (query) => {
+            if (typeof turnCount !== "number") return true;
+            return query.queryKey[5] === turnCount;
+          },
+        });
       }
       if (!activeThreadId) return;
       dispatch({
