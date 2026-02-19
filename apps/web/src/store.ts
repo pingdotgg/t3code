@@ -891,7 +891,18 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         threads: updateThread(state.threads, target.id, (t) => {
           const nextEvents = [event, ...t.events];
-          const shouldRederiveDiffs = event.method === "turn/completed";
+          const eventTurnId = getEventTurnId(event);
+          const hasCompletedSummaryForTurn = Boolean(
+            eventTurnId && t.turnDiffSummaries.some((summary) => summary.turnId === eventTurnId),
+          );
+          const itemType = asString(asObject(asObject(event.payload)?.item)?.type);
+          const normalizedItemType = itemType?.replace(/[_-]/g, "").toLowerCase();
+          const isMetadataItemCompleted =
+            event.method === "item/completed" &&
+            (normalizedItemType === "agentmessage" || normalizedItemType === "filechange");
+          const shouldRederiveDiffs =
+            event.method === "turn/completed" ||
+            (hasCompletedSummaryForTurn && isMetadataItemCompleted);
           const turnDiffSummaries = shouldRederiveDiffs
             ? mergeTurnDiffSummaries(t.turnDiffSummaries, deriveTurnDiffSummaries(nextEvents))
             : t.turnDiffSummaries;

@@ -980,4 +980,43 @@ describe("store reducer thread continuity", () => {
     expect(next.threads[0]?.turnDiffSummaries[0]?.checkpointTurnCount).toBe(2);
     expect(next.threads[0]?.turnDiffSummaries[1]?.checkpointTurnCount).toBe(3);
   });
+
+  it("does not rederive completed turn summaries from late turn diff events", () => {
+    const completed = reducer(makeState(makeThread()), {
+      type: "APPLY_EVENT",
+      event: makeEvent({
+        method: "turn/completed",
+        turnId: "turn-1",
+        createdAt: "2026-02-09T00:00:03.000Z",
+        payload: { turn: { id: "turn-1", status: "completed" } },
+      }),
+      activeAssistantItemRef: { current: null },
+    });
+
+    expect(completed.threads[0]?.turnDiffSummaries[0]?.files).toEqual([]);
+
+    const withLateDiff = reducer(completed, {
+      type: "APPLY_EVENT",
+      event: makeEvent({
+        method: "turn/diff/updated",
+        turnId: "turn-1",
+        createdAt: "2026-02-09T00:00:04.000Z",
+        payload: {
+          diff: [
+            "diff --git a/src/a.ts b/src/a.ts",
+            "@@ -1 +1 @@",
+            "-old",
+            "+new",
+            "diff --git a/src/b.ts b/src/b.ts",
+            "@@ -1 +1 @@",
+            "-old",
+            "+new",
+          ].join("\n"),
+        },
+      }),
+      activeAssistantItemRef: { current: null },
+    });
+
+    expect(withLateDiff.threads[0]?.turnDiffSummaries[0]?.files).toEqual([]);
+  });
 });
