@@ -59,6 +59,39 @@ describe("providerSessionStartInputSchema", () => {
       }),
     ).toThrow();
   });
+
+  it("accepts Claude-specific start input fields", () => {
+    const parsed = providerSessionStartInputSchema.parse({
+      provider: "claudeCode",
+      claudeSessionId: "claude-session-1",
+      claudeBinaryPath: "/opt/claude/bin/claude",
+      permissionMode: "plan",
+      maxThinkingTokens: 5_000,
+    });
+    expect(parsed.provider).toBe("claudeCode");
+    expect(parsed.claudeSessionId).toBe("claude-session-1");
+    expect(parsed.claudeBinaryPath).toBe("/opt/claude/bin/claude");
+    expect(parsed.permissionMode).toBe("plan");
+    expect(parsed.maxThinkingTokens).toBe(5_000);
+  });
+
+  it("rejects blank Claude overrides and negative thinking tokens", () => {
+    expect(() =>
+      providerSessionStartInputSchema.parse({
+        claudeSessionId: "   ",
+      }),
+    ).toThrow();
+    expect(() =>
+      providerSessionStartInputSchema.parse({
+        claudeBinaryPath: "   ",
+      }),
+    ).toThrow();
+    expect(() =>
+      providerSessionStartInputSchema.parse({
+        maxThinkingTokens: -1,
+      }),
+    ).toThrow();
+  });
 });
 
 describe("providerSendTurnInputSchema", () => {

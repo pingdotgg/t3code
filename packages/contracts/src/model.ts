@@ -37,3 +37,53 @@ export function resolveModelSlug(model: string | null | undefined): ModelSlug {
 
   return MODEL_OPTIONS.some((option) => option.slug === normalized) ? normalized : DEFAULT_MODEL;
 }
+
+export const CLAUDE_MODEL_OPTIONS = [
+  { slug: "sonnet", name: "Claude Sonnet (latest)" },
+  { slug: "opus", name: "Claude Opus (latest)" },
+  { slug: "haiku", name: "Claude Haiku (latest)" },
+] as const;
+
+export type ClaudeModelSlug = string;
+
+export const DEFAULT_CLAUDE_MODEL = "sonnet";
+
+const CLAUDE_MODEL_SLUG_ALIASES: Record<string, ClaudeModelSlug> = {
+  sonnet: "sonnet",
+  "sonnet-4-6": "sonnet",
+  "claude-sonnet-4-6": "sonnet",
+  "sonnet-4-5": "sonnet",
+  "claude-sonnet-4-5": "sonnet",
+  opus: "opus",
+  "opus-4-6": "opus",
+  "claude-opus-4-6": "opus",
+  "opus-4-5": "opus",
+  "claude-opus-4-5": "opus",
+  "opus-4-1": "opus",
+  "claude-opus-4-1": "opus",
+  haiku: "haiku",
+  "haiku-4-5": "haiku",
+  "claude-haiku-4-5": "haiku",
+};
+
+export function normalizeClaudeModelSlug(model: string | null | undefined): ClaudeModelSlug | null {
+  if (typeof model !== "string") {
+    return null;
+  }
+
+  const trimmed = model.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return CLAUDE_MODEL_SLUG_ALIASES[trimmed] ?? (trimmed as ClaudeModelSlug);
+}
+
+export function resolveClaudeModelSlug(model: string | null | undefined): ClaudeModelSlug {
+  const normalized = normalizeClaudeModelSlug(model);
+  if (!normalized) {
+    return DEFAULT_CLAUDE_MODEL;
+  }
+
+  return normalized;
+}

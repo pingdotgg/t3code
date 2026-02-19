@@ -1,3 +1,4 @@
+import type { ProviderKind } from "@t3tools/contracts";
 import { DEFAULT_MODEL } from "./model-logic";
 import { DEFAULT_THREAD_TERMINAL_HEIGHT, DEFAULT_THREAD_TERMINAL_ID, type Thread } from "./types";
 
@@ -5,6 +6,7 @@ interface CreateThreadOptions {
   branch?: string | null;
   createdAt?: string;
   model?: string;
+  provider?: ProviderKind;
   title?: string;
   worktreePath?: string | null;
 }
@@ -15,6 +17,7 @@ export function createThread(projectId: string, options: CreateThreadOptions = {
   return {
     id: crypto.randomUUID(),
     codexThreadId: null,
+    provider: options.provider ?? "codex",
     projectId,
     title: options.title ?? "New thread",
     model: options.model ?? DEFAULT_MODEL,

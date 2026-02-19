@@ -32,12 +32,19 @@ export const providerSessionStatusSchema = z.enum([
   "closed",
 ]);
 
+export const providerModelOptionSchema = z.object({
+  slug: z.string().trim().min(1),
+  name: z.string().trim().min(1),
+  description: z.string().trim().min(1).optional(),
+});
+
 export const providerSessionSchema = z.object({
   sessionId: z.string().min(1),
   provider: providerKindSchema,
   status: providerSessionStatusSchema,
   cwd: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
+  availableModels: z.array(providerModelOptionSchema).optional(),
   threadId: z.string().min(1).optional(),
   activeTurnId: z.string().min(1).optional(),
   createdAt: z.string().datetime(),
@@ -54,6 +61,10 @@ export const providerSessionStartInputSchema = z.object({
   codexHomePath: z.string().trim().min(1).optional(),
   approvalPolicy: providerApprovalPolicySchema.default("never"),
   sandboxMode: providerSandboxModeSchema.default("workspace-write"),
+  claudeSessionId: z.string().trim().min(1).optional(),
+  claudeBinaryPath: z.string().trim().min(1).optional(),
+  permissionMode: z.enum(["default", "plan", "bypassPermissions"]).optional(),
+  maxThinkingTokens: z.number().int().min(0).optional(),
 });
 
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
@@ -198,6 +209,7 @@ export type ProviderSandboxMode = z.infer<typeof providerSandboxModeSchema>;
 export type ProviderRequestKind = z.infer<typeof providerRequestKindSchema>;
 export type ProviderApprovalDecision = z.infer<typeof providerApprovalDecisionSchema>;
 export type ProviderSessionStatus = z.infer<typeof providerSessionStatusSchema>;
+export type ProviderModelOption = z.infer<typeof providerModelOptionSchema>;
 export type ProviderSession = z.infer<typeof providerSessionSchema>;
 export type ProviderSessionStartInput = z.input<typeof providerSessionStartInputSchema>;
 export type ProviderSendTurnImageAttachment = z.infer<typeof providerSendTurnImageAttachmentSchema>;

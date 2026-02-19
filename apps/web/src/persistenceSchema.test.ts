@@ -446,6 +446,7 @@ describe("toPersistedState", () => {
     expect(persisted.threads[0]).toEqual({
       id: "t-1",
       codexThreadId: "thr_1",
+      provider: "codex",
       projectId: "p-1",
       title: "Thread",
       model: "gpt-5.3-codex",

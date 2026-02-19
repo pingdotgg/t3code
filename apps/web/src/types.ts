@@ -1,6 +1,7 @@
 import type {
   ProjectScript as ContractProjectScript,
   ProviderEvent,
+  ProviderKind,
   ProviderSession,
 } from "@t3tools/contracts";
 
@@ -65,6 +66,7 @@ export interface Project {
 export interface Thread {
   id: string;
   codexThreadId: string | null;
+  provider?: ProviderKind;
   projectId: string;
   title: string;
   model: string;

@@ -17,6 +17,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.47",
     "node-pty": "^1.1.0",
     "open": "^10.1.0",
     "ws": "^8.18.0"

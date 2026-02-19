@@ -30,6 +30,7 @@ import {
 } from "@t3tools/contracts";
 import type { CodexThreadTurnSnapshot } from "./codexAppServerManager";
 import { CodexAppServerManager } from "./codexAppServerManager";
+import { ClaudeCodeManager } from "./claudeCodeManager";
 import { FilesystemCheckpointStore } from "./filesystemCheckpointStore";
 
 export interface ProviderManagerEvents {
@@ -162,6 +163,7 @@ function buildCheckpoints(turns: CodexThreadTurnSnapshot[]): ProviderCheckpoint[
 
 export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
   private readonly codex = new CodexAppServerManager();
+  private readonly claude = new ClaudeCodeManager();
   private readonly filesystemCheckpointStore = new FilesystemCheckpointStore();
   private readonly threadLogsDir: string;
   private readonly threadLogStreams = new Map<string, fs.WriteStream>();
@@ -171,13 +173,10 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
   private readonly filesystemLocks = new Map<string, Promise<void>>();
   private disposed = false;
   private readonly onCodexEvent = (event: ProviderEvent) => {
-    if (this.disposed) {
-      return;
-    }
-
-    this.routeEventToThreadLog(event);
-    this.emit("event", event);
-    this.maybeCaptureFilesystemCheckpoint(event);
+    this.onProviderEvent(event);
+  };
+  private readonly onClaudeEvent = (event: ProviderEvent) => {
+    this.onProviderEvent(event);
   };
 
   constructor() {
@@ -188,15 +187,15 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
     fs.mkdirSync(this.threadLogsDir, { recursive: true });
 
     this.codex.on("event", this.onCodexEvent);
+    this.claude.on("event", this.onClaudeEvent);
   }
 
   async startSession(raw: ProviderSessionStartInput): Promise<ProviderSession> {
     const input = providerSessionStartInputSchema.parse(raw);
-    if (input.provider !== "codex") {
-      throw new Error(`Provider '${input.provider}' is not implemented yet.`);
-    }
-
-    const session = await this.codex.startSession(input);
+    const session =
+      input.provider === "claudeCode"
+        ? await this.claude.startSession(input)
+        : await this.codex.startSession(input);
     if (session.threadId) {
       this.sessionThreadIds.set(session.sessionId, session.threadId);
       this.flushPendingSessionEvents(session.sessionId, session.threadId);
@@ -204,24 +203,23 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
     await this.initializeFilesystemCheckpointing(session, input.cwd).catch((error) => {
       const message =
         error instanceof Error ? error.message : "Failed to initialize filesystem checkpoints.";
-      this.emitFilesystemCheckpointError(session.sessionId, message, session.threadId);
+      this.emitFilesystemCheckpointError(session.provider, session.sessionId, message, session.threadId);
     });
     return session;
   }
 
   async sendTurn(raw: ProviderSendTurnInput): Promise<ProviderTurnStartResult> {
     const input = providerSendTurnInputSchema.parse(raw);
-    if (!this.codex.hasSession(input.sessionId)) {
-      throw new Error(`Unknown provider session: ${input.sessionId}`);
-    }
-
-    return this.codex.sendTurn(input);
+    const backend = this.resolveBackend(input.sessionId);
+    return backend === "claudeCode" ? this.claude.sendTurn(input) : this.codex.sendTurn(input);
   }
 
   async interruptTurn(raw: ProviderInterruptTurnInput): Promise<void> {
     const input = providerInterruptTurnInputSchema.parse(raw);
-    if (!this.codex.hasSession(input.sessionId)) {
-      throw new Error(`Unknown provider session: ${input.sessionId}`);
+    const backend = this.resolveBackend(input.sessionId);
+    if (backend === "claudeCode") {
+      await this.claude.interruptTurn(input.sessionId);
+      return;
     }
 
     await this.codex.interruptTurn(input.sessionId, input.turnId);
@@ -229,8 +227,10 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
 
   async respondToRequest(raw: ProviderRespondToRequestInput): Promise<void> {
     const input = providerRespondToRequestInputSchema.parse(raw);
-    if (!this.codex.hasSession(input.sessionId)) {
-      throw new Error(`Unknown provider session: ${input.sessionId}`);
+    const backend = this.resolveBackend(input.sessionId);
+    if (backend === "claudeCode") {
+      await this.claude.respondToRequest(input.sessionId, input.requestId, input.decision);
+      return;
     }
 
     await this.codex.respondToRequest(input.sessionId, input.requestId, input.decision);
@@ -238,7 +238,15 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
 
   stopSession(raw: ProviderStopSessionInput): void {
     const input = providerStopSessionInputSchema.parse(raw);
-    this.codex.stopSession(input.sessionId);
+    if (!this.hasSession(input.sessionId)) {
+      return;
+    }
+    const backend = this.resolveBackend(input.sessionId);
+    if (backend === "claudeCode") {
+      this.claude.stopSession(input.sessionId);
+    } else {
+      this.codex.stopSession(input.sessionId);
+    }
     this.sessionThreadIds.delete(input.sessionId);
     this.pendingEventsBySession.delete(input.sessionId);
     this.sessionCheckpointCwds.delete(input.sessionId);
@@ -246,16 +254,12 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
   }
 
   listSessions(): ProviderSession[] {
-    return this.codex.listSessions();
+    return [...this.codex.listSessions(), ...this.claude.listSessions()];
   }
 
   async listCheckpoints(raw: ProviderListCheckpointsInput): Promise<ProviderListCheckpointsResult> {
     const input = providerListCheckpointsInputSchema.parse(raw);
-    if (!this.codex.hasSession(input.sessionId)) {
-      throw new Error(`Unknown provider session: ${input.sessionId}`);
-    }
-
-    const snapshot = await this.codex.readThread(input.sessionId);
+    const snapshot = await this.readThread(input.sessionId);
     return {
       threadId: snapshot.threadId,
       checkpoints: buildCheckpoints(snapshot.turns),
@@ -266,17 +270,13 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
     raw: ProviderGetCheckpointDiffInput,
   ): Promise<ProviderGetCheckpointDiffResult> {
     const input = providerGetCheckpointDiffInputSchema.parse(raw);
-    if (!this.codex.hasSession(input.sessionId)) {
-      throw new Error(`Unknown provider session: ${input.sessionId}`);
-    }
-
     const checkpointCwd = await this.getOrInitializeFilesystemCheckpointCwd(input.sessionId);
     if (!checkpointCwd) {
       throw new Error("Filesystem checkpoints are unavailable for this session.");
     }
 
     return this.withFilesystemLock(input.sessionId, async () => {
-      const snapshot = await this.codex.readThread(input.sessionId);
+      const snapshot = await this.readThread(input.sessionId);
       if (input.toTurnCount > snapshot.turns.length) {
         throw new Error(
           `Checkpoint turn count ${input.toTurnCount} exceeds current turn count ${snapshot.turns.length}.`,
@@ -303,16 +303,12 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
     raw: ProviderRevertToCheckpointInput,
   ): Promise<ProviderRevertToCheckpointResult> {
     const input = providerRevertToCheckpointInputSchema.parse(raw);
-    if (!this.codex.hasSession(input.sessionId)) {
-      throw new Error(`Unknown provider session: ${input.sessionId}`);
-    }
-
     const checkpointCwd = await this.getOrInitializeFilesystemCheckpointCwd(input.sessionId);
     if (!checkpointCwd) {
       throw new Error("Filesystem checkpoints are unavailable for this session.");
     }
     return this.withFilesystemLock(input.sessionId, async () => {
-      const beforeSnapshot = await this.codex.readThread(input.sessionId);
+      const beforeSnapshot = await this.readThread(input.sessionId);
       const currentTurnCount = beforeSnapshot.turns.length;
       if (input.turnCount > currentTurnCount) {
         throw new Error(
@@ -347,7 +343,7 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
       const requestedRollbackTurns = currentTurnCount - input.turnCount;
       const afterSnapshot =
         requestedRollbackTurns > 0
-          ? await this.codex.rollbackThread(input.sessionId, requestedRollbackTurns)
+          ? await this.rollbackThread(input.sessionId, requestedRollbackTurns)
           : beforeSnapshot;
 
       await this.filesystemCheckpointStore.pruneAfterTurn({
@@ -375,6 +371,7 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
 
   stopAll(): void {
     this.codex.stopAll();
+    this.claude.stopAll();
   }
 
   dispose(): void {
@@ -384,6 +381,7 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
 
     this.disposed = true;
     this.codex.off("event", this.onCodexEvent);
+    this.claude.off("event", this.onClaudeEvent);
     for (const stream of this.threadLogStreams.values()) {
       stream.end();
     }
@@ -392,6 +390,55 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
     this.pendingEventsBySession.clear();
     this.sessionCheckpointCwds.clear();
     this.filesystemLocks.clear();
+  }
+
+  private onProviderEvent(event: ProviderEvent): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.routeEventToThreadLog(event);
+    this.emit("event", event);
+    this.maybeCaptureFilesystemCheckpoint(event);
+  }
+
+  private hasSession(sessionId: string): boolean {
+    return this.codex.hasSession(sessionId) || this.claude.hasSession(sessionId);
+  }
+
+  private resolveBackend(sessionId: string): "codex" | "claudeCode" {
+    if (this.codex.hasSession(sessionId)) {
+      return "codex";
+    }
+    if (this.claude.hasSession(sessionId)) {
+      return "claudeCode";
+    }
+    throw new Error(`Unknown provider session: ${sessionId}`);
+  }
+
+  private async readThread(sessionId: string): Promise<{
+    threadId: string;
+    turns: Array<{ id: string; items: unknown[] }>;
+  }> {
+    const backend = this.resolveBackend(sessionId);
+    if (backend === "claudeCode") {
+      return this.claude.readThread(sessionId);
+    }
+    return this.codex.readThread(sessionId);
+  }
+
+  private async rollbackThread(
+    sessionId: string,
+    numTurns: number,
+  ): Promise<{
+    threadId: string;
+    turns: Array<{ id: string; items: unknown[] }>;
+  }> {
+    const backend = this.resolveBackend(sessionId);
+    if (backend === "claudeCode") {
+      return this.claude.rollbackThread(sessionId, numTurns);
+    }
+    return this.codex.rollbackThread(sessionId, numTurns);
   }
 
   private async initializeFilesystemCheckpointing(
@@ -407,7 +454,7 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
         return;
       }
 
-      const snapshot = await this.codex.readThread(session.sessionId);
+      const snapshot = await this.readThread(session.sessionId);
       await this.filesystemCheckpointStore.ensureRootCheckpoint({
         cwd,
         threadId: snapshot.threadId,
@@ -417,7 +464,7 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
         threadId: snapshot.threadId,
         turnCount: snapshot.turns.length,
       });
-      if (this.codex.hasSession(session.sessionId)) {
+      if (this.hasSession(session.sessionId)) {
         this.sessionCheckpointCwds.set(session.sessionId, cwd);
       }
     });
@@ -429,9 +476,7 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
       return existingCwd;
     }
 
-    const session = this.codex
-      .listSessions()
-      .find((candidate) => candidate.sessionId === sessionId);
+    const session = this.listSessions().find((candidate) => candidate.sessionId === sessionId);
     const candidateCwds = session?.cwd ? [session.cwd] : [process.cwd()];
 
     await this.withFilesystemLock(sessionId, async () => {
@@ -448,7 +493,7 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
       );
       const supportedCwd = cwdSupport.find((entry) => entry.supportsGit)?.cwd;
       if (supportedCwd) {
-        const snapshot = await this.codex.readThread(sessionId);
+        const snapshot = await this.readThread(sessionId);
         await this.filesystemCheckpointStore.ensureRootCheckpoint({
           cwd: supportedCwd,
           threadId: snapshot.threadId,
@@ -458,7 +503,7 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
           threadId: snapshot.threadId,
           turnCount: snapshot.turns.length,
         });
-        if (this.codex.hasSession(sessionId)) {
+        if (this.hasSession(sessionId)) {
           this.sessionCheckpointCwds.set(sessionId, supportedCwd);
         }
         return;
@@ -479,43 +524,53 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
     if (!checkpointCwd) {
       void this.getOrInitializeFilesystemCheckpointCwd(event.sessionId)
         .then(async (initializedCwd) => {
-          if (!initializedCwd || !this.codex.hasSession(event.sessionId)) {
+          if (!initializedCwd || !this.hasSession(event.sessionId)) {
             return;
           }
-          const snapshot = await this.codex.readThread(event.sessionId);
-          this.emitCheckpointCaptured(event.sessionId, snapshot.threadId, snapshot.turns.length);
+          const snapshot = await this.readThread(event.sessionId);
+          this.emitCheckpointCaptured(
+            event.provider,
+            event.sessionId,
+            snapshot.threadId,
+            snapshot.turns.length,
+          );
         })
         .catch((error) => {
           const message =
             error instanceof Error ? error.message : "Failed to initialize filesystem checkpoints.";
-          this.emitFilesystemCheckpointError(event.sessionId, message, event.threadId);
+          this.emitFilesystemCheckpointError(event.provider, event.sessionId, message, event.threadId);
         });
       return;
     }
 
     void this.withFilesystemLock(event.sessionId, async () => {
-      if (!this.codex.hasSession(event.sessionId)) {
+      if (!this.hasSession(event.sessionId)) {
         return;
       }
 
-      const snapshot = await this.codex.readThread(event.sessionId);
+      const snapshot = await this.readThread(event.sessionId);
       await this.filesystemCheckpointStore.captureCheckpoint({
         cwd: checkpointCwd,
         threadId: snapshot.threadId,
         turnCount: snapshot.turns.length,
       });
-      this.emitCheckpointCaptured(event.sessionId, snapshot.threadId, snapshot.turns.length);
+      this.emitCheckpointCaptured(event.provider, event.sessionId, snapshot.threadId, snapshot.turns.length);
     }).catch((error) => {
       const message = error instanceof Error ? error.message : "Failed to capture checkpoint.";
-      this.emitFilesystemCheckpointError(event.sessionId, message, event.threadId);
+      this.emitFilesystemCheckpointError(event.provider, event.sessionId, message, event.threadId);
     });
   }
 
-  private emitCheckpointCaptured(sessionId: string, threadId: string, turnCount: number): void {
+  private emitCheckpointCaptured(
+    provider: ProviderSession["provider"],
+    sessionId: string,
+    threadId: string,
+    turnCount: number,
+  ): void {
     this.emit("event", {
       id: randomUUID(),
       kind: "notification",
-      provider: "codex",
+      provider,
       sessionId,
       createdAt: new Date().toISOString(),
       method: "checkpoint/captured",
@@ -528,6 +583,7 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
   }
 
   private emitFilesystemCheckpointError(
+    provider: ProviderSession["provider"],
     sessionId: string,
     message: string,
     threadId?: string,
@@ -535,7 +591,7 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
     this.emit("event", {
       id: randomUUID(),
       kind: "error",
-      provider: "codex",
+      provider,
       sessionId,
       createdAt: new Date().toISOString(),
       method: "checkpoint/filesystemError",

@@ -3,6 +3,77 @@ import { describe, expect, it, vi } from "vitest";
 import { ProviderManager } from "./providerManager";
 
 describe("ProviderManager", () => {
+  it("routes Claude session start to the Claude backend", async () => {
+    const manager = new ProviderManager();
+    const internals = manager as unknown as {
+      claude: {
+        startSession: (input: unknown) => Promise<{
+          sessionId: string;
+          provider: "claudeCode";
+          status: "ready";
+          createdAt: string;
+          updatedAt: string;
+        }>;
+      };
+    };
+    vi.spyOn(
+      manager as unknown as {
+        initializeFilesystemCheckpointing: (session: unknown, cwd?: string) => Promise<void>;
+      },
+      "initializeFilesystemCheckpointing",
+    ).mockResolvedValue(undefined);
+    const startSession = vi.fn(async () => ({
+      sessionId: "sess_claude",
+      provider: "claudeCode" as const,
+      status: "ready" as const,
+      createdAt: "2026-02-19T00:00:00.000Z",
+      updatedAt: "2026-02-19T00:00:00.000Z",
+    }));
+    internals.claude.startSession = startSession;
+
+    const session = await manager.startSession({
+      provider: "claudeCode",
+    });
+
+    expect(startSession).toHaveBeenCalledTimes(1);
+    expect(session.provider).toBe("claudeCode");
+
+    manager.dispose();
+  });
+
+  it("routes sendTurn to Claude backend when the session belongs to Claude", async () => {
+    const manager = new ProviderManager();
+    const internals = manager as unknown as {
+      codex: {
+        hasSession: (sessionId: string) => boolean;
+      };
+      claude: {
+        hasSession: (sessionId: string) => boolean;
+        sendTurn: (input: unknown) => Promise<{ threadId: string; turnId: string }>;
+      };
+    };
+    internals.codex.hasSession = () => false;
+    internals.claude.hasSession = () => true;
+    const sendTurn = vi.fn(async () => ({
+      threadId: "claude_thread_1",
+      turnId: "turn_1",
+    }));
+    internals.claude.sendTurn = sendTurn;
+
+    const result = await manager.sendTurn({
+      sessionId: "sess_claude",
+      input: "hello",
+    });
+
+    expect(sendTurn).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      threadId: "claude_thread_1",
+      turnId: "turn_1",
+    });
+
+    manager.dispose();
+  });
+
   it("detaches provider event listener and ends thread log streams on dispose", () => {
     const manager = new ProviderManager();
     const internals = manager as unknown as {

@@ -4,12 +4,13 @@ import {
   type NativeApi,
   type ProjectEntry,
   type ProjectScript,
-  ModelSlug,
+  type ProviderKind,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ResolvedKeybindingsConfig,
   type ProviderApprovalDecision,
+  type ProviderModelOption,
   type ProviderSendTurnAttachmentInput,
 } from "@t3tools/contracts";
 import {
@@ -43,14 +44,16 @@ import {
   replaceTextRange,
 } from "../composer-logic";
 import {
-  DEFAULT_MODEL,
+  defaultModelForProvider,
   DEFAULT_REASONING,
-  MODEL_OPTIONS,
   REASONING_OPTIONS,
   ReasoningEffort,
-  resolveModelSlug,
+  modelOptionsForProvider,
+  resolveModelSlugForProvider,
+  type SupportedModelSlug,
 } from "../model-logic";
 import {
+  PROVIDER_OPTIONS,
   derivePendingApprovals,
   derivePhase,
   deriveTurnDiffFilesFromUnifiedDiff,
@@ -132,12 +135,6 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
-const SEARCHABLE_MODEL_OPTIONS = MODEL_OPTIONS.map(({ slug, name }) => ({
-  slug,
-  name,
-  searchSlug: slug.toLowerCase(),
-  searchName: name.toLowerCase(),
-}));
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
@@ -229,7 +226,7 @@ type ComposerCommandItem =
   | {
       id: string;
       type: "model";
-      model: ModelSlug;
+      model: SupportedModelSlug;
       label: string;
       description: string;
     };
@@ -418,8 +415,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeThreadRuntimeId =
     activeThread?.codexThreadId ?? activeThread?.session?.threadId ?? null;
   const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
-  const selectedModel = resolveModelSlug(
-    activeThread?.model ?? activeProject?.model ?? DEFAULT_MODEL,
+  const activeProvider: ProviderKind =
+    activeThread?.provider ?? activeThread?.session?.provider ?? "codex";
+  const selectedModel = resolveModelSlugForProvider(
+    activeProvider,
+    activeThread?.model ??
+      (activeProvider === "codex" ? activeProject?.model : undefined) ??
+      defaultModelForProvider(activeProvider),
+  );
+  const availableModelOptions = useMemo(
+    () => modelOptionsForProvider(activeProvider, activeThread?.session?.availableModels),
+    [activeProvider, activeThread?.session?.availableModels],
   );
   const phase = derivePhase(activeThread?.session ?? null);
   const isWorking = phase === "running" || isSending || isConnecting || isRevertingCheckpoint;
@@ -644,6 +650,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const runtimeApprovalPolicy = state.runtimeMode === "full-access" ? "never" : "on-request";
   const runtimeSandboxMode =
     state.runtimeMode === "full-access" ? "danger-full-access" : "workspace-write";
+  const runtimeClaudePermissionMode =
+    state.runtimeMode === "full-access" ? "bypassPermissions" : "default";
   const codexBinaryPath = appSettings.codexBinaryPath.trim();
   const codexHomePath = appSettings.codexHomePath.trim();
   const gitCwd = activeThread?.worktreePath ?? activeProject?.cwd ?? null;
@@ -702,7 +710,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       ];
     }
 
-    return SEARCHABLE_MODEL_OPTIONS.filter(({ searchSlug, searchName }) => {
+    const searchableModelOptions = availableModelOptions.map(({ slug, name }) => ({
+      slug,
+      name,
+      searchSlug: slug.toLowerCase(),
+      searchName: name.toLowerCase(),
+    }));
+    return searchableModelOptions.filter(({ searchSlug, searchName }) => {
       const query = composerTrigger.query.trim().toLowerCase();
       if (!query) return true;
       return searchSlug.includes(query) || searchName.includes(query);
@@ -713,7 +727,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       label: name,
       description: slug,
     }));
-  }, [composerTrigger, workspaceEntries]);
+  }, [availableModelOptions, composerTrigger, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -1511,16 +1525,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
         } satisfies EnsuredSessionInfo;
       }
 
-      const priorCodexThreadId = activeThread.codexThreadId;
+      const priorThreadRuntimeId = activeThread.codexThreadId;
       setIsConnecting(true);
       try {
         const session = await api.providers.startSession({
-          provider: "codex",
+          provider: activeProvider,
           cwd: cwdOverride ?? activeThread.worktreePath ?? activeProject.cwd,
           model: selectedModel || undefined,
-          resumeThreadId: priorCodexThreadId ?? undefined,
-          ...(codexBinaryPath.length > 0 ? { codexBinaryPath } : {}),
-          ...(codexHomePath.length > 0 ? { codexHomePath } : {}),
+          ...(activeProvider === "codex"
+            ? {
+                resumeThreadId: priorThreadRuntimeId ?? undefined,
+                ...(codexBinaryPath.length > 0 ? { codexBinaryPath } : {}),
+                ...(codexHomePath.length > 0 ? { codexHomePath } : {}),
+              }
+            : {
+                claudeSessionId: priorThreadRuntimeId ?? undefined,
+                permissionMode: runtimeClaudePermissionMode,
+              }),
           approvalPolicy: runtimeApprovalPolicy,
           sandboxMode: runtimeSandboxMode,
         });
@@ -1531,9 +1552,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
         const resolvedThreadId = session.threadId ?? null;
         const continuityState: SessionContinuityState =
-          priorCodexThreadId === null
+          priorThreadRuntimeId === null
             ? "new"
-            : resolvedThreadId === priorCodexThreadId
+            : resolvedThreadId === priorThreadRuntimeId
               ? "resumed"
               : "fallback_new";
         await syncCheckpointTurnCounts({
@@ -1560,10 +1581,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [
       activeProject,
       activeThread,
+      activeProvider,
       api,
       codexBinaryPath,
       codexHomePath,
       dispatch,
+      runtimeClaudePermissionMode,
       runtimeApprovalPolicy,
       runtimeSandboxMode,
       selectedModel,
@@ -1841,16 +1864,35 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
 
   const onModelSelect = useCallback(
-    (model: ModelSlug) => {
+    (model: SupportedModelSlug) => {
       if (!activeThread) return;
       dispatch({
         type: "SET_THREAD_MODEL",
         threadId: activeThread.id,
-        model: resolveModelSlug(model),
+        model: resolveModelSlugForProvider(activeProvider, model),
       });
       scheduleComposerFocus();
     },
-    [activeThread, dispatch, scheduleComposerFocus],
+    [activeProvider, activeThread, dispatch, scheduleComposerFocus],
+  );
+  const onProviderSelect = useCallback(
+    async (provider: ProviderKind) => {
+      if (!activeThread || provider === activeProvider) return;
+      if (activeThread.session && api) {
+        await api.providers
+          .stopSession({
+            sessionId: activeThread.session.sessionId,
+          })
+          .catch(() => undefined);
+      }
+      dispatch({
+        type: "SET_THREAD_PROVIDER",
+        threadId: activeThread.id,
+        provider,
+      });
+      scheduleComposerFocus();
+    },
+    [activeProvider, activeThread, api, dispatch, scheduleComposerFocus],
   );
   const onEffortSelect = useCallback(
     (effort: ReasoningEffort) => {
@@ -2182,8 +2224,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
             {/* Bottom toolbar */}
             <div className="flex items-center justify-between px-3 pb-3">
               <div className="flex items-center gap-1">
+                <ProviderPicker provider={activeProvider} onProviderChange={onProviderSelect} />
+
+                <Separator orientation="vertical" className="mx-0.5 h-4" />
+
                 {/* Model picker */}
-                <ModelPicker model={selectedModel} onModelChange={onModelSelect} />
+                <ModelPicker
+                  options={availableModelOptions}
+                  model={selectedModel}
+                  onModelChange={onModelSelect}
+                />
 
                 {/* Divider */}
                 <Separator orientation="vertical" className="mx-0.5 h-4" />
@@ -2958,22 +3008,50 @@ const MessagesTimeline = memo(function MessagesTimeline({
 });
 
 const ModelPicker = memo(function ModelPicker(props: {
-  model: ModelSlug;
-  onModelChange: (model: ModelSlug) => void;
+  options: ReadonlyArray<ProviderModelOption>;
+  model: SupportedModelSlug;
+  onModelChange: (model: SupportedModelSlug) => void;
 }) {
   return (
     <Select
-      items={MODEL_OPTIONS.map((option) => ({ label: option.name, value: option.slug }))}
+      items={props.options.map((option) => ({ label: option.name, value: option.slug }))}
       value={props.model}
-      onValueChange={(value) => (value ? props.onModelChange(value) : undefined)}
+      onValueChange={(value) => (value ? props.onModelChange(value as SupportedModelSlug) : undefined)}
     >
       <SelectTrigger size="sm" variant="ghost">
         <SelectValue />
       </SelectTrigger>
       <SelectPopup alignItemWithTrigger={false}>
-        {MODEL_OPTIONS.map(({ slug, name }) => (
+        {props.options.map(({ slug, name }) => (
           <SelectItem key={slug} value={slug}>
             {name}
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
+  );
+});
+
+const ProviderPicker = memo(function ProviderPicker(props: {
+  provider: ProviderKind;
+  onProviderChange: (provider: ProviderKind) => void | Promise<void>;
+}) {
+  return (
+    <Select
+      items={PROVIDER_OPTIONS.filter((option) => option.available).map((option) => ({
+        label: option.label,
+        value: option.value,
+      }))}
+      value={props.provider}
+      onValueChange={(value) => (value ? props.onProviderChange(value as ProviderKind) : undefined)}
+    >
+      <SelectTrigger size="sm" variant="ghost">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectPopup alignItemWithTrigger={false}>
+        {PROVIDER_OPTIONS.filter((option) => option.available).map(({ value, label }) => (
+          <SelectItem key={value} value={value}>
+            {label}
           </SelectItem>
         ))}
       </SelectPopup>

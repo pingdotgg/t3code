@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_MODEL, MODEL_OPTIONS, normalizeModelSlug, resolveModelSlug } from "./model";
+import {
+  CLAUDE_MODEL_OPTIONS,
+  DEFAULT_CLAUDE_MODEL,
+  DEFAULT_MODEL,
+  MODEL_OPTIONS,
+  normalizeClaudeModelSlug,
+  normalizeModelSlug,
+  resolveClaudeModelSlug,
+  resolveModelSlug,
+} from "./model";
 
 describe("normalizeModelSlug", () => {
   it("maps known aliases to canonical slugs", () => {
@@ -30,6 +39,35 @@ describe("resolveModelSlug", () => {
   it("resolves only supported model options", () => {
     for (const model of MODEL_OPTIONS) {
       expect(resolveModelSlug(model.slug)).toBe(model.slug);
+    }
+  });
+});
+
+describe("normalizeClaudeModelSlug", () => {
+  it("maps known aliases to canonical Claude slugs", () => {
+    expect(normalizeClaudeModelSlug("sonnet")).toBe("sonnet");
+    expect(normalizeClaudeModelSlug("opus")).toBe("opus");
+    expect(normalizeClaudeModelSlug("claude-sonnet-4-6")).toBe("sonnet");
+    expect(normalizeClaudeModelSlug("claude-opus-4-5")).toBe("opus");
+  });
+
+  it("returns null for empty or missing values", () => {
+    expect(normalizeClaudeModelSlug("")).toBeNull();
+    expect(normalizeClaudeModelSlug("   ")).toBeNull();
+    expect(normalizeClaudeModelSlug(null)).toBeNull();
+    expect(normalizeClaudeModelSlug(undefined)).toBeNull();
+  });
+});
+
+describe("resolveClaudeModelSlug", () => {
+  it("returns default for missing models only", () => {
+    expect(resolveClaudeModelSlug(undefined)).toBe(DEFAULT_CLAUDE_MODEL);
+    expect(resolveClaudeModelSlug("claude-3-5-sonnet")).toBe("claude-3-5-sonnet");
+  });
+
+  it("resolves only supported Claude model options", () => {
+    for (const model of CLAUDE_MODEL_OPTIONS) {
+      expect(resolveClaudeModelSlug(model.slug)).toBe(model.slug);
     }
   });
 });

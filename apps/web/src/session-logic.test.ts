@@ -302,6 +302,164 @@ describe("deriveWorkLogEntries", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]?.label).toBe("Command run");
     expect(entries[0]?.detail).toBe("git status --short");
+    expect(entries[0]?.createdAt).toBe("2026-02-08T10:00:01.000Z");
+  });
+
+  it("keeps tool-call start ordering when a completion event exists", () => {
+    const entries = deriveWorkLogEntries(
+      [
+        makeEvent({
+          id: "evt-tool-start",
+          method: "item/started",
+          turnId: "turn-1",
+          createdAt: "2026-02-08T10:00:02.000Z",
+          payload: {
+            item: {
+              id: "item-tool-1",
+              type: "toolUse",
+              tool: "Bash",
+              command: "ls -la",
+            },
+          },
+        }),
+        makeEvent({
+          id: "evt-tool-complete",
+          method: "item/completed",
+          turnId: "turn-1",
+          createdAt: "2026-02-08T10:00:09.000Z",
+          payload: {
+            item: {
+              id: "item-tool-1",
+              type: "toolUse",
+              summary: "done",
+            },
+          },
+        }),
+      ],
+      "turn-1",
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.label).toBe("Tool call");
+    expect(entries[0]?.createdAt).toBe("2026-02-08T10:00:02.000Z");
+  });
+
+  it("surfaces finalized assistant thinking and drops raw thinking deltas", () => {
+    const entries = deriveWorkLogEntries(
+      [
+        makeEvent({
+          id: "evt-thinking-delta",
+          provider: "claudeCode",
+          method: "assistant/thinking",
+          turnId: "turn-1",
+          createdAt: "2026-02-08T10:00:01.000Z",
+          textDelta: "partial thought",
+          payload: { raw: { event: { delta: { thinking: "partial thought" } } } },
+        }),
+        makeEvent({
+          id: "evt-thinking-full",
+          provider: "claudeCode",
+          method: "assistant/thinking",
+          turnId: "turn-1",
+          createdAt: "2026-02-08T10:00:02.000Z",
+          payload: { text: "Complete thought." },
+        }),
+      ],
+      "turn-1",
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.label).toBe("Reasoning");
+    expect(entries[0]?.detail).toBe("Complete thought.");
+  });
+
+  it("falls back to tool_use/start when item/started is unavailable", () => {
+    const entries = deriveWorkLogEntries(
+      [
+        makeEvent({
+          id: "evt-tool-use-start",
+          provider: "claudeCode",
+          method: "tool_use/start",
+          turnId: "turn-1",
+          itemId: "toolu_1",
+          createdAt: "2026-02-08T10:00:02.000Z",
+          payload: {
+            toolUseId: "toolu_1",
+            toolName: "Read",
+            input: { file_path: "/tmp/example.ts" },
+          },
+        }),
+      ],
+      "turn-1",
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.label).toBe("Tool call");
+    expect(entries[0]?.detail).toBe("Read - /tmp/example.ts");
+  });
+
+  it("deduplicates tool_use/start when matching item/started exists", () => {
+    const entries = deriveWorkLogEntries(
+      [
+        makeEvent({
+          id: "evt-tool-use-start",
+          provider: "claudeCode",
+          method: "tool_use/start",
+          turnId: "turn-1",
+          itemId: "toolu_1",
+          createdAt: "2026-02-08T10:00:02.000Z",
+          payload: {
+            toolUseId: "toolu_1",
+            toolName: "Read",
+            input: { file_path: "/tmp/example.ts" },
+          },
+        }),
+        makeEvent({
+          id: "evt-item-started",
+          provider: "claudeCode",
+          method: "item/started",
+          turnId: "turn-1",
+          itemId: "toolu_1",
+          createdAt: "2026-02-08T10:00:02.100Z",
+          payload: {
+            item: {
+              id: "toolu_1",
+              type: "toolUse",
+              tool: "Read",
+              input: { file_path: "/tmp/example.ts" },
+            },
+          },
+        }),
+      ],
+      "turn-1",
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.label).toBe("Tool call");
+    expect(entries[0]?.detail).toBe("/tmp/example.ts");
+  });
+
+  it("falls back to tool_use/result when matching item/completed is unavailable", () => {
+    const entries = deriveWorkLogEntries(
+      [
+        makeEvent({
+          id: "evt-tool-use-result",
+          provider: "claudeCode",
+          method: "tool_use/result",
+          turnId: "turn-1",
+          createdAt: "2026-02-08T10:00:03.000Z",
+          payload: {
+            summary: "Read complete",
+            toolUseIds: ["toolu_1"],
+          },
+        }),
+      ],
+      "turn-1",
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.label).toBe("Tool result");
+    expect(entries[0]?.detail).toBe("Read complete");
   });
 
   it("preserves full tool-call detail text without data truncation", () => {

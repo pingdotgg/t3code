@@ -8,8 +8,14 @@ import {
   useReducer,
 } from "react";
 
-import { type ProviderEvent, type ProviderSession, type TerminalEvent, normalizeProjectScripts } from "@t3tools/contracts";
-import { resolveModelSlug } from "./model-logic";
+import {
+  type ProviderEvent,
+  type ProviderKind,
+  type ProviderSession,
+  type TerminalEvent,
+  normalizeProjectScripts,
+} from "@t3tools/contracts";
+import { defaultModelForProvider, resolveModelSlug, resolveModelSlugForProvider } from "./model-logic";
 import { hydratePersistedState, toPersistedState } from "./persistenceSchema";
 import {
   applyEventToMessages,
@@ -80,6 +86,7 @@ type Action =
   | { type: "SET_ERROR"; threadId: string; error: string | null }
   | { type: "SET_THREAD_TITLE"; threadId: string; title: string }
   | { type: "SET_THREAD_MODEL"; threadId: string; model: string }
+  | { type: "SET_THREAD_PROVIDER"; threadId: string; provider: ProviderKind }
   | {
       type: "REVERT_TO_CHECKPOINT";
       threadId: string;
@@ -486,6 +493,17 @@ function getEventThreadId(event: ProviderEvent): string | undefined {
   );
 }
 
+function isSessionThreadPlaceholder(thread: Thread, threadId: string | null | undefined): boolean {
+  if (!threadId) {
+    return false;
+  }
+  const sessionId = thread.session?.sessionId;
+  if (!sessionId) {
+    return false;
+  }
+  return threadId === sessionId;
+}
+
 function shouldIgnoreForeignThreadEvent(thread: Thread, event: ProviderEvent): boolean {
   const eventThreadId = getEventThreadId(event);
   if (!eventThreadId) {
@@ -497,8 +515,14 @@ function shouldIgnoreForeignThreadEvent(thread: Thread, event: ProviderEvent): b
     return false;
   }
 
-  // During connect, accept a thread/started notification as an identity rebind.
-  if (event.method === "thread/started" && thread.session?.status === "connecting") {
+  // `thread/started` is authoritative for thread identity and can rebind at any time.
+  if (event.method === "thread/started") {
+    return false;
+  }
+
+  // Claude can temporarily report the local provider session id before publishing
+  // the runtime thread id. Treat that placeholder as non-authoritative.
+  if (isSessionThreadPlaceholder(thread, expectedThreadId)) {
     return false;
   }
 
@@ -651,9 +675,11 @@ export function reducer(state: AppState, action: Action): AppState {
     }
 
     case "ADD_THREAD": {
+      const provider = action.thread.provider ?? "codex";
       const nextThread = normalizeThreadTerminals({
         ...action.thread,
-        model: resolveModelSlug(action.thread.model),
+        provider,
+        model: resolveModelSlugForProvider(provider, action.thread.model),
         lastVisitedAt: action.thread.lastVisitedAt ?? action.thread.createdAt,
         turnDiffSummaries: action.thread.turnDiffSummaries ?? [],
       });
@@ -907,15 +933,27 @@ export function reducer(state: AppState, action: Action): AppState {
             ? mergeTurnDiffSummaries(t.turnDiffSummaries, deriveTurnDiffSummaries(nextEvents))
             : t.turnDiffSummaries;
           const eventThreadId = getEventThreadId(event);
+          const expectedThreadId = t.session?.threadId ?? t.codexThreadId;
           const shouldRebindIdentity =
-            event.method === "thread/started" && t.session?.status === "connecting";
+            Boolean(eventThreadId) &&
+            (event.method === "thread/started" ||
+              isSessionThreadPlaceholder(t, expectedThreadId));
+          const evolvedSession = t.session ? evolveSession(t.session, event) : t.session;
+          const session =
+            shouldRebindIdentity && evolvedSession && eventThreadId
+              ? {
+                  ...evolvedSession,
+                  threadId: eventThreadId,
+                  updatedAt: event.createdAt,
+                }
+              : evolvedSession;
           return {
             ...t,
-            codexThreadId: shouldRebindIdentity
-              ? (eventThreadId ?? t.codexThreadId)
+            codexThreadId: shouldRebindIdentity && eventThreadId
+              ? eventThreadId
               : (t.codexThreadId ?? eventThreadId ?? null),
             error: event.kind === "error" && event.message ? event.message : t.error,
-            session: t.session ? evolveSession(t.session, event) : t.session,
+            session,
             messages: applyEventToMessages(t.messages, event, activeAssistantItemRef),
             events: nextEvents,
             turnDiffSummaries,
@@ -933,6 +971,7 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         threads: updateThread(state.threads, action.threadId, (t) => ({
           ...t,
+          provider: action.session.provider,
           session: action.session,
           codexThreadId: action.session.threadId ?? t.codexThreadId,
           events: [],
@@ -988,7 +1027,26 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         threads: updateThread(state.threads, action.threadId, (t) => ({
           ...t,
-          model: resolveModelSlug(action.model),
+          model: resolveModelSlugForProvider(t.provider ?? "codex", action.model),
+        })),
+      };
+
+    case "SET_THREAD_PROVIDER":
+      return {
+        ...state,
+        threads: updateThread(state.threads, action.threadId, (t) => ({
+          ...t,
+          provider: action.provider,
+          model: resolveModelSlugForProvider(action.provider, defaultModelForProvider(action.provider)),
+          codexThreadId: null,
+          session: null,
+          events: [],
+          turnDiffSummaries: [],
+          error: null,
+          latestTurnId: undefined,
+          latestTurnStartedAt: undefined,
+          latestTurnCompletedAt: undefined,
+          latestTurnDurationMs: undefined,
         })),
       };
 

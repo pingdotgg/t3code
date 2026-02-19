@@ -8,7 +8,7 @@ export const PROVIDER_OPTIONS: Array<{
   available: boolean;
 }> = [
   { value: "codex", label: "Codex", available: true },
-  { value: "claudeCode", label: "Claude Code (soon)", available: false },
+  { value: "claudeCode", label: "Claude Code", available: true },
 ];
 
 let cachedApi: NativeApi | undefined;
@@ -115,6 +115,31 @@ function normalizeDetail(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function extractToolInputDetail(input: unknown): string | undefined {
+  const record = asObject(input);
+  if (!record) return undefined;
+
+  const command = normalizeDetail(asString(record.command));
+  if (command) return command;
+
+  const description = normalizeDetail(asString(record.description));
+  if (description) return description;
+
+  const filePath = normalizeDetail(asString(record.file_path));
+  if (filePath) return filePath;
+
+  const pattern = normalizeDetail(asString(record.pattern));
+  const path = normalizeDetail(asString(record.path));
+  if (pattern && path) return `${pattern} (${path})`;
+  if (pattern) return pattern;
+  if (path) return path;
+
+  const prompt = normalizeDetail(asString(record.prompt));
+  if (prompt) return prompt;
+
+  return undefined;
+}
+
 function approvalDetail(event: ProviderEvent): string | undefined {
   const payload = asObject(event.payload);
   const command = asString(payload?.command);
@@ -217,7 +242,9 @@ function extractDetail(
   payload: Record<string, unknown> | undefined,
   item: Record<string, unknown> | undefined,
 ): string | undefined {
+  const toolInputDetail = extractToolInputDetail(item?.input) ?? extractToolInputDetail(payload?.input);
   const candidates = [
+    toolInputDetail,
     asString(item?.command),
     asString(item?.tool),
     asString(item?.name),
@@ -392,10 +419,14 @@ export function deriveWorkLogEntries(
     return true;
   };
 
+  const startedLifecycleItemIds = new Set<string>();
   const completedLifecycleItemIds = new Set<string>();
   for (const event of ordered) {
     if (!shouldIncludeEvent(event)) continue;
     const candidate = lifecycleCandidateFromItemEvent(event);
+    if (candidate?.phase === "started" && candidate.itemId) {
+      startedLifecycleItemIds.add(candidate.itemId);
+    }
     if (candidate?.phase === "completed" && candidate.itemId) {
       completedLifecycleItemIds.add(candidate.itemId);
     }
@@ -407,9 +438,9 @@ export function deriveWorkLogEntries(
     const lifecycleCandidate = lifecycleCandidateFromItemEvent(event);
     if (lifecycleCandidate) {
       if (
-        lifecycleCandidate.phase === "started" &&
+        lifecycleCandidate.phase === "completed" &&
         lifecycleCandidate.itemId &&
-        completedLifecycleItemIds.has(lifecycleCandidate.itemId)
+        startedLifecycleItemIds.has(lifecycleCandidate.itemId)
       ) {
         continue;
       }
@@ -424,6 +455,63 @@ export function deriveWorkLogEntries(
         ...(lifecycleCandidate.detail ? { detail: lifecycleCandidate.detail } : {}),
         tone: lifecycleCandidate.tone,
       });
+      continue;
+    }
+
+    if (event.method === "assistant/thinking") {
+      const payload = asObject(event.payload);
+      const text = normalizeDetail(asString(payload?.text));
+      if (text) {
+        entries.push({
+          id: event.id,
+          createdAt: event.createdAt,
+          label: "Reasoning",
+          detail: text,
+          tone: "thinking",
+        });
+      }
+      continue;
+    }
+
+    if (event.method === "tool_use/start") {
+      if (event.itemId && startedLifecycleItemIds.has(event.itemId)) {
+        continue;
+      }
+      const payload = asObject(event.payload);
+      const toolName = normalizeDetail(asString(payload?.toolName));
+      const inputDetail = extractToolInputDetail(payload?.input);
+      const detail = normalizeDetail(
+        [toolName, inputDetail].filter((value): value is string => Boolean(value)).join(" - "),
+      );
+      entries.push({
+        id: event.id,
+        createdAt: event.createdAt,
+        label: "Tool call",
+        ...(detail ? { detail } : {}),
+        tone: "tool",
+      });
+      continue;
+    }
+
+    if (event.method === "tool_use/result") {
+      const payload = asObject(event.payload);
+      const idsRaw = asArray(payload?.toolUseIds) ?? [];
+      const toolUseIds = idsRaw
+        .map((value) => asString(value))
+        .filter((value): value is string => Boolean(value));
+      if (toolUseIds.length > 0 && toolUseIds.every((id) => completedLifecycleItemIds.has(id))) {
+        continue;
+      }
+      const summary = normalizeDetail(asString(payload?.summary));
+      if (summary) {
+        entries.push({
+          id: event.id,
+          createdAt: event.createdAt,
+          label: "Tool result",
+          detail: summary,
+          tone: "tool",
+        });
+      }
       continue;
     }
 

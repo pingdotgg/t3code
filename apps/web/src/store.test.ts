@@ -494,12 +494,12 @@ describe("store reducer thread continuity", () => {
     expect(next).toBe(state);
   });
 
-  it("rebases thread identity on thread/started during connect", () => {
+  it("rebases thread identity on thread/started regardless of current session status", () => {
     const state = makeState(
       makeThread({
         codexThreadId: "thr_old",
         session: makeSession({
-          status: "connecting",
+          status: "ready",
           threadId: "thr_old",
         }),
       }),
@@ -516,6 +516,35 @@ describe("store reducer thread continuity", () => {
 
     expect(next.threads[0]?.codexThreadId).toBe("thr_new");
     expect(next.threads[0]?.session?.threadId).toBe("thr_new");
+  });
+
+  it("accepts Claude deltas when thread id is still a session-id placeholder and rebinds", () => {
+    const state = makeState(
+      makeThread({
+        provider: "claudeCode",
+        codexThreadId: "sess-1",
+        session: makeSession({
+          provider: "claudeCode",
+          threadId: "sess-1",
+        }),
+      }),
+    );
+    const next = reducer(state, {
+      type: "APPLY_EVENT",
+      event: makeEvent({
+        provider: "claudeCode",
+        method: "item/agentMessage/delta",
+        threadId: "claude-thread-1",
+        itemId: "item-1",
+        textDelta: "Hello",
+        payload: { itemId: "item-1", delta: "Hello" },
+      }),
+      activeAssistantItemRef: { current: null },
+    });
+
+    expect(next.threads[0]?.codexThreadId).toBe("claude-thread-1");
+    expect(next.threads[0]?.session?.threadId).toBe("claude-thread-1");
+    expect(next.threads[0]?.messages[0]?.text).toBe("Hello");
   });
 
   it("preserves persisted turn diffs when events were reset and appends new completed turn diffs", () => {

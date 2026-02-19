@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { projectScriptSchema } from "@t3tools/contracts";
+import { projectScriptSchema, providerKindSchema } from "@t3tools/contracts";
 
 import { DEFAULT_MODEL, resolveModelSlug } from "./model-logic";
 import {
@@ -66,6 +66,7 @@ const persistedTurnDiffSummarySchema = z.object({
 const persistedThreadSchema = z.object({
   id: z.string().min(1),
   codexThreadId: z.string().min(1).nullable().default(null),
+  provider: providerKindSchema.default("codex"),
   projectId: z.string().min(1),
   title: z.string().min(1),
   model: z.string().min(1),
@@ -259,6 +260,7 @@ function hydrateThread(
   return {
     id: thread.id,
     codexThreadId: thread.codexThreadId,
+    provider: thread.provider,
     projectId: thread.projectId,
     title: thread.title,
     model: resolveModelSlug(maybeMigrateLegacyModel(thread.model, isLegacyPayload)),
@@ -347,6 +349,7 @@ export function toPersistedState(
     threads: state.threads.map((thread) => ({
       id: thread.id,
       codexThreadId: thread.codexThreadId,
+      provider: thread.provider ?? "codex",
       projectId: thread.projectId,
       title: thread.title,
       model: thread.model,
