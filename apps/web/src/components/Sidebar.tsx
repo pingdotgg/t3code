@@ -331,6 +331,7 @@ export default function Sidebar() {
         await removeWorktreeMutation.mutateAsync({
           cwd: threadProject.cwd,
           path: orphanedWorktreePath,
+          force: true,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error removing worktree.";

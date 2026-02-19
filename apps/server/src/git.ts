@@ -546,7 +546,11 @@ export class GitCoreService {
   }
 
   async removeWorktree(input: GitRemoveWorktreeInput): Promise<void> {
-    const args = ["worktree", "remove", input.path] as const;
+    const args = ["worktree", "remove"];
+    if (input.force) {
+      args.push("--force");
+    }
+    args.push(input.path);
     try {
       await executeGit(input.cwd, args, {
         timeoutMs: 15_000,

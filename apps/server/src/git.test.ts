@@ -617,6 +617,32 @@ describe("git integration", () => {
       await removeGitWorktree({ cwd: tmp.path, path: wtPath });
       expect(existsSync(wtPath)).toBe(false);
     });
+
+    it("removeGitWorktree force removes a dirty worktree", async () => {
+      await using tmp = await makeTmpDir();
+      await initRepoWithCommit(tmp.path);
+
+      const wtPath = path.join(tmp.path, "wt-dirty-dir");
+      const currentBranch = (await listGitBranches({ cwd: tmp.path })).branches.find(
+        (b) => b.current,
+      )!.name;
+
+      await createGitWorktree({
+        cwd: tmp.path,
+        branch: currentBranch,
+        newBranch: "wt-dirty",
+        path: wtPath,
+      });
+      expect(existsSync(wtPath)).toBe(true);
+
+      await writeFile(path.join(wtPath, "README.md"), "dirty change\n");
+
+      await expect(removeGitWorktree({ cwd: tmp.path, path: wtPath })).rejects.toThrow();
+      expect(existsSync(wtPath)).toBe(true);
+
+      await removeGitWorktree({ cwd: tmp.path, path: wtPath, force: true });
+      expect(existsSync(wtPath)).toBe(false);
+    });
   });
 
   // ── Full flow: local branch checkout ──

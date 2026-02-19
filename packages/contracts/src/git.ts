@@ -16,6 +16,7 @@ export const gitCreateWorktreeInputSchema = z.object({
 export const gitRemoveWorktreeInputSchema = z.object({
   cwd: z.string().min(1),
   path: z.string().min(1),
+  force: z.boolean().optional(),
 });
 
 export const gitCreateBranchInputSchema = z.object({
