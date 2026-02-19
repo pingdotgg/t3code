@@ -497,7 +497,7 @@ describe("deriveTurnDiffSummaries", () => {
     expect(summaries[0]?.files[0]?.kind).toBe("modified");
     expect(summaries[0]?.files[0]?.additions).toBe(1);
     expect(summaries[0]?.files[0]?.deletions).toBe(1);
-    expect("unifiedDiff" in (summaries[0] as Record<string, unknown>)).toBe(false);
+    expect(summaries[0]).not.toHaveProperty("unifiedDiff");
   });
 
   it("includes completed turns even when no fileChange tool events were emitted", () => {

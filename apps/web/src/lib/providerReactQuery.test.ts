@@ -62,24 +62,26 @@ describe("checkpointDiffQueryOptions", () => {
       cacheScope: "turn:abc",
     });
     const retry = options.retry;
+    expect(typeof retry).toBe("function");
+    if (typeof retry !== "function") {
+      throw new Error("Expected retry to be a function.");
+    }
 
-    expect(retry?.(1, new Error("Checkpoint turn count 2 exceeds current turn count 1."))).toBe(
-      true,
-    );
+    expect(retry(1, new Error("Checkpoint turn count 2 exceeds current turn count 1."))).toBe(true);
     expect(
-      retry?.(
+      retry(
         11,
         new Error("Filesystem checkpoint is unavailable for turn 2 in thread thread-1."),
       ),
     ).toBe(true);
     expect(
-      retry?.(
+      retry(
         12,
         new Error("Filesystem checkpoint is unavailable for turn 2 in thread thread-1."),
       ),
     ).toBe(false);
-    expect(retry?.(2, new Error("Something else failed."))).toBe(true);
-    expect(retry?.(3, new Error("Something else failed."))).toBe(false);
+    expect(retry(2, new Error("Something else failed."))).toBe(true);
+    expect(retry(3, new Error("Something else failed."))).toBe(false);
   });
 
   it("backs off longer for checkpoint-not-ready errors", () => {
@@ -91,12 +93,16 @@ describe("checkpointDiffQueryOptions", () => {
       cacheScope: "turn:abc",
     });
     const retryDelay = options.retryDelay;
+    expect(typeof retryDelay).toBe("function");
+    if (typeof retryDelay !== "function") {
+      throw new Error("Expected retryDelay to be a function.");
+    }
 
-    const checkpointDelay = retryDelay?.(
+    const checkpointDelay = retryDelay(
       4,
       new Error("Checkpoint turn count 2 exceeds current turn count 1."),
     );
-    const genericDelay = retryDelay?.(4, new Error("Network failure"));
+    const genericDelay = retryDelay(4, new Error("Network failure"));
 
     expect(typeof checkpointDelay).toBe("number");
     expect(typeof genericDelay).toBe("number");

@@ -506,9 +506,6 @@ function mergeTurnDiffFileChange(
   if (existing.kind === undefined && incoming.kind !== undefined) {
     existing.kind = incoming.kind;
   }
-  if (existing.diff === undefined && incoming.diff !== undefined) {
-    existing.diff = incoming.diff;
-  }
   if (existing.additions === undefined && incoming.additions !== undefined) {
     existing.additions = incoming.additions;
   }
