@@ -3,6 +3,7 @@
 ## Small things
 
 - [ ] Plan mode
+- [ ] Submitting new messages should scroll to bottom
 - [ ] 1 click copy in codeblocks
 - [x] Pasting/adding images to submit with prompts
 - [ ] Only show last 10 threads for a given project
