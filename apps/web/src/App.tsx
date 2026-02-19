@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
-import { Suspense, lazy, useEffect, useRef } from "react";
+import { Activity, Suspense, lazy, useEffect, useRef, useState } from "react";
 
 import ChatView from "./components/ChatView";
 import Sidebar from "./components/Sidebar";
@@ -15,7 +15,43 @@ import { Sheet, SheetPopup } from "./components/ui/sheet";
 import { invalidateGitQueries } from "./lib/gitReactQuery";
 
 const DiffPanel = lazy(() => import("./components/DiffPanel"));
+const DiffWorkerPoolProvider = lazy(() =>
+  import("./components/DiffPanel").then((module) => ({
+    default: module.DiffWorkerPoolProvider,
+  })),
+);
 const DIFF_INLINE_LAYOUT_MEDIA_QUERY = "(max-width: 1180px)";
+
+const DiffPanelWrapper = (props: { children: React.ReactNode; sheet: boolean }) => {
+  const { state, dispatch } = useStore();
+  if (props.sheet) {
+    return (
+      <Sheet
+        open={state.diffOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            dispatch({ type: "CLOSE_DIFF" });
+          }
+        }}
+      >
+        <SheetPopup
+          side="right"
+          showCloseButton={false}
+          keepMounted
+          className="w-[min(88vw,820px)] max-w-[820px] p-0"
+        >
+          {props.children}
+        </SheetPopup>
+      </Sheet>
+    );
+  }
+
+  return (
+    <aside className={state.diffOpen ? undefined : "hidden"} aria-hidden={!state.diffOpen}>
+      {props.children}
+    </aside>
+  );
+};
 
 function EventRouter() {
   const api = useNativeApi();
@@ -181,8 +217,19 @@ function DesktopProjectBootstrap() {
 
 function Layout() {
   const api = useNativeApi();
-  const { state, dispatch } = useStore();
+  const { state } = useStore();
   const shouldUseDiffSheet = useMediaQuery(DIFF_INLINE_LAYOUT_MEDIA_QUERY);
+
+  const diffLoadingFallback =
+    !state.diffOpen || shouldUseDiffSheet ? (
+      <div className="flex h-full min-h-0 items-center justify-center px-4 text-center text-xs text-muted-foreground/70">
+        Loading diff viewer...
+      </div>
+    ) : (
+      <aside className="flex h-full w-[560px] shrink-0 items-center justify-center border-l border-border bg-card px-4 text-center text-xs text-muted-foreground/70">
+        Loading diff viewer...
+      </aside>
+    );
 
   if (!api) {
     return (
@@ -201,43 +248,15 @@ function Layout() {
       <DesktopProjectBootstrap />
       <Sidebar />
       <ChatView />
-      {state.diffOpen && !shouldUseDiffSheet && (
-        <Suspense
-          fallback={
-            <aside className="flex h-full w-[560px] shrink-0 items-center justify-center border-l border-border bg-card px-4 text-center text-xs text-muted-foreground/70">
-              Loading diff viewer...
-            </aside>
-          }
-        >
-          <DiffPanel mode="inline" />
-        </Suspense>
-      )}
-      {state.diffOpen && shouldUseDiffSheet && (
-        <Sheet
-          open={state.diffOpen}
-          onOpenChange={(open) => {
-            if (!open) {
-              dispatch({ type: "CLOSE_DIFF" });
-            }
-          }}
-        >
-          <SheetPopup
-            side="right"
-            showCloseButton={false}
-            className="w-[min(88vw,820px)] max-w-[820px] p-0"
-          >
-            <Suspense
-              fallback={
-                <div className="flex h-full min-h-0 items-center justify-center px-4 text-center text-xs text-muted-foreground/70">
-                  Loading diff viewer...
-                </div>
-              }
-            >
-              <DiffPanel mode="sheet" />
-            </Suspense>
-          </SheetPopup>
-        </Sheet>
-      )}
+      <Activity mode={state.diffOpen ? "visible" : "hidden"}>
+        <DiffPanelWrapper sheet={shouldUseDiffSheet}>
+          <Suspense fallback={diffLoadingFallback}>
+            <DiffWorkerPoolProvider>
+              <DiffPanel mode={shouldUseDiffSheet ? "sheet" : "inline"} />
+            </DiffWorkerPoolProvider>
+          </Suspense>
+        </DiffPanelWrapper>
+      </Activity>
     </div>
   );
 }
