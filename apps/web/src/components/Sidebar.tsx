@@ -4,6 +4,7 @@ import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { isElectron } from "../env";
+import { APP_STAGE_LABEL } from "../branding";
 import { useTheme } from "../hooks/useTheme";
 import { DEFAULT_MODEL } from "../model-logic";
 import { derivePendingApprovals } from "../session-logic";
@@ -431,9 +432,14 @@ export default function Sidebar() {
       <div
         className={`flex items-center gap-2.5 px-4 ${isElectron ? "drag-region h-[52px] pl-[76px]" : "py-4"}`}
       >
-        <span className="flex-1 text-sm font-semibold tracking-tight text-foreground">
-          T3 <span className="font-normal text-muted-foreground">Code</span>
-        </span>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="truncate text-sm font-semibold tracking-tight text-foreground">
+            T3 <span className="font-normal text-muted-foreground">Code</span>
+          </span>
+          <span className="rounded border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {APP_STAGE_LABEL}
+          </span>
+        </div>
         <button
           type="button"
           className="rounded-md p-1.5 text-muted-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-muted-foreground"

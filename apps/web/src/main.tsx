@@ -9,12 +9,14 @@ import "@xterm/xterm/css/xterm.css";
 import "highlight.js/styles/github-dark.css";
 import "./index.css";
 
+import { APP_DISPLAY_NAME } from "./branding";
 import { isElectron } from "./env";
 import { routeTree } from "./routeTree.gen";
 
 const history = isElectron ? createHashHistory() : createBrowserHistory();
 
 const queryClient = new QueryClient();
+document.title = APP_DISPLAY_NAME;
 
 const router = createRouter({
   routeTree,

@@ -2,7 +2,7 @@
   "name": "@t3tools/desktop",
   "version": "0.0.0",
   "private": true,
-  "productName": "T3 Code",
+  "productName": "T3 Code (Alpha)",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "bun run --parallel dev:bundle dev:electron",

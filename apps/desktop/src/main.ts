@@ -21,7 +21,7 @@ const BACKEND_ENTRY = path.join(ROOT_DIR, "apps/server/dist/index.mjs");
 const WEB_ENTRY = path.join(ROOT_DIR, "apps/web/dist/index.html");
 const STATE_DIR = path.join(os.homedir(), ".t3", "userdata");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
-const APP_DISPLAY_NAME = "T3 Code";
+const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const APP_USER_MODEL_ID = "com.t3tools.t3code";
 
 let mainWindow: BrowserWindow | null = null;
