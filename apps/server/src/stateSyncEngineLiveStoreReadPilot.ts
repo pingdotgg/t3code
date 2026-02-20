@@ -92,12 +92,21 @@ export class LiveStoreReadPilotStateSyncEngine
     this.disableDelegateReadFallback = options.disableDelegateReadFallback ?? false;
     this.unsubscribeDelegate = this.delegate.onStateEvent((event) => {
       this.emit("stateEvent", event);
-      void this.mirror.mirrorStateEvent(event).catch((error) => {
-        this.logger.warn("failed to mirror state event in read pilot", {
-          error,
-          seq: event.seq,
+      void this.mirror
+        .mirrorStateEvent(event)
+        .then((mirrored) => {
+          if (mirrored === false) {
+            this.logger.warn("mirror state event in read pilot reported unsuccessful write", {
+              seq: event.seq,
+            });
+          }
+        })
+        .catch((error) => {
+          this.logger.warn("failed to mirror state event in read pilot", {
+            error,
+            seq: event.seq,
+          });
         });
-      });
     });
   }
 

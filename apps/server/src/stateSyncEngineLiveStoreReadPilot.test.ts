@@ -287,6 +287,50 @@ describe("LiveStoreReadPilotStateSyncEngine", () => {
     }
   });
 
+  it("logs a warning when mirror reports unsuccessful event writes", async () => {
+    const delegate = new MockDelegateStateSyncEngine();
+    const mirror = makeMirrorStub({
+      snapshot: {
+        projects: [],
+        threads: [],
+        lastStateSeq: 1,
+      },
+      catchUp: {
+        events: [],
+        lastStateSeq: 1,
+      },
+      listMessages: {
+        messages: [],
+        total: 0,
+        nextOffset: null,
+      },
+    });
+    vi.mocked(mirror.mirrorStateEvent).mockResolvedValue(false);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const engine = new LiveStoreReadPilotStateSyncEngine({
+      delegate,
+      mirror,
+    });
+
+    try {
+      delegate.emitStateEvent({
+        seq: 1,
+        eventType: "project.upsert",
+        entityId: "project-1",
+        payload: {},
+        createdAt: "2026-02-20T00:00:00.000Z",
+      });
+      await Promise.resolve();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("mirror state event in read pilot reported unsuccessful write"),
+      );
+    } finally {
+      warnSpy.mockRestore();
+      engine.close();
+    }
+  });
+
   it("runs bootstrap parity check against delegate when enabled", () => {
     const delegate = new MockDelegateStateSyncEngine();
     delegate.loadSnapshotMock.mockReturnValue({

@@ -143,6 +143,36 @@ describe("ShadowStateSyncEngine", () => {
     }
   });
 
+  it("logs a warning when mirror reports unsuccessful writes", async () => {
+    const stateDir = makeTempDir("t3code-shadow-unsuccessful-write-state-");
+    const projectDir = makeTempDir("t3code-shadow-unsuccessful-write-project-");
+    const service = new PersistenceService({
+      dbPath: path.join(stateDir, "state.sqlite"),
+    });
+    const legacy = new LegacyStateSyncEngine({ persistenceService: service });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mirror: StateEventMirror = {
+      mirrorStateEvent: async () => false,
+      dispose: async () => undefined,
+    };
+    const shadow = new ShadowStateSyncEngine({
+      delegate: legacy,
+      mirror,
+    });
+
+    try {
+      shadow.addProject({ cwd: projectDir });
+      await Promise.resolve();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("livestore shadow mirror reported unsuccessful write"),
+      );
+    } finally {
+      warnSpy.mockRestore();
+      shadow.close();
+      service.close();
+    }
+  });
+
   it("keeps LiveStore mirror snapshot in parity with delegate writes", async () => {
     const stateDir = makeTempDir("t3code-shadow-parity-state-");
     const projectDir = makeTempDir("t3code-shadow-parity-project-");

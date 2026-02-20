@@ -72,9 +72,18 @@ export class ShadowStateSyncEngine
     this.enableListMessagesParityCheck = options.enableListMessagesParityCheck ?? false;
     this.unsubscribeDelegate = this.delegate.onStateEvent((event) => {
       this.emit("stateEvent", event);
-      void this.mirror.mirrorStateEvent(event).catch((error) => {
-        this.logger.warn("livestore shadow mirror failed", { error, seq: event.seq });
-      });
+      void this.mirror
+        .mirrorStateEvent(event)
+        .then((mirrored) => {
+          if (mirrored === false) {
+            this.logger.warn("livestore shadow mirror reported unsuccessful write", {
+              seq: event.seq,
+            });
+          }
+        })
+        .catch((error) => {
+          this.logger.warn("livestore shadow mirror failed", { error, seq: event.seq });
+        });
     });
   }
 
