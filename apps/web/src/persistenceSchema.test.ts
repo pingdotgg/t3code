@@ -20,6 +20,7 @@ describe("hydratePersistedState", () => {
           cwd: "/tmp/project",
           model: "gpt-5.2-codex",
           expanded: true,
+          scripts: [],
         },
       ],
       threads: [
@@ -69,6 +70,7 @@ describe("hydratePersistedState", () => {
           cwd: "/tmp/project",
           model: "gpt-5.3-codex",
           expanded: false,
+          scripts: [],
         },
       ],
       threads: [
@@ -104,7 +106,6 @@ describe("hydratePersistedState", () => {
       { id: `group-${DEFAULT_THREAD_TERMINAL_ID}`, terminalIds: [DEFAULT_THREAD_TERMINAL_ID] },
     ]);
     expect(hydrated?.threads[0]?.activeTerminalGroupId).toBe(`group-${DEFAULT_THREAD_TERMINAL_ID}`);
-    expect(hydrated?.activeThreadId).toBe("t-1");
     expect(hydrated?.runtimeMode).toBe("full-access");
   });
 
@@ -119,6 +120,7 @@ describe("hydratePersistedState", () => {
           cwd: "/tmp/project",
           model: "gpt-5.3-codex",
           expanded: false,
+          scripts: [],
         },
       ],
       threads: [],
@@ -140,6 +142,7 @@ describe("hydratePersistedState", () => {
           cwd: "/tmp/project",
           model: "gpt-5.3-codex",
           expanded: true,
+          scripts: [],
         },
       ],
       threads: [
@@ -187,6 +190,7 @@ describe("hydratePersistedState", () => {
           cwd: "/tmp/project",
           model: "gpt-5.3-codex",
           expanded: true,
+          scripts: [],
         },
       ],
       threads: [
@@ -231,6 +235,7 @@ describe("hydratePersistedState", () => {
           cwd: "/tmp/project",
           model: "gpt-5.3-codex",
           expanded: true,
+          scripts: [],
         },
       ],
       threads: [
@@ -256,6 +261,106 @@ describe("hydratePersistedState", () => {
       { id: `group-${DEFAULT_THREAD_TERMINAL_ID}`, terminalIds: [DEFAULT_THREAD_TERMINAL_ID] },
     ]);
     expect(hydrated?.threads[0]?.activeTerminalGroupId).toBe(`group-${DEFAULT_THREAD_TERMINAL_ID}`);
+  });
+
+  it("hydrates persisted turn diff summaries as metadata-only entries", () => {
+    const payload = JSON.stringify({
+      version: 7,
+      runtimeMode: "full-access",
+      projects: [
+        {
+          id: "p-1",
+          name: "Project",
+          cwd: "/tmp/project",
+          model: "gpt-5.3-codex",
+          expanded: true,
+        },
+      ],
+      threads: [
+        {
+          id: "t-1",
+          codexThreadId: "thr_1",
+          projectId: "p-1",
+          title: "Thread",
+          model: "gpt-5.3-codex",
+          messages: [],
+          createdAt: "2026-02-08T10:00:00.000Z",
+          turnDiffSummaries: [
+            {
+              turnId: "turn-1",
+              completedAt: "2026-02-08T10:05:00.000Z",
+              checkpointTurnCount: 1,
+              files: [
+                {
+                  path: "src/app.ts",
+                  kind: "modified",
+                  additions: 3,
+                  deletions: 1,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      activeThreadId: "t-1",
+    });
+
+    const hydrated = hydratePersistedState(payload, false);
+    expect(hydrated?.threads[0]?.turnDiffSummaries).toEqual([
+      {
+        turnId: "turn-1",
+        completedAt: "2026-02-08T10:05:00.000Z",
+        checkpointTurnCount: 1,
+        files: [
+          {
+            path: "src/app.ts",
+            kind: "modified",
+            additions: 3,
+            deletions: 1,
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("drops malformed persisted turn diff summaries instead of rejecting the whole snapshot", () => {
+    const payload = JSON.stringify({
+      version: 7,
+      runtimeMode: "full-access",
+      projects: [
+        {
+          id: "p-1",
+          name: "Project",
+          cwd: "/tmp/project",
+          model: "gpt-5.3-codex",
+          expanded: true,
+        },
+      ],
+      threads: [
+        {
+          id: "t-1",
+          codexThreadId: "thr_1",
+          projectId: "p-1",
+          title: "Thread",
+          model: "gpt-5.3-codex",
+          messages: [],
+          createdAt: "2026-02-08T10:00:00.000Z",
+          turnDiffSummaries: [
+            {
+              turnId: "turn-1",
+              completedAt: "2026-02-08T10:05:00.000Z",
+              files: [{ path: 123 }],
+            },
+          ],
+        },
+      ],
+      activeThreadId: "t-1",
+    });
+
+    const hydrated = hydratePersistedState(payload, false);
+    expect(hydrated).not.toBeNull();
+    expect(hydrated?.threads[0]?.id).toBe("t-1");
+    expect(hydrated?.threads[0]?.turnDiffSummaries).toEqual([]);
   });
 });
 
@@ -303,6 +408,22 @@ describe("toPersistedState", () => {
       lastVisitedAt: "2026-02-08T10:02:00.000Z",
       branch: null,
       worktreePath: null,
+      turnDiffSummaries: [
+        {
+          turnId: "turn-1",
+          completedAt: "2026-02-08T10:05:00.000Z",
+          status: "completed",
+          checkpointTurnCount: 1,
+          files: [
+            {
+              path: "src/app.ts",
+              kind: "modified",
+              additions: 3,
+              deletions: 1,
+            },
+          ],
+        },
+      ],
     };
 
     const persisted = toPersistedState({
@@ -313,10 +434,10 @@ describe("toPersistedState", () => {
           cwd: "/tmp/project",
           model: "gpt-5.3-codex",
           expanded: true,
+          scripts: [],
         },
       ],
       threads: [thread],
-      activeThreadId: "t-1",
       runtimeMode: "full-access",
     });
 
@@ -359,6 +480,22 @@ describe("toPersistedState", () => {
       lastVisitedAt: thread.lastVisitedAt,
       branch: null,
       worktreePath: null,
+      turnDiffSummaries: [
+        {
+          turnId: "turn-1",
+          completedAt: "2026-02-08T10:05:00.000Z",
+          status: "completed",
+          checkpointTurnCount: 1,
+          files: [
+            {
+              path: "src/app.ts",
+              kind: "modified",
+              additions: 3,
+              deletions: 1,
+            },
+          ],
+        },
+      ],
     });
     const persistedThread = persisted.threads[0];
     expect(persistedThread).toBeDefined();

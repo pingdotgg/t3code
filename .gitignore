@@ -10,3 +10,4 @@ packages/*/dist
 .env.local
 build/
 .logs/
+release/

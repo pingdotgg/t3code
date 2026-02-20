@@ -1,10 +1,18 @@
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 import {
+  type ProviderCheckpoint,
   type ProviderEvent,
+  type ProviderGetCheckpointDiffInput,
+  type ProviderGetCheckpointDiffResult,
   type ProviderInterruptTurnInput,
+  type ProviderListCheckpointsInput,
+  type ProviderListCheckpointsResult,
+  type ProviderRevertToCheckpointInput,
+  type ProviderRevertToCheckpointResult,
   type ProviderRespondToRequestInput,
   type ProviderSendTurnInput,
   type ProviderSession,
@@ -12,23 +20,155 @@ import {
   type ProviderStopSessionInput,
   type ProviderTurnStartResult,
   providerInterruptTurnInputSchema,
+  providerGetCheckpointDiffInputSchema,
+  providerListCheckpointsInputSchema,
+  providerRevertToCheckpointInputSchema,
   providerRespondToRequestInputSchema,
   providerSendTurnInputSchema,
   providerSessionStartInputSchema,
   providerStopSessionInputSchema,
 } from "@t3tools/contracts";
+import type { CodexThreadTurnSnapshot } from "./codexAppServerManager";
 import { CodexAppServerManager } from "./codexAppServerManager";
+import { FilesystemCheckpointStore } from "./filesystemCheckpointStore";
 
 export interface ProviderManagerEvents {
   event: [event: ProviderEvent];
 }
 
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function trimToPreview(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 120) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 117)}...`;
+}
+
+function summarizeUserMessageContent(content: unknown[]): string | undefined {
+  const segments: string[] = [];
+
+  for (const part of content) {
+    const record = asObject(part);
+    const type = asString(record?.type);
+    if (!type) continue;
+
+    if (type === "text") {
+      const text = asString(record?.text);
+      if (text && text.trim().length > 0) {
+        segments.push(text.trim());
+      }
+      continue;
+    }
+
+    if (type === "image") {
+      segments.push("[Image attachment]");
+      continue;
+    }
+
+    if (type === "localImage") {
+      segments.push("[Local image attachment]");
+      continue;
+    }
+  }
+
+  if (segments.length === 0) {
+    return undefined;
+  }
+  return trimToPreview(segments.join(" "));
+}
+
+function summarizeTurn(turn: CodexThreadTurnSnapshot): {
+  messageCountDelta: number;
+  preview?: string;
+} {
+  let messageCountDelta = 0;
+  let preview: string | undefined;
+
+  for (const item of turn.items) {
+    const record = asObject(item);
+    const type = asString(record?.type);
+    if (!type) continue;
+
+    if (type === "userMessage") {
+      messageCountDelta += 1;
+      if (!preview) {
+        const content = asArray(record?.content);
+        preview = summarizeUserMessageContent(content);
+      }
+      continue;
+    }
+
+    if (type === "agentMessage") {
+      messageCountDelta += 1;
+      if (!preview) {
+        const text = asString(record?.text);
+        if (text && text.trim().length > 0) {
+          preview = trimToPreview(text);
+        }
+      }
+    }
+  }
+
+  return {
+    messageCountDelta,
+    ...(preview ? { preview } : {}),
+  };
+}
+
+function buildCheckpoints(turns: CodexThreadTurnSnapshot[]): ProviderCheckpoint[] {
+  const checkpoints: ProviderCheckpoint[] = [];
+  let messageCount = 0;
+  const isEmpty = turns.length === 0;
+  checkpoints.push({
+    id: "root",
+    turnCount: 0,
+    messageCount: 0,
+    label: "Start of conversation",
+    isCurrent: isEmpty,
+  });
+
+  for (let index = 0; index < turns.length; index += 1) {
+    const turn = turns[index];
+    if (!turn) continue;
+    const turnSummary = summarizeTurn(turn);
+    messageCount += turnSummary.messageCountDelta;
+    checkpoints.push({
+      id: turn.id,
+      turnCount: index + 1,
+      messageCount,
+      label: `Turn ${index + 1}`,
+      ...(turnSummary.preview ? { preview: turnSummary.preview } : {}),
+      isCurrent: index === turns.length - 1,
+    });
+  }
+
+  return checkpoints;
+}
+
 export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
   private readonly codex = new CodexAppServerManager();
+  private readonly filesystemCheckpointStore = new FilesystemCheckpointStore();
   private readonly threadLogsDir: string;
   private readonly threadLogStreams = new Map<string, fs.WriteStream>();
   private readonly sessionThreadIds = new Map<string, string>();
   private readonly pendingEventsBySession = new Map<string, ProviderEvent[]>();
+  private readonly sessionCheckpointCwds = new Map<string, string>();
+  private readonly filesystemLocks = new Map<string, Promise<void>>();
   private disposed = false;
   private readonly onCodexEvent = (event: ProviderEvent) => {
     if (this.disposed) {
@@ -37,6 +177,7 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
 
     this.routeEventToThreadLog(event);
     this.emit("event", event);
+    this.maybeCaptureFilesystemCheckpoint(event);
   };
 
   constructor() {
@@ -60,6 +201,11 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
       this.sessionThreadIds.set(session.sessionId, session.threadId);
       this.flushPendingSessionEvents(session.sessionId, session.threadId);
     }
+    await this.initializeFilesystemCheckpointing(session, input.cwd).catch((error) => {
+      const message =
+        error instanceof Error ? error.message : "Failed to initialize filesystem checkpoints.";
+      this.emitFilesystemCheckpointError(session.sessionId, message, session.threadId);
+    });
     return session;
   }
 
@@ -95,10 +241,136 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
     this.codex.stopSession(input.sessionId);
     this.sessionThreadIds.delete(input.sessionId);
     this.pendingEventsBySession.delete(input.sessionId);
+    this.sessionCheckpointCwds.delete(input.sessionId);
+    this.filesystemLocks.delete(input.sessionId);
   }
 
   listSessions(): ProviderSession[] {
     return this.codex.listSessions();
+  }
+
+  async listCheckpoints(raw: ProviderListCheckpointsInput): Promise<ProviderListCheckpointsResult> {
+    const input = providerListCheckpointsInputSchema.parse(raw);
+    if (!this.codex.hasSession(input.sessionId)) {
+      throw new Error(`Unknown provider session: ${input.sessionId}`);
+    }
+
+    const snapshot = await this.codex.readThread(input.sessionId);
+    return {
+      threadId: snapshot.threadId,
+      checkpoints: buildCheckpoints(snapshot.turns),
+    };
+  }
+
+  async getCheckpointDiff(
+    raw: ProviderGetCheckpointDiffInput,
+  ): Promise<ProviderGetCheckpointDiffResult> {
+    const input = providerGetCheckpointDiffInputSchema.parse(raw);
+    if (!this.codex.hasSession(input.sessionId)) {
+      throw new Error(`Unknown provider session: ${input.sessionId}`);
+    }
+
+    const checkpointCwd = await this.getOrInitializeFilesystemCheckpointCwd(input.sessionId);
+    if (!checkpointCwd) {
+      throw new Error("Filesystem checkpoints are unavailable for this session.");
+    }
+
+    return this.withFilesystemLock(input.sessionId, async () => {
+      const snapshot = await this.codex.readThread(input.sessionId);
+      if (input.toTurnCount > snapshot.turns.length) {
+        throw new Error(
+          `Checkpoint turn count ${input.toTurnCount} exceeds current turn count ${snapshot.turns.length}.`,
+        );
+      }
+
+      const diff = await this.filesystemCheckpointStore.diffCheckpoints({
+        cwd: checkpointCwd,
+        threadId: snapshot.threadId,
+        fromTurnCount: input.fromTurnCount,
+        toTurnCount: input.toTurnCount,
+      });
+
+      return {
+        threadId: snapshot.threadId,
+        fromTurnCount: input.fromTurnCount,
+        toTurnCount: input.toTurnCount,
+        diff,
+      };
+    });
+  }
+
+  async revertToCheckpoint(
+    raw: ProviderRevertToCheckpointInput,
+  ): Promise<ProviderRevertToCheckpointResult> {
+    const input = providerRevertToCheckpointInputSchema.parse(raw);
+    if (!this.codex.hasSession(input.sessionId)) {
+      throw new Error(`Unknown provider session: ${input.sessionId}`);
+    }
+
+    const checkpointCwd = await this.getOrInitializeFilesystemCheckpointCwd(input.sessionId);
+    if (!checkpointCwd) {
+      throw new Error("Filesystem checkpoints are unavailable for this session.");
+    }
+    return this.withFilesystemLock(input.sessionId, async () => {
+      const beforeSnapshot = await this.codex.readThread(input.sessionId);
+      const currentTurnCount = beforeSnapshot.turns.length;
+      if (input.turnCount > currentTurnCount) {
+        throw new Error(
+          `Checkpoint turn count ${input.turnCount} exceeds current turn count ${currentTurnCount}.`,
+        );
+      }
+
+      if (checkpointCwd && input.turnCount > 0) {
+        const hasCheckpoint = await this.filesystemCheckpointStore.hasCheckpoint({
+          cwd: checkpointCwd,
+          threadId: beforeSnapshot.threadId,
+          turnCount: input.turnCount,
+        });
+        if (!hasCheckpoint) {
+          throw new Error(
+            `Filesystem checkpoint is unavailable for turn ${input.turnCount} in thread ${beforeSnapshot.threadId}.`,
+          );
+        }
+      }
+
+      const restored = await this.filesystemCheckpointStore.restoreCheckpoint({
+        cwd: checkpointCwd,
+        threadId: beforeSnapshot.threadId,
+        turnCount: input.turnCount,
+      });
+      if (!restored) {
+        throw new Error(
+          `Filesystem checkpoint is unavailable for turn ${input.turnCount} in thread ${beforeSnapshot.threadId}.`,
+        );
+      }
+
+      const requestedRollbackTurns = currentTurnCount - input.turnCount;
+      const afterSnapshot =
+        requestedRollbackTurns > 0
+          ? await this.codex.rollbackThread(input.sessionId, requestedRollbackTurns)
+          : beforeSnapshot;
+
+      await this.filesystemCheckpointStore.pruneAfterTurn({
+        cwd: checkpointCwd,
+        threadId: afterSnapshot.threadId,
+        maxTurnCount: afterSnapshot.turns.length,
+      });
+
+      const checkpoints = buildCheckpoints(afterSnapshot.turns);
+      const currentCheckpoint =
+        checkpoints.find((checkpoint) => checkpoint.isCurrent) ??
+        checkpoints[checkpoints.length - 1] ??
+        checkpoints[0];
+      const rolledBackTurns = Math.max(0, currentTurnCount - afterSnapshot.turns.length);
+
+      return {
+        threadId: afterSnapshot.threadId,
+        turnCount: currentCheckpoint?.turnCount ?? 0,
+        messageCount: currentCheckpoint?.messageCount ?? 0,
+        rolledBackTurns,
+        checkpoints,
+      };
+    });
   }
 
   stopAll(): void {
@@ -118,6 +390,174 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
     this.threadLogStreams.clear();
     this.sessionThreadIds.clear();
     this.pendingEventsBySession.clear();
+    this.sessionCheckpointCwds.clear();
+    this.filesystemLocks.clear();
+  }
+
+  private async initializeFilesystemCheckpointing(
+    session: ProviderSession,
+    preferredCwd?: string,
+  ): Promise<void> {
+    const cwd = preferredCwd ?? session.cwd ?? process.cwd();
+
+    await this.withFilesystemLock(session.sessionId, async () => {
+      const supportsGit = await this.filesystemCheckpointStore.isGitRepository(cwd);
+      if (!supportsGit) {
+        this.sessionCheckpointCwds.delete(session.sessionId);
+        return;
+      }
+
+      const snapshot = await this.codex.readThread(session.sessionId);
+      await this.filesystemCheckpointStore.ensureRootCheckpoint({
+        cwd,
+        threadId: snapshot.threadId,
+      });
+      await this.filesystemCheckpointStore.captureCheckpoint({
+        cwd,
+        threadId: snapshot.threadId,
+        turnCount: snapshot.turns.length,
+      });
+      if (this.codex.hasSession(session.sessionId)) {
+        this.sessionCheckpointCwds.set(session.sessionId, cwd);
+      }
+    });
+  }
+
+  private async getOrInitializeFilesystemCheckpointCwd(sessionId: string): Promise<string | null> {
+    const existingCwd = this.sessionCheckpointCwds.get(sessionId);
+    if (existingCwd) {
+      return existingCwd;
+    }
+
+    const session = this.codex
+      .listSessions()
+      .find((candidate) => candidate.sessionId === sessionId);
+    const candidateCwds = session?.cwd ? [session.cwd] : [process.cwd()];
+
+    await this.withFilesystemLock(sessionId, async () => {
+      const currentCwd = this.sessionCheckpointCwds.get(sessionId);
+      if (currentCwd) {
+        return;
+      }
+
+      const cwdSupport = await Promise.all(
+        candidateCwds.map(async (cwd) => ({
+          cwd,
+          supportsGit: await this.filesystemCheckpointStore.isGitRepository(cwd),
+        })),
+      );
+      const supportedCwd = cwdSupport.find((entry) => entry.supportsGit)?.cwd;
+      if (supportedCwd) {
+        const snapshot = await this.codex.readThread(sessionId);
+        await this.filesystemCheckpointStore.ensureRootCheckpoint({
+          cwd: supportedCwd,
+          threadId: snapshot.threadId,
+        });
+        await this.filesystemCheckpointStore.captureCheckpoint({
+          cwd: supportedCwd,
+          threadId: snapshot.threadId,
+          turnCount: snapshot.turns.length,
+        });
+        if (this.codex.hasSession(sessionId)) {
+          this.sessionCheckpointCwds.set(sessionId, supportedCwd);
+        }
+        return;
+      }
+
+      this.sessionCheckpointCwds.delete(sessionId);
+    });
+
+    return this.sessionCheckpointCwds.get(sessionId) ?? null;
+  }
+
+  private maybeCaptureFilesystemCheckpoint(event: ProviderEvent): void {
+    if (event.kind !== "notification" || event.method !== "turn/completed") {
+      return;
+    }
+
+    const checkpointCwd = this.sessionCheckpointCwds.get(event.sessionId);
+    if (!checkpointCwd) {
+      void this.getOrInitializeFilesystemCheckpointCwd(event.sessionId)
+        .then(async (initializedCwd) => {
+          if (!initializedCwd || !this.codex.hasSession(event.sessionId)) {
+            return;
+          }
+          const snapshot = await this.codex.readThread(event.sessionId);
+          this.emitCheckpointCaptured(event.sessionId, snapshot.threadId, snapshot.turns.length);
+        })
+        .catch((error) => {
+          const message =
+            error instanceof Error ? error.message : "Failed to initialize filesystem checkpoints.";
+          this.emitFilesystemCheckpointError(event.sessionId, message, event.threadId);
+        });
+      return;
+    }
+
+    void this.withFilesystemLock(event.sessionId, async () => {
+      if (!this.codex.hasSession(event.sessionId)) {
+        return;
+      }
+
+      const snapshot = await this.codex.readThread(event.sessionId);
+      await this.filesystemCheckpointStore.captureCheckpoint({
+        cwd: checkpointCwd,
+        threadId: snapshot.threadId,
+        turnCount: snapshot.turns.length,
+      });
+      this.emitCheckpointCaptured(event.sessionId, snapshot.threadId, snapshot.turns.length);
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : "Failed to capture checkpoint.";
+      this.emitFilesystemCheckpointError(event.sessionId, message, event.threadId);
+    });
+  }
+
+  private emitCheckpointCaptured(sessionId: string, threadId: string, turnCount: number): void {
+    this.emit("event", {
+      id: randomUUID(),
+      kind: "notification",
+      provider: "codex",
+      sessionId,
+      createdAt: new Date().toISOString(),
+      method: "checkpoint/captured",
+      threadId,
+      payload: {
+        threadId,
+        turnCount,
+      },
+    });
+  }
+
+  private emitFilesystemCheckpointError(
+    sessionId: string,
+    message: string,
+    threadId?: string,
+  ): void {
+    this.emit("event", {
+      id: randomUUID(),
+      kind: "error",
+      provider: "codex",
+      sessionId,
+      createdAt: new Date().toISOString(),
+      method: "checkpoint/filesystemError",
+      message,
+      ...(threadId ? { threadId } : {}),
+    });
+  }
+
+  private withFilesystemLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.filesystemLocks.get(sessionId) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(fn);
+    const completion = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.filesystemLocks.set(sessionId, completion);
+    return next.finally(() => {
+      const tracked = this.filesystemLocks.get(sessionId);
+      if (tracked === completion) {
+        this.filesystemLocks.delete(sessionId);
+      }
+    });
   }
 
   private routeEventToThreadLog(event: ProviderEvent): void {

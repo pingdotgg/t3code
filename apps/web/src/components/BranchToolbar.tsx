@@ -9,6 +9,7 @@ import {
   gitCreateBranchAndCheckoutMutationOptions,
 } from "../lib/gitReactQuery";
 import { useStore } from "../store";
+import { deriveSyncedLocalBranch } from "./BranchToolbar.logic";
 import { Button } from "./ui/button";
 import {
   Combobox,
@@ -22,6 +23,7 @@ import {
 import { ChevronDownIcon } from "lucide-react";
 
 interface BranchToolbarProps {
+  threadId: string;
   envMode: "local" | "worktree";
   onEnvModeChange: (mode: "local" | "worktree") => void;
   envLocked: boolean;
@@ -29,6 +31,7 @@ interface BranchToolbarProps {
 }
 
 export default function BranchToolbar({
+  threadId,
   envMode,
   onEnvModeChange,
   envLocked,
@@ -41,7 +44,7 @@ export default function BranchToolbar({
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
 
-  const activeThread = state.threads.find((thread) => thread.id === state.activeThreadId);
+  const activeThread = state.threads.find((thread) => thread.id === threadId);
   const activeProject = state.projects.find((project) => project.id === activeThread?.projectId);
   const activeThreadId = activeThread?.id;
   const activeThreadBranch = activeThread?.branch ?? null;
@@ -67,36 +70,35 @@ export default function BranchToolbar({
       : branchNames;
   // ── Mutations ─────────────────────────────────────────────────────────
 
-  const checkoutMutation = useMutation({
-    ...gitCheckoutMutationOptions({ api, cwd: branchCwd, queryClient }),
-    onError: (error) => {
-      setThreadError(error instanceof Error ? error.message : "Failed to checkout branch.");
-      setIsBranchMenuOpen(true);
-    },
-  });
+  const checkoutMutation = useMutation(
+    gitCheckoutMutationOptions({ api, cwd: branchCwd, queryClient }),
+  );
 
-  const createBranchMutation = useMutation({
-    ...gitCreateBranchAndCheckoutMutationOptions({ api, cwd: branchCwd, queryClient }),
-    onError: (error) =>
-      setThreadError(error instanceof Error ? error.message : "Failed to create branch."),
-  });
+  const createBranchMutation = useMutation(
+    gitCreateBranchAndCheckoutMutationOptions({ api, cwd: branchCwd, queryClient }),
+  );
 
   // ── Effects ───────────────────────────────────────────────────────────
 
   // Keep thread branch synced to git current branch for local threads.
   const queryBranches = branchesQuery.data?.branches;
   useEffect(() => {
-    if (!activeThreadId || activeWorktreePath) return;
-    const current = queryBranches?.find((branch) => branch.current);
-    if (!current) return;
-    if (current.name === activeThreadBranch) return;
+    const syncedBranch = deriveSyncedLocalBranch({
+      activeThreadId,
+      activeWorktreePath,
+      envMode,
+      activeThreadBranch,
+      queryBranches,
+    });
+    if (!activeThreadId || !syncedBranch) return;
+
     dispatch({
       type: "SET_THREAD_BRANCH",
       threadId: activeThreadId,
-      branch: current.name,
+      branch: syncedBranch,
       worktreePath: null,
     });
-  }, [activeThreadId, activeWorktreePath, activeThreadBranch, queryBranches, dispatch]);
+  }, [activeThreadId, activeWorktreePath, activeThreadBranch, queryBranches, envMode, dispatch]);
 
   useEffect(() => {
     if (isBranchMenuOpen) return;
@@ -153,6 +155,10 @@ export default function BranchToolbar({
         setIsBranchMenuOpen(false);
         onComposerFocusRequest?.();
       },
+      onError: (error) => {
+        setThreadError(error instanceof Error ? error.message : "Failed to checkout branch.");
+        setIsBranchMenuOpen(true);
+      },
     });
   };
 
@@ -166,6 +172,9 @@ export default function BranchToolbar({
         setBranchQuery("");
         setIsBranchMenuOpen(false);
         onComposerFocusRequest?.();
+      },
+      onError: (error) => {
+        setThreadError(error instanceof Error ? error.message : "Failed to create branch.");
       },
     });
   };

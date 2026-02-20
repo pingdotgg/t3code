@@ -38,12 +38,12 @@ import {
   gitStatusQueryOptions,
   invalidateGitQueries,
 } from "~/lib/gitReactQuery";
-import { useStore } from "~/store";
 import { preferredTerminalEditor, resolvePathLinkTarget } from "~/terminal-links";
 
 interface GitActionsControlProps {
   api: NativeApi | undefined;
   gitCwd: string | null;
+  activeThreadId: string | null;
 }
 
 function getMenuActionDisabledReason(
@@ -136,9 +136,11 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   return <InfoIcon className={iconClassName} />;
 }
 
-export default function GitActionsControl({ api, gitCwd }: GitActionsControlProps) {
-  const { state } = useStore();
-  const activeThreadId = state.activeThreadId;
+export default function GitActionsControl({
+  api,
+  gitCwd,
+  activeThreadId,
+}: GitActionsControlProps) {
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
@@ -226,18 +228,15 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
       });
       return;
     }
-    const promise = api.shell.openExternal(prUrl);
-    toastManager.promise(promise, {
-      loading: { title: "Opening PR...", data: threadToastData },
-      success: { title: "PR opened", data: threadToastData },
-      error: (err) => ({
+    void api.shell.openExternal(prUrl).catch((err) => {
+      toastManager.add({
+        type: "error",
         title: "Unable to open PR link",
         description: err instanceof Error ? err.message : "An error occurred.",
         data: threadToastData,
-      }),
+      });
     });
-    void promise.catch(() => undefined);
-  }, [api, gitStatusForActions?.pr, threadToastData]);
+  }, [api, gitStatusForActions?.pr?.state, gitStatusForActions?.pr?.url, threadToastData]);
 
   const runGitActionWithToast = useCallback(
     async ({
@@ -632,7 +631,8 @@ export default function GitActionsControl({ api, gitCwd }: GitActionsControlProp
                         : gitStatusForActions.aheadCount === 0 &&
                             gitStatusForActions.behindCount === 0
                           ? "Up to date"
-                          : gitStatusForActions.aheadCount > 0 && gitStatusForActions.behindCount > 0
+                          : gitStatusForActions.aheadCount > 0 &&
+                              gitStatusForActions.behindCount > 0
                             ? `Diverged (+${gitStatusForActions.aheadCount} / -${gitStatusForActions.behindCount})`
                             : gitStatusForActions.aheadCount > 0
                               ? `Ahead by ${gitStatusForActions.aheadCount}`

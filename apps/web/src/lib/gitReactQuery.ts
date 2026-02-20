@@ -1,6 +1,11 @@
 import type { GitStackedAction, NativeApi } from "@t3tools/contracts";
 import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 
+const GIT_STATUS_STALE_TIME_MS = 5_000;
+const GIT_STATUS_REFETCH_INTERVAL_MS = 15_000;
+const GIT_BRANCHES_STALE_TIME_MS = 15_000;
+const GIT_BRANCHES_REFETCH_INTERVAL_MS = 60_000;
+
 export const gitQueryKeys = {
   all: ["git"] as const,
   status: (cwd: string | null) => ["git", "status", cwd] as const,
@@ -21,6 +26,10 @@ export function gitStatusQueryOptions(api: NativeApi | undefined, cwd: string | 
       return api.git.status({ cwd });
     },
     enabled: !!api && !!cwd,
+    staleTime: GIT_STATUS_STALE_TIME_MS,
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
+    refetchInterval: GIT_STATUS_REFETCH_INTERVAL_MS,
   });
 }
 
@@ -34,6 +43,10 @@ export function gitBranchesQueryOptions(api: NativeApi | undefined, cwd: string 
       return api.git.listBranches({ cwd });
     },
     enabled: !!api && !!cwd,
+    staleTime: GIT_BRANCHES_STALE_TIME_MS,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchInterval: GIT_BRANCHES_REFETCH_INTERVAL_MS,
   });
 }
 
@@ -160,11 +173,11 @@ export function gitRemoveWorktreeMutationOptions(input: {
   queryClient: QueryClient;
 }) {
   return mutationOptions({
-    mutationFn: async ({ cwd, path }: { cwd: string; path: string }) => {
+    mutationFn: async ({ cwd, path, force }: { cwd: string; path: string; force?: boolean }) => {
       if (!input.api) {
         throw new Error("Git worktree removal is unavailable.");
       }
-      return input.api.git.removeWorktree({ cwd, path });
+      return input.api.git.removeWorktree({ cwd, path, force });
     },
     onSettled: async () => {
       await invalidateGitQueries(input.queryClient);

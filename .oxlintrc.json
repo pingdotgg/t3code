@@ -1,6 +1,13 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "ignorePatterns": ["dist", "dist-electron", "node_modules", "bun.lock", "*.tsbuildinfo"],
+  "ignorePatterns": [
+    "dist",
+    "dist-electron",
+    "node_modules",
+    "bun.lock",
+    "*.tsbuildinfo",
+    "**/routeTree.gen.ts"
+  ],
   "plugins": ["eslint", "oxc", "react", "unicorn", "typescript"],
   "categories": {
     "correctness": "warn",

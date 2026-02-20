@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
-  isScrollContainerNearBottom,
-} from "./chat-scroll";
+import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX, isScrollContainerNearBottom } from "./chat-scroll";
 
 describe("isScrollContainerNearBottom", () => {
   it("returns true when already at bottom", () => {

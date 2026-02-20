@@ -19,7 +19,12 @@
     "test": "turbo run test",
     "test:desktop-smoke": "turbo run smoke-test --filter=@t3tools/desktop",
     "fmt": "oxfmt",
-    "build:contracts": "turbo run build --filter=@t3tools/contracts"
+    "build:contracts": "turbo run build --filter=@t3tools/contracts",
+    "dist:desktop:dmg": "node scripts/build-desktop-dmg.mjs",
+    "dist:desktop:dmg:arm64": "node scripts/build-desktop-dmg.mjs --arch arm64",
+    "dist:desktop:dmg:x64": "node scripts/build-desktop-dmg.mjs --arch x64",
+    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
+    "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
   },
   "devDependencies": {
     "oxfmt": "^0.28.0",

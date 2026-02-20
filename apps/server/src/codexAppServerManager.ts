@@ -65,6 +65,16 @@ interface JsonRpcNotification {
   params?: unknown;
 }
 
+export interface CodexThreadTurnSnapshot {
+  id: string;
+  items: unknown[];
+}
+
+export interface CodexThreadSnapshot {
+  threadId: string;
+  turns: CodexThreadTurnSnapshot[];
+}
+
 const ANSI_ESCAPE_CHAR = String.fromCharCode(27);
 const ANSI_ESCAPE_REGEX = new RegExp(`${ANSI_ESCAPE_CHAR}\\[[0-9;]*m`, "g");
 const CODEX_STDERR_LOG_REGEX =
@@ -138,40 +148,48 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   async startSession(input: ProviderSessionStartInput): Promise<ProviderSession> {
     const sessionId = randomUUID();
     const now = new Date().toISOString();
-
-    const session: ProviderSession = {
-      sessionId,
-      provider: "codex",
-      status: "connecting",
-      model: normalizeCodexModelSlug(input.model),
-      cwd: input.cwd,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const child = spawn("codex", ["app-server"], {
-      cwd: input.cwd,
-      env: process.env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const output = readline.createInterface({ input: child.stdout });
-
-    const context: CodexSessionContext = {
-      session,
-      child,
-      output,
-      pending: new Map(),
-      pendingApprovals: new Map(),
-      nextRequestId: 1,
-      stopping: false,
-    };
-
-    this.sessions.set(sessionId, context);
-    this.attachProcessListeners(context);
-
-    this.emitLifecycleEvent(context, "session/connecting", "Starting codex app-server");
+    let context: CodexSessionContext | undefined;
 
     try {
+      const resolvedCwd = input.cwd ?? process.cwd();
+
+      const session: ProviderSession = {
+        sessionId,
+        provider: "codex",
+        status: "connecting",
+        model: normalizeCodexModelSlug(input.model),
+        cwd: resolvedCwd,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const codexBinaryPath = input.codexBinaryPath?.trim() || "codex";
+      const codexHomePath = input.codexHomePath?.trim();
+      const child = spawn(codexBinaryPath, ["app-server"], {
+        cwd: resolvedCwd,
+        env: {
+          ...process.env,
+          ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      const output = readline.createInterface({ input: child.stdout });
+
+      context = {
+        session,
+        child,
+        output,
+        pending: new Map(),
+        pendingApprovals: new Map(),
+        nextRequestId: 1,
+        stopping: false,
+      };
+
+      this.sessions.set(sessionId, context);
+      this.attachProcessListeners(context);
+
+      this.emitLifecycleEvent(context, "session/connecting", "Starting codex app-server");
+
       await this.sendRequest(context, "initialize", {
         clientInfo: {
           name: "t3code_desktop",
@@ -241,12 +259,24 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       return { ...context.session };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start Codex session.";
-      this.updateSession(context, {
-        status: "error",
-        lastError: message,
-      });
-      this.emitErrorEvent(context, "session/startFailed", message);
-      this.stopSession(sessionId);
+      if (context) {
+        this.updateSession(context, {
+          status: "error",
+          lastError: message,
+        });
+        this.emitErrorEvent(context, "session/startFailed", message);
+        this.stopSession(sessionId);
+      } else {
+        this.emitEvent({
+          id: randomUUID(),
+          kind: "error",
+          provider: "codex",
+          sessionId,
+          createdAt: new Date().toISOString(),
+          method: "session/startFailed",
+          message,
+        });
+      }
       throw new Error(message, { cause: error });
     }
   }
@@ -329,6 +359,41 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       threadId: context.session.threadId,
       turnId: effectiveTurnId,
     });
+  }
+
+  async readThread(sessionId: string): Promise<CodexThreadSnapshot> {
+    const context = this.requireSession(sessionId);
+    const threadId = context.session.threadId;
+    if (!threadId) {
+      throw new Error("Session is missing a thread id.");
+    }
+
+    const response = await this.sendRequest(context, "thread/read", {
+      threadId,
+      includeTurns: true,
+    });
+    return this.parseThreadSnapshot("thread/read", response);
+  }
+
+  async rollbackThread(sessionId: string, numTurns: number): Promise<CodexThreadSnapshot> {
+    const context = this.requireSession(sessionId);
+    const threadId = context.session.threadId;
+    if (!threadId) {
+      throw new Error("Session is missing a thread id.");
+    }
+    if (!Number.isInteger(numTurns) || numTurns < 1) {
+      throw new Error("numTurns must be an integer >= 1.");
+    }
+
+    const response = await this.sendRequest(context, "thread/rollback", {
+      threadId,
+      numTurns,
+    });
+    this.updateSession(context, {
+      status: "ready",
+      activeTurnId: undefined,
+    });
+    return this.parseThreadSnapshot("thread/rollback", response);
   }
 
   async respondToRequest(
@@ -742,6 +807,31 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     return undefined;
   }
 
+  private parseThreadSnapshot(method: string, response: unknown): CodexThreadSnapshot {
+    const responseRecord = this.readObject(response);
+    const thread = this.readObject(responseRecord, "thread");
+    const threadId = this.readString(thread, "id") ?? this.readString(responseRecord, "threadId");
+    if (!threadId) {
+      throw new Error(`${method} response did not include a thread id.`);
+    }
+
+    const turnsRaw = this.readArray(thread, "turns") ?? this.readArray(responseRecord, "turns") ?? [];
+    const turns = turnsRaw.map((turnValue, index) => {
+      const turn = this.readObject(turnValue);
+      const turnId = this.readString(turn, "id") ?? `${threadId}:turn:${index + 1}`;
+      const items = this.readArray(turn, "items") ?? [];
+      return {
+        id: turnId,
+        items,
+      };
+    });
+
+    return {
+      threadId,
+      turns,
+    };
+  }
+
   private isServerRequest(value: unknown): value is JsonRpcRequest {
     if (!value || typeof value !== "object") {
       return false;
@@ -821,6 +911,16 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     return target as Record<string, unknown>;
+  }
+
+  private readArray(value: unknown, key?: string): unknown[] | undefined {
+    const target =
+      key === undefined
+        ? value
+        : value && typeof value === "object"
+          ? (value as Record<string, unknown>)[key]
+          : undefined;
+    return Array.isArray(target) ? target : undefined;
   }
 
   private readString(value: unknown, key: string): string | undefined {

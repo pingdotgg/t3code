@@ -50,6 +50,8 @@ export const providerSessionStartInputSchema = z.object({
   cwd: z.string().min(1).optional(),
   model: z.string().trim().min(1).optional(),
   resumeThreadId: z.string().trim().min(1).optional(),
+  codexBinaryPath: z.string().trim().min(1).optional(),
+  codexHomePath: z.string().trim().min(1).optional(),
   approvalPolicy: providerApprovalPolicySchema.default("never"),
   sandboxMode: providerSandboxModeSchema.default("workspace-write"),
 });
@@ -111,6 +113,60 @@ export const providerStopSessionInputSchema = z.object({
   sessionId: z.string().min(1),
 });
 
+export const providerListCheckpointsInputSchema = z.object({
+  sessionId: z.string().min(1),
+});
+
+export const providerCheckpointSchema = z.object({
+  id: z.string().min(1),
+  turnCount: z.number().int().min(0),
+  messageCount: z.number().int().min(0),
+  label: z.string().min(1),
+  preview: z.string().min(1).optional(),
+  isCurrent: z.boolean(),
+});
+
+export const providerListCheckpointsResultSchema = z.object({
+  threadId: z.string().min(1),
+  checkpoints: z.array(providerCheckpointSchema),
+});
+
+export const providerRevertToCheckpointInputSchema = z.object({
+  sessionId: z.string().min(1),
+  turnCount: z.number().int().min(0),
+});
+
+export const providerRevertToCheckpointResultSchema = z.object({
+  threadId: z.string().min(1),
+  turnCount: z.number().int().min(0),
+  messageCount: z.number().int().min(0),
+  rolledBackTurns: z.number().int().min(0),
+  checkpoints: z.array(providerCheckpointSchema),
+});
+
+export const providerGetCheckpointDiffInputSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    fromTurnCount: z.number().int().min(0),
+    toTurnCount: z.number().int().min(0),
+  })
+  .superRefine((value, ctx) => {
+    if (value.fromTurnCount > value.toTurnCount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "fromTurnCount must be less than or equal to toTurnCount",
+        path: ["fromTurnCount"],
+      });
+    }
+  });
+
+export const providerGetCheckpointDiffResultSchema = z.object({
+  threadId: z.string().min(1),
+  fromTurnCount: z.number().int().min(0),
+  toTurnCount: z.number().int().min(0),
+  diff: z.string(),
+});
+
 export const providerRespondToRequestInputSchema = z.object({
   sessionId: z.string().min(1),
   requestId: z.string().min(1),
@@ -151,6 +207,15 @@ export type ProviderSendTurnInput = z.input<typeof providerSendTurnInputSchema>;
 export type ProviderTurnStartResult = z.infer<typeof providerTurnStartResultSchema>;
 export type ProviderInterruptTurnInput = z.input<typeof providerInterruptTurnInputSchema>;
 export type ProviderStopSessionInput = z.input<typeof providerStopSessionInputSchema>;
+export type ProviderListCheckpointsInput = z.input<typeof providerListCheckpointsInputSchema>;
+export type ProviderCheckpoint = z.infer<typeof providerCheckpointSchema>;
+export type ProviderListCheckpointsResult = z.infer<typeof providerListCheckpointsResultSchema>;
+export type ProviderRevertToCheckpointInput = z.input<typeof providerRevertToCheckpointInputSchema>;
+export type ProviderRevertToCheckpointResult = z.infer<
+  typeof providerRevertToCheckpointResultSchema
+>;
+export type ProviderGetCheckpointDiffInput = z.input<typeof providerGetCheckpointDiffInputSchema>;
+export type ProviderGetCheckpointDiffResult = z.infer<typeof providerGetCheckpointDiffResultSchema>;
 export type ProviderRespondToRequestInput = z.input<typeof providerRespondToRequestInputSchema>;
 export type ProviderEventKind = z.infer<typeof providerEventKindSchema>;
 export type ProviderEvent = z.infer<typeof providerEventSchema>;

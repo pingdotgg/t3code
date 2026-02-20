@@ -10,11 +10,16 @@ export const WS_METHODS = {
   providersRespondToRequest: "providers.respondToRequest",
   providersStopSession: "providers.stopSession",
   providersListSessions: "providers.listSessions",
+  providersListCheckpoints: "providers.listCheckpoints",
+  providersGetCheckpointDiff: "providers.getCheckpointDiff",
+  providersRevertToCheckpoint: "providers.revertToCheckpoint",
 
   // Project registry methods
   projectsList: "projects.list",
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
+  projectsSearchEntries: "projects.searchEntries",
+  projectsUpdateScripts: "projects.updateScripts",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -40,6 +45,7 @@ export const WS_METHODS = {
 
   // Server meta
   serverGetConfig: "server.getConfig",
+  serverUpsertKeybinding: "server.upsertKeybinding",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────

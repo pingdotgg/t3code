@@ -1,10 +1,16 @@
-import type { ProviderEvent, ProviderSession } from "@t3tools/contracts";
+import type {
+  ProjectScript as ContractProjectScript,
+  ProviderEvent,
+  ProviderSession,
+} from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export type RuntimeMode = "approval-required" | "full-access";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
 export const DEFAULT_THREAD_TERMINAL_ID = "default";
+export const MAX_THREAD_TERMINAL_COUNT = 4;
+export type ProjectScript = ContractProjectScript;
 
 export interface ThreadTerminalGroup {
   id: string;
@@ -31,12 +37,29 @@ export interface ChatMessage {
   streaming: boolean;
 }
 
+export interface TurnDiffFileChange {
+  path: string;
+  kind?: string | undefined;
+  additions?: number | undefined;
+  deletions?: number | undefined;
+}
+
+export interface TurnDiffSummary {
+  turnId: string;
+  completedAt: string;
+  status?: string | undefined;
+  files: TurnDiffFileChange[];
+  assistantMessageId?: string | undefined;
+  checkpointTurnCount?: number | undefined;
+}
+
 export interface Project {
   id: string;
   name: string;
   cwd: string;
   model: string;
   expanded: boolean;
+  scripts: ProjectScript[];
 }
 
 export interface Thread {
@@ -64,4 +87,5 @@ export interface Thread {
   lastVisitedAt?: string | undefined;
   branch: string | null;
   worktreePath: string | null;
+  turnDiffSummaries: TurnDiffSummary[];
 }

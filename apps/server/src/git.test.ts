@@ -617,6 +617,32 @@ describe("git integration", () => {
       await removeGitWorktree({ cwd: tmp.path, path: wtPath });
       expect(existsSync(wtPath)).toBe(false);
     });
+
+    it("removeGitWorktree force removes a dirty worktree", async () => {
+      await using tmp = await makeTmpDir();
+      await initRepoWithCommit(tmp.path);
+
+      const wtPath = path.join(tmp.path, "wt-dirty-dir");
+      const currentBranch = (await listGitBranches({ cwd: tmp.path })).branches.find(
+        (b) => b.current,
+      )!.name;
+
+      await createGitWorktree({
+        cwd: tmp.path,
+        branch: currentBranch,
+        newBranch: "wt-dirty",
+        path: wtPath,
+      });
+      expect(existsSync(wtPath)).toBe(true);
+
+      await writeFile(path.join(wtPath, "README.md"), "dirty change\n");
+
+      await expect(removeGitWorktree({ cwd: tmp.path, path: wtPath })).rejects.toThrow();
+      expect(existsSync(wtPath)).toBe(true);
+
+      await removeGitWorktree({ cwd: tmp.path, path: wtPath, force: true });
+      expect(existsSync(wtPath)).toBe(false);
+    });
   });
 
   // ── Full flow: local branch checkout ──
@@ -758,6 +784,53 @@ describe("git integration", () => {
       await writeFile(path.join(tmp.path, "README.md"), "updated\n");
       const dirty = await core.statusDetails(tmp.path);
       expect(dirty.hasWorkingTreeChanges).toBe(true);
+    });
+
+    it("includes command context when worktree removal fails", async () => {
+      await using tmp = await makeTmpDir();
+      await initRepoWithCommit(tmp.path);
+      const core = new GitCoreService();
+      const missingWorktreePath = path.join(tmp.path, "missing-worktree");
+
+      const error = await core
+        .removeWorktree({ cwd: tmp.path, path: missingWorktreePath })
+        .then(() => null)
+        .catch((err: unknown) => err);
+
+      expect(error).toBeInstanceOf(Error);
+      const message = (error as Error).message;
+      expect(message).toContain("git worktree remove");
+      expect(message).toContain(`cwd: ${tmp.path}`);
+      expect(message).toContain(missingWorktreePath);
+    });
+
+    it("refreshes upstream before statusDetails so behind count reflects remote updates", async () => {
+      await using remote = await makeTmpDir();
+      await using source = await makeTmpDir();
+      await using clone = await makeTmpDir();
+      await git(remote.path, "init --bare");
+
+      await initRepoWithCommit(source.path);
+      const initialBranch = (await listGitBranches({ cwd: source.path })).branches.find(
+        (branch) => branch.current,
+      )!.name;
+      await git(source.path, `remote add origin ${JSON.stringify(remote.path)}`);
+      await git(source.path, `push -u origin ${initialBranch}`);
+
+      await git(clone.path, `clone ${JSON.stringify(remote.path)} .`);
+      await git(clone.path, "config user.email 'test@test.com'");
+      await git(clone.path, "config user.name 'Test'");
+      await git(clone.path, `checkout -B ${initialBranch} --track origin/${initialBranch}`);
+      await writeFile(path.join(clone.path, "CHANGELOG.md"), "remote change\n");
+      await git(clone.path, "add CHANGELOG.md");
+      await git(clone.path, "commit -m 'remote update'");
+      await git(clone.path, `push origin ${initialBranch}`);
+
+      const core = new GitCoreService();
+      const details = await core.statusDetails(source.path);
+      expect(details.branch).toBe(initialBranch);
+      expect(details.aheadCount).toBe(0);
+      expect(details.behindCount).toBe(1);
     });
 
     it("prepares commit context by auto-staging and creates commit", async () => {

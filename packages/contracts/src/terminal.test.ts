@@ -42,6 +42,36 @@ describe("terminalOpenInputSchema", () => {
     });
     expect(parsed.terminalId).toBe(DEFAULT_TERMINAL_ID);
   });
+
+  it("accepts optional env overrides", () => {
+    const parsed = terminalOpenInputSchema.parse({
+      threadId: "thread-1",
+      cwd: "/tmp/project",
+      cols: 100,
+      rows: 24,
+      env: {
+        T3CODE_PROJECT_ROOT: "/tmp/project",
+        CUSTOM_FLAG: "1",
+      },
+    });
+    expect(parsed.env).toMatchObject({
+      T3CODE_PROJECT_ROOT: "/tmp/project",
+      CUSTOM_FLAG: "1",
+    });
+  });
+
+  it("rejects invalid env keys", () => {
+    const result = terminalOpenInputSchema.safeParse({
+      threadId: "thread-1",
+      cwd: "/tmp/project",
+      cols: 100,
+      rows: 24,
+      env: {
+        "bad-key": "1",
+      },
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("terminalWriteInputSchema", () => {

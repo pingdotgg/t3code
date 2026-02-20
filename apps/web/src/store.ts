@@ -8,14 +8,23 @@ import {
   useReducer,
 } from "react";
 
-import type { ProviderEvent, ProviderSession, TerminalEvent } from "@t3tools/contracts";
+import { type ProviderEvent, type ProviderSession, type TerminalEvent, normalizeProjectScripts } from "@t3tools/contracts";
 import { resolveModelSlug } from "./model-logic";
 import { hydratePersistedState, toPersistedState } from "./persistenceSchema";
-import { applyEventToMessages, asObject, asString, evolveSession } from "./session-logic";
+import {
+  applyEventToMessages,
+  asObject,
+  asString,
+  deriveTurnDiffSummaries,
+  inferCheckpointTurnCountByTurnId,
+  evolveSession,
+} from "./session-logic";
 import {
   type ChatAttachment,
   DEFAULT_THREAD_TERMINAL_ID,
   DEFAULT_RUNTIME_MODE,
+  MAX_THREAD_TERMINAL_COUNT,
+  type ProjectScript,
   type Project,
   type RuntimeMode,
   type Thread,
@@ -26,11 +35,12 @@ import {
 
 type Action =
   | { type: "ADD_PROJECT"; project: Project }
+  | { type: "SET_PROJECT_SCRIPTS"; projectId: string; scripts: ProjectScript[] }
   | { type: "SYNC_PROJECTS"; projects: Project[] }
+  | { type: "SET_THREADS_HYDRATED"; hydrated: boolean }
   | { type: "TOGGLE_PROJECT"; projectId: string }
   | { type: "DELETE_PROJECT"; projectId: string }
   | { type: "ADD_THREAD"; thread: Thread }
-  | { type: "SET_ACTIVE_THREAD"; threadId: string }
   | { type: "TOGGLE_THREAD_TERMINAL"; threadId: string }
   | { type: "SET_THREAD_TERMINAL_OPEN"; threadId: string; open: boolean }
   | { type: "SET_THREAD_TERMINAL_HEIGHT"; threadId: string; height: number }
@@ -38,11 +48,11 @@ type Action =
   | { type: "NEW_THREAD_TERMINAL"; threadId: string; terminalId: string }
   | { type: "SET_THREAD_ACTIVE_TERMINAL"; threadId: string; terminalId: string }
   | { type: "CLOSE_THREAD_TERMINAL"; threadId: string; terminalId: string }
-  | { type: "TOGGLE_DIFF" }
   | {
       type: "APPLY_EVENT";
       event: ProviderEvent;
       activeAssistantItemRef: { current: string | null };
+      activeThreadId?: string | null;
     }
   | { type: "APPLY_TERMINAL_EVENT"; event: TerminalEvent }
   | { type: "UPDATE_SESSION"; threadId: string; session: ProviderSession }
@@ -57,11 +67,25 @@ type Action =
   | { type: "SET_THREAD_TITLE"; threadId: string; title: string }
   | { type: "SET_THREAD_MODEL"; threadId: string; model: string }
   | {
+      type: "REVERT_TO_CHECKPOINT";
+      threadId: string;
+      sessionId: string;
+      threadRuntimeId: string;
+      turnCount: number;
+      messageCount: number;
+    }
+  | {
+      type: "SET_THREAD_TURN_CHECKPOINT_COUNTS";
+      threadId: string;
+      checkpointTurnCountByTurnId: Record<string, number>;
+    }
+  | {
       type: "SET_THREAD_BRANCH";
       threadId: string;
       branch: string | null;
       worktreePath: string | null;
     }
+  | { type: "MARK_THREAD_VISITED"; threadId: string; visitedAt?: string }
   | { type: "SET_RUNTIME_MODE"; mode: RuntimeMode }
   | { type: "DELETE_THREAD"; threadId: string };
 
@@ -70,9 +94,8 @@ type Action =
 export interface AppState {
   projects: Project[];
   threads: Thread[];
-  activeThreadId: string | null;
+  threadsHydrated: boolean;
   runtimeMode: RuntimeMode;
-  diffOpen: boolean;
 }
 
 const PERSISTED_STATE_KEY = "t3code:renderer-state:v7";
@@ -90,9 +113,8 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 const initialState: AppState = {
   projects: [],
   threads: [],
-  activeThreadId: null,
+  threadsHydrated: false,
   runtimeMode: DEFAULT_RUNTIME_MODE,
-  diffOpen: false,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -110,7 +132,13 @@ function readPersistedState(): AppState {
     const hydrated = hydratePersistedState(raw, !rawCurrent && raw === rawCodethingV1);
     if (!hydrated) return initialState;
 
-    return { ...hydrated, diffOpen: false };
+    const threads = hydrated.threads.map((thread) => normalizeThreadTerminals(thread));
+
+    return {
+      ...hydrated,
+      threads,
+      threadsHydrated: threads.length > 0,
+    };
   } catch {
     return initialState;
   }
@@ -137,9 +165,67 @@ function updateThread(
   return threads.map((t) => (t.id === threadId ? updater(t) : t));
 }
 
+function mergeTurnDiffSummaries(
+  existing: Thread["turnDiffSummaries"],
+  next: Thread["turnDiffSummaries"],
+): Thread["turnDiffSummaries"] {
+  if (next.length === 0) return existing;
+
+  const existingByTurnId = new Map(existing.map((summary) => [summary.turnId, summary] as const));
+  const merged = next.map((summary) => {
+    const previous = existingByTurnId.get(summary.turnId);
+    if (!previous) {
+      return summary;
+    }
+
+    const files =
+      summary.files.length === 0 && previous.files.length > 0 ? previous.files : summary.files;
+
+    return {
+      ...summary,
+      files,
+      ...(summary.assistantMessageId
+        ? {}
+        : previous.assistantMessageId
+          ? { assistantMessageId: previous.assistantMessageId }
+          : {}),
+      ...(typeof summary.checkpointTurnCount === "number"
+        ? {}
+        : typeof previous.checkpointTurnCount === "number"
+          ? { checkpointTurnCount: previous.checkpointTurnCount }
+          : {}),
+    };
+  });
+
+  const mergedTurnIds = new Set(merged.map((summary) => summary.turnId));
+  for (const summary of existing) {
+    if (!mergedTurnIds.has(summary.turnId)) {
+      merged.push(summary);
+    }
+  }
+
+  const sorted = merged.toSorted((a, b) => {
+    const aTime = Date.parse(a.completedAt);
+    const bTime = Date.parse(b.completedAt);
+    if (Number.isNaN(aTime) || Number.isNaN(bTime)) {
+      return b.completedAt.localeCompare(a.completedAt);
+    }
+    return bTime - aTime;
+  });
+
+  const inferredTurnCountByTurnId = inferCheckpointTurnCountByTurnId(sorted);
+  return sorted.map((summary) =>
+    typeof summary.checkpointTurnCount === "number"
+      ? summary
+      : Object.assign({}, summary, {
+          checkpointTurnCount: inferredTurnCountByTurnId[summary.turnId],
+        }),
+  );
+}
+
 function normalizeTerminalIds(terminalIds: string[]): string[] {
   const ids = terminalIds.map((id) => id.trim()).filter((id) => id.length > 0);
-  const unique = [...new Set(ids)];
+  const unique = [...new Set(ids)].slice(0, MAX_THREAD_TERMINAL_COUNT);
   if (unique.length > 0) {
     return unique;
   }
@@ -156,6 +242,7 @@ function normalizeRunningTerminalIds(
     .map((id) => id.trim())
     .filter((id) => id.length > 0 && validTerminalIdSet.has(id));
 }
+
 
 function normalizeTerminalGroupIds(terminalIds: string[]): string[] {
   return [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];
@@ -420,8 +507,28 @@ export function reducer(state: AppState, action: Action): AppState {
           {
             ...action.project,
             model: resolveModelSlug(action.project.model),
+            scripts: normalizeProjectScripts(action.project.scripts),
           },
         ],
+      };
+
+    case "SET_PROJECT_SCRIPTS":
+      return {
+        ...state,
+        projects: state.projects.map((project) =>
+          project.id === action.projectId
+            ? { ...project, scripts: normalizeProjectScripts(action.scripts) }
+            : project,
+        ),
+      };
+
+    case "SET_THREADS_HYDRATED":
+      if (state.threadsHydrated === action.hydrated) {
+        return state;
+      }
+      return {
+        ...state,
+        threadsHydrated: action.hydrated,
       };
 
     case "SYNC_PROJECTS": {
@@ -430,10 +537,12 @@ export function reducer(state: AppState, action: Action): AppState {
       );
       const nextProjects = action.projects.map((project) => {
         const previous = previousByCwd.get(project.cwd);
+        const scripts = normalizeProjectScripts(project.scripts);
         return {
           ...project,
           model: resolveModelSlug(previous?.model ?? project.model),
           expanded: previous?.expanded ?? project.expanded,
+          scripts,
         };
       });
       const previousProjectById = new Map(
@@ -454,15 +563,11 @@ export function reducer(state: AppState, action: Action): AppState {
           });
         })
         .filter((thread): thread is Thread => thread !== null);
-      const activeThreadId = nextThreads.some((thread) => thread.id === state.activeThreadId)
-        ? state.activeThreadId
-        : (nextThreads[0]?.id ?? null);
 
       return {
         ...state,
         projects: nextProjects,
         threads: nextThreads,
-        activeThreadId,
       };
     }
 
@@ -481,15 +586,11 @@ export function reducer(state: AppState, action: Action): AppState {
       }
 
       const threads = state.threads.filter((thread) => thread.projectId !== action.projectId);
-      const activeThreadId = threads.some((thread) => thread.id === state.activeThreadId)
-        ? state.activeThreadId
-        : (threads[0]?.id ?? null);
 
       return {
         ...state,
         projects,
         threads,
-        activeThreadId,
       };
     }
 
@@ -498,23 +599,11 @@ export function reducer(state: AppState, action: Action): AppState {
         ...action.thread,
         model: resolveModelSlug(action.thread.model),
         lastVisitedAt: action.thread.lastVisitedAt ?? action.thread.createdAt,
+        turnDiffSummaries: action.thread.turnDiffSummaries ?? [],
       });
       return {
         ...state,
         threads: [...state.threads, nextThread],
-        activeThreadId: action.thread.id,
-      };
-    }
-
-    case "SET_ACTIVE_THREAD": {
-      const visitedAt = new Date().toISOString();
-      return {
-        ...state,
-        activeThreadId: action.threadId,
-        threads: updateThread(state.threads, action.threadId, (t) => ({
-          ...t,
-          lastVisitedAt: visitedAt,
-        })),
       };
     }
 
@@ -550,6 +639,13 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         threads: updateThread(state.threads, action.threadId, (thread) => {
           const normalizedThread = normalizeThreadTerminals(thread);
+          const isNewTerminal = !normalizedThread.terminalIds.includes(action.terminalId);
+          if (
+            isNewTerminal &&
+            normalizedThread.terminalIds.length >= MAX_THREAD_TERMINAL_COUNT
+          ) {
+            return normalizedThread;
+          }
           const terminalIds = normalizedThread.terminalIds.includes(action.terminalId)
             ? normalizedThread.terminalIds
             : [...normalizedThread.terminalIds, action.terminalId];
@@ -616,6 +712,13 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         threads: updateThread(state.threads, action.threadId, (thread) => {
           const normalizedThread = normalizeThreadTerminals(thread);
+          const isNewTerminal = !normalizedThread.terminalIds.includes(action.terminalId);
+          if (
+            isNewTerminal &&
+            normalizedThread.terminalIds.length >= MAX_THREAD_TERMINAL_COUNT
+          ) {
+            return normalizedThread;
+          }
           const terminalIds = normalizedThread.terminalIds.includes(action.terminalId)
             ? normalizedThread.terminalIds
             : [...normalizedThread.terminalIds, action.terminalId];
@@ -671,9 +774,6 @@ export function reducer(state: AppState, action: Action): AppState {
         ),
       };
 
-    case "TOGGLE_DIFF":
-      return { ...state, diffOpen: !state.diffOpen };
-
     case "APPLY_TERMINAL_EVENT":
       if (!state.threads.some((thread) => thread.id === action.event.threadId)) {
         return state;
@@ -703,34 +803,49 @@ export function reducer(state: AppState, action: Action): AppState {
       };
 
     case "APPLY_EVENT": {
-      const { event, activeAssistantItemRef } = action;
+      const { event, activeAssistantItemRef, activeThreadId } = action;
       const target = findThreadBySessionId(state.threads, event.sessionId);
       if (!target) return state;
       if (shouldIgnoreForeignThreadEvent(target, event)) return state;
 
       return {
         ...state,
-        threads: updateThread(state.threads, target.id, (t) => ({
-          ...t,
-          ...(() => {
-            const eventThreadId = getEventThreadId(event);
-            const shouldRebindIdentity =
-              event.method === "thread/started" && t.session?.status === "connecting";
-            return {
-              codexThreadId: shouldRebindIdentity
-                ? (eventThreadId ?? t.codexThreadId)
-                : (t.codexThreadId ?? eventThreadId ?? null),
-              error: event.kind === "error" && event.message ? event.message : t.error,
-            };
-          })(),
-          session: t.session ? evolveSession(t.session, event) : t.session,
-          messages: applyEventToMessages(t.messages, event, activeAssistantItemRef),
-          events: [event, ...t.events],
-          ...updateTurnFields(t, event),
-          ...(event.method === "turn/completed" && t.id === state.activeThreadId
-            ? { lastVisitedAt: event.createdAt }
-            : {}),
-        })),
+        threads: updateThread(state.threads, target.id, (t) => {
+          const nextEvents = [event, ...t.events];
+          const eventTurnId = getEventTurnId(event);
+          const hasCompletedSummaryForTurn = Boolean(
+            eventTurnId && t.turnDiffSummaries.some((summary) => summary.turnId === eventTurnId),
+          );
+          const itemType = asString(asObject(asObject(event.payload)?.item)?.type);
+          const normalizedItemType = itemType?.replace(/[_-]/g, "").toLowerCase();
+          const isMetadataItemCompleted =
+            event.method === "item/completed" &&
+            (normalizedItemType === "agentmessage" || normalizedItemType === "filechange");
+          const shouldRederiveDiffs =
+            event.method === "turn/completed" ||
+            (hasCompletedSummaryForTurn && isMetadataItemCompleted);
+          const turnDiffSummaries = shouldRederiveDiffs
+            ? mergeTurnDiffSummaries(t.turnDiffSummaries, deriveTurnDiffSummaries(nextEvents))
+            : t.turnDiffSummaries;
+          const eventThreadId = getEventThreadId(event);
+          const shouldRebindIdentity =
+            event.method === "thread/started" && t.session?.status === "connecting";
+          return {
+            ...t,
+            codexThreadId: shouldRebindIdentity
+              ? (eventThreadId ?? t.codexThreadId)
+              : (t.codexThreadId ?? eventThreadId ?? null),
+            error: event.kind === "error" && event.message ? event.message : t.error,
+            session: t.session ? evolveSession(t.session, event) : t.session,
+            messages: applyEventToMessages(t.messages, event, activeAssistantItemRef),
+            events: nextEvents,
+            turnDiffSummaries,
+            ...updateTurnFields(t, event),
+            ...(event.method === "turn/completed" && t.id === activeThreadId
+              ? { lastVisitedAt: event.createdAt }
+              : {}),
+          };
+        }),
       };
     }
 
@@ -798,6 +913,72 @@ export function reducer(state: AppState, action: Action): AppState {
         })),
       };
 
+    case "REVERT_TO_CHECKPOINT":
+      return {
+        ...state,
+        threads: updateThread(state.threads, action.threadId, (t) => {
+          const nextMessageCount = Math.max(0, Math.floor(action.messageCount));
+          const nextTurnCount = Math.max(0, Math.floor(action.turnCount));
+          const now = new Date().toISOString();
+          return {
+            ...t,
+            codexThreadId: action.threadRuntimeId,
+            session:
+              t.session?.sessionId === action.sessionId
+                ? {
+                    ...t.session,
+                    status: "ready",
+                    threadId: action.threadRuntimeId,
+                    activeTurnId: undefined,
+                    updatedAt: now,
+                    lastError: undefined,
+                  }
+                : t.session,
+            messages: t.messages.slice(0, nextMessageCount),
+            events: [],
+            turnDiffSummaries: t.turnDiffSummaries.filter(
+              (summary) =>
+                typeof summary.checkpointTurnCount === "number" &&
+                summary.checkpointTurnCount <= nextTurnCount,
+            ),
+            error: null,
+            latestTurnId: undefined,
+            latestTurnStartedAt: undefined,
+            latestTurnCompletedAt: undefined,
+            latestTurnDurationMs: undefined,
+            lastVisitedAt: now,
+          };
+        }),
+      };
+
+    case "SET_THREAD_TURN_CHECKPOINT_COUNTS":
+      return {
+        ...state,
+        threads: updateThread(state.threads, action.threadId, (t) => {
+          const hasUpdates = t.turnDiffSummaries.some(
+            (summary) =>
+              action.checkpointTurnCountByTurnId[summary.turnId] !== undefined &&
+              action.checkpointTurnCountByTurnId[summary.turnId] !== summary.checkpointTurnCount,
+          );
+          if (!hasUpdates) {
+            return t;
+          }
+          return {
+            ...t,
+            turnDiffSummaries: t.turnDiffSummaries.map((summary) => {
+              const turnCount = action.checkpointTurnCountByTurnId[summary.turnId];
+              if (turnCount === undefined) {
+                return summary;
+              }
+              return {
+                ...summary,
+                checkpointTurnCount: turnCount,
+              };
+            }),
+          };
+        }),
+      };
+
     case "SET_THREAD_BRANCH": {
       return {
         ...state,
@@ -816,18 +997,28 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     }
 
+    case "MARK_THREAD_VISITED": {
+      const visitedAt = action.visitedAt ?? new Date().toISOString();
+      return {
+        ...state,
+        threads: updateThread(state.threads, action.threadId, (t) => ({
+          ...t,
+          lastVisitedAt: visitedAt,
+        })),
+      };
+    }
+
     case "SET_RUNTIME_MODE":
       return {
         ...state,
         runtimeMode: action.mode,
       };
 
-    case "DELETE_THREAD": {
-      const threads = state.threads.filter((t) => t.id !== action.threadId);
-      const activeThreadId =
-        state.activeThreadId === action.threadId ? (threads[0]?.id ?? null) : state.activeThreadId;
-      return { ...state, threads, activeThreadId };
-    }
+    case "DELETE_THREAD":
+      return {
+        ...state,
+        threads: state.threads.filter((t) => t.id !== action.threadId),
+      };
 
     default:
       return state;

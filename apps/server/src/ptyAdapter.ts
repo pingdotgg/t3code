@@ -20,6 +20,7 @@ export interface PtyProcess {
 
 export interface PtySpawnInput {
   shell: string;
+  args?: string[];
   cwd: string;
   cols: number;
   rows: number;
@@ -118,7 +119,7 @@ class NodePtyProcess implements PtyProcess {
 export class NodePtyAdapter implements PtyAdapter {
   spawn(input: PtySpawnInput): PtyProcess {
     ensureNodePtySpawnHelperExecutable();
-    const ptyProcess = nodePty.spawn(input.shell, [], {
+    const ptyProcess = nodePty.spawn(input.shell, input.args ?? [], {
       cwd: input.cwd,
       cols: input.cols,
       rows: input.rows,

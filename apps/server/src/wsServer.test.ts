@@ -323,6 +323,8 @@ describe("WebSocket Server", () => {
   });
 
   it("responds to server.getConfig", async () => {
+    const fakeHome = makeTempDir("t3code-home-");
+    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
     server = createTestServer({ cwd: "/my/workspace" });
     await server.start();
     const addr = server.httpServer.address();
@@ -491,6 +493,59 @@ describe("WebSocket Server", () => {
     expect(secondResponse.result).toEqual(firstResponse.result);
   });
 
+  it("upserts keybinding rules and updates cached server config", async () => {
+    const fakeHome = makeTempDir("t3code-home-upsert-keybinding-");
+    const configDir = path.join(fakeHome, ".t3");
+    fs.mkdirSync(configDir, { recursive: true });
+    const keybindingsPath = path.join(configDir, "keybindings.json");
+    fs.writeFileSync(
+      keybindingsPath,
+      JSON.stringify([{ key: "mod+j", command: "terminal.toggle" }]),
+      "utf8",
+    );
+    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+
+    server = createTestServer({ cwd: "/my/workspace" });
+    await server.start();
+    const addr = server.httpServer.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const upsertResponse = await sendRequest(ws, WS_METHODS.serverUpsertKeybinding, {
+      key: "mod+shift+r",
+      command: "script.run-tests.run",
+    });
+    expect(upsertResponse.error).toBeUndefined();
+    expect(upsertResponse.result).toEqual({
+      keybindings: mergeWithDefaultsForTest([
+        { key: "mod+j", command: "terminal.toggle" },
+        { key: "mod+shift+r", command: "script.run-tests.run" },
+      ]),
+    });
+
+    const persistedConfig = JSON.parse(fs.readFileSync(keybindingsPath, "utf8")) as Array<{
+      key: string;
+      command: string;
+    }>;
+    expect(persistedConfig).toEqual([
+      { key: "mod+j", command: "terminal.toggle" },
+      { key: "mod+shift+r", command: "script.run-tests.run" },
+    ]);
+
+    const configResponse = await sendRequest(ws, WS_METHODS.serverGetConfig);
+    expect(configResponse.error).toBeUndefined();
+    expect(configResponse.result).toEqual({
+      cwd: "/my/workspace",
+      keybindings: mergeWithDefaultsForTest([
+        { key: "mod+j", command: "terminal.toggle" },
+        { key: "mod+shift+r", command: "script.run-tests.run" },
+      ]),
+    });
+  });
+
   it("warns and ignores unsupported keybindings config format", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fakeHome = makeTempDir("t3code-home-unsupported-format-");
@@ -589,6 +644,38 @@ describe("WebSocket Server", () => {
     const response = await sendRequest(ws, WS_METHODS.providersListSessions);
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual([]);
+  });
+
+  it("returns unknown-session errors for checkpoint RPCs without an active provider session", async () => {
+    server = createTestServer({ cwd: "/test" });
+    await server.start();
+    const addr = server.httpServer.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const listResponse = await sendRequest(ws, WS_METHODS.providersListCheckpoints, {
+      sessionId: "missing-session",
+    });
+    expect(listResponse.result).toBeUndefined();
+    expect(listResponse.error?.message).toContain("Unknown provider session");
+
+    const revertResponse = await sendRequest(ws, WS_METHODS.providersRevertToCheckpoint, {
+      sessionId: "missing-session",
+      turnCount: 0,
+    });
+    expect(revertResponse.result).toBeUndefined();
+    expect(revertResponse.error?.message).toContain("Unknown provider session");
+
+    const diffResponse = await sendRequest(ws, WS_METHODS.providersGetCheckpointDiff, {
+      sessionId: "missing-session",
+      fromTurnCount: 0,
+      toTurnCount: 1,
+    });
+    expect(diffResponse.result).toBeUndefined();
+    expect(diffResponse.error?.message).toContain("Unknown provider session");
   });
 
   it("routes terminal RPC methods and broadcasts terminal events", async () => {
@@ -756,6 +843,42 @@ describe("WebSocket Server", () => {
     expect(projectId).toBeTruthy();
     if (!projectId) return;
 
+    const updatedScripts = await sendRequest(ws, WS_METHODS.projectsUpdateScripts, {
+      id: projectId,
+      scripts: [
+        {
+          id: "setup",
+          name: "Setup",
+          command: "bun install",
+          icon: "configure",
+          runOnWorktreeCreate: true,
+        },
+      ],
+    });
+    expect(updatedScripts.error).toBeUndefined();
+    const scriptPayload = (
+      updatedScripts.result as {
+        project: {
+          scripts: Array<{
+            id: string;
+            name: string;
+            command: string;
+            icon: string;
+            runOnWorktreeCreate: boolean;
+          }>;
+        };
+      }
+    ).project.scripts;
+    expect(scriptPayload).toEqual([
+      {
+        id: "setup",
+        name: "Setup",
+        command: "bun install",
+        icon: "configure",
+        runOnWorktreeCreate: true,
+      },
+    ]);
+
     const removed = await sendRequest(ws, WS_METHODS.projectsRemove, {
       id: projectId,
     });
@@ -764,6 +887,38 @@ describe("WebSocket Server", () => {
     const afterRemove = await sendRequest(ws, WS_METHODS.projectsList);
     expect(afterRemove.error).toBeUndefined();
     expect(afterRemove.result).toEqual([]);
+  });
+
+  it("supports projects.searchEntries", async () => {
+    const workspace = makeTempDir("t3code-ws-workspace-entries-");
+    fs.mkdirSync(path.join(workspace, "src", "components"), { recursive: true });
+    fs.writeFileSync(path.join(workspace, "src", "components", "Composer.tsx"), "export {};", "utf8");
+    fs.writeFileSync(path.join(workspace, "README.md"), "# test", "utf8");
+    fs.mkdirSync(path.join(workspace, ".git"), { recursive: true });
+    fs.writeFileSync(path.join(workspace, ".git", "HEAD"), "ref: refs/heads/main\n", "utf8");
+
+    server = createTestServer({ cwd: "/test" });
+    await server.start();
+    const addr = server.httpServer.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.projectsSearchEntries, {
+      cwd: workspace,
+      query: "comp",
+      limit: 10,
+    });
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({
+      entries: expect.arrayContaining([
+        expect.objectContaining({ path: "src/components", kind: "directory" }),
+        expect.objectContaining({ path: "src/components/Composer.tsx", kind: "file" }),
+      ]),
+      truncated: false,
+    });
   });
 
   it("supports git methods over websocket", async () => {

@@ -17,7 +17,13 @@ import type {
 } from "./git";
 import type {
   ProviderEvent,
+  ProviderGetCheckpointDiffInput,
+  ProviderGetCheckpointDiffResult,
   ProviderInterruptTurnInput,
+  ProviderListCheckpointsInput,
+  ProviderListCheckpointsResult,
+  ProviderRevertToCheckpointInput,
+  ProviderRevertToCheckpointResult,
   ProviderRespondToRequestInput,
   ProviderSendTurnInput,
   ProviderSession,
@@ -29,7 +35,11 @@ import type {
   ProjectAddInput,
   ProjectAddResult,
   ProjectListResult,
+  ProjectSearchEntriesInput,
+  ProjectSearchEntriesResult,
   ProjectRemoveInput,
+  ProjectUpdateScriptsInput,
+  ProjectUpdateScriptsResult,
 } from "./project";
 import type { ServerConfig } from "./server";
 import type {
@@ -42,6 +52,7 @@ import type {
   TerminalWriteInput,
 } from "./terminal";
 import type { NewTodoInput, Todo } from "./todo";
+import type { ServerUpsertKeybindingInput, ServerUpsertKeybindingResult } from "./server";
 
 export const EDITORS = [
   { id: "cursor", label: "Cursor", command: "cursor" },
@@ -84,12 +95,23 @@ export interface NativeApi {
     respondToRequest: (input: ProviderRespondToRequestInput) => Promise<void>;
     stopSession: (input: ProviderStopSessionInput) => Promise<void>;
     listSessions: () => Promise<ProviderSession[]>;
+    listCheckpoints: (
+      input: ProviderListCheckpointsInput,
+    ) => Promise<ProviderListCheckpointsResult>;
+    getCheckpointDiff: (
+      input: ProviderGetCheckpointDiffInput,
+    ) => Promise<ProviderGetCheckpointDiffResult>;
+    revertToCheckpoint: (
+      input: ProviderRevertToCheckpointInput,
+    ) => Promise<ProviderRevertToCheckpointResult>;
     onEvent: (callback: (event: ProviderEvent) => void) => () => void;
   };
   projects: {
     list: () => Promise<ProjectListResult>;
     add: (input: ProjectAddInput) => Promise<ProjectAddResult>;
     remove: (input: ProjectRemoveInput) => Promise<void>;
+    searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
+    updateScripts: (input: ProjectUpdateScriptsInput) => Promise<ProjectUpdateScriptsResult>;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
@@ -116,5 +138,6 @@ export interface NativeApi {
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
+    upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
   };
 }

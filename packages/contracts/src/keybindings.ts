@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const keybindingCommandSchema = z.enum([
+export const STATIC_KEYBINDING_COMMANDS = [
   "terminal.toggle",
   "terminal.split",
   "terminal.new",
@@ -8,6 +8,16 @@ export const keybindingCommandSchema = z.enum([
   "chat.new",
   "chat.newLocal",
   "editor.openFavorite",
+] as const;
+
+export const keybindingCommandSchema = z.union([
+  z.enum(STATIC_KEYBINDING_COMMANDS),
+  z
+    .string()
+    .trim()
+    .min(1)
+    .max(96)
+    .regex(/^script\.[a-z0-9][a-z0-9-]*\.run$/),
 ]);
 
 const keybindingValueSchema = z.string().trim().min(1).max(64);
@@ -21,14 +31,16 @@ export const keybindingRuleSchema = z.object({
 
 export const keybindingsConfigSchema = z.array(keybindingRuleSchema).max(256);
 
-export const keybindingShortcutSchema = z.object({
-  key: z.string().trim().min(1).max(32),
-  metaKey: z.boolean(),
-  ctrlKey: z.boolean(),
-  shiftKey: z.boolean(),
-  altKey: z.boolean(),
-  modKey: z.boolean(),
-}).strict();
+export const keybindingShortcutSchema = z
+  .object({
+    key: z.string().trim().min(1).max(32),
+    metaKey: z.boolean(),
+    ctrlKey: z.boolean(),
+    shiftKey: z.boolean(),
+    altKey: z.boolean(),
+    modKey: z.boolean(),
+  })
+  .strict();
 
 export type KeybindingWhenNode =
   | { type: "identifier"; name: string }
@@ -59,11 +71,13 @@ export const keybindingWhenNodeSchema: z.ZodType<KeybindingWhenNode> = z.lazy(()
   ]),
 );
 
-export const resolvedKeybindingRuleSchema = z.object({
-  command: keybindingCommandSchema,
-  shortcut: keybindingShortcutSchema,
-  whenAst: keybindingWhenNodeSchema.optional(),
-}).strict();
+export const resolvedKeybindingRuleSchema = z
+  .object({
+    command: keybindingCommandSchema,
+    shortcut: keybindingShortcutSchema,
+    whenAst: keybindingWhenNodeSchema.optional(),
+  })
+  .strict();
 
 export const resolvedKeybindingsConfigSchema = z.array(resolvedKeybindingRuleSchema).max(256);
 

@@ -196,6 +196,65 @@ describe("TerminalManager", () => {
     manager.dispose();
   });
 
+  it("resizes running terminal on open when a different size is requested", async () => {
+    const { manager, ptyAdapter } = makeManager();
+    await manager.open(openInput({ cols: 100, rows: 24 }));
+    const process = ptyAdapter.processes[0];
+    expect(process).toBeDefined();
+    if (!process) return;
+
+    await manager.open(openInput({ cols: 140, rows: 40 }));
+
+    expect(process.resizeCalls).toEqual([{ cols: 140, rows: 40 }]);
+
+    manager.dispose();
+  });
+
+  it("preserves existing terminal size on open when size is omitted", async () => {
+    const { manager, ptyAdapter } = makeManager();
+    await manager.open(openInput({ cols: 100, rows: 24 }));
+    const ptyProcess = ptyAdapter.processes[0];
+    expect(ptyProcess).toBeDefined();
+    if (!ptyProcess) return;
+
+    await manager.open({
+      threadId: "thread-1",
+      cwd: globalThis.process.cwd(),
+    });
+
+    expect(ptyProcess.resizeCalls).toEqual([]);
+
+    ptyProcess.emitExit({ exitCode: 0, signal: 0 });
+    await manager.open({
+      threadId: "thread-1",
+      cwd: globalThis.process.cwd(),
+    });
+
+    const resumedSpawn = ptyAdapter.spawnInputs[1];
+    expect(resumedSpawn).toBeDefined();
+    if (!resumedSpawn) return;
+    expect(resumedSpawn.cols).toBe(100);
+    expect(resumedSpawn.rows).toBe(24);
+
+    manager.dispose();
+  });
+
+  it("uses default dimensions when opening a new terminal without size hints", async () => {
+    const { manager, ptyAdapter } = makeManager();
+    await manager.open({
+      threadId: "thread-1",
+      cwd: process.cwd(),
+    });
+
+    const spawned = ptyAdapter.spawnInputs[0];
+    expect(spawned).toBeDefined();
+    if (!spawned) return;
+    expect(spawned.cols).toBe(120);
+    expect(spawned.rows).toBe(30);
+
+    manager.dispose();
+  });
+
   it("supports multiple terminals per thread with isolated sessions", async () => {
     const { manager, ptyAdapter } = makeManager();
     await manager.open(openInput({ terminalId: "default" }));
@@ -465,5 +524,43 @@ describe("TerminalManager", () => {
     } finally {
       restoreEnv();
     }
+  });
+
+  it("injects runtime env overrides into spawned terminals", async () => {
+    const { manager, ptyAdapter } = makeManager();
+    await manager.open(
+      openInput({
+        env: {
+          T3CODE_PROJECT_ROOT: "/repo",
+          T3CODE_WORKTREE_PATH: "/repo/worktree-a",
+          CUSTOM_FLAG: "1",
+        },
+      }),
+    );
+    const spawnInput = ptyAdapter.spawnInputs[0];
+    expect(spawnInput).toBeDefined();
+    if (!spawnInput) return;
+
+    expect(spawnInput.env.T3CODE_PROJECT_ROOT).toBe("/repo");
+    expect(spawnInput.env.T3CODE_WORKTREE_PATH).toBe("/repo/worktree-a");
+    expect(spawnInput.env.CUSTOM_FLAG).toBe("1");
+
+    manager.dispose();
+  });
+
+  it("starts zsh with prompt spacer disabled to avoid `%` end markers", async () => {
+    if (process.platform === "win32") return;
+    const { manager, ptyAdapter } = makeManager(5, {
+      shellResolver: () => "/bin/zsh",
+    });
+    await manager.open(openInput());
+    const spawnInput = ptyAdapter.spawnInputs[0];
+    expect(spawnInput).toBeDefined();
+    if (!spawnInput) return;
+
+    expect(spawnInput.shell).toBe("/bin/zsh");
+    expect(spawnInput.args).toEqual(["-o", "nopromptsp"]);
+
+    manager.dispose();
   });
 });

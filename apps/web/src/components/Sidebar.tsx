@@ -9,25 +9,22 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { gitStatusResultSchema, type GitStatusResult } from "@t3tools/contracts";
+import { useNavigate, useParams } from "@tanstack/react-router";
+import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
-import { useTheme } from "../hooks/useTheme";
+import { APP_STAGE_LABEL } from "../branding";
 import { DEFAULT_MODEL } from "../model-logic";
 import { derivePendingApprovals } from "../session-logic";
 import { useStore } from "../store";
 import { isChatNewLocalShortcut, isChatNewShortcut } from "../keybindings";
-import {
-  DEFAULT_THREAD_TERMINAL_HEIGHT,
-  DEFAULT_THREAD_TERMINAL_ID,
-  type Project,
-  type Thread,
-} from "../types";
+import { type Project, type Thread } from "../types";
 import { useNativeApi } from "../hooks/useNativeApi";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { toastManager } from "./ui/toast";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
+import { createThread } from "../threadFactory";
 
-const THEME_CYCLE = { system: "light", light: "dark", dark: "system" } as const;
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 
 function formatRelativeTime(iso: string): string {
@@ -157,6 +154,10 @@ function terminalStatusIndicator(thread: Thread): TerminalStatusIndicator | null
 export default function Sidebar() {
   const { state, dispatch } = useStore();
   const api = useNativeApi();
+  const navigate = useNavigate();
+  const { settings: appSettings } = useAppSettings();
+  const params = useParams({ strict: false });
+  const routeThreadId = typeof params.threadId === "string" ? params.threadId : null;
   const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery({
     ...serverConfigQueryOptions(api),
     select: (config) => config.keybindings,
@@ -165,7 +166,6 @@ export default function Sidebar() {
   const removeWorktreeMutation = useMutation(
     gitRemoveWorktreeMutationOptions({ api, queryClient }),
   );
-  const { theme, setTheme } = useTheme();
   const [addingProject, setAddingProject] = useState(false);
   const [newCwd, setNewCwd] = useState("");
   const [isPickingFolder, setIsPickingFolder] = useState(false);
@@ -242,37 +242,21 @@ export default function Sidebar() {
         worktreePath?: string | null;
       },
     ) => {
+      const thread = createThread(projectId, {
+        model: state.projects.find((project) => project.id === projectId)?.model ?? DEFAULT_MODEL,
+        branch: options?.branch ?? null,
+        worktreePath: options?.worktreePath ?? null,
+      });
       dispatch({
         type: "ADD_THREAD",
-        thread: {
-          id: crypto.randomUUID(),
-          codexThreadId: null,
-          projectId,
-          title: "New thread",
-          model: state.projects.find((p) => p.id === projectId)?.model ?? DEFAULT_MODEL,
-          terminalOpen: false,
-          terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
-          terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
-          runningTerminalIds: [],
-          activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
-          terminalGroups: [
-            {
-              id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
-              terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
-            },
-          ],
-          activeTerminalGroupId: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
-          session: null,
-          messages: [],
-          events: [],
-          error: null,
-          createdAt: new Date().toISOString(),
-          branch: options?.branch ?? null,
-          worktreePath: options?.worktreePath ?? null,
-        },
+        thread,
+      });
+      void navigate({
+        to: "/$threadId",
+        params: { threadId: thread.id },
       });
     },
-    [dispatch, state.projects],
+    [dispatch, navigate, state.projects],
   );
 
   const focusMostRecentThreadForProject = useCallback(
@@ -286,12 +270,12 @@ export default function Sidebar() {
         })[0];
       if (!latestThread) return;
 
-      dispatch({
-        type: "SET_ACTIVE_THREAD",
-        threadId: latestThread.id,
+      void navigate({
+        to: "/$threadId",
+        params: { threadId: latestThread.id },
       });
     },
-    [dispatch, state.threads],
+    [navigate, state.threads],
   );
 
   const addProjectFromPath = useCallback(
@@ -309,6 +293,7 @@ export default function Sidebar() {
             cwd: result.project.cwd,
             model: DEFAULT_MODEL,
             expanded: true,
+            scripts: result.project.scripts,
           };
           const existingById = state.projects.find((p) => p.id === project.id);
           const existingByCwd = state.projects.find((p) => p.cwd === project.cwd);
@@ -336,6 +321,7 @@ export default function Sidebar() {
             cwd,
             model: DEFAULT_MODEL,
             expanded: true,
+            scripts: [],
           };
           dispatch({ type: "ADD_PROJECT", project });
           handleNewThread(project.id);
@@ -380,6 +366,17 @@ export default function Sidebar() {
 
       const thread = state.threads.find((t) => t.id === threadId);
       if (!thread) return;
+      if (appSettings.confirmThreadDelete) {
+        const confirmed = await api.dialogs.confirm(
+          [
+            `Delete thread \"${thread.title}\"?`,
+            "This permanently clears conversation history for this thread.",
+          ].join("\n"),
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
       const threadProject = state.projects.find((project) => project.id === thread.projectId);
       const orphanedWorktreePath = getOrphanedWorktreePathForThread(state.threads, threadId);
       const displayWorktreePath = orphanedWorktreePath
@@ -417,7 +414,20 @@ export default function Sidebar() {
         // Terminal may already be closed
       }
 
+      const shouldNavigateToFallback = routeThreadId === threadId;
+      const fallbackThreadId = state.threads.find((entry) => entry.id !== threadId)?.id ?? null;
       dispatch({ type: "DELETE_THREAD", threadId });
+      if (shouldNavigateToFallback) {
+        if (fallbackThreadId) {
+          void navigate({
+            to: "/$threadId",
+            params: { threadId: fallbackThreadId },
+            replace: true,
+          });
+        } else {
+          void navigate({ to: "/", replace: true });
+        }
+      }
 
       if (!shouldDeleteWorktree || !orphanedWorktreePath || !threadProject) {
         return;
@@ -427,12 +437,33 @@ export default function Sidebar() {
         await removeWorktreeMutation.mutateAsync({
           cwd: threadProject.cwd,
           path: orphanedWorktreePath,
+          force: true,
         });
-      } catch {
-        // Worktree deletion is best-effort and should not block thread deletion.
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error removing worktree.";
+        console.error("Failed to remove orphaned worktree after thread deletion", {
+          threadId,
+          projectCwd: threadProject.cwd,
+          worktreePath: orphanedWorktreePath,
+          error,
+        });
+        toastManager.add({
+          type: "error",
+          title: "Thread deleted, but worktree removal failed",
+          description: `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`,
+        });
       }
     },
-    [api, dispatch, removeWorktreeMutation, state.projects, state.threads],
+    [
+      api,
+      appSettings.confirmThreadDelete,
+      dispatch,
+      navigate,
+      removeWorktreeMutation,
+      routeThreadId,
+      state.projects,
+      state.threads,
+    ],
   );
 
   const handleProjectContextMenu = useCallback(
@@ -482,7 +513,9 @@ export default function Sidebar() {
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
-      const activeThread = state.threads.find((t) => t.id === state.activeThreadId);
+      const activeThread = routeThreadId
+        ? state.threads.find((thread) => thread.id === routeThreadId)
+        : undefined;
       if (isChatNewLocalShortcut(event, keybindings)) {
         const projectId = activeThread?.projectId ?? state.projects[0]?.id;
         if (!projectId) return;
@@ -505,7 +538,7 @@ export default function Sidebar() {
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
-  }, [handleNewThread, keybindings, state.activeThreadId, state.projects, state.threads]);
+  }, [handleNewThread, keybindings, routeThreadId, state.projects, state.threads]);
 
   return (
     <aside className="sidebar flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-card">
@@ -513,24 +546,14 @@ export default function Sidebar() {
       <div
         className={`flex items-center gap-2.5 px-4 ${isElectron ? "drag-region h-[52px] pl-[76px]" : "py-4"}`}
       >
-        <span className="flex-1 text-sm font-semibold tracking-tight text-foreground">
-          T3 <span className="font-normal text-muted-foreground">Code</span>
-        </span>
-        <button
-          type="button"
-          className="rounded-md p-1.5 text-muted-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-muted-foreground"
-          onClick={() => setTheme(THEME_CYCLE[theme])}
-          aria-label={`Theme: ${theme}`}
-          title={`Theme: ${theme}`}
-        >
-          {theme === "system" ? (
-            <MonitorIcon className="size-3.5" />
-          ) : theme === "light" ? (
-            <SunIcon className="size-3.5" />
-          ) : (
-            <MoonIcon className="size-3.5" />
-          )}
-        </button>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="truncate text-sm font-semibold tracking-tight text-foreground">
+            T3 <span className="font-normal text-muted-foreground">Code</span>
+          </span>
+          <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-widest text-muted-foreground/60">
+            {APP_STAGE_LABEL}
+          </span>
+        </div>
       </div>
 
       {/* New thread (global) */}
@@ -590,7 +613,7 @@ export default function Sidebar() {
               {project.expanded && (
                 <div className="ml-2 border-l border-border/80 pl-2">
                   {threads.map((thread) => {
-                    const isActive = state.activeThreadId === thread.id;
+                    const isActive = routeThreadId === thread.id;
                     const threadStatus = threadStatusPill(
                       thread,
                       pendingApprovalByThreadId.get(thread.id) === true,
@@ -606,12 +629,12 @@ export default function Sidebar() {
                             ? "bg-accent text-foreground"
                             : "text-muted-foreground hover:bg-secondary"
                         }`}
-                        onClick={() =>
-                          dispatch({
-                            type: "SET_ACTIVE_THREAD",
-                            threadId: thread.id,
-                          })
-                        }
+                        onClick={() => {
+                          void navigate({
+                            to: "/$threadId",
+                            params: { threadId: thread.id },
+                          });
+                        }}
                         onContextMenu={(e) => {
                           e.preventDefault();
                           void handleThreadContextMenu(thread.id, {

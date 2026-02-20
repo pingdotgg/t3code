@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { projectScriptSchema } from "@t3tools/contracts";
 
 import { DEFAULT_MODEL, resolveModelSlug } from "./model-logic";
 import {
@@ -19,6 +20,7 @@ const persistedProjectSchema = z.object({
   cwd: z.string().min(1),
   model: z.string().min(1),
   expanded: z.boolean(),
+  scripts: z.array(projectScriptSchema).default([]),
 });
 
 const persistedMessageSchema = z.object({
@@ -45,6 +47,22 @@ const persistedTerminalGroupSchema = z.object({
   terminalIds: z.array(z.string().trim().min(1)),
 });
 
+const persistedTurnDiffFileChangeSchema = z.object({
+  path: z.string().min(1),
+  kind: z.string().min(1).optional(),
+  additions: z.number().int().min(0).optional(),
+  deletions: z.number().int().min(0).optional(),
+});
+
+const persistedTurnDiffSummarySchema = z.object({
+  turnId: z.string().min(1),
+  completedAt: z.string().min(1),
+  status: z.string().min(1).optional(),
+  files: z.array(persistedTurnDiffFileChangeSchema),
+  assistantMessageId: z.string().min(1).optional(),
+  checkpointTurnCount: z.number().int().min(0).optional(),
+});
+
 const persistedThreadSchema = z.object({
   id: z.string().min(1),
   codexThreadId: z.string().min(1).nullable().default(null),
@@ -65,12 +83,13 @@ const persistedThreadSchema = z.object({
   lastVisitedAt: z.string().min(1).optional(),
   branch: z.string().min(1).nullable().optional(),
   worktreePath: z.string().min(1).nullable().optional(),
+  turnDiffSummaries: z.array(persistedTurnDiffSummarySchema).catch([]).default([]),
 });
 
 const persistedStateBodySchema = z.object({
   projects: z.array(persistedProjectSchema),
   threads: z.array(persistedThreadSchema),
-  activeThreadId: z.string().min(1).nullable(),
+  activeThreadId: z.string().min(1).nullable().optional(),
 });
 
 const runtimeModeSchema = z.enum(["approval-required", "full-access"]);
@@ -121,7 +140,6 @@ const persistedStateSchema = z.union([
 export interface PersistedStoreSnapshot {
   projects: Project[];
   threads: Thread[];
-  activeThreadId: string | null;
   runtimeMode: RuntimeMode;
 }
 
@@ -140,6 +158,7 @@ function hydrateProject(
   return {
     ...project,
     model: resolveModelSlug(maybeMigrateLegacyModel(project.model, isLegacyPayload)),
+    scripts: project.scripts,
   };
 }
 
@@ -270,6 +289,21 @@ function hydrateThread(
     lastVisitedAt: thread.lastVisitedAt,
     branch: thread.branch ?? null,
     worktreePath: thread.worktreePath ?? null,
+    turnDiffSummaries: thread.turnDiffSummaries.map((summary) => ({
+      turnId: summary.turnId,
+      completedAt: summary.completedAt,
+      ...(summary.status ? { status: summary.status } : {}),
+      files: summary.files.map((file) => ({
+        path: file.path,
+        ...(file.kind ? { kind: file.kind } : {}),
+        ...(typeof file.additions === "number" ? { additions: file.additions } : {}),
+        ...(typeof file.deletions === "number" ? { deletions: file.deletions } : {}),
+      })),
+      ...(summary.assistantMessageId ? { assistantMessageId: summary.assistantMessageId } : {}),
+      ...(typeof summary.checkpointTurnCount === "number"
+        ? { checkpointTurnCount: summary.checkpointTurnCount }
+        : {}),
+    })),
   };
 }
 
@@ -296,15 +330,9 @@ export function hydratePersistedState(
   const threads = parsedState.data.threads
     .map((thread) => hydrateThread(thread, isLegacyPayload))
     .filter((thread) => projectIds.has(thread.projectId));
-  const hasActiveThread = Boolean(
-    parsedState.data.activeThreadId &&
-    threads.some((thread) => thread.id === parsedState.data.activeThreadId),
-  );
-
   return {
     projects,
     threads,
-    activeThreadId: hasActiveThread ? parsedState.data.activeThreadId : (threads[0]?.id ?? null),
     runtimeMode:
       "runtimeMode" in parsedState.data ? parsedState.data.runtimeMode : DEFAULT_RUNTIME_MODE,
   };
@@ -350,8 +378,22 @@ export function toPersistedState(
       ...(thread.lastVisitedAt ? { lastVisitedAt: thread.lastVisitedAt } : {}),
       branch: thread.branch,
       worktreePath: thread.worktreePath,
+      turnDiffSummaries: thread.turnDiffSummaries.map((summary) => ({
+        turnId: summary.turnId,
+        completedAt: summary.completedAt,
+        ...(summary.status ? { status: summary.status } : {}),
+        files: summary.files.map((file) => ({
+          path: file.path,
+          ...(file.kind ? { kind: file.kind } : {}),
+          ...(typeof file.additions === "number" ? { additions: file.additions } : {}),
+          ...(typeof file.deletions === "number" ? { deletions: file.deletions } : {}),
+        })),
+        ...(summary.assistantMessageId ? { assistantMessageId: summary.assistantMessageId } : {}),
+        ...(typeof summary.checkpointTurnCount === "number"
+          ? { checkpointTurnCount: summary.checkpointTurnCount }
+          : {}),
+      })),
     })),
-    activeThreadId: state.activeThreadId,
     runtimeMode: state.runtimeMode,
   };
 }

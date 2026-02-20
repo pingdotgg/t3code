@@ -91,6 +91,10 @@ export function createWsNativeApi(): NativeApi {
       respondToRequest: (input) => transport.request(WS_METHODS.providersRespondToRequest, input),
       stopSession: (input) => transport.request(WS_METHODS.providersStopSession, input),
       listSessions: () => transport.request(WS_METHODS.providersListSessions),
+      listCheckpoints: (input) => transport.request(WS_METHODS.providersListCheckpoints, input),
+      getCheckpointDiff: (input) => transport.request(WS_METHODS.providersGetCheckpointDiff, input),
+      revertToCheckpoint: (input) =>
+        transport.request(WS_METHODS.providersRevertToCheckpoint, input),
       onEvent: (callback) =>
         transport.subscribe(WS_CHANNELS.providerEvent, callback as (data: unknown) => void),
     },
@@ -98,6 +102,8 @@ export function createWsNativeApi(): NativeApi {
       list: () => transport.request(WS_METHODS.projectsList),
       add: (input) => transport.request(WS_METHODS.projectsAdd, input),
       remove: (input) => transport.request(WS_METHODS.projectsRemove, input),
+      searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
+      updateScripts: (input) => transport.request(WS_METHODS.projectsUpdateScripts, input),
     },
     shell: {
       openInEditor: (cwd, editor) =>
@@ -141,6 +147,7 @@ export function createWsNativeApi(): NativeApi {
     },
     server: {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
+      upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
     },
   };
 

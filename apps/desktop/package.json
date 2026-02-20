@@ -2,13 +2,14 @@
   "name": "@t3tools/desktop",
   "version": "0.0.0",
   "private": true,
+  "productName": "T3 Code (Alpha)",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "bun run --parallel dev:bundle dev:electron",
     "dev:bundle": "tsdown --watch",
     "dev:electron": "bun run scripts/dev-electron.mjs",
     "build": "tsdown",
-    "start": "electron dist-electron/main.js",
+    "start": "bun run scripts/start-electron.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "smoke-test": "node scripts/smoke-test.mjs"

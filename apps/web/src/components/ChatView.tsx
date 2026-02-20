@@ -1,8 +1,10 @@
 import {
   EDITORS,
   type EditorId,
-  ModelSlug,
   type NativeApi,
+  type ProjectEntry,
+  type ProjectScript,
+  ModelSlug,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -14,7 +16,6 @@ import {
   type ClipboardEvent,
   type DragEvent,
   type FormEvent,
-  Fragment,
   type KeyboardEvent,
   memo,
   type RefObject,
@@ -25,12 +26,24 @@ import {
   useRef,
   useState,
 } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDebouncedValue } from "@tanstack/react-pacer";
+import { useNavigate, useSearch } from "@tanstack/react-router";
+import { type VirtualItem, useVirtualizer } from "@tanstack/react-virtual";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
-import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
+import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
+import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
+import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
+import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import { useAppSettings } from "../appSettings";
 import { buildBootstrapInput } from "../historyBootstrap";
+import {
+  type ComposerTriggerKind,
+  detectComposerTrigger,
+  replaceTextRange,
+} from "../composer-logic";
 import {
   DEFAULT_MODEL,
   DEFAULT_REASONING,
@@ -42,7 +55,9 @@ import {
 import {
   derivePendingApprovals,
   derivePhase,
+  deriveTurnDiffFilesFromUnifiedDiff,
   deriveTimelineEntries,
+  type TurnDiffSummary,
   type PendingApproval,
   deriveWorkLogEntries,
   formatDuration,
@@ -51,15 +66,21 @@ import {
 } from "../session-logic";
 import { isScrollContainerNearBottom } from "../chat-scroll";
 import { useStore } from "../store";
-import type { ChatImageAttachment } from "../types";
+import { truncateTitle } from "../truncateTitle";
+import {
+  DEFAULT_THREAD_TERMINAL_ID,
+  MAX_THREAD_TERMINAL_COUNT,
+  type ChatImageAttachment,
+  type TurnDiffFileChange,
+} from "../types";
+import { basenameOfPath, getVscodeIconUrlForEntry } from "../vscode-icons";
+import { useTheme } from "../hooks/useTheme";
+import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import BranchToolbar from "./BranchToolbar";
 import GitActionsControl from "./GitActionsControl";
 import {
   isOpenFavoriteEditorShortcut,
-  isTerminalCloseShortcut,
-  isTerminalNewShortcut,
-  isTerminalSplitShortcut,
-  isTerminalToggleShortcut,
+  resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../keybindings";
 import ChatMarkdown from "./ChatMarkdown";
@@ -67,12 +88,17 @@ import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { useNativeApi } from "../hooks/useNativeApi";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import {
+  BotIcon,
   ChevronDownIcon,
   CircleAlertIcon,
+  FileIcon,
+  FolderIcon,
+  DiffIcon,
   FolderClosedIcon,
   InfoIcon,
   LockIcon,
   LockOpenIcon,
+  Undo2Icon,
   XIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
@@ -83,6 +109,16 @@ import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu"
 import { CursorIcon, Icon } from "./Icons";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { Badge } from "./ui/badge";
+import { Command, CommandInput, CommandItem, CommandList } from "./ui/command";
+import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
+import {
+  commandForProjectScript,
+  nextProjectScriptId,
+  projectScriptRuntimeEnv,
+  projectScriptIdFromCommand,
+  setupProjectScript,
+} from "~/projectScripts";
+import { Toggle } from "./ui/toggle";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
   if (!duration) return formatTimestamp(createdAt);
@@ -90,11 +126,40 @@ function formatMessageMeta(createdAt: string, duration: string | null): string {
 }
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
+const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
+const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
+const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
+const SEARCHABLE_MODEL_OPTIONS = MODEL_OPTIONS.map(({ slug, name }) => ({
+  slug,
+  name,
+  searchSlug: slug.toLowerCase(),
+  searchName: name.toLowerCase(),
+}));
+const SCRIPT_TERMINAL_COLS = 120;
+const SCRIPT_TERMINAL_ROWS = 30;
+
+function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
+  const stored = localStorage.getItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
+  if (!stored) return {};
+
+  try {
+    const parsed: unknown = JSON.parse(stored);
+    if (!parsed || typeof parsed !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, string] =>
+          typeof entry[0] === "string" && typeof entry[1] === "string",
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
 
 function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   if (tone === "error") return "text-rose-300/50 dark:text-rose-300/50";
@@ -121,6 +186,56 @@ interface ExpandedImagePreview {
   name: string;
 }
 
+type TurnCheckpointFilesState =
+  | {
+      status: "pending" | "loading";
+      files: TurnDiffFileChange[];
+      errorMessage?: undefined;
+    }
+  | {
+      status: "error";
+      files: TurnDiffFileChange[];
+      errorMessage: string;
+    }
+  | {
+      status: "ready";
+      files: TurnDiffFileChange[];
+      errorMessage?: undefined;
+    };
+
+function checkpointErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  if (typeof error === "string" && error.trim().length > 0) {
+    return error;
+  }
+  return "Checkpoint diff is unavailable.";
+}
+
+type ComposerCommandItem =
+  | {
+      id: string;
+      type: "path";
+      path: string;
+      pathKind: ProjectEntry["kind"];
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "slash-command";
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "model";
+      model: ModelSlug;
+      label: string;
+      description: string;
+    };
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -138,19 +253,147 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-export default function ChatView() {
+const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
+  pathValue: string;
+  kind: "file" | "directory";
+  theme: "light" | "dark";
+}) {
+  const [failed, setFailed] = useState(false);
+  const iconUrl = useMemo(
+    () => getVscodeIconUrlForEntry(props.pathValue, props.kind, props.theme),
+    [props.kind, props.pathValue, props.theme],
+  );
+
+  useEffect(() => {
+    setFailed(false);
+  }, [iconUrl]);
+
+  if (failed) {
+    return props.kind === "directory" ? (
+      <FolderIcon className="size-4 text-muted-foreground/80" />
+    ) : (
+      <FileIcon className="size-4 text-muted-foreground/80" />
+    );
+  }
+
+  return (
+    <img
+      src={iconUrl}
+      alt=""
+      aria-hidden="true"
+      className="size-4 shrink-0"
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  );
+});
+
+const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
+  item: ComposerCommandItem;
+  resolvedTheme: "light" | "dark";
+  onSelect: (item: ComposerCommandItem) => void;
+}) {
+  return (
+    <CommandItem
+      value={props.item.id}
+      className="cursor-pointer gap-2"
+      onMouseDown={(event) => {
+        event.preventDefault();
+      }}
+      onClick={() => {
+        props.onSelect(props.item);
+      }}
+    >
+      {props.item.type === "path" ? (
+        <VscodeEntryIcon
+          pathValue={props.item.path}
+          kind={props.item.pathKind}
+          theme={props.resolvedTheme}
+        />
+      ) : null}
+      {props.item.type === "slash-command" ? (
+        <BotIcon className="size-4 text-muted-foreground/80" />
+      ) : null}
+      {props.item.type === "model" ? (
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          model
+        </Badge>
+      ) : null}
+      <span className="truncate">{props.item.label}</span>
+      <span className="truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
+    </CommandItem>
+  );
+});
+
+const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
+  items: ComposerCommandItem[];
+  resolvedTheme: "light" | "dark";
+  isLoading: boolean;
+  triggerKind: ComposerTriggerKind | null;
+  onHighlightedItemChange: (itemId: string | null) => void;
+  onSelect: (item: ComposerCommandItem) => void;
+  commandInputRef: RefObject<HTMLInputElement | null>;
+}) {
+  return (
+    <Command
+      mode="none"
+      onItemHighlighted={(highlightedValue) => {
+        props.onHighlightedItemChange(
+          typeof highlightedValue === "string" ? highlightedValue : null,
+        );
+      }}
+    >
+      <div className="relative overflow-hidden rounded-xl border border-border/80 bg-popover/96 shadow-lg/8 backdrop-blur-xs">
+        <div className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0">
+          <CommandInput autoFocus={false} ref={props.commandInputRef} />
+        </div>
+        <CommandList className="max-h-64">
+          {props.items.map((item) => (
+            <ComposerCommandMenuItem
+              key={item.id}
+              item={item}
+              resolvedTheme={props.resolvedTheme}
+              onSelect={props.onSelect}
+            />
+          ))}
+        </CommandList>
+        {props.items.length === 0 && (
+          <p className="px-3 py-2 text-muted-foreground/70 text-xs">
+            {props.isLoading
+              ? "Searching workspace files..."
+              : props.triggerKind === "path"
+                ? "No matching files or folders."
+                : "No matching command."}
+          </p>
+        )}
+      </div>
+    </Command>
+  );
+});
+
+interface ChatViewProps {
+  threadId: string;
+}
+
+export default function ChatView({ threadId }: ChatViewProps) {
   const { state, dispatch } = useStore();
+  const navigate = useNavigate();
+  const rawSearch = useSearch({ strict: false });
   const api = useNativeApi();
+  const { resolvedTheme } = useTheme();
+  const { settings: appSettings } = useAppSettings();
   const queryClient = useQueryClient();
   const createWorktreeMutation = useMutation(
     gitCreateWorktreeMutationOptions({ api, queryClient }),
   );
   const [prompt, setPrompt] = useState("");
+  const promptRef = useRef(prompt);
   const [composerImages, setComposerImages] = useState<ComposerImageAttachment[]>([]);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [selectedEffort, setSelectedEffort] = useState(DEFAULT_REASONING);
   const [envMode, setEnvMode] = useState<"local" | "worktree">("local");
   const [isSwitchingRuntimeMode, setIsSwitchingRuntimeMode] = useState(false);
@@ -158,23 +401,37 @@ export default function ChatView() {
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
+  const [composerCursor, setComposerCursor] = useState(0);
+  const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
+  const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useState<
+    Record<string, string>
+  >(() => readLastInvokedScriptByProjectFromStorage());
   const messagesScrollRef = useRef<HTMLDivElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerCommandInputRef = useRef<HTMLInputElement>(null);
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
+  const checkpointHydrationSessionRequestRef = useRef(new Set<string>());
+  const checkpointTurnCountSyncFingerprintRef = useRef(new Map<string, string>());
 
-  const activeThread = state.threads.find((t) => t.id === state.activeThreadId);
+  const activeThread = state.threads.find((t) => t.id === threadId);
+  const diffSearch = useMemo(
+    () => parseDiffRouteSearch(rawSearch as Record<string, unknown>),
+    [rawSearch],
+  );
+  const diffOpen = diffSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
-  const activeSessionId = activeThread?.session?.sessionId;
+  const activeSessionId = activeThread?.session?.sessionId ?? null;
+  const activeThreadRuntimeId =
+    activeThread?.codexThreadId ?? activeThread?.session?.threadId ?? null;
   const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
   const selectedModel = resolveModelSlug(
     activeThread?.model ?? activeProject?.model ?? DEFAULT_MODEL,
   );
   const phase = derivePhase(activeThread?.session ?? null);
-  const isWorking = phase === "running" || isSending || isConnecting;
+  const isWorking = phase === "running" || isSending || isConnecting || isRevertingCheckpoint;
   const nowIso = new Date(nowTick).toISOString();
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(activeThread?.events ?? [], undefined),
@@ -202,6 +459,142 @@ export default function ChatView() {
     () => deriveTimelineEntries(activeThread?.messages ?? [], workLogEntries),
     [activeThread?.messages, workLogEntries],
   );
+  const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
+    useTurnDiffSummaries(activeThread);
+  const turnDiffSummaryByAssistantMessageId = useMemo(() => {
+    const byMessageId = new Map<string, TurnDiffSummary>();
+    for (const summary of turnDiffSummaries) {
+      if (!summary.assistantMessageId) continue;
+      byMessageId.set(summary.assistantMessageId, summary);
+    }
+    return byMessageId;
+  }, [turnDiffSummaries]);
+  const checkpointDiffInputsByTurn = useMemo(
+    () =>
+      turnDiffSummaries
+        .filter((summary) => summary.assistantMessageId)
+        .map((summary) => {
+          const checkpointTurnCount =
+            summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
+          return {
+            turnId: summary.turnId,
+            checkpointTurnCount:
+              typeof checkpointTurnCount === "number" ? checkpointTurnCount : null,
+          };
+        }),
+    [inferredCheckpointTurnCountByTurnId, turnDiffSummaries],
+  );
+  const checkpointDiffQueriesByTurn = useQueries({
+    queries: checkpointDiffInputsByTurn.map((input) =>
+      checkpointDiffQueryOptions(api, {
+        sessionId: activeSessionId,
+        threadRuntimeId: activeThreadRuntimeId,
+        fromTurnCount:
+          typeof input.checkpointTurnCount === "number"
+            ? Math.max(0, input.checkpointTurnCount - 1)
+            : null,
+        toTurnCount: input.checkpointTurnCount,
+        cacheScope: `turn:${input.turnId}`,
+      }),
+    ),
+  });
+  const turnCheckpointFilesByTurnId = useMemo(() => {
+    const byTurnId = new Map<string, TurnCheckpointFilesState>();
+    for (let index = 0; index < checkpointDiffInputsByTurn.length; index += 1) {
+      const input = checkpointDiffInputsByTurn[index];
+      const query = checkpointDiffQueriesByTurn[index];
+      if (!input || !query) continue;
+
+      if (!activeSessionId || typeof input.checkpointTurnCount !== "number") {
+        byTurnId.set(input.turnId, { status: "pending", files: [] });
+        continue;
+      }
+
+      const diff = query.data?.diff;
+      if (typeof diff === "string") {
+        byTurnId.set(input.turnId, {
+          status: "ready",
+          files: deriveTurnDiffFilesFromUnifiedDiff(diff),
+        });
+        continue;
+      }
+
+      if (query.isError) {
+        byTurnId.set(input.turnId, {
+          status: "error",
+          files: [],
+          errorMessage: checkpointErrorMessage(query.error),
+        });
+        continue;
+      }
+
+      byTurnId.set(input.turnId, { status: "loading", files: [] });
+    }
+    return byTurnId;
+  }, [activeSessionId, checkpointDiffInputsByTurn, checkpointDiffQueriesByTurn]);
+  const revertTurnCountByUserMessageId = useMemo(() => {
+    const byUserMessageId = new Map<string, number>();
+    for (let index = 0; index < timelineEntries.length; index += 1) {
+      const entry = timelineEntries[index];
+      if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
+        continue;
+      }
+
+      for (let nextIndex = index + 1; nextIndex < timelineEntries.length; nextIndex += 1) {
+        const nextEntry = timelineEntries[nextIndex];
+        if (!nextEntry || nextEntry.kind !== "message") {
+          continue;
+        }
+        if (nextEntry.message.role === "user") {
+          break;
+        }
+        const summary = turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
+        if (!summary) {
+          continue;
+        }
+        const turnCount =
+          summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
+        if (typeof turnCount !== "number") {
+          break;
+        }
+        byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
+        break;
+      }
+    }
+
+    return byUserMessageId;
+  }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+
+  useEffect(() => {
+    if (!activeThreadId || turnDiffSummaries.length === 0) {
+      return;
+    }
+
+    const inferredMissingTurnCounts = turnDiffSummaries.reduce<Record<string, number>>(
+      (acc, summary) => {
+        if (typeof summary.checkpointTurnCount === "number") {
+          return acc;
+        }
+        const inferredTurnCount = inferredCheckpointTurnCountByTurnId[summary.turnId];
+        if (typeof inferredTurnCount !== "number") {
+          return acc;
+        }
+        acc[summary.turnId] = inferredTurnCount;
+        return acc;
+      },
+      {},
+    );
+    if (Object.keys(inferredMissingTurnCounts).length === 0) {
+      return;
+    }
+
+    dispatch({
+      type: "SET_THREAD_TURN_CHECKPOINT_COUNTS",
+      threadId: activeThreadId,
+      checkpointTurnCountByTurnId: inferredMissingTurnCounts,
+    });
+  }, [activeThreadId, dispatch, inferredCheckpointTurnCountByTurnId, turnDiffSummaries]);
+
   const completionSummary = useMemo(() => {
     if (!activeThread?.latestTurnStartedAt) return null;
     if (!activeThread.latestTurnCompletedAt) return null;
@@ -257,23 +650,97 @@ export default function ChatView() {
     completionSummary,
     timelineEntries,
   ]);
-  const runtimeSessionConfig =
-    state.runtimeMode === "full-access"
-      ? ({
-          approvalPolicy: "never",
-          sandboxMode: "danger-full-access",
-        } as const)
-      : ({
-          approvalPolicy: "on-request",
-          sandboxMode: "workspace-write",
-        } as const);
+  const runtimeApprovalPolicy = state.runtimeMode === "full-access" ? "never" : "on-request";
+  const runtimeSandboxMode =
+    state.runtimeMode === "full-access" ? "danger-full-access" : "workspace-write";
+  const codexBinaryPath = appSettings.codexBinaryPath.trim();
+  const codexHomePath = appSettings.codexHomePath.trim();
   const gitCwd = activeThread?.worktreePath ?? activeProject?.cwd ?? null;
+  const composerTrigger = useMemo(
+    () => detectComposerTrigger(prompt, composerCursor),
+    [prompt, composerCursor],
+  );
+  const composerTriggerKind = composerTrigger?.kind ?? null;
+  const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
+  const isPathTrigger = composerTriggerKind === "path";
+  const [debouncedPathQuery, composerPathQueryDebouncer] = useDebouncedValue(
+    pathTriggerQuery,
+    { wait: COMPOSER_PATH_QUERY_DEBOUNCE_MS },
+    (debouncerState) => ({ isPending: debouncerState.isPending }),
+  );
+  const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(api, gitCwd));
   const keybindingsQuery = useQuery({
     ...serverConfigQueryOptions(api),
     select: (config) => config.keybindings,
   });
+  const workspaceEntriesQuery = useQuery(
+    projectSearchEntriesQueryOptions({
+      api,
+      cwd: gitCwd,
+      query: effectivePathQuery,
+      enabled: isPathTrigger,
+      limit: 80,
+    }),
+  );
+  const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+  const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
+    if (!composerTrigger) return [];
+    if (composerTrigger.kind === "path") {
+      return workspaceEntries.map((entry) => ({
+        id: `path:${entry.kind}:${entry.path}`,
+        type: "path",
+        path: entry.path,
+        pathKind: entry.kind,
+        label: basenameOfPath(entry.path),
+        description: entry.parentPath ?? "",
+      }));
+    }
+
+    if (composerTrigger.kind === "slash-command") {
+      if (!"model".includes(composerTrigger.query.toLowerCase())) {
+        return [];
+      }
+      return [
+        {
+          id: "slash:model",
+          type: "slash-command",
+          label: "/model",
+          description: "Switch response model for this thread",
+        },
+      ];
+    }
+
+    return SEARCHABLE_MODEL_OPTIONS.filter(({ searchSlug, searchName }) => {
+      const query = composerTrigger.query.trim().toLowerCase();
+      if (!query) return true;
+      return searchSlug.includes(query) || searchName.includes(query);
+    }).map(({ slug, name }) => ({
+      id: `model:${slug}`,
+      type: "model",
+      model: slug,
+      label: name,
+      description: slug,
+    }));
+  }, [composerTrigger, workspaceEntries]);
+  const composerMenuOpen = Boolean(composerTrigger);
+  const activeComposerMenuItem = useMemo(
+    () =>
+      composerMenuItems.find((item) => item.id === composerHighlightedItemId) ??
+      composerMenuItems[0] ??
+      null,
+    [composerHighlightedItemId, composerMenuItems],
+  );
   const keybindings = keybindingsQuery.data ?? EMPTY_KEYBINDINGS;
+  const threadTerminalRuntimeEnv = useMemo(() => {
+    if (!activeProject?.cwd) return {};
+    return projectScriptRuntimeEnv({
+      project: {
+        cwd: activeProject.cwd,
+      },
+      worktreePath: activeThread?.worktreePath ?? null,
+    });
+  }, [activeProject?.cwd, activeThread?.worktreePath]);
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = branchesQuery.data?.isRepo ?? true;
   const splitTerminalShortcutLabel = useMemo(
@@ -294,6 +761,8 @@ export default function ChatView() {
     (activeThread.messages.length > 0 ||
       (activeThread.session !== null && activeThread.session.status !== "closed")),
   );
+  const hasReachedTerminalLimit =
+    (activeThread?.terminalIds.length ?? 0) >= MAX_THREAD_TERMINAL_COUNT;
 
   const revokePreviewUrls = useCallback((images: Array<{ previewUrl?: string }>) => {
     for (const image of images) {
@@ -322,23 +791,23 @@ export default function ChatView() {
     });
   }, [activeThread?.terminalOpen, activeThreadId, dispatch]);
   const splitTerminal = useCallback(() => {
-    if (!activeThreadId) return;
+    if (!activeThreadId || hasReachedTerminalLimit) return;
     dispatch({
       type: "SPLIT_THREAD_TERMINAL",
       threadId: activeThreadId,
       terminalId: `terminal-${crypto.randomUUID()}`,
     });
     setTerminalFocusRequestId((value) => value + 1);
-  }, [activeThreadId, dispatch]);
+  }, [activeThreadId, dispatch, hasReachedTerminalLimit]);
   const createNewTerminal = useCallback(() => {
-    if (!activeThreadId) return;
+    if (!activeThreadId || hasReachedTerminalLimit) return;
     dispatch({
       type: "NEW_THREAD_TERMINAL",
       threadId: activeThreadId,
       terminalId: `terminal-${crypto.randomUUID()}`,
     });
     setTerminalFocusRequestId((value) => value + 1);
-  }, [activeThreadId, dispatch]);
+  }, [activeThreadId, dispatch, hasReachedTerminalLimit]);
   const activateTerminal = useCallback(
     (terminalId: string) => {
       if (!activeThreadId) return;
@@ -380,6 +849,225 @@ export default function ChatView() {
     },
     [activeThread?.terminalIds.length, activeThreadId, api, dispatch],
   );
+  const runProjectScript = useCallback(
+    async (
+      script: ProjectScript,
+      options?: {
+        cwd?: string;
+        env?: Record<string, string>;
+        worktreePath?: string | null;
+        preferNewTerminal?: boolean;
+        rememberAsLastInvoked?: boolean;
+      },
+    ) => {
+      if (!api || !activeThreadId || !activeProject || !activeThread) return;
+      if (options?.rememberAsLastInvoked !== false) {
+        setLastInvokedScriptByProjectId((current) => {
+          if (current[activeProject.id] === script.id) return current;
+          return { ...current, [activeProject.id]: script.id };
+        });
+      }
+      const targetCwd = options?.cwd ?? gitCwd ?? activeProject.cwd;
+      const baseTerminalId =
+        activeThread.activeTerminalId || activeThread.terminalIds[0] || DEFAULT_THREAD_TERMINAL_ID;
+      const isBaseTerminalBusy = activeThread.runningTerminalIds.includes(baseTerminalId);
+      const wantsNewTerminal = Boolean(options?.preferNewTerminal) || isBaseTerminalBusy;
+      const shouldCreateNewTerminal =
+        wantsNewTerminal && activeThread.terminalIds.length < MAX_THREAD_TERMINAL_COUNT;
+      const targetTerminalId = shouldCreateNewTerminal
+        ? `terminal-${crypto.randomUUID()}`
+        : baseTerminalId;
+
+      dispatch({
+        type: "SET_THREAD_TERMINAL_OPEN",
+        threadId: activeThreadId,
+        open: true,
+      });
+      if (shouldCreateNewTerminal) {
+        dispatch({
+          type: "NEW_THREAD_TERMINAL",
+          threadId: activeThreadId,
+          terminalId: targetTerminalId,
+        });
+      } else {
+        dispatch({
+          type: "SET_THREAD_ACTIVE_TERMINAL",
+          threadId: activeThreadId,
+          terminalId: targetTerminalId,
+        });
+      }
+      setTerminalFocusRequestId((value) => value + 1);
+
+      const runtimeEnv = projectScriptRuntimeEnv({
+        project: {
+          cwd: activeProject.cwd,
+        },
+        worktreePath: options?.worktreePath ?? activeThread.worktreePath ?? null,
+        ...(options?.env ? { extraEnv: options.env } : {}),
+      });
+
+      try {
+        await api.terminal.open({
+          threadId: activeThreadId,
+          terminalId: targetTerminalId,
+          cwd: targetCwd,
+          env: runtimeEnv,
+          ...(shouldCreateNewTerminal
+            ? {
+                cols: SCRIPT_TERMINAL_COLS,
+                rows: SCRIPT_TERMINAL_ROWS,
+              }
+            : {}),
+        });
+        await api.terminal.write({
+          threadId: activeThreadId,
+          terminalId: targetTerminalId,
+          data: `${script.command}\r`,
+        });
+      } catch (error) {
+        dispatch({
+          type: "SET_ERROR",
+          threadId: activeThreadId,
+          error: error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+        });
+      }
+    },
+    [activeProject, activeThread, activeThreadId, api, dispatch, gitCwd],
+  );
+  const persistProjectScripts = useCallback(
+    async (input: {
+      projectId: string;
+      projectCwd: string;
+      previousScripts: ProjectScript[];
+      nextScripts: ProjectScript[];
+      keybinding?: string | null;
+      keybindingCommand: string;
+    }) => {
+      dispatch({
+        type: "SET_PROJECT_SCRIPTS",
+        projectId: input.projectId,
+        scripts: input.nextScripts,
+      });
+
+      if (!isElectron || !api) return;
+
+      let scriptsPersisted = false;
+      try {
+        const updated = await api.projects.updateScripts({
+          id: input.projectId,
+          scripts: input.nextScripts,
+        });
+        scriptsPersisted = true;
+
+        if (input.keybinding) {
+          const keybindingUpdate = await api.server.upsertKeybinding({
+            key: input.keybinding,
+            command: input.keybindingCommand,
+          });
+          queryClient.setQueryData(
+            serverQueryKeys.config(),
+            (current: { cwd: string; keybindings: ResolvedKeybindingsConfig } | undefined) =>
+              current
+                ? { ...current, keybindings: keybindingUpdate.keybindings }
+                : {
+                    cwd: input.projectCwd,
+                    keybindings: keybindingUpdate.keybindings,
+                  },
+          );
+        }
+
+        dispatch({
+          type: "SET_PROJECT_SCRIPTS",
+          projectId: updated.project.id,
+          scripts: updated.project.scripts,
+        });
+      } catch (error) {
+        if (scriptsPersisted) {
+          await api.projects
+            .updateScripts({
+              id: input.projectId,
+              scripts: input.previousScripts,
+            })
+            .catch(() => undefined);
+        }
+        dispatch({
+          type: "SET_PROJECT_SCRIPTS",
+          projectId: input.projectId,
+          scripts: input.previousScripts,
+        });
+        throw error;
+      }
+    },
+    [api, dispatch, queryClient],
+  );
+  const saveProjectScript = useCallback(
+    async (input: NewProjectScriptInput) => {
+      if (!activeProject) return;
+      const nextId = nextProjectScriptId(
+        input.name,
+        activeProject.scripts.map((script) => script.id),
+      );
+      const nextScript: ProjectScript = {
+        id: nextId,
+        name: input.name,
+        command: input.command,
+        icon: input.icon,
+        runOnWorktreeCreate: input.runOnWorktreeCreate,
+      };
+      const nextScripts = input.runOnWorktreeCreate
+        ? [
+            ...activeProject.scripts.map((script) =>
+              script.runOnWorktreeCreate ? { ...script, runOnWorktreeCreate: false } : script,
+            ),
+            nextScript,
+          ]
+        : [...activeProject.scripts, nextScript];
+
+      await persistProjectScripts({
+        projectId: activeProject.id,
+        projectCwd: activeProject.cwd,
+        previousScripts: activeProject.scripts,
+        nextScripts,
+        keybinding: input.keybinding,
+        keybindingCommand: commandForProjectScript(nextId),
+      });
+    },
+    [activeProject, persistProjectScripts],
+  );
+  const updateProjectScript = useCallback(
+    async (scriptId: string, input: NewProjectScriptInput) => {
+      if (!activeProject) return;
+      const existingScript = activeProject.scripts.find((script) => script.id === scriptId);
+      if (!existingScript) {
+        throw new Error("Script not found.");
+      }
+
+      const updatedScript: ProjectScript = {
+        ...existingScript,
+        name: input.name,
+        command: input.command,
+        icon: input.icon,
+        runOnWorktreeCreate: input.runOnWorktreeCreate,
+      };
+      const nextScripts = activeProject.scripts.map((script) =>
+        script.id === scriptId
+          ? updatedScript
+          : input.runOnWorktreeCreate
+            ? { ...script, runOnWorktreeCreate: false }
+            : script,
+      );
+
+      await persistProjectScripts({
+        projectId: activeProject.id,
+        projectCwd: activeProject.cwd,
+        previousScripts: activeProject.scripts,
+        nextScripts,
+        keybinding: input.keybinding,
+        keybindingCommand: commandForProjectScript(scriptId),
+      });
+    },
+    [activeProject, persistProjectScripts],
+  );
 
   const handleRuntimeModeChange = async (mode: "approval-required" | "full-access") => {
     if (mode === state.runtimeMode) return;
@@ -403,6 +1091,21 @@ export default function ChatView() {
       setIsSwitchingRuntimeMode(false);
     }
   };
+
+  useEffect(() => {
+    try {
+      if (Object.keys(lastInvokedScriptByProjectId).length === 0) {
+        localStorage.removeItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
+        return;
+      }
+      localStorage.setItem(
+        LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
+        JSON.stringify(lastInvokedScriptByProjectId),
+      );
+    } catch {
+      // Ignore storage write failures (private mode, quota exceeded, etc.)
+    }
+  }, [lastInvokedScriptByProjectId]);
 
   // Auto-scroll on new messages
   const messageCount = activeThread?.messages.length ?? 0;
@@ -437,6 +1140,20 @@ export default function ChatView() {
   }, [activeThread?.id]);
 
   useEffect(() => {
+    if (!composerMenuOpen) {
+      setComposerHighlightedItemId(null);
+      return;
+    }
+    setComposerHighlightedItemId((existing) =>
+      existing && composerMenuItems.some((item) => item.id === existing) ? existing : null,
+    );
+  }, [composerMenuItems, composerMenuOpen]);
+
+  useEffect(() => {
+    setIsRevertingCheckpoint(false);
+  }, [activeThread?.id]);
+
+  useEffect(() => {
     if (!activeThread?.id || activeThread.terminalOpen) return;
     const frame = window.requestAnimationFrame(() => {
       focusComposer();
@@ -455,6 +1172,11 @@ export default function ChatView() {
       revokePreviewUrls(existing);
       return [];
     });
+    setPrompt("");
+    promptRef.current = "";
+    setIsSending(false);
+    setComposerCursor(0);
+    setComposerHighlightedItemId(null);
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     setExpandedImage(null);
@@ -543,14 +1265,17 @@ export default function ChatView() {
         terminalOpen: Boolean(activeThread?.terminalOpen),
       };
 
-      if (isTerminalToggleShortcut(event, keybindings, { context: shortcutContext })) {
+      const command = resolveShortcutCommand(event, keybindings, { context: shortcutContext });
+      if (!command) return;
+
+      if (command === "terminal.toggle") {
         event.preventDefault();
         event.stopPropagation();
         toggleTerminalVisibility();
         return;
       }
 
-      if (isTerminalSplitShortcut(event, keybindings, { context: shortcutContext })) {
+      if (command === "terminal.split") {
         event.preventDefault();
         event.stopPropagation();
         if (!activeThread?.terminalOpen) {
@@ -564,7 +1289,7 @@ export default function ChatView() {
         return;
       }
 
-      if (isTerminalCloseShortcut(event, keybindings, { context: shortcutContext })) {
+      if (command === "terminal.close") {
         event.preventDefault();
         event.stopPropagation();
         if (!activeThread?.terminalOpen) return;
@@ -572,40 +1297,55 @@ export default function ChatView() {
         return;
       }
 
-      if (!isTerminalNewShortcut(event, keybindings, { context: shortcutContext })) return;
+      if (command === "terminal.new") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!activeThread?.terminalOpen) {
+          dispatch({
+            type: "SET_THREAD_TERMINAL_OPEN",
+            threadId: activeThreadId,
+            open: true,
+          });
+        }
+        createNewTerminal();
+        return;
+      }
+
+      const scriptId = projectScriptIdFromCommand(command);
+      if (!scriptId || !activeProject) return;
+      const script = activeProject.scripts.find((entry) => entry.id === scriptId);
+      if (!script) return;
       event.preventDefault();
       event.stopPropagation();
-      if (!activeThread?.terminalOpen) {
-        dispatch({
-          type: "SET_THREAD_TERMINAL_OPEN",
-          threadId: activeThreadId,
-          open: true,
-        });
-      }
-      createNewTerminal();
+      void runProjectScript(script);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [
+    activeProject,
     activeThread?.terminalOpen,
     activeThread?.activeTerminalId,
     activeThreadId,
     closeTerminal,
     createNewTerminal,
     dispatch,
+    runProjectScript,
     splitTerminal,
     keybindings,
     toggleTerminalVisibility,
   ]);
 
-  const setThreadError = (threadId: string | null, error: string | null) => {
-    if (!threadId) return;
-    dispatch({
-      type: "SET_ERROR",
-      threadId,
-      error,
-    });
-  };
+  const setThreadError = useCallback(
+    (threadId: string | null, error: string | null) => {
+      if (!threadId) return;
+      dispatch({
+        type: "SET_ERROR",
+        threadId,
+        error,
+      });
+    },
+    [dispatch],
+  );
 
   const addComposerImages = (files: File[]) => {
     if (!activeThreadId || files.length === 0) return;
@@ -710,62 +1450,240 @@ export default function ChatView() {
     focusComposer();
   };
 
-  const ensureSession = async (cwdOverride?: string): Promise<EnsuredSessionInfo | null> => {
-    if (!api || !activeThread || !activeProject) return null;
-    if (activeThread.session && activeThread.session.status !== "closed") {
-      const sessionThreadId = activeThread.session.threadId ?? null;
-      const continuityState: SessionContinuityState =
-        activeThread.codexThreadId === null
-          ? "new"
-          : sessionThreadId === activeThread.codexThreadId
-            ? "resumed"
-            : "fallback_new";
-      return {
-        sessionId: activeThread.session.sessionId,
-        resolvedThreadId: sessionThreadId,
-        continuityState,
-      } satisfies EnsuredSessionInfo;
-    }
+  const syncCheckpointTurnCounts = useCallback(
+    async (input: {
+      threadId: string;
+      sessionId: string;
+      threadRuntimeId: string | null;
+    }): Promise<void> => {
+      if (!api || turnDiffSummaries.length === 0) {
+        return;
+      }
 
-    const priorCodexThreadId = activeThread.codexThreadId;
-    setIsConnecting(true);
-    try {
-      const session = await api.providers.startSession({
-        provider: "codex",
-        cwd: cwdOverride ?? activeThread.worktreePath ?? activeProject.cwd,
-        model: selectedModel || undefined,
-        resumeThreadId: priorCodexThreadId ?? undefined,
-        approvalPolicy: runtimeSessionConfig.approvalPolicy,
-        sandboxMode: runtimeSessionConfig.sandboxMode,
-      });
-      dispatch({
-        type: "UPDATE_SESSION",
-        threadId: activeThread.id,
-        session,
-      });
-      const resolvedThreadId = session.threadId ?? null;
-      const continuityState: SessionContinuityState =
-        priorCodexThreadId === null
-          ? "new"
-          : resolvedThreadId === priorCodexThreadId
-            ? "resumed"
-            : "fallback_new";
-      return {
-        sessionId: session.sessionId,
-        resolvedThreadId,
-        continuityState,
-      };
-    } catch (err) {
-      dispatch({
-        type: "SET_ERROR",
-        threadId: activeThread.id,
-        error: err instanceof Error ? err.message : "Failed to connect.",
-      });
-      return null;
-    } finally {
-      setIsConnecting(false);
+      const turnIds = turnDiffSummaries.map((summary) => summary.turnId);
+      if (turnIds.length === 0) {
+        return;
+      }
+
+      const syncKey = `${input.threadId}:${input.sessionId}:${input.threadRuntimeId ?? "none"}`;
+      const turnFingerprint = turnIds.join(",");
+      if (checkpointTurnCountSyncFingerprintRef.current.get(syncKey) === turnFingerprint) {
+        return;
+      }
+      checkpointTurnCountSyncFingerprintRef.current.set(syncKey, turnFingerprint);
+
+      try {
+        const result = await api.providers.listCheckpoints({
+          sessionId: input.sessionId,
+        });
+        const turnIdSet = new Set(turnIds);
+        const checkpointTurnCountByTurnId = Object.fromEntries(
+          result.checkpoints
+            .filter((checkpoint) => checkpoint.turnCount > 0 && turnIdSet.has(checkpoint.id))
+            .map((checkpoint) => [checkpoint.id, checkpoint.turnCount] as const),
+        );
+        if (Object.keys(checkpointTurnCountByTurnId).length === 0) {
+          return;
+        }
+        dispatch({
+          type: "SET_THREAD_TURN_CHECKPOINT_COUNTS",
+          threadId: input.threadId,
+          checkpointTurnCountByTurnId,
+        });
+      } catch {
+        checkpointTurnCountSyncFingerprintRef.current.delete(syncKey);
+      }
+    },
+    [api, dispatch, turnDiffSummaries],
+  );
+
+  const ensureSession = useCallback(
+    async (cwdOverride?: string): Promise<EnsuredSessionInfo | null> => {
+      if (!api || !activeThread || !activeProject) return null;
+      if (activeThread.session && activeThread.session.status !== "closed") {
+        const sessionThreadId = activeThread.session.threadId ?? null;
+        const continuityState: SessionContinuityState =
+          activeThread.codexThreadId === null
+            ? "new"
+            : sessionThreadId === activeThread.codexThreadId
+              ? "resumed"
+              : "fallback_new";
+        await syncCheckpointTurnCounts({
+          threadId: activeThread.id,
+          sessionId: activeThread.session.sessionId,
+          threadRuntimeId: sessionThreadId,
+        });
+        return {
+          sessionId: activeThread.session.sessionId,
+          resolvedThreadId: sessionThreadId,
+          continuityState,
+        } satisfies EnsuredSessionInfo;
+      }
+
+      const priorCodexThreadId = activeThread.codexThreadId;
+      setIsConnecting(true);
+      try {
+        const session = await api.providers.startSession({
+          provider: "codex",
+          cwd: cwdOverride ?? activeThread.worktreePath ?? activeProject.cwd,
+          model: selectedModel || undefined,
+          resumeThreadId: priorCodexThreadId ?? undefined,
+          ...(codexBinaryPath.length > 0 ? { codexBinaryPath } : {}),
+          ...(codexHomePath.length > 0 ? { codexHomePath } : {}),
+          approvalPolicy: runtimeApprovalPolicy,
+          sandboxMode: runtimeSandboxMode,
+        });
+        dispatch({
+          type: "UPDATE_SESSION",
+          threadId: activeThread.id,
+          session,
+        });
+        const resolvedThreadId = session.threadId ?? null;
+        const continuityState: SessionContinuityState =
+          priorCodexThreadId === null
+            ? "new"
+            : resolvedThreadId === priorCodexThreadId
+              ? "resumed"
+              : "fallback_new";
+        await syncCheckpointTurnCounts({
+          threadId: activeThread.id,
+          sessionId: session.sessionId,
+          threadRuntimeId: resolvedThreadId,
+        });
+        return {
+          sessionId: session.sessionId,
+          resolvedThreadId,
+          continuityState,
+        };
+      } catch (err) {
+        dispatch({
+          type: "SET_ERROR",
+          threadId: activeThread.id,
+          error: err instanceof Error ? err.message : "Failed to connect.",
+        });
+        return null;
+      } finally {
+        setIsConnecting(false);
+      }
+    },
+    [
+      activeProject,
+      activeThread,
+      api,
+      codexBinaryPath,
+      codexHomePath,
+      dispatch,
+      runtimeApprovalPolicy,
+      runtimeSandboxMode,
+      selectedModel,
+      syncCheckpointTurnCounts,
+    ],
+  );
+
+  useEffect(() => {
+    if (!api || !activeThreadId || activeSessionId) return;
+    if (phase === "running" || isSending || isConnecting || isRevertingCheckpoint) return;
+    const hasThreadIdentity = Boolean(activeThreadRuntimeId);
+    if (!hasThreadIdentity) return;
+    if (turnDiffSummaries.length === 0) return;
+
+    const requestKey = `${activeThreadId}:${activeThreadRuntimeId ?? "none"}`;
+    if (checkpointHydrationSessionRequestRef.current.has(requestKey)) {
+      return;
     }
-  };
+    checkpointHydrationSessionRequestRef.current.add(requestKey);
+    setThreadError(activeThreadId, null);
+    void ensureSession().then(
+      () => {
+        checkpointHydrationSessionRequestRef.current.delete(requestKey);
+      },
+      () => {
+        // Keep the key on failure so this effect does not re-enter in a tight loop.
+      },
+    );
+  }, [
+    activeThreadId,
+    activeThreadRuntimeId,
+    activeSessionId,
+    api,
+    ensureSession,
+    isConnecting,
+    isRevertingCheckpoint,
+    isSending,
+    phase,
+    setThreadError,
+    turnDiffSummaries,
+  ]);
+
+  const onRevertToTurnCount = useCallback(
+    async (turnCount: number) => {
+      if (!api || !activeThread || isRevertingCheckpoint) {
+        return;
+      }
+      if (phase === "running" || isSending || isConnecting) {
+        setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
+        return;
+      }
+      const confirmed = await api.dialogs.confirm(
+        [
+          `Revert this thread to checkpoint ${turnCount}?`,
+          "This will discard newer messages and turn diffs in this thread.",
+          "This action cannot be undone.",
+        ].join("\n"),
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setIsRevertingCheckpoint(true);
+      setThreadError(activeThread.id, null);
+      try {
+        const sessionInfo = await ensureSession();
+        if (!sessionInfo) {
+          return;
+        }
+        const result = await api.providers.revertToCheckpoint({
+          sessionId: sessionInfo.sessionId,
+          turnCount,
+        });
+        dispatch({
+          type: "REVERT_TO_CHECKPOINT",
+          threadId: activeThread.id,
+          sessionId: sessionInfo.sessionId,
+          threadRuntimeId: result.threadId,
+          turnCount: result.turnCount,
+          messageCount: result.messageCount,
+        });
+        dispatch({
+          type: "SET_THREAD_TURN_CHECKPOINT_COUNTS",
+          threadId: activeThread.id,
+          checkpointTurnCountByTurnId: Object.fromEntries(
+            result.checkpoints
+              .filter((entry) => entry.turnCount > 0)
+              .map((entry) => [entry.id, entry.turnCount] as const),
+          ),
+        });
+      } catch (err) {
+        setThreadError(
+          activeThread.id,
+          err instanceof Error ? err.message : "Failed to revert thread state.",
+        );
+      } finally {
+        setIsRevertingCheckpoint(false);
+      }
+    },
+    [
+      activeThread,
+      api,
+      dispatch,
+      ensureSession,
+      isConnecting,
+      isRevertingCheckpoint,
+      isSending,
+      phase,
+      setThreadError,
+    ],
+  );
 
   const onSend = async (e: FormEvent) => {
     e.preventDefault();
@@ -797,6 +1715,14 @@ export default function ChatView() {
           branch: result.worktree.branch,
           worktreePath: result.worktree.path,
         });
+        const setupScript = setupProjectScript(activeProject.scripts);
+        if (setupScript) {
+          void runProjectScript(setupScript, {
+            cwd: result.worktree.path,
+            worktreePath: result.worktree.path,
+            rememberAsLastInvoked: false,
+          });
+        }
       } catch (err) {
         dispatch({
           type: "SET_ERROR",
@@ -814,7 +1740,7 @@ export default function ChatView() {
         (composerImagesSnapshot.length > 0
           ? `Image: ${composerImagesSnapshot[0]?.name ?? "attachment"}`
           : "New thread");
-      const title = titleSeed.length > 50 ? `${titleSeed.slice(0, 50)}...` : titleSeed;
+      const title = truncateTitle(titleSeed);
       dispatch({
         type: "SET_THREAD_TITLE",
         threadId: activeThread.id,
@@ -839,8 +1765,11 @@ export default function ChatView() {
       ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
     });
     const previousMessages = activeThread.messages;
+    promptRef.current = "";
     setPrompt("");
     setComposerImages([]);
+    setComposerCursor(0);
+    setComposerHighlightedItemId(null);
 
     const sessionInfo = await ensureSession(sessionCwd);
     if (!sessionInfo) return;
@@ -947,7 +1876,86 @@ export default function ChatView() {
     [scheduleComposerFocus],
   );
 
+  const applyPromptReplacement = useCallback(
+    (rangeStart: number, rangeEnd: number, replacement: string) => {
+      const next = replaceTextRange(promptRef.current, rangeStart, rangeEnd, replacement);
+      promptRef.current = next.text;
+      setPrompt(next.text);
+      window.requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        textarea.focus();
+        textarea.setSelectionRange(next.cursor, next.cursor);
+        setComposerCursor(next.cursor);
+      });
+    },
+    [],
+  );
+
+  const onSelectComposerItem = useCallback(
+    (item: ComposerCommandItem) => {
+      if (!composerTrigger) return;
+      if (item.type === "path") {
+        applyPromptReplacement(
+          composerTrigger.rangeStart,
+          composerTrigger.rangeEnd,
+          `@${item.path} `,
+        );
+        return;
+      }
+      if (item.type === "slash-command") {
+        applyPromptReplacement(composerTrigger.rangeStart, composerTrigger.rangeEnd, "/model ");
+        return;
+      }
+      onModelSelect(item.model);
+      applyPromptReplacement(composerTrigger.rangeStart, composerTrigger.rangeEnd, "");
+    },
+    [applyPromptReplacement, composerTrigger, onModelSelect],
+  );
+  const onComposerMenuItemHighlighted = useCallback((itemId: string | null) => {
+    setComposerHighlightedItemId(itemId);
+  }, []);
+  const nudgeComposerMenuHighlight = useCallback((key: "ArrowDown" | "ArrowUp") => {
+    const commandInput = composerCommandInputRef.current;
+    if (!commandInput) return;
+    commandInput.dispatchEvent(
+      new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+    );
+  }, []);
+  const isComposerMenuLoading =
+    composerTriggerKind === "path" &&
+    ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
+      workspaceEntriesQuery.isLoading ||
+      workspaceEntriesQuery.isFetching);
+
+  const onPromptChange = useCallback((nextPrompt: string, nextCursor: number) => {
+    promptRef.current = nextPrompt;
+    setPrompt(nextPrompt);
+    setComposerCursor(nextCursor);
+  }, []);
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (composerMenuOpen && composerMenuItems.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        nudgeComposerMenuHighlight("ArrowDown");
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        nudgeComposerMenuHighlight("ArrowUp");
+        return;
+      }
+      if (e.key === "Tab" || e.key === "Enter") {
+        const selectedItem = activeComposerMenuItem ?? composerMenuItems[0];
+        if (selectedItem) {
+          e.preventDefault();
+          onSelectComposerItem(selectedItem);
+          return;
+        }
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void onSend(e as unknown as FormEvent);
@@ -963,13 +1971,45 @@ export default function ChatView() {
     setExpandedImage(image);
   }, []);
   const onToggleDiff = useCallback(() => {
-    dispatch({ type: "TOGGLE_DIFF" });
-  }, [dispatch]);
+    void navigate({
+      to: "/$threadId",
+      params: { threadId },
+      search: (previous) => {
+        const rest = stripDiffSearchParams(previous);
+        return diffOpen ? rest : { ...rest, diff: "1" };
+      },
+    });
+  }, [diffOpen, navigate, threadId]);
+  const onOpenTurnDiff = useCallback(
+    (turnId: string, filePath?: string) => {
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+        search: (previous) => {
+          const rest = stripDiffSearchParams(previous);
+          return filePath
+            ? { ...rest, diff: "1", diffTurnId: turnId, diffFilePath: filePath }
+            : { ...rest, diff: "1", diffTurnId: turnId };
+        },
+      });
+    },
+    [navigate, threadId],
+  );
+  const onRevertUserMessage = useCallback(
+    (messageId: string) => {
+      const targetTurnCount = revertTurnCountByUserMessageId.get(messageId);
+      if (typeof targetTurnCount !== "number") {
+        return;
+      }
+      void onRevertToTurnCount(targetTurnCount);
+    },
+    [onRevertToTurnCount, revertTurnCountByUserMessageId],
+  );
 
   // Empty state: no active thread
   if (!activeThread) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col bg-background text-muted-foreground/40">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-muted-foreground/40">
         {isElectron && (
           <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
             <span className="text-xs text-muted-foreground/50">No active thread</span>
@@ -985,18 +2025,28 @@ export default function ChatView() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-background">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       {/* Top bar */}
       <header
         className={`flex items-center justify-between border-b border-border px-5 ${isElectron ? "drag-region h-[52px]" : "py-3"}`}
       >
         <ChatHeader
+          activeThreadId={activeThread.id}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
+          activeProjectScripts={activeProject?.scripts}
+          preferredScriptId={
+            activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
+          }
           keybindings={keybindings}
           api={api}
           gitCwd={gitCwd}
-          diffOpen={state.diffOpen}
+          diffOpen={diffOpen}
+          onRunProjectScript={(script) => {
+            void runProjectScript(script);
+          }}
+          onAddProjectScript={saveProjectScript}
+          onUpdateProjectScript={updateProjectScript}
           onToggleDiff={onToggleDiff}
         />
       </header>
@@ -1018,15 +2068,21 @@ export default function ChatView() {
         <MessagesTimeline
           hasMessages={activeThread.messages.length > 0}
           isWorking={isWorking}
+          scrollContainerRef={messagesScrollRef}
           timelineEntries={timelineEntries}
           completionDividerBeforeEntryId={completionDividerBeforeEntryId}
           completionSummary={completionSummary}
           assistantCompletionByItemId={assistantCompletionByItemId}
+          turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+          turnCheckpointFilesByTurnId={turnCheckpointFilesByTurnId}
           nowIso={nowIso}
           expandedWorkGroups={expandedWorkGroups}
           onToggleWorkGroup={onToggleWorkGroup}
+          onOpenTurnDiff={onOpenTurnDiff}
+          revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
+          onRevertUserMessage={onRevertUserMessage}
+          isRevertingCheckpoint={isRevertingCheckpoint}
           onImageExpand={onExpandTimelineImage}
-          messagesEndRef={messagesEndRef}
         />
       </div>
 
@@ -1043,7 +2099,21 @@ export default function ChatView() {
             onDrop={onComposerDrop}
           >
             {/* Textarea area */}
-            <div className="px-4 pt-4 pb-2">
+            <div className="relative px-4 pt-4 pb-2">
+              {composerMenuOpen && (
+                <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
+                  <ComposerCommandMenu
+                    items={composerMenuItems}
+                    resolvedTheme={resolvedTheme}
+                    isLoading={isComposerMenuLoading}
+                    triggerKind={composerTriggerKind}
+                    onHighlightedItemChange={onComposerMenuItemHighlighted}
+                    onSelect={onSelectComposerItem}
+                    commandInputRef={composerCommandInputRef}
+                  />
+                </div>
+              )}
+
               {composerImages.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-2">
                   {composerImages.map((image) => (
@@ -1083,13 +2153,33 @@ export default function ChatView() {
                 className="w-full resize-none bg-transparent text-[14px] leading-relaxed text-foreground placeholder:text-muted-foreground/35 focus:outline-none"
                 rows={2}
                 value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
+                onChange={(event) =>
+                  onPromptChange(
+                    event.target.value,
+                    event.target.selectionStart ?? event.target.value.length,
+                  )
+                }
                 onKeyDown={onKeyDown}
+                onKeyUp={(event) =>
+                  setComposerCursor(
+                    event.currentTarget.selectionStart ?? event.currentTarget.value.length,
+                  )
+                }
+                onClick={(event) =>
+                  setComposerCursor(
+                    event.currentTarget.selectionStart ?? event.currentTarget.value.length,
+                  )
+                }
+                onSelect={(event) =>
+                  setComposerCursor(
+                    event.currentTarget.selectionStart ?? event.currentTarget.value.length,
+                  )
+                }
                 onPaste={onComposerPaste}
                 placeholder={
                   phase === "disconnected"
                     ? "Ask for follow-up changes or attach images"
-                    : "Ask anything, or attach images..."
+                    : "Ask anything, @tag files/folders, or use /model"
                 }
                 disabled={isSending || isConnecting}
               />
@@ -1209,6 +2299,7 @@ export default function ChatView() {
 
       {isGitRepo && (
         <BranchToolbar
+          threadId={activeThread.id}
           envMode={envMode}
           onEnvModeChange={onEnvModeChange}
           envLocked={envLocked}
@@ -1222,6 +2313,7 @@ export default function ChatView() {
           api={api}
           threadId={activeThread.id}
           cwd={gitCwd ?? activeProject.cwd}
+          runtimeEnv={threadTerminalRuntimeEnv}
           height={activeThread.terminalHeight}
           terminalIds={activeThread.terminalIds}
           activeTerminalId={activeThread.activeTerminalId}
@@ -1284,44 +2376,70 @@ export default function ChatView() {
 }
 
 interface ChatHeaderProps {
+  activeThreadId: string;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  activeProjectScripts: ProjectScript[] | undefined;
+  preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
   api: NativeApi | undefined;
   gitCwd: string | null;
   diffOpen: boolean;
+  onRunProjectScript: (script: ProjectScript) => void;
+  onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
+  onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onToggleDiff: () => void;
 }
 
 const ChatHeader = memo(function ChatHeader({
+  activeThreadId,
   activeThreadTitle,
   activeProjectName,
+  activeProjectScripts,
+  preferredScriptId,
   keybindings,
   api,
   gitCwd,
   diffOpen,
+  onRunProjectScript,
+  onAddProjectScript,
+  onUpdateProjectScript,
   onToggleDiff,
 }: ChatHeaderProps) {
   return (
     <>
-      <div className="flex items-center gap-3">
-        <h2 className="text-sm font-medium text-foreground">{activeThreadTitle}</h2>
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <h2 className="truncate text-sm font-medium text-foreground" title={activeThreadTitle}>
+          {activeThreadTitle}
+        </h2>
         {activeProjectName && <Badge variant="outline">{activeProjectName}</Badge>}
       </div>
-      <div className="flex items-center gap-3">
-        {activeProjectName && <OpenInPicker keybindings={keybindings} />}
-        {activeProjectName && <GitActionsControl api={api} gitCwd={gitCwd} />}
-        <Button
+      <div className="shrink-0 flex items-center gap-3">
+        {activeProjectScripts && (
+          <ProjectScriptsControl
+            scripts={activeProjectScripts}
+            keybindings={keybindings}
+            preferredScriptId={preferredScriptId}
+            onRunScript={onRunProjectScript}
+            onAddScript={onAddProjectScript}
+            onUpdateScript={onUpdateProjectScript}
+          />
+        )}
+        {activeProjectName && (
+          <OpenInPicker keybindings={keybindings} activeThreadId={activeThreadId} />
+        )}
+        {activeProjectName && (
+          <GitActionsControl api={api} gitCwd={gitCwd} activeThreadId={activeThreadId} />
+        )}
+        <Toggle
+          pressed={diffOpen}
+          onPressedChange={onToggleDiff}
+          aria-label="Toggle diff panel"
+          variant="outline"
           size="xs"
-          variant="ghost"
-          className={cn(
-            "text-muted-foreground/70 hover:text-foreground/80",
-            diffOpen && "bg-accent text-accent-foreground",
-          )}
-          onClick={onToggleDiff}
         >
-          Diff
-        </Button>
+          <DiffIcon className="size-3" />
+        </Toggle>
       </div>
     </>
   );
@@ -1416,214 +2534,443 @@ const PendingApprovalsPanel = memo(function PendingApprovalsPanel({
 interface MessagesTimelineProps {
   hasMessages: boolean;
   isWorking: boolean;
+  scrollContainerRef: RefObject<HTMLDivElement | null>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   completionDividerBeforeEntryId: string | null;
   completionSummary: string | null;
   assistantCompletionByItemId: Map<string, string>;
+  turnDiffSummaryByAssistantMessageId: Map<string, TurnDiffSummary>;
+  turnCheckpointFilesByTurnId: Map<string, TurnCheckpointFilesState>;
   nowIso: string;
   expandedWorkGroups: Record<string, boolean>;
   onToggleWorkGroup: (groupId: string) => void;
+  onOpenTurnDiff: (turnId: string, filePath?: string) => void;
+  revertTurnCountByUserMessageId: Map<string, number>;
+  onRevertUserMessage: (messageId: string) => void;
+  isRevertingCheckpoint: boolean;
   onImageExpand: (image: ExpandedImagePreview) => void;
-  messagesEndRef: RefObject<HTMLDivElement | null>;
 }
+
+type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
+type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
+type TimelineWorkEntry = Extract<TimelineEntry, { kind: "work" }>["entry"];
+type TimelineRow =
+  | {
+      kind: "work";
+      id: string;
+      groupedEntries: TimelineWorkEntry[];
+    }
+  | {
+      kind: "message";
+      id: string;
+      message: TimelineMessage;
+      showCompletionDivider: boolean;
+    }
+  | { kind: "working"; id: string };
 
 const MessagesTimeline = memo(function MessagesTimeline({
   hasMessages,
   isWorking,
+  scrollContainerRef,
   timelineEntries,
   completionDividerBeforeEntryId,
   completionSummary,
   assistantCompletionByItemId,
+  turnDiffSummaryByAssistantMessageId,
+  turnCheckpointFilesByTurnId,
   nowIso,
   expandedWorkGroups,
   onToggleWorkGroup,
+  onOpenTurnDiff,
+  revertTurnCountByUserMessageId,
+  onRevertUserMessage,
+  isRevertingCheckpoint,
   onImageExpand,
-  messagesEndRef,
 }: MessagesTimelineProps) {
+  const rows = useMemo<TimelineRow[]>(() => {
+    const nextRows: TimelineRow[] = [];
+
+    for (let index = 0; index < timelineEntries.length; index += 1) {
+      const timelineEntry = timelineEntries[index];
+      if (!timelineEntry) {
+        continue;
+      }
+
+      if (timelineEntry.kind === "work") {
+        const groupedEntries = [timelineEntry.entry];
+        let cursor = index + 1;
+        while (cursor < timelineEntries.length) {
+          const nextEntry = timelineEntries[cursor];
+          if (!nextEntry || nextEntry.kind !== "work") break;
+          groupedEntries.push(nextEntry.entry);
+          cursor += 1;
+        }
+        nextRows.push({
+          kind: "work",
+          id: timelineEntry.id,
+          groupedEntries,
+        });
+        index = cursor - 1;
+        continue;
+      }
+
+      nextRows.push({
+        kind: "message",
+        id: timelineEntry.id,
+        message: timelineEntry.message,
+        showCompletionDivider:
+          timelineEntry.message.role === "assistant" &&
+          completionDividerBeforeEntryId === timelineEntry.id,
+      });
+    }
+
+    if (isWorking) {
+      nextRows.push({ kind: "working", id: "working-indicator-row" });
+    }
+
+    return nextRows;
+  }, [timelineEntries, completionDividerBeforeEntryId, isWorking]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: (index: number) => {
+      const row = rows[index];
+      if (!row) return 96;
+      if (row.kind === "work") return 112;
+      if (row.kind === "working") return 40;
+      return row.message.role === "assistant" ? 220 : 170;
+    },
+    measureElement: (element: HTMLElement) => element.getBoundingClientRect().height,
+    overscan: 8,
+  });
+
+  const virtualRows = rowVirtualizer.getVirtualItems();
+
   if (!hasMessages && !isWorking) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground/30">Send a message to start the conversation.</p>
+        <p className="text-sm text-muted-foreground/30">
+          Send a message to start the conversation.
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
-      {timelineEntries.map((timelineEntry, index) => {
-        if (timelineEntry.kind === "work" && timelineEntries[index - 1]?.kind === "work") {
-          return null;
-        }
-
-        const showCompletionDivider =
-          timelineEntry.kind === "message" &&
-          timelineEntry.message.role === "assistant" &&
-          completionDividerBeforeEntryId === timelineEntry.id;
-
-        if (timelineEntry.kind === "work") {
-          const groupedEntries = [timelineEntry.entry];
-          let cursor = index + 1;
-          while (cursor < timelineEntries.length) {
-            const nextEntry = timelineEntries[cursor];
-            if (!nextEntry || nextEntry.kind !== "work") break;
-            groupedEntries.push(nextEntry.entry);
-            cursor += 1;
-          }
-
-          const groupId = timelineEntry.id;
-          const isExpanded = expandedWorkGroups[groupId] ?? false;
-          const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
-          const visibleEntries =
-            hasOverflow && !isExpanded
-              ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
-              : groupedEntries;
-          const hiddenCount = groupedEntries.length - visibleEntries.length;
-          const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
-          const groupLabel = onlyToolEntries
-            ? groupedEntries.length === 1
-              ? "Tool call"
-              : `Tool calls (${groupedEntries.length})`
-            : groupedEntries.length === 1
-              ? "Work event"
-              : `Work log (${groupedEntries.length})`;
-
-          return (
-            <Fragment key={timelineEntry.id}>
-              <div className="rounded-lg border border-border/80 bg-card/45 px-3 py-2">
-                <div className="mb-1.5 flex items-center justify-between gap-3">
-                  <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
-                    {groupLabel}
-                  </p>
-                  {hasOverflow && (
-                    <button
-                      type="button"
-                      className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-muted-foreground/80"
-                      onClick={() => onToggleWorkGroup(groupId)}
-                    >
-                      {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
-                    </button>
-                  )}
-                </div>
-                <div className="space-y-1">
-                  {visibleEntries.map((workEntry) => (
-                    <div key={`work-row:${workEntry.id}`} className="flex items-start gap-2 py-0.5">
-                      <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
-                      <p
-                        className={`py-[2px] text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}
-                      >
-                        {workEntry.detail ? (
-                          <>
-                            {workEntry.label}
-                            <span
-                              className="ml-1.5 inline-block max-w-[70ch] truncate align-bottom font-mono text-[11px] opacity-60"
-                              title={workEntry.detail}
-                            >
-                              {workEntry.detail}
-                            </span>
-                          </>
-                        ) : (
-                          workEntry.label
-                        )}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </Fragment>
-          );
-        }
-
-        if (timelineEntry.message.role === "user") {
-          const userImages = timelineEntry.message.attachments ?? [];
-          return (
-            <Fragment key={timelineEntry.id}>
-              <div className="flex justify-end">
-                <div className="max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
-                  {userImages.length > 0 && (
-                    <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-                      {userImages.map((image) => (
-                        <div
-                          key={image.id}
-                          className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
-                        >
-                          {image.previewUrl ? (
-                            <img
-                              src={image.previewUrl}
-                              alt={image.name}
-                              className="h-full max-h-[220px] w-full cursor-zoom-in object-cover"
-                              onClick={() =>
-                                onImageExpand({ src: image.previewUrl!, name: image.name })
-                              }
-                            />
-                          ) : (
-                            <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
-                              {image.name}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {timelineEntry.message.text && (
-                    <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
-                      {timelineEntry.message.text}
-                    </pre>
-                  )}
-                  <p className="mt-1.5 text-right text-[10px] text-muted-foreground/30">
-                    {formatTimestamp(timelineEntry.message.createdAt)}
-                  </p>
-                </div>
-              </div>
-            </Fragment>
-          );
-        }
+    <div
+      className="relative mx-auto max-w-3xl"
+      style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+    >
+      {virtualRows.map((virtualRow: VirtualItem) => {
+        const row = rows[virtualRow.index];
+        if (!row) return null;
 
         return (
-          <Fragment key={timelineEntry.id}>
-            {showCompletionDivider && (
-              <div className="my-3 flex items-center gap-3">
-                <span className="h-px flex-1 bg-border" />
-                <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
-                  {completionSummary ? `Response • ${completionSummary}` : "Response"}
-                </span>
-                <span className="h-px flex-1 bg-border" />
-              </div>
-            )}
-            <div className="px-1 py-0.5">
-              <ChatMarkdown
-                text={
-                  timelineEntry.message.text ||
-                  (timelineEntry.message.streaming ? "" : "(empty response)")
-                }
-              />
-              <p className="mt-1.5 text-[10px] text-muted-foreground/30">
-                {formatMessageMeta(
-                  timelineEntry.message.createdAt,
-                  timelineEntry.message.streaming
-                    ? formatElapsed(timelineEntry.message.createdAt, nowIso)
-                    : formatElapsed(
-                        timelineEntry.message.createdAt,
-                        assistantCompletionByItemId.get(timelineEntry.message.id),
-                      ),
-                )}
-              </p>
+          <div
+            key={row.id}
+            data-index={virtualRow.index}
+            ref={rowVirtualizer.measureElement}
+            className="absolute left-0 top-0 w-full"
+            style={{ transform: `translateY(${virtualRow.start}px)` }}
+          >
+            <div className="pb-4">
+              {row.kind === "work" &&
+                (() => {
+                  const groupId = row.id;
+                  const groupedEntries = row.groupedEntries;
+                  const isExpanded = expandedWorkGroups[groupId] ?? false;
+                  const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
+                  const visibleEntries =
+                    hasOverflow && !isExpanded
+                      ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
+                      : groupedEntries;
+                  const hiddenCount = groupedEntries.length - visibleEntries.length;
+                  const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
+                  const groupLabel = onlyToolEntries
+                    ? groupedEntries.length === 1
+                      ? "Tool call"
+                      : `Tool calls (${groupedEntries.length})`
+                    : groupedEntries.length === 1
+                      ? "Work event"
+                      : `Work log (${groupedEntries.length})`;
+
+                  return (
+                    <div className="rounded-lg border border-border/80 bg-card/45 px-3 py-2">
+                      <div className="mb-1.5 flex items-center justify-between gap-3">
+                        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+                          {groupLabel}
+                        </p>
+                        {hasOverflow && (
+                          <button
+                            type="button"
+                            className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-muted-foreground/80"
+                            onClick={() => onToggleWorkGroup(groupId)}
+                          >
+                            {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
+                          </button>
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        {visibleEntries.map((workEntry) => (
+                          <div
+                            key={`work-row:${workEntry.id}`}
+                            className="flex items-start gap-2 py-0.5"
+                          >
+                            <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
+                            <p
+                              className={`py-[2px] text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}
+                            >
+                              {workEntry.detail ? (
+                                <>
+                                  {workEntry.label}
+                                  <span
+                                    className="ml-1.5 inline-block max-w-[70ch] truncate align-bottom font-mono text-[11px] opacity-60"
+                                    title={workEntry.detail}
+                                  >
+                                    {workEntry.detail}
+                                  </span>
+                                </>
+                              ) : (
+                                workEntry.label
+                              )}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+              {row.kind === "message" &&
+                row.message.role === "user" &&
+                (() => {
+                  const userImages = row.message.attachments ?? [];
+                  const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
+                  return (
+                    <div className="flex justify-end">
+                      <div className="max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
+                        {userImages.length > 0 && (
+                          <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+                            {userImages.map(
+                              (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+                                <div
+                                  key={image.id}
+                                  className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                                >
+                                  {image.previewUrl ? (
+                                    <img
+                                      src={image.previewUrl}
+                                      alt={image.name}
+                                      className="h-full max-h-[220px] w-full cursor-zoom-in object-cover"
+                                      onClick={() =>
+                                        onImageExpand({ src: image.previewUrl!, name: image.name })
+                                      }
+                                    />
+                                  ) : (
+                                    <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
+                                      {image.name}
+                                    </div>
+                                  )}
+                                </div>
+                              ),
+                            )}
+                          </div>
+                        )}
+                        {row.message.text && (
+                          <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+                            {row.message.text}
+                          </pre>
+                        )}
+                        <div className="mt-1.5 flex items-center justify-end gap-2">
+                          {canRevertAgentWork && (
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="outline"
+                              disabled={isRevertingCheckpoint || isWorking}
+                              onClick={() => onRevertUserMessage(row.message.id)}
+                            >
+                              <Undo2Icon className="size-3" />
+                            </Button>
+                          )}
+                          <p className="text-right text-[10px] text-muted-foreground/30">
+                            {formatTimestamp(row.message.createdAt)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+              {row.kind === "message" &&
+                row.message.role === "assistant" &&
+                (() => {
+                  const messageText =
+                    row.message.text || (row.message.streaming ? "" : "(empty response)");
+                  return (
+                    <>
+                      {row.showCompletionDivider && (
+                        <div className="my-3 flex items-center gap-3">
+                          <span className="h-px flex-1 bg-border" />
+                          <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
+                            {completionSummary ? `Response • ${completionSummary}` : "Response"}
+                          </span>
+                          <span className="h-px flex-1 bg-border" />
+                        </div>
+                      )}
+                      <div className="px-1 py-0.5">
+                        <ChatMarkdown text={messageText} />
+                        {(() => {
+                          const turnSummary = turnDiffSummaryByAssistantMessageId.get(
+                            row.message.id,
+                          );
+                          if (!turnSummary) return null;
+                          const checkpointFilesState = turnCheckpointFilesByTurnId.get(
+                            turnSummary.turnId,
+                          );
+                          const checkpointFiles = checkpointFilesState?.files ?? [];
+                          const summaryStat = checkpointFiles.reduce(
+                            (acc, file) => {
+                              if (
+                                typeof file.additions !== "number" ||
+                                typeof file.deletions !== "number"
+                              ) {
+                                return acc;
+                              }
+                              return {
+                                additions: acc.additions + file.additions,
+                                deletions: acc.deletions + file.deletions,
+                              };
+                            },
+                            { additions: 0, deletions: 0 },
+                          );
+                          const changedFileCountLabel =
+                            checkpointFilesState?.status === "ready"
+                              ? String(checkpointFiles.length)
+                              : "...";
+                          return (
+                            <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
+                              <div className="mb-1.5 flex items-center justify-between gap-2">
+                                <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+                                  <span>Changed files ({changedFileCountLabel})</span>
+                                  {(summaryStat.additions > 0 || summaryStat.deletions > 0) && (
+                                    <>
+                                      <span className="mx-1">•</span>
+                                      <span className="text-success">+{summaryStat.additions}</span>
+                                      <span className="mx-0.5 text-muted-foreground/70">/</span>
+                                      <span className="text-destructive">
+                                        -{summaryStat.deletions}
+                                      </span>
+                                    </>
+                                  )}
+                                </p>
+                                <Button
+                                  type="button"
+                                  size="xs"
+                                  variant="outline"
+                                  onClick={() =>
+                                    onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)
+                                  }
+                                >
+                                  View diff
+                                </Button>
+                              </div>
+                              {!checkpointFilesState ||
+                              checkpointFilesState.status === "pending" ? (
+                                <p className="text-[11px] text-muted-foreground/70">
+                                  Waiting for checkpoint metadata...
+                                </p>
+                              ) : checkpointFilesState?.status === "loading" ? (
+                                <p className="text-[11px] text-muted-foreground/70">
+                                  Loading checkpoint diff...
+                                </p>
+                              ) : checkpointFilesState?.status === "error" ? (
+                                <p
+                                  className="truncate text-[11px] text-muted-foreground/70"
+                                  title={checkpointFilesState.errorMessage}
+                                >
+                                  {checkpointFilesState.errorMessage}
+                                </p>
+                              ) : checkpointFiles.length > 0 ? (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {checkpointFiles.map((file) => (
+                                    <button
+                                      key={`${turnSummary.turnId}:${file.path}`}
+                                      type="button"
+                                      className="rounded-md border border-border/70 bg-background/70 px-2 py-1 font-mono text-[11px] text-muted-foreground/80 transition-colors hover:border-border hover:text-foreground/90"
+                                      onClick={() => onOpenTurnDiff(turnSummary.turnId, file.path)}
+                                    >
+                                      {(() => {
+                                        const stat =
+                                          typeof file.additions === "number" &&
+                                          typeof file.deletions === "number"
+                                            ? {
+                                                additions: file.additions,
+                                                deletions: file.deletions,
+                                              }
+                                            : null;
+                                        if (!stat) {
+                                          return file.path;
+                                        }
+                                        return (
+                                          <>
+                                            <span>{file.path}</span>
+                                            <span className="ml-1 text-muted-foreground/70">(</span>
+                                            <span className="text-success">+{stat.additions}</span>
+                                            <span className="mx-0.5 text-muted-foreground/70">
+                                              /
+                                            </span>
+                                            <span className="text-destructive">
+                                              -{stat.deletions}
+                                            </span>
+                                            <span className="text-muted-foreground/70">)</span>
+                                          </>
+                                        );
+                                      })()}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-[11px] text-muted-foreground/70">
+                                  No changed files.
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })()}
+                        <p className="mt-1.5 text-[10px] text-muted-foreground/30">
+                          {formatMessageMeta(
+                            row.message.createdAt,
+                            row.message.streaming
+                              ? formatElapsed(row.message.createdAt, nowIso)
+                              : formatElapsed(
+                                  row.message.createdAt,
+                                  assistantCompletionByItemId.get(row.message.id),
+                                ),
+                          )}
+                        </p>
+                      </div>
+                    </>
+                  );
+                })()}
+
+              {row.kind === "working" && (
+                <div className="flex items-center gap-2 py-0.5 pl-1.5">
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
+                  <div className="flex items-center pt-1">
+                    <span className="inline-flex items-center gap-[3px]">
+                      <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
+                      <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
+                      <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
-          </Fragment>
+          </div>
         );
       })}
-      {isWorking && (
-        <div className="flex items-center gap-2 py-0.5 pl-1.5">
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
-          <div className="flex items-center pt-1">
-            <span className="inline-flex items-center gap-[3px]">
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
-            </span>
-          </div>
-        </div>
-      )}
-      <div ref={messagesEndRef} />
     </div>
   );
 });
@@ -1678,8 +3025,10 @@ const ReasoningEffortPicker = memo(function ReasoningEffortPicker(props: {
 
 const OpenInPicker = memo(function OpenInPicker({
   keybindings,
+  activeThreadId,
 }: {
   keybindings: ResolvedKeybindingsConfig;
+  activeThreadId: string | null;
 }) {
   const [lastEditor, setLastEditor] = useState<EditorId>(() => {
     const stored = localStorage.getItem(LAST_EDITOR_KEY);
@@ -1706,7 +3055,7 @@ const OpenInPicker = memo(function OpenInPicker({
 
   const api = useNativeApi();
   const { state } = useStore();
-  const activeThread = state.threads.find((t) => t.id === state.activeThreadId);
+  const activeThread = state.threads.find((t) => t.id === activeThreadId);
   const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
 
   const openInEditor = useCallback(

@@ -5,6 +5,8 @@ import {
   type WorkLogEntry,
   applyEventToMessages,
   derivePendingApprovals,
+  deriveTurnDiffFilesFromUnifiedDiff,
+  deriveTurnDiffSummaries,
   deriveTimelineEntries,
   deriveWorkLogEntries,
   evolveSession,
@@ -390,6 +392,239 @@ describe("deriveWorkLogEntries", () => {
 
     expect(entries).toHaveLength(2);
     expect(entries.map((entry) => entry.detail)).toEqual(["pwd", "ls -la"]);
+  });
+});
+
+describe("deriveTurnDiffSummaries", () => {
+  it("tracks completed turns and links them to assistant message completion", () => {
+    const summaries = deriveTurnDiffSummaries([
+      makeEvent({
+        id: "evt-turn-start",
+        method: "turn/started",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:00.000Z",
+      }),
+      makeEvent({
+        id: "evt-file-change",
+        method: "item/completed",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:01.000Z",
+        payload: {
+          item: {
+            id: "item-file-change",
+            type: "fileChange",
+            status: "completed",
+            changes: [
+              {
+                path: "src/a.ts",
+                kind: "modified",
+                diff: "diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n",
+              },
+            ],
+          },
+        },
+      }),
+      makeEvent({
+        id: "evt-turn-diff-updated",
+        method: "turn/diff/updated",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:02.000Z",
+        payload: {
+          threadId: "thr-1",
+          turnId: "turn-1",
+          diff: [
+            "diff --git a/src/a.ts b/src/a.ts",
+            "@@ -1 +1 @@",
+            "-old",
+            "+new",
+            "diff --git a/src/b.ts b/src/b.ts",
+            "@@ -0,0 +1 @@",
+            "+created",
+          ].join("\n"),
+        },
+      }),
+      makeEvent({
+        id: "evt-agent-msg",
+        method: "item/completed",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:03.000Z",
+        payload: {
+          item: {
+            id: "msg-1",
+            type: "agentMessage",
+            text: "Done",
+          },
+        },
+      }),
+      makeEvent({
+        id: "evt-turn-completed",
+        method: "turn/completed",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:04.000Z",
+        payload: {
+          turn: {
+            id: "turn-1",
+            status: "completed",
+          },
+        },
+      }),
+      makeEvent({
+        id: "evt-turn-2-file-change",
+        method: "item/completed",
+        turnId: "turn-2",
+        createdAt: "2026-02-08T10:00:05.000Z",
+        payload: {
+          item: {
+            id: "item-file-change-2",
+            type: "fileChange",
+            status: "completed",
+            changes: [
+              {
+                path: "src/unfinished.ts",
+                kind: "modified",
+                diff: "diff --git a/src/unfinished.ts b/src/unfinished.ts",
+              },
+            ],
+          },
+        },
+      }),
+    ]);
+
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.turnId).toBe("turn-1");
+    expect(summaries[0]?.assistantMessageId).toBe("msg-1");
+    expect(summaries[0]?.files.map((file) => file.path)).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(summaries[0]?.files[0]?.kind).toBe("modified");
+    expect(summaries[0]?.files[0]?.additions).toBe(1);
+    expect(summaries[0]?.files[0]?.deletions).toBe(1);
+    expect(summaries[0]).not.toHaveProperty("unifiedDiff");
+  });
+
+  it("includes completed turns even when no fileChange tool events were emitted", () => {
+    const summaries = deriveTurnDiffSummaries([
+      makeEvent({
+        id: "evt-turn-start",
+        method: "turn/started",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:00.000Z",
+      }),
+      makeEvent({
+        id: "evt-turn-completed",
+        method: "turn/completed",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:01.000Z",
+        payload: {
+          turn: {
+            id: "turn-1",
+            status: "completed",
+          },
+        },
+      }),
+    ]);
+
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.turnId).toBe("turn-1");
+    expect(summaries[0]?.files).toEqual([]);
+  });
+
+  it("keeps newest diff data when older events provide stale values", () => {
+    const summaries = deriveTurnDiffSummaries([
+      makeEvent({
+        id: "evt-turn-diff-old",
+        method: "turn/diff/updated",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:01.000Z",
+        payload: {
+          diff: [
+            "diff --git a/src/example.ts b/src/example.ts",
+            "@@ -1 +1,2 @@",
+            "-old",
+            "+older",
+            "+extra",
+          ].join("\n"),
+        },
+      }),
+      makeEvent({
+        id: "evt-turn-diff-new",
+        method: "turn/diff/updated",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:02.000Z",
+        payload: {
+          diff: [
+            "diff --git a/src/example.ts b/src/example.ts",
+            "@@ -1 +1 @@",
+            "-old",
+            "+newest",
+          ].join("\n"),
+        },
+      }),
+      makeEvent({
+        id: "evt-turn-completed",
+        method: "turn/completed",
+        turnId: "turn-1",
+        createdAt: "2026-02-08T10:00:03.000Z",
+        payload: {
+          turn: {
+            id: "turn-1",
+            status: "completed",
+          },
+        },
+      }),
+    ]);
+
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.files[0]?.path).toBe("src/example.ts");
+    expect(summaries[0]?.files[0]?.additions).toBe(1);
+    expect(summaries[0]?.files[0]?.deletions).toBe(1);
+  });
+});
+
+describe("deriveTurnDiffFilesFromUnifiedDiff", () => {
+  it("splits a multi-file patch into sorted per-file entries", () => {
+    const files = deriveTurnDiffFilesFromUnifiedDiff(
+      [
+        "diff --git a/src/b.ts b/src/b.ts",
+        "@@ -1 +1 @@",
+        "-old-b",
+        "+new-b",
+        "diff --git a/src/a.ts b/src/a.ts",
+        "@@ -1 +1 @@",
+        "-old-a",
+        "+new-a",
+      ].join("\n"),
+    );
+
+    expect(files.map((file) => file.path)).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(files[0]?.additions).toBe(1);
+    expect(files[0]?.deletions).toBe(1);
+  });
+
+  it("parses git headers when file paths include ` b/`", () => {
+    const files = deriveTurnDiffFilesFromUnifiedDiff(
+      [
+        "diff --git a/subdir b/example.ts b/subdir b/example.ts",
+        "--- a/subdir b/example.ts",
+        "+++ b/subdir b/example.ts",
+        "@@ -1 +1 @@",
+        "-old",
+        "+new",
+      ].join("\n"),
+    );
+
+    expect(files).toHaveLength(1);
+    expect(files[0]?.path).toBe("subdir b/example.ts");
+  });
+
+  it("parses git header fallback for binary diffs with ` b/` in path", () => {
+    const files = deriveTurnDiffFilesFromUnifiedDiff(
+      [
+        "diff --git a/subdir b/image.png b/subdir b/image.png",
+        "Binary files a/subdir b/image.png and b/subdir b/image.png differ",
+      ].join("\n"),
+    );
+
+    expect(files).toHaveLength(1);
+    expect(files[0]?.path).toBe("subdir b/image.png");
   });
 });
 
