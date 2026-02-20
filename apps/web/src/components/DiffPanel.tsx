@@ -2,8 +2,8 @@ import { parsePatchFiles } from "@pierre/diffs";
 import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { Columns2Icon, Rows3Icon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeftIcon, ChevronRightIcon, Columns2Icon, Rows3Icon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -12,7 +12,6 @@ import { useNativeApi } from "../hooks/useNativeApi";
 import { useTheme } from "../hooks/useTheme";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
-import { formatTimestamp } from "../session-logic";
 import { useStore } from "../store";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
@@ -68,6 +67,13 @@ function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
   return fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
 }
 
+function formatTurnChipTimestamp(isoDate: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(isoDate));
+}
+
 interface DiffPanelProps {
   mode?: "inline" | "sheet";
 }
@@ -81,6 +87,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const { state } = useStore();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const patchViewportRef = useRef<HTMLDivElement>(null);
+  const turnStripRef = useRef<HTMLDivElement>(null);
+  const [canScrollTurnStripLeft, setCanScrollTurnStripLeft] = useState(false);
+  const [canScrollTurnStripRight, setCanScrollTurnStripRight] = useState(false);
   const params = useParams({ strict: false });
   const rawSearch = useSearch({ strict: false });
   const routeThreadId = typeof params.threadId === "string" ? params.threadId : null;
@@ -217,6 +226,64 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       },
     });
   };
+  const updateTurnStripScrollState = useCallback(() => {
+    const element = turnStripRef.current;
+    if (!element) {
+      setCanScrollTurnStripLeft(false);
+      setCanScrollTurnStripRight(false);
+      return;
+    }
+
+    const maxScrollLeft = Math.max(0, element.scrollWidth - element.clientWidth);
+    setCanScrollTurnStripLeft(element.scrollLeft > 4);
+    setCanScrollTurnStripRight(element.scrollLeft < maxScrollLeft - 4);
+  }, []);
+  const scrollTurnStripBy = useCallback((offset: number) => {
+    const element = turnStripRef.current;
+    if (!element) return;
+    element.scrollBy({ left: offset, behavior: "smooth" });
+  }, []);
+  const onTurnStripWheel = useCallback((event: WheelEvent) => {
+    const element = turnStripRef.current;
+    if (!element) return;
+    if (element.scrollWidth <= element.clientWidth + 1) return;
+    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+
+    event.preventDefault();
+    element.scrollBy({ left: event.deltaY, behavior: "auto" });
+  }, []);
+
+  useEffect(() => {
+    const element = turnStripRef.current;
+    if (!element) return;
+
+    updateTurnStripScrollState();
+    const onScroll = () => updateTurnStripScrollState();
+    
+    element.addEventListener("scroll", onScroll, { passive: true });
+    element.addEventListener("wheel", onTurnStripWheel, { passive: false });
+
+    const resizeObserver = new ResizeObserver(() => updateTurnStripScrollState());
+    resizeObserver.observe(element);
+
+    return () => {
+      element.removeEventListener("scroll", onScroll);
+      element.removeEventListener("wheel", onTurnStripWheel);
+      resizeObserver.disconnect();
+    };
+  }, [updateTurnStripScrollState, onTurnStripWheel]);
+
+  useEffect(() => {
+    updateTurnStripScrollState();
+  }, [turnDiffSummaries, selectedTurnId, updateTurnStripScrollState]);
+
+  useEffect(() => {
+    const element = turnStripRef.current;
+    if (!element) return;
+
+    const selectedChip = element.querySelector<HTMLElement>("[data-turn-chip-selected='true']");
+    selectedChip?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+  }, [selectedTurn?.turnId, selectedTurnId]);
 
   const shouldUseDragRegion = isElectron && mode === "inline";
 
@@ -231,49 +298,98 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     >
       <div
         className={cn(
-          "flex items-center justify-between border-b border-border px-4",
+          "flex items-center justify-between gap-2 border-b border-border px-4",
           shouldUseDragRegion ? "drag-region h-[52px]" : "py-3",
         )}
       >
-        <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-          <button type="button" className="shrink-0 rounded-md" onClick={selectWholeConversation}>
-            <div
-              className={cn(
-                "rounded-md border px-2 py-1 text-left transition-colors",
-                selectedTurnId === null
-                  ? "border-border bg-accent text-accent-foreground"
-                  : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
-              )}
-            >
-              <div className="text-[10px] font-medium">All turns</div>
-              <div className="text-[8px] opacity-70">Conversation</div>
-            </div>
+        <div className="relative min-w-0 flex-1 [-webkit-app-region:no-drag]">
+          {canScrollTurnStripLeft && (
+            <div className="pointer-events-none absolute inset-y-0 left-8 z-10 w-7 bg-gradient-to-r from-card to-transparent" />
+          )}
+          {canScrollTurnStripRight && (
+            <div className="pointer-events-none absolute inset-y-0 right-8 z-10 w-7 bg-gradient-to-l from-card to-transparent" />
+          )}
+          <button
+            type="button"
+            className={cn(
+              "absolute left-0 top-1/2 z-20 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md border bg-background/90 text-muted-foreground transition-colors",
+              canScrollTurnStripLeft
+                ? "border-border/70 hover:border-border hover:text-foreground"
+                : "cursor-not-allowed border-border/40 text-muted-foreground/40",
+            )}
+            onClick={() => scrollTurnStripBy(-180)}
+            disabled={!canScrollTurnStripLeft}
+            aria-label="Scroll turn list left"
+          >
+            <ChevronLeftIcon className="size-3.5" />
           </button>
-          {turnDiffSummaries.map((summary, index) => (
+          <button
+            type="button"
+            className={cn(
+              "absolute right-0 top-1/2 z-20 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md border bg-background/90 text-muted-foreground transition-colors",
+              canScrollTurnStripRight
+                ? "border-border/70 hover:border-border hover:text-foreground"
+                : "cursor-not-allowed border-border/40 text-muted-foreground/40",
+            )}
+            onClick={() => scrollTurnStripBy(180)}
+            disabled={!canScrollTurnStripRight}
+            aria-label="Scroll turn list right"
+          >
+            <ChevronRightIcon className="size-3.5" />
+          </button>
+          <div
+            ref={turnStripRef}
+            className="turn-chip-strip flex gap-1 overflow-x-auto px-8 py-0.5"
+          >
             <button
-              key={summary.turnId}
               type="button"
               className="shrink-0 rounded-md"
-              onClick={() => selectTurn(summary.turnId)}
-              title={summary.turnId}
+              onClick={selectWholeConversation}
+              data-turn-chip-selected={selectedTurnId === null}
             >
               <div
                 className={cn(
                   "rounded-md border px-2 py-1 text-left transition-colors",
-                  summary.turnId === selectedTurn?.turnId
+                  selectedTurnId === null
                     ? "border-border bg-accent text-accent-foreground"
                     : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
                 )}
               >
-                <div className="text-[10px] font-medium">
-                  Turn {turnDiffSummaries.length - index}
-                </div>
-                <div className="text-[8px] opacity-70">{formatTimestamp(summary.completedAt)}</div>
+                <div className="text-[10px] leading-tight font-medium">All turns</div>
               </div>
             </button>
-          ))}
+            {turnDiffSummaries.map((summary, index) => (
+              <button
+                key={summary.turnId}
+                type="button"
+                className="shrink-0 rounded-md"
+                onClick={() => selectTurn(summary.turnId)}
+                title={summary.turnId}
+                data-turn-chip-selected={summary.turnId === selectedTurn?.turnId}
+              >
+                <div
+                  className={cn(
+                    "rounded-md border px-2 py-1 text-left transition-colors",
+                    summary.turnId === selectedTurn?.turnId
+                      ? "border-border bg-accent text-accent-foreground"
+                      : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
+                  )}
+                >
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] leading-tight font-medium">
+                      Turn {turnDiffSummaries.length - index}
+                    </span>
+                    <span className="text-[9px] leading-tight opacity-70">
+                      {formatTurnChipTimestamp(summary.completedAt)}
+                    </span>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
         <ToggleGroup
+          className="shrink-0 [-webkit-app-region:no-drag]"
           variant="outline"
           size="xs"
           value={[diffRenderMode]}
