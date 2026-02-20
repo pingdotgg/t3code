@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Activity, Suspense, lazy, type ReactNode, useCallback, useEffect } from "react";
+import { Suspense, lazy, type ReactNode, useCallback, useEffect } from "react";
 
 import ChatView from "../components/ChatView";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -97,13 +97,11 @@ function ChatThreadRouteView() {
   return (
     <>
       <ChatView threadId={threadId} />
-      <Activity mode={diffOpen ? "visible" : "hidden"}>
-        <DiffPanelWrapper sheet={shouldUseDiffSheet} diffOpen={diffOpen} onCloseDiff={closeDiff}>
-          <Suspense fallback={diffLoadingFallback}>
-            <DiffPanel mode={shouldUseDiffSheet ? "sheet" : "inline"} />
-          </Suspense>
-        </DiffPanelWrapper>
-      </Activity>
+      <DiffPanelWrapper sheet={shouldUseDiffSheet} diffOpen={diffOpen} onCloseDiff={closeDiff}>
+        <Suspense fallback={diffLoadingFallback}>
+          <DiffPanel mode={shouldUseDiffSheet ? "sheet" : "inline"} />
+        </Suspense>
+      </DiffPanelWrapper>
     </>
   );
 }

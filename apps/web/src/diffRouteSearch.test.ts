@@ -17,6 +17,28 @@ describe("parseDiffRouteSearch", () => {
     });
   });
 
+  it("treats numeric and boolean diff toggles as open", () => {
+    expect(
+      parseDiffRouteSearch({
+        diff: 1,
+        diffTurnId: "turn-1",
+      }),
+    ).toEqual({
+      diff: "1",
+      diffTurnId: "turn-1",
+    });
+
+    expect(
+      parseDiffRouteSearch({
+        diff: true,
+        diffTurnId: "turn-1",
+      }),
+    ).toEqual({
+      diff: "1",
+      diffTurnId: "turn-1",
+    });
+  });
+
   it("drops turn and file values when diff is closed", () => {
     const parsed = parseDiffRouteSearch({
       diff: "0",
@@ -50,4 +72,3 @@ describe("parseDiffRouteSearch", () => {
     });
   });
 });
-

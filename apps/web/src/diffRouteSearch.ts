@@ -4,6 +4,10 @@ export interface DiffRouteSearch {
   diffFilePath?: string;
 }
 
+function isDiffOpenValue(value: unknown): boolean {
+  return value === "1" || value === 1 || value === true;
+}
+
 function normalizeSearchString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -20,7 +24,7 @@ export function stripDiffSearchParams<T extends Record<string, unknown>>(
 }
 
 export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRouteSearch {
-  const diff = search.diff === "1" ? "1" : undefined;
+  const diff = isDiffOpenValue(search.diff) ? "1" : undefined;
   const diffTurnId = diff ? normalizeSearchString(search.diffTurnId) : undefined;
   const diffFilePath = diff && diffTurnId ? normalizeSearchString(search.diffFilePath) : undefined;
 
