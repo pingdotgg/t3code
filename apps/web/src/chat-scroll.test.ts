@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX, isScrollContainerNearBottom } from "./chat-scroll";
+import { AUTO_SCROLL_BOTTOM_EPSILON_PX, isScrollContainerAtBottom } from "./chat-scroll";
 
-describe("isScrollContainerNearBottom", () => {
+describe("isScrollContainerAtBottom", () => {
   it("returns true when already at bottom", () => {
     expect(
-      isScrollContainerNearBottom({
+      isScrollContainerAtBottom({
         scrollTop: 600,
         clientHeight: 400,
         scrollHeight: 1_000,
@@ -13,31 +13,31 @@ describe("isScrollContainerNearBottom", () => {
     ).toBe(true);
   });
 
-  it("returns true when within the auto-scroll threshold", () => {
+  it("returns true when within the bottom epsilon", () => {
     expect(
-      isScrollContainerNearBottom({
-        scrollTop: 540,
+      isScrollContainerAtBottom({
+        scrollTop: 599,
         clientHeight: 400,
         scrollHeight: 1_000,
       }),
     ).toBe(true);
   });
 
-  it("returns false when the user is meaningfully above the bottom", () => {
+  it("returns false when the user is above the epsilon", () => {
     expect(
-      isScrollContainerNearBottom({
-        scrollTop: 520,
+      isScrollContainerAtBottom({
+        scrollTop: 597,
         clientHeight: 400,
         scrollHeight: 1_000,
       }),
     ).toBe(false);
   });
 
-  it("clamps negative thresholds to zero", () => {
+  it("clamps negative epsilons to zero", () => {
     expect(
-      isScrollContainerNearBottom(
+      isScrollContainerAtBottom(
         {
-          scrollTop: 539,
+          scrollTop: 599,
           clientHeight: 400,
           scrollHeight: 1_000,
         },
@@ -46,17 +46,27 @@ describe("isScrollContainerNearBottom", () => {
     ).toBe(false);
   });
 
-  it("falls back to the default threshold for non-finite values", () => {
+  it("falls back to the default epsilon for non-finite values", () => {
     expect(
-      isScrollContainerNearBottom(
+      isScrollContainerAtBottom(
         {
-          scrollTop: 540,
+          scrollTop: 599,
           clientHeight: 400,
           scrollHeight: 1_000,
         },
         Number.NaN,
       ),
     ).toBe(true);
-    expect(AUTO_SCROLL_BOTTOM_THRESHOLD_PX).toBe(64);
+    expect(AUTO_SCROLL_BOTTOM_EPSILON_PX).toBe(2);
+  });
+
+  it("treats overscrolled values as bottom", () => {
+    expect(
+      isScrollContainerAtBottom({
+        scrollTop: 610,
+        clientHeight: 400,
+        scrollHeight: 1_000,
+      }),
+    ).toBe(true);
   });
 });

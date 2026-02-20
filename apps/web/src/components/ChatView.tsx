@@ -17,6 +17,9 @@ import {
   type DragEvent,
   type FormEvent,
   type KeyboardEvent,
+  type PointerEvent,
+  type TouchEvent,
+  type WheelEvent,
   memo,
   type RefObject,
   useCallback,
@@ -64,7 +67,7 @@ import {
   formatElapsed,
   formatTimestamp,
 } from "../session-logic";
-import { isScrollContainerNearBottom } from "../chat-scroll";
+import { isScrollContainerAtBottom } from "../chat-scroll";
 import { useStore } from "../store";
 import { truncateTitle } from "../truncateTitle";
 import {
@@ -408,6 +411,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   >(() => readLastInvokedScriptByProjectFromStorage());
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
+  const lastKnownScrollTopRef = useRef(0);
+  const isPointerScrollActiveRef = useRef(false);
+  const lastTouchClientYRef = useRef<number | null>(null);
+  const pendingUserScrollUpIntentRef = useRef(false);
+  const pendingAutoScrollFrameRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerCommandInputRef = useRef<HTMLInputElement>(null);
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
@@ -1107,33 +1115,97 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
   }, [lastInvokedScriptByProjectId]);
 
-  // Auto-scroll on new messages
-  const messageCount = activeThread?.messages.length ?? 0;
+  // Auto-tail while the user stays at the bottom.
   const workLogCount = workLogEntries.length;
   const scrollMessagesToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const scrollContainer = messagesScrollRef.current;
     if (!scrollContainer) return;
     scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior });
+    lastKnownScrollTopRef.current = scrollContainer.scrollTop;
     shouldAutoScrollRef.current = true;
   }, []);
+  const requestAutoTailToBottom = useCallback(() => {
+    if (pendingAutoScrollFrameRef.current !== null) return;
+    pendingAutoScrollFrameRef.current = window.requestAnimationFrame(() => {
+      pendingAutoScrollFrameRef.current = null;
+      if (!shouldAutoScrollRef.current) return;
+      scrollMessagesToBottom();
+    });
+  }, [scrollMessagesToBottom]);
   const onMessagesScroll = useCallback(() => {
     const scrollContainer = messagesScrollRef.current;
     if (!scrollContainer) return;
-    shouldAutoScrollRef.current = isScrollContainerNearBottom(scrollContainer);
+    const currentScrollTop = scrollContainer.scrollTop;
+    const atBottom = isScrollContainerAtBottom(scrollContainer);
+
+    if (!shouldAutoScrollRef.current && atBottom) {
+      shouldAutoScrollRef.current = true;
+      pendingUserScrollUpIntentRef.current = false;
+    } else if (shouldAutoScrollRef.current && pendingUserScrollUpIntentRef.current) {
+      const scrolledUp = currentScrollTop < lastKnownScrollTopRef.current - 1;
+      if (scrolledUp) {
+        shouldAutoScrollRef.current = false;
+      }
+      pendingUserScrollUpIntentRef.current = false;
+    } else if (shouldAutoScrollRef.current && isPointerScrollActiveRef.current) {
+      // Pointer-driven upward scroll means user takes control.
+      const scrolledUp = currentScrollTop < lastKnownScrollTopRef.current - 1;
+      if (scrolledUp) {
+        shouldAutoScrollRef.current = false;
+      }
+    }
+
+    lastKnownScrollTopRef.current = currentScrollTop;
+  }, []);
+  const onMessagesWheel = useCallback((event: WheelEvent<HTMLDivElement>) => {
+    // Wheel-up indicates user intent to move away from bottom.
+    if (event.deltaY < 0) {
+      pendingUserScrollUpIntentRef.current = true;
+    }
+  }, []);
+  const onMessagesPointerDown = useCallback((_event: PointerEvent<HTMLDivElement>) => {
+    isPointerScrollActiveRef.current = true;
+  }, []);
+  const onMessagesPointerUp = useCallback((_event: PointerEvent<HTMLDivElement>) => {
+    isPointerScrollActiveRef.current = false;
+  }, []);
+  const onMessagesPointerCancel = useCallback((_event: PointerEvent<HTMLDivElement>) => {
+    isPointerScrollActiveRef.current = false;
+  }, []);
+  const onMessagesTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    lastTouchClientYRef.current = touch.clientY;
+  }, []);
+  const onMessagesTouchMove = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    const previousTouchY = lastTouchClientYRef.current;
+    if (previousTouchY !== null && touch.clientY > previousTouchY + 1) {
+      // Finger moved downward => user intends to scroll content upward.
+      pendingUserScrollUpIntentRef.current = true;
+    }
+    lastTouchClientYRef.current = touch.clientY;
+  }, []);
+  const onMessagesTouchEnd = useCallback((_event: TouchEvent<HTMLDivElement>) => {
+    lastTouchClientYRef.current = null;
   }, []);
   useLayoutEffect(() => {
     if (!activeThread?.id) return;
     scrollMessagesToBottom();
   }, [activeThread?.id, scrollMessagesToBottom]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!shouldAutoScrollRef.current) return;
-    scrollMessagesToBottom("smooth");
-  }, [messageCount, scrollMessagesToBottom]);
-  useEffect(() => {
-    if (phase !== "running") return;
-    if (!shouldAutoScrollRef.current) return;
-    scrollMessagesToBottom("smooth");
-  }, [phase, workLogCount, scrollMessagesToBottom]);
+    requestAutoTailToBottom();
+  }, [activeThread?.messages, workLogCount, requestAutoTailToBottom]);
+  useEffect(
+    () => () => {
+      if (pendingAutoScrollFrameRef.current === null) return;
+      window.cancelAnimationFrame(pendingAutoScrollFrameRef.current);
+      pendingAutoScrollFrameRef.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     setExpandedWorkGroups({});
@@ -2064,6 +2136,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ref={messagesScrollRef}
         className="min-h-0 flex-1 overflow-y-auto px-5 py-4"
         onScroll={onMessagesScroll}
+        onWheel={onMessagesWheel}
+        onPointerDown={onMessagesPointerDown}
+        onPointerUp={onMessagesPointerUp}
+        onPointerCancel={onMessagesPointerCancel}
+        onTouchStart={onMessagesTouchStart}
+        onTouchMove={onMessagesTouchMove}
+        onTouchEnd={onMessagesTouchEnd}
+        onTouchCancel={onMessagesTouchEnd}
       >
         <MessagesTimeline
           hasMessages={activeThread.messages.length > 0}
