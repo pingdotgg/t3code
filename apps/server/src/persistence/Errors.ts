@@ -1,6 +1,6 @@
-import { ParseResult, Schema } from "effect";
+import { Schema, SchemaIssue } from "effect";
 
-export class PersistenceSqlError extends Schema.TaggedError<PersistenceSqlError>()(
+export class PersistenceSqlError extends Schema.TaggedErrorClass<PersistenceSqlError>()(
   "PersistenceSqlError",
   {
     operation: Schema.String,
@@ -13,7 +13,7 @@ export class PersistenceSqlError extends Schema.TaggedError<PersistenceSqlError>
   }
 }
 
-export class PersistenceDecodeError extends Schema.TaggedError<PersistenceDecodeError>()(
+export class PersistenceDecodeError extends Schema.TaggedErrorClass<PersistenceDecodeError>()(
   "PersistenceDecodeError",
   {
     operation: Schema.String,
@@ -26,7 +26,7 @@ export class PersistenceDecodeError extends Schema.TaggedError<PersistenceDecode
   }
 }
 
-export class PersistenceSerializationError extends Schema.TaggedError<PersistenceSerializationError>()(
+export class PersistenceSerializationError extends Schema.TaggedErrorClass<PersistenceSerializationError>()(
   "PersistenceSerializationError",
   {
     operation: Schema.String,
@@ -39,7 +39,7 @@ export class PersistenceSerializationError extends Schema.TaggedError<Persistenc
   }
 }
 
-export class ProjectValidationError extends Schema.TaggedError<ProjectValidationError>()(
+export class ProjectValidationError extends Schema.TaggedErrorClass<ProjectValidationError>()(
   "ProjectValidationError",
   {
     operation: Schema.String,
@@ -52,7 +52,7 @@ export class ProjectValidationError extends Schema.TaggedError<ProjectValidation
   }
 }
 
-export class ProjectPathMissingError extends Schema.TaggedError<ProjectPathMissingError>()(
+export class ProjectPathMissingError extends Schema.TaggedErrorClass<ProjectPathMissingError>()(
   "ProjectPathMissingError",
   {
     cwd: Schema.String,
@@ -64,7 +64,7 @@ export class ProjectPathMissingError extends Schema.TaggedError<ProjectPathMissi
   }
 }
 
-export class ProjectNotFoundError extends Schema.TaggedError<ProjectNotFoundError>()(
+export class ProjectNotFoundError extends Schema.TaggedErrorClass<ProjectNotFoundError>()(
   "ProjectNotFoundError",
   {
     projectId: Schema.String,
@@ -99,10 +99,10 @@ export function toPersistenceSqlError(operation: string) {
 }
 
 export function toPersistenceDecodeError(operation: string) {
-  return (error: ParseResult.ParseError): PersistenceDecodeError =>
+  return (error: Schema.SchemaError): PersistenceDecodeError =>
     new PersistenceDecodeError({
       operation,
-      issue: ParseResult.TreeFormatter.formatErrorSync(error),
+      issue: SchemaIssue.makeFormatterDefault()(error.issue),
       cause: error,
     });
 }

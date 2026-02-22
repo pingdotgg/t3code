@@ -2,12 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { Layer, ManagedRuntime } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ProjectRepository } from "../Services/Projects";
-import { ProjectRepositoryLive } from "./Projects";
-import { makeSqlitePersistenceLive } from "./Sqlite";
+import { ProjectRepository } from "../Services/Projects.ts";
+import { ProjectRepositoryLive } from "./Projects.ts";
+import { makeSqlitePersistenceLive } from "./Sqlite.ts";
 
 function makeProjectRepositoryTest(dbPath: string) {
   return ProjectRepositoryLive.pipe(Layer.provide(makeSqlitePersistenceLive(dbPath)));
@@ -34,7 +34,7 @@ describe("ProjectRepository", () => {
     const dbPath = path.join(stateDir, "orchestration.sqlite");
 
     const firstRuntime = ManagedRuntime.make(makeProjectRepositoryTest(dbPath));
-    const first = await firstRuntime.runPromise(ProjectRepository);
+    const first = await firstRuntime.runPromise(Effect.service(ProjectRepository));
 
     const created = await firstRuntime.runPromise(first.add({ cwd: projectDir }));
     expect(created.created).toBe(true);
@@ -46,7 +46,7 @@ describe("ProjectRepository", () => {
     await firstRuntime.dispose();
 
     const secondRuntime = ManagedRuntime.make(makeProjectRepositoryTest(dbPath));
-    const second = await secondRuntime.runPromise(ProjectRepository);
+    const second = await secondRuntime.runPromise(Effect.service(ProjectRepository));
     const listed = await secondRuntime.runPromise(second.list());
 
     expect(listed).toHaveLength(1);
@@ -62,7 +62,7 @@ describe("ProjectRepository", () => {
     const dbPath = path.join(stateDir, "orchestration.sqlite");
 
     const runtime = ManagedRuntime.make(makeProjectRepositoryTest(dbPath));
-    const repository = await runtime.runPromise(ProjectRepository);
+    const repository = await runtime.runPromise(Effect.service(ProjectRepository));
 
     const existingProject = await runtime.runPromise(repository.add({ cwd: existing }));
     const missingProject = await runtime.runPromise(repository.add({ cwd: missing }));

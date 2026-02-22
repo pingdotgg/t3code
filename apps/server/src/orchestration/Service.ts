@@ -11,11 +11,11 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "@t3tools/contracts";
-import { Context } from "effect";
+import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 
-import type { OrchestrationDispatchError, OrchestrationEngineError } from "./Errors";
-import type { OrchestrationEventRepositoryError } from "../persistence/Errors";
+import type { OrchestrationDispatchError, OrchestrationEngineError } from "./Errors.ts";
+import type { OrchestrationEventRepositoryError } from "../persistence/Errors.ts";
 
 export interface OrchestrationEngineShape {
   /**
@@ -89,7 +89,7 @@ export interface OrchestrationEngineShape {
  * })
  * ```
  */
-export class OrchestrationEngineService extends Context.Tag("orchestration/Engine")<
+export class OrchestrationEngineService extends ServiceMap.Service<
   OrchestrationEngineService,
   OrchestrationEngineShape
->() {}
+>()("orchestration/Engine") {}

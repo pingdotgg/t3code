@@ -2,7 +2,7 @@ import type { OrchestrationEvent } from "@t3tools/contracts";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { createEmptyReadModel, reduceEvent } from "./reducer";
+import { createEmptyReadModel, reduceEvent } from "./reducer.ts";
 
 describe("orchestration reducer", () => {
   it("applies thread.created events using runtime schema decoding", async () => {

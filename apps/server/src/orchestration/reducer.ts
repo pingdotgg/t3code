@@ -16,7 +16,7 @@ import {
 } from "@t3tools/contracts";
 import { Effect, Schema } from "effect";
 
-import { toReducerDecodeError, type OrchestrationReducerDecodeError } from "./Errors";
+import { toReducerDecodeError, type OrchestrationReducerDecodeError } from "./Errors.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 
@@ -34,9 +34,9 @@ function decodeForEvent<A>(
   eventType: string,
   field: string,
 ): Effect.Effect<A, OrchestrationReducerDecodeError> {
-  return Schema.decodeUnknown(schema)(value).pipe(
+  return Schema.decodeUnknownEffect(schema)(value).pipe(
     Effect.mapError(toReducerDecodeError(`${eventType}:${field}`)),
-  );
+  ) as Effect.Effect<A, OrchestrationReducerDecodeError> 
 }
 
 const ThreadCreatedPayloadSchema = Schema.Struct({
@@ -61,7 +61,7 @@ const ThreadMetaUpdatedPayloadSchema = Schema.Struct({
 
 const MessageSentPayloadSchema = Schema.Struct({
   id: Schema.String,
-  role: Schema.Literal("user", "assistant"),
+  role: Schema.Literals(["user", "assistant"]),
   text: Schema.String,
   threadId: Schema.String,
   createdAt: Schema.String,

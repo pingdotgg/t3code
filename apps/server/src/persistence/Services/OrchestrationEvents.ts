@@ -7,10 +7,10 @@
  * @module OrchestrationEventRepository
  */
 import type { OrchestrationEvent } from "@t3tools/contracts";
-import { Context } from "effect";
+import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 
-import type { OrchestrationEventRepositoryError } from "../Errors";
+import type { OrchestrationEventRepositoryError } from "../Errors.ts";
 
 export interface OrchestrationEventRepositoryShape {
   /**
@@ -54,7 +54,7 @@ export interface OrchestrationEventRepositoryShape {
  * })
  * ```
  */
-export class OrchestrationEventRepository extends Context.Tag("orchestration/EventRepository")<
+export class OrchestrationEventRepository extends ServiceMap.Service<
   OrchestrationEventRepository,
   OrchestrationEventRepositoryShape
->() {}
+>()("orchestration/EventRepository") {}

@@ -14,10 +14,10 @@ import type {
   ProjectUpdateScriptsInput,
   ProjectUpdateScriptsResult,
 } from "@t3tools/contracts";
-import { Context } from "effect";
+import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 
-import type { ProjectRepositoryError } from "../Errors";
+import type { ProjectRepositoryError } from "../Errors.ts";
 
 export interface ProjectRepositoryShape {
   /**
@@ -72,7 +72,7 @@ export interface ProjectRepositoryShape {
  * })
  * ```
  */
-export class ProjectRepository extends Context.Tag("persistence/ProjectRepository")<
+export class ProjectRepository extends ServiceMap.Service<
   ProjectRepository,
   ProjectRepositoryShape
->() {}
+>()("persistence/ProjectRepository") {}

@@ -3,22 +3,18 @@ import os from "node:os";
 import path from "node:path";
 
 import type { OrchestrationEvent } from "@t3tools/contracts";
-import { Effect } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
   OrchestrationEventRepository,
   type OrchestrationEventRepositoryShape,
-} from "../persistence/Services/OrchestrationEvents";
-import { PersistenceSqlError } from "../persistence/Errors";
-
-import { Layer, ManagedRuntime } from "effect";
-
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite";
-
-import { OrchestrationEngineLive } from "./Layer";
-import { OrchestrationEngineService } from "./Service";
-import { OrchestrationEventRepositoryLive } from "../persistence/Layers/OrchestrationEvents";
+} from "../persistence/Services/OrchestrationEvents.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
+import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import { OrchestrationEngineLive } from "./Layer.ts";
+import { OrchestrationEngineService } from "./Service.ts";
+import { OrchestrationEventRepositoryLive } from "../persistence/Layers/OrchestrationEvents.ts";
 
 const tempDirs: string[] = [];
 
@@ -41,7 +37,7 @@ export async function createOrchestrationSystem(stateDir: string) {
     Layer.provide(makeSqlitePersistenceLive(dbPath)),
   );
   const runtime = ManagedRuntime.make(orchestrationLayer);
-  const engine = await runtime.runPromise(OrchestrationEngineService);
+  const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
   return {
     engine,
     run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
@@ -362,7 +358,7 @@ describe("OrchestrationEngine", () => {
         Layer.provide(Layer.succeed(OrchestrationEventRepository, inMemoryStore)),
       ),
     );
-    await runtime.runPromise(OrchestrationEngineService);
+    await runtime.runPromise(Effect.service(OrchestrationEngineService));
     await runtime.dispose();
     await expect(runtime.dispose()).resolves.toBeUndefined();
   });
@@ -404,7 +400,7 @@ describe("OrchestrationEngine", () => {
         Layer.provide(Layer.succeed(OrchestrationEventRepository, flakyStore)),
       ),
     );
-    const engine = await runtime.runPromise(OrchestrationEngineService);
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const createdAt = new Date().toISOString();
 
     await expect(

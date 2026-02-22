@@ -19,8 +19,8 @@ import {
   projectScriptsSchema,
   projectUpdateScriptsInputSchema,
 } from "@t3tools/contracts";
-import * as SqlClient from "@effect/sql/SqlClient";
-import * as SqlSchema from "@effect/sql/SqlSchema";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { Effect, Layer, Option, Schema } from "effect";
 
 import {
@@ -32,8 +32,8 @@ import {
   toPersistenceSerializationError,
   toPersistenceSqlError,
   type ProjectRepositoryError,
-} from "../Errors";
-import { ProjectRepository, type ProjectRepositoryShape } from "../Services/Projects";
+} from "../Errors.ts";
+import { ProjectRepository, type ProjectRepositoryShape } from "../Services/Projects.ts";
 
 const ProjectRowSchema = Schema.Struct({
   id: Schema.String,
@@ -226,7 +226,7 @@ const makeRepository = Effect.gen(function* () {
       `,
   });
 
-  const findProjectById = SqlSchema.findOne({
+  const findProjectById = SqlSchema.findOneOption({
     Request: FindByIdRequestSchema,
     Result: ProjectRowSchema,
     execute: ({ id }) =>
@@ -243,7 +243,7 @@ const makeRepository = Effect.gen(function* () {
       `,
   });
 
-  const findProjectByCwd = SqlSchema.findOne({
+  const findProjectByCwd = SqlSchema.findOneOption({
     Request: FindByCwdRequestSchema,
     Result: ProjectRowSchema,
     execute: ({ cwd }) =>
@@ -260,7 +260,7 @@ const makeRepository = Effect.gen(function* () {
       `,
   });
 
-  const insertProject = SqlSchema.single({
+  const insertProject = SqlSchema.findOne({
     Request: InsertProjectRequestSchema,
     Result: ProjectRowSchema,
     execute: (request) =>
@@ -291,7 +291,7 @@ const makeRepository = Effect.gen(function* () {
       `,
   });
 
-  const updateProjectScripts = SqlSchema.single({
+  const updateProjectScripts = SqlSchema.findOne({
     Request: UpdateScriptsRequestSchema,
     Result: ProjectRowSchema,
     execute: (request) =>
@@ -381,7 +381,7 @@ const makeRepository = Effect.gen(function* () {
         Effect.mapError(toPersistenceSqlError("ProjectRepository.remove:findById")),
       );
       if (Option.isNone(existing)) {
-        return yield* Effect.fail(new ProjectNotFoundError({ projectId: input.id }));
+        return yield* (new ProjectNotFoundError({ projectId: input.id }));
       }
 
       yield* deleteProject({ id: input.id }).pipe(
@@ -396,7 +396,7 @@ const makeRepository = Effect.gen(function* () {
         Effect.mapError(toPersistenceSqlError("ProjectRepository.updateScripts:findById")),
       );
       if (Option.isNone(existing)) {
-        return yield* Effect.fail(new ProjectNotFoundError({ projectId: input.id }));
+        return yield* (new ProjectNotFoundError({ projectId: input.id }));
       }
 
       const nextScripts = yield* parseProjectScripts(

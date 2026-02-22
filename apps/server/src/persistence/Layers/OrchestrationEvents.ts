@@ -1,7 +1,7 @@
 import type { OrchestrationEvent } from "@t3tools/contracts";
 import { OrchestrationEventSchema } from "@t3tools/contracts";
-import * as SqlClient from "@effect/sql/SqlClient";
-import * as SqlSchema from "@effect/sql/SqlSchema";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { Effect, Layer, Schema } from "effect";
 
 import {
@@ -10,14 +10,14 @@ import {
   toPersistenceSerializationError,
   toPersistenceSqlError,
   type OrchestrationEventRepositoryError,
-} from "../Errors";
-import { makeSqlitePersistenceLive } from "./Sqlite";
+} from "../Errors.ts";
+import { makeSqlitePersistenceLive } from "./Sqlite.ts";
 import {
   OrchestrationEventRepository,
   type OrchestrationEventRepositoryShape,
-} from "../Services/OrchestrationEvents";
+} from "../Services/OrchestrationEvents.ts";
 
-const decodeEvent = Schema.decodeUnknown(OrchestrationEventSchema);
+const decodeEvent = Schema.decodeUnknownEffect(OrchestrationEventSchema);
 
 const EventRowSchema = Schema.Struct({
   sequence: Schema.Number,
@@ -73,7 +73,7 @@ function eventRowToOrchestrationEvent(
 const makeRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  const appendEventRow = SqlSchema.single({
+  const appendEventRow = SqlSchema.findOne({
     Request: AppendEventRequestSchema,
     Result: EventRowSchema,
     execute: (request) =>

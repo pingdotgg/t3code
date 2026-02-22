@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 
-import { Layer, ManagedRuntime } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
 import { describe, expect, it, afterEach, vi } from "vitest";
 import { createServer } from "./wsServer";
 import WebSocket from "ws";
@@ -1039,7 +1039,7 @@ describe("WebSocket Server", () => {
         Layer.provide(makeSqlitePersistenceLive(path.join(stateDir, "orchestration.sqlite"))),
       ),
     );
-    const projectRepository = await projectRuntime.runPromise(ProjectRepository);
+    const projectRepository = await projectRuntime.runPromise(Effect.service(ProjectRepository));
     await projectRuntime.runPromise(projectRepository.add({ cwd: existing }));
     await projectRuntime.runPromise(projectRepository.add({ cwd: missing }));
     await projectRuntime.dispose();

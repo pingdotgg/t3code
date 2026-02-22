@@ -16,7 +16,7 @@ const IdSchema = Schema.String;
 
 export const OrchestrationMessageSchema = Schema.Struct({
   id: IdSchema,
-  role: Schema.Literal("user", "assistant"),
+  role: Schema.Literals(["user", "assistant"]),
   text: Schema.String,
   createdAt: IsoDateTimeSchema,
   streaming: Schema.Boolean,
@@ -26,8 +26,8 @@ export type OrchestrationMessage = Schema.Schema.Type<typeof OrchestrationMessag
 
 export const OrchestrationSessionSchema = Schema.Struct({
   sessionId: IdSchema,
-  status: Schema.Literal("connecting", "ready", "running", "error", "closed"),
-  provider: Schema.Literal("codex", "claudeCode"),
+  status: Schema.Literals(["connecting", "ready", "running", "error", "closed"]),
+  provider: Schema.Literals(["codex", "claudeCode"]),
   threadId: IdSchema,
   activeTurnId: Schema.NullOr(Schema.String),
   createdAt: IsoDateTimeSchema,
@@ -94,7 +94,7 @@ export type OrchestrationGitReadModel = Schema.Schema.Type<typeof OrchestrationG
 export const OrchestrationReadModelSchema = Schema.Struct({
   sequence: Schema.Number,
   threads: Schema.Array(OrchestrationThreadSchema),
-  gitByProjectId: Schema.Record({ key: Schema.String, value: OrchestrationGitReadModelSchema }),
+  gitByProjectId: Schema.Record( Schema.String,  OrchestrationGitReadModelSchema),
   updatedAt: IsoDateTimeSchema,
 });
 
@@ -135,7 +135,7 @@ export const SendMessageCommandSchema = Schema.Struct({
   commandId: IdSchema,
   threadId: IdSchema,
   messageId: IdSchema,
-  role: Schema.Literal("user", "assistant"),
+  role: Schema.Literals(["user", "assistant"]),
   text: Schema.String,
   streaming: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTimeSchema,
@@ -182,7 +182,7 @@ export const RevertThreadCommandSchema = Schema.Struct({
   createdAt: IsoDateTimeSchema,
 });
 
-export const OrchestrationCommandSchema = Schema.Union(
+export const OrchestrationCommandSchema = Schema.Union([
   CreateThreadCommandSchema,
   DeleteThreadCommandSchema,
   UpdateThreadMetaCommandSchema,
@@ -190,7 +190,7 @@ export const OrchestrationCommandSchema = Schema.Union(
   SetThreadSessionSchema,
   UpsertGitReadModelCommandSchema,
   CompleteThreadTurnDiffCommandSchema,
-  RevertThreadCommandSchema,
+  RevertThreadCommandSchema,]
 );
 
 export type OrchestrationCommand = Schema.Schema.Type<typeof OrchestrationCommandSchema>;

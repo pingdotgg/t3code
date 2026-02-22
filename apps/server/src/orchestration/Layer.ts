@@ -6,16 +6,16 @@ import type {
 import { OrchestrationCommandSchema } from "@t3tools/contracts";
 import { Deferred, Effect, Layer, PubSub, Queue, Schema } from "effect";
 
-import { createLogger } from "../logger";
-import { OrchestrationEventRepository } from "../persistence/Services/OrchestrationEvents";
+import { createLogger } from "../logger.ts";
+import { OrchestrationEventRepository } from "../persistence/Services/OrchestrationEvents.ts";
 import {
   toListenerCallbackError,
   toOrchestrationCommandDecodeError,
   toOrchestrationJsonParseError,
   type OrchestrationDispatchError,
-} from "./Errors";
-import { createEmptyReadModel, reduceEvent } from "./reducer";
-import { OrchestrationEngineService, type OrchestrationEngineShape } from "./Service";
+} from "./Errors.ts";
+import { createEmptyReadModel, reduceEvent } from "./reducer.ts";
+import { OrchestrationEngineService, type OrchestrationEngineShape } from "./Service.ts";
 
 type CommandEnvelope = {
   command: OrchestrationCommand;
@@ -160,9 +160,9 @@ function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEve
   }
 }
 
-const decodeUnknownCommand = Schema.decodeUnknown(OrchestrationCommandSchema);
+const decodeUnknownCommand = Schema.decodeUnknownEffect(OrchestrationCommandSchema);
 
-const makeOrchestrationEngine = () =>
+const makeOrchestrationEngine = 
   Effect.gen(function* () {
     const logger = createLogger("orchestration");
     const eventStore = yield* OrchestrationEventRepository;
@@ -209,7 +209,7 @@ const makeOrchestrationEngine = () =>
 
         yield* Deferred.succeed(envelope.result, { sequence: savedEvent.sequence });
       }).pipe(
-        Effect.catchAll((error) => Deferred.fail(envelope.result, error).pipe(Effect.asVoid)),
+        Effect.catch((error) => Deferred.fail(envelope.result, error).pipe(Effect.asVoid)),
       );
 
     const bootstrapReadModel: Effect.Effect<void, OrchestrationDispatchError> = Effect.gen(
@@ -287,7 +287,7 @@ const makeOrchestrationEngine = () =>
     } satisfies OrchestrationEngineShape;
   });
 
-export const OrchestrationEngineLive = Layer.scoped(
+export const OrchestrationEngineLive = Layer.effect(
   OrchestrationEngineService,
-  makeOrchestrationEngine(),
+  makeOrchestrationEngine,
 );

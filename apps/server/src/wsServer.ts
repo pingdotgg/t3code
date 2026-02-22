@@ -18,7 +18,7 @@ import {
   type WsResponse,
   wsRequestSchema,
 } from "@t3tools/contracts";
-import { Layer, ManagedRuntime } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { createLogger } from "./logger";
@@ -747,8 +747,8 @@ export function createServer(options: ServerOptions) {
 
     try {
       const [nextOrchestrationEngine, repository] = await Promise.all([
-        runtime.runPromise(OrchestrationEngineService),
-        runtime.runPromise(ProjectRepository),
+        runtime.runPromise(Effect.service(OrchestrationEngineService)),
+        runtime.runPromise(Effect.service(ProjectRepository)),
       ]);
       orchestrationEngine = nextOrchestrationEngine;
       projectRepository = repository;

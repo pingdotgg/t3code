@@ -8,7 +8,7 @@
  * ensuring the database schema is always up-to-date before the application starts.
  */
 
-import * as Migrator from "@effect/sql/Migrator";
+import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Layer from "effect/Layer";
 
 // Import all migrations statically
@@ -57,11 +57,11 @@ export const runMigrations = run({ loader });
  * @example
  * ```typescript
  * import { MigrationsLive } from "@acme/db/Migrations"
- * import { PgClient } from "@effect/sql-pg"
+ * import { SqliteClient } from "@effect/sql-sqlite-node"
  *
- * // Migrations run automatically when PgClient is provided
+ * // Migrations run automatically when SqliteClient is provided
  * const AppLayer = MigrationsLive.pipe(
- *   Layer.provideMerge(PgClient.layer({ url: Redacted.make("postgresql://...") }))
+ *   Layer.provideMerge(SqliteClient.layer({ filename: "database.sqlite" }))
  * )
  * ```
  */

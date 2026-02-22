@@ -1,8 +1,8 @@
-import { ParseResult, Schema } from "effect";
+import { SchemaIssue, Schema } from "effect";
 
-import type { OrchestrationEventRepositoryError } from "../persistence/Errors";
+import type { OrchestrationEventRepositoryError } from "../persistence/Errors.ts";
 
-export class OrchestrationCommandJsonParseError extends Schema.TaggedError<OrchestrationCommandJsonParseError>()(
+export class OrchestrationCommandJsonParseError extends Schema.TaggedErrorClass<OrchestrationCommandJsonParseError>()(
   "OrchestrationCommandJsonParseError",
   {
     detail: Schema.String,
@@ -14,7 +14,7 @@ export class OrchestrationCommandJsonParseError extends Schema.TaggedError<Orche
   }
 }
 
-export class OrchestrationCommandDecodeError extends Schema.TaggedError<OrchestrationCommandDecodeError>()(
+export class OrchestrationCommandDecodeError extends Schema.TaggedErrorClass<OrchestrationCommandDecodeError>()(
   "OrchestrationCommandDecodeError",
   {
     issue: Schema.String,
@@ -26,7 +26,7 @@ export class OrchestrationCommandDecodeError extends Schema.TaggedError<Orchestr
   }
 }
 
-export class OrchestrationReducerDecodeError extends Schema.TaggedError<OrchestrationReducerDecodeError>()(
+export class OrchestrationReducerDecodeError extends Schema.TaggedErrorClass<OrchestrationReducerDecodeError>()(
   "OrchestrationReducerDecodeError",
   {
     eventType: Schema.String,
@@ -39,10 +39,10 @@ export class OrchestrationReducerDecodeError extends Schema.TaggedError<Orchestr
   }
 }
 
-export class OrchestrationListenerCallbackError extends Schema.TaggedError<OrchestrationListenerCallbackError>()(
+export class OrchestrationListenerCallbackError extends Schema.TaggedErrorClass<OrchestrationListenerCallbackError>()(
   "OrchestrationListenerCallbackError",
   {
-    listener: Schema.Literal("read-model", "domain-event"),
+    listener: Schema.Literals(["read-model", "domain-event"]),
     detail: Schema.String,
     cause: Schema.optional(Schema.Defect),
   },
@@ -62,18 +62,18 @@ export type OrchestrationEngineError =
   | OrchestrationCommandJsonParseError
   | OrchestrationCommandDecodeError;
 
-export function toOrchestrationCommandDecodeError(error: ParseResult.ParseError) {
+export function toOrchestrationCommandDecodeError(error: Schema.SchemaError) {
   return new OrchestrationCommandDecodeError({
-    issue: ParseResult.TreeFormatter.formatErrorSync(error),
+    issue: SchemaIssue.makeFormatterDefault()(error.issue),
     cause: error,
   });
 }
 
 export function toReducerDecodeError(eventType: string) {
-  return (error: ParseResult.ParseError): OrchestrationReducerDecodeError =>
+  return (error: Schema.SchemaError): OrchestrationReducerDecodeError =>
     new OrchestrationReducerDecodeError({
       eventType,
-      issue: ParseResult.TreeFormatter.formatErrorSync(error),
+      issue: SchemaIssue.makeFormatterDefault()(error.issue),
       cause: error,
     });
 }
