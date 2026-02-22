@@ -1,8 +1,12 @@
 /**
  * CheckpointStore - Repository interface for filesystem-backed workspace checkpoints.
  *
+ * Owns hidden Git-ref checkpoint capture/restore and diff computation for a
+ * workspace thread timeline. It does not store user-facing checkpoint metadata
+ * and does not coordinate provider conversation rollback.
+ *
  * Uses Effect `ServiceMap.Service` for dependency injection and exposes typed
- * domain errors for checkpoint lifecycle operations.
+ * domain errors for checkpoint storage operations.
  *
  * @module CheckpointStore
  */
@@ -83,9 +87,9 @@ export interface CheckpointStoreShape {
 }
 
 /**
- * CheckpointStore - Context tag for checkpoint persistence and restore operations.
+ * CheckpointStore - Service tag for checkpoint persistence and restore operations.
  */
 export class CheckpointStore extends ServiceMap.Service<
   CheckpointStore,
   CheckpointStoreShape
->()("provider/CheckpointStore") {}
+>()("checkpointing/CheckpointStore") {}

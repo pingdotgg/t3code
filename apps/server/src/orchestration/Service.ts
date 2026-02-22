@@ -1,7 +1,11 @@
 /**
  * OrchestrationEngineService - Service interface for orchestration command handling.
  *
- * Uses Effect `Context.Tag` for dependency injection. Command dispatch,
+ * Owns command validation/dispatch and in-memory read-model updates backed by
+ * `OrchestrationEventRepository` persistence. It does not own provider process
+ * management or transport concerns (e.g. websocket request parsing).
+ *
+ * Uses Effect `ServiceMap.Service` for dependency injection. Command dispatch,
  * replay, and unknown-input decoding all return typed domain errors.
  *
  * @module OrchestrationEngineService
@@ -79,7 +83,7 @@ export interface OrchestrationEngineShape {
 }
 
 /**
- * OrchestrationEngineService - Context tag for orchestration engine access.
+ * OrchestrationEngineService - Service tag for orchestration engine access.
  *
  * @example
  * ```ts

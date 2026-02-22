@@ -1,7 +1,10 @@
 /**
  * OrchestrationEventRepository - Repository interface for orchestration events.
  *
- * Uses Effect `Context.Tag` for dependency injection and exposes typed
+ * Owns durable append/replay access to the orchestration event stream. It does
+ * not reduce events into read models or apply command validation rules.
+ *
+ * Uses Effect `ServiceMap.Service` for dependency injection and exposes typed
  * persistence/decode errors for event append and replay operations.
  *
  * @module OrchestrationEventRepository
@@ -44,7 +47,7 @@ export interface OrchestrationEventRepositoryShape {
 }
 
 /**
- * OrchestrationEventRepository - Context tag for orchestration event persistence.
+ * OrchestrationEventRepository - Service tag for orchestration event persistence.
  *
  * @example
  * ```ts

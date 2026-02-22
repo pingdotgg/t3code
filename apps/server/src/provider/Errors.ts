@@ -1,163 +1,104 @@
 import { Schema } from "effect";
 
+import type { CheckpointServiceError } from "../checkpointing/Errors.ts";
+
 /**
- * CheckpointValidationError - Invalid checkpoint API input.
+ * ProviderAdapterValidationError - Invalid adapter API input.
  */
-export class CheckpointValidationError extends Schema.TaggedErrorClass<CheckpointValidationError>()(
-  "CheckpointValidationError",
+export class ProviderAdapterValidationError extends Schema.TaggedErrorClass<ProviderAdapterValidationError>()(
+  "ProviderAdapterValidationError",
   {
+    provider: Schema.String,
     operation: Schema.String,
     issue: Schema.String,
     cause: Schema.optional(Schema.Defect),
   },
 ) {
   override get message(): string {
-    return `Checkpoint validation failed in ${this.operation}: ${this.issue}`;
+    return `Provider adapter validation failed (${this.provider}) in ${this.operation}: ${this.issue}`;
   }
 }
 
 /**
- * CheckpointGitCommandError - Git command execution failed in checkpoint store.
+ * ProviderAdapterSessionNotFoundError - Adapter-owned session id is unknown.
  */
-export class CheckpointGitCommandError extends Schema.TaggedErrorClass<CheckpointGitCommandError>()(
-  "CheckpointGitCommandError",
+export class ProviderAdapterSessionNotFoundError extends Schema.TaggedErrorClass<ProviderAdapterSessionNotFoundError>()(
+  "ProviderAdapterSessionNotFoundError",
   {
-    operation: Schema.String,
-    command: Schema.String,
-    cwd: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Checkpoint git command failed in ${this.operation}: ${this.command} (${this.cwd}) - ${this.detail}`;
-  }
-}
-
-/**
- * CheckpointUnavailableError - Expected checkpoint does not exist.
- */
-export class CheckpointUnavailableError extends Schema.TaggedErrorClass<CheckpointUnavailableError>()(
-  "CheckpointUnavailableError",
-  {
-    threadId: Schema.String,
-    turnCount: Schema.Number,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Checkpoint unavailable for thread ${this.threadId} turn ${this.turnCount}: ${this.detail}`;
-  }
-}
-
-/**
- * CheckpointRepositoryError - Checkpointing unavailable for cwd/repository.
- */
-export class CheckpointRepositoryError extends Schema.TaggedErrorClass<CheckpointRepositoryError>()(
-  "CheckpointRepositoryError",
-  {
-    cwd: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Checkpoint repository error for ${this.cwd}: ${this.detail}`;
-  }
-}
-
-/**
- * CodexValidationError - Invalid Codex API input.
- */
-export class CodexValidationError extends Schema.TaggedErrorClass<CodexValidationError>()(
-  "CodexValidationError",
-  {
-    operation: Schema.String,
-    issue: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Codex validation failed in ${this.operation}: ${this.issue}`;
-  }
-}
-
-/**
- * CodexSessionNotFoundError - Session id is unknown.
- */
-export class CodexSessionNotFoundError extends Schema.TaggedErrorClass<CodexSessionNotFoundError>()(
-  "CodexSessionNotFoundError",
-  {
+    provider: Schema.String,
     sessionId: Schema.String,
     cause: Schema.optional(Schema.Defect),
   },
 ) {
   override get message(): string {
-    return `Unknown codex session: ${this.sessionId}`;
+    return `Unknown ${this.provider} adapter session: ${this.sessionId}`;
   }
 }
 
 /**
- * CodexSessionClosedError - Session exists but is closed.
+ * ProviderAdapterSessionClosedError - Adapter session exists but is closed.
  */
-export class CodexSessionClosedError extends Schema.TaggedErrorClass<CodexSessionClosedError>()(
-  "CodexSessionClosedError",
+export class ProviderAdapterSessionClosedError extends Schema.TaggedErrorClass<ProviderAdapterSessionClosedError>()(
+  "ProviderAdapterSessionClosedError",
   {
+    provider: Schema.String,
     sessionId: Schema.String,
     cause: Schema.optional(Schema.Defect),
   },
 ) {
   override get message(): string {
-    return `Codex session is closed: ${this.sessionId}`;
+    return `${this.provider} adapter session is closed: ${this.sessionId}`;
   }
 }
 
 /**
- * CodexProtocolError - Invalid/unexpected JSON-RPC payload from app-server.
+ * ProviderAdapterProtocolError - Invalid/unexpected provider protocol payload.
  */
-export class CodexProtocolError extends Schema.TaggedErrorClass<CodexProtocolError>()(
-  "CodexProtocolError",
+export class ProviderAdapterProtocolError extends Schema.TaggedErrorClass<ProviderAdapterProtocolError>()(
+  "ProviderAdapterProtocolError",
   {
+    provider: Schema.String,
     operation: Schema.String,
     detail: Schema.String,
     cause: Schema.optional(Schema.Defect),
   },
 ) {
   override get message(): string {
-    return `Codex protocol error in ${this.operation}: ${this.detail}`;
+    return `Provider adapter protocol error (${this.provider}) in ${this.operation}: ${this.detail}`;
   }
 }
 
 /**
- * CodexRequestError - JSON-RPC request failed or timed out.
+ * ProviderAdapterRequestError - Provider protocol request failed or timed out.
  */
-export class CodexRequestError extends Schema.TaggedErrorClass<CodexRequestError>()(
-  "CodexRequestError",
+export class ProviderAdapterRequestError extends Schema.TaggedErrorClass<ProviderAdapterRequestError>()(
+  "ProviderAdapterRequestError",
   {
+    provider: Schema.String,
     method: Schema.String,
     detail: Schema.String,
     cause: Schema.optional(Schema.Defect),
   },
 ) {
   override get message(): string {
-    return `Codex request failed for ${this.method}: ${this.detail}`;
+    return `Provider adapter request failed (${this.provider}) for ${this.method}: ${this.detail}`;
   }
 }
 
 /**
- * CodexProcessError - codex app-server process lifecycle failure.
+ * ProviderAdapterProcessError - Provider process lifecycle failure.
  */
-export class CodexProcessError extends Schema.TaggedErrorClass<CodexProcessError>()(
-  "CodexProcessError",
+export class ProviderAdapterProcessError extends Schema.TaggedErrorClass<ProviderAdapterProcessError>()(
+  "ProviderAdapterProcessError",
   {
+    provider: Schema.String,
     sessionId: Schema.String,
     detail: Schema.String,
     cause: Schema.optional(Schema.Defect),
   },
 ) {
   override get message(): string {
-    return `Codex process error for session ${this.sessionId}: ${this.detail}`;
+    return `Provider adapter process error (${this.provider}) for session ${this.sessionId}: ${this.detail}`;
   }
 }
 
@@ -257,19 +198,13 @@ export class ProviderFilesystemError extends Schema.TaggedErrorClass<ProviderFil
   }
 }
 
-export type CheckpointStoreError =
-  | CheckpointValidationError
-  | CheckpointGitCommandError
-  | CheckpointUnavailableError
-  | CheckpointRepositoryError;
-
-export type CodexServiceError =
-  | CodexValidationError
-  | CodexSessionNotFoundError
-  | CodexSessionClosedError
-  | CodexProtocolError
-  | CodexRequestError
-  | CodexProcessError;
+export type ProviderAdapterError =
+  | ProviderAdapterValidationError
+  | ProviderAdapterSessionNotFoundError
+  | ProviderAdapterSessionClosedError
+  | ProviderAdapterProtocolError
+  | ProviderAdapterRequestError
+  | ProviderAdapterProcessError;
 
 export type ProviderServiceError =
   | ProviderValidationError
@@ -278,5 +213,5 @@ export type ProviderServiceError =
   | ProviderCheckpointUnavailableError
   | ProviderCheckpointRangeError
   | ProviderFilesystemError
-  | CodexServiceError
-  | CheckpointStoreError;
+  | ProviderAdapterError
+  | CheckpointServiceError;

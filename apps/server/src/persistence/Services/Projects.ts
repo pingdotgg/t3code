@@ -1,7 +1,10 @@
 /**
  * ProjectRepository - Repository interface for project persistence.
  *
- * Uses Effect `Context.Tag` for dependency injection and returns typed
+ * Owns persisted project records (cwd, scripts, and cleanup of missing paths).
+ * It does not manage provider sessions, orchestration events, or websocket APIs.
+ *
+ * Uses Effect `ServiceMap.Service` for dependency injection and returns typed
  * domain errors for all operations.
  *
  * @module ProjectRepository
@@ -62,7 +65,7 @@ export interface ProjectRepositoryShape {
 }
 
 /**
- * ProjectRepository - Context tag for project persistence dependency injection.
+ * ProjectRepository - Service tag for project persistence dependency injection.
  *
  * @example
  * ```ts

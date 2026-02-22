@@ -1,6 +1,11 @@
 /**
  * ProviderService - Service interface for provider sessions, turns, and checkpoints.
  *
+ * Acts as the cross-provider facade used by transports (WebSocket/RPC). It
+ * resolves provider adapters through `ProviderAdapterRegistry`, routes
+ * session-scoped calls via `ProviderSessionDirectory`, and exposes one unified
+ * provider event stream to callers.
+ *
  * Uses Effect `ServiceMap.Service` for dependency injection and returns typed
  * domain errors for validation, session, codex, and checkpoint workflows.
  *
@@ -59,7 +64,9 @@ export interface ProviderServiceShape {
   /**
    * Stop a provider session.
    */
-  readonly stopSession: (input: ProviderStopSessionInput) => Effect.Effect<void, ProviderServiceError>;
+  readonly stopSession: (
+    input: ProviderStopSessionInput,
+  ) => Effect.Effect<void, ProviderServiceError>;
 
   /**
    * List active provider sessions.
@@ -93,12 +100,9 @@ export interface ProviderServiceShape {
   readonly stopAll: () => Effect.Effect<void, ProviderServiceError>;
 
   /**
-   * Dispose provider resources (logs/listeners).
-   */
-  readonly dispose: () => Effect.Effect<void, ProviderServiceError>;
-
-  /**
    * Subscribe to provider event stream.
+   *
+   * Fan-out is owned by ProviderService (not by a standalone event-bus service).
    */
   readonly subscribeToEvents: (
     callback: (event: ProviderEvent) => void,
@@ -106,7 +110,7 @@ export interface ProviderServiceShape {
 }
 
 /**
- * ProviderService - Context tag for provider orchestration.
+ * ProviderService - Service tag for provider orchestration.
  */
 export class ProviderService extends ServiceMap.Service<ProviderService, ProviderServiceShape>()(
   "provider/ProviderService",
