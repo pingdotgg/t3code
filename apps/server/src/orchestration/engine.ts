@@ -1,5 +1,3 @@
-import path from "node:path";
-
 import type {
   OrchestrationCommand,
   OrchestrationEvent,
@@ -21,7 +19,6 @@ import {
 
 import { createLogger } from "../logger";
 import type { OrchestrationEventRepositoryShape } from "../persistence/Services/OrchestrationEvents";
-import { makeSqliteOrchestrationEventRepository } from "../persistence/Layers/OrchestrationEvents";
 import { createEmptyReadModel, reduceEvent } from "./reducer";
 import { UI_ENTITY_CONTRACTS } from "./uiContractInventory";
 
@@ -215,15 +212,8 @@ export class OrchestrationEngine {
   private readonly readModelListeners = new Set<(snapshot: OrchestrationReadModel) => void>();
   private readonly domainEventListeners = new Set<(event: OrchestrationEvent) => void>();
 
-  constructor(stateDir: string);
-  constructor(eventStore: OrchestrationEventRepositoryShape);
-  constructor(stateDirOrEventStore: string | OrchestrationEventRepositoryShape) {
-    if (typeof stateDirOrEventStore === "string") {
-      const dbPath = path.join(stateDirOrEventStore, "orchestration.sqlite");
-      this.eventStore = makeSqliteOrchestrationEventRepository(dbPath);
-    } else {
-      this.eventStore = stateDirOrEventStore;
-    }
+  constructor(eventStore: OrchestrationEventRepositoryShape) {
+    this.eventStore = eventStore;
     this.readModel = createEmptyReadModel(new Date().toISOString());
     this.commandQueue = Runtime.runSync(this.runtime)(Queue.unbounded<CommandEnvelope>());
     this.readModelPubSub = Runtime.runSync(this.runtime)(
@@ -279,6 +269,10 @@ export class OrchestrationEngine {
   }
 
   async start(): Promise<void> {
+    if (this.workerFiber) {
+      return;
+    }
+
     await Runtime.runPromise(this.runtime)(this.bootstrapReadModel());
 
     const worker = Stream.fromQueue(this.commandQueue).pipe(
@@ -297,7 +291,6 @@ export class OrchestrationEngine {
       await Runtime.runPromise(this.runtime)(Fiber.interrupt(this.workerFiber));
       this.workerFiber = null;
     }
-    this.eventStore.close();
   }
 
   getSnapshot(): OrchestrationReadModel {

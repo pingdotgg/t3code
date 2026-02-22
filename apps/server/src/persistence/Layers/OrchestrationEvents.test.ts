@@ -3,10 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { Runtime } from "effect";
+import { Runtime, ManagedRuntime } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { makeSqliteOrchestrationEventRepository } from "./OrchestrationEvents";
+import { OrchestrationEventRepository } from "../Services/OrchestrationEvents";
+import { makeSqliteOrchestrationEventRepositoryLive } from "./OrchestrationEvents";
 
 const tempDirs: string[] = [];
 
@@ -22,14 +23,15 @@ afterEach(() => {
   }
 });
 
-describe("SqliteEventStore", () => {
+describe("OrchestrationEventRepository", () => {
   it("persists and replays events across restarts", async () => {
     const stateDir = makeTempDir("t3code-event-store-");
     const dbPath = path.join(stateDir, "orchestration.sqlite");
     const runtime = Runtime.defaultRuntime;
     const createdAt = new Date().toISOString();
 
-    const first = makeSqliteOrchestrationEventRepository(dbPath);
+    const firstRuntime = ManagedRuntime.make(makeSqliteOrchestrationEventRepositoryLive(dbPath));
+    const first = await firstRuntime.runPromise(OrchestrationEventRepository);
     const saved = await Runtime.runPromise(runtime)(
       first.append({
         eventId: "event-1",
@@ -42,12 +44,13 @@ describe("SqliteEventStore", () => {
       }),
     );
     expect(saved.sequence).toBe(1);
-    first.close();
+    await firstRuntime.dispose();
 
-    const second = makeSqliteOrchestrationEventRepository(dbPath);
+    const secondRuntime = ManagedRuntime.make(makeSqliteOrchestrationEventRepositoryLive(dbPath));
+    const second = await secondRuntime.runPromise(OrchestrationEventRepository);
     const replayed = await Runtime.runPromise(runtime)(second.readFromSequence(0));
     expect(replayed).toEqual([saved]);
-    second.close();
+    await secondRuntime.dispose();
   });
 
   it("creates and reuses the migrator tracking table", async () => {
@@ -55,13 +58,15 @@ describe("SqliteEventStore", () => {
     const dbPath = path.join(stateDir, "orchestration.sqlite");
     const runtime = Runtime.defaultRuntime;
 
-    const first = makeSqliteOrchestrationEventRepository(dbPath);
+    const firstRuntime = ManagedRuntime.make(makeSqliteOrchestrationEventRepositoryLive(dbPath));
+    const first = await firstRuntime.runPromise(OrchestrationEventRepository);
     await Runtime.runPromise(runtime)(first.readAll());
-    first.close();
+    await firstRuntime.dispose();
 
-    const second = makeSqliteOrchestrationEventRepository(dbPath);
+    const secondRuntime = ManagedRuntime.make(makeSqliteOrchestrationEventRepositoryLive(dbPath));
+    const second = await secondRuntime.runPromise(OrchestrationEventRepository);
     await Runtime.runPromise(runtime)(second.readAll());
-    second.close();
+    await secondRuntime.dispose();
 
     const db = new DatabaseSync(dbPath, { readOnly: true });
     const tableRow = db

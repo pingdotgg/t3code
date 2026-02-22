@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { OrchestrationEventRepositoryShape } from "../persistence/Services/OrchestrationEvents";
 import { OrchestrationEngine } from "./engine";
+import { createOrchestrationSystem } from "./runtime";
 
 const tempDirs: string[] = [];
 
@@ -30,8 +31,8 @@ describe("OrchestrationEngine", () => {
     const projectId = "project-1";
     const threadId = "thread-1";
 
-    const engineA = new OrchestrationEngine(stateDir);
-    await engineA.start();
+    const firstSystem = await createOrchestrationSystem(stateDir);
+    const engineA = firstSystem.engine;
     await engineA.dispatch({
       type: "project.create",
       commandId: "cmd-1",
@@ -63,19 +64,19 @@ describe("OrchestrationEngine", () => {
       createdAt,
     });
     const snapshotA = engineA.getSnapshot();
-    await engineA.stop();
+    await firstSystem.dispose();
 
-    const engineB = new OrchestrationEngine(stateDir);
-    await engineB.start();
+    const secondSystem = await createOrchestrationSystem(stateDir);
+    const engineB = secondSystem.engine;
     const snapshotB = engineB.getSnapshot();
     expect(snapshotB).toEqual(snapshotA);
-    await engineB.stop();
+    await secondSystem.dispose();
   });
 
   it("fans out read-model updates to subscribers", async () => {
     const stateDir = makeTempDir("t3code-orchestration-fanout-");
-    const engine = new OrchestrationEngine(stateDir);
-    await engine.start();
+    const system = await createOrchestrationSystem(stateDir);
+    const engine = system.engine;
     const updates: number[] = [];
     const unsubscribe = engine.subscribeToReadModel((snapshot) => {
       updates.push(snapshot.sequence);
@@ -91,13 +92,13 @@ describe("OrchestrationEngine", () => {
     });
     unsubscribe();
     expect(updates.length).toBeGreaterThan(0);
-    await engine.stop();
+    await system.dispose();
   });
 
   it("replays append-only events from sequence", async () => {
     const stateDir = makeTempDir("t3code-orchestration-replay-");
-    const engine = new OrchestrationEngine(stateDir);
-    await engine.start();
+    const system = await createOrchestrationSystem(stateDir);
+    const engine = system.engine;
     await engine.dispatch({
       type: "project.create",
       commandId: "cmd-a",
@@ -117,14 +118,14 @@ describe("OrchestrationEngine", () => {
     expect(events.length).toBe(2);
     expect(events[0]?.type).toBe("project.created");
     expect(events[1]?.type).toBe("project.deleted");
-    await engine.stop();
+    await system.dispose();
   });
 
   it("stores completed turn summaries even when no files changed", async () => {
     const stateDir = makeTempDir("t3code-orchestration-turn-diff-");
-    const engine = new OrchestrationEngine(stateDir);
+    const firstSystem = await createOrchestrationSystem(stateDir);
+    const engine = firstSystem.engine;
     const completedAt = new Date().toISOString();
-    await engine.start();
     await engine.dispatch({
       type: "project.create",
       commandId: "cmd-project-turn-diff",
@@ -167,10 +168,10 @@ describe("OrchestrationEngine", () => {
         checkpointTurnCount: 1,
       },
     ]);
-    await engine.stop();
+    await firstSystem.dispose();
 
-    const restartedEngine = new OrchestrationEngine(stateDir);
-    await restartedEngine.start();
+    const secondSystem = await createOrchestrationSystem(stateDir);
+    const restartedEngine = secondSystem.engine;
     const restartedThread = restartedEngine
       .getSnapshot()
       .threads.find((thread) => thread.id === "thread-turn-diff");
@@ -183,14 +184,14 @@ describe("OrchestrationEngine", () => {
         checkpointTurnCount: 1,
       },
     ]);
-    await restartedEngine.stop();
+    await secondSystem.dispose();
   });
 
   it("reverts thread messages and turn summaries to a checkpoint", async () => {
     const stateDir = makeTempDir("t3code-orchestration-revert-");
-    const engine = new OrchestrationEngine(stateDir);
+    const firstSystem = await createOrchestrationSystem(stateDir);
+    const engine = firstSystem.engine;
     const createdAt = new Date().toISOString();
-    await engine.start();
     await engine.dispatch({
       type: "project.create",
       commandId: "cmd-project-revert",
@@ -291,10 +292,10 @@ describe("OrchestrationEngine", () => {
     expect(thread?.messages.map((message) => message.id)).toEqual(["user-1", "assistant:turn-1"]);
     expect(thread?.turnDiffSummaries.map((summary) => summary.turnId)).toEqual(["turn-1"]);
     expect(thread?.latestTurnId).toBe("turn-1");
-    await engine.stop();
+    await firstSystem.dispose();
 
-    const restarted = new OrchestrationEngine(stateDir);
-    await restarted.start();
+    const secondSystem = await createOrchestrationSystem(stateDir);
+    const restarted = secondSystem.engine;
     const restartedThread = restarted
       .getSnapshot()
       .threads.find((entry) => entry.id === "thread-revert");
@@ -303,12 +304,22 @@ describe("OrchestrationEngine", () => {
       "assistant:turn-1",
     ]);
     expect(restartedThread?.turnDiffSummaries.map((summary) => summary.turnId)).toEqual(["turn-1"]);
-    await restarted.stop();
+    await secondSystem.dispose();
   });
 
   it("allows stop to be called multiple times", async () => {
-    const stateDir = makeTempDir("t3code-orchestration-stop-");
-    const engine = new OrchestrationEngine(stateDir);
+    const inMemoryStore: OrchestrationEventRepositoryShape = {
+      append(event) {
+        return Effect.succeed({ ...event, sequence: 1 });
+      },
+      readFromSequence() {
+        return Effect.succeed([]);
+      },
+      readAll() {
+        return Effect.succeed([]);
+      },
+    };
+    const engine = new OrchestrationEngine(inMemoryStore);
     await engine.start();
     await engine.stop();
     await expect(engine.stop()).resolves.toBeUndefined();
@@ -341,7 +352,6 @@ describe("OrchestrationEngine", () => {
       readAll() {
         return Effect.succeed(events);
       },
-      close() {},
     };
 
     const engine = new OrchestrationEngine(flakyStore);

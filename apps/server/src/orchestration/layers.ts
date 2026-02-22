@@ -3,23 +3,28 @@ import path from "node:path";
 import { Effect, Layer } from "effect";
 
 import { OrchestrationEventRepository } from "../persistence/Services/OrchestrationEvents";
-import { makeSqliteOrchestrationEventRepository } from "../persistence/Layers/OrchestrationEvents";
+import { makeSqliteOrchestrationEventRepositoryLive } from "../persistence/Layers/OrchestrationEvents";
 import { OrchestrationEngine } from "./engine";
 import { OrchestrationConfig, OrchestrationEngineService } from "./services";
 
-export const OrchestrationEventRepositoryLive = Layer.effect(
-  OrchestrationEventRepository,
+export const OrchestrationEventRepositoryLive = Layer.unwrapEffect(
   Effect.map(OrchestrationConfig, ({ stateDir }) => {
     const dbPath = path.join(stateDir, "orchestration.sqlite");
-    return makeSqliteOrchestrationEventRepository(dbPath);
+    return makeSqliteOrchestrationEventRepositoryLive(dbPath);
   }),
 );
 
-export const OrchestrationEngineLive = Layer.effect(
+export const OrchestrationEngineLive = Layer.scoped(
   OrchestrationEngineService,
-  Effect.map(OrchestrationEventRepository, (eventRepository) => {
-    return new OrchestrationEngine(eventRepository);
-  }),
+  Effect.acquireRelease(
+    Effect.gen(function* () {
+      const eventRepository = yield* OrchestrationEventRepository;
+      const engine = new OrchestrationEngine(eventRepository);
+      yield* Effect.promise(() => engine.start());
+      return engine;
+    }),
+    (engine) => Effect.promise(() => engine.stop()),
+  ),
 );
 
 export const OrchestrationLive = OrchestrationEngineLive.pipe(

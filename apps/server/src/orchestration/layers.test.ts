@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createOrchestrationEngine } from "./runtime";
+import { createOrchestrationSystem } from "./runtime";
 
 const tempDirs: string[] = [];
 
@@ -24,9 +24,9 @@ describe("orchestration layers", () => {
   it("creates an engine through Context.Tag wiring", async () => {
     const stateDir = makeTempDir("t3code-orchestration-layer-");
     const createdAt = new Date().toISOString();
-    const engine = createOrchestrationEngine(stateDir);
+    const firstSystem = await createOrchestrationSystem(stateDir);
+    const { engine } = firstSystem;
 
-    await engine.start();
     await engine.dispatch({
       type: "project.create",
       commandId: "cmd-layer-1",
@@ -37,11 +37,11 @@ describe("orchestration layers", () => {
       createdAt,
     });
     const firstSnapshot = engine.getSnapshot();
-    await engine.stop();
+    await firstSystem.dispose();
 
-    const restarted = createOrchestrationEngine(stateDir);
-    await restarted.start();
+    const secondSystem = await createOrchestrationSystem(stateDir);
+    const restarted = secondSystem.engine;
     expect(restarted.getSnapshot()).toEqual(firstSnapshot);
-    await restarted.stop();
+    await secondSystem.dispose();
   });
 });

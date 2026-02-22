@@ -36,7 +36,7 @@ import {
 import { TerminalManager } from "./terminalManager";
 import { loadResolvedKeybindingsConfig, upsertKeybindingRule } from "./keybindings";
 import { searchWorkspaceEntries } from "./workspaceEntries";
-import { createOrchestrationEngine } from "./orchestration/runtime";
+import { createOrchestrationSystem, type OrchestrationSystem } from "./orchestration/runtime";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -88,6 +88,8 @@ function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+const noop = () => {};
+
 export function createServer(options: ServerOptions) {
   const {
     port,
@@ -107,14 +109,15 @@ export function createServer(options: ServerOptions) {
   const projectRegistry =
     providedRegistry ?? new ProjectRegistry(path.join(os.homedir(), ".t3", "userdata"));
   const gitManager = providedGitManager ?? new GitManager();
-  const orchestrationEngine = createOrchestrationEngine(
-    stateDir ?? path.join(os.homedir(), ".t3", "userdata"),
-  );
+  const resolvedStateDir = stateDir ?? path.join(os.homedir(), ".t3", "userdata");
+  let orchestrationSystem: OrchestrationSystem | null = null;
   const clients = new Set<WebSocket>();
   const logger = createLogger("ws");
   const logWebSocketEvents =
     explicitLogWsEvents ?? parseBooleanEnv(process.env.T3CODE_LOG_WS_EVENTS) ?? Boolean(devUrl);
   let keybindingsConfig = loadResolvedKeybindingsConfig(logger);
+  let unsubscribeReadModel = noop;
+  let unsubscribeDomainEvents = noop;
 
   function logOutgoingPush(push: WsPush, recipients: number) {
     if (!logWebSocketEvents) return;
@@ -125,46 +128,62 @@ export function createServer(options: ServerOptions) {
     });
   }
 
-  const unsubscribeReadModel = orchestrationEngine.subscribeToReadModel((snapshot) => {
-    const push: WsPush = {
-      type: "push",
-      channel: ORCHESTRATION_WS_CHANNELS.readModel,
-      data: {
-        sequence: snapshot.sequence,
-        snapshot,
-      } satisfies OrchestrationReadModelPush,
-    };
-    const message = JSON.stringify(push);
-    let recipients = 0;
-    for (const client of clients) {
-      if (client.readyState === client.OPEN) {
-        client.send(message);
-        recipients += 1;
-      }
+  function requireOrchestrationEngine() {
+    if (!orchestrationSystem) {
+      throw new Error("Orchestration engine is not started");
     }
-    logOutgoingPush(push, recipients);
-  });
+    return orchestrationSystem.engine;
+  }
 
-  const unsubscribeDomainEvents = orchestrationEngine.subscribeToDomainEvents((event) => {
-    const push: WsPush = {
-      type: "push",
-      channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
-      data: event,
-    };
-    const message = JSON.stringify(push);
-    let recipients = 0;
-    for (const client of clients) {
-      if (client.readyState === client.OPEN) {
-        client.send(message);
-        recipients += 1;
+  function attachOrchestrationSubscriptions() {
+    const orchestrationEngine = requireOrchestrationEngine();
+
+    unsubscribeReadModel = orchestrationEngine.subscribeToReadModel((snapshot) => {
+      const push: WsPush = {
+        type: "push",
+        channel: ORCHESTRATION_WS_CHANNELS.readModel,
+        data: {
+          sequence: snapshot.sequence,
+          snapshot,
+        } satisfies OrchestrationReadModelPush,
+      };
+      const message = JSON.stringify(push);
+      let recipients = 0;
+      for (const client of clients) {
+        if (client.readyState === client.OPEN) {
+          client.send(message);
+          recipients += 1;
+        }
       }
-    }
-    logOutgoingPush(push, recipients);
-  });
+      logOutgoingPush(push, recipients);
+    });
+
+    unsubscribeDomainEvents = orchestrationEngine.subscribeToDomainEvents((event) => {
+      const push: WsPush = {
+        type: "push",
+        channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
+        data: event,
+      };
+      const message = JSON.stringify(push);
+      let recipients = 0;
+      for (const client of clients) {
+        if (client.readyState === client.OPEN) {
+          client.send(message);
+          recipients += 1;
+        }
+      }
+      logOutgoingPush(push, recipients);
+    });
+  }
 
   // Forward provider events to all connected WebSocket clients
   providerManager.on("event", (event) => {
     void (async () => {
+      const liveOrchestrationSystem = orchestrationSystem;
+      if (!liveOrchestrationSystem) {
+        return;
+      }
+      const orchestrationEngine = liveOrchestrationSystem.engine;
       const snapshot = orchestrationEngine.getSnapshot();
       const thread = snapshot.threads.find((entry) => entry.session?.sessionId === event.sessionId);
       if (!thread) return;
@@ -367,6 +386,7 @@ export function createServer(options: ServerOptions) {
 
   wss.on("connection", (ws) => {
     clients.add(ws);
+    const orchestrationEngine = requireOrchestrationEngine();
 
     // Send welcome message with project info
     const segments = cwd.split(/[/\\]/).filter(Boolean);
@@ -433,6 +453,8 @@ export function createServer(options: ServerOptions) {
   }
 
   async function routeRequest(request: WsRequest): Promise<unknown> {
+    const orchestrationEngine = requireOrchestrationEngine();
+
     switch (request.method) {
       case WS_METHODS.providersStartSession:
         return providerManager.startSession(request.params as never);
@@ -676,21 +698,42 @@ export function createServer(options: ServerOptions) {
     }
   }
 
-  function start() {
+  async function ensureOrchestrationSystemStarted() {
+    if (orchestrationSystem) {
+      return;
+    }
+
+    orchestrationSystem = await createOrchestrationSystem(resolvedStateDir);
+    attachOrchestrationSubscriptions();
+  }
+
+  async function disposeOrchestrationSystem() {
+    unsubscribeReadModel();
+    unsubscribeDomainEvents();
+    unsubscribeReadModel = noop;
+    unsubscribeDomainEvents = noop;
+
+    if (!orchestrationSystem) {
+      return;
+    }
+
+    const system = orchestrationSystem;
+    orchestrationSystem = null;
+    await system.dispose();
+  }
+
+  async function start() {
+    await ensureOrchestrationSystemStarted();
+
     return new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => {
         httpServer.off("error", onError);
-        reject(error);
+        void disposeOrchestrationSystem().finally(() => reject(error));
       };
       httpServer.once("error", onError);
-      const onListening = async () => {
+      const onListening = () => {
         httpServer.off("error", onError);
-        try {
-          await orchestrationEngine.start();
-          resolve();
-        } catch (error) {
-          reject(error instanceof Error ? error : new Error("Failed to start orchestration engine"));
-        }
+        resolve();
       };
       if (host) {
         httpServer.listen(port, host, onListening);
@@ -701,9 +744,7 @@ export function createServer(options: ServerOptions) {
   }
 
   async function stop(): Promise<void> {
-    unsubscribeReadModel();
-    unsubscribeDomainEvents();
-    await orchestrationEngine.stop();
+    await disposeOrchestrationSystem();
     terminalManager.off("event", onTerminalEvent);
     providerManager.stopAll();
     providerManager.dispose();

@@ -7,10 +7,13 @@ import type { SqlClient as SqlClientService } from "@effect/sql/SqlClient";
 import * as SqlClient from "@effect/sql/SqlClient";
 import * as SqlSchema from "@effect/sql/SqlSchema";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
-import { Effect, ManagedRuntime, Schema } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 
-import type { OrchestrationEventRepositoryShape } from "../Services/OrchestrationEvents";
 import { runMigrations } from "../Migrations";
+import {
+  OrchestrationEventRepository,
+  type OrchestrationEventRepositoryShape,
+} from "../Services/OrchestrationEvents";
 
 const decodeEvent = Schema.decodeUnknownSync(OrchestrationEventSchema);
 
@@ -42,11 +45,31 @@ const ReadFromSequenceRequestSchema = Schema.Struct({
   limit: Schema.Number,
 });
 
-const appendEventRow = SqlSchema.single({
-  Request: AppendEventRequestSchema,
-  Result: EventRowSchema,
-  execute: (request) =>
-    Effect.flatMap(SqlClient.SqlClient, (sql) =>
+class OrchestrationSql extends Context.Tag("persistence/OrchestrationSql")<
+  OrchestrationSql,
+  SqlClientService
+>() {}
+
+function eventRowToOrchestrationEvent(row: EventRow): OrchestrationEvent {
+  return decodeEvent({
+    sequence: row.sequence,
+    eventId: row.eventId,
+    type: row.type,
+    aggregateType: row.aggregateType,
+    aggregateId: row.aggregateId,
+    occurredAt: row.occurredAt,
+    commandId: row.commandId,
+    payload: JSON.parse(row.payloadJson) as unknown,
+  });
+}
+
+const makeRepository = Effect.gen(function* () {
+  const sql = yield* OrchestrationSql;
+
+  const appendEventRow = SqlSchema.single({
+    Request: AppendEventRequestSchema,
+    Result: EventRowSchema,
+    execute: (request) =>
       sql`
         INSERT INTO orchestration_events (
           event_id,
@@ -76,14 +99,12 @@ const appendEventRow = SqlSchema.single({
           command_id AS "commandId",
           payload_json AS "payloadJson"
       `,
-    ),
-});
+  });
 
-const readEventRowsFromSequence = SqlSchema.findAll({
-  Request: ReadFromSequenceRequestSchema,
-  Result: EventRowSchema,
-  execute: (request) =>
-    Effect.flatMap(SqlClient.SqlClient, (sql) =>
+  const readEventRowsFromSequence = SqlSchema.findAll({
+    Request: ReadFromSequenceRequestSchema,
+    Result: EventRowSchema,
+    execute: (request) =>
       sql`
         SELECT
           sequence,
@@ -99,92 +120,59 @@ const readEventRowsFromSequence = SqlSchema.findAll({
         ORDER BY sequence ASC
         LIMIT ${request.limit}
       `,
-    ),
-});
-
-function eventRowToOrchestrationEvent(row: EventRow): OrchestrationEvent {
-  return decodeEvent({
-    sequence: row.sequence,
-    eventId: row.eventId,
-    type: row.type,
-    aggregateType: row.aggregateType,
-    aggregateId: row.aggregateId,
-    occurredAt: row.occurredAt,
-    commandId: row.commandId,
-    payload: JSON.parse(row.payloadJson) as unknown,
   });
-}
-
-export function makeSqliteOrchestrationEventRepository(
-  dbPath: string,
-): OrchestrationEventRepositoryShape {
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-
-  const runtime: ManagedRuntime.ManagedRuntime<SqlClientService, unknown> = ManagedRuntime.make(
-    SqliteClient.layer({
-      filename: dbPath,
-    }),
-  );
-  let closed = false;
-
-  const provideSql = <A, E>(
-    effect: Effect.Effect<A, E, SqlClientService>,
-  ): Effect.Effect<A, E | unknown> => Effect.provide(effect, runtime);
-
-  const initialize = Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`PRAGMA journal_mode = WAL;`;
-    yield* sql`PRAGMA foreign_keys = ON;`;
-    yield* runMigrations;
-  });
-
-  const initialized = runtime.runPromise(initialize).then(() => undefined);
-  const ensureInitialized = Effect.promise(() => initialized);
 
   const append: OrchestrationEventRepositoryShape["append"] = (event) =>
-    Effect.gen(function* () {
-      yield* ensureInitialized;
-      const row = yield* provideSql(
-        appendEventRow({
-          eventId: event.eventId,
-          type: event.type,
-          aggregateType: event.aggregateType,
-          aggregateId: event.aggregateId,
-          occurredAt: event.occurredAt,
-          commandId: event.commandId,
-          payloadJson: JSON.stringify(event.payload),
-        }),
-      );
-      return eventRowToOrchestrationEvent(row);
-    }).pipe(Effect.orDie);
+    appendEventRow({
+      eventId: event.eventId,
+      type: event.type,
+      aggregateType: event.aggregateType,
+      aggregateId: event.aggregateId,
+      occurredAt: event.occurredAt,
+      commandId: event.commandId,
+      payloadJson: JSON.stringify(event.payload),
+    }).pipe(Effect.map(eventRowToOrchestrationEvent), Effect.orDie);
 
   const readFromSequence: OrchestrationEventRepositoryShape["readFromSequence"] = (
     sequenceExclusive,
     limit = 1_000,
   ) =>
-    Effect.gen(function* () {
-      yield* ensureInitialized;
-      const rows = yield* provideSql(
-        readEventRowsFromSequence({
-          sequenceExclusive,
-          limit,
-        }),
-      );
-      return rows.map(eventRowToOrchestrationEvent);
-    }).pipe(Effect.orDie);
-
-  const close = (): void => {
-    if (closed) {
-      return;
-    }
-    closed = true;
-    void runtime.dispose();
-  };
+    readEventRowsFromSequence({ sequenceExclusive, limit }).pipe(
+      Effect.map((rows) => rows.map(eventRowToOrchestrationEvent)),
+      Effect.orDie,
+    );
 
   return {
     append,
     readFromSequence,
     readAll: () => readFromSequence(0, Number.MAX_SAFE_INTEGER),
-    close,
-  };
+  } satisfies OrchestrationEventRepositoryShape;
+});
+
+export const OrchestrationEventRepositoryLive = Layer.effect(
+  OrchestrationEventRepository,
+  makeRepository,
+);
+
+export function makeSqliteOrchestrationEventRepositoryLive(dbPath: string) {
+  const SqliteClientLive = Effect.gen(function* () {
+    yield* Effect.try({
+      try: () => fs.mkdirSync(path.dirname(dbPath), { recursive: true }),
+      catch: (error) => Effect.die(error),
+    })
+    return SqliteClient.layer({ filename: dbPath });
+  }).pipe(Layer.unwrapEffect)
+
+  const OrchestrationSqlLive = Layer.scoped(
+    OrchestrationSql,
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA journal_mode = WAL;`;
+      yield* sql`PRAGMA foreign_keys = ON;`;
+      yield* runMigrations;
+      return sql;
+    }),
+  ).pipe(Layer.provide(SqliteClientLive));
+
+  return OrchestrationEventRepositoryLive.pipe(Layer.provide(OrchestrationSqlLive));
 }

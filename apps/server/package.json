@@ -17,6 +17,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@effect/platform": "^0.94.5",
+    "@effect/platform-node": "^0.104.1",
     "@effect/sql": "^0.49.0",
     "@effect/sql-sqlite-node": "^0.50.1",
     "effect": "^3.19.19",

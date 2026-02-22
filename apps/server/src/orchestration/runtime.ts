@@ -1,14 +1,22 @@
-import { Effect, Layer, Runtime } from "effect";
+import { Layer, ManagedRuntime } from "effect";
 
 import type { OrchestrationEngine } from "./engine";
 import { OrchestrationLive } from "./layers";
 import { OrchestrationConfig, OrchestrationEngineService } from "./services";
 
-export function createOrchestrationEngine(stateDir: string): OrchestrationEngine {
+export interface OrchestrationSystem {
+  readonly engine: OrchestrationEngine;
+  readonly dispose: () => Promise<void>;
+}
+
+export async function createOrchestrationSystem(stateDir: string): Promise<OrchestrationSystem> {
   const orchestrationLayer = OrchestrationLive.pipe(
     Layer.provide(Layer.succeed(OrchestrationConfig, { stateDir })),
   );
-  return Runtime.runSync(Runtime.defaultRuntime)(
-    Effect.provide(OrchestrationEngineService, orchestrationLayer),
-  );
+  const runtime = ManagedRuntime.make(orchestrationLayer);
+  const engine = await runtime.runPromise(OrchestrationEngineService);
+  return {
+    engine,
+    dispose: () => runtime.dispose(),
+  };
 }

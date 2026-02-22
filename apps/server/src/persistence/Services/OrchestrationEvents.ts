@@ -11,7 +11,6 @@ export interface OrchestrationEventRepositoryShape {
     limit?: number,
   ) => Effect.Effect<OrchestrationEvent[]>;
   readonly readAll: () => Effect.Effect<OrchestrationEvent[]>;
-  readonly close: () => void;
 }
 
 export class OrchestrationEventRepository extends Context.Tag("orchestration/EventRepository")<
