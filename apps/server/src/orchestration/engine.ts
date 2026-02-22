@@ -9,6 +9,7 @@ import { OrchestrationCommandSchema } from "@t3tools/contracts";
 import { PubSub, Queue, Schema, Stream, Effect, Fiber, Runtime, Either } from "effect";
 
 import { createLogger } from "../logger";
+import type { OrchestrationEventStore } from "./eventStore";
 import { SqliteEventStore } from "./eventStore";
 import { createEmptyReadModel, reduceEvent } from "./reducer";
 import { UI_ENTITY_CONTRACTS } from "./uiContractInventory";
@@ -190,7 +191,7 @@ function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEve
 export class OrchestrationEngine {
   private readonly logger = createLogger("orchestration");
   private readonly runtime = Runtime.defaultRuntime;
-  private readonly eventStore: SqliteEventStore;
+  private readonly eventStore: OrchestrationEventStore;
 
   private readModel: OrchestrationReadModel;
   private commandQueue: Queue.Queue<CommandEnvelope>;
@@ -200,9 +201,15 @@ export class OrchestrationEngine {
   private readonly readModelListeners = new Set<(snapshot: OrchestrationReadModel) => void>();
   private readonly domainEventListeners = new Set<(event: OrchestrationEvent) => void>();
 
-  constructor(stateDir: string) {
-    const dbPath = path.join(stateDir, "orchestration.sqlite");
-    this.eventStore = new SqliteEventStore(dbPath);
+  constructor(stateDir: string);
+  constructor(eventStore: OrchestrationEventStore);
+  constructor(stateDirOrEventStore: string | OrchestrationEventStore) {
+    if (typeof stateDirOrEventStore === "string") {
+      const dbPath = path.join(stateDirOrEventStore, "orchestration.sqlite");
+      this.eventStore = new SqliteEventStore(dbPath);
+    } else {
+      this.eventStore = stateDirOrEventStore;
+    }
     this.readModel = createEmptyReadModel(new Date().toISOString());
     this.commandQueue = Runtime.runSync(this.runtime)(Queue.unbounded<CommandEnvelope>());
     this.readModelPubSub = Runtime.runSync(this.runtime)(

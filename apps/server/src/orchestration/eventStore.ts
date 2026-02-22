@@ -6,6 +6,13 @@ import type { SQLOutputValue } from "node:sqlite";
 import type { OrchestrationEvent } from "@t3tools/contracts";
 import { Effect } from "effect";
 
+export interface OrchestrationEventStore {
+  append(event: Omit<OrchestrationEvent, "sequence">): Effect.Effect<OrchestrationEvent>;
+  readFromSequence(sequenceExclusive: number, limit?: number): Effect.Effect<OrchestrationEvent[]>;
+  readAll(): Effect.Effect<OrchestrationEvent[]>;
+  close(): void;
+}
+
 interface EventRow {
   sequence: number;
   event_id: string;
@@ -50,7 +57,7 @@ function readRequiredNumber(
   throw new Error(`Invalid SQLite value for ${String(column)}: expected number`);
 }
 
-export class SqliteEventStore {
+export class SqliteEventStore implements OrchestrationEventStore {
   private readonly db: DatabaseSync;
   private readonly insertStatement: StatementSync;
   private closed = false;

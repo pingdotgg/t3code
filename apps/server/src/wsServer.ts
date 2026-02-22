@@ -36,7 +36,7 @@ import {
 import { TerminalManager } from "./terminalManager";
 import { loadResolvedKeybindingsConfig, upsertKeybindingRule } from "./keybindings";
 import { searchWorkspaceEntries } from "./workspaceEntries";
-import { OrchestrationEngine } from "./orchestration/engine";
+import { createOrchestrationEngine } from "./orchestration/runtime";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -107,7 +107,7 @@ export function createServer(options: ServerOptions) {
   const projectRegistry =
     providedRegistry ?? new ProjectRegistry(path.join(os.homedir(), ".t3", "userdata"));
   const gitManager = providedGitManager ?? new GitManager();
-  const orchestrationEngine = new OrchestrationEngine(
+  const orchestrationEngine = createOrchestrationEngine(
     stateDir ?? path.join(os.homedir(), ".t3", "userdata"),
   );
   const clients = new Set<WebSocket>();
