@@ -2,9 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import type { OrchestrationEvent } from "@t3tools/contracts";
+import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { OrchestrationEngine } from "./engine";
+import type { OrchestrationEventStore } from "./eventStore";
 
 const tempDirs: string[] = [];
 
@@ -309,5 +312,67 @@ describe("OrchestrationEngine", () => {
     await engine.start();
     await engine.stop();
     await expect(engine.stop()).resolves.toBeUndefined();
+  });
+
+  it("keeps processing queued commands after a storage failure", async () => {
+    const events: OrchestrationEvent[] = [];
+    let nextSequence = 1;
+    let shouldFailFirstAppend = true;
+
+    const flakyStore: OrchestrationEventStore = {
+      append(event) {
+        if (shouldFailFirstAppend) {
+          shouldFailFirstAppend = false;
+          return Effect.sync(() => {
+            throw new Error("append failed");
+          });
+        }
+        const savedEvent = {
+          ...event,
+          sequence: nextSequence,
+        } satisfies OrchestrationEvent;
+        nextSequence += 1;
+        events.push(savedEvent);
+        return Effect.succeed(savedEvent);
+      },
+      readFromSequence(sequenceExclusive) {
+        return Effect.succeed(events.filter((event) => event.sequence > sequenceExclusive));
+      },
+      readAll() {
+        return Effect.succeed(events);
+      },
+      close() {},
+    };
+
+    const engine = new OrchestrationEngine(flakyStore);
+    const createdAt = new Date().toISOString();
+    await engine.start();
+
+    await expect(
+      engine.dispatch({
+        type: "project.create",
+        commandId: "cmd-flaky-1",
+        projectId: "project-flaky-fail",
+        name: "flaky-fail",
+        cwd: "/tmp/flaky-fail",
+        model: "gpt-5-codex",
+        createdAt,
+      }),
+    ).rejects.toThrow("append failed");
+
+    const result = await engine.dispatch({
+      type: "project.create",
+      commandId: "cmd-flaky-2",
+      projectId: "project-flaky-ok",
+      name: "flaky-ok",
+      cwd: "/tmp/flaky-ok",
+      model: "gpt-5-codex",
+      createdAt,
+    });
+
+    expect(result.sequence).toBe(1);
+    expect(engine.getSnapshot().projects.map((project) => project.id)).toEqual(["project-flaky-ok"]);
+
+    await engine.stop();
   });
 });

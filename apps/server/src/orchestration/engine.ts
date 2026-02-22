@@ -6,7 +6,18 @@ import type {
   OrchestrationReadModel,
 } from "@t3tools/contracts";
 import { OrchestrationCommandSchema } from "@t3tools/contracts";
-import { PubSub, Queue, Schema, Stream, Effect, Fiber, Runtime, Either } from "effect";
+import {
+  PubSub,
+  Queue,
+  Schema,
+  Stream,
+  Effect,
+  Fiber,
+  Runtime,
+  Either,
+  Deferred,
+  Cause,
+} from "effect";
 
 import { createLogger } from "../logger";
 import type { OrchestrationEventStore } from "./eventStore";
@@ -16,9 +27,12 @@ import { UI_ENTITY_CONTRACTS } from "./uiContractInventory";
 
 type CommandEnvelope = {
   command: OrchestrationCommand;
-  resolve: (result: { sequence: number }) => void;
-  reject: (error: Error) => void;
+  result: Deferred.Deferred<{ sequence: number }, Error>;
 };
+
+function asError(error: unknown, fallbackMessage: string): Error {
+  return error instanceof Error ? error : new Error(fallbackMessage);
+}
 
 function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEvent, "sequence"> {
   const eventId = crypto.randomUUID();
@@ -218,43 +232,57 @@ export class OrchestrationEngine {
     this.eventPubSub = Runtime.runSync(this.runtime)(PubSub.unbounded<OrchestrationEvent>());
   }
 
+  private processEnvelope(envelope: CommandEnvelope): Effect.Effect<void> {
+    return Effect.gen(this, function* () {
+      const eventBase = mapCommandToEvent(envelope.command);
+      const savedEvent = yield* this.eventStore.append(eventBase);
+
+      yield* Effect.sync(() => {
+        this.readModel = reduceEvent(this.readModel, savedEvent);
+      });
+
+      const snapshot = this.readModel;
+      yield* Effect.all([
+        PubSub.publish(this.eventPubSub, savedEvent),
+        PubSub.publish(this.readModelPubSub, snapshot),
+      ]);
+
+      yield* Effect.sync(() => {
+        for (const listener of this.domainEventListeners) {
+          listener(savedEvent);
+        }
+        for (const listener of this.readModelListeners) {
+          listener(snapshot);
+        }
+      });
+
+      yield* Deferred.succeed(envelope.result, { sequence: savedEvent.sequence });
+    }).pipe(
+      Effect.catchAllCause((cause) =>
+        Deferred.fail(
+          envelope.result,
+          asError(Cause.squash(cause), "Unknown command processing error"),
+        ).pipe(Effect.asVoid),
+      ),
+    );
+  }
+
+  private bootstrapReadModel(): Effect.Effect<void> {
+    return Effect.gen(this, function* () {
+      const existingEvents = yield* this.eventStore.readAll();
+      yield* Effect.sync(() => {
+        for (const event of existingEvents) {
+          this.readModel = reduceEvent(this.readModel, event);
+        }
+      });
+    });
+  }
+
   async start(): Promise<void> {
-    const existingEvents = await Runtime.runPromise(this.runtime)(this.eventStore.readAll());
-    for (const event of existingEvents) {
-      this.readModel = reduceEvent(this.readModel, event);
-    }
+    await Runtime.runPromise(this.runtime)(this.bootstrapReadModel());
 
     const worker = Stream.fromQueue(this.commandQueue).pipe(
-      Stream.runForEach((envelope) =>
-        Effect.tryPromise({
-          try: async () => {
-            const eventBase = mapCommandToEvent(envelope.command);
-            const savedEvent = await Runtime.runPromise(this.runtime)(
-              this.eventStore.append(eventBase),
-            );
-            this.readModel = reduceEvent(this.readModel, savedEvent);
-            await Promise.all([
-              Runtime.runPromise(this.runtime)(PubSub.publish(this.eventPubSub, savedEvent)),
-              Runtime.runPromise(this.runtime)(
-                PubSub.publish(this.readModelPubSub, this.readModel),
-              ),
-            ]);
-            for (const listener of this.domainEventListeners) {
-              listener(savedEvent);
-            }
-            for (const listener of this.readModelListeners) {
-              listener(this.readModel);
-            }
-            envelope.resolve({ sequence: savedEvent.sequence });
-          },
-          catch: (error) => {
-            const message =
-              error instanceof Error ? error.message : "Unknown command processing error";
-            envelope.reject(new Error(message));
-            return undefined;
-          },
-        }),
-      ),
+      Stream.runForEach((envelope) => this.processEnvelope(envelope)),
     );
 
     this.workerFiber = Runtime.runFork(this.runtime)(worker);
@@ -301,13 +329,13 @@ export class OrchestrationEngine {
   }
 
   async dispatch(command: OrchestrationCommand): Promise<{ sequence: number }> {
-    return new Promise<{ sequence: number }>((resolve, reject) => {
-      Runtime.runPromise(this.runtime)(
-        Queue.offer(this.commandQueue, { command, resolve, reject }),
-      ).catch((error) => {
-        const message = error instanceof Error ? error.message : "Queue offer failed";
-        reject(new Error(message));
-      });
+    const program = Effect.gen(this, function* () {
+      const result = yield* Deferred.make<{ sequence: number }, Error>();
+      yield* Queue.offer(this.commandQueue, { command, result });
+      return yield* Deferred.await(result);
+    });
+    return Runtime.runPromise(this.runtime)(program).catch((error) => {
+      throw asError(error, "Queue offer failed");
     });
   }
 
