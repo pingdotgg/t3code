@@ -9,7 +9,6 @@ export const WS_METHODS = {
   providersInterruptTurn: "providers.interruptTurn",
   providersRespondToRequest: "providers.respondToRequest",
   providersStopSession: "providers.stopSession",
-  providersListSessions: "providers.listSessions",
   providersListCheckpoints: "providers.listCheckpoints",
   providersGetCheckpointDiff: "providers.getCheckpointDiff",
   providersRevertToCheckpoint: "providers.revertToCheckpoint",
@@ -51,7 +50,6 @@ export const WS_METHODS = {
 // ── Push Event Channels ──────────────────────────────────────────────
 
 export const WS_CHANNELS = {
-  providerEvent: "providers.event",
   terminalEvent: "terminal.event",
   serverWelcome: "server.welcome",
 } as const;

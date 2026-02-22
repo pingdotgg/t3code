@@ -24,7 +24,6 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     activeTerminalGroupId: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
     session: null,
     messages: [],
-    events: [],
     turnDiffSummaries: [],
     error: null,
     createdAt: "2026-02-13T00:00:00.000Z",

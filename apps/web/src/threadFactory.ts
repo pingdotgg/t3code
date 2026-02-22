@@ -32,7 +32,6 @@ export function createThread(projectId: string, options: CreateThreadOptions = {
     activeTerminalGroupId: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
     session: null,
     messages: [],
-    events: [],
     turnDiffSummaries: [],
     error: null,
     createdAt,

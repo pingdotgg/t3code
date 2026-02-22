@@ -7,8 +7,11 @@ import type { Duplex } from "node:stream";
 
 import {
   EDITORS,
+  ORCHESTRATION_WS_CHANNELS,
+  ORCHESTRATION_WS_METHODS,
   WS_CHANNELS,
   WS_METHODS,
+  type OrchestrationReadModelPush,
   type TerminalEvent,
   type WsPush,
   type WsRequest,
@@ -33,6 +36,7 @@ import {
 import { TerminalManager } from "./terminalManager";
 import { loadResolvedKeybindingsConfig, upsertKeybindingRule } from "./keybindings";
 import { searchWorkspaceEntries } from "./workspaceEntries";
+import { OrchestrationEngine } from "./orchestration/engine";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -53,6 +57,7 @@ export interface ServerOptions {
   port: number;
   host?: string | undefined;
   cwd: string;
+  stateDir?: string | undefined;
   staticDir?: string | undefined;
   devUrl?: string | undefined;
   logWebSocketEvents?: boolean | undefined;
@@ -75,6 +80,7 @@ export function createServer(options: ServerOptions) {
     port,
     host,
     cwd,
+    stateDir,
     staticDir,
     devUrl,
     logWebSocketEvents: explicitLogWsEvents,
@@ -88,6 +94,9 @@ export function createServer(options: ServerOptions) {
   const projectRegistry =
     providedRegistry ?? new ProjectRegistry(path.join(os.homedir(), ".t3", "userdata"));
   const gitManager = providedGitManager ?? new GitManager();
+  const orchestrationEngine = new OrchestrationEngine(
+    stateDir ?? path.join(os.homedir(), ".t3", "userdata"),
+  );
   const clients = new Set<WebSocket>();
   const logger = createLogger("ws");
   const logWebSocketEvents =
@@ -103,11 +112,30 @@ export function createServer(options: ServerOptions) {
     });
   }
 
-  // Forward provider events to all connected WebSocket clients
-  providerManager.on("event", (event) => {
+  const unsubscribeReadModel = orchestrationEngine.subscribeToReadModel((snapshot) => {
     const push: WsPush = {
       type: "push",
-      channel: WS_CHANNELS.providerEvent,
+      channel: ORCHESTRATION_WS_CHANNELS.readModel,
+      data: {
+        sequence: snapshot.sequence,
+        snapshot,
+      } satisfies OrchestrationReadModelPush,
+    };
+    const message = JSON.stringify(push);
+    let recipients = 0;
+    for (const client of clients) {
+      if (client.readyState === client.OPEN) {
+        client.send(message);
+        recipients += 1;
+      }
+    }
+    logOutgoingPush(push, recipients);
+  });
+
+  const unsubscribeDomainEvents = orchestrationEngine.subscribeToDomainEvents((event) => {
+    const push: WsPush = {
+      type: "push",
+      channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
       data: event,
     };
     const message = JSON.stringify(push);
@@ -119,6 +147,78 @@ export function createServer(options: ServerOptions) {
       }
     }
     logOutgoingPush(push, recipients);
+  });
+
+  // Forward provider events to all connected WebSocket clients
+  providerManager.on("event", (event) => {
+    void (async () => {
+      const snapshot = orchestrationEngine.getSnapshot();
+      const thread = snapshot.threads.find((entry) => entry.session?.sessionId === event.sessionId);
+      if (!thread) return;
+      const now = event.createdAt;
+      if (event.method === "turn/started" || event.method === "turn/completed") {
+        await orchestrationEngine.dispatch({
+          type: "thread.session",
+          commandId: crypto.randomUUID(),
+          threadId: thread.id,
+          session: {
+            sessionId: event.sessionId,
+            provider: event.provider,
+            status: event.method === "turn/started" ? "running" : "ready",
+            threadId: thread.id,
+            activeTurnId: event.method === "turn/started" ? (event.turnId ?? null) : null,
+            createdAt: thread.session?.createdAt ?? now,
+            updatedAt: now,
+            lastError: null,
+          },
+          createdAt: now,
+        });
+      }
+      if (event.textDelta && event.textDelta.length > 0) {
+        const assistantMessageId = `assistant:${event.turnId ?? event.itemId ?? event.sessionId}`;
+        await orchestrationEngine.dispatch({
+          type: "message.send",
+          commandId: crypto.randomUUID(),
+          threadId: thread.id,
+          messageId: assistantMessageId,
+          role: "assistant",
+          text: event.textDelta,
+          streaming: true,
+          createdAt: now,
+        });
+      }
+      if (event.method === "turn/completed") {
+        const assistantMessageId = `assistant:${event.turnId ?? event.itemId ?? event.sessionId}`;
+        await orchestrationEngine.dispatch({
+          type: "message.send",
+          commandId: crypto.randomUUID(),
+          threadId: thread.id,
+          messageId: assistantMessageId,
+          role: "assistant",
+          text: "",
+          streaming: false,
+          createdAt: now,
+        });
+      }
+      if (event.kind === "error" && event.message) {
+        await orchestrationEngine.dispatch({
+          type: "thread.session",
+          commandId: crypto.randomUUID(),
+          threadId: thread.id,
+          session: {
+            sessionId: event.sessionId,
+            provider: event.provider,
+            status: "error",
+            threadId: thread.id,
+            activeTurnId: event.turnId ?? null,
+            createdAt: thread.session?.createdAt ?? now,
+            updatedAt: now,
+            lastError: event.message,
+          },
+          createdAt: now,
+        });
+      }
+    })().catch(() => undefined);
   });
 
   const onTerminalEvent = (event: TerminalEvent) => {
@@ -247,6 +347,17 @@ export function createServer(options: ServerOptions) {
     logOutgoingPush(welcome, 1);
     ws.send(JSON.stringify(welcome));
 
+    const snapshotPush: WsPush = {
+      type: "push",
+      channel: ORCHESTRATION_WS_CHANNELS.readModel,
+      data: {
+        sequence: orchestrationEngine.getSnapshot().sequence,
+        snapshot: orchestrationEngine.getSnapshot(),
+      } satisfies OrchestrationReadModelPush,
+    };
+    logOutgoingPush(snapshotPush, 1);
+    ws.send(JSON.stringify(snapshotPush));
+
     ws.on("message", (raw) => {
       void handleMessage(ws, raw);
     });
@@ -307,9 +418,6 @@ export function createServer(options: ServerOptions) {
         return undefined;
       }
 
-      case WS_METHODS.providersListSessions:
-        return providerManager.listSessions();
-
       case WS_METHODS.providersListCheckpoints:
         return providerManager.listCheckpoints(request.params as never);
 
@@ -323,11 +431,32 @@ export function createServer(options: ServerOptions) {
         return projectRegistry.list();
 
       case WS_METHODS.projectsAdd:
-        return projectRegistry.add(request.params as never);
+        {
+          const result = await projectRegistry.add(request.params as never);
+          await orchestrationEngine.dispatch({
+            type: "project.create",
+            commandId: crypto.randomUUID(),
+            projectId: result.project.id,
+            name: result.project.name,
+            cwd: result.project.cwd,
+            model: "gpt-5-codex",
+            createdAt: new Date().toISOString(),
+          });
+          return result;
+        }
 
       case WS_METHODS.projectsRemove:
-        projectRegistry.remove(request.params as never);
-        return undefined;
+        {
+          const params = request.params as { id: string };
+          projectRegistry.remove(request.params as never);
+          await orchestrationEngine.dispatch({
+            type: "project.delete",
+            commandId: crypto.randomUUID(),
+            projectId: params.id,
+            createdAt: new Date().toISOString(),
+          });
+          return undefined;
+        }
 
       case WS_METHODS.projectsSearchEntries:
         return searchWorkspaceEntries(request.params as never);
@@ -379,7 +508,24 @@ export function createServer(options: ServerOptions) {
       }
 
       case WS_METHODS.gitStatus:
-        return gitManager.status(request.params as never);
+        {
+          const params = request.params as { cwd: string };
+          const status = await gitManager.status(request.params as never);
+          const project = projectRegistry.list().find((entry) => entry.cwd === params.cwd);
+          if (project) {
+            await orchestrationEngine.dispatch({
+              type: "git.readModel.upsert",
+              commandId: crypto.randomUUID(),
+              projectId: project.id,
+              branch: status.branch,
+              hasWorkingTreeChanges: status.hasWorkingTreeChanges,
+              aheadCount: status.aheadCount,
+              behindCount: status.behindCount,
+              createdAt: new Date().toISOString(),
+            });
+          }
+          return status;
+        }
 
       case WS_METHODS.gitPull:
         return pullGitBranch(request.params as never);
@@ -438,6 +584,25 @@ export function createServer(options: ServerOptions) {
           keybindings: keybindingsConfig,
         };
 
+      case ORCHESTRATION_WS_METHODS.getSnapshot:
+        return orchestrationEngine.getSnapshot();
+
+      case ORCHESTRATION_WS_METHODS.dispatchCommand:
+        return orchestrationEngine.dispatchUnknown(request.params);
+
+      case ORCHESTRATION_WS_METHODS.replayEvents:
+        return orchestrationEngine.replayEvents(
+          Math.max(
+            0,
+            Math.floor(
+              Number(
+                (request.params as { fromSequenceExclusive?: number } | undefined)
+                  ?.fromSequenceExclusive ?? 0,
+              ),
+            ),
+          ),
+        );
+
       default:
         throw new Error(`Unknown method: ${request.method}`);
     }
@@ -450,9 +615,14 @@ export function createServer(options: ServerOptions) {
         reject(error);
       };
       httpServer.once("error", onError);
-      const onListening = () => {
+      const onListening = async () => {
         httpServer.off("error", onError);
-        resolve();
+        try {
+          await orchestrationEngine.start();
+          resolve();
+        } catch (error) {
+          reject(error instanceof Error ? error : new Error("Failed to start orchestration engine"));
+        }
       };
       if (host) {
         httpServer.listen(port, host, onListening);
@@ -463,6 +633,9 @@ export function createServer(options: ServerOptions) {
   }
 
   async function stop(): Promise<void> {
+    unsubscribeReadModel();
+    unsubscribeDomainEvents();
+    await orchestrationEngine.stop();
     terminalManager.off("event", onTerminalEvent);
     providerManager.stopAll();
     providerManager.dispose();

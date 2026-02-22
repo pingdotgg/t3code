@@ -2,17 +2,15 @@ import {
   Outlet,
   createRootRouteWithContext,
   type ErrorComponentProps,
-  useParams,
 } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
-import { QueryClient, useQueryClient } from "@tanstack/react-query";
+import { QueryClient } from "@tanstack/react-query";
 
 import { APP_DISPLAY_NAME } from "../branding";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider } from "../components/ui/toast";
 import { isElectron } from "../env";
 import { useNativeApi } from "../hooks/useNativeApi";
-import { invalidateGitQueries } from "../lib/gitReactQuery";
 import { DEFAULT_MODEL } from "../model-logic";
 import { useStore } from "../store";
 import { onServerWelcome } from "../wsNativeApi";
@@ -125,67 +123,33 @@ function errorDetails(error: unknown): string {
 function EventRouter() {
   const api = useNativeApi();
   const { dispatch } = useStore();
-  const queryClient = useQueryClient();
-  const activeAssistantItemRef = useRef<string | null>(null);
-  const activeThreadId = useParams({
-    strict: false,
-    select: (params) => params.threadId,
-  });
 
   useEffect(() => {
     if (!api) return;
-    return api.providers.onEvent((event) => {
-      if (event.method === "turn/completed") {
-        void invalidateGitQueries(queryClient);
-      }
-      if (event.method === "checkpoint/captured") {
-        const payload = event.payload as { turnCount?: number } | undefined;
-        const turnCount = payload?.turnCount;
-        void queryClient.invalidateQueries({
-          queryKey: ["providers", "checkpointDiff"] as const,
-          predicate: (query) => {
-            if (typeof turnCount !== "number") return true;
-            return query.queryKey[5] === turnCount;
-          },
-        });
-      }
-      if (!activeThreadId) return;
-      dispatch({
-        type: "APPLY_EVENT",
-        event,
-        activeAssistantItemRef,
-        activeThreadId,
-      });
+    void api.orchestration
+      .getSnapshot()
+      .then((snapshot) => {
+        dispatch({ type: "SYNC_SERVER_READ_MODEL", readModel: snapshot });
+      })
+      .catch(() => undefined);
+    const unsubReadModel = api.orchestration.onReadModel((snapshot) => {
+      dispatch({ type: "SYNC_SERVER_READ_MODEL", readModel: snapshot });
     });
-  }, [activeThreadId, api, dispatch, queryClient]);
-
-  useEffect(() => {
-    if (!activeThreadId) return;
-    dispatch({
-      type: "MARK_THREAD_VISITED",
-      threadId: activeThreadId,
-      visitedAt: new Date().toISOString(),
-    });
-  }, [activeThreadId, dispatch]);
-
-  useEffect(() => {
-    if (!api) return;
-    return api.terminal.onEvent((event) => {
-      dispatch({
-        type: "APPLY_TERMINAL_EVENT",
-        event,
-      });
-    });
+    return () => {
+      unsubReadModel();
+    };
   }, [api, dispatch]);
 
   return null;
 }
 
 function AutoProjectBootstrap() {
+  const api = useNativeApi();
   const { state, dispatch } = useStore();
   const bootstrappedRef = useRef(false);
 
   useEffect(() => {
+    if (!api) return;
     // Browser mode bootstraps from server welcome.
     // Electron bootstraps from persisted projects via DesktopProjectBootstrap.
     if (isElectron) return;
@@ -202,75 +166,40 @@ function AutoProjectBootstrap() {
       }
 
       bootstrappedRef.current = true;
-
-      // Create project + thread from server cwd
       const projectId = crypto.randomUUID();
-      dispatch({
-        type: "ADD_PROJECT",
-        project: {
-          id: projectId,
+      const threadId = crypto.randomUUID();
+      const now = new Date().toISOString();
+      void api.orchestration
+        .dispatchCommand({
+          type: "project.create",
+          commandId: crypto.randomUUID(),
+          projectId,
           name: payload.projectName,
           cwd: payload.cwd,
           model: DEFAULT_MODEL,
-          expanded: true,
-          scripts: [],
-        },
-      });
-      dispatch({ type: "SET_THREADS_HYDRATED", hydrated: true });
+          createdAt: now,
+        })
+        .then(() =>
+          api.orchestration.dispatchCommand({
+            type: "thread.create",
+            commandId: crypto.randomUUID(),
+            threadId,
+            projectId,
+            title: "New thread",
+            model: DEFAULT_MODEL,
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+          }),
+        )
+        .catch(() => undefined);
     });
-  }, [state.projects, dispatch]);
+  }, [api, state.projects, dispatch]);
 
   return null;
 }
 
 function DesktopProjectBootstrap() {
-  const api = useNativeApi();
-  const { dispatch } = useStore();
-  const bootstrappedRef = useRef(false);
-
-  useEffect(() => {
-    if (!isElectron || !api || bootstrappedRef.current) return;
-
-    let disposed = false;
-    let retryDelayMs = 500;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const attemptBootstrap = async () => {
-      try {
-        const projects = await api.projects.list();
-        if (disposed) return;
-        dispatch({
-          type: "SYNC_PROJECTS",
-          projects: projects.map((project) => ({
-            id: project.id,
-            name: project.name,
-            cwd: project.cwd,
-            model: DEFAULT_MODEL,
-            expanded: true,
-            scripts: project.scripts,
-          })),
-        });
-        dispatch({ type: "SET_THREADS_HYDRATED", hydrated: true });
-        bootstrappedRef.current = true;
-      } catch {
-        if (disposed) return;
-        retryTimer = setTimeout(() => {
-          retryTimer = null;
-          void attemptBootstrap();
-        }, retryDelayMs);
-        retryDelayMs = Math.min(retryDelayMs * 2, 5_000);
-      }
-    };
-
-    void attemptBootstrap();
-
-    return () => {
-      disposed = true;
-      if (retryTimer) {
-        clearTimeout(retryTimer);
-      }
-    };
-  }, [api, dispatch]);
-
+  // Desktop now hydrates from orchestration read-model snapshots.
   return null;
 }

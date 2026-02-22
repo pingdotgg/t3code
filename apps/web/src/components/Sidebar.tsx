@@ -7,16 +7,14 @@ import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL } from "../branding";
 import { DEFAULT_MODEL } from "../model-logic";
-import { derivePendingApprovals } from "../session-logic";
 import { useStore } from "../store";
 import { isChatNewLocalShortcut, isChatNewShortcut } from "../keybindings";
-import { type Project, type Thread } from "../types";
+import { type Thread } from "../types";
 import { useNativeApi } from "../hooks/useNativeApi";
 import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { toastManager } from "./ui/toast";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
-import { createThread } from "../threadFactory";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 
@@ -131,13 +129,7 @@ export default function Sidebar() {
   const [newCwd, setNewCwd] = useState("");
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
-  const pendingApprovalByThreadId = useMemo(() => {
-    const map = new Map<string, boolean>();
-    for (const thread of state.threads) {
-      map.set(thread.id, derivePendingApprovals(thread.events).length > 0);
-    }
-    return map;
-  }, [state.threads]);
+  const pendingApprovalByThreadId = useMemo(() => new Map<string, boolean>(), []);
 
   const handleNewThread = useCallback(
     (
@@ -147,21 +139,27 @@ export default function Sidebar() {
         worktreePath?: string | null;
       },
     ) => {
-      const thread = createThread(projectId, {
-        model: state.projects.find((project) => project.id === projectId)?.model ?? DEFAULT_MODEL,
+      if (!api) return;
+      const threadId = crypto.randomUUID();
+      const createdAt = new Date().toISOString();
+      const model = state.projects.find((project) => project.id === projectId)?.model ?? DEFAULT_MODEL;
+      void api.orchestration.dispatchCommand({
+        type: "thread.create",
+        commandId: crypto.randomUUID(),
+        threadId,
+        projectId,
+        title: "New thread",
+        model,
         branch: options?.branch ?? null,
         worktreePath: options?.worktreePath ?? null,
-      });
-      dispatch({
-        type: "ADD_THREAD",
-        thread,
+        createdAt,
       });
       void navigate({
         to: "/$threadId",
-        params: { threadId: thread.id },
+        params: { threadId },
       });
     },
-    [dispatch, navigate, state.projects],
+    [api, dispatch, navigate, state.projects],
   );
 
   const focusMostRecentThreadForProject = useCallback(
@@ -190,47 +188,30 @@ export default function Sidebar() {
 
       setIsAddingProject(true);
       try {
-        if (isElectron && api) {
-          const result = await api.projects.add({ cwd });
-          const project: Project = {
-            id: result.project.id,
-            name: result.project.name,
-            cwd: result.project.cwd,
-            model: DEFAULT_MODEL,
-            expanded: true,
-            scripts: result.project.scripts,
-          };
-          const existingById = state.projects.find((p) => p.id === project.id);
-          const existingByCwd = state.projects.find((p) => p.cwd === project.cwd);
-          if (!existingById && !existingByCwd) {
-            dispatch({ type: "ADD_PROJECT", project });
-          }
-          const resolvedProjectId = existingByCwd?.id ?? project.id;
-
-          if (result.created) {
-            handleNewThread(resolvedProjectId);
-          } else {
-            focusMostRecentThreadForProject(resolvedProjectId);
-          }
-        } else {
-          const existing = state.projects.find((project) => project.cwd === cwd);
-          if (existing) {
-            focusMostRecentThreadForProject(existing.id);
-            return;
-          }
-
-          const name = inferProjectName(cwd);
-          const project: Project = {
-            id: crypto.randomUUID(),
-            name,
-            cwd,
-            model: DEFAULT_MODEL,
-            expanded: true,
-            scripts: [],
-          };
-          dispatch({ type: "ADD_PROJECT", project });
-          handleNewThread(project.id);
+        if (!api) return;
+        const existing = state.projects.find((project) => project.cwd === cwd);
+        if (existing) {
+          focusMostRecentThreadForProject(existing.id);
+          return;
         }
+
+        const projectId = crypto.randomUUID();
+        const now = new Date().toISOString();
+        const name = inferProjectName(cwd);
+        if (isElectron) {
+          // Keep project registry in sync for desktop integrations.
+          await api.projects.add({ cwd });
+        }
+        await api.orchestration.dispatchCommand({
+          type: "project.create",
+          commandId: crypto.randomUUID(),
+          projectId,
+          name,
+          cwd,
+          model: DEFAULT_MODEL,
+          createdAt: now,
+        });
+        handleNewThread(projectId);
       } finally {
         setIsAddingProject(false);
         setNewCwd("");
@@ -321,7 +302,12 @@ export default function Sidebar() {
 
       const shouldNavigateToFallback = routeThreadId === threadId;
       const fallbackThreadId = state.threads.find((entry) => entry.id !== threadId)?.id ?? null;
-      dispatch({ type: "DELETE_THREAD", threadId });
+      await api.orchestration.dispatchCommand({
+        type: "thread.delete",
+        commandId: crypto.randomUUID(),
+        threadId,
+        createdAt: new Date().toISOString(),
+      });
       if (shouldNavigateToFallback) {
         if (fallbackThreadId) {
           void navigate({
@@ -411,7 +397,12 @@ export default function Sidebar() {
         }
       }
 
-      dispatch({ type: "DELETE_PROJECT", projectId });
+      await api.orchestration.dispatchCommand({
+        type: "project.delete",
+        commandId: crypto.randomUUID(),
+        projectId,
+        createdAt: new Date().toISOString(),
+      });
     },
     [api, dispatch, state.projects, state.threads],
   );

@@ -1,4 +1,13 @@
-import { type NativeApi, WS_CHANNELS, WS_METHODS, type WsWelcomePayload } from "@t3tools/contracts";
+import {
+  ORCHESTRATION_WS_CHANNELS,
+  ORCHESTRATION_WS_METHODS,
+  type NativeApi,
+  WS_CHANNELS,
+  WS_METHODS,
+  type OrchestrationEvent,
+  type OrchestrationReadModel,
+  type WsWelcomePayload,
+} from "@t3tools/contracts";
 
 import { showContextMenuFallback } from "./contextMenuFallback";
 import { WsTransport } from "./wsTransport";
@@ -90,13 +99,10 @@ export function createWsNativeApi(): NativeApi {
       interruptTurn: (input) => transport.request(WS_METHODS.providersInterruptTurn, input),
       respondToRequest: (input) => transport.request(WS_METHODS.providersRespondToRequest, input),
       stopSession: (input) => transport.request(WS_METHODS.providersStopSession, input),
-      listSessions: () => transport.request(WS_METHODS.providersListSessions),
       listCheckpoints: (input) => transport.request(WS_METHODS.providersListCheckpoints, input),
       getCheckpointDiff: (input) => transport.request(WS_METHODS.providersGetCheckpointDiff, input),
       revertToCheckpoint: (input) =>
         transport.request(WS_METHODS.providersRevertToCheckpoint, input),
-      onEvent: (callback) =>
-        transport.subscribe(WS_CHANNELS.providerEvent, callback as (data: unknown) => void),
     },
     projects: {
       list: () => transport.request(WS_METHODS.projectsList),
@@ -148,6 +154,26 @@ export function createWsNativeApi(): NativeApi {
     server: {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
+    },
+    orchestration: {
+      getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),
+      dispatchCommand: (command) =>
+        transport.request(ORCHESTRATION_WS_METHODS.dispatchCommand, command),
+      replayEvents: (fromSequenceExclusive) =>
+        transport.request(ORCHESTRATION_WS_METHODS.replayEvents, { fromSequenceExclusive }),
+      onReadModel: (callback) =>
+        transport.subscribe(
+          ORCHESTRATION_WS_CHANNELS.readModel,
+          (data: unknown) => {
+            const payload = data as { snapshot: OrchestrationReadModel };
+            callback(payload.snapshot);
+          },
+        ),
+      onDomainEvent: (callback) =>
+        transport.subscribe(
+          ORCHESTRATION_WS_CHANNELS.domainEvent,
+          callback as (data: unknown) => void,
+        ),
     },
   };
 

@@ -17,6 +17,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "effect": "^3.19.19",
     "node-pty": "^1.1.0",
     "open": "^10.1.0",
     "ws": "^8.18.0"
@@ -24,6 +26,7 @@
   "devDependencies": {
     "@t3tools/contracts": "workspace:*",
     "@t3tools/web": "workspace:*",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.2",
     "@types/ws": "^8.5.13",
     "tsdown": "^0.20.3",

@@ -23,6 +23,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "effect": "^3.19.19",
     "zod": "^3.24.1"
   },
   "devDependencies": {

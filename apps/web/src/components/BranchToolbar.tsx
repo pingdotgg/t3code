@@ -92,13 +92,23 @@ export default function BranchToolbar({
     });
     if (!activeThreadId || !syncedBranch) return;
 
+    if (api) {
+      void api.orchestration.dispatchCommand({
+        type: "thread.meta.update",
+        commandId: crypto.randomUUID(),
+        threadId: activeThreadId,
+        branch: syncedBranch,
+        worktreePath: null,
+        createdAt: new Date().toISOString(),
+      });
+    }
     dispatch({
       type: "SET_THREAD_BRANCH",
       threadId: activeThreadId,
       branch: syncedBranch,
       worktreePath: null,
     });
-  }, [activeThreadId, activeWorktreePath, activeThreadBranch, queryBranches, envMode, dispatch]);
+  }, [activeThreadId, activeWorktreePath, activeThreadBranch, queryBranches, envMode, dispatch, api]);
 
   useEffect(() => {
     if (isBranchMenuOpen) return;
@@ -119,6 +129,16 @@ export default function BranchToolbar({
     const sessionId = activeThread?.session?.sessionId;
     if (sessionId && worktreePath !== activeWorktreePath) {
       void api?.providers.stopSession({ sessionId }).catch(() => undefined);
+    }
+    if (api) {
+      void api.orchestration.dispatchCommand({
+        type: "thread.meta.update",
+        commandId: crypto.randomUUID(),
+        threadId: activeThreadId,
+        branch,
+        worktreePath,
+        createdAt: new Date().toISOString(),
+      });
     }
     dispatch({ type: "SET_THREAD_BRANCH", threadId: activeThreadId, branch, worktreePath });
   };

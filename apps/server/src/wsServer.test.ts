@@ -621,29 +621,13 @@ describe("WebSocket Server", () => {
     const ws = await connectWs(port);
     connections.push(ws);
 
-    // Consume welcome
+    // Consume welcome + initial orchestration snapshot pushes
+    await waitForMessage(ws);
     await waitForMessage(ws);
 
     const response = await sendRequest(ws, "nonexistent.method");
     expect(response.error).toBeDefined();
     expect(response.error!.message).toContain("Unknown method");
-  });
-
-  it("responds to providers.listSessions with empty array", async () => {
-    server = createTestServer({ cwd: "/test" });
-    await server.start();
-    const addr = server.httpServer.address();
-    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
-
-    const ws = await connectWs(port);
-    connections.push(ws);
-
-    // Consume welcome
-    await waitForMessage(ws);
-
-    const response = await sendRequest(ws, WS_METHODS.providersListSessions);
-    expect(response.error).toBeUndefined();
-    expect(response.result).toEqual([]);
   });
 
   it("returns unknown-session errors for checkpoint RPCs without an active provider session", async () => {
@@ -800,9 +784,21 @@ describe("WebSocket Server", () => {
     // Send garbage
     ws.send("not json at all");
 
-    const response = (await waitForMessage(ws)) as WsResponse;
-    expect(response.error).toBeDefined();
-    expect(response.error!.message).toContain("Invalid request format");
+    let response: WsResponse | null = null;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const message = (await waitForMessage(ws)) as Record<string, unknown>;
+      if (typeof message.id === "string" && message.id === "unknown") {
+        response = message as WsResponse;
+        break;
+      }
+      if (message.error) {
+        response = message as WsResponse;
+        break;
+      }
+    }
+    expect(response).toBeDefined();
+    expect(response!.error).toBeDefined();
+    expect(response!.error!.message).toContain("Invalid request format");
   });
 
   it("supports projects list/add/dedupe/remove", async () => {

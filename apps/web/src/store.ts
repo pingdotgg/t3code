@@ -8,19 +8,13 @@ import {
   useReducer,
 } from "react";
 
-import { type ProviderEvent, type ProviderSession, type TerminalEvent, normalizeProjectScripts } from "@t3tools/contracts";
+import {
+  type OrchestrationReadModel,
+  normalizeProjectScripts,
+} from "@t3tools/contracts";
 import { resolveModelSlug } from "./model-logic";
-import { hydratePersistedState, toPersistedState } from "./persistenceSchema";
 import {
-  applyEventToMessages,
-  asObject,
-  asString,
-  deriveTurnDiffSummaries,
-  inferCheckpointTurnCountByTurnId,
-  evolveSession,
-} from "./session-logic";
-import {
-  type ChatAttachment,
+  DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
   DEFAULT_RUNTIME_MODE,
   MAX_THREAD_TERMINAL_COUNT,
@@ -34,13 +28,10 @@ import {
 // ── Actions ──────────────────────────────────────────────────────────
 
 type Action =
-  | { type: "ADD_PROJECT"; project: Project }
+  | { type: "SYNC_SERVER_READ_MODEL"; readModel: OrchestrationReadModel }
   | { type: "SET_PROJECT_SCRIPTS"; projectId: string; scripts: ProjectScript[] }
-  | { type: "SYNC_PROJECTS"; projects: Project[] }
   | { type: "SET_THREADS_HYDRATED"; hydrated: boolean }
   | { type: "TOGGLE_PROJECT"; projectId: string }
-  | { type: "DELETE_PROJECT"; projectId: string }
-  | { type: "ADD_THREAD"; thread: Thread }
   | { type: "TOGGLE_THREAD_TERMINAL"; threadId: string }
   | { type: "SET_THREAD_TERMINAL_OPEN"; threadId: string; open: boolean }
   | { type: "SET_THREAD_TERMINAL_HEIGHT"; threadId: string; height: number }
@@ -48,46 +39,14 @@ type Action =
   | { type: "NEW_THREAD_TERMINAL"; threadId: string; terminalId: string }
   | { type: "SET_THREAD_ACTIVE_TERMINAL"; threadId: string; terminalId: string }
   | { type: "CLOSE_THREAD_TERMINAL"; threadId: string; terminalId: string }
-  | {
-      type: "APPLY_EVENT";
-      event: ProviderEvent;
-      activeAssistantItemRef: { current: string | null };
-      activeThreadId?: string | null;
-    }
-  | { type: "APPLY_TERMINAL_EVENT"; event: TerminalEvent }
-  | { type: "UPDATE_SESSION"; threadId: string; session: ProviderSession }
-  | {
-      type: "PUSH_USER_MESSAGE";
-      threadId: string;
-      id: string;
-      text: string;
-      attachments?: ChatAttachment[];
-    }
   | { type: "SET_ERROR"; threadId: string; error: string | null }
-  | { type: "SET_THREAD_TITLE"; threadId: string; title: string }
-  | { type: "SET_THREAD_MODEL"; threadId: string; model: string }
-  | {
-      type: "REVERT_TO_CHECKPOINT";
-      threadId: string;
-      sessionId: string;
-      threadRuntimeId: string;
-      turnCount: number;
-      messageCount: number;
-    }
-  | {
-      type: "SET_THREAD_TURN_CHECKPOINT_COUNTS";
-      threadId: string;
-      checkpointTurnCountByTurnId: Record<string, number>;
-    }
   | {
       type: "SET_THREAD_BRANCH";
       threadId: string;
       branch: string | null;
       worktreePath: string | null;
     }
-  | { type: "MARK_THREAD_VISITED"; threadId: string; visitedAt?: string }
-  | { type: "SET_RUNTIME_MODE"; mode: RuntimeMode }
-  | { type: "DELETE_THREAD"; threadId: string };
+  | { type: "SET_RUNTIME_MODE"; mode: RuntimeMode };
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -116,6 +75,7 @@ const initialState: AppState = {
   threadsHydrated: false,
   runtimeMode: DEFAULT_RUNTIME_MODE,
 };
+const persistedExpandedProjectCwds = new Set<string>();
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -123,21 +83,24 @@ function readPersistedState(): AppState {
   if (typeof window === "undefined") return initialState;
 
   try {
-    const rawCurrent = window.localStorage.getItem(PERSISTED_STATE_KEY);
-    const legacyValues = LEGACY_PERSISTED_STATE_KEYS.map((key) => window.localStorage.getItem(key));
-    const rawLegacy = legacyValues.find((value) => value !== null) ?? null;
-    const raw = rawCurrent ?? rawLegacy;
+    const raw = window.localStorage.getItem(PERSISTED_STATE_KEY);
     if (!raw) return initialState;
-    const rawCodethingV1 = window.localStorage.getItem("codething:renderer-state:v1");
-    const hydrated = hydratePersistedState(raw, !rawCurrent && raw === rawCodethingV1);
-    if (!hydrated) return initialState;
-
-    const threads = hydrated.threads.map((thread) => normalizeThreadTerminals(thread));
-
+    const parsed = JSON.parse(raw) as {
+      runtimeMode?: RuntimeMode;
+      expandedProjectCwds?: string[];
+    };
+    persistedExpandedProjectCwds.clear();
+    for (const cwd of parsed.expandedProjectCwds ?? []) {
+      if (typeof cwd === "string" && cwd.length > 0) {
+        persistedExpandedProjectCwds.add(cwd);
+      }
+    }
     return {
-      ...hydrated,
-      threads,
-      threadsHydrated: threads.length > 0,
+      ...initialState,
+      runtimeMode:
+        parsed.runtimeMode === "approval-required" || parsed.runtimeMode === "full-access"
+          ? parsed.runtimeMode
+          : DEFAULT_RUNTIME_MODE,
     };
   } catch {
     return initialState;
@@ -148,7 +111,15 @@ function persistState(state: AppState): void {
   if (typeof window === "undefined") return;
 
   try {
-    window.localStorage.setItem(PERSISTED_STATE_KEY, JSON.stringify(toPersistedState(state)));
+    window.localStorage.setItem(
+      PERSISTED_STATE_KEY,
+      JSON.stringify({
+        runtimeMode: state.runtimeMode,
+        expandedProjectCwds: state.projects
+          .filter((project) => project.expanded)
+          .map((project) => project.cwd),
+      }),
+    );
     for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
       window.localStorage.removeItem(legacyKey);
     }
@@ -165,63 +136,6 @@ function updateThread(
   return threads.map((t) => (t.id === threadId ? updater(t) : t));
 }
 
-function mergeTurnDiffSummaries(
-  existing: Thread["turnDiffSummaries"],
-  next: Thread["turnDiffSummaries"],
-): Thread["turnDiffSummaries"] {
-  if (next.length === 0) return existing;
-
-  const existingByTurnId = new Map(existing.map((summary) => [summary.turnId, summary] as const));
-  const merged = next.map((summary) => {
-    const previous = existingByTurnId.get(summary.turnId);
-    if (!previous) {
-      return summary;
-    }
-
-    const files =
-      summary.files.length === 0 && previous.files.length > 0 ? previous.files : summary.files;
-
-    return {
-      ...summary,
-      files,
-      ...(summary.assistantMessageId
-        ? {}
-        : previous.assistantMessageId
-          ? { assistantMessageId: previous.assistantMessageId }
-          : {}),
-      ...(typeof summary.checkpointTurnCount === "number"
-        ? {}
-        : typeof previous.checkpointTurnCount === "number"
-          ? { checkpointTurnCount: previous.checkpointTurnCount }
-          : {}),
-    };
-  });
-
-  const mergedTurnIds = new Set(merged.map((summary) => summary.turnId));
-  for (const summary of existing) {
-    if (!mergedTurnIds.has(summary.turnId)) {
-      merged.push(summary);
-    }
-  }
-
-  const sorted = merged.toSorted((a, b) => {
-    const aTime = Date.parse(a.completedAt);
-    const bTime = Date.parse(b.completedAt);
-    if (Number.isNaN(aTime) || Number.isNaN(bTime)) {
-      return b.completedAt.localeCompare(a.completedAt);
-    }
-    return bTime - aTime;
-  });
-
-  const inferredTurnCountByTurnId = inferCheckpointTurnCountByTurnId(sorted);
-  return sorted.map((summary) =>
-    typeof summary.checkpointTurnCount === "number"
-      ? summary
-      : Object.assign({}, summary, {
-          checkpointTurnCount: inferredTurnCountByTurnId[summary.turnId],
-        }),
-  );
-}
 
 function normalizeTerminalIds(terminalIds: string[]): string[] {
   const ids = terminalIds.map((id) => id.trim()).filter((id) => id.length > 0);
@@ -409,108 +323,80 @@ function closeThreadTerminal(thread: Thread, terminalId: string): Thread {
   });
 }
 
-function findThreadBySessionId(threads: Thread[], sessionId: string): Thread | undefined {
-  return threads.find((t) => t.session?.sessionId === sessionId);
-}
-
-function getEventTurnId(event: ProviderEvent): string | undefined {
-  if (event.turnId) return event.turnId;
-  const payload = asObject(event.payload);
-  const turn = asObject(payload?.turn);
-  return asString(turn?.id);
-}
-
-function getEventThreadId(event: ProviderEvent): string | undefined {
-  if (event.threadId) return event.threadId;
-  const payload = asObject(event.payload);
-  const payloadThread = asObject(payload?.thread);
-  const payloadMessage = asObject(payload?.msg);
-  return (
-    asString(payload?.threadId) ??
-    asString(payloadThread?.id) ??
-    asString(payload?.conversationId) ??
-    asString(payload?.thread_id) ??
-    asString(payloadMessage?.thread_id)
-  );
-}
-
-function shouldIgnoreForeignThreadEvent(thread: Thread, event: ProviderEvent): boolean {
-  const eventThreadId = getEventThreadId(event);
-  if (!eventThreadId) {
-    return false;
-  }
-
-  const expectedThreadId = thread.session?.threadId ?? thread.codexThreadId;
-  if (!expectedThreadId || eventThreadId === expectedThreadId) {
-    return false;
-  }
-
-  // During connect, accept a thread/started notification as an identity rebind.
-  if (event.method === "thread/started" && thread.session?.status === "connecting") {
-    return false;
-  }
-
-  return true;
-}
-
-function durationMs(startIso: string, endIso: string): number | undefined {
-  const start = Date.parse(startIso);
-  const end = Date.parse(endIso);
-  if (Number.isNaN(start) || Number.isNaN(end) || end < start) {
-    return undefined;
-  }
-
-  return end - start;
-}
-
-function updateTurnFields(thread: Thread, event: ProviderEvent): Partial<Thread> {
-  if (event.method === "turn/started") {
-    return {
-      latestTurnId: getEventTurnId(event) ?? thread.latestTurnId,
-      latestTurnStartedAt: event.createdAt,
-      latestTurnCompletedAt: undefined,
-      latestTurnDurationMs: undefined,
-    };
-  }
-
-  if (event.method === "turn/completed") {
-    const completedTurnId = getEventTurnId(event) ?? thread.latestTurnId;
-    const startedAt =
-      completedTurnId && completedTurnId === thread.latestTurnId
-        ? thread.latestTurnStartedAt
-        : undefined;
-    const elapsed =
-      startedAt && startedAt.length > 0 ? durationMs(startedAt, event.createdAt) : undefined;
-
-    return {
-      latestTurnId: completedTurnId ?? thread.latestTurnId,
-      latestTurnCompletedAt: event.createdAt,
-      latestTurnDurationMs: elapsed,
-    };
-  }
-
-  return {};
-}
 
 // ── Reducer ──────────────────────────────────────────────────────────
 
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
-    case "ADD_PROJECT":
-      if (state.projects.some((project) => project.cwd === action.project.cwd)) {
-        return state;
-      }
+    case "SYNC_SERVER_READ_MODEL": {
+      const existingThreadById = new Map(state.threads.map((thread) => [thread.id, thread] as const));
+      const projects = action.readModel.projects.map((project) => {
+        const existing = state.projects.find((entry) => entry.id === project.id);
+        return {
+          id: project.id,
+          name: project.name,
+          cwd: project.cwd,
+          model: resolveModelSlug(project.model),
+          expanded:
+            existing?.expanded ??
+            (persistedExpandedProjectCwds.size > 0
+              ? persistedExpandedProjectCwds.has(project.cwd)
+              : true),
+          scripts: existing?.scripts ?? [],
+        };
+      });
+      const threads = action.readModel.threads.map((thread) => {
+        const existing = existingThreadById.get(thread.id);
+        return normalizeThreadTerminals({
+          id: thread.id,
+          codexThreadId: thread.session?.threadId ?? null,
+          projectId: thread.projectId,
+          title: thread.title,
+          model: resolveModelSlug(thread.model),
+          terminalOpen: existing?.terminalOpen ?? false,
+          terminalHeight: existing?.terminalHeight ?? DEFAULT_THREAD_TERMINAL_HEIGHT,
+          terminalIds: existing?.terminalIds ?? [DEFAULT_THREAD_TERMINAL_ID],
+          runningTerminalIds: existing?.runningTerminalIds ?? [],
+          activeTerminalId: existing?.activeTerminalId ?? DEFAULT_THREAD_TERMINAL_ID,
+          terminalGroups: existing?.terminalGroups ?? [
+            { id: `group-${DEFAULT_THREAD_TERMINAL_ID}`, terminalIds: [DEFAULT_THREAD_TERMINAL_ID] },
+          ],
+          activeTerminalGroupId: existing?.activeTerminalGroupId ?? `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+          session: thread.session
+            ? {
+                sessionId: thread.session.sessionId,
+                provider: thread.session.provider,
+                status: thread.session.status,
+                threadId: thread.session.threadId,
+                activeTurnId: thread.session.activeTurnId ?? undefined,
+                createdAt: thread.session.createdAt,
+                updatedAt: thread.session.updatedAt,
+                ...(thread.session.lastError ? { lastError: thread.session.lastError } : {}),
+              }
+            : null,
+          messages: thread.messages.map((message) => ({ ...message })),
+          error: thread.error,
+          createdAt: thread.createdAt,
+          latestTurnId: thread.latestTurnId ?? undefined,
+          latestTurnStartedAt: thread.latestTurnStartedAt ?? undefined,
+          latestTurnCompletedAt: thread.latestTurnCompletedAt ?? undefined,
+          latestTurnDurationMs: thread.latestTurnDurationMs ?? undefined,
+          lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,
+          branch: thread.branch,
+          worktreePath: thread.worktreePath,
+          turnDiffSummaries: thread.turnDiffSummaries.map((summary) => ({
+            ...summary,
+            files: summary.files.map((file) => ({ ...file })),
+          })),
+        });
+      });
       return {
         ...state,
-        projects: [
-          ...state.projects,
-          {
-            ...action.project,
-            model: resolveModelSlug(action.project.model),
-            scripts: normalizeProjectScripts(action.project.scripts),
-          },
-        ],
+        projects,
+        threads,
+        threadsHydrated: true,
       };
+    }
 
     case "SET_PROJECT_SCRIPTS":
       return {
@@ -531,46 +417,6 @@ export function reducer(state: AppState, action: Action): AppState {
         threadsHydrated: action.hydrated,
       };
 
-    case "SYNC_PROJECTS": {
-      const previousByCwd = new Map(
-        state.projects.map((project) => [project.cwd, project] as const),
-      );
-      const nextProjects = action.projects.map((project) => {
-        const previous = previousByCwd.get(project.cwd);
-        const scripts = normalizeProjectScripts(project.scripts);
-        return {
-          ...project,
-          model: resolveModelSlug(previous?.model ?? project.model),
-          expanded: previous?.expanded ?? project.expanded,
-          scripts,
-        };
-      });
-      const previousProjectById = new Map(
-        state.projects.map((project) => [project.id, project] as const),
-      );
-      const nextProjectIdByCwd = new Map(
-        nextProjects.map((project) => [project.cwd, project.id] as const),
-      );
-      const nextThreads = state.threads
-        .map((thread) => {
-          const previousProject = previousProjectById.get(thread.projectId);
-          if (!previousProject) return null;
-          const mappedProjectId = nextProjectIdByCwd.get(previousProject.cwd);
-          if (!mappedProjectId) return null;
-          return normalizeThreadTerminals({
-            ...thread,
-            projectId: mappedProjectId,
-          });
-        })
-        .filter((thread): thread is Thread => thread !== null);
-
-      return {
-        ...state,
-        projects: nextProjects,
-        threads: nextThreads,
-      };
-    }
-
     case "TOGGLE_PROJECT":
       return {
         ...state,
@@ -578,34 +424,6 @@ export function reducer(state: AppState, action: Action): AppState {
           p.id === action.projectId ? { ...p, expanded: !p.expanded } : p,
         ),
       };
-
-    case "DELETE_PROJECT": {
-      const projects = state.projects.filter((project) => project.id !== action.projectId);
-      if (projects.length === state.projects.length) {
-        return state;
-      }
-
-      const threads = state.threads.filter((thread) => thread.projectId !== action.projectId);
-
-      return {
-        ...state,
-        projects,
-        threads,
-      };
-    }
-
-    case "ADD_THREAD": {
-      const nextThread = normalizeThreadTerminals({
-        ...action.thread,
-        model: resolveModelSlug(action.thread.model),
-        lastVisitedAt: action.thread.lastVisitedAt ?? action.thread.createdAt,
-        turnDiffSummaries: action.thread.turnDiffSummaries ?? [],
-      });
-      return {
-        ...state,
-        threads: [...state.threads, nextThread],
-      };
-    }
 
     case "TOGGLE_THREAD_TERMINAL":
       return {
@@ -774,118 +592,6 @@ export function reducer(state: AppState, action: Action): AppState {
         ),
       };
 
-    case "APPLY_TERMINAL_EVENT":
-      if (!state.threads.some((thread) => thread.id === action.event.threadId)) {
-        return state;
-      }
-      return {
-        ...state,
-        threads: updateThread(state.threads, action.event.threadId, (thread) => {
-          const normalizedThread = normalizeThreadTerminals(thread);
-          const runningTerminalIdSet = new Set(normalizedThread.runningTerminalIds);
-          if (action.event.type === "started" || action.event.type === "restarted") {
-            runningTerminalIdSet.delete(action.event.terminalId);
-          } else if (action.event.type === "activity") {
-            if (action.event.hasRunningSubprocess) {
-              runningTerminalIdSet.add(action.event.terminalId);
-            } else {
-              runningTerminalIdSet.delete(action.event.terminalId);
-            }
-          } else if (action.event.type === "exited" || action.event.type === "error") {
-            runningTerminalIdSet.delete(action.event.terminalId);
-          }
-
-          return normalizeThreadTerminals({
-            ...normalizedThread,
-            runningTerminalIds: [...runningTerminalIdSet],
-          });
-        }),
-      };
-
-    case "APPLY_EVENT": {
-      const { event, activeAssistantItemRef, activeThreadId } = action;
-      const target = findThreadBySessionId(state.threads, event.sessionId);
-      if (!target) return state;
-      if (shouldIgnoreForeignThreadEvent(target, event)) return state;
-
-      return {
-        ...state,
-        threads: updateThread(state.threads, target.id, (t) => {
-          const nextEvents = [event, ...t.events];
-          const eventTurnId = getEventTurnId(event);
-          const hasCompletedSummaryForTurn = Boolean(
-            eventTurnId && t.turnDiffSummaries.some((summary) => summary.turnId === eventTurnId),
-          );
-          const itemType = asString(asObject(asObject(event.payload)?.item)?.type);
-          const normalizedItemType = itemType?.replace(/[_-]/g, "").toLowerCase();
-          const isMetadataItemCompleted =
-            event.method === "item/completed" &&
-            (normalizedItemType === "agentmessage" || normalizedItemType === "filechange");
-          const shouldRederiveDiffs =
-            event.method === "turn/completed" ||
-            (hasCompletedSummaryForTurn && isMetadataItemCompleted);
-          const turnDiffSummaries = shouldRederiveDiffs
-            ? mergeTurnDiffSummaries(t.turnDiffSummaries, deriveTurnDiffSummaries(nextEvents))
-            : t.turnDiffSummaries;
-          const eventThreadId = getEventThreadId(event);
-          const shouldRebindIdentity =
-            event.method === "thread/started" && t.session?.status === "connecting";
-          return {
-            ...t,
-            codexThreadId: shouldRebindIdentity
-              ? (eventThreadId ?? t.codexThreadId)
-              : (t.codexThreadId ?? eventThreadId ?? null),
-            error: event.kind === "error" && event.message ? event.message : t.error,
-            session: t.session ? evolveSession(t.session, event) : t.session,
-            messages: applyEventToMessages(t.messages, event, activeAssistantItemRef),
-            events: nextEvents,
-            turnDiffSummaries,
-            ...updateTurnFields(t, event),
-            ...(event.method === "turn/completed" && t.id === activeThreadId
-              ? { lastVisitedAt: event.createdAt }
-              : {}),
-          };
-        }),
-      };
-    }
-
-    case "UPDATE_SESSION":
-      return {
-        ...state,
-        threads: updateThread(state.threads, action.threadId, (t) => ({
-          ...t,
-          session: action.session,
-          codexThreadId: action.session.threadId ?? t.codexThreadId,
-          events: [],
-          error: null,
-          latestTurnId: undefined,
-          latestTurnStartedAt: undefined,
-          latestTurnCompletedAt: undefined,
-          latestTurnDurationMs: undefined,
-        })),
-      };
-
-    case "PUSH_USER_MESSAGE":
-      return {
-        ...state,
-        threads: updateThread(state.threads, action.threadId, (t) => ({
-          ...t,
-          messages: [
-            ...t.messages,
-            {
-              id: action.id,
-              role: "user" as const,
-              text: action.text,
-              ...(action.attachments && action.attachments.length > 0
-                ? { attachments: action.attachments }
-                : {}),
-              createdAt: new Date().toISOString(),
-              streaming: false,
-            },
-          ],
-        })),
-      };
-
     case "SET_ERROR":
       return {
         ...state,
@@ -893,90 +599,6 @@ export function reducer(state: AppState, action: Action): AppState {
           ...t,
           error: action.error,
         })),
-      };
-
-    case "SET_THREAD_TITLE":
-      return {
-        ...state,
-        threads: updateThread(state.threads, action.threadId, (t) => ({
-          ...t,
-          title: action.title,
-        })),
-      };
-
-    case "SET_THREAD_MODEL":
-      return {
-        ...state,
-        threads: updateThread(state.threads, action.threadId, (t) => ({
-          ...t,
-          model: resolveModelSlug(action.model),
-        })),
-      };
-
-    case "REVERT_TO_CHECKPOINT":
-      return {
-        ...state,
-        threads: updateThread(state.threads, action.threadId, (t) => {
-          const nextMessageCount = Math.max(0, Math.floor(action.messageCount));
-          const nextTurnCount = Math.max(0, Math.floor(action.turnCount));
-          const now = new Date().toISOString();
-          return {
-            ...t,
-            codexThreadId: action.threadRuntimeId,
-            session:
-              t.session?.sessionId === action.sessionId
-                ? {
-                    ...t.session,
-                    status: "ready",
-                    threadId: action.threadRuntimeId,
-                    activeTurnId: undefined,
-                    updatedAt: now,
-                    lastError: undefined,
-                  }
-                : t.session,
-            messages: t.messages.slice(0, nextMessageCount),
-            events: [],
-            turnDiffSummaries: t.turnDiffSummaries.filter(
-              (summary) =>
-                typeof summary.checkpointTurnCount === "number" &&
-                summary.checkpointTurnCount <= nextTurnCount,
-            ),
-            error: null,
-            latestTurnId: undefined,
-            latestTurnStartedAt: undefined,
-            latestTurnCompletedAt: undefined,
-            latestTurnDurationMs: undefined,
-            lastVisitedAt: now,
-          };
-        }),
-      };
-
-    case "SET_THREAD_TURN_CHECKPOINT_COUNTS":
-      return {
-        ...state,
-        threads: updateThread(state.threads, action.threadId, (t) => {
-          const hasUpdates = t.turnDiffSummaries.some(
-            (summary) =>
-              action.checkpointTurnCountByTurnId[summary.turnId] !== undefined &&
-              action.checkpointTurnCountByTurnId[summary.turnId] !== summary.checkpointTurnCount,
-          );
-          if (!hasUpdates) {
-            return t;
-          }
-          return {
-            ...t,
-            turnDiffSummaries: t.turnDiffSummaries.map((summary) => {
-              const turnCount = action.checkpointTurnCountByTurnId[summary.turnId];
-              if (turnCount === undefined) {
-                return summary;
-              }
-              return {
-                ...summary,
-                checkpointTurnCount: turnCount,
-              };
-            }),
-          };
-        }),
       };
 
     case "SET_THREAD_BRANCH": {
@@ -997,27 +619,10 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     }
 
-    case "MARK_THREAD_VISITED": {
-      const visitedAt = action.visitedAt ?? new Date().toISOString();
-      return {
-        ...state,
-        threads: updateThread(state.threads, action.threadId, (t) => ({
-          ...t,
-          lastVisitedAt: visitedAt,
-        })),
-      };
-    }
-
     case "SET_RUNTIME_MODE":
       return {
         ...state,
         runtimeMode: action.mode,
-      };
-
-    case "DELETE_THREAD":
-      return {
-        ...state,
-        threads: state.threads.filter((t) => t.id !== action.threadId),
       };
 
     default:

@@ -1,6 +1,5 @@
 import type {
   ProjectScript as ContractProjectScript,
-  ProviderEvent,
   ProviderSession,
 } from "@t3tools/contracts";
 
@@ -77,7 +76,6 @@ export interface Thread {
   activeTerminalGroupId: string;
   session: ProviderSession | null;
   messages: ChatMessage[];
-  events: ProviderEvent[];
   error: string | null;
   createdAt: string;
   latestTurnId?: string | undefined;

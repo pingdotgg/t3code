@@ -16,7 +16,6 @@ import type {
   GitStatusResult,
 } from "./git";
 import type {
-  ProviderEvent,
   ProviderGetCheckpointDiffInput,
   ProviderGetCheckpointDiffResult,
   ProviderInterruptTurnInput,
@@ -53,6 +52,11 @@ import type {
 } from "./terminal";
 import type { NewTodoInput, Todo } from "./todo";
 import type { ServerUpsertKeybindingInput, ServerUpsertKeybindingResult } from "./server";
+import type {
+  OrchestrationCommand,
+  OrchestrationEvent,
+  OrchestrationReadModel,
+} from "./orchestration";
 
 export const EDITORS = [
   { id: "cursor", label: "Cursor", command: "cursor" },
@@ -94,7 +98,6 @@ export interface NativeApi {
     interruptTurn: (input: ProviderInterruptTurnInput) => Promise<void>;
     respondToRequest: (input: ProviderRespondToRequestInput) => Promise<void>;
     stopSession: (input: ProviderStopSessionInput) => Promise<void>;
-    listSessions: () => Promise<ProviderSession[]>;
     listCheckpoints: (
       input: ProviderListCheckpointsInput,
     ) => Promise<ProviderListCheckpointsResult>;
@@ -104,7 +107,6 @@ export interface NativeApi {
     revertToCheckpoint: (
       input: ProviderRevertToCheckpointInput,
     ) => Promise<ProviderRevertToCheckpointResult>;
-    onEvent: (callback: (event: ProviderEvent) => void) => () => void;
   };
   projects: {
     list: () => Promise<ProjectListResult>;
@@ -139,5 +141,12 @@ export interface NativeApi {
   server: {
     getConfig: () => Promise<ServerConfig>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+  };
+  orchestration: {
+    getSnapshot: () => Promise<OrchestrationReadModel>;
+    dispatchCommand: (command: OrchestrationCommand) => Promise<{ sequence: number }>;
+    replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
+    onReadModel: (callback: (snapshot: OrchestrationReadModel) => void) => () => void;
+    onDomainEvent: (callback: (event: OrchestrationEvent) => void) => () => void;
   };
 }

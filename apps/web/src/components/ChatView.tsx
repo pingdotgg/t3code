@@ -57,7 +57,6 @@ import {
   derivePhase,
   deriveTurnDiffFilesFromUnifiedDiff,
   deriveTimelineEntries,
-  type TurnDiffSummary,
   type PendingApproval,
   deriveWorkLogEntries,
   formatDuration,
@@ -72,6 +71,7 @@ import {
   MAX_THREAD_TERMINAL_COUNT,
   type ChatImageAttachment,
   type TurnDiffFileChange,
+  type TurnDiffSummary,
 } from "../types";
 import { basenameOfPath, getVscodeIconUrlForEntry } from "../vscode-icons";
 import { useTheme } from "../hooks/useTheme";
@@ -433,28 +433,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const phase = derivePhase(activeThread?.session ?? null);
   const isWorking = phase === "running" || isSending || isConnecting || isRevertingCheckpoint;
   const nowIso = new Date(nowTick).toISOString();
-  const workLogEntries = useMemo(
-    () => deriveWorkLogEntries(activeThread?.events ?? [], undefined),
-    [activeThread?.events],
-  );
+  const workLogEntries = useMemo(() => deriveWorkLogEntries([], undefined), []);
   const latestTurnWorkEntries = useMemo(
-    () => deriveWorkLogEntries(activeThread?.events ?? [], activeThread?.latestTurnId),
-    [activeThread?.events, activeThread?.latestTurnId],
+    () => deriveWorkLogEntries([], activeThread?.latestTurnId),
+    [activeThread?.latestTurnId],
   );
-  const pendingApprovals = useMemo(
-    () => derivePendingApprovals(activeThread?.events ?? []),
-    [activeThread?.events],
-  );
-  const assistantCompletionByItemId = useMemo(() => {
-    const map = new Map<string, string>();
-    const ordered = [...(activeThread?.events ?? [])].toReversed();
-    for (const event of ordered) {
-      if (event.method !== "item/completed") continue;
-      if (!event.itemId) continue;
-      map.set(event.itemId, event.createdAt);
-    }
-    return map;
-  }, [activeThread?.events]);
+  const pendingApprovals = useMemo(() => derivePendingApprovals([]), []);
+  const assistantCompletionByItemId = useMemo(() => new Map<string, string>(), []);
   const timelineEntries = useMemo(
     () => deriveTimelineEntries(activeThread?.messages ?? [], workLogEntries),
     [activeThread?.messages, workLogEntries],
@@ -564,36 +549,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     return byUserMessageId;
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
-
-  useEffect(() => {
-    if (!activeThreadId || turnDiffSummaries.length === 0) {
-      return;
-    }
-
-    const inferredMissingTurnCounts = turnDiffSummaries.reduce<Record<string, number>>(
-      (acc, summary) => {
-        if (typeof summary.checkpointTurnCount === "number") {
-          return acc;
-        }
-        const inferredTurnCount = inferredCheckpointTurnCountByTurnId[summary.turnId];
-        if (typeof inferredTurnCount !== "number") {
-          return acc;
-        }
-        acc[summary.turnId] = inferredTurnCount;
-        return acc;
-      },
-      {},
-    );
-    if (Object.keys(inferredMissingTurnCounts).length === 0) {
-      return;
-    }
-
-    dispatch({
-      type: "SET_THREAD_TURN_CHECKPOINT_COUNTS",
-      threadId: activeThreadId,
-      checkpointTurnCountByTurnId: inferredMissingTurnCounts,
-    });
-  }, [activeThreadId, dispatch, inferredCheckpointTurnCountByTurnId, turnDiffSummaries]);
 
   const completionSummary = useMemo(() => {
     if (!activeThread?.latestTurnStartedAt) return null;
@@ -1473,28 +1428,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       checkpointTurnCountSyncFingerprintRef.current.set(syncKey, turnFingerprint);
 
       try {
-        const result = await api.providers.listCheckpoints({
+        await api.providers.listCheckpoints({
           sessionId: input.sessionId,
-        });
-        const turnIdSet = new Set(turnIds);
-        const checkpointTurnCountByTurnId = Object.fromEntries(
-          result.checkpoints
-            .filter((checkpoint) => checkpoint.turnCount > 0 && turnIdSet.has(checkpoint.id))
-            .map((checkpoint) => [checkpoint.id, checkpoint.turnCount] as const),
-        );
-        if (Object.keys(checkpointTurnCountByTurnId).length === 0) {
-          return;
-        }
-        dispatch({
-          type: "SET_THREAD_TURN_CHECKPOINT_COUNTS",
-          threadId: input.threadId,
-          checkpointTurnCountByTurnId,
         });
       } catch {
         checkpointTurnCountSyncFingerprintRef.current.delete(syncKey);
       }
     },
-    [api, dispatch, turnDiffSummaries],
+    [api, turnDiffSummaries],
   );
 
   const ensureSession = useCallback(
@@ -1533,10 +1474,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
           approvalPolicy: runtimeApprovalPolicy,
           sandboxMode: runtimeSandboxMode,
         });
-        dispatch({
-          type: "UPDATE_SESSION",
+        await api.orchestration.dispatchCommand({
+          type: "thread.session",
+          commandId: crypto.randomUUID(),
           threadId: activeThread.id,
-          session,
+          session: {
+            sessionId: session.sessionId,
+            provider: session.provider,
+            status: session.status,
+            threadId: session.threadId ?? activeThread.id,
+            activeTurnId: session.activeTurnId ?? null,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+            lastError: session.lastError ?? null,
+          },
+          createdAt: new Date().toISOString(),
         });
         const resolvedThreadId = session.threadId ?? null;
         const continuityState: SessionContinuityState =
@@ -1572,7 +1524,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       api,
       codexBinaryPath,
       codexHomePath,
-      dispatch,
       runtimeApprovalPolicy,
       runtimeSandboxMode,
       selectedModel,
@@ -1642,26 +1593,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         if (!sessionInfo) {
           return;
         }
-        const result = await api.providers.revertToCheckpoint({
+        await api.providers.revertToCheckpoint({
           sessionId: sessionInfo.sessionId,
           turnCount,
-        });
-        dispatch({
-          type: "REVERT_TO_CHECKPOINT",
-          threadId: activeThread.id,
-          sessionId: sessionInfo.sessionId,
-          threadRuntimeId: result.threadId,
-          turnCount: result.turnCount,
-          messageCount: result.messageCount,
-        });
-        dispatch({
-          type: "SET_THREAD_TURN_CHECKPOINT_COUNTS",
-          threadId: activeThread.id,
-          checkpointTurnCountByTurnId: Object.fromEntries(
-            result.checkpoints
-              .filter((entry) => entry.turnCount > 0)
-              .map((entry) => [entry.id, entry.turnCount] as const),
-          ),
         });
       } catch (err) {
         setThreadError(
@@ -1709,12 +1643,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
           newBranch,
         });
         sessionCwd = result.worktree.path;
-        dispatch({
-          type: "SET_THREAD_BRANCH",
-          threadId: activeThread.id,
-          branch: result.worktree.branch,
-          worktreePath: result.worktree.path,
-        });
+        if (api) {
+          await api.orchestration.dispatchCommand({
+            type: "thread.meta.update",
+            commandId: crypto.randomUUID(),
+            threadId: activeThread.id,
+            branch: result.worktree.branch,
+            worktreePath: result.worktree.path,
+            createdAt: new Date().toISOString(),
+          });
+        }
         const setupScript = setupProjectScript(activeProject.scripts);
         if (setupScript) {
           void runProjectScript(setupScript, {
@@ -1741,11 +1679,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ? `Image: ${composerImagesSnapshot[0]?.name ?? "attachment"}`
           : "New thread");
       const title = truncateTitle(titleSeed);
-      dispatch({
-        type: "SET_THREAD_TITLE",
-        threadId: activeThread.id,
-        title,
-      });
+      if (api) {
+        await api.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: crypto.randomUUID(),
+          threadId: activeThread.id,
+          title,
+          createdAt: new Date().toISOString(),
+        });
+      }
     }
 
     setThreadError(activeThread.id, null);
@@ -1757,13 +1699,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
-    dispatch({
-      type: "PUSH_USER_MESSAGE",
-      threadId: activeThread.id,
-      id: crypto.randomUUID(),
-      text: trimmed,
-      ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
-    });
+    const userMessageId = crypto.randomUUID();
+    if (api) {
+      await api.orchestration.dispatchCommand({
+        type: "message.send",
+        commandId: crypto.randomUUID(),
+        threadId: activeThread.id,
+        messageId: userMessageId,
+        role: "user",
+        text: trimmed,
+        streaming: false,
+        createdAt: new Date().toISOString(),
+      });
+    }
     const previousMessages = activeThread.messages;
     promptRef.current = "";
     setPrompt("");
@@ -1852,14 +1800,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const onModelSelect = useCallback(
     (model: ModelSlug) => {
       if (!activeThread) return;
-      dispatch({
-        type: "SET_THREAD_MODEL",
-        threadId: activeThread.id,
-        model: resolveModelSlug(model),
-      });
+      if (api) {
+        void api.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: crypto.randomUUID(),
+          threadId: activeThread.id,
+          model: resolveModelSlug(model),
+          createdAt: new Date().toISOString(),
+        });
+      }
       scheduleComposerFocus();
     },
-    [activeThread, dispatch, scheduleComposerFocus],
+    [activeThread, api, scheduleComposerFocus],
   );
   const onEffortSelect = useCallback(
     (effort: ReasoningEffort) => {

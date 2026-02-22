@@ -9,3 +9,4 @@ export * from "./keybindings";
 export * from "./server";
 export * from "./project";
 export * from "./git";
+export * from "./orchestration";
