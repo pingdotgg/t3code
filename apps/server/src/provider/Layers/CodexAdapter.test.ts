@@ -1,0 +1,202 @@
+import type {
+  ProviderApprovalDecision,
+  ProviderEvent,
+  ProviderSendTurnInput,
+  ProviderSession,
+  ProviderSessionStartInput,
+  ProviderTurnStartResult,
+} from "@t3tools/contracts";
+import { afterAll, assert, it, vi } from "@effect/vitest";
+import { assertFailure } from "@effect/vitest/utils";
+
+import { Effect } from "effect";
+
+import { CodexAppServerManager } from "../../codexAppServerManager.ts";
+import { ProviderAdapterValidationError } from "../Errors.ts";
+import { CodexAdapter } from "../Services/CodexAdapter.ts";
+import { makeCodexAdapterLive } from "./CodexAdapter.ts";
+
+class FakeCodexManager extends CodexAppServerManager {
+  public startSessionImpl = vi.fn(
+    async (input: ProviderSessionStartInput): Promise<ProviderSession> => {
+      const now = new Date().toISOString();
+      return {
+        sessionId: "sess-1",
+        provider: "codex",
+        status: "ready",
+        threadId: "thread-1",
+        cwd: input.cwd,
+        createdAt: now,
+        updatedAt: now,
+      };
+    },
+  );
+
+  public sendTurnImpl = vi.fn(
+    async (_input: ProviderSendTurnInput): Promise<ProviderTurnStartResult> => ({
+      threadId: "thread-1",
+      turnId: "turn-1",
+    }),
+  );
+
+  public interruptTurnImpl = vi.fn(
+    async (_sessionId: string, _turnId?: string): Promise<void> => undefined,
+  );
+
+  public readThreadImpl = vi.fn(async (_sessionId: string) => ({
+    threadId: "thread-1",
+    turns: [],
+  }));
+
+  public rollbackThreadImpl = vi.fn(async (_sessionId: string, _numTurns: number) => ({
+    threadId: "thread-1",
+    turns: [],
+  }));
+
+  public respondToRequestImpl = vi.fn(
+    async (
+      _sessionId: string,
+      _requestId: string,
+      _decision: ProviderApprovalDecision,
+    ): Promise<void> => undefined,
+  );
+
+  public stopAllImpl = vi.fn(() => undefined);
+
+  override startSession(input: ProviderSessionStartInput): Promise<ProviderSession> {
+    return this.startSessionImpl(input);
+  }
+
+  override sendTurn(input: ProviderSendTurnInput): Promise<ProviderTurnStartResult> {
+    return this.sendTurnImpl(input);
+  }
+
+  override interruptTurn(sessionId: string, turnId?: string): Promise<void> {
+    return this.interruptTurnImpl(sessionId, turnId);
+  }
+
+  override readThread(sessionId: string) {
+    return this.readThreadImpl(sessionId);
+  }
+
+  override rollbackThread(sessionId: string, numTurns: number) {
+    return this.rollbackThreadImpl(sessionId, numTurns);
+  }
+
+  override respondToRequest(
+    sessionId: string,
+    requestId: string,
+    decision: ProviderApprovalDecision,
+  ): Promise<void> {
+    return this.respondToRequestImpl(sessionId, requestId, decision);
+  }
+
+  override stopSession(_sessionId: string): void {}
+
+  override listSessions(): ProviderSession[] {
+    return [];
+  }
+
+  override hasSession(_sessionId: string): boolean {
+    return false;
+  }
+
+  override stopAll(): void {
+    this.stopAllImpl();
+  }
+}
+
+const validationManager = new FakeCodexManager();
+const validationLayer = it.layer(makeCodexAdapterLive({ manager: validationManager }));
+
+validationLayer("CodexAdapterLive validation", (it) => {
+  it.effect("returns validation error for non-codex provider on startSession", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const result = yield* adapter
+        .startSession({
+          provider: "claudeCode",
+        })
+        .pipe(Effect.result);
+
+      assertFailure(
+        result,
+        new ProviderAdapterValidationError({
+          provider: "codex",
+          operation: "startSession",
+          issue: "Expected provider 'codex' but received 'claudeCode'.",
+        }),
+      );
+      assert.equal(validationManager.startSessionImpl.mock.calls.length, 0);
+    }),
+  );
+});
+
+const sessionErrorManager = new FakeCodexManager();
+sessionErrorManager.sendTurnImpl.mockImplementation(async () => {
+  throw new Error("Unknown session: sess-missing");
+});
+const sessionErrorLayer = it.layer(makeCodexAdapterLive({ manager: sessionErrorManager }));
+
+sessionErrorLayer("CodexAdapterLive session errors", (it) => {
+  it.effect("maps unknown-session sendTurn errors to ProviderAdapterSessionNotFoundError", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const result = yield* adapter
+        .sendTurn({
+          sessionId: "sess-missing",
+          input: "hello",
+          attachments: [],
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag !== "Failure") {
+        return;
+      }
+
+      assert.equal(result.failure._tag, "ProviderAdapterSessionNotFoundError");
+      if (result.failure._tag !== "ProviderAdapterSessionNotFoundError") {
+        return;
+      }
+      assert.equal(result.failure.provider, "codex");
+      assert.equal(result.failure.sessionId, "sess-missing");
+      assert.instanceOf(result.failure.cause, Error);
+    }),
+  );
+});
+
+const lifecycleManager = new FakeCodexManager();
+const lifecycleLayer = it.layer(makeCodexAdapterLive({ manager: lifecycleManager }));
+
+lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("subscribes and unsubscribes from manager events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const onEvent = vi.fn((_event: ProviderEvent) => undefined);
+      const unsubscribe = yield* adapter.subscribeToEvents(onEvent);
+
+      const event: ProviderEvent = {
+        id: "evt-1",
+        kind: "notification",
+        provider: "codex",
+        sessionId: "sess-1",
+        createdAt: new Date().toISOString(),
+        method: "turn/started",
+      };
+
+      lifecycleManager.emit("event", event);
+      assert.equal(onEvent.mock.calls.length, 1);
+      assert.equal(onEvent.mock.calls[0]?.[0]?.method, "turn/started");
+
+      unsubscribe();
+      lifecycleManager.emit("event", event);
+      assert.equal(onEvent.mock.calls.length, 1);
+      assert.equal(lifecycleManager.stopAllImpl.mock.calls.length, 0);
+    }),
+  );
+});
+
+afterAll(() => {
+  assert.equal(lifecycleManager.stopAllImpl.mock.calls.length, 1);
+});
