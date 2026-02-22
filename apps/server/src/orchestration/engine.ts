@@ -20,8 +20,8 @@ import {
 } from "effect";
 
 import { createLogger } from "../logger";
-import type { OrchestrationEventStore } from "./eventStore";
-import { SqliteEventStore } from "./eventStore";
+import type { OrchestrationEventRepositoryShape } from "./eventRepository";
+import { makeSqliteOrchestrationEventRepository } from "./eventStore";
 import { createEmptyReadModel, reduceEvent } from "./reducer";
 import { UI_ENTITY_CONTRACTS } from "./uiContractInventory";
 
@@ -205,7 +205,7 @@ function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEve
 export class OrchestrationEngine {
   private readonly logger = createLogger("orchestration");
   private readonly runtime = Runtime.defaultRuntime;
-  private readonly eventStore: OrchestrationEventStore;
+  private readonly eventStore: OrchestrationEventRepositoryShape;
 
   private readModel: OrchestrationReadModel;
   private commandQueue: Queue.Queue<CommandEnvelope>;
@@ -216,11 +216,11 @@ export class OrchestrationEngine {
   private readonly domainEventListeners = new Set<(event: OrchestrationEvent) => void>();
 
   constructor(stateDir: string);
-  constructor(eventStore: OrchestrationEventStore);
-  constructor(stateDirOrEventStore: string | OrchestrationEventStore) {
+  constructor(eventStore: OrchestrationEventRepositoryShape);
+  constructor(stateDirOrEventStore: string | OrchestrationEventRepositoryShape) {
     if (typeof stateDirOrEventStore === "string") {
       const dbPath = path.join(stateDirOrEventStore, "orchestration.sqlite");
-      this.eventStore = new SqliteEventStore(dbPath);
+      this.eventStore = makeSqliteOrchestrationEventRepository(dbPath);
     } else {
       this.eventStore = stateDirOrEventStore;
     }

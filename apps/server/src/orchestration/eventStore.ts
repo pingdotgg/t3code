@@ -4,17 +4,13 @@ import path from "node:path";
 import type { OrchestrationEvent } from "@t3tools/contracts";
 import { OrchestrationEventSchema } from "@t3tools/contracts";
 import type { SqlClient as SqlClientService } from "@effect/sql/SqlClient";
-import * as SqlClient  from "@effect/sql/SqlClient";
+import * as SqlClient from "@effect/sql/SqlClient";
 import * as SqlSchema from "@effect/sql/SqlSchema";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { Effect, ManagedRuntime, Schema } from "effect";
 
-export interface OrchestrationEventStore {
-  append(event: Omit<OrchestrationEvent, "sequence">): Effect.Effect<OrchestrationEvent>;
-  readFromSequence(sequenceExclusive: number, limit?: number): Effect.Effect<OrchestrationEvent[]>;
-  readAll(): Effect.Effect<OrchestrationEvent[]>;
-  close(): void;
-}
+import type { OrchestrationEventRepositoryShape } from "./eventRepository";
+import { runOrchestrationMigrations } from "./migrations";
 
 const decodeEvent = Schema.decodeUnknownSync(OrchestrationEventSchema);
 
@@ -119,59 +115,36 @@ function eventRowToOrchestrationEvent(row: EventRow): OrchestrationEvent {
   });
 }
 
-export class SqliteEventStore implements OrchestrationEventStore {
-  private readonly runtime: ManagedRuntime.ManagedRuntime<SqlClientService, unknown>;
-  private readonly migrated: Promise<void>;
-  private closed = false;
+export function makeSqliteOrchestrationEventRepository(
+  dbPath: string,
+): OrchestrationEventRepositoryShape {
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
-  constructor(dbPath: string) {
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    this.runtime = ManagedRuntime.make(
-      SqliteClient.layer({
-        filename: dbPath,
-      }),
-    );
-    this.migrated = this.runtime.runPromise(this.migrate()).then(() => undefined);
-  }
+  const runtime: ManagedRuntime.ManagedRuntime<SqlClientService, unknown> = ManagedRuntime.make(
+    SqliteClient.layer({
+      filename: dbPath,
+    }),
+  );
+  let closed = false;
 
-  private provideSql<A, E>(
+  const provideSql = <A, E>(
     effect: Effect.Effect<A, E, SqlClientService>,
-  ): Effect.Effect<A, E | unknown> {
-    return Effect.provide(effect, this.runtime);
-  }
+  ): Effect.Effect<A, E | unknown> => Effect.provide(effect, runtime);
 
-  private ensureMigrated(): Effect.Effect<void> {
-    return Effect.promise(() => this.migrated);
-  }
+  const initialize = Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`PRAGMA journal_mode = WAL;`;
+    yield* sql`PRAGMA foreign_keys = ON;`;
+    yield* runOrchestrationMigrations;
+  });
 
-  private migrate(): Effect.Effect<void, unknown, SqlClientService> {
-    return Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`PRAGMA journal_mode = WAL;`;
-      yield* sql`PRAGMA foreign_keys = ON;`;
-      yield* sql`
-        CREATE TABLE IF NOT EXISTS orchestration_events (
-          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-          event_id TEXT NOT NULL UNIQUE,
-          event_type TEXT NOT NULL,
-          aggregate_type TEXT NOT NULL,
-          aggregate_id TEXT NOT NULL,
-          occurred_at TEXT NOT NULL,
-          command_id TEXT,
-          payload_json TEXT NOT NULL
-        )
-      `;
-      yield* sql`
-        CREATE INDEX IF NOT EXISTS idx_orch_events_aggregate
-        ON orchestration_events(aggregate_type, aggregate_id, sequence)
-      `;
-    });
-  }
+  const initialized = runtime.runPromise(initialize).then(() => undefined);
+  const ensureInitialized = Effect.promise(() => initialized);
 
-  append(event: Omit<OrchestrationEvent, "sequence">): Effect.Effect<OrchestrationEvent> {
-    return Effect.gen(this, function* () {
-      yield* this.ensureMigrated();
-      const row = yield* this.provideSql(
+  const append: OrchestrationEventRepositoryShape["append"] = (event) =>
+    Effect.gen(function* () {
+      yield* ensureInitialized;
+      const row = yield* provideSql(
         appendEventRow({
           eventId: event.eventId,
           type: event.type,
@@ -184,12 +157,14 @@ export class SqliteEventStore implements OrchestrationEventStore {
       );
       return eventRowToOrchestrationEvent(row);
     }).pipe(Effect.orDie);
-  }
 
-  readFromSequence(sequenceExclusive: number, limit = 1_000): Effect.Effect<OrchestrationEvent[]> {
-    return Effect.gen(this, function* () {
-      yield* this.ensureMigrated();
-      const rows = yield* this.provideSql(
+  const readFromSequence: OrchestrationEventRepositoryShape["readFromSequence"] = (
+    sequenceExclusive,
+    limit = 1_000,
+  ) =>
+    Effect.gen(function* () {
+      yield* ensureInitialized;
+      const rows = yield* provideSql(
         readEventRowsFromSequence({
           sequenceExclusive,
           limit,
@@ -197,17 +172,19 @@ export class SqliteEventStore implements OrchestrationEventStore {
       );
       return rows.map(eventRowToOrchestrationEvent);
     }).pipe(Effect.orDie);
-  }
 
-  readAll(): Effect.Effect<OrchestrationEvent[]> {
-    return this.readFromSequence(0, Number.MAX_SAFE_INTEGER);
-  }
-
-  close(): void {
-    if (this.closed) {
+  const close = (): void => {
+    if (closed) {
       return;
     }
-    this.closed = true;
-    void this.runtime.dispose();
-  }
+    closed = true;
+    void runtime.dispose();
+  };
+
+  return {
+    append,
+    readFromSequence,
+    readAll: () => readFromSequence(0, Number.MAX_SAFE_INTEGER),
+    close,
+  };
 }

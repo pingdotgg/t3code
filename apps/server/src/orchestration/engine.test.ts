@@ -7,7 +7,7 @@ import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { OrchestrationEngine } from "./engine";
-import type { OrchestrationEventStore } from "./eventStore";
+import type { OrchestrationEventRepositoryShape } from "./eventRepository";
 
 const tempDirs: string[] = [];
 
@@ -319,7 +319,7 @@ describe("OrchestrationEngine", () => {
     let nextSequence = 1;
     let shouldFailFirstAppend = true;
 
-    const flakyStore: OrchestrationEventStore = {
+    const flakyStore: OrchestrationEventRepositoryShape = {
       append(event) {
         if (shouldFailFirstAppend) {
           shouldFailFirstAppend = false;

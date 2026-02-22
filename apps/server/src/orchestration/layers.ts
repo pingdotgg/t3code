@@ -2,27 +2,26 @@ import path from "node:path";
 
 import { Effect, Layer } from "effect";
 
+import { OrchestrationEventRepository } from "./eventRepository";
 import { OrchestrationEngine } from "./engine";
-import { SqliteEventStore } from "./eventStore";
-import {
-  OrchestrationConfig,
-  OrchestrationEngineService,
-  OrchestrationEventStoreService,
-} from "./services";
+import { makeSqliteOrchestrationEventRepository } from "./eventStore";
+import { OrchestrationConfig, OrchestrationEngineService } from "./services";
 
-export const OrchestrationEventStoreLive = Layer.effect(
-  OrchestrationEventStoreService,
+export const OrchestrationEventRepositoryLive = Layer.effect(
+  OrchestrationEventRepository,
   Effect.map(OrchestrationConfig, ({ stateDir }) => {
     const dbPath = path.join(stateDir, "orchestration.sqlite");
-    return new SqliteEventStore(dbPath);
+    return makeSqliteOrchestrationEventRepository(dbPath);
   }),
 );
 
 export const OrchestrationEngineLive = Layer.effect(
   OrchestrationEngineService,
-  Effect.map(OrchestrationEventStoreService, (eventStore) => new OrchestrationEngine(eventStore)),
+  Effect.map(OrchestrationEventRepository, (eventRepository) => {
+    return new OrchestrationEngine(eventRepository);
+  }),
 );
 
 export const OrchestrationLive = OrchestrationEngineLive.pipe(
-  Layer.provide(OrchestrationEventStoreLive),
+  Layer.provide(OrchestrationEventRepositoryLive),
 );
