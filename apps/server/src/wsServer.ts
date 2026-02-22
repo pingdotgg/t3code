@@ -75,6 +75,19 @@ function parseBooleanEnv(value: string | undefined): boolean | undefined {
   return undefined;
 }
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") return null;
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 export function createServer(options: ServerOptions) {
   const {
     port,
@@ -199,6 +212,26 @@ export function createServer(options: ServerOptions) {
           streaming: false,
           createdAt: now,
         });
+      }
+      if (event.method === "checkpoint/captured") {
+        const payload = asObject(event.payload);
+        const turnId = event.turnId ?? asString(payload?.turnId);
+        if (turnId) {
+          await orchestrationEngine.dispatch({
+            type: "thread.turnDiff.complete",
+            commandId: crypto.randomUUID(),
+            threadId: thread.id,
+            turnId,
+            completedAt: now,
+            ...(asString(payload?.status) !== null ? { status: asString(payload?.status) ?? undefined } : {}),
+            files: [],
+            assistantMessageId: `assistant:${turnId}`,
+            ...(asNumber(payload?.turnCount) !== null
+              ? { checkpointTurnCount: asNumber(payload?.turnCount) ?? undefined }
+              : {}),
+            createdAt: now,
+          });
+        }
       }
       if (event.kind === "error" && event.message) {
         await orchestrationEngine.dispatch({
@@ -425,7 +458,42 @@ export function createServer(options: ServerOptions) {
         return providerManager.getCheckpointDiff(request.params as never);
 
       case WS_METHODS.providersRevertToCheckpoint:
-        return providerManager.revertToCheckpoint(request.params as never);
+        {
+          const result = await providerManager.revertToCheckpoint(request.params as never);
+          const params = request.params as { sessionId?: string };
+          const sessionId = params.sessionId;
+          if (typeof sessionId === "string") {
+            const snapshot = orchestrationEngine.getSnapshot();
+            const thread = snapshot.threads.find((entry) => entry.session?.sessionId === sessionId);
+            if (thread) {
+              const now = new Date().toISOString();
+              await orchestrationEngine.dispatch({
+                type: "thread.revert",
+                commandId: crypto.randomUUID(),
+                threadId: thread.id,
+                turnCount: result.turnCount,
+                messageCount: result.messageCount,
+                createdAt: now,
+              });
+              if (thread.session) {
+                await orchestrationEngine.dispatch({
+                  type: "thread.session",
+                  commandId: crypto.randomUUID(),
+                  threadId: thread.id,
+                  session: {
+                    ...thread.session,
+                    status: "ready",
+                    activeTurnId: null,
+                    updatedAt: now,
+                    lastError: null,
+                  },
+                  createdAt: now,
+                });
+              }
+            }
+          }
+          return result;
+        }
 
       case WS_METHODS.projectsList:
         return projectRegistry.list();

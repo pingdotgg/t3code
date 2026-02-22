@@ -130,6 +130,12 @@ function summarizeTurn(turn: CodexThreadTurnSnapshot): {
   };
 }
 
+function readTurnCompletionStatus(event: ProviderEvent): string | undefined {
+  const payload = asObject(event.payload);
+  const turn = asObject(payload?.turn);
+  return asString(turn?.status);
+}
+
 function buildCheckpoints(turns: CodexThreadTurnSnapshot[]): ProviderCheckpoint[] {
   const checkpoints: ProviderCheckpoint[] = [];
   let messageCount = 0;
@@ -475,6 +481,7 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
       return;
     }
 
+    const turnStatus = readTurnCompletionStatus(event);
     const checkpointCwd = this.sessionCheckpointCwds.get(event.sessionId);
     if (!checkpointCwd) {
       void this.getOrInitializeFilesystemCheckpointCwd(event.sessionId)
@@ -483,7 +490,13 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
             return;
           }
           const snapshot = await this.codex.readThread(event.sessionId);
-          this.emitCheckpointCaptured(event.sessionId, snapshot.threadId, snapshot.turns.length);
+          this.emitCheckpointCaptured(
+            event.sessionId,
+            snapshot.threadId,
+            snapshot.turns.length,
+            event.turnId,
+            turnStatus,
+          );
         })
         .catch((error) => {
           const message =
@@ -504,14 +517,26 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
         threadId: snapshot.threadId,
         turnCount: snapshot.turns.length,
       });
-      this.emitCheckpointCaptured(event.sessionId, snapshot.threadId, snapshot.turns.length);
+      this.emitCheckpointCaptured(
+        event.sessionId,
+        snapshot.threadId,
+        snapshot.turns.length,
+        event.turnId,
+        turnStatus,
+      );
     }).catch((error) => {
       const message = error instanceof Error ? error.message : "Failed to capture checkpoint.";
       this.emitFilesystemCheckpointError(event.sessionId, message, event.threadId);
     });
   }
 
-  private emitCheckpointCaptured(sessionId: string, threadId: string, turnCount: number): void {
+  private emitCheckpointCaptured(
+    sessionId: string,
+    threadId: string,
+    turnCount: number,
+    turnId?: string,
+    status?: string,
+  ): void {
     this.emit("event", {
       id: randomUUID(),
       kind: "notification",
@@ -520,9 +545,12 @@ export class ProviderManager extends EventEmitter<ProviderManagerEvents> {
       createdAt: new Date().toISOString(),
       method: "checkpoint/captured",
       threadId,
+      ...(turnId ? { turnId } : {}),
       payload: {
         threadId,
         turnCount,
+        ...(turnId ? { turnId } : {}),
+        ...(status ? { status } : {}),
       },
     });
   }

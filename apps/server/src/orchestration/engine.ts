@@ -148,6 +148,42 @@ function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEve
           updatedAt: command.createdAt,
         },
       };
+    case "thread.turnDiff.complete":
+      return {
+        eventId,
+        type: "thread.turn-diff-completed",
+        aggregateType: "thread",
+        aggregateId: command.threadId,
+        occurredAt: command.createdAt,
+        commandId: command.commandId,
+        payload: {
+          threadId: command.threadId,
+          turnId: command.turnId,
+          completedAt: command.completedAt,
+          ...(command.status !== undefined ? { status: command.status } : {}),
+          files: command.files,
+          ...(command.assistantMessageId !== undefined
+            ? { assistantMessageId: command.assistantMessageId }
+            : {}),
+          ...(command.checkpointTurnCount !== undefined
+            ? { checkpointTurnCount: command.checkpointTurnCount }
+            : {}),
+        },
+      };
+    case "thread.revert":
+      return {
+        eventId,
+        type: "thread.reverted",
+        aggregateType: "thread",
+        aggregateId: command.threadId,
+        occurredAt: command.createdAt,
+        commandId: command.commandId,
+        payload: {
+          threadId: command.threadId,
+          turnCount: command.turnCount,
+          messageCount: command.messageCount,
+        },
+      };
   }
 }
 
@@ -169,7 +205,9 @@ export class OrchestrationEngine {
     this.eventStore = new SqliteEventStore(dbPath);
     this.readModel = createEmptyReadModel(new Date().toISOString());
     this.commandQueue = Runtime.runSync(this.runtime)(Queue.unbounded<CommandEnvelope>());
-    this.readModelPubSub = Runtime.runSync(this.runtime)(PubSub.unbounded<OrchestrationReadModel>());
+    this.readModelPubSub = Runtime.runSync(this.runtime)(
+      PubSub.unbounded<OrchestrationReadModel>(),
+    );
     this.eventPubSub = Runtime.runSync(this.runtime)(PubSub.unbounded<OrchestrationEvent>());
   }
 
@@ -184,11 +222,15 @@ export class OrchestrationEngine {
         Effect.tryPromise({
           try: async () => {
             const eventBase = mapCommandToEvent(envelope.command);
-            const savedEvent = await Runtime.runPromise(this.runtime)(this.eventStore.append(eventBase));
+            const savedEvent = await Runtime.runPromise(this.runtime)(
+              this.eventStore.append(eventBase),
+            );
             this.readModel = reduceEvent(this.readModel, savedEvent);
             await Promise.all([
               Runtime.runPromise(this.runtime)(PubSub.publish(this.eventPubSub, savedEvent)),
-              Runtime.runPromise(this.runtime)(PubSub.publish(this.readModelPubSub, this.readModel)),
+              Runtime.runPromise(this.runtime)(
+                PubSub.publish(this.readModelPubSub, this.readModel),
+              ),
             ]);
             for (const listener of this.domainEventListeners) {
               listener(savedEvent);
@@ -199,7 +241,8 @@ export class OrchestrationEngine {
             envelope.resolve({ sequence: savedEvent.sequence });
           },
           catch: (error) => {
-            const message = error instanceof Error ? error.message : "Unknown command processing error";
+            const message =
+              error instanceof Error ? error.message : "Unknown command processing error";
             envelope.reject(new Error(message));
             return undefined;
           },
@@ -219,6 +262,7 @@ export class OrchestrationEngine {
       await Runtime.runPromise(this.runtime)(Fiber.interrupt(this.workerFiber));
       this.workerFiber = null;
     }
+    this.eventStore.close();
   }
 
   getSnapshot(): OrchestrationReadModel {
@@ -226,7 +270,9 @@ export class OrchestrationEngine {
   }
 
   async replayEvents(fromSequenceExclusive: number): Promise<OrchestrationEvent[]> {
-    return Runtime.runPromise(this.runtime)(this.eventStore.readFromSequence(fromSequenceExclusive));
+    return Runtime.runPromise(this.runtime)(
+      this.eventStore.readFromSequence(fromSequenceExclusive),
+    );
   }
 
   async dispatchUnknown(command: unknown): Promise<{ sequence: number }> {

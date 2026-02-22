@@ -298,12 +298,14 @@ describe("ProviderManager", () => {
 
   it("emits checkpoint/captured after turn completion checkpoint capture", async () => {
     const manager = new ProviderManager();
-    const events: Array<{ method: string; payload?: unknown; threadId?: string }> = [];
+    const events: Array<{ method: string; payload?: unknown; threadId?: string; turnId?: string }> =
+      [];
     manager.on("event", (event) => {
       events.push({
         method: event.method,
         ...(event.payload !== undefined ? { payload: event.payload } : {}),
         ...(event.threadId ? { threadId: event.threadId } : {}),
+        ...(event.turnId ? { turnId: event.turnId } : {}),
       });
     });
 
@@ -316,6 +318,8 @@ describe("ProviderManager", () => {
         createdAt: string;
         method: string;
         threadId: string;
+        turnId?: string;
+        payload?: unknown;
       }) => void;
       codex: {
         hasSession: (sessionId: string) => boolean;
@@ -351,6 +355,12 @@ describe("ProviderManager", () => {
       createdAt: "2026-02-19T00:00:00.000Z",
       method: "turn/completed",
       threadId: "thr_1",
+      turnId: "turn_1",
+      payload: {
+        turn: {
+          status: "completed",
+        },
+      },
     });
 
     await vi.waitFor(() => {
@@ -364,9 +374,12 @@ describe("ProviderManager", () => {
 
     const checkpointCapturedEvent = events.find((event) => event.method === "checkpoint/captured");
     expect(checkpointCapturedEvent?.threadId).toBe("thr_1");
+    expect(checkpointCapturedEvent?.turnId).toBe("turn_1");
     expect(checkpointCapturedEvent?.payload).toEqual({
       threadId: "thr_1",
       turnCount: 1,
+      turnId: "turn_1",
+      status: "completed",
     });
 
     manager.dispose();

@@ -31,6 +31,10 @@ function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
 export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   return {
     sequence: 0,
@@ -189,6 +193,107 @@ export function reduceEvent(
           session,
           updatedAt: event.occurredAt,
           error: session.lastError,
+        }),
+      };
+    }
+    case "thread.turn-diff-completed": {
+      if (!payload) return nextBase;
+      const threadId = asString(payload.threadId) ?? event.aggregateId;
+      const thread = nextBase.threads.find((entry) => entry.id === threadId);
+      const turnId = asString(payload.turnId);
+      if (!thread || !turnId) return nextBase;
+
+      const files = asArray(payload.files).flatMap((filePayload) => {
+        const file = asObject(filePayload);
+        const filePath = asString(file?.path);
+        if (!filePath) {
+          return [];
+        }
+
+        const nextFile: {
+          path: string;
+          kind?: string;
+          additions?: number;
+          deletions?: number;
+        } = { path: filePath };
+        const kind = asString(file?.kind);
+        if (kind !== null) {
+          nextFile.kind = kind;
+        }
+        const additions = asNumber(file?.additions);
+        if (additions !== null) {
+          nextFile.additions = additions;
+        }
+        const deletions = asNumber(file?.deletions);
+        if (deletions !== null) {
+          nextFile.deletions = deletions;
+        }
+        return [nextFile];
+      });
+
+      const nextSummary = {
+        turnId,
+        completedAt: asString(payload.completedAt) ?? event.occurredAt,
+        ...(asString(payload.status) !== null ? { status: asString(payload.status) ?? undefined } : {}),
+        files,
+        ...(asString(payload.assistantMessageId) !== null
+          ? { assistantMessageId: asString(payload.assistantMessageId) ?? undefined }
+          : {}),
+        ...(asNumber(payload.checkpointTurnCount) !== null
+          ? { checkpointTurnCount: asNumber(payload.checkpointTurnCount) ?? undefined }
+          : {}),
+      };
+      const turnDiffSummaries = [...thread.turnDiffSummaries.filter((summary) => summary.turnId !== turnId), nextSummary]
+        .toSorted((left, right) => left.completedAt.localeCompare(right.completedAt));
+
+      return {
+        ...nextBase,
+        threads: updateThread(nextBase.threads, threadId, {
+          latestTurnId: turnId,
+          latestTurnCompletedAt: nextSummary.completedAt,
+          turnDiffSummaries,
+          updatedAt: event.occurredAt,
+        }),
+      };
+    }
+    case "thread.reverted": {
+      if (!payload) return nextBase;
+      const threadId = asString(payload.threadId) ?? event.aggregateId;
+      const thread = nextBase.threads.find((entry) => entry.id === threadId);
+      if (!thread) return nextBase;
+
+      const targetTurnCount = Math.max(0, Math.floor(asNumber(payload.turnCount) ?? 0));
+      const targetMessageCount = Math.max(0, Math.floor(asNumber(payload.messageCount) ?? 0));
+      const sortedSummaries = [...thread.turnDiffSummaries].toSorted((left, right) =>
+        left.completedAt.localeCompare(right.completedAt),
+      );
+      const inferredTurnCountByTurnId = new Map<string, number>();
+      for (let index = 0; index < sortedSummaries.length; index += 1) {
+        const summary = sortedSummaries[index];
+        if (!summary) continue;
+        inferredTurnCountByTurnId.set(summary.turnId, index + 1);
+      }
+
+      const turnDiffSummaries = thread.turnDiffSummaries
+        .filter((summary) => {
+          const checkpointTurnCount =
+            summary.checkpointTurnCount ?? inferredTurnCountByTurnId.get(summary.turnId) ?? 0;
+          return checkpointTurnCount <= targetTurnCount;
+        })
+        .toSorted((left, right) => left.completedAt.localeCompare(right.completedAt));
+      const latestSummary =
+        turnDiffSummaries.length > 0 ? turnDiffSummaries[turnDiffSummaries.length - 1] : null;
+
+      return {
+        ...nextBase,
+        threads: updateThread(nextBase.threads, threadId, {
+          messages: thread.messages.slice(0, Math.min(targetMessageCount, thread.messages.length)),
+          turnDiffSummaries,
+          latestTurnId: latestSummary?.turnId ?? null,
+          latestTurnStartedAt: null,
+          latestTurnCompletedAt: latestSummary?.completedAt ?? null,
+          latestTurnDurationMs: null,
+          updatedAt: event.occurredAt,
         }),
       };
     }

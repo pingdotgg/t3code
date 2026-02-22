@@ -189,6 +189,28 @@ export const UpsertGitReadModelCommandSchema = Schema.Struct({
   createdAt: IsoDateTimeSchema,
 });
 
+export const CompleteThreadTurnDiffCommandSchema = Schema.Struct({
+  type: Schema.Literal("thread.turnDiff.complete"),
+  commandId: IdSchema,
+  threadId: IdSchema,
+  turnId: IdSchema,
+  completedAt: IsoDateTimeSchema,
+  status: Schema.optional(Schema.String),
+  files: Schema.Array(OrchestrationTurnDiffFileSchema),
+  assistantMessageId: Schema.optional(Schema.String),
+  checkpointTurnCount: Schema.optional(Schema.Number),
+  createdAt: IsoDateTimeSchema,
+});
+
+export const RevertThreadCommandSchema = Schema.Struct({
+  type: Schema.Literal("thread.revert"),
+  commandId: IdSchema,
+  threadId: IdSchema,
+  turnCount: Schema.Number,
+  messageCount: Schema.Number,
+  createdAt: IsoDateTimeSchema,
+});
+
 export const OrchestrationCommandSchema = Schema.Union(
   CreateProjectCommandSchema,
   DeleteProjectCommandSchema,
@@ -198,6 +220,8 @@ export const OrchestrationCommandSchema = Schema.Union(
   SendMessageCommandSchema,
   SetThreadSessionSchema,
   UpsertGitReadModelCommandSchema,
+  CompleteThreadTurnDiffCommandSchema,
+  RevertThreadCommandSchema,
 );
 
 export type OrchestrationCommand = Schema.Schema.Type<typeof OrchestrationCommandSchema>;
