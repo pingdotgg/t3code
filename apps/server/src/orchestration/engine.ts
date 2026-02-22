@@ -20,7 +20,6 @@ import {
 import { createLogger } from "../logger";
 import type { OrchestrationEventRepositoryShape } from "../persistence/Services/OrchestrationEvents";
 import { createEmptyReadModel, reduceEvent } from "./reducer";
-import { UI_ENTITY_CONTRACTS } from "./uiContractInventory";
 
 type CommandEnvelope = {
   command: OrchestrationCommand;
@@ -245,7 +244,6 @@ export class OrchestrationEngine {
     this.workerFiber = Runtime.runFork(this.runtime)(worker);
     this.logger.info("orchestration engine started", {
       sequence: this.readModel.sequence,
-      contracts: UI_ENTITY_CONTRACTS.length,
     });
   }
 
