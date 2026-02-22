@@ -44,8 +44,6 @@ const ProjectRowSchema = Schema.Struct({
   updatedAt: Schema.String,
 });
 
-type ProjectRow = Schema.Schema.Type<typeof ProjectRowSchema>;
-
 const FindByIdRequestSchema = Schema.Struct({
   id: Schema.String,
 });
@@ -137,7 +135,7 @@ function decodeScriptsJson(
 }
 
 function rowToProjectRecord(
-  row: ProjectRow,
+  row: Schema.Schema.Type<typeof ProjectRowSchema>,
   operation: string,
 ): Effect.Effect<ProjectRecord, ProjectRepositoryError> {
   return decodeScriptsJson(row.scriptsJson, `${operation}:scripts`).pipe(

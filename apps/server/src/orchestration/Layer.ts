@@ -17,10 +17,10 @@ import {
 import { createEmptyReadModel, reduceEvent } from "./reducer.ts";
 import { OrchestrationEngineService, type OrchestrationEngineShape } from "./Service.ts";
 
-type CommandEnvelope = {
+interface CommandEnvelope {
   command: OrchestrationCommand;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
-};
+}
 
 function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEvent, "sequence"> {
   const eventId = crypto.randomUUID();

@@ -69,7 +69,10 @@ interface ShellCandidate {
   args?: string[];
 }
 
-type TerminalStartInput = TerminalOpenInput & { cols: number; rows: number };
+interface TerminalStartInput extends TerminalOpenInput {
+  cols: number;
+  rows: number
+};
 
 function defaultShellResolver(): string {
   if (process.platform === "win32") {

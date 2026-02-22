@@ -30,8 +30,6 @@ const EventRowSchema = Schema.Struct({
   payloadJson: Schema.String,
 });
 
-type EventRow = Schema.Schema.Type<typeof EventRowSchema>;
-
 const AppendEventRequestSchema = Schema.Struct({
   eventId: Schema.String,
   type: Schema.String,
@@ -48,7 +46,7 @@ const ReadFromSequenceRequestSchema = Schema.Struct({
 });
 
 function eventRowToOrchestrationEvent(
-  row: EventRow,
+  row: Schema.Schema.Type<typeof EventRowSchema>,
   operation: string,
 ): Effect.Effect<OrchestrationEvent, OrchestrationEventRepositoryError> {
   return Effect.try({

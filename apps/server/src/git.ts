@@ -29,7 +29,7 @@ export interface TerminalCommandInput {
   maxOutputBytes?: number;
 }
 
-export type TerminalCommandResult = ProcessRunResult;
+
 
 export interface GitStatusDetails extends Omit<GitStatusResult, "openPr"> {
   upstreamRef: string | null;
@@ -159,7 +159,7 @@ function normalizeGitSpawnError(cwd: string, error: unknown): Error {
   return new Error(`Failed to run git command: ${error.message}`);
 }
 
-function normalizeGitExecutionError(args: readonly string[], result: TerminalCommandResult): Error {
+function normalizeGitExecutionError(args: readonly string[], result: ProcessRunResult): Error {
   const stderr = result.stderr.trim();
   if (stderr.toLowerCase().includes("not a git repository")) {
     return new Error("Current folder is not a git repository.");
@@ -176,8 +176,8 @@ async function runGitOrThrow(
   cwd: string,
   args: readonly string[],
   options: RunGitOptions = {},
-): Promise<TerminalCommandResult> {
-  let result: TerminalCommandResult;
+): Promise<ProcessRunResult> {
+  let result: ProcessRunResult;
   try {
     result = await runGit(args, cwd, options.timeoutMs);
   } catch (error) {
@@ -197,7 +197,7 @@ async function executeGit(
   cwd: string,
   args: readonly string[],
   options: ExecuteGitOptions = {},
-): Promise<TerminalCommandResult> {
+): Promise<ProcessRunResult> {
   const result = await runGitOrThrow(cwd, args, {
     timeoutMs: options.timeoutMs,
     allowNonZeroExit: true,
@@ -680,7 +680,7 @@ const defaultGitCoreService = new GitCoreService();
 
 export async function runTerminalCommand(
   input: TerminalCommandInput,
-): Promise<TerminalCommandResult> {
+): Promise<ProcessRunResult> {
   const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const shellPath =
     process.platform === "win32"

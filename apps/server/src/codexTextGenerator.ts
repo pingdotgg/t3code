@@ -12,11 +12,13 @@ import type {
 } from "./coreServices";
 import { type ProcessRunOptions, type ProcessRunResult, runProcess } from "./processRunner";
 
-type ProcessRunner = (
-  command: string,
-  args: readonly string[],
-  options?: ProcessRunOptions,
-) => Promise<ProcessRunResult>;
+interface ProcessRunner {
+  (
+    command: string,
+    args: readonly string[],
+    options?: ProcessRunOptions,
+  ): Promise<ProcessRunResult>;
+}
 
 const CODEX_MODEL = "gpt-5.3-codex";
 const CODEX_REASONING_EFFORT = "low";
