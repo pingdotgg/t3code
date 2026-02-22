@@ -36,13 +36,13 @@ import {
 import { TerminalManager } from "./terminalManager";
 import { loadResolvedKeybindingsConfig, upsertKeybindingRule } from "./keybindings";
 import { searchWorkspaceEntries } from "./workspaceEntries";
-import type { OrchestrationEngine } from "./orchestration/engine";
-import { OrchestrationLive } from "./orchestration/layers";
-import { OrchestrationEngineService } from "./orchestration/services";
+import { OrchestrationEngineLive } from "./orchestration/Layer";
+import { OrchestrationEngineService, type OrchestrationEngineShape } from "./orchestration/Service";
 import { ProjectRepositoryLive } from "./persistence/Layers/Projects";
 import { makeSqlitePersistenceLive } from "./persistence/Layers/Sqlite";
 import { ProjectRepository, type ProjectRepositoryShape } from "./persistence/Services/Projects";
 import assert from "node:assert";
+import { OrchestrationEventRepositoryLive } from "./persistence/Layers/OrchestrationEvents";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -136,7 +136,7 @@ export function createServer(options: ServerOptions) {
     unknown
   > | null = null;
   let projectRepository: ProjectRepositoryShape | null = null;
-  let orchestrationEngine: OrchestrationEngine | null = null;
+  let orchestrationEngine: OrchestrationEngineShape | null = null;
   const clients = new Set<WebSocket>();
   const logger = createLogger("ws");
   const logWebSocketEvents =
@@ -169,141 +169,157 @@ export function createServer(options: ServerOptions) {
     return effectRuntime;
   };
 
-  function attachOrchestrationSubscriptions() {
-    const orchestrationEngine = getOrchestrationEngine();
-
-    unsubscribeReadModel = orchestrationEngine.subscribeToReadModel((snapshot) => {
-      const push: WsPush = {
-        type: "push",
-        channel: ORCHESTRATION_WS_CHANNELS.readModel,
-        data: {
-          sequence: snapshot.sequence,
-          snapshot,
-        } satisfies OrchestrationReadModelPush,
-      };
-      const message = JSON.stringify(push);
-      let recipients = 0;
-      for (const client of clients) {
-        if (client.readyState === client.OPEN) {
-          client.send(message);
-          recipients += 1;
+  async function attachOrchestrationSubscriptions(
+    runtime: ManagedRuntime.ManagedRuntime<ProjectRepository | OrchestrationEngineService, unknown>,
+    orchestrationEngine: OrchestrationEngineShape,
+  ) {
+    unsubscribeReadModel = await runtime.runPromise(
+      orchestrationEngine.subscribeToReadModel((snapshot) => {
+        const push: WsPush = {
+          type: "push",
+          channel: ORCHESTRATION_WS_CHANNELS.readModel,
+          data: {
+            sequence: snapshot.sequence,
+            snapshot,
+          } satisfies OrchestrationReadModelPush,
+        };
+        const message = JSON.stringify(push);
+        let recipients = 0;
+        for (const client of clients) {
+          if (client.readyState === client.OPEN) {
+            client.send(message);
+            recipients += 1;
+          }
         }
-      }
-      logOutgoingPush(push, recipients);
-    });
+        logOutgoingPush(push, recipients);
+      }),
+    );
 
-    unsubscribeDomainEvents = orchestrationEngine.subscribeToDomainEvents((event) => {
-      const push: WsPush = {
-        type: "push",
-        channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
-        data: event,
-      };
-      const message = JSON.stringify(push);
-      let recipients = 0;
-      for (const client of clients) {
-        if (client.readyState === client.OPEN) {
-          client.send(message);
-          recipients += 1;
+    unsubscribeDomainEvents = await runtime.runPromise(
+      orchestrationEngine.subscribeToDomainEvents((event) => {
+        const push: WsPush = {
+          type: "push",
+          channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
+          data: event,
+        };
+        const message = JSON.stringify(push);
+        let recipients = 0;
+        for (const client of clients) {
+          if (client.readyState === client.OPEN) {
+            client.send(message);
+            recipients += 1;
+          }
         }
-      }
-      logOutgoingPush(push, recipients);
-    });
+        logOutgoingPush(push, recipients);
+      }),
+    );
   }
 
   // Forward provider events to all connected WebSocket clients
   providerManager.on("event", (event) => {
     void (async () => {
       const liveOrchestrationEngine = orchestrationEngine;
-      if (!liveOrchestrationEngine) {
+      const runtime = effectRuntime;
+      if (!liveOrchestrationEngine || !runtime) {
         return;
       }
-      const snapshot = liveOrchestrationEngine.getSnapshot();
+      const snapshot = await runtime.runPromise(liveOrchestrationEngine.getSnapshot());
       const thread = snapshot.threads.find((entry) => entry.session?.sessionId === event.sessionId);
       if (!thread) return;
       const now = event.createdAt;
       if (event.method === "turn/started" || event.method === "turn/completed") {
-        await liveOrchestrationEngine.dispatch({
-          type: "thread.session",
-          commandId: crypto.randomUUID(),
-          threadId: thread.id,
-          session: {
-            sessionId: event.sessionId,
-            provider: event.provider,
-            status: event.method === "turn/started" ? "running" : "ready",
+        await runtime.runPromise(
+          liveOrchestrationEngine.dispatch({
+            type: "thread.session",
+            commandId: crypto.randomUUID(),
             threadId: thread.id,
-            activeTurnId: event.method === "turn/started" ? (event.turnId ?? null) : null,
-            createdAt: thread.session?.createdAt ?? now,
-            updatedAt: now,
-            lastError: null,
-          },
-          createdAt: now,
-        });
+            session: {
+              sessionId: event.sessionId,
+              provider: event.provider,
+              status: event.method === "turn/started" ? "running" : "ready",
+              threadId: thread.id,
+              activeTurnId: event.method === "turn/started" ? (event.turnId ?? null) : null,
+              createdAt: thread.session?.createdAt ?? now,
+              updatedAt: now,
+              lastError: null,
+            },
+            createdAt: now,
+          }),
+        );
       }
       if (event.textDelta && event.textDelta.length > 0) {
         const assistantMessageId = `assistant:${event.turnId ?? event.itemId ?? event.sessionId}`;
-        await liveOrchestrationEngine.dispatch({
-          type: "message.send",
-          commandId: crypto.randomUUID(),
-          threadId: thread.id,
-          messageId: assistantMessageId,
-          role: "assistant",
-          text: event.textDelta,
-          streaming: true,
-          createdAt: now,
-        });
+        await runtime.runPromise(
+          liveOrchestrationEngine.dispatch({
+            type: "message.send",
+            commandId: crypto.randomUUID(),
+            threadId: thread.id,
+            messageId: assistantMessageId,
+            role: "assistant",
+            text: event.textDelta,
+            streaming: true,
+            createdAt: now,
+          }),
+        );
       }
       if (event.method === "turn/completed") {
         const assistantMessageId = `assistant:${event.turnId ?? event.itemId ?? event.sessionId}`;
-        await liveOrchestrationEngine.dispatch({
-          type: "message.send",
-          commandId: crypto.randomUUID(),
-          threadId: thread.id,
-          messageId: assistantMessageId,
-          role: "assistant",
-          text: "",
-          streaming: false,
-          createdAt: now,
-        });
+        await runtime.runPromise(
+          liveOrchestrationEngine.dispatch({
+            type: "message.send",
+            commandId: crypto.randomUUID(),
+            threadId: thread.id,
+            messageId: assistantMessageId,
+            role: "assistant",
+            text: "",
+            streaming: false,
+            createdAt: now,
+          }),
+        );
       }
       if (event.method === "checkpoint/captured") {
         const payload = asObject(event.payload);
         const turnId = event.turnId ?? asString(payload?.turnId);
         if (turnId) {
-          await liveOrchestrationEngine.dispatch({
-            type: "thread.turnDiff.complete",
-            commandId: crypto.randomUUID(),
-            threadId: thread.id,
-            turnId,
-            completedAt: now,
-            ...(asString(payload?.status) !== null
-              ? { status: asString(payload?.status) ?? undefined }
-              : {}),
-            files: [],
-            assistantMessageId: `assistant:${turnId}`,
-            ...(asNumber(payload?.turnCount) !== null
-              ? { checkpointTurnCount: asNumber(payload?.turnCount) ?? undefined }
-              : {}),
-            createdAt: now,
-          });
+          await runtime.runPromise(
+            liveOrchestrationEngine.dispatch({
+              type: "thread.turnDiff.complete",
+              commandId: crypto.randomUUID(),
+              threadId: thread.id,
+              turnId,
+              completedAt: now,
+              ...(asString(payload?.status) !== null
+                ? { status: asString(payload?.status) ?? undefined }
+                : {}),
+              files: [],
+              assistantMessageId: `assistant:${turnId}`,
+              ...(asNumber(payload?.turnCount) !== null
+                ? { checkpointTurnCount: asNumber(payload?.turnCount) ?? undefined }
+                : {}),
+              createdAt: now,
+            }),
+          );
         }
       }
       if (event.kind === "error" && event.message) {
-        await liveOrchestrationEngine.dispatch({
-          type: "thread.session",
-          commandId: crypto.randomUUID(),
-          threadId: thread.id,
-          session: {
-            sessionId: event.sessionId,
-            provider: event.provider,
-            status: "error",
+        await runtime.runPromise(
+          liveOrchestrationEngine.dispatch({
+            type: "thread.session",
+            commandId: crypto.randomUUID(),
             threadId: thread.id,
-            activeTurnId: event.turnId ?? null,
-            createdAt: thread.session?.createdAt ?? now,
-            updatedAt: now,
-            lastError: event.message,
-          },
-          createdAt: now,
-        });
+            session: {
+              sessionId: event.sessionId,
+              provider: event.provider,
+              status: "error",
+              threadId: thread.id,
+              activeTurnId: event.turnId ?? null,
+              createdAt: thread.session?.createdAt ?? now,
+              updatedAt: now,
+              lastError: event.message,
+            },
+            createdAt: now,
+          }),
+        );
       }
     })().catch(() => undefined);
   });
@@ -410,6 +426,7 @@ export function createServer(options: ServerOptions) {
   wss.on("connection", (ws) => {
     clients.add(ws);
     const orchestrationEngine = getOrchestrationEngine();
+    const runtime = getEffectRuntime();
 
     // Send welcome message with project info
     const segments = cwd.split(/[/\\]/).filter(Boolean);
@@ -423,16 +440,24 @@ export function createServer(options: ServerOptions) {
     logOutgoingPush(welcome, 1);
     ws.send(JSON.stringify(welcome));
 
-    const snapshotPush: WsPush = {
-      type: "push",
-      channel: ORCHESTRATION_WS_CHANNELS.readModel,
-      data: {
-        sequence: orchestrationEngine.getSnapshot().sequence,
-        snapshot: orchestrationEngine.getSnapshot(),
-      } satisfies OrchestrationReadModelPush,
-    };
-    logOutgoingPush(snapshotPush, 1);
-    ws.send(JSON.stringify(snapshotPush));
+    void runtime
+      .runPromise(orchestrationEngine.getSnapshot())
+      .then((snapshot) => {
+        if (ws.readyState !== ws.OPEN) {
+          return;
+        }
+        const snapshotPush: WsPush = {
+          type: "push",
+          channel: ORCHESTRATION_WS_CHANNELS.readModel,
+          data: {
+            sequence: snapshot.sequence,
+            snapshot,
+          } satisfies OrchestrationReadModelPush,
+        };
+        logOutgoingPush(snapshotPush, 1);
+        ws.send(JSON.stringify(snapshotPush));
+      })
+      .catch(() => undefined);
 
     ws.on("message", (raw) => {
       void handleMessage(ws, raw);
@@ -509,32 +534,36 @@ export function createServer(options: ServerOptions) {
         const params = request.params as { sessionId?: string };
         const sessionId = params.sessionId;
         if (typeof sessionId === "string") {
-          const snapshot = orchestrationEngine.getSnapshot();
+          const snapshot = await effectRuntime.runPromise(orchestrationEngine.getSnapshot());
           const thread = snapshot.threads.find((entry) => entry.session?.sessionId === sessionId);
           if (thread) {
             const now = new Date().toISOString();
-            await orchestrationEngine.dispatch({
-              type: "thread.revert",
-              commandId: crypto.randomUUID(),
-              threadId: thread.id,
-              turnCount: result.turnCount,
-              messageCount: result.messageCount,
-              createdAt: now,
-            });
-            if (thread.session) {
-              await orchestrationEngine.dispatch({
-                type: "thread.session",
+            await effectRuntime.runPromise(
+              orchestrationEngine.dispatch({
+                type: "thread.revert",
                 commandId: crypto.randomUUID(),
                 threadId: thread.id,
-                session: {
-                  ...thread.session,
-                  status: "ready",
-                  activeTurnId: null,
-                  updatedAt: now,
-                  lastError: null,
-                },
+                turnCount: result.turnCount,
+                messageCount: result.messageCount,
                 createdAt: now,
-              });
+              }),
+            );
+            if (thread.session) {
+              await effectRuntime.runPromise(
+                orchestrationEngine.dispatch({
+                  type: "thread.session",
+                  commandId: crypto.randomUUID(),
+                  threadId: thread.id,
+                  session: {
+                    ...thread.session,
+                    status: "ready",
+                    activeTurnId: null,
+                    updatedAt: now,
+                    lastError: null,
+                  },
+                  createdAt: now,
+                }),
+              );
             }
           }
         }
@@ -605,16 +634,18 @@ export function createServer(options: ServerOptions) {
         const projects = await effectRuntime.runPromise(projectRepository.list());
         const project = projects.find((entry) => entry.cwd === params.cwd);
         if (project) {
-          await orchestrationEngine.dispatch({
-            type: "git.readModel.upsert",
-            commandId: crypto.randomUUID(),
-            projectId: project.id,
-            branch: status.branch,
-            hasWorkingTreeChanges: status.hasWorkingTreeChanges,
-            aheadCount: status.aheadCount,
-            behindCount: status.behindCount,
-            createdAt: new Date().toISOString(),
-          });
+          await effectRuntime.runPromise(
+            orchestrationEngine.dispatch({
+              type: "git.readModel.upsert",
+              commandId: crypto.randomUUID(),
+              projectId: project.id,
+              branch: status.branch,
+              hasWorkingTreeChanges: status.hasWorkingTreeChanges,
+              aheadCount: status.aheadCount,
+              behindCount: status.behindCount,
+              createdAt: new Date().toISOString(),
+            }),
+          );
         }
         return status;
       }
@@ -677,19 +708,21 @@ export function createServer(options: ServerOptions) {
         };
 
       case ORCHESTRATION_WS_METHODS.getSnapshot:
-        return orchestrationEngine.getSnapshot();
+        return effectRuntime.runPromise(orchestrationEngine.getSnapshot());
 
       case ORCHESTRATION_WS_METHODS.dispatchCommand:
-        return orchestrationEngine.dispatchUnknown(request.params);
+        return effectRuntime.runPromise(orchestrationEngine.dispatchUnknown(request.params));
 
       case ORCHESTRATION_WS_METHODS.replayEvents:
-        return orchestrationEngine.replayEvents(
-          Math.max(
-            0,
-            Math.floor(
-              Number(
-                (request.params as { fromSequenceExclusive?: number } | undefined)
-                  ?.fromSequenceExclusive ?? 0,
+        return effectRuntime.runPromise(
+          orchestrationEngine.replayEvents(
+            Math.max(
+              0,
+              Math.floor(
+                Number(
+                  (request.params as { fromSequenceExclusive?: number } | undefined)
+                    ?.fromSequenceExclusive ?? 0,
+                ),
               ),
             ),
           ),
@@ -703,11 +736,14 @@ export function createServer(options: ServerOptions) {
   async function createEffectRuntime() {
     const dbPath = path.join(resolvedStateDir, "orchestration.sqlite");
     const persistenceLayer = makeSqlitePersistenceLive(dbPath);
-    const runtime = ManagedRuntime.make(
-      Layer.mergeAll(OrchestrationLive, ProjectRepositoryLive).pipe(
-        Layer.provide(persistenceLayer),
-      ),
+    const orchestrationLayer = Layer.provide(
+      OrchestrationEngineLive,
+      OrchestrationEventRepositoryLive,
     );
+    const layer = Layer.mergeAll(orchestrationLayer, ProjectRepositoryLive).pipe(
+      Layer.provide(persistenceLayer),
+    );
+    const runtime = ManagedRuntime.make(layer);
 
     try {
       const [nextOrchestrationEngine, repository] = await Promise.all([
@@ -717,7 +753,7 @@ export function createServer(options: ServerOptions) {
       orchestrationEngine = nextOrchestrationEngine;
       projectRepository = repository;
       await runtime.runPromise(repository.pruneMissing());
-      attachOrchestrationSubscriptions();
+      await attachOrchestrationSubscriptions(runtime, nextOrchestrationEngine);
     } catch (error) {
       await runtime.dispose().catch(() => undefined);
       throw error;

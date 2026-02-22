@@ -5,21 +5,22 @@ import type {
 } from "@t3tools/contracts";
 import { OrchestrationCommandSchema } from "@t3tools/contracts";
 import {
+  Cause,
+  Deferred,
+  Effect,
+  Either,
+  Fiber,
+  Layer,
   PubSub,
   Queue,
-  Schema,
-  Stream,
-  Effect,
-  Fiber,
   Runtime,
-  Either,
-  Deferred,
-  Cause,
+  Schema,
 } from "effect";
 
 import { createLogger } from "../logger";
-import type { OrchestrationEventRepositoryShape } from "../persistence/Services/OrchestrationEvents";
+import { OrchestrationEventRepository } from "../persistence/Services/OrchestrationEvents";
 import { createEmptyReadModel, reduceEvent } from "./reducer";
+import { OrchestrationEngineService, type OrchestrationEngineShape } from "./Service";
 
 type CommandEnvelope = {
   command: OrchestrationCommand;
@@ -168,45 +169,38 @@ function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEve
   }
 }
 
-export class OrchestrationEngine {
-  private readonly logger = createLogger("orchestration");
-  private readonly runtime = Runtime.defaultRuntime;
-  private readonly eventStore: OrchestrationEventRepositoryShape;
+const decodeUnknownCommand = Schema.decodeUnknownEither(OrchestrationCommandSchema);
 
-  private readModel: OrchestrationReadModel;
-  private commandQueue: Queue.Queue<CommandEnvelope>;
-  private readModelPubSub: PubSub.PubSub<OrchestrationReadModel>;
-  private eventPubSub: PubSub.PubSub<OrchestrationEvent>;
-  private workerFiber: Fiber.RuntimeFiber<void, unknown> | null = null;
-  private readonly readModelListeners = new Set<(snapshot: OrchestrationReadModel) => void>();
-  private readonly domainEventListeners = new Set<(event: OrchestrationEvent) => void>();
+export const makeOrchestrationEngine = Effect.gen(function* () {
+  const logger = createLogger("orchestration");
+  const eventStore = yield* OrchestrationEventRepository;
+  const runtime = Runtime.defaultRuntime;
 
-  constructor(eventStore: OrchestrationEventRepositoryShape) {
-    this.eventStore = eventStore;
-    this.readModel = createEmptyReadModel(new Date().toISOString());
-    this.commandQueue = Runtime.runSync(this.runtime)(Queue.unbounded<CommandEnvelope>());
-    this.readModelPubSub = Runtime.runSync(this.runtime)(
-      PubSub.unbounded<OrchestrationReadModel>(),
-    );
-    this.eventPubSub = Runtime.runSync(this.runtime)(PubSub.unbounded<OrchestrationEvent>());
-  }
+  let readModel = createEmptyReadModel(new Date().toISOString());
 
-  private processEnvelope(envelope: CommandEnvelope): Effect.Effect<void> {
-    return Effect.gen(this, function* () {
+  const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
+  const readModelPubSub = yield* PubSub.unbounded<OrchestrationReadModel>();
+  const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
+
+  const readModelListeners = new Set<(snapshot: OrchestrationReadModel) => void>();
+  const domainEventListeners = new Set<(event: OrchestrationEvent) => void>();
+
+  const processEnvelope = (envelope: CommandEnvelope): Effect.Effect<void> =>
+    Effect.gen(function* () {
       const eventBase = mapCommandToEvent(envelope.command);
-      const savedEvent = yield* this.eventStore.append(eventBase);
-      this.readModel = yield* reduceEvent(this.readModel, savedEvent);
+      const savedEvent = yield* eventStore.append(eventBase);
+      readModel = yield* reduceEvent(readModel, savedEvent);
 
-      const snapshot = this.readModel;
+      const snapshot = readModel;
       yield* Effect.all([
-        PubSub.publish(this.eventPubSub, savedEvent),
-        PubSub.publish(this.readModelPubSub, snapshot),
+        PubSub.publish(eventPubSub, savedEvent),
+        PubSub.publish(readModelPubSub, snapshot),
       ]);
 
-      for (const listener of this.domainEventListeners) {
+      for (const listener of domainEventListeners) {
         listener(savedEvent);
       }
-      for (const listener of this.readModelListeners) {
+      for (const listener of readModelListeners) {
         listener(snapshot);
       }
 
@@ -219,91 +213,85 @@ export class OrchestrationEngine {
         ).pipe(Effect.asVoid),
       ),
     );
-  }
 
-  private bootstrapReadModel(): Effect.Effect<void, unknown> {
-    return Effect.gen(this, function* () {
-      const existingEvents = yield* this.eventStore.readAll();
-      for (const event of existingEvents) {
-        this.readModel = yield* reduceEvent(this.readModel, event);
-      }
-    });
-  }
-
-  async start(): Promise<void> {
-    if (this.workerFiber) {
-      return;
+  const bootstrapReadModel: Effect.Effect<void, unknown> = Effect.gen(function* () {
+    const existingEvents = yield* eventStore.readAll();
+    for (const event of existingEvents) {
+      readModel = yield* reduceEvent(readModel, event);
     }
+  });
 
-    await Runtime.runPromise(this.runtime)(this.bootstrapReadModel());
+  yield* bootstrapReadModel;
 
-    const worker = Stream.fromQueue(this.commandQueue).pipe(
-      Stream.runForEach((envelope) => this.processEnvelope(envelope)),
-    );
+  const worker = Effect.forever(Queue.take(commandQueue).pipe(Effect.flatMap(processEnvelope)));
+  const workerFiber: Fiber.RuntimeFiber<void, unknown> = Runtime.runFork(runtime)(worker);
+  logger.info("orchestration engine started", {
+    sequence: readModel.sequence,
+  });
 
-    this.workerFiber = Runtime.runFork(this.runtime)(worker);
-    this.logger.info("orchestration engine started", {
-      sequence: this.readModel.sequence,
-    });
-  }
+  yield* Effect.addFinalizer(() => Fiber.interrupt(workerFiber).pipe(Effect.orDie));
 
-  async stop(): Promise<void> {
-    if (this.workerFiber) {
-      await Runtime.runPromise(this.runtime)(Fiber.interrupt(this.workerFiber));
-      this.workerFiber = null;
-    }
-  }
+  const getSnapshot: OrchestrationEngineShape["getSnapshot"] = () =>
+    Effect.sync((): OrchestrationReadModel => readModel);
 
-  getSnapshot(): OrchestrationReadModel {
-    return this.readModel;
-  }
+  const replayEvents: OrchestrationEngineShape["replayEvents"] = (fromSequenceExclusive) =>
+    eventStore.readFromSequence(fromSequenceExclusive);
 
-  async replayEvents(fromSequenceExclusive: number): Promise<OrchestrationEvent[]> {
-    return Runtime.runPromise(this.runtime)(
-      this.eventStore.readFromSequence(fromSequenceExclusive),
-    );
-  }
-
-  async dispatchUnknown(command: unknown): Promise<{ sequence: number }> {
-    const decode = Schema.decodeUnknownEither(OrchestrationCommandSchema);
-    let payload: unknown = command;
-    if (typeof command === "string") {
-      try {
-        payload = JSON.parse(command) as unknown;
-      } catch {
-        throw new Error("Invalid orchestration command: payload is not valid JSON");
-      }
-    }
-    const decoded = decode(payload);
-    if (Either.isLeft(decoded)) {
-      const issues = decoded.left.toString();
-      throw new Error(`Invalid orchestration command: ${issues}`);
-    }
-    return this.dispatch(decoded.right);
-  }
-
-  async dispatch(command: OrchestrationCommand): Promise<{ sequence: number }> {
-    const program = Effect.gen(this, function* () {
+  const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
+    Effect.gen(function* () {
       const result = yield* Deferred.make<{ sequence: number }, Error>();
-      yield* Queue.offer(this.commandQueue, { command, result });
+      yield* Queue.offer(commandQueue, { command, result });
       return yield* Deferred.await(result);
-    });
-    return Runtime.runPromise(this.runtime)(program).catch((error) => {
-      throw asError(error, "Queue offer failed");
-    });
-  }
+    }).pipe(Effect.mapError((error) => asError(error, "Queue offer failed")));
 
-  subscribeToReadModel(callback: (snapshot: OrchestrationReadModel) => void): () => void {
-    this.readModelListeners.add(callback);
-    return () => {
-      this.readModelListeners.delete(callback);
-    };
-  }
+  const dispatchUnknown: OrchestrationEngineShape["dispatchUnknown"] = (command) =>
+    Effect.gen(function* () {
+      let payload: unknown = command;
+      if (typeof command === "string") {
+        try {
+          payload = JSON.parse(command) as unknown;
+        } catch {
+          return yield* Effect.fail(
+            new Error("Invalid orchestration command: payload is not valid JSON"),
+          );
+        }
+      }
+      const decoded = decodeUnknownCommand(payload);
+      if (Either.isLeft(decoded)) {
+        return yield* Effect.fail(
+          new Error(`Invalid orchestration command: ${decoded.left.toString()}`),
+        );
+      }
+      return yield* dispatch(decoded.right);
+    });
 
-  subscribeToDomainEvents(callback: (event: OrchestrationEvent) => void): () => void {
-    this.domainEventListeners.add(callback);
-    return () => {
-      this.domainEventListeners.delete(callback);
-    };
-  }
-}
+  const subscribeToReadModel: OrchestrationEngineShape["subscribeToReadModel"] = (callback) =>
+    Effect.sync(() => {
+      readModelListeners.add(callback);
+      return () => {
+        readModelListeners.delete(callback);
+      };
+    });
+
+  const subscribeToDomainEvents: OrchestrationEngineShape["subscribeToDomainEvents"] = (callback) =>
+    Effect.sync(() => {
+      domainEventListeners.add(callback);
+      return () => {
+        domainEventListeners.delete(callback);
+      };
+    });
+
+  return {
+    getSnapshot,
+    replayEvents,
+    dispatchUnknown,
+    dispatch,
+    subscribeToReadModel,
+    subscribeToDomainEvents,
+  } satisfies OrchestrationEngineShape;
+});
+
+export const OrchestrationEngineLive = Layer.scoped(
+  OrchestrationEngineService,
+  makeOrchestrationEngine,
+);
