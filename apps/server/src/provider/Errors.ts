@@ -149,6 +149,22 @@ export class ProviderSessionNotFoundError extends Schema.TaggedErrorClass<Provid
 }
 
 /**
+ * ProviderSessionDirectoryPersistenceError - Session directory persistence failure.
+ */
+export class ProviderSessionDirectoryPersistenceError extends Schema.TaggedErrorClass<ProviderSessionDirectoryPersistenceError>()(
+  "ProviderSessionDirectoryPersistenceError",
+  {
+    operation: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Provider session directory persistence error in ${this.operation}: ${this.detail}`;
+  }
+}
+
+/**
  * ProviderCheckpointUnavailableError - Checkpointing unavailable for this session.
  */
 export class ProviderCheckpointUnavailableError extends Schema.TaggedErrorClass<ProviderCheckpointUnavailableError>()(
@@ -210,6 +226,7 @@ export type ProviderServiceError =
   | ProviderValidationError
   | ProviderUnsupportedError
   | ProviderSessionNotFoundError
+  | ProviderSessionDirectoryPersistenceError
   | ProviderCheckpointUnavailableError
   | ProviderCheckpointRangeError
   | ProviderFilesystemError

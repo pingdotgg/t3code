@@ -150,6 +150,36 @@ export class CheckpointRepositoryPersistenceError extends Schema.TaggedErrorClas
   }
 }
 
+// ===============================
+// Provider Session Repository Errors
+// ===============================
+
+export class ProviderSessionRepositoryValidationError extends Schema.TaggedErrorClass<ProviderSessionRepositoryValidationError>()(
+  "ProviderSessionRepositoryValidationError",
+  {
+    operation: Schema.String,
+    issue: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Provider session repository validation failed in ${this.operation}: ${this.issue}`;
+  }
+}
+
+export class ProviderSessionRepositoryPersistenceError extends Schema.TaggedErrorClass<ProviderSessionRepositoryPersistenceError>()(
+  "ProviderSessionRepositoryPersistenceError",
+  {
+    operation: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Provider session repository persistence error in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export type ProjectRepositoryError =
   | PersistenceSqlError
   | PersistenceDecodeError
@@ -166,3 +196,7 @@ export type OrchestrationEventStoreError =
 export type CheckpointRepositoryError =
   | CheckpointRepositoryValidationError
   | CheckpointRepositoryPersistenceError;
+
+export type ProviderSessionRepositoryError =
+  | ProviderSessionRepositoryValidationError
+  | ProviderSessionRepositoryPersistenceError;

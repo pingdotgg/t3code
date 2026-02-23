@@ -55,6 +55,7 @@ import { ProviderService, type ProviderServiceShape } from "./provider/Services/
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
 import { CheckpointServiceLive } from "./checkpointing/Layers/CheckpointService";
 import { CheckpointRepositoryLive } from "./persistence/Layers/Checkpoints";
+import { ProviderSessionRepositoryLive } from "./persistence/Layers/ProviderSessions";
 import { makeEventNdjsonLogger, type EventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlError from "effect/unstable/sql/SqlError";
@@ -637,12 +638,15 @@ export function createServer(options: ServerOptions) {
         const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
           Layer.provide(codexAdapterLayer),
         );
+        const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+          Layer.provide(ProviderSessionRepositoryLive),
+        );
         const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(NodeServices.layer));
         const checkpointDependenciesLayer = Layer.mergeAll(
           checkpointStoreLayer,
           CheckpointRepositoryLive,
           adapterRegistryLayer,
-          ProviderSessionDirectoryLive,
+          providerSessionDirectoryLayer,
         );
         const checkpointServiceLayer = CheckpointServiceLive.pipe(
           Layer.provideMerge(checkpointDependenciesLayer),
