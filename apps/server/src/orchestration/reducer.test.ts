@@ -46,6 +46,7 @@ describe("orchestration reducer", () => {
         latestTurnDurationMs: null,
         messages: [],
         session: null,
+        activities: [],
         turnDiffSummaries: [],
         error: null,
       },

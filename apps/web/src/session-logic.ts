@@ -1,4 +1,8 @@
-import type { ProviderKind, ProviderSession } from "@t3tools/contracts";
+import type {
+  OrchestrationThreadActivity,
+  ProviderKind,
+  ProviderSession,
+} from "@t3tools/contracts";
 
 import type { ChatMessage, SessionPhase, TurnDiffFileChange, TurnDiffSummary } from "./types";
 
@@ -70,15 +74,56 @@ export function formatElapsed(startIso: string, endIso: string | undefined): str
   return formatDuration(endedAt - startedAt);
 }
 
-export function derivePendingApprovals(_events: unknown[]): PendingApproval[] {
-  return [];
+export function derivePendingApprovals(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): PendingApproval[] {
+  const openByRequestId = new Map<string, PendingApproval>();
+  const ordered = [...activities].toSorted((left, right) =>
+    left.createdAt.localeCompare(right.createdAt),
+  );
+
+  for (const activity of ordered) {
+    if (activity.requestId && activity.requestKind) {
+      openByRequestId.set(activity.requestId, {
+        requestId: activity.requestId,
+        requestKind: activity.requestKind,
+        createdAt: activity.createdAt,
+        ...(activity.detail ? { detail: activity.detail } : {}),
+      });
+      continue;
+    }
+
+    if (activity.requestId && activity.label === "Approval resolved") {
+      openByRequestId.delete(activity.requestId);
+    }
+  }
+
+  return [...openByRequestId.values()].toSorted((left, right) =>
+    left.createdAt.localeCompare(right.createdAt),
+  );
 }
 
 export function deriveWorkLogEntries(
-  _events: unknown[],
-  _latestTurnId: string | undefined,
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  latestTurnId: string | undefined,
 ): WorkLogEntry[] {
-  return [];
+  const ordered = [...activities].toSorted((left, right) =>
+    left.createdAt.localeCompare(right.createdAt),
+  );
+  return ordered
+    .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
+    .map((activity) => {
+      const entry: WorkLogEntry = {
+        id: activity.id,
+        createdAt: activity.createdAt,
+        label: activity.label,
+        tone: activity.tone,
+      };
+      if (activity.detail) {
+        entry.detail = activity.detail;
+      }
+      return entry;
+    });
 }
 
 export function deriveTimelineEntries(
@@ -97,7 +142,7 @@ export function deriveTimelineEntries(
     createdAt: entry.createdAt,
     entry,
   }));
-  return [...messageRows, ...workRows].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return [...messageRows, ...workRows].toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export function deriveTurnDiffFilesFromUnifiedDiff(diff: string): TurnDiffFileChange[] {
@@ -116,7 +161,7 @@ export function deriveTurnDiffFilesFromUnifiedDiff(diff: string): TurnDiffFileCh
 export function inferCheckpointTurnCountByTurnId(
   summaries: TurnDiffSummary[],
 ): Record<string, number> {
-  const sorted = [...summaries].sort((a, b) => a.completedAt.localeCompare(b.completedAt));
+  const sorted = [...summaries].toSorted((a, b) => a.completedAt.localeCompare(b.completedAt));
   const result: Record<string, number> = {};
   for (let index = 0; index < sorted.length; index += 1) {
     const summary = sorted[index];
@@ -126,7 +171,7 @@ export function inferCheckpointTurnCountByTurnId(
   return result;
 }
 
-export function deriveTurnDiffSummaries(_events: unknown[]): TurnDiffSummary[] {
+export function deriveTurnDiffSummaries(_events: ReadonlyArray<OrchestrationThreadActivity>): TurnDiffSummary[] {
   return [];
 }
 

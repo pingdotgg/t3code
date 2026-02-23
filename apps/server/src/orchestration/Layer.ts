@@ -143,6 +143,19 @@ function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEve
             : {}),
         },
       };
+    case "thread.activity.append":
+      return {
+        eventId,
+        type: "thread.activity-appended",
+        aggregateType: "thread",
+        aggregateId: command.threadId,
+        occurredAt: command.createdAt,
+        commandId: command.commandId,
+        payload: {
+          threadId: command.threadId,
+          activity: command.activity,
+        },
+      };
     case "thread.revert":
       return {
         eventId,

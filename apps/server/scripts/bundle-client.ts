@@ -2,13 +2,11 @@
  * Copies the built web app into dist/client/ so the published npm package
  * includes the web UI. This runs as a post-build step.
  */
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const webDist = path.resolve(__dirname, "../../web/dist");
-const target = path.resolve(__dirname, "../dist/client");
+const webDist = path.resolve(import.meta.dirname, "../../web/dist");
+const target = path.resolve(import.meta.dirname, "../dist/client");
 
 if (!fs.existsSync(webDist)) {
   console.log(

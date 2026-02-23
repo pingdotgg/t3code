@@ -12,7 +12,6 @@
  * @module ProviderService
  */
 import type {
-  ProviderEvent,
   ProviderGetCheckpointDiffInput,
   ProviderGetCheckpointDiffResult,
   ProviderInterruptTurnInput,
@@ -26,9 +25,10 @@ import type {
   ProviderSessionStartInput,
   ProviderStopSessionInput,
   ProviderTurnStartResult,
+  ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import { ServiceMap } from "effect";
-import type { Effect } from "effect";
+import type { Effect, Stream } from "effect";
 
 import type { ProviderServiceError } from "../Errors.ts";
 
@@ -100,13 +100,11 @@ export interface ProviderServiceShape {
   readonly stopAll: () => Effect.Effect<void, ProviderServiceError>;
 
   /**
-   * Subscribe to provider event stream.
+   * Canonical provider runtime event stream.
    *
    * Fan-out is owned by ProviderService (not by a standalone event-bus service).
    */
-  readonly subscribeToEvents: (
-    callback: (event: ProviderEvent) => void,
-  ) => Effect.Effect<() => void, ProviderServiceError>;
+  readonly streamEvents: Stream.Stream<ProviderRuntimeEvent>;
 }
 
 /**

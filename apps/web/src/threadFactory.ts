@@ -33,6 +33,7 @@ export function createThread(projectId: string, options: CreateThreadOptions = {
     session: null,
     messages: [],
     turnDiffSummaries: [],
+    activities: [],
     error: null,
     createdAt,
     branch: options.branch ?? null,

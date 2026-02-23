@@ -398,6 +398,7 @@ export function reducer(state: AppState, action: Action): AppState {
             ...summary,
             files: summary.files.map((file) => ({ ...file })),
           })),
+          activities: thread.activities.map((activity) => ({ ...activity })),
         });
       });
       return {

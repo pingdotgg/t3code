@@ -7,7 +7,6 @@ export const ORCHESTRATION_WS_METHODS = {
 } as const;
 
 export const ORCHESTRATION_WS_CHANNELS = {
-  readModel: "orchestration.readModel",
   domainEvent: "orchestration.domainEvent",
 } as const;
 
@@ -59,6 +58,30 @@ export type OrchestrationTurnDiffSummary = Schema.Schema.Type<
   typeof OrchestrationTurnDiffSummarySchema
 >;
 
+export const OrchestrationThreadActivityToneSchema = Schema.Literals([
+  "thinking",
+  "tool",
+  "info",
+  "error",
+]);
+
+export type OrchestrationThreadActivityTone = Schema.Schema.Type<
+  typeof OrchestrationThreadActivityToneSchema
+>;
+
+export const OrchestrationThreadActivitySchema = Schema.Struct({
+  id: IdSchema,
+  createdAt: IsoDateTimeSchema,
+  label: Schema.String,
+  detail: Schema.optional(Schema.String),
+  tone: OrchestrationThreadActivityToneSchema,
+  turnId: Schema.optional(Schema.String),
+  requestId: Schema.optional(Schema.String),
+  requestKind: Schema.optional(Schema.Literals(["command", "file-change"])),
+});
+
+export type OrchestrationThreadActivity = Schema.Schema.Type<typeof OrchestrationThreadActivitySchema>;
+
 export const OrchestrationThreadSchema = Schema.Struct({
   id: IdSchema,
   projectId: IdSchema,
@@ -75,6 +98,7 @@ export const OrchestrationThreadSchema = Schema.Struct({
   messages: Schema.Array(OrchestrationMessageSchema),
   session: Schema.NullOr(OrchestrationSessionSchema),
   turnDiffSummaries: Schema.Array(OrchestrationTurnDiffSummarySchema),
+  activities: Schema.Array(OrchestrationThreadActivitySchema),
   error: Schema.NullOr(Schema.String),
 });
 
@@ -182,6 +206,14 @@ export const RevertThreadCommandSchema = Schema.Struct({
   createdAt: IsoDateTimeSchema,
 });
 
+export const AppendThreadActivityCommandSchema = Schema.Struct({
+  type: Schema.Literal("thread.activity.append"),
+  commandId: IdSchema,
+  threadId: IdSchema,
+  activity: OrchestrationThreadActivitySchema,
+  createdAt: IsoDateTimeSchema,
+});
+
 export const OrchestrationCommandSchema = Schema.Union([
   CreateThreadCommandSchema,
   DeleteThreadCommandSchema,
@@ -190,6 +222,7 @@ export const OrchestrationCommandSchema = Schema.Union([
   SetThreadSessionSchema,
   UpsertGitReadModelCommandSchema,
   CompleteThreadTurnDiffCommandSchema,
+  AppendThreadActivityCommandSchema,
   RevertThreadCommandSchema,]
 );
 
@@ -207,10 +240,3 @@ export const OrchestrationEventSchema = Schema.Struct({
 });
 
 export type OrchestrationEvent = Schema.Schema.Type<typeof OrchestrationEventSchema>;
-
-export const OrchestrationReadModelPushSchema = Schema.Struct({
-  sequence: Schema.Number,
-  snapshot: OrchestrationReadModelSchema,
-});
-
-export type OrchestrationReadModelPush = Schema.Schema.Type<typeof OrchestrationReadModelPushSchema>;

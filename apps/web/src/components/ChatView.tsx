@@ -432,20 +432,35 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const phase = derivePhase(activeThread?.session ?? null);
   const isWorking = phase === "running" || isSending || isConnecting || isRevertingCheckpoint;
+  const activeTurnId = activeThread?.session?.activeTurnId ?? undefined;
   const nowIso = new Date(nowTick).toISOString();
-  const workLogEntries = useMemo(() => deriveWorkLogEntries([], undefined), []);
-  const latestTurnWorkEntries = useMemo(
-    () => deriveWorkLogEntries([], activeThread?.latestTurnId),
-    [activeThread?.latestTurnId],
+  const threadActivities = activeThread?.activities ?? [];
+  const workLogEntries = useMemo(
+    () => deriveWorkLogEntries(threadActivities, undefined),
+    [threadActivities],
   );
-  const pendingApprovals = useMemo(() => derivePendingApprovals([]), []);
-  const assistantCompletionByItemId = useMemo(() => new Map<string, string>(), []);
+  const latestTurnWorkEntries = useMemo(
+    () => deriveWorkLogEntries(threadActivities, activeTurnId ?? activeThread?.latestTurnId),
+    [activeThread?.latestTurnId, activeTurnId, threadActivities],
+  );
+  const pendingApprovals = useMemo(
+    () => derivePendingApprovals(threadActivities),
+    [threadActivities],
+  );
   const timelineEntries = useMemo(
     () => deriveTimelineEntries(activeThread?.messages ?? [], workLogEntries),
     [activeThread?.messages, workLogEntries],
   );
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
+  const assistantCompletionByItemId = useMemo(() => {
+    const completionByMessageId = new Map<string, string>();
+    for (const summary of turnDiffSummaries) {
+      if (!summary.assistantMessageId) continue;
+      completionByMessageId.set(summary.assistantMessageId, summary.completedAt);
+    }
+    return completionByMessageId;
+  }, [turnDiffSummaries]);
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
     const byMessageId = new Map<string, TurnDiffSummary>();
     for (const summary of turnDiffSummaries) {

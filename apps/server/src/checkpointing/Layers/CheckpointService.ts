@@ -377,6 +377,16 @@ const makeCheckpointService = Effect.gen(function* () {
       return next;
     });
 
+  const clearSessionSemaphore = (sessionId: string) =>
+    Ref.update(sessionSemaphoresRef, (current) => {
+      if (!current.has(sessionId)) {
+        return current;
+      }
+      const next = new Map(current);
+      next.delete(sessionId);
+      return next;
+    });
+
   const getTrackedCheckpointCwd = (sessionId: string) =>
     Ref.get(sessionCheckpointCwdsRef).pipe(
       Effect.map((current) => Option.fromNullishOr(current.get(sessionId))),
@@ -1024,12 +1034,24 @@ const makeCheckpointService = Effect.gen(function* () {
       ),
     );
 
+  const releaseSession: CheckpointServiceShape["releaseSession"] = (input) =>
+    Effect.gen(function* () {
+      const providerSessionId = yield* normalizeNonEmpty(
+        input.providerSessionId,
+        "CheckpointService.releaseSession",
+        "providerSessionId",
+      );
+      yield* clearTrackedCheckpointCwd(providerSessionId);
+      yield* clearSessionSemaphore(providerSessionId);
+    });
+
   return {
     initializeForSession,
     captureCurrentTurn,
     listCheckpoints,
     getCheckpointDiff,
     revertToCheckpoint,
+    releaseSession,
   } satisfies CheckpointServiceShape;
 });
 

@@ -4,8 +4,6 @@ import {
   type NativeApi,
   WS_CHANNELS,
   WS_METHODS,
-  type OrchestrationEvent,
-  type OrchestrationReadModel,
   type WsWelcomePayload,
 } from "@t3tools/contracts";
 
@@ -161,14 +159,6 @@ export function createWsNativeApi(): NativeApi {
         transport.request(ORCHESTRATION_WS_METHODS.dispatchCommand, command),
       replayEvents: (fromSequenceExclusive) =>
         transport.request(ORCHESTRATION_WS_METHODS.replayEvents, { fromSequenceExclusive }),
-      onReadModel: (callback) =>
-        transport.subscribe(
-          ORCHESTRATION_WS_CHANNELS.readModel,
-          (data: unknown) => {
-            const payload = data as { snapshot: OrchestrationReadModel };
-            callback(payload.snapshot);
-          },
-        ),
       onDomainEvent: (callback) =>
         transport.subscribe(
           ORCHESTRATION_WS_CHANNELS.domainEvent,

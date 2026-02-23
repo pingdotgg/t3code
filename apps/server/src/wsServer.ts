@@ -11,7 +11,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   WS_CHANNELS,
   WS_METHODS,
-  type OrchestrationReadModelPush,
+  type ProviderRuntimeEvent,
   type TerminalEvent,
   type WsPush,
   type WsRequest,
@@ -19,7 +19,7 @@ import {
   wsRequestSchema,
 } from "@t3tools/contracts";
 import { NodeServices } from "@effect/platform-node";
-import { Effect, Layer, ManagedRuntime } from "effect";
+import { Effect, Exit, Layer, ManagedRuntime, Queue, Scope, Stream } from "effect";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { createLogger } from "./logger";
@@ -43,14 +43,18 @@ import { makeSqlitePersistenceLive } from "./persistence/Layers/Sqlite";
 import { ProjectRepository, type ProjectRepositoryShape } from "./persistence/Services/Projects";
 import assert from "node:assert";
 import { OrchestrationEventRepositoryLive } from "./persistence/Layers/OrchestrationEvents";
-import { CodexAdapterLive } from "./provider/Layers/CodexAdapter";
+import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
-import { ProviderServiceLive } from "./provider/Layers/ProviderService";
+import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
 import { CheckpointServiceLive } from "./checkpointing/Layers/CheckpointService";
 import { CheckpointRepositoryLive } from "./persistence/Layers/Checkpoints";
+import {
+  makeEventNdjsonLogger,
+  type EventNdjsonLogger,
+} from "./provider/Layers/EventNdjsonLogger";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlError from "effect/unstable/sql/SqlError";
 import * as Migrator from "effect/unstable/sql/Migrator";
@@ -114,17 +118,90 @@ function parseBooleanEnv(value: string | undefined): boolean | undefined {
   return undefined;
 }
 
-function asObject(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object") return null;
-  return value as Record<string, unknown>;
+const providerTurnKey = (sessionId: string, turnId: string) => `${sessionId}:${turnId}`;
+
+type ActivityTone = "thinking" | "tool" | "info" | "error";
+
+interface ThreadActivityInput {
+  readonly id: string;
+  readonly createdAt: string;
+  readonly label: string;
+  readonly detail?: string;
+  readonly tone: ActivityTone;
+  readonly turnId?: string;
+  readonly requestId?: string;
+  readonly requestKind?: "command" | "file-change";
 }
 
-function asString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
+function truncateDetail(value: string, limit = 180): string {
+  return value.length > limit ? `${value.slice(0, limit - 1)}...` : value;
 }
 
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+function runtimeEventToActivities(event: ProviderRuntimeEvent): ReadonlyArray<ThreadActivityInput> {
+  switch (event.type) {
+    case "approval.requested":
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          label:
+            event.requestKind === "command"
+              ? "Command approval requested"
+              : "File-change approval requested",
+          ...(event.detail ? { detail: truncateDetail(event.detail) } : {}),
+          tone: "tool",
+          ...(event.turnId ? { turnId: event.turnId } : {}),
+          requestId: event.requestId,
+          requestKind: event.requestKind,
+        },
+      ];
+    case "approval.resolved":
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          label: "Approval resolved",
+          tone: "info",
+          ...(event.turnId ? { turnId: event.turnId } : {}),
+          requestId: event.requestId,
+          ...(event.requestKind ? { requestKind: event.requestKind } : {}),
+        },
+      ];
+    case "runtime.error":
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          label: "Runtime error",
+          detail: truncateDetail(event.message),
+          tone: "error",
+          ...(event.turnId ? { turnId: event.turnId } : {}),
+        },
+      ];
+    case "checkpoint.captured":
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          label: "Checkpoint captured",
+          tone: "info",
+          ...(event.turnId ? { turnId: event.turnId } : {}),
+        },
+      ];
+    case "tool.completed":
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          label: `${event.title} complete`,
+          ...(event.detail ? { detail: truncateDetail(event.detail) } : {}),
+          tone: "tool",
+          ...(event.turnId ? { turnId: event.turnId } : {}),
+        },
+      ];
+    default:
+      return [];
+  }
 }
 
 const noop = () => {};
@@ -157,7 +234,8 @@ export function createServer(options: ServerOptions) {
   const logWebSocketEvents =
     explicitLogWsEvents ?? parseBooleanEnv(process.env.T3CODE_LOG_WS_EVENTS) ?? Boolean(devUrl);
   let keybindingsConfig = loadResolvedKeybindingsConfig(logger);
-  let unsubscribeReadModel = noop;
+  let orchestrationDomainEventLogger: EventNdjsonLogger | undefined;
+  let orchestrationCommandLogger: EventNdjsonLogger | undefined;
   let unsubscribeDomainEvents = noop;
   let unsubscribeProviderEvents = noop;
 
@@ -197,30 +275,12 @@ export function createServer(options: ServerOptions) {
     >,
     orchestrationEngine: OrchestrationEngineShape,
   ) {
-    unsubscribeReadModel = await runtime.runPromise(
-      orchestrationEngine.subscribeToReadModel((snapshot) => {
-        const push: WsPush = {
-          type: "push",
-          channel: ORCHESTRATION_WS_CHANNELS.readModel,
-          data: {
-            sequence: snapshot.sequence,
-            snapshot,
-          } satisfies OrchestrationReadModelPush,
-        };
-        const message = JSON.stringify(push);
-        let recipients = 0;
-        for (const client of clients) {
-          if (client.readyState === client.OPEN) {
-            client.send(message);
-            recipients += 1;
-          }
-        }
-        logOutgoingPush(push, recipients);
-      }),
-    );
-
     unsubscribeDomainEvents = await runtime.runPromise(
       orchestrationEngine.subscribeToDomainEvents((event) => {
+        orchestrationDomainEventLogger?.write({
+          observedAt: new Date().toISOString(),
+          event,
+        });
         const push: WsPush = {
           type: "push",
           channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
@@ -247,53 +307,96 @@ export function createServer(options: ServerOptions) {
     providerService: ProviderServiceShape,
     orchestrationEngine: OrchestrationEngineShape,
   ) {
-    unsubscribeProviderEvents = await runtime.runPromise(
-      providerService.subscribeToEvents((event) => {
-        void (async () => {
-          const snapshot = await runtime.runPromise(orchestrationEngine.getSnapshot());
-          const thread = snapshot.threads.find(
-            (entry) => entry.session?.sessionId === event.sessionId,
-          );
-          if (!thread) return;
-          const now = event.createdAt;
-          if (event.method === "turn/started" || event.method === "turn/completed") {
-            await runtime.runPromise(
-              orchestrationEngine.dispatch({
-                type: "thread.session",
-                commandId: crypto.randomUUID(),
-                threadId: thread.id,
-                session: {
-                  sessionId: event.sessionId,
-                  provider: event.provider,
-                  status: event.method === "turn/started" ? "running" : "ready",
-                  threadId: thread.id,
-                  activeTurnId: event.method === "turn/started" ? (event.turnId ?? null) : null,
-                  createdAt: thread.session?.createdAt ?? now,
-                  updatedAt: now,
-                  lastError: null,
-                },
-                createdAt: now,
-              }),
-            );
+    const turnMessageIdsByTurnKey = new Map<string, Set<string>>();
+    const latestMessageIdByTurnKey = new Map<string, string>();
+
+    const rememberAssistantMessageId = (sessionId: string, turnId: string, messageId: string) => {
+      const key = providerTurnKey(sessionId, turnId);
+      const existingIds = turnMessageIdsByTurnKey.get(key);
+      if (existingIds) {
+        existingIds.add(messageId);
+      } else {
+        turnMessageIdsByTurnKey.set(key, new Set([messageId]));
+      }
+      latestMessageIdByTurnKey.set(key, messageId);
+    };
+
+    const getAssistantMessageIdsForTurn = (sessionId: string, turnId: string) => {
+      return turnMessageIdsByTurnKey.get(providerTurnKey(sessionId, turnId)) ?? new Set<string>();
+    };
+
+    const clearAssistantMessageIdsForTurn = (sessionId: string, turnId: string) => {
+      turnMessageIdsByTurnKey.delete(providerTurnKey(sessionId, turnId));
+    };
+
+    const getLatestAssistantMessageIdForTurn = (sessionId: string, turnId: string) => {
+      return latestMessageIdByTurnKey.get(providerTurnKey(sessionId, turnId));
+    };
+
+    const clearTurnStateForSession = (sessionId: string) => {
+      const prefix = `${sessionId}:`;
+      for (const key of turnMessageIdsByTurnKey.keys()) {
+        if (key.startsWith(prefix)) {
+          turnMessageIdsByTurnKey.delete(key);
+        }
+      }
+      for (const key of latestMessageIdByTurnKey.keys()) {
+        if (key.startsWith(prefix)) {
+          latestMessageIdByTurnKey.delete(key);
+        }
+      }
+    };
+
+    const processEvent = (event: ProviderRuntimeEvent) =>
+      Effect.gen(function* () {
+        const snapshot = yield* orchestrationEngine.getSnapshot();
+        const thread = snapshot.threads.find((entry) => entry.session?.sessionId === event.sessionId);
+        if (!thread) return;
+
+        const now = event.createdAt;
+        if (event.type === "turn.started" || event.type === "turn.completed") {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.session",
+            commandId: crypto.randomUUID(),
+            threadId: thread.id,
+            session: {
+              sessionId: event.sessionId,
+              provider: event.provider,
+              status: event.type === "turn.started" ? "running" : "ready",
+              threadId: thread.id,
+              activeTurnId: event.type === "turn.started" ? event.turnId : null,
+              createdAt: thread.session?.createdAt ?? now,
+              updatedAt: now,
+              lastError:
+                event.type === "turn.completed" && event.status === "failed"
+                  ? (event.errorMessage ?? null)
+                  : null,
+            },
+            createdAt: now,
+          });
+        }
+
+        if (event.type === "message.delta" && event.delta.length > 0) {
+          const assistantMessageId = `assistant:${event.itemId ?? event.turnId ?? event.sessionId}`;
+          if (event.turnId) {
+            rememberAssistantMessageId(event.sessionId, event.turnId, assistantMessageId);
           }
-          if (event.textDelta && event.textDelta.length > 0) {
-            const assistantMessageId = `assistant:${event.turnId ?? event.itemId ?? event.sessionId}`;
-            await runtime.runPromise(
-              orchestrationEngine.dispatch({
-                type: "message.send",
-                commandId: crypto.randomUUID(),
-                threadId: thread.id,
-                messageId: assistantMessageId,
-                role: "assistant",
-                text: event.textDelta,
-                streaming: true,
-                createdAt: now,
-              }),
-            );
-          }
-          if (event.method === "turn/completed") {
-            const assistantMessageId = `assistant:${event.turnId ?? event.itemId ?? event.sessionId}`;
-            await runtime.runPromise(
+          yield* orchestrationEngine.dispatch({
+            type: "message.send",
+            commandId: crypto.randomUUID(),
+            threadId: thread.id,
+            messageId: assistantMessageId,
+            role: "assistant",
+            text: event.delta,
+            streaming: true,
+            createdAt: now,
+          });
+        }
+
+        if (event.type === "turn.completed") {
+          if (event.turnId) {
+            const assistantMessageIds = getAssistantMessageIdsForTurn(event.sessionId, event.turnId);
+            yield* Effect.forEach(assistantMessageIds, (assistantMessageId) =>
               orchestrationEngine.dispatch({
                 type: "message.send",
                 commandId: crypto.randomUUID(),
@@ -304,55 +407,85 @@ export function createServer(options: ServerOptions) {
                 streaming: false,
                 createdAt: now,
               }),
-            );
+            ).pipe(Effect.asVoid);
+            clearAssistantMessageIdsForTurn(event.sessionId, event.turnId);
           }
-          if (event.method === "checkpoint/captured") {
-            const payload = asObject(event.payload);
-            const turnId = event.turnId ?? asString(payload?.turnId);
-            if (turnId) {
-              await runtime.runPromise(
-                orchestrationEngine.dispatch({
-                  type: "thread.turnDiff.complete",
-                  commandId: crypto.randomUUID(),
-                  threadId: thread.id,
-                  turnId,
-                  completedAt: now,
-                  ...(asString(payload?.status) !== null
-                    ? { status: asString(payload?.status) ?? undefined }
-                    : {}),
-                  files: [],
-                  assistantMessageId: `assistant:${turnId}`,
-                  ...(asNumber(payload?.turnCount) !== null
-                    ? { checkpointTurnCount: asNumber(payload?.turnCount) ?? undefined }
-                    : {}),
-                  createdAt: now,
-                }),
-              );
-            }
-          }
-          if (event.kind === "error" && event.message) {
-            await runtime.runPromise(
-              orchestrationEngine.dispatch({
-                type: "thread.session",
-                commandId: crypto.randomUUID(),
-                threadId: thread.id,
-                session: {
-                  sessionId: event.sessionId,
-                  provider: event.provider,
-                  status: "error",
-                  threadId: thread.id,
-                  activeTurnId: event.turnId ?? null,
-                  createdAt: thread.session?.createdAt ?? now,
-                  updatedAt: now,
-                  lastError: event.message,
-                },
-                createdAt: now,
-              }),
-            );
-          }
-        })().catch(() => undefined);
-      }),
+        }
+
+        if (event.type === "session.exited") {
+          clearTurnStateForSession(event.sessionId);
+        }
+
+        if (event.type === "checkpoint.captured" && event.turnId) {
+          const assistantMessageId =
+            getLatestAssistantMessageIdForTurn(event.sessionId, event.turnId) ??
+            `assistant:${event.turnId}`;
+          yield* orchestrationEngine.dispatch({
+            type: "thread.turnDiff.complete",
+            commandId: crypto.randomUUID(),
+            threadId: thread.id,
+            turnId: event.turnId,
+            completedAt: now,
+            ...(event.status ? { status: event.status } : {}),
+            files: [],
+            assistantMessageId,
+            checkpointTurnCount: event.turnCount,
+            createdAt: now,
+          });
+        }
+
+        if (event.type === "runtime.error") {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.session",
+            commandId: crypto.randomUUID(),
+            threadId: thread.id,
+            session: {
+              sessionId: event.sessionId,
+              provider: event.provider,
+              status: "error",
+              threadId: thread.id,
+              activeTurnId: event.turnId ?? null,
+              createdAt: thread.session?.createdAt ?? now,
+              updatedAt: now,
+              lastError: event.message,
+            },
+            createdAt: now,
+          });
+        }
+
+        const activities = runtimeEventToActivities(event);
+        yield* Effect.forEach(activities, (activity) =>
+          orchestrationEngine.dispatch({
+            type: "thread.activity.append",
+            commandId: crypto.randomUUID(),
+            threadId: thread.id,
+            activity,
+            createdAt: activity.createdAt,
+          }),
+        ).pipe(Effect.asVoid);
+      });
+
+    const subscriptionScope = await runtime.runPromise(Scope.make("sequential"));
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const providerEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+
+        yield* Effect.addFinalizer(() => Queue.shutdown(providerEventQueue).pipe(Effect.asVoid));
+
+        yield* Effect.forkScoped(
+          Effect.forever(Queue.take(providerEventQueue).pipe(Effect.flatMap(processEvent))),
+        );
+        yield* Effect.forkScoped(
+          Stream.runForEach(providerService.streamEvents, (event) =>
+            Queue.offer(providerEventQueue, event).pipe(Effect.asVoid),
+          ),
+        );
+      }).pipe(Scope.provide(subscriptionScope)),
     );
+
+    unsubscribeProviderEvents = () => {
+      runtime.runFork(Scope.close(subscriptionScope, Exit.void));
+    };
   }
 
   const onTerminalEvent = (event: TerminalEvent) => {
@@ -456,8 +589,6 @@ export function createServer(options: ServerOptions) {
 
   wss.on("connection", (ws) => {
     clients.add(ws);
-    const orchestrationEngine = getOrchestrationEngine();
-    const runtime = getEffectRuntime();
 
     // Send welcome message with project info
     const segments = cwd.split(/[/\\]/).filter(Boolean);
@@ -470,25 +601,6 @@ export function createServer(options: ServerOptions) {
     };
     logOutgoingPush(welcome, 1);
     ws.send(JSON.stringify(welcome));
-
-    void runtime
-      .runPromise(orchestrationEngine.getSnapshot())
-      .then((snapshot) => {
-        if (ws.readyState !== ws.OPEN) {
-          return;
-        }
-        const snapshotPush: WsPush = {
-          type: "push",
-          channel: ORCHESTRATION_WS_CHANNELS.readModel,
-          data: {
-            sequence: snapshot.sequence,
-            snapshot,
-          } satisfies OrchestrationReadModelPush,
-        };
-        logOutgoingPush(snapshotPush, 1);
-        ws.send(JSON.stringify(snapshotPush));
-      })
-      .catch(() => undefined);
 
     ws.on("message", (raw) => {
       void handleMessage(ws, raw);
@@ -745,6 +857,11 @@ export function createServer(options: ServerOptions) {
         return effectRuntime.runPromise(orchestrationEngine.getSnapshot());
 
       case ORCHESTRATION_WS_METHODS.dispatchCommand:
+        orchestrationCommandLogger?.write({
+          observedAt: new Date().toISOString(),
+          requestId: request.id,
+          command: request.params,
+        });
         return effectRuntime.runPromise(orchestrationEngine.dispatchUnknown(request.params));
 
       case ORCHESTRATION_WS_METHODS.replayEvents:
@@ -769,12 +886,23 @@ export function createServer(options: ServerOptions) {
 
   async function createEffectRuntime() {
     const dbPath = path.join(resolvedStateDir, "orchestration.sqlite");
+    const providerLogsDir = path.join(resolvedStateDir, "logs", "providers");
+    const orchestrationLogsDir = path.join(resolvedStateDir, "logs", "orchestration");
+    orchestrationDomainEventLogger = makeEventNdjsonLogger(
+      path.join(orchestrationLogsDir, "orchestration-domain.ndjson"),
+    );
+    orchestrationCommandLogger = makeEventNdjsonLogger(
+      path.join(orchestrationLogsDir, "orchestration-command.ndjson"),
+    );
     const persistenceLayer = customPersistenceLayer ?? makeSqlitePersistenceLive(dbPath);
     const orchestrationLayer = Layer.provide(
       OrchestrationEngineLive,
       OrchestrationEventRepositoryLive,
     );
-    const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(Layer.provide(CodexAdapterLive));
+    const codexAdapterLayer = makeCodexAdapterLive({
+      nativeEventLogPath: path.join(providerLogsDir, "provider-native.ndjson"),
+    });
+    const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(Layer.provide(codexAdapterLayer));
     const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(NodeServices.layer));
     const checkpointDependenciesLayer = Layer.mergeAll(
       checkpointStoreLayer,
@@ -785,7 +913,9 @@ export function createServer(options: ServerOptions) {
     const checkpointServiceLayer = CheckpointServiceLive.pipe(
       Layer.provideMerge(checkpointDependenciesLayer),
     );
-    const providerLayer = ProviderServiceLive.pipe(Layer.provideMerge(checkpointServiceLayer));
+    const providerLayer = makeProviderServiceLive({
+      canonicalEventLogPath: path.join(providerLogsDir, "provider-canonical.ndjson"),
+    }).pipe(Layer.provideMerge(checkpointServiceLayer));
 
     const layer = Layer.mergeAll(orchestrationLayer, ProjectRepositoryLive, providerLayer).pipe(
       Layer.provide(persistenceLayer),
@@ -814,12 +944,14 @@ export function createServer(options: ServerOptions) {
   }
 
   async function disposeEffectRuntime() {
-    unsubscribeReadModel();
     unsubscribeDomainEvents();
     unsubscribeProviderEvents();
-    unsubscribeReadModel = noop;
     unsubscribeDomainEvents = noop;
     unsubscribeProviderEvents = noop;
+    orchestrationDomainEventLogger?.close();
+    orchestrationDomainEventLogger = undefined;
+    orchestrationCommandLogger?.close();
+    orchestrationCommandLogger = undefined;
 
     const runtime = effectRuntime;
     const liveProviderService = providerService;

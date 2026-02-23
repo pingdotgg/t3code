@@ -146,7 +146,6 @@ export interface NativeApi {
     getSnapshot: () => Promise<OrchestrationReadModel>;
     dispatchCommand: (command: OrchestrationCommand) => Promise<{ sequence: number }>;
     replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
-    onReadModel: (callback: (snapshot: OrchestrationReadModel) => void) => () => void;
     onDomainEvent: (callback: (event: OrchestrationEvent) => void) => () => void;
   };
 }

@@ -7,5 +7,5 @@
     "noEmit": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["src", "tsdown.config.ts"]
+  "include": ["src", "integration", "tsdown.config.ts", "scripts"]
 }

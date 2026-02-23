@@ -11,7 +11,7 @@
   "main": "./dist/index.mjs",
   "scripts": {
     "dev": "VITE_DEV_SERVER_URL=${VITE_DEV_SERVER_URL:-http://localhost:5173} bun run src/index.ts",
-    "build": "tsdown && node scripts/bundle-client.mjs",
+    "build": "tsdown && node scripts/bundle-client.ts",
     "start": "node dist/index.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

@@ -1,4 +1,5 @@
 import type {
+  OrchestrationThreadActivity,
   ProjectScript as ContractProjectScript,
   ProviderSession,
 } from "@t3tools/contracts";
@@ -86,4 +87,5 @@ export interface Thread {
   branch: string | null;
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
+  activities: OrchestrationThreadActivity[];
 }

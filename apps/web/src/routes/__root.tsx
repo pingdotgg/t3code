@@ -126,17 +126,59 @@ function EventRouter() {
 
   useEffect(() => {
     if (!api) return;
-    void Promise.all([api.projects.list(), api.orchestration.getSnapshot()])
-      .then(([projects, snapshot]) => {
+    let disposed = false;
+    let latestSequence = 0;
+    let syncing = false;
+    let pending = false;
+
+    const flushSnapshotSync = async (): Promise<void> => {
+      const snapshot = await api.orchestration.getSnapshot();
+      if (disposed) return;
+      latestSequence = Math.max(latestSequence, snapshot.sequence);
+      dispatch({ type: "SYNC_SERVER_READ_MODEL", readModel: snapshot });
+      if (pending) {
+        pending = false;
+        await flushSnapshotSync();
+      }
+    };
+
+    const syncSnapshot = async () => {
+      if (syncing) {
+        pending = true;
+        return;
+      }
+      syncing = true;
+      try {
+        pending = false;
+        await flushSnapshotSync();
+      } catch {
+        // Keep prior state and wait for next domain event to trigger a resync.
+      } finally {
+        syncing = false;
+      }
+    };
+
+    void Promise.all([api.projects.list(), syncSnapshot()])
+      .then(([projects]) => {
+        if (disposed) return;
         dispatch({ type: "SYNC_PROJECTS", projects });
-        dispatch({ type: "SYNC_SERVER_READ_MODEL", readModel: snapshot });
       })
       .catch(() => undefined);
-    const unsubReadModel = api.orchestration.onReadModel((snapshot) => {
-      dispatch({ type: "SYNC_SERVER_READ_MODEL", readModel: snapshot });
+
+    const unsubDomainEvent = api.orchestration.onDomainEvent((event) => {
+      if (event.sequence <= latestSequence) {
+        return;
+      }
+      latestSequence = event.sequence;
+      void syncSnapshot();
+    });
+    const unsubWelcome = onServerWelcome(() => {
+      void syncSnapshot();
     });
     return () => {
-      unsubReadModel();
+      disposed = true;
+      unsubDomainEvent();
+      unsubWelcome();
     };
   }, [api, dispatch]);
 

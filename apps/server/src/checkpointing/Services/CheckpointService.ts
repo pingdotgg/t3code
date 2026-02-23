@@ -69,6 +69,16 @@ export interface CheckpointServiceShape {
   readonly revertToCheckpoint: (
     input: ProviderRevertToCheckpointInput,
   ) => Effect.Effect<ProviderRevertToCheckpointResult, CheckpointServiceError>;
+
+  /**
+   * Release in-memory checkpoint session state after session shutdown.
+   *
+   * This only clears local coordination state (locks/cwd tracking). It does not
+   * delete durable checkpoint metadata or git refs.
+   */
+  readonly releaseSession: (input: {
+    readonly providerSessionId: string;
+  }) => Effect.Effect<void, CheckpointServiceError>;
 }
 
 /**

@@ -7,6 +7,7 @@ import type {
   OrchestrationThread,
 } from "@t3tools/contracts";
 import {
+  OrchestrationThreadActivitySchema,
   OrchestrationGitReadModelSchema,
   OrchestrationMessageSchema,
   OrchestrationSessionSchema,
@@ -89,6 +90,11 @@ const ThreadRevertedPayloadSchema = Schema.Struct({
   messageCount: Schema.Number,
 });
 
+const ThreadActivityAppendedPayloadSchema = Schema.Struct({
+  threadId: Schema.String,
+  activity: OrchestrationThreadActivitySchema,
+});
+
 export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   return {
     sequence: 0,
@@ -135,6 +141,7 @@ export function reduceEvent(
             messages: [],
             session: null,
             turnDiffSummaries: [],
+            activities: [],
             error: null,
           },
           event.type,
@@ -214,11 +221,13 @@ export function reduceEvent(
                         ? message.text
                         : entry.text,
                     streaming: message.streaming,
-                    createdAt: message.createdAt,
+                    createdAt: entry.createdAt,
                   }
                 : entry,
             )
-          : [...targetThread.messages, message];
+          : !message.streaming && message.text.length === 0
+            ? targetThread.messages
+            : [...targetThread.messages, message];
 
         return {
           ...nextBase,
@@ -334,6 +343,16 @@ export function reduceEvent(
             .toSorted((left, right) => left.completedAt.localeCompare(right.completedAt));
           const latestSummary =
             turnDiffSummaries.length > 0 ? turnDiffSummaries[turnDiffSummaries.length - 1] : null;
+          const activities = thread.activities.filter((activity) => {
+            if (!activity.turnId) {
+              return true;
+            }
+            const checkpointTurnCount = inferredTurnCountByTurnId.get(activity.turnId);
+            if (checkpointTurnCount === undefined) {
+              return true;
+            }
+            return checkpointTurnCount <= targetTurnCount;
+          });
 
           return {
             ...nextBase,
@@ -347,6 +366,35 @@ export function reduceEvent(
               latestTurnStartedAt: null,
               latestTurnCompletedAt: latestSummary?.completedAt ?? null,
               latestTurnDurationMs: null,
+              activities,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+    case "thread.activity-appended":
+      return decodeForEvent(
+        ThreadActivityAppendedPayloadSchema,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          const activities = [
+            ...thread.activities.filter((activity) => activity.id !== payload.activity.id),
+            payload.activity,
+          ]
+            .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
+            .slice(-500);
+
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              activities,
               updatedAt: event.occurredAt,
             }),
           };

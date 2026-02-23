@@ -12,7 +12,6 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { ProviderEvent } from "@t3tools/contracts";
 import {
   providerGetCheckpointDiffInputSchema,
   providerInterruptTurnInputSchema,
@@ -22,46 +21,54 @@ import {
   providerSendTurnInputSchema,
   providerSessionStartInputSchema,
   providerStopSessionInputSchema,
+  type ProviderRuntimeEvent,
+  type ProviderRuntimeTurnCompletedEvent,
 } from "@t3tools/contracts";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, PubSub, Queue, Stream } from "effect";
 
 import { CheckpointService } from "../../checkpointing/Services/CheckpointService.ts";
 import { ProviderValidationError } from "../Errors.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderService, type ProviderServiceShape } from "../Services/ProviderService.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
+import { makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object") {
-    return undefined;
-  }
-  return value as Record<string, unknown>;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function readTurnCompletionStatus(event: ProviderEvent): string | undefined {
-  const payload = asObject(event.payload);
-  const turn = asObject(payload?.turn);
-  return asString(turn?.status);
+export interface ProviderServiceLiveOptions {
+  readonly canonicalEventLogPath?: string;
 }
 
 function toCheckpointCaptureErrorEvent(
-  event: ProviderEvent,
+  event: ProviderRuntimeTurnCompletedEvent,
   error: { readonly message: string },
-): ProviderEvent {
+): ProviderRuntimeEvent {
   return {
-    id: randomUUID(),
-    kind: "error",
+    type: "runtime.error",
+    eventId: randomUUID(),
     provider: event.provider,
     sessionId: event.sessionId,
     createdAt: new Date().toISOString(),
-    method: "checkpoint/captureError",
-    message: error.message,
     ...(event.threadId !== undefined ? { threadId: event.threadId } : {}),
     ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+    message: error.message,
+  };
+}
+
+function toCheckpointCapturedEvent(input: {
+  readonly event: ProviderRuntimeTurnCompletedEvent;
+  readonly threadId: string;
+  readonly turnCount: number;
+}): ProviderRuntimeEvent {
+  const { event, threadId, turnCount } = input;
+  return {
+    type: "checkpoint.captured",
+    eventId: randomUUID(),
+    provider: event.provider,
+    sessionId: event.sessionId,
+    createdAt: new Date().toISOString(),
+    threadId,
+    ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+    turnCount,
+    ...(event.status !== undefined ? { status: event.status } : {}),
   };
 }
 
@@ -77,58 +84,80 @@ function toValidationError(
   });
 }
 
-const makeProviderService = Effect.gen(function* () {
-  const registry = yield* ProviderAdapterRegistry;
-  const directory = yield* ProviderSessionDirectory;
-  const checkpointService = yield* CheckpointService;
+const makeProviderService = (options?: ProviderServiceLiveOptions) =>
+  Effect.gen(function* () {
+    const canonicalEventLogger =
+      options?.canonicalEventLogPath !== undefined
+        ? makeEventNdjsonLogger(options.canonicalEventLogPath)
+        : undefined;
 
-  const eventSubscribers = new Set<(event: ProviderEvent) => void>();
-  const notifySubscribers = (event: ProviderEvent): void => {
-    for (const callback of eventSubscribers) {
-      try {
-        callback(event);
-      } catch {
-        // Subscriber callbacks must not destabilize provider event fanout.
-      }
-    }
-  };
+    const registry = yield* ProviderAdapterRegistry;
+    const directory = yield* ProviderSessionDirectory;
+    const checkpointService = yield* CheckpointService;
 
-  const providers = yield* registry.listProviders();
-  const adapters = yield* Effect.forEach(providers, (provider) => registry.getByProvider(provider));
+    const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+    const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
 
-  yield* Effect.acquireRelease(
-    Effect.forEach(adapters, (adapter) =>
-      adapter.subscribeToEvents((event) => {
-        notifySubscribers(event);
-        if (event.kind !== "notification" || event.method !== "turn/completed") {
-          return;
-        }
+    const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
+      Effect.sync(() => {
+        canonicalEventLogger?.write({
+          observedAt: new Date().toISOString(),
+          event,
+        });
+      }).pipe(
+        Effect.flatMap(() => PubSub.publish(runtimeEventPubSub, event)),
+        Effect.asVoid,
+      );
 
-        const status = readTurnCompletionStatus(event);
-        const captureInput = {
-          providerSessionId: event.sessionId,
-          ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
-          ...(status !== undefined ? { status } : {}),
-        };
+    const providers = yield* registry.listProviders();
+    const adapters = yield* Effect.forEach(providers, (provider) => registry.getByProvider(provider));
 
-        Effect.runFork(
-          checkpointService.captureCurrentTurn(captureInput).pipe(
-            Effect.catch((error) =>
-              Effect.sync(() => {
-                notifySubscribers(toCheckpointCaptureErrorEvent(event, error));
-              }),
-            ),
-          ),
-        );
-      }),
-    ),
-    (unsubscribeAll) =>
-      Effect.forEach(unsubscribeAll, (unsubscribe) =>
-        Effect.sync(() => {
-          unsubscribe();
+  const onTurnCompleted = (event: ProviderRuntimeTurnCompletedEvent): Effect.Effect<void> =>
+    checkpointService
+      .captureCurrentTurn({
+        providerSessionId: event.sessionId,
+        ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+        ...(event.status !== undefined ? { status: event.status } : {}),
+      })
+      .pipe(
+        Effect.flatMap(() => checkpointService.listCheckpoints({ sessionId: event.sessionId })),
+        Effect.flatMap((result) => {
+          const currentCheckpoint =
+            result.checkpoints.find((checkpoint) => checkpoint.isCurrent) ??
+            result.checkpoints[result.checkpoints.length - 1];
+          if (!currentCheckpoint) {
+            return Effect.void;
+          }
+
+          return publishRuntimeEvent(
+            toCheckpointCapturedEvent({
+              event,
+              threadId: result.threadId,
+              turnCount: currentCheckpoint.turnCount,
+            }),
+          );
         }),
-      ).pipe(Effect.asVoid),
-  );
+        Effect.catch((error) => publishRuntimeEvent(toCheckpointCaptureErrorEvent(event, error))),
+      );
+
+  const processRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
+    publishRuntimeEvent(event).pipe(
+      Effect.flatMap(() => {
+        if (event.type !== "turn.completed") {
+          return Effect.void;
+        }
+        return onTurnCompleted(event);
+      }),
+    );
+
+  const worker = Effect.forever(Queue.take(runtimeEventQueue).pipe(Effect.flatMap(processRuntimeEvent)));
+  yield* Effect.forkScoped(worker);
+
+  yield* Effect.forEach(adapters, (adapter) =>
+    Stream.runForEach(adapter.streamEvents, (event) =>
+      Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid),
+    ).pipe(Effect.forkScoped),
+  ).pipe(Effect.asVoid);
 
   const adapterForSession = (sessionId: string) =>
     directory
@@ -252,6 +281,7 @@ const makeProviderService = Effect.gen(function* () {
       const input = parsed.data;
       const adapter = yield* adapterForSession(input.sessionId);
       yield* adapter.stopSession(input.sessionId);
+      yield* checkpointService.releaseSession({ providerSessionId: input.sessionId });
       yield* directory.remove(input.sessionId);
     });
 
@@ -316,34 +346,34 @@ const makeProviderService = Effect.gen(function* () {
 
   const stopAll: ProviderServiceShape["stopAll"] = () =>
     Effect.gen(function* () {
-      yield* Effect.forEach(adapters, (adapter) => adapter.stopAll()).pipe(Effect.asVoid);
       const sessionIds = yield* directory.listSessionIds();
-      yield* Effect.forEach(sessionIds, (sessionId) => directory.remove(sessionId)).pipe(
-        Effect.asVoid,
-      );
+      yield* Effect.forEach(adapters, (adapter) => adapter.stopAll()).pipe(Effect.asVoid);
+      yield* Effect.forEach(
+        sessionIds,
+        (sessionId) =>
+          checkpointService.releaseSession({ providerSessionId: sessionId }).pipe(
+            Effect.flatMap(() => directory.remove(sessionId)),
+          ),
+      ).pipe(Effect.asVoid);
     });
 
-  const subscribeToEvents: ProviderServiceShape["subscribeToEvents"] = (callback) =>
-    Effect.sync(() => {
-      eventSubscribers.add(callback);
-      return () => {
-        eventSubscribers.delete(callback);
-      };
-    });
-
-  return {
-    startSession,
-    sendTurn,
-    interruptTurn,
+    return {
+      startSession,
+      sendTurn,
+      interruptTurn,
     respondToRequest,
     stopSession,
     listSessions,
     listCheckpoints,
     getCheckpointDiff,
     revertToCheckpoint,
-    stopAll,
-    subscribeToEvents,
-  } satisfies ProviderServiceShape;
-});
+      stopAll,
+      streamEvents: Stream.fromPubSub(runtimeEventPubSub),
+    } satisfies ProviderServiceShape;
+  });
 
-export const ProviderServiceLive = Layer.effect(ProviderService, makeProviderService);
+export const ProviderServiceLive = Layer.effect(ProviderService, makeProviderService());
+
+export function makeProviderServiceLive(options?: ProviderServiceLiveOptions) {
+  return Layer.effect(ProviderService, makeProviderService(options));
+}

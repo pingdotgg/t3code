@@ -1,6 +1,5 @@
 import type {
   ProviderApprovalDecision,
-  ProviderEvent,
   ProviderKind,
   ProviderSendTurnInput,
   ProviderSession,
@@ -9,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { NodeServices } from "@effect/platform-node";
 import { it, assert } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, FileSystem, Layer, Path, Stream } from "effect";
 
 import { runGit as runGitProcess } from "../../git/Process.ts";
 import { CheckpointServiceLive } from "./CheckpointService.ts";
@@ -194,9 +193,7 @@ class InMemoryProviderAdapter implements ProviderAdapterShape<ProviderAdapterErr
       this.active = false;
     });
 
-  readonly subscribeToEvents = (
-    _callback: (event: ProviderEvent) => void,
-  ): Effect.Effect<() => void, ProviderAdapterError> => Effect.succeed(() => undefined);
+  readonly streamEvents = Stream.empty;
 }
 
 function makeFixture(turns: ReadonlyArray<ProviderThreadTurnSnapshot>) {

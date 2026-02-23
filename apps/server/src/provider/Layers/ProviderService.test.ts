@@ -1,11 +1,11 @@
 import type {
   ProviderApprovalDecision,
-  ProviderEvent,
   ProviderGetCheckpointDiffInput,
   ProviderGetCheckpointDiffResult,
   ProviderListCheckpointsInput,
   ProviderListCheckpointsResult,
   ProviderRevertToCheckpointInput,
+  ProviderRuntimeEvent,
   ProviderRevertToCheckpointResult,
   ProviderSendTurnInput,
   ProviderSession,
@@ -16,7 +16,7 @@ import { providerSessionStartInputSchema } from "@t3tools/contracts";
 import { it, assert, vi } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
 
-import { Effect, Layer } from "effect";
+import { Effect, Fiber, Layer, PubSub, Ref, Stream } from "effect";
 
 import { CheckpointService } from "../../checkpointing/Services/CheckpointService.ts";
 import {
@@ -35,7 +35,7 @@ import { NodeServices } from "@effect/platform-node";
 
 function makeFakeCodexAdapter() {
   const sessions = new Map<string, ProviderSession>();
-  const eventListeners = new Set<(event: ProviderEvent) => void>();
+  const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
   let nextSession = 1;
 
   const startSession = vi.fn((input: ProviderSessionStartInput) =>
@@ -127,16 +127,6 @@ function makeFakeCodexAdapter() {
       }),
   );
 
-  const subscribeToEvents = vi.fn(
-    (callback: (event: ProviderEvent) => void): Effect.Effect<() => void, ProviderAdapterError> =>
-      Effect.sync(() => {
-        eventListeners.add(callback);
-        return () => {
-          eventListeners.delete(callback);
-        };
-      }),
-  );
-
   const adapter: ProviderAdapterShape<ProviderAdapterError> = {
     provider: "codex",
     startSession,
@@ -149,13 +139,11 @@ function makeFakeCodexAdapter() {
     readThread,
     rollbackThread,
     stopAll,
-    subscribeToEvents,
+    streamEvents: Stream.fromPubSub(runtimeEventPubSub),
   };
 
-  const emit = (event: ProviderEvent): void => {
-    for (const listener of eventListeners) {
-      listener(event);
-    }
+  const emit = (event: ProviderRuntimeEvent): void => {
+    Effect.runSync(PubSub.publish(runtimeEventPubSub, event));
   };
 
   return {
@@ -171,7 +159,6 @@ function makeFakeCodexAdapter() {
     readThread,
     rollbackThread,
     stopAll,
-    subscribeToEvents,
   };
 }
 
@@ -224,6 +211,7 @@ function makeCheckpointServiceDouble() {
         ],
       }),
   );
+  const releaseSession = vi.fn((_input: { providerSessionId: string }) => Effect.void);
 
   const service: typeof CheckpointService.Service = {
     initializeForSession,
@@ -231,6 +219,7 @@ function makeCheckpointServiceDouble() {
     listCheckpoints,
     getCheckpointDiff,
     revertToCheckpoint,
+    releaseSession,
   };
 
   return {
@@ -240,6 +229,7 @@ function makeCheckpointServiceDouble() {
     listCheckpoints,
     getCheckpointDiff,
     revertToCheckpoint,
+    releaseSession,
   };
 }
 
@@ -334,6 +324,9 @@ routing.layer("ProviderServiceLive routing", (it) => {
       ]);
 
       yield* provider.stopSession({ sessionId: session.sessionId });
+      assert.deepEqual(routing.checkpoint.releaseSession.mock.calls, [
+        [{ providerSessionId: session.sessionId }],
+      ]);
       const sendAfterStop = yield* Effect.result(
         provider.sendTurn({
           sessionId: session.sessionId,
@@ -347,6 +340,29 @@ routing.layer("ProviderServiceLive routing", (it) => {
       );
     }),
   );
+
+  it.effect("releases checkpoint session state when stopping all sessions", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      const first = yield* provider.startSession({
+        provider: "codex",
+      });
+      const second = yield* provider.startSession({
+        provider: "codex",
+      });
+
+      yield* provider.stopAll();
+
+      assert.deepEqual(routing.checkpoint.releaseSession.mock.calls.slice(-2), [
+        [{ providerSessionId: first.sessionId }],
+        [{ providerSessionId: second.sessionId }],
+      ]);
+
+      const remaining = yield* provider.listSessions();
+      assert.equal(remaining.length, 0);
+    }),
+  );
 });
 
 const fanout = makeProviderServiceLayer();
@@ -358,40 +374,111 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         provider: "codex",
       });
 
-      const onEvent = vi.fn((_event: ProviderEvent) => undefined);
-      const unsubscribe = yield* provider.subscribeToEvents(onEvent);
+      const eventsRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
+      const consumer = yield* Stream.runForEach(provider.streamEvents, (event) =>
+        Ref.update(eventsRef, (current) => [...current, event]),
+      ).pipe(
+        Effect.forkChild,
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
 
-      const completedEvent: ProviderEvent = {
-        id: "evt-1",
-        kind: "notification",
+      const completedEvent: ProviderRuntimeEvent = {
+        type: "turn.completed",
+        eventId: "evt-1",
         provider: "codex",
         sessionId: session.sessionId,
         createdAt: new Date().toISOString(),
-        method: "turn/completed",
         threadId: "thread-1",
         turnId: "turn-1",
-        payload: {
-          turn: {
-            status: "completed",
-          },
-        },
+        status: "completed",
       };
 
       fanout.codex.emit(completedEvent);
       yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
 
-      assert.equal(onEvent.mock.calls.length, 1);
-      assert.equal(onEvent.mock.calls[0]?.[0]?.method, "turn/completed");
+      const events = yield* Ref.get(eventsRef);
+      yield* Fiber.interrupt(consumer);
+
+      assert.equal(events.length >= 2, true);
+      assert.equal(events[0]?.type, "turn.completed");
+      assert.equal(events[1]?.type, "checkpoint.captured");
       assert.deepEqual(fanout.checkpoint.captureCurrentTurn.mock.calls, [
         [{ providerSessionId: session.sessionId, turnId: "turn-1", status: "completed" }],
       ]);
+    }),
+  );
 
-      unsubscribe();
-      fanout.codex.emit({
-        ...completedEvent,
-        id: "evt-2",
+  it.effect("keeps subscriber delivery ordered and isolates failing subscribers", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const session = yield* provider.startSession({
+        provider: "codex",
       });
-      assert.equal(onEvent.mock.calls.length, 1);
+      fanout.checkpoint.captureCurrentTurn.mockClear();
+
+      const receivedByHealthy: string[] = [];
+      const healthyFiber = yield* Stream.take(provider.streamEvents, 3).pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            receivedByHealthy.push(event.eventId);
+          }),
+        ),
+        Effect.forkChild,
+      );
+      const failingFiber = yield* Stream.take(provider.streamEvents, 1).pipe(
+        Stream.runForEach(() => Effect.fail("listener crash")),
+        Effect.forkChild,
+      );
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+
+      const events: ReadonlyArray<ProviderRuntimeEvent> = [
+        {
+          type: "tool.completed",
+          eventId: "evt-ordered-1",
+          provider: "codex",
+          sessionId: session.sessionId,
+          createdAt: new Date().toISOString(),
+          threadId: "thread-1",
+          turnId: "turn-1",
+          toolKind: "command",
+          title: "Command run",
+          detail: "echo one",
+        },
+        {
+          type: "message.delta",
+          eventId: "evt-ordered-2",
+          provider: "codex",
+          sessionId: session.sessionId,
+          createdAt: new Date().toISOString(),
+          threadId: "thread-1",
+          turnId: "turn-1",
+          delta: "hello",
+        },
+        {
+          type: "turn.completed",
+          eventId: "evt-ordered-3",
+          provider: "codex",
+          sessionId: session.sessionId,
+          createdAt: new Date().toISOString(),
+          threadId: "thread-1",
+          turnId: "turn-1",
+          status: "completed",
+        },
+      ];
+
+      for (const event of events) {
+        fanout.codex.emit(event);
+      }
+      const failingResult = yield* Effect.result(Fiber.join(failingFiber));
+      assert.equal(failingResult._tag, "Failure");
+      yield* Fiber.join(healthyFiber);
+
+      assert.deepEqual(receivedByHealthy.slice(0, 3), [
+        "evt-ordered-1",
+        "evt-ordered-2",
+        "evt-ordered-3",
+      ]);
+      assert.equal(receivedByHealthy.length, 3);
     }),
   );
 });

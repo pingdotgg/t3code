@@ -27,7 +27,7 @@ export interface OrchestrationEngineShape {
    *
    * @returns Effect containing the latest read model.
    */
-  readonly getSnapshot: () => Effect.Effect<OrchestrationReadModel>;
+  readonly getSnapshot: () => Effect.Effect<OrchestrationReadModel, never, never>;
 
   /**
    * Replay persisted orchestration events from an exclusive sequence cursor.
@@ -37,7 +37,7 @@ export interface OrchestrationEngineShape {
    */
   readonly replayEvents: (
     fromSequenceExclusive: number,
-  ) => Effect.Effect<OrchestrationEvent[], OrchestrationEventRepositoryError>;
+  ) => Effect.Effect<OrchestrationEvent[], OrchestrationEventRepositoryError, never>;
 
   /**
    * Validate and dispatch an unknown command payload.
@@ -49,7 +49,7 @@ export interface OrchestrationEngineShape {
    */
   readonly dispatchUnknown: (
     command: unknown,
-  ) => Effect.Effect<{ sequence: number }, OrchestrationEngineError>;
+  ) => Effect.Effect<{ sequence: number }, OrchestrationEngineError, never>;
 
   /**
    * Dispatch a validated orchestration command.
@@ -59,7 +59,7 @@ export interface OrchestrationEngineShape {
    */
   readonly dispatch: (
     command: OrchestrationCommand,
-  ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError>;
+  ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
 
   /**
    * Subscribe to read model updates.
@@ -69,7 +69,7 @@ export interface OrchestrationEngineShape {
    */
   readonly subscribeToReadModel: (
     callback: (snapshot: OrchestrationReadModel) => void,
-  ) => Effect.Effect<() => void>;
+  ) => Effect.Effect<() => void, never, never>;
 
   /**
    * Subscribe to domain event fan-out.
@@ -79,7 +79,7 @@ export interface OrchestrationEngineShape {
    */
   readonly subscribeToDomainEvents: (
     callback: (event: OrchestrationEvent) => void,
-  ) => Effect.Effect<() => void>;
+  ) => Effect.Effect<() => void, never, never>;
 }
 
 /**

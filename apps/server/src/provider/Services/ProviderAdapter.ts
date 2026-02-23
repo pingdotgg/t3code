@@ -9,14 +9,15 @@
  */
 import type {
   ProviderApprovalDecision,
-  ProviderEvent,
   ProviderKind,
+  ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
 import type { Effect } from "effect";
+import type { Stream } from "effect";
 
 export interface ProviderThreadTurnSnapshot {
   readonly id: string;
@@ -96,9 +97,7 @@ export interface ProviderAdapterShape<TError> {
   readonly stopAll: () => Effect.Effect<void, TError>;
 
   /**
-   * Subscribe to provider events emitted by this adapter.
+   * Canonical runtime event stream emitted by this adapter.
    */
-  readonly subscribeToEvents: (
-    callback: (event: ProviderEvent) => void,
-  ) => Effect.Effect<() => void, TError>;
+  readonly streamEvents: Stream.Stream<ProviderRuntimeEvent>;
 }

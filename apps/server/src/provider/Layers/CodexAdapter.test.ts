@@ -9,7 +9,7 @@ import type {
 import { afterAll, assert, it, vi } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
 
-import { Effect } from "effect";
+import { Effect, Fiber, Stream } from "effect";
 
 import { CodexAppServerManager } from "../../codexAppServerManager.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
@@ -170,11 +170,15 @@ const lifecycleManager = new FakeCodexManager();
 const lifecycleLayer = it.layer(makeCodexAdapterLive({ manager: lifecycleManager }));
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
-  it.effect("subscribes and unsubscribes from manager events", () =>
+  it.effect("emits canonical events on stream and supports consumer interruption", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
-      const onEvent = vi.fn((_event: ProviderEvent) => undefined);
-      const unsubscribe = yield* adapter.subscribeToEvents(onEvent);
+      const onEvent = vi.fn(() => undefined);
+      const consumer = yield* Stream.runForEach(adapter.streamEvents, () =>
+        Effect.sync(() => {
+          onEvent();
+        }),
+      ).pipe(Effect.forkChild);
 
       const event: ProviderEvent = {
         id: "evt-1",
@@ -183,14 +187,16 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         sessionId: "sess-1",
         createdAt: new Date().toISOString(),
         method: "turn/started",
+        turnId: "turn-1",
       };
 
       lifecycleManager.emit("event", event);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
       assert.equal(onEvent.mock.calls.length, 1);
-      assert.equal(onEvent.mock.calls[0]?.[0]?.method, "turn/started");
 
-      unsubscribe();
+      yield* Fiber.interrupt(consumer);
       lifecycleManager.emit("event", event);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
       assert.equal(onEvent.mock.calls.length, 1);
       assert.equal(lifecycleManager.stopAllImpl.mock.calls.length, 0);
     }),

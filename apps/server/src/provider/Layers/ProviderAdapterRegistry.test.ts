@@ -2,7 +2,7 @@ import type { ProviderKind } from "@t3tools/contracts";
 import { it, assert, vi } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
 
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Stream } from "effect";
 
 import { CodexAdapter, CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
@@ -22,7 +22,7 @@ const fakeCodexAdapter: CodexAdapterShape = {
   readThread: vi.fn(),
   rollbackThread: vi.fn(),
   stopAll: vi.fn(),
-  subscribeToEvents: vi.fn(),
+  streamEvents: Stream.empty,
 };
 
 const layer = it.layer(

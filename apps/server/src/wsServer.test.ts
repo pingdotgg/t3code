@@ -628,8 +628,7 @@ describe("WebSocket Server", () => {
     const ws = await connectWs(port);
     connections.push(ws);
 
-    // Consume welcome + initial orchestration snapshot pushes
-    await waitForMessage(ws);
+    // Consume welcome push
     await waitForMessage(ws);
 
     const response = await sendRequest(ws, "nonexistent.method");
