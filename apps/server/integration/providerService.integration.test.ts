@@ -16,6 +16,7 @@ import {
 } from "../src/provider/Services/ProviderService.ts";
 import { SqlitePersistenceMemory } from "../src/persistence/Layers/Sqlite.ts";
 import { CheckpointRepositoryLive } from "../src/persistence/Layers/Checkpoints.ts";
+import { ProviderSessionRepositoryLive } from "../src/persistence/Layers/ProviderSessions.ts";
 
 import {
   makeTestProviderAdapterHarness,
@@ -77,12 +78,16 @@ const makeIntegrationFixture = Effect.gen(function* () {
     listProviders: () => Effect.succeed(["codex"]),
   };
 
+  const directoryLayer = ProviderSessionDirectoryLive.pipe(
+    Layer.provide(ProviderSessionRepositoryLive),
+  );
+
   const shared = Layer.mergeAll(
-    ProviderSessionDirectoryLive,
+    directoryLayer,
     Layer.succeed(ProviderAdapterRegistry, registry),
     Layer.provide(CheckpointStoreLive, NodeServices.layer),
-    Layer.provide(CheckpointRepositoryLive, SqlitePersistenceMemory),
-  );
+    CheckpointRepositoryLive,
+  ).pipe(Layer.provide(SqlitePersistenceMemory));
 
   const checkpointLayer = CheckpointServiceLive.pipe(Layer.provide(shared));
 

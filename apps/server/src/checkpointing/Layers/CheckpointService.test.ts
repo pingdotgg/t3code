@@ -32,6 +32,7 @@ import { ProviderSessionDirectoryLive } from "../../provider/Layers/ProviderSess
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { CheckpointRepository } from "../../persistence/Services/Checkpoints.ts";
 import { CheckpointRepositoryLive } from "../../persistence/Layers/Checkpoints.ts";
+import { ProviderSessionRepositoryLive } from "../../persistence/Layers/ProviderSessions.ts";
 
 const runGit = (cwd: string, args: readonly string[]) =>
   runGitProcess({
@@ -211,13 +212,17 @@ function makeFixture(turns: ReadonlyArray<ProviderThreadTurnSnapshot>) {
       listProviders: () => Effect.succeed(["codex"]),
     };
 
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(
+      Layer.provide(ProviderSessionRepositoryLive),
+    );
+
     const dependencies = Layer.mergeAll(
       Layer.provide(CheckpointStoreLive, NodeServices.layer),
-      Layer.provide(CheckpointRepositoryLive, SqlitePersistenceMemory),
+      CheckpointRepositoryLive,
       Layer.succeed(ProviderAdapterRegistry, registry),
-      ProviderSessionDirectoryLive,
+      directoryLayer,
       NodeServices.layer,
-    );
+    ).pipe(Layer.provide(SqlitePersistenceMemory));
 
     const layer = CheckpointServiceLive.pipe(Layer.provideMerge(dependencies));
 

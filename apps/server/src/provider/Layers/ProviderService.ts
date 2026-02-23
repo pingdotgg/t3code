@@ -112,57 +112,64 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
     const providers = yield* registry.listProviders();
     const adapters = yield* Effect.forEach(providers, (provider) => registry.getByProvider(provider));
 
-  const onTurnCompleted = (event: ProviderRuntimeTurnCompletedEvent): Effect.Effect<void> =>
-    checkpointService
-      .captureCurrentTurn({
-        providerSessionId: event.sessionId,
-        ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
-        ...(event.status !== undefined ? { status: event.status } : {}),
-      })
-      .pipe(
-        Effect.flatMap(() => checkpointService.listCheckpoints({ sessionId: event.sessionId })),
-        Effect.flatMap((result) => {
-          const currentCheckpoint =
-            result.checkpoints.find((checkpoint) => checkpoint.isCurrent) ??
-            result.checkpoints[result.checkpoints.length - 1];
-          if (!currentCheckpoint) {
+    const staleSessionIds = yield* directory.reconcileWithAdapters(adapters);
+    yield* Effect.forEach(staleSessionIds, (sessionId) =>
+      checkpointService.releaseSession({ providerSessionId: sessionId }),
+    ).pipe(Effect.asVoid);
+
+    const onTurnCompleted = (event: ProviderRuntimeTurnCompletedEvent): Effect.Effect<void> =>
+      checkpointService
+        .captureCurrentTurn({
+          providerSessionId: event.sessionId,
+          ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+          ...(event.status !== undefined ? { status: event.status } : {}),
+        })
+        .pipe(
+          Effect.flatMap(() => checkpointService.listCheckpoints({ sessionId: event.sessionId })),
+          Effect.flatMap((result) => {
+            const currentCheckpoint =
+              result.checkpoints.find((checkpoint) => checkpoint.isCurrent) ??
+              result.checkpoints[result.checkpoints.length - 1];
+            if (!currentCheckpoint) {
+              return Effect.void;
+            }
+
+            return publishRuntimeEvent(
+              toCheckpointCapturedEvent({
+                event,
+                threadId: result.threadId,
+                turnCount: currentCheckpoint.turnCount,
+              }),
+            );
+          }),
+          Effect.catch((error) => publishRuntimeEvent(toCheckpointCaptureErrorEvent(event, error))),
+        );
+
+    const processRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
+      publishRuntimeEvent(event).pipe(
+        Effect.flatMap(() => {
+          if (event.type !== "turn.completed") {
             return Effect.void;
           }
-
-          return publishRuntimeEvent(
-            toCheckpointCapturedEvent({
-              event,
-              threadId: result.threadId,
-              turnCount: currentCheckpoint.turnCount,
-            }),
-          );
+          return onTurnCompleted(event);
         }),
-        Effect.catch((error) => publishRuntimeEvent(toCheckpointCaptureErrorEvent(event, error))),
       );
 
-  const processRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
-    publishRuntimeEvent(event).pipe(
-      Effect.flatMap(() => {
-        if (event.type !== "turn.completed") {
-          return Effect.void;
-        }
-        return onTurnCompleted(event);
-      }),
+    const worker = Effect.forever(
+      Queue.take(runtimeEventQueue).pipe(Effect.flatMap(processRuntimeEvent)),
     );
+    yield* Effect.forkScoped(worker);
 
-  const worker = Effect.forever(Queue.take(runtimeEventQueue).pipe(Effect.flatMap(processRuntimeEvent)));
-  yield* Effect.forkScoped(worker);
+    yield* Effect.forEach(adapters, (adapter) =>
+      Stream.runForEach(adapter.streamEvents, (event) =>
+        Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid),
+      ).pipe(Effect.forkScoped),
+    ).pipe(Effect.asVoid);
 
-  yield* Effect.forEach(adapters, (adapter) =>
-    Stream.runForEach(adapter.streamEvents, (event) =>
-      Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid),
-    ).pipe(Effect.forkScoped),
-  ).pipe(Effect.asVoid);
-
-  const adapterForSession = (sessionId: string) =>
-    directory
-      .getProvider(sessionId)
-      .pipe(Effect.flatMap((provider) => registry.getByProvider(provider)));
+    const adapterForSession = (sessionId: string) =>
+      directory
+        .getProvider(sessionId)
+        .pipe(Effect.flatMap((provider) => registry.getByProvider(provider)));
 
   const startSession: ProviderServiceShape["startSession"] = (rawInput) =>
     Effect.gen(function* () {
@@ -361,12 +368,12 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       startSession,
       sendTurn,
       interruptTurn,
-    respondToRequest,
-    stopSession,
-    listSessions,
-    listCheckpoints,
-    getCheckpointDiff,
-    revertToCheckpoint,
+      respondToRequest,
+      stopSession,
+      listSessions,
+      listCheckpoints,
+      getCheckpointDiff,
+      revertToCheckpoint,
       stopAll,
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
     } satisfies ProviderServiceShape;

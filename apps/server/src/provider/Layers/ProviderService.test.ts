@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import type {
   ProviderApprovalDecision,
   ProviderGetCheckpointDiffInput,
@@ -29,9 +33,15 @@ import {
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
+import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import { ProviderServiceLive } from "./ProviderService.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 import { NodeServices } from "@effect/platform-node";
+import { ProviderSessionRepositoryLive } from "../../persistence/Layers/ProviderSessions.ts";
+import {
+  makeSqlitePersistenceLive,
+  SqlitePersistenceMemory,
+} from "../../persistence/Layers/Sqlite.ts";
 
 function makeFakeCodexAdapter() {
   const sessions = new Map<string, ProviderSession>();
@@ -246,14 +256,19 @@ function makeProviderServiceLayer() {
 
   const checkpointLayer = Layer.succeed(CheckpointService, checkpoint.service);
   const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
+  const directoryLayer = ProviderSessionDirectoryLive.pipe(
+    Layer.provide(ProviderSessionRepositoryLive),
+    Layer.provide(SqlitePersistenceMemory),
+  );
 
   const layer = it.layer(
     Layer.mergeAll(
       ProviderServiceLive.pipe(
         Layer.provide(providerAdapterLayer),
-        Layer.provide(ProviderSessionDirectoryLive),
+        Layer.provide(directoryLayer),
         Layer.provide(checkpointLayer),
       ),
+      directoryLayer,
       NodeServices.layer,
     ),
   );
@@ -266,6 +281,53 @@ function makeProviderServiceLayer() {
 }
 
 const routing = makeProviderServiceLayer();
+it.effect("ProviderServiceLive reconciles stale persisted sessions on startup", () =>
+  Effect.gen(function* () {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-"));
+    const dbPath = path.join(tempDir, "orchestration.sqlite");
+
+    const codex = makeFakeCodexAdapter();
+    const checkpoint = makeCheckpointServiceDouble();
+    const registry: typeof ProviderAdapterRegistry.Service = {
+      getByProvider: (provider) =>
+        provider === "codex"
+          ? Effect.succeed(codex.adapter)
+          : Effect.fail(new ProviderUnsupportedError({ provider })),
+      listProviders: () => Effect.succeed(["codex"]),
+    };
+
+    const persistenceLayer = makeSqlitePersistenceLive(dbPath);
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(
+      Layer.provide(ProviderSessionRepositoryLive),
+      Layer.provide(persistenceLayer),
+    );
+
+    yield* Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      yield* directory.upsert({
+        sessionId: "sess-stale",
+        provider: "codex",
+        threadId: "thread-stale",
+      });
+    }).pipe(Effect.provide(directoryLayer));
+
+    const providerLayer = ProviderServiceLive.pipe(
+      Layer.provide(Layer.succeed(ProviderAdapterRegistry, registry)),
+      Layer.provide(directoryLayer),
+      Layer.provide(Layer.succeed(CheckpointService, checkpoint.service)),
+    );
+
+    checkpoint.releaseSession.mockClear();
+    yield* Effect.gen(function* () {
+      yield* ProviderService;
+    }).pipe(Effect.provide(providerLayer));
+
+    assert.deepEqual(checkpoint.releaseSession.mock.calls, [[{ providerSessionId: "sess-stale" }]]);
+
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 routing.layer("ProviderServiceLive routing", (it) => {
   it.effect("routes provider operations and delegates checkpoint workflows", () =>
     Effect.gen(function* () {

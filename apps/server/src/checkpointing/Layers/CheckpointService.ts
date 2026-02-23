@@ -392,16 +392,40 @@ const makeCheckpointService = Effect.gen(function* () {
       Effect.map((current) => Option.fromNullishOr(current.get(sessionId))),
     );
 
+  const mapDirectoryLookupError = (
+    sessionId: string,
+    operation: string,
+    cause: unknown,
+  ): CheckpointSessionNotFoundError | CheckpointInvariantError => {
+    if (
+      typeof cause === "object" &&
+      cause !== null &&
+      "_tag" in cause &&
+      (cause as { _tag?: string })._tag === "ProviderSessionNotFoundError"
+    ) {
+      return new CheckpointSessionNotFoundError({
+        sessionId,
+        cause,
+      });
+    }
+
+    return invariantError(
+      operation,
+      `Failed to resolve provider session metadata for session ${sessionId}.`,
+      cause,
+    );
+  };
+
   const resolveAdapterForSession = (
     sessionId: string,
   ): Effect.Effect<ProviderAdapterShape<ProviderAdapterError>, CheckpointServiceError> =>
     directory.getProvider(sessionId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new CheckpointSessionNotFoundError({
-            sessionId,
-            cause,
-          }),
+      Effect.mapError((cause) =>
+        mapDirectoryLookupError(
+          sessionId,
+          "CheckpointService.resolveAdapterForSession:getProvider",
+          cause,
+        ),
       ),
       Effect.flatMap((provider) =>
         registry
@@ -456,12 +480,12 @@ const makeCheckpointService = Effect.gen(function* () {
     operation: string,
   ): Effect.Effect<string, CheckpointServiceError> =>
     directory.getThreadId(sessionId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new CheckpointSessionNotFoundError({
-            sessionId,
-            cause,
-          }),
+      Effect.mapError((cause) =>
+        mapDirectoryLookupError(
+          sessionId,
+          `${operation}:getThreadId`,
+          cause,
+        ),
       ),
       Effect.flatMap((threadId) =>
         Option.match(threadId, {
