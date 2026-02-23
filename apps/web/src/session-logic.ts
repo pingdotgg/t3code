@@ -112,6 +112,7 @@ export function deriveWorkLogEntries(
   );
   return ordered
     .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
+    .filter((activity) => activity.label !== "Checkpoint captured")
     .map((activity) => {
       const entry: WorkLogEntry = {
         id: activity.id,
@@ -146,16 +147,47 @@ export function deriveTimelineEntries(
 }
 
 export function deriveTurnDiffFilesFromUnifiedDiff(diff: string): TurnDiffFileChange[] {
+  const normalized = diff.replace(/\r\n/g, "\n");
+  const headerMatches = [...normalized.matchAll(/^diff --git .+$/gm)];
+  if (headerMatches.length === 0) {
+    return [];
+  }
+
   const files: TurnDiffFileChange[] = [];
-  const lines = diff.split("\n");
-  for (const line of lines) {
-    if (!line.startsWith("diff --git ")) continue;
-    const match = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+  for (let index = 0; index < headerMatches.length; index += 1) {
+    const header = headerMatches[index];
+    if (!header) continue;
+    const start = header.index ?? 0;
+    const nextStart = headerMatches[index + 1]?.index ?? normalized.length;
+    const segment = normalized.slice(start, nextStart);
+    const headerLine = header[0];
+    if (!headerLine) continue;
+
+    const match = headerLine.match(/^diff --git a\/(.+?) b\/(.+)$/);
     const filePath = match?.[2] ?? match?.[1];
     if (!filePath) continue;
-    files.push({ path: filePath });
+
+    let additions = 0;
+    let deletions = 0;
+    for (const line of segment.split("\n")) {
+      if (line.startsWith("+++ ") || line.startsWith("--- ")) continue;
+      if (line.startsWith("+")) {
+        additions += 1;
+        continue;
+      }
+      if (line.startsWith("-")) {
+        deletions += 1;
+      }
+    }
+
+    files.push({
+      path: filePath,
+      additions,
+      deletions,
+    });
   }
-  return files;
+
+  return files.toSorted((left, right) => left.path.localeCompare(right.path));
 }
 
 export function inferCheckpointTurnCountByTurnId(

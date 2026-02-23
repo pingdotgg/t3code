@@ -204,6 +204,7 @@ export function reduceEvent(
             role: payload.role,
             text: payload.text,
             createdAt: payload.createdAt,
+            ...(payload.streaming ? {} : { completedAt: event.occurredAt }),
             streaming: payload.streaming,
           },
           event.type,
@@ -222,6 +223,9 @@ export function reduceEvent(
                         : entry.text,
                     streaming: message.streaming,
                     createdAt: entry.createdAt,
+                    ...(message.streaming
+                      ? { completedAt: undefined }
+                      : { completedAt: message.completedAt ?? event.occurredAt }),
                   }
                 : entry,
             )
@@ -260,12 +264,51 @@ export function reduceEvent(
           "session",
         );
 
+        const sessionUpdatedAt = session.updatedAt;
+        const turnTimingPatch: ThreadPatch =
+          session.status === "running" && session.activeTurnId
+            ? (() => {
+                const isSameTurn = thread.latestTurnId === session.activeTurnId;
+                return {
+                  latestTurnId: session.activeTurnId,
+                  latestTurnStartedAt:
+                    isSameTurn && thread.latestTurnStartedAt
+                      ? thread.latestTurnStartedAt
+                      : sessionUpdatedAt,
+                  ...(isSameTurn
+                    ? {}
+                    : {
+                        latestTurnCompletedAt: null,
+                        latestTurnDurationMs: null,
+                      }),
+                };
+              })()
+            : session.activeTurnId === null && thread.latestTurnId && thread.latestTurnStartedAt
+              ? (() => {
+                  const latestTurnCompletedAt = thread.latestTurnCompletedAt ?? sessionUpdatedAt;
+                  const startedAtMs = Date.parse(thread.latestTurnStartedAt);
+                  const completedAtMs = Date.parse(latestTurnCompletedAt);
+                  const latestTurnDurationMs =
+                    !Number.isNaN(startedAtMs) &&
+                    !Number.isNaN(completedAtMs) &&
+                    completedAtMs >= startedAtMs
+                      ? completedAtMs - startedAtMs
+                      : thread.latestTurnDurationMs;
+
+                  return {
+                    latestTurnCompletedAt,
+                    latestTurnDurationMs,
+                  };
+                })()
+              : {};
+
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             session,
             updatedAt: event.occurredAt,
             error: session.lastError,
+            ...turnTimingPatch,
           }),
         };
       });
@@ -303,12 +346,23 @@ export function reduceEvent(
           ...thread.turnDiffSummaries.filter((summary) => summary.turnId !== payload.turnId),
           nextSummary,
         ].toSorted((left, right) => left.completedAt.localeCompare(right.completedAt));
+        const startedAtMs = thread.latestTurnStartedAt
+          ? Date.parse(thread.latestTurnStartedAt)
+          : Number.NaN;
+        const completedAtMs = Date.parse(nextSummary.completedAt);
+        const latestTurnDurationMs =
+          !Number.isNaN(startedAtMs) &&
+          !Number.isNaN(completedAtMs) &&
+          completedAtMs >= startedAtMs
+            ? completedAtMs - startedAtMs
+            : thread.latestTurnDurationMs;
 
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             latestTurnId: payload.turnId,
             latestTurnCompletedAt: nextSummary.completedAt,
+            latestTurnDurationMs,
             turnDiffSummaries,
             updatedAt: event.occurredAt,
           }),

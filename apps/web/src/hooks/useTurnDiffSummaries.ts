@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { inferCheckpointTurnCountByTurnId } from "../session-logic";
-import type { Thread, TurnDiffSummary } from "../types";
+import type { Thread } from "../types";
 
 export function useTurnDiffSummaries(activeThread: Thread | undefined) {
   const turnDiffSummaries = useMemo(() => {

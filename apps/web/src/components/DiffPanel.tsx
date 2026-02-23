@@ -104,14 +104,28 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const activeSessionId = activeThread?.session?.sessionId ?? null;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
+  const orderedTurnDiffSummaries = useMemo(
+    () =>
+      [...turnDiffSummaries].toSorted((left, right) => {
+        const leftTurnCount =
+          left.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[left.turnId] ?? 0;
+        const rightTurnCount =
+          right.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[right.turnId] ?? 0;
+        if (leftTurnCount !== rightTurnCount) {
+          return rightTurnCount - leftTurnCount;
+        }
+        return right.completedAt.localeCompare(left.completedAt);
+      }),
+    [inferredCheckpointTurnCountByTurnId, turnDiffSummaries],
+  );
 
   const selectedTurnId = diffSearch.diffTurnId ?? null;
   const selectedFilePath = selectedTurnId !== null ? (diffSearch.diffFilePath ?? null) : null;
   const selectedTurn =
     selectedTurnId === null
       ? undefined
-      : (turnDiffSummaries.find((summary) => summary.turnId === selectedTurnId) ??
-        turnDiffSummaries[0]);
+      : (orderedTurnDiffSummaries.find((summary) => summary.turnId === selectedTurnId) ??
+        orderedTurnDiffSummaries[0]);
   const selectedCheckpointTurnCount =
     selectedTurn &&
     (selectedTurn.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[selectedTurn.turnId]);
@@ -126,7 +140,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     [selectedCheckpointTurnCount],
   );
   const conversationCheckpointTurnCount = useMemo(() => {
-    const turnCounts = turnDiffSummaries
+    const turnCounts = orderedTurnDiffSummaries
       .map(
         (summary) =>
           summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId],
@@ -137,7 +151,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     }
     const latest = Math.max(...turnCounts);
     return latest > 0 ? latest : undefined;
-  }, [inferredCheckpointTurnCountByTurnId, turnDiffSummaries]);
+  }, [inferredCheckpointTurnCountByTurnId, orderedTurnDiffSummaries]);
   const conversationCheckpointRange = useMemo(
     () =>
       !selectedTurn && typeof conversationCheckpointTurnCount === "number"
@@ -152,11 +166,11 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     ? selectedCheckpointRange
     : conversationCheckpointRange;
   const conversationCacheScope = useMemo(() => {
-    if (selectedTurn || turnDiffSummaries.length === 0) {
+    if (selectedTurn || orderedTurnDiffSummaries.length === 0) {
       return null;
     }
-    return `conversation:${turnDiffSummaries.map((summary) => summary.turnId).join(",")}`;
-  }, [selectedTurn, turnDiffSummaries]);
+    return `conversation:${orderedTurnDiffSummaries.map((summary) => summary.turnId).join(",")}`;
+  }, [orderedTurnDiffSummaries, selectedTurn]);
   const activeCheckpointDiffQuery = useQuery(
     checkpointDiffQueryOptions(api, {
       sessionId: activeSessionId,
@@ -181,6 +195,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         : null;
 
   const selectedPatch = selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff;
+  const hasResolvedPatch = typeof selectedPatch === "string";
+  const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
   const renderablePatch = useMemo(() => getRenderablePatch(selectedPatch), [selectedPatch]);
   const renderableFiles = useMemo(() => {
     if (!renderablePatch || renderablePatch.kind !== "files") {
@@ -275,7 +291,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
 
   useEffect(() => {
     updateTurnStripScrollState();
-  }, [turnDiffSummaries, selectedTurnId, updateTurnStripScrollState]);
+  }, [orderedTurnDiffSummaries, selectedTurnId, updateTurnStripScrollState]);
 
   useEffect(() => {
     const element = turnStripRef.current;
@@ -358,7 +374,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                 <div className="text-[10px] leading-tight font-medium">All turns</div>
               </div>
             </button>
-            {turnDiffSummaries.map((summary, index) => (
+            {orderedTurnDiffSummaries.map((summary) => (
               <button
                 key={summary.turnId}
                 type="button"
@@ -377,7 +393,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                 >
                   <div className="flex items-center gap-1">
                     <span className="text-[10px] leading-tight font-medium">
-                      Turn {turnDiffSummaries.length - index}
+                      Turn{" "}
+                      {summary.checkpointTurnCount ??
+                        inferredCheckpointTurnCountByTurnId[summary.turnId] ??
+                        "?"}
                     </span>
                     <span className="text-[9px] leading-tight opacity-70">
                       {formatTurnChipTimestamp(summary.completedAt)}
@@ -413,7 +432,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
-      ) : turnDiffSummaries.length === 0 ? (
+      ) : orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           No completed turns yet.
         </div>
@@ -430,7 +449,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                 <p>
                   {isLoadingCheckpointDiff
                     ? "Loading checkpoint diff..."
-                    : "No patch available for this selection."}
+                    : hasNoNetChanges
+                      ? "No net changes in this selection."
+                      : "No patch available for this selection."}
                 </p>
               </div>
             ) : renderablePatch.kind === "files" ? (

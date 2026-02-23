@@ -161,6 +161,39 @@ function itemDetail(
   return undefined;
 }
 
+function mapMessageCompletedEvent(event: ProviderEvent): ProviderRuntimeEvent | undefined {
+  if (event.method !== "item/completed") {
+    return undefined;
+  }
+
+  const payload = asObject(event.payload);
+  const item = asObject(payload?.item);
+  if (!item) {
+    return undefined;
+  }
+
+  const normalizedType = normalizeItemType(item.type ?? item.kind);
+  if (!normalizedType.includes("agent message")) {
+    return undefined;
+  }
+
+  const itemId = event.itemId ?? asString(item.id);
+  if (!itemId) {
+    return undefined;
+  }
+
+  return {
+    type: "message.completed",
+    eventId: event.id,
+    provider: event.provider,
+    sessionId: event.sessionId,
+    createdAt: event.createdAt,
+    itemId,
+    ...(event.threadId ? { threadId: event.threadId } : {}),
+    ...(event.turnId ? { turnId: event.turnId } : {}),
+  };
+}
+
 function mapToolEvent(event: ProviderEvent): ProviderRuntimeEvent | undefined {
   if (event.method !== "item/started" && event.method !== "item/completed") {
     return undefined;
@@ -265,6 +298,11 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
         ...(decision ? { decision } : {}),
       },
     ];
+  }
+
+  const messageCompleted = mapMessageCompletedEvent(event);
+  if (messageCompleted) {
+    return [messageCompleted];
   }
 
   const tool = mapToolEvent(event);

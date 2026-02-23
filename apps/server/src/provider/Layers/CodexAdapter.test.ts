@@ -170,6 +170,45 @@ const lifecycleManager = new FakeCodexManager();
 const lifecycleLayer = it.layer(makeCodexAdapterLive({ manager: lifecycleManager }));
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("maps completed agent message items to canonical message.completed events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      const event: ProviderEvent = {
+        id: "evt-msg-complete",
+        kind: "notification",
+        provider: "codex",
+        sessionId: "sess-1",
+        createdAt: new Date().toISOString(),
+        method: "item/completed",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "msg_1",
+        payload: {
+          item: {
+            type: "agentMessage",
+            id: "msg_1",
+          },
+        },
+      };
+
+      lifecycleManager.emit("event", event);
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(firstEvent.value.type, "message.completed");
+      if (firstEvent.value.type !== "message.completed") {
+        return;
+      }
+      assert.equal(firstEvent.value.itemId, "msg_1");
+      assert.equal(firstEvent.value.turnId, "turn-1");
+    }),
+  );
+
   it.effect("emits canonical events on stream and supports consumer interruption", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;

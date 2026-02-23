@@ -16,7 +16,7 @@ import type {
   OrchestrationReadModel,
 } from "@t3tools/contracts";
 import { ServiceMap } from "effect";
-import type { Effect } from "effect";
+import type { Effect, Stream } from "effect";
 
 import type { OrchestrationDispatchError, OrchestrationEngineError } from "./Errors.ts";
 import type { OrchestrationEventRepositoryError } from "../persistence/Errors.ts";
@@ -62,24 +62,9 @@ export interface OrchestrationEngineShape {
   ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
 
   /**
-   * Subscribe to read model updates.
-   *
-   * @param callback - Handler invoked on every read model update.
-   * @returns Effect containing an unsubscribe function.
+   * Stream persisted domain events in dispatch order.
    */
-  readonly subscribeToReadModel: (
-    callback: (snapshot: OrchestrationReadModel) => void,
-  ) => Effect.Effect<() => void, never, never>;
-
-  /**
-   * Subscribe to domain event fan-out.
-   *
-   * @param callback - Handler invoked for every persisted domain event.
-   * @returns Effect containing an unsubscribe function.
-   */
-  readonly subscribeToDomainEvents: (
-    callback: (event: OrchestrationEvent) => void,
-  ) => Effect.Effect<() => void, never, never>;
+  readonly streamDomainEvents: Stream.Stream<OrchestrationEvent>;
 }
 
 /**

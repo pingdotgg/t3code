@@ -18,6 +18,7 @@ export const OrchestrationMessageSchema = Schema.Struct({
   role: Schema.Literals(["user", "assistant"]),
   text: Schema.String,
   createdAt: IsoDateTimeSchema,
+  completedAt: Schema.optional(IsoDateTimeSchema),
   streaming: Schema.Boolean,
 });
 

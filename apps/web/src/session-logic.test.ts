@@ -1,7 +1,11 @@
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { derivePendingApprovals, deriveWorkLogEntries } from "./session-logic";
+import {
+  derivePendingApprovals,
+  deriveTurnDiffFilesFromUnifiedDiff,
+  deriveWorkLogEntries,
+} from "./session-logic";
 
 function makeActivity(
   overrides: Partial<OrchestrationThreadActivity>,
@@ -86,5 +90,53 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities, "turn-2");
     expect(entries.map((entry) => entry.id)).toEqual(["turn-2"]);
+  });
+
+  it("omits checkpoint captured info entries", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "checkpoint",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        label: "Checkpoint captured",
+        tone: "info",
+      }),
+      makeActivity({
+        id: "tool-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        label: "Command run complete",
+        tone: "tool",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+    expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
+  });
+});
+
+describe("deriveTurnDiffFilesFromUnifiedDiff", () => {
+  it("extracts per-file +/- counts from unified diff", () => {
+    const diff = [
+      "diff --git a/a.txt b/a.txt",
+      "index 111..222 100644",
+      "--- a/a.txt",
+      "+++ b/a.txt",
+      "@@ -1 +1,2 @@",
+      "-old",
+      "+new",
+      "+extra",
+      "diff --git a/b.txt b/b.txt",
+      "index 333..444 100644",
+      "--- a/b.txt",
+      "+++ b/b.txt",
+      "@@ -2,2 +2 @@",
+      "-x",
+      "-y",
+      "+z",
+    ].join("\n");
+
+    expect(deriveTurnDiffFilesFromUnifiedDiff(diff)).toEqual([
+      { path: "a.txt", additions: 2, deletions: 1 },
+      { path: "b.txt", additions: 1, deletions: 2 },
+    ]);
   });
 });

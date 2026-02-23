@@ -50,11 +50,9 @@ import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionD
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
 import { CheckpointServiceLive } from "./checkpointing/Layers/CheckpointService";
+import { parseTurnDiffFilesFromUnifiedDiff, type TurnDiffFileSummary } from "./checkpointing/Diffs";
 import { CheckpointRepositoryLive } from "./persistence/Layers/Checkpoints";
-import {
-  makeEventNdjsonLogger,
-  type EventNdjsonLogger,
-} from "./provider/Layers/EventNdjsonLogger";
+import { makeEventNdjsonLogger, type EventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlError from "effect/unstable/sql/SqlError";
 import * as Migrator from "effect/unstable/sql/Migrator";
@@ -275,28 +273,39 @@ export function createServer(options: ServerOptions) {
     >,
     orchestrationEngine: OrchestrationEngineShape,
   ) {
-    unsubscribeDomainEvents = await runtime.runPromise(
-      orchestrationEngine.subscribeToDomainEvents((event) => {
-        orchestrationDomainEventLogger?.write({
-          observedAt: new Date().toISOString(),
-          event,
-        });
-        const push: WsPush = {
-          type: "push",
-          channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
-          data: event,
-        };
-        const message = JSON.stringify(push);
-        let recipients = 0;
-        for (const client of clients) {
-          if (client.readyState === client.OPEN) {
-            client.send(message);
-            recipients += 1;
-          }
-        }
-        logOutgoingPush(push, recipients);
-      }),
+    const subscriptionScope = await runtime.runPromise(Scope.make("sequential"));
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.forkScoped(
+          Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
+            Effect.sync(() => {
+              orchestrationDomainEventLogger?.write({
+                observedAt: new Date().toISOString(),
+                event,
+              });
+              const push: WsPush = {
+                type: "push",
+                channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
+                data: event,
+              };
+              const message = JSON.stringify(push);
+              let recipients = 0;
+              for (const client of clients) {
+                if (client.readyState === client.OPEN) {
+                  client.send(message);
+                  recipients += 1;
+                }
+              }
+              logOutgoingPush(push, recipients);
+            }),
+          ),
+        );
+      }).pipe(Scope.provide(subscriptionScope)),
     );
+
+    unsubscribeDomainEvents = () => {
+      runtime.runFork(Scope.close(subscriptionScope, Exit.void));
+    };
   }
 
   async function attachProviderSubscriptions(
@@ -350,7 +359,9 @@ export function createServer(options: ServerOptions) {
     const processEvent = (event: ProviderRuntimeEvent) =>
       Effect.gen(function* () {
         const snapshot = yield* orchestrationEngine.getSnapshot();
-        const thread = snapshot.threads.find((entry) => entry.session?.sessionId === event.sessionId);
+        const thread = snapshot.threads.find(
+          (entry) => entry.session?.sessionId === event.sessionId,
+        );
         if (!thread) return;
 
         const now = event.createdAt;
@@ -393,9 +404,29 @@ export function createServer(options: ServerOptions) {
           });
         }
 
+        if (event.type === "message.completed") {
+          const assistantMessageId = `assistant:${event.itemId}`;
+          if (event.turnId) {
+            rememberAssistantMessageId(event.sessionId, event.turnId, assistantMessageId);
+          }
+          yield* orchestrationEngine.dispatch({
+            type: "message.send",
+            commandId: crypto.randomUUID(),
+            threadId: thread.id,
+            messageId: assistantMessageId,
+            role: "assistant",
+            text: "",
+            streaming: false,
+            createdAt: now,
+          });
+        }
+
         if (event.type === "turn.completed") {
           if (event.turnId) {
-            const assistantMessageIds = getAssistantMessageIdsForTurn(event.sessionId, event.turnId);
+            const assistantMessageIds = getAssistantMessageIdsForTurn(
+              event.sessionId,
+              event.turnId,
+            );
             yield* Effect.forEach(assistantMessageIds, (assistantMessageId) =>
               orchestrationEngine.dispatch({
                 type: "message.send",
@@ -417,6 +448,30 @@ export function createServer(options: ServerOptions) {
         }
 
         if (event.type === "checkpoint.captured" && event.turnId) {
+          const files: ReadonlyArray<TurnDiffFileSummary> = yield* providerService
+            .getCheckpointDiff({
+              sessionId: event.sessionId,
+              fromTurnCount: Math.max(0, event.turnCount - 1),
+              toTurnCount: event.turnCount,
+            })
+            .pipe(
+              Effect.map((result) => parseTurnDiffFilesFromUnifiedDiff(result.diff)),
+              Effect.catch((error) =>
+                Effect.sync(() => {
+                  logger.warn("failed to derive checkpoint file summary", {
+                    sessionId: event.sessionId,
+                    turnId: event.turnId,
+                    turnCount: event.turnCount,
+                    error:
+                      error instanceof Error
+                        ? error.message
+                        : typeof error === "string"
+                          ? error
+                          : "unknown error",
+                  });
+                }).pipe(Effect.as([] as ReadonlyArray<TurnDiffFileSummary>)),
+              ),
+            );
           const assistantMessageId =
             getLatestAssistantMessageIdForTurn(event.sessionId, event.turnId) ??
             `assistant:${event.turnId}`;
@@ -427,7 +482,7 @@ export function createServer(options: ServerOptions) {
             turnId: event.turnId,
             completedAt: now,
             ...(event.status ? { status: event.status } : {}),
-            files: [],
+            files,
             assistantMessageId,
             checkpointTurnCount: event.turnCount,
             createdAt: now,
