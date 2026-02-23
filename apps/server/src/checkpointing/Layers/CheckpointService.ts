@@ -441,6 +441,43 @@ const makeCheckpointService = Effect.gen(function* () {
         ),
       );
 
+  const resolveThreadIdForSession = (
+    sessionId: string,
+    operation: string,
+  ): Effect.Effect<string, CheckpointServiceError> =>
+    directory.getThreadId(sessionId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new CheckpointSessionNotFoundError({
+            sessionId,
+            cause,
+          }),
+      ),
+      Effect.flatMap((threadId) =>
+        Option.match(threadId, {
+          onSome: (value) => {
+            const normalizedThreadId = value.trim();
+            if (normalizedThreadId.length > 0) {
+              return Effect.succeed(normalizedThreadId);
+            }
+            return Effect.fail(
+              invariantError(
+                operation,
+                `Resolved empty thread id for session ${sessionId}.`,
+              ),
+            );
+          },
+          onNone: () =>
+            Effect.fail(
+              invariantError(
+                operation,
+                `Missing thread id in session directory for session ${sessionId}.`,
+              ),
+            ),
+        }),
+      ),
+    );
+
   const rollbackThreadSnapshot = (
     sessionId: string,
     adapter: ProviderAdapterShape<ProviderAdapterError>,
@@ -633,19 +670,10 @@ const makeCheckpointService = Effect.gen(function* () {
           Effect.gen(function* () {
             const adapter = yield* resolveAdapterForSession(input.providerSessionId);
             yield* ensureSessionIsActive(input.providerSessionId, adapter);
-            const snapshot = yield* readThreadSnapshot(
+            const threadId = yield* resolveThreadIdForSession(
               input.providerSessionId,
-              adapter,
-              "CheckpointService.initializeForSession:readThread",
+              "CheckpointService.initializeForSession",
             );
-            if (snapshot.turns.length !== 0) {
-              return yield* Effect.fail(
-                invariantError(
-                  "CheckpointService.initializeForSession",
-                  `Expected empty thread snapshot during initialization, received ${snapshot.turns.length} turn(s).`,
-                ),
-              );
-            }
 
             const supportsGit = yield* store.isGitRepository(input.cwd);
             if (!supportsGit) {
@@ -686,7 +714,7 @@ const makeCheckpointService = Effect.gen(function* () {
             yield* captureAndPersistCheckpoint({
               providerSessionId: input.providerSessionId,
               cwd: input.cwd,
-              threadId: snapshot.threadId,
+              threadId,
               checkpoint: rootCheckpoint(),
             });
             yield* setTrackedCheckpointCwd(input.providerSessionId, input.cwd);

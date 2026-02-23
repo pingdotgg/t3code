@@ -31,6 +31,7 @@ import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts"
 import { ProviderService } from "../Services/ProviderService.ts";
 import { ProviderServiceLive } from "./ProviderService.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
+import { NodeServices } from "@effect/platform-node";
 
 function makeFakeCodexAdapter() {
   const sessions = new Map<string, ProviderSession>();
@@ -253,15 +254,17 @@ function makeProviderServiceLayer() {
     listProviders: () => Effect.succeed(["codex"]),
   };
 
+  const checkpointLayer = Layer.succeed(CheckpointService, checkpoint.service);
+  const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
+
   const layer = it.layer(
-    ProviderServiceLive.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          Layer.succeed(ProviderAdapterRegistry, registry),
-          ProviderSessionDirectoryLive,
-          Layer.succeed(CheckpointService, checkpoint.service),
-        ),
+    Layer.mergeAll(
+      ProviderServiceLive.pipe(
+        Layer.provide(providerAdapterLayer),
+        Layer.provide(ProviderSessionDirectoryLive),
+        Layer.provide(checkpointLayer),
       ),
+      NodeServices.layer,
     ),
   );
 
@@ -420,6 +423,42 @@ validation.layer("ProviderServiceLive validation", (it) => {
           operation: "ProviderService.startSession",
           issue: parse.error.message,
           ...(cause !== undefined ? { cause } : {}),
+        }),
+      );
+    }),
+  );
+
+  it.effect("fails startSession when adapter returns no threadId", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      validation.codex.startSession.mockImplementationOnce((input: ProviderSessionStartInput) =>
+        Effect.sync(() => {
+          const now = new Date().toISOString();
+          return {
+            sessionId: "sess-missing-thread",
+            provider: "codex",
+            status: "ready",
+            cwd: input.cwd ?? process.cwd(),
+            createdAt: now,
+            updatedAt: now,
+          } satisfies ProviderSession;
+        }),
+      );
+
+      const failure = yield* Effect.result(
+        provider.startSession({
+          provider: "codex",
+          cwd: "/tmp/project",
+        }),
+      );
+
+      assertFailure(
+        failure,
+        new ProviderValidationError({
+          operation: "ProviderService.startSession",
+          issue:
+            "Provider 'codex' returned a session without threadId. threadId is required for checkpoint initialization.",
         }),
       );
     }),

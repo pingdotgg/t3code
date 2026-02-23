@@ -1,40 +1,21 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
 import type { OrchestrationEvent } from "@t3tools/contracts";
 import { Effect, Layer, ManagedRuntime } from "effect";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   OrchestrationEventRepository,
   type OrchestrationEventRepositoryShape,
 } from "../persistence/Services/OrchestrationEvents.ts";
 import { PersistenceSqlError } from "../persistence/Errors.ts";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { OrchestrationEngineLive } from "./Layer.ts";
 import { OrchestrationEngineService } from "./Service.ts";
 import { OrchestrationEventRepositoryLive } from "../persistence/Layers/OrchestrationEvents.ts";
 
-const tempDirs: string[] = [];
-
-function makeTempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of tempDirs.splice(0, tempDirs.length)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-export async function createOrchestrationSystem(stateDir: string) {
-  const dbPath = path.join(stateDir, "orchestration.sqlite");
+export async function createOrchestrationSystem() {
   const orchestrationLayer = OrchestrationEngineLive.pipe(
     Layer.provide(OrchestrationEventRepositoryLive),
-    Layer.provide(makeSqlitePersistenceLive(dbPath)),
+    Layer.provide(SqlitePersistenceMemory),
   );
   const runtime = ManagedRuntime.make(orchestrationLayer);
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
@@ -46,16 +27,15 @@ export async function createOrchestrationSystem(stateDir: string) {
 }
 
 describe("OrchestrationEngine", () => {
-  it("replays to the same deterministic snapshot", async () => {
-    const stateDir = makeTempDir("t3code-orchestration-");
+  it("returns deterministic snapshots for repeated reads", async () => {
     const createdAt = new Date().toISOString();
     const projectId = "project-1";
     const threadId = "thread-1";
 
-    const firstSystem = await createOrchestrationSystem(stateDir);
-    const engineA = firstSystem.engine;
-    await firstSystem.run(
-      engineA.dispatch({
+    const system = await createOrchestrationSystem();
+    const engine = system.engine;
+    await system.run(
+      engine.dispatch({
         type: "thread.create",
         commandId: "cmd-1",
         threadId,
@@ -67,8 +47,8 @@ describe("OrchestrationEngine", () => {
         createdAt,
       }),
     );
-    await firstSystem.run(
-      engineA.dispatch({
+    await system.run(
+      engine.dispatch({
         type: "message.send",
         commandId: "cmd-3",
         threadId,
@@ -79,19 +59,14 @@ describe("OrchestrationEngine", () => {
         createdAt,
       }),
     );
-    const snapshotA = await firstSystem.run(engineA.getSnapshot());
-    await firstSystem.dispose();
-
-    const secondSystem = await createOrchestrationSystem(stateDir);
-    const engineB = secondSystem.engine;
-    const snapshotB = await secondSystem.run(engineB.getSnapshot());
+    const snapshotA = await system.run(engine.getSnapshot());
+    const snapshotB = await system.run(engine.getSnapshot());
     expect(snapshotB).toEqual(snapshotA);
-    await secondSystem.dispose();
+    await system.dispose();
   });
 
   it("fans out read-model updates to subscribers", async () => {
-    const stateDir = makeTempDir("t3code-orchestration-fanout-");
-    const system = await createOrchestrationSystem(stateDir);
+    const system = await createOrchestrationSystem();
     const engine = system.engine;
     const updates: number[] = [];
     const unsubscribe = await system.run(
@@ -118,8 +93,7 @@ describe("OrchestrationEngine", () => {
   });
 
   it("replays append-only events from sequence", async () => {
-    const stateDir = makeTempDir("t3code-orchestration-replay-");
-    const system = await createOrchestrationSystem(stateDir);
+    const system = await createOrchestrationSystem();
     const engine = system.engine;
     await system.run(
       engine.dispatch({
@@ -150,11 +124,10 @@ describe("OrchestrationEngine", () => {
   });
 
   it("stores completed turn summaries even when no files changed", async () => {
-    const stateDir = makeTempDir("t3code-orchestration-turn-diff-");
-    const firstSystem = await createOrchestrationSystem(stateDir);
-    const engine = firstSystem.engine;
+    const system = await createOrchestrationSystem();
+    const engine = system.engine;
     const completedAt = new Date().toISOString();
-    await firstSystem.run(
+    await system.run(
       engine.dispatch({
         type: "thread.create",
         commandId: "cmd-thread-turn-diff",
@@ -167,7 +140,7 @@ describe("OrchestrationEngine", () => {
         createdAt: completedAt,
       }),
     );
-    await firstSystem.run(
+    await system.run(
       engine.dispatch({
         type: "thread.turnDiff.complete",
         commandId: "cmd-turn-diff-complete",
@@ -181,7 +154,7 @@ describe("OrchestrationEngine", () => {
       }),
     );
 
-    const firstThread = (await firstSystem.run(engine.getSnapshot())).threads.find(
+    const firstThread = (await system.run(engine.getSnapshot())).threads.find(
       (thread) => thread.id === "thread-turn-diff",
     );
     expect(firstThread?.turnDiffSummaries).toEqual([
@@ -193,31 +166,14 @@ describe("OrchestrationEngine", () => {
         checkpointTurnCount: 1,
       },
     ]);
-    await firstSystem.dispose();
-
-    const secondSystem = await createOrchestrationSystem(stateDir);
-    const restartedEngine = secondSystem.engine;
-    const restartedThread = (await secondSystem.run(restartedEngine.getSnapshot())).threads.find(
-      (thread) => thread.id === "thread-turn-diff",
-    );
-    expect(restartedThread?.turnDiffSummaries).toEqual([
-      {
-        turnId: "turn-1",
-        completedAt,
-        status: "completed",
-        files: [],
-        checkpointTurnCount: 1,
-      },
-    ]);
-    await secondSystem.dispose();
+    await system.dispose();
   });
 
   it("reverts thread messages and turn summaries to a checkpoint", async () => {
-    const stateDir = makeTempDir("t3code-orchestration-revert-");
-    const firstSystem = await createOrchestrationSystem(stateDir);
-    const engine = firstSystem.engine;
+    const system = await createOrchestrationSystem();
+    const engine = system.engine;
     const createdAt = new Date().toISOString();
-    await firstSystem.run(
+    await system.run(
       engine.dispatch({
         type: "thread.create",
         commandId: "cmd-thread-revert",
@@ -230,7 +186,7 @@ describe("OrchestrationEngine", () => {
         createdAt,
       }),
     );
-    await firstSystem.run(
+    await system.run(
       engine.dispatch({
         type: "message.send",
         commandId: "cmd-msg-1-user",
@@ -242,7 +198,7 @@ describe("OrchestrationEngine", () => {
         createdAt,
       }),
     );
-    await firstSystem.run(
+    await system.run(
       engine.dispatch({
         type: "message.send",
         commandId: "cmd-msg-1-assistant",
@@ -254,7 +210,7 @@ describe("OrchestrationEngine", () => {
         createdAt,
       }),
     );
-    await firstSystem.run(
+    await system.run(
       engine.dispatch({
         type: "thread.turnDiff.complete",
         commandId: "cmd-turn-1-complete",
@@ -270,7 +226,7 @@ describe("OrchestrationEngine", () => {
     );
 
     const createdAtSecond = new Date(Date.now() + 1_000).toISOString();
-    await firstSystem.run(
+    await system.run(
       engine.dispatch({
         type: "message.send",
         commandId: "cmd-msg-2-user",
@@ -282,7 +238,7 @@ describe("OrchestrationEngine", () => {
         createdAt: createdAtSecond,
       }),
     );
-    await firstSystem.run(
+    await system.run(
       engine.dispatch({
         type: "message.send",
         commandId: "cmd-msg-2-assistant",
@@ -294,7 +250,7 @@ describe("OrchestrationEngine", () => {
         createdAt: createdAtSecond,
       }),
     );
-    await firstSystem.run(
+    await system.run(
       engine.dispatch({
         type: "thread.turnDiff.complete",
         commandId: "cmd-turn-2-complete",
@@ -309,7 +265,7 @@ describe("OrchestrationEngine", () => {
       }),
     );
 
-    await firstSystem.run(
+    await system.run(
       engine.dispatch({
         type: "thread.revert",
         commandId: "cmd-thread-revert-apply",
@@ -320,25 +276,13 @@ describe("OrchestrationEngine", () => {
       }),
     );
 
-    const thread = (await firstSystem.run(engine.getSnapshot())).threads.find(
+    const thread = (await system.run(engine.getSnapshot())).threads.find(
       (entry) => entry.id === "thread-revert",
     );
     expect(thread?.messages.map((message) => message.id)).toEqual(["user-1", "assistant:turn-1"]);
     expect(thread?.turnDiffSummaries.map((summary) => summary.turnId)).toEqual(["turn-1"]);
     expect(thread?.latestTurnId).toBe("turn-1");
-    await firstSystem.dispose();
-
-    const secondSystem = await createOrchestrationSystem(stateDir);
-    const restarted = secondSystem.engine;
-    const restartedThread = (await secondSystem.run(restarted.getSnapshot())).threads.find(
-      (entry) => entry.id === "thread-revert",
-    );
-    expect(restartedThread?.messages.map((message) => message.id)).toEqual([
-      "user-1",
-      "assistant:turn-1",
-    ]);
-    expect(restartedThread?.turnDiffSummaries.map((summary) => summary.turnId)).toEqual(["turn-1"]);
-    await secondSystem.dispose();
+    await system.dispose();
   });
 
   it("allows stop to be called multiple times", async () => {

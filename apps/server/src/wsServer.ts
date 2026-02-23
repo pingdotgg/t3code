@@ -18,11 +18,11 @@ import {
   type WsResponse,
   wsRequestSchema,
 } from "@t3tools/contracts";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { createLogger } from "./logger";
-import { ProviderManager } from "./providerManager";
 import { GitManager } from "./gitManager";
 import {
   checkoutGitBranch,
@@ -43,6 +43,17 @@ import { makeSqlitePersistenceLive } from "./persistence/Layers/Sqlite";
 import { ProjectRepository, type ProjectRepositoryShape } from "./persistence/Services/Projects";
 import assert from "node:assert";
 import { OrchestrationEventRepositoryLive } from "./persistence/Layers/OrchestrationEvents";
+import { CodexAdapterLive } from "./provider/Layers/CodexAdapter";
+import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
+import { ProviderServiceLive } from "./provider/Layers/ProviderService";
+import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
+import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
+import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
+import { CheckpointServiceLive } from "./checkpointing/Layers/CheckpointService";
+import { CheckpointRepositoryLive } from "./persistence/Layers/Checkpoints";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlError from "effect/unstable/sql/SqlError";
+import * as Migrator from "effect/unstable/sql/Migrator";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -64,6 +75,9 @@ export interface ServerOptions {
   host?: string | undefined;
   cwd: string;
   stateDir?: string | undefined;
+  persistenceLayer?:
+    | Layer.Layer<SqlClient.SqlClient, SqlError.SqlError | Migrator.MigrationError>
+    | undefined;
   staticDir?: string | undefined;
   devUrl?: string | undefined;
   logWebSocketEvents?: boolean | undefined;
@@ -121,6 +135,7 @@ export function createServer(options: ServerOptions) {
     host,
     cwd,
     stateDir,
+    persistenceLayer: customPersistenceLayer,
     staticDir,
     devUrl,
     logWebSocketEvents: explicitLogWsEvents,
@@ -128,15 +143,15 @@ export function createServer(options: ServerOptions) {
     terminalManager = new TerminalManager(),
     authToken,
   } = options;
-  const providerManager = new ProviderManager();
 
   const resolvedStateDir = stateDir ?? path.join(os.homedir(), ".t3", "userdata");
   let effectRuntime: ManagedRuntime.ManagedRuntime<
-    ProjectRepository | OrchestrationEngineService,
+    ProjectRepository | OrchestrationEngineService | ProviderService,
     unknown
   > | null = null;
   let projectRepository: ProjectRepositoryShape | null = null;
   let orchestrationEngine: OrchestrationEngineShape | null = null;
+  let providerService: ProviderServiceShape | null = null;
   const clients = new Set<WebSocket>();
   const logger = createLogger("ws");
   const logWebSocketEvents =
@@ -144,6 +159,7 @@ export function createServer(options: ServerOptions) {
   let keybindingsConfig = loadResolvedKeybindingsConfig(logger);
   let unsubscribeReadModel = noop;
   let unsubscribeDomainEvents = noop;
+  let unsubscribeProviderEvents = noop;
 
   function logOutgoingPush(push: WsPush, recipients: number) {
     if (!logWebSocketEvents) return;
@@ -169,8 +185,16 @@ export function createServer(options: ServerOptions) {
     return effectRuntime;
   };
 
+  const getProviderService = () => {
+    assert(providerService, "Provider service is not started");
+    return providerService;
+  };
+
   async function attachOrchestrationSubscriptions(
-    runtime: ManagedRuntime.ManagedRuntime<ProjectRepository | OrchestrationEngineService, unknown>,
+    runtime: ManagedRuntime.ManagedRuntime<
+      ProjectRepository | OrchestrationEngineService | ProviderService,
+      unknown
+    >,
     orchestrationEngine: OrchestrationEngineShape,
   ) {
     unsubscribeReadModel = await runtime.runPromise(
@@ -215,114 +239,121 @@ export function createServer(options: ServerOptions) {
     );
   }
 
-  // Forward provider events to all connected WebSocket clients
-  providerManager.on("event", (event) => {
-    void (async () => {
-      const liveOrchestrationEngine = orchestrationEngine;
-      const runtime = effectRuntime;
-      if (!liveOrchestrationEngine || !runtime) {
-        return;
-      }
-      const snapshot = await runtime.runPromise(liveOrchestrationEngine.getSnapshot());
-      const thread = snapshot.threads.find((entry) => entry.session?.sessionId === event.sessionId);
-      if (!thread) return;
-      const now = event.createdAt;
-      if (event.method === "turn/started" || event.method === "turn/completed") {
-        await runtime.runPromise(
-          liveOrchestrationEngine.dispatch({
-            type: "thread.session",
-            commandId: crypto.randomUUID(),
-            threadId: thread.id,
-            session: {
-              sessionId: event.sessionId,
-              provider: event.provider,
-              status: event.method === "turn/started" ? "running" : "ready",
-              threadId: thread.id,
-              activeTurnId: event.method === "turn/started" ? (event.turnId ?? null) : null,
-              createdAt: thread.session?.createdAt ?? now,
-              updatedAt: now,
-              lastError: null,
-            },
-            createdAt: now,
-          }),
-        );
-      }
-      if (event.textDelta && event.textDelta.length > 0) {
-        const assistantMessageId = `assistant:${event.turnId ?? event.itemId ?? event.sessionId}`;
-        await runtime.runPromise(
-          liveOrchestrationEngine.dispatch({
-            type: "message.send",
-            commandId: crypto.randomUUID(),
-            threadId: thread.id,
-            messageId: assistantMessageId,
-            role: "assistant",
-            text: event.textDelta,
-            streaming: true,
-            createdAt: now,
-          }),
-        );
-      }
-      if (event.method === "turn/completed") {
-        const assistantMessageId = `assistant:${event.turnId ?? event.itemId ?? event.sessionId}`;
-        await runtime.runPromise(
-          liveOrchestrationEngine.dispatch({
-            type: "message.send",
-            commandId: crypto.randomUUID(),
-            threadId: thread.id,
-            messageId: assistantMessageId,
-            role: "assistant",
-            text: "",
-            streaming: false,
-            createdAt: now,
-          }),
-        );
-      }
-      if (event.method === "checkpoint/captured") {
-        const payload = asObject(event.payload);
-        const turnId = event.turnId ?? asString(payload?.turnId);
-        if (turnId) {
-          await runtime.runPromise(
-            liveOrchestrationEngine.dispatch({
-              type: "thread.turnDiff.complete",
-              commandId: crypto.randomUUID(),
-              threadId: thread.id,
-              turnId,
-              completedAt: now,
-              ...(asString(payload?.status) !== null
-                ? { status: asString(payload?.status) ?? undefined }
-                : {}),
-              files: [],
-              assistantMessageId: `assistant:${turnId}`,
-              ...(asNumber(payload?.turnCount) !== null
-                ? { checkpointTurnCount: asNumber(payload?.turnCount) ?? undefined }
-                : {}),
-              createdAt: now,
-            }),
+  async function attachProviderSubscriptions(
+    runtime: ManagedRuntime.ManagedRuntime<
+      ProjectRepository | OrchestrationEngineService | ProviderService,
+      unknown
+    >,
+    providerService: ProviderServiceShape,
+    orchestrationEngine: OrchestrationEngineShape,
+  ) {
+    unsubscribeProviderEvents = await runtime.runPromise(
+      providerService.subscribeToEvents((event) => {
+        void (async () => {
+          const snapshot = await runtime.runPromise(orchestrationEngine.getSnapshot());
+          const thread = snapshot.threads.find(
+            (entry) => entry.session?.sessionId === event.sessionId,
           );
-        }
-      }
-      if (event.kind === "error" && event.message) {
-        await runtime.runPromise(
-          liveOrchestrationEngine.dispatch({
-            type: "thread.session",
-            commandId: crypto.randomUUID(),
-            threadId: thread.id,
-            session: {
-              sessionId: event.sessionId,
-              provider: event.provider,
-              status: "error",
-              threadId: thread.id,
-              activeTurnId: event.turnId ?? null,
-              createdAt: thread.session?.createdAt ?? now,
-              updatedAt: now,
-              lastError: event.message,
-            },
-            createdAt: now,
-          }),
-        );
-      }
-    })().catch(() => undefined);
-  });
+          if (!thread) return;
+          const now = event.createdAt;
+          if (event.method === "turn/started" || event.method === "turn/completed") {
+            await runtime.runPromise(
+              orchestrationEngine.dispatch({
+                type: "thread.session",
+                commandId: crypto.randomUUID(),
+                threadId: thread.id,
+                session: {
+                  sessionId: event.sessionId,
+                  provider: event.provider,
+                  status: event.method === "turn/started" ? "running" : "ready",
+                  threadId: thread.id,
+                  activeTurnId: event.method === "turn/started" ? (event.turnId ?? null) : null,
+                  createdAt: thread.session?.createdAt ?? now,
+                  updatedAt: now,
+                  lastError: null,
+                },
+                createdAt: now,
+              }),
+            );
+          }
+          if (event.textDelta && event.textDelta.length > 0) {
+            const assistantMessageId = `assistant:${event.turnId ?? event.itemId ?? event.sessionId}`;
+            await runtime.runPromise(
+              orchestrationEngine.dispatch({
+                type: "message.send",
+                commandId: crypto.randomUUID(),
+                threadId: thread.id,
+                messageId: assistantMessageId,
+                role: "assistant",
+                text: event.textDelta,
+                streaming: true,
+                createdAt: now,
+              }),
+            );
+          }
+          if (event.method === "turn/completed") {
+            const assistantMessageId = `assistant:${event.turnId ?? event.itemId ?? event.sessionId}`;
+            await runtime.runPromise(
+              orchestrationEngine.dispatch({
+                type: "message.send",
+                commandId: crypto.randomUUID(),
+                threadId: thread.id,
+                messageId: assistantMessageId,
+                role: "assistant",
+                text: "",
+                streaming: false,
+                createdAt: now,
+              }),
+            );
+          }
+          if (event.method === "checkpoint/captured") {
+            const payload = asObject(event.payload);
+            const turnId = event.turnId ?? asString(payload?.turnId);
+            if (turnId) {
+              await runtime.runPromise(
+                orchestrationEngine.dispatch({
+                  type: "thread.turnDiff.complete",
+                  commandId: crypto.randomUUID(),
+                  threadId: thread.id,
+                  turnId,
+                  completedAt: now,
+                  ...(asString(payload?.status) !== null
+                    ? { status: asString(payload?.status) ?? undefined }
+                    : {}),
+                  files: [],
+                  assistantMessageId: `assistant:${turnId}`,
+                  ...(asNumber(payload?.turnCount) !== null
+                    ? { checkpointTurnCount: asNumber(payload?.turnCount) ?? undefined }
+                    : {}),
+                  createdAt: now,
+                }),
+              );
+            }
+          }
+          if (event.kind === "error" && event.message) {
+            await runtime.runPromise(
+              orchestrationEngine.dispatch({
+                type: "thread.session",
+                commandId: crypto.randomUUID(),
+                threadId: thread.id,
+                session: {
+                  sessionId: event.sessionId,
+                  provider: event.provider,
+                  status: "error",
+                  threadId: thread.id,
+                  activeTurnId: event.turnId ?? null,
+                  createdAt: thread.session?.createdAt ?? now,
+                  updatedAt: now,
+                  lastError: event.message,
+                },
+                createdAt: now,
+              }),
+            );
+          }
+        })().catch(() => undefined);
+      }),
+    );
+  }
 
   const onTerminalEvent = (event: TerminalEvent) => {
     const push: WsPush = {
@@ -504,33 +535,36 @@ export function createServer(options: ServerOptions) {
     const orchestrationEngine = getOrchestrationEngine();
     const projectRepository = getProjectRepository();
     const effectRuntime = getEffectRuntime();
+    const providerService = getProviderService();
 
     switch (request.method) {
       case WS_METHODS.providersStartSession:
-        return providerManager.startSession(request.params as never);
+        return effectRuntime.runPromise(providerService.startSession(request.params as never));
 
       case WS_METHODS.providersSendTurn:
-        return providerManager.sendTurn(request.params as never);
+        return effectRuntime.runPromise(providerService.sendTurn(request.params as never));
 
       case WS_METHODS.providersInterruptTurn:
-        return providerManager.interruptTurn(request.params as never);
+        return effectRuntime.runPromise(providerService.interruptTurn(request.params as never));
 
       case WS_METHODS.providersRespondToRequest:
-        return providerManager.respondToRequest(request.params as never);
+        return effectRuntime.runPromise(providerService.respondToRequest(request.params as never));
 
       case WS_METHODS.providersStopSession: {
-        providerManager.stopSession(request.params as never);
+        await effectRuntime.runPromise(providerService.stopSession(request.params as never));
         return undefined;
       }
 
       case WS_METHODS.providersListCheckpoints:
-        return providerManager.listCheckpoints(request.params as never);
+        return effectRuntime.runPromise(providerService.listCheckpoints(request.params as never));
 
       case WS_METHODS.providersGetCheckpointDiff:
-        return providerManager.getCheckpointDiff(request.params as never);
+        return effectRuntime.runPromise(providerService.getCheckpointDiff(request.params as never));
 
       case WS_METHODS.providersRevertToCheckpoint: {
-        const result = await providerManager.revertToCheckpoint(request.params as never);
+        const result = await effectRuntime.runPromise(
+          providerService.revertToCheckpoint(request.params as never),
+        );
         const params = request.params as { sessionId?: string };
         const sessionId = params.sessionId;
         if (typeof sessionId === "string") {
@@ -735,25 +769,42 @@ export function createServer(options: ServerOptions) {
 
   async function createEffectRuntime() {
     const dbPath = path.join(resolvedStateDir, "orchestration.sqlite");
-    const persistenceLayer = makeSqlitePersistenceLive(dbPath);
+    const persistenceLayer = customPersistenceLayer ?? makeSqlitePersistenceLive(dbPath);
     const orchestrationLayer = Layer.provide(
       OrchestrationEngineLive,
       OrchestrationEventRepositoryLive,
     );
-    const layer = Layer.mergeAll(orchestrationLayer, ProjectRepositoryLive).pipe(
+    const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(Layer.provide(CodexAdapterLive));
+    const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(NodeServices.layer));
+    const checkpointDependenciesLayer = Layer.mergeAll(
+      checkpointStoreLayer,
+      CheckpointRepositoryLive,
+      adapterRegistryLayer,
+      ProviderSessionDirectoryLive,
+    );
+    const checkpointServiceLayer = CheckpointServiceLive.pipe(
+      Layer.provideMerge(checkpointDependenciesLayer),
+    );
+    const providerLayer = ProviderServiceLive.pipe(Layer.provideMerge(checkpointServiceLayer));
+
+    const layer = Layer.mergeAll(orchestrationLayer, ProjectRepositoryLive, providerLayer).pipe(
       Layer.provide(persistenceLayer),
+      Layer.provideMerge(NodeServices.layer),
     );
     const runtime = ManagedRuntime.make(layer);
 
     try {
-      const [nextOrchestrationEngine, repository] = await Promise.all([
+      const [nextOrchestrationEngine, repository, nextProviderService] = await Promise.all([
         runtime.runPromise(Effect.service(OrchestrationEngineService)),
         runtime.runPromise(Effect.service(ProjectRepository)),
+        runtime.runPromise(Effect.service(ProviderService)),
       ]);
       orchestrationEngine = nextOrchestrationEngine;
       projectRepository = repository;
+      providerService = nextProviderService;
       await runtime.runPromise(repository.pruneMissing());
       await attachOrchestrationSubscriptions(runtime, nextOrchestrationEngine);
+      await attachProviderSubscriptions(runtime, nextProviderService, nextOrchestrationEngine);
     } catch (error) {
       await runtime.dispose().catch(() => undefined);
       throw error;
@@ -765,16 +816,24 @@ export function createServer(options: ServerOptions) {
   async function disposeEffectRuntime() {
     unsubscribeReadModel();
     unsubscribeDomainEvents();
+    unsubscribeProviderEvents();
     unsubscribeReadModel = noop;
     unsubscribeDomainEvents = noop;
+    unsubscribeProviderEvents = noop;
 
     const runtime = effectRuntime;
+    const liveProviderService = providerService;
     effectRuntime = null;
     orchestrationEngine = null;
     projectRepository = null;
+    providerService = null;
 
     if (!runtime) {
       return;
+    }
+
+    if (liveProviderService) {
+      await runtime.runPromise(liveProviderService.stopAll()).catch(() => undefined);
     }
 
     await runtime.dispose();
@@ -804,8 +863,6 @@ export function createServer(options: ServerOptions) {
   async function stop(): Promise<void> {
     await disposeEffectRuntime();
     terminalManager.off("event", onTerminalEvent);
-    providerManager.stopAll();
-    providerManager.dispose();
     terminalManager.dispose();
 
     for (const client of clients) {

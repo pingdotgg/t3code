@@ -1,7 +1,3 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-
 import type {
   ProviderApprovalDecision,
   ProviderEvent,
@@ -13,7 +9,7 @@ import type {
 } from "@t3tools/contracts";
 import { NodeServices } from "@effect/platform-node";
 import { it, assert } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, FileSystem, Layer, Path } from "effect";
 
 import { runGit as runGitProcess } from "../../git/Process.ts";
 import { CheckpointServiceLive } from "./CheckpointService.ts";
@@ -34,14 +30,9 @@ import type {
 } from "../../provider/Services/ProviderAdapter.ts";
 import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
 import { ProviderSessionDirectoryLive } from "../../provider/Layers/ProviderSessionDirectory.ts";
-import { makeSqliteCheckpointRepositoryLive } from "../../persistence/Layers/Checkpoints.ts";
+import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { CheckpointRepository } from "../../persistence/Services/Checkpoints.ts";
-
-const makeTemporaryDirectoryScoped = (prefix: string) =>
-  Effect.acquireRelease(
-    Effect.promise(() => mkdtemp(path.join(os.tmpdir(), prefix))),
-    (directory) => Effect.promise(() => rm(directory, { recursive: true, force: true })),
-  );
+import { CheckpointRepositoryLive } from "../../persistence/Layers/Checkpoints.ts";
 
 const runGit = (cwd: string, args: readonly string[]) =>
   runGitProcess({
@@ -53,23 +44,24 @@ const runGit = (cwd: string, args: readonly string[]) =>
     Effect.provide(NodeServices.layer),
   );
 
-function createRepo() {
-  return Effect.gen(function* () {
-    const cwd = yield* makeTemporaryDirectoryScoped("t3-checkpoint-service-repo-");
-    yield* runGit(cwd, ["init", "--initial-branch=main"]);
-    yield* runGit(cwd, ["config", "user.email", "test@example.com"]);
-    yield* runGit(cwd, ["config", "user.name", "Test User"]);
-    yield* Effect.promise(() => writeFile(path.join(cwd, "README.md"), "v1\n"));
-    yield* runGit(cwd, ["add", "."]);
-    yield* runGit(cwd, ["commit", "-m", "Initial"]);
-    return cwd;
-  });
-}
+const makeGitRepository = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const cwd = yield* fs.makeTempDirectory();
+  yield* runGit(cwd, ["init", "--initial-branch=main"]);
+  yield* runGit(cwd, ["config", "user.email", "test@example.com"]);
+  yield* runGit(cwd, ["config", "user.name", "Test User"]);
+  yield* fs.writeFileString(path.join(cwd, "README.md"), "v1\n");
+  yield* runGit(cwd, ["add", "."]);
+  yield* runGit(cwd, ["commit", "-m", "Initial"]);
+  return cwd;
+});
 
 class InMemoryProviderAdapter implements ProviderAdapterShape<ProviderAdapterError> {
   readonly provider = "codex" as const;
 
   private active = true;
+  private readThreadFailure: ProviderAdapterError | undefined;
   private snapshot: ProviderThreadSnapshot;
   private readonly session: ProviderSession;
 
@@ -103,6 +95,10 @@ class InMemoryProviderAdapter implements ProviderAdapterShape<ProviderAdapterErr
 
   getTurns(): ReadonlyArray<ProviderThreadTurnSnapshot> {
     return this.snapshot.turns;
+  }
+
+  setReadThreadFailure(error: ProviderAdapterError | undefined): void {
+    this.readThreadFailure = error;
   }
 
   readonly startSession = (
@@ -157,7 +153,9 @@ class InMemoryProviderAdapter implements ProviderAdapterShape<ProviderAdapterErr
     this.hasSession(sessionId).pipe(
       Effect.flatMap((hasSession) =>
         hasSession
-          ? Effect.succeed(this.snapshot)
+          ? this.readThreadFailure
+            ? Effect.fail(this.readThreadFailure)
+            : Effect.succeed(this.snapshot)
           : Effect.fail(
               new ProviderAdapterSessionNotFoundError({
                 provider: this.provider,
@@ -203,9 +201,7 @@ class InMemoryProviderAdapter implements ProviderAdapterShape<ProviderAdapterErr
 
 function makeFixture(turns: ReadonlyArray<ProviderThreadTurnSnapshot>) {
   return Effect.gen(function* () {
-    const cwd = yield* createRepo();
-    const stateDir = yield* makeTemporaryDirectoryScoped("t3-checkpoint-service-state-");
-    const dbPath = path.join(stateDir, "orchestration.sqlite");
+    const cwd = yield* makeGitRepository;
 
     const sessionId = "sess-1";
     const adapter = new InMemoryProviderAdapter(sessionId, cwd, turns);
@@ -220,9 +216,10 @@ function makeFixture(turns: ReadonlyArray<ProviderThreadTurnSnapshot>) {
 
     const dependencies = Layer.mergeAll(
       Layer.provide(CheckpointStoreLive, NodeServices.layer),
-      makeSqliteCheckpointRepositoryLive(dbPath),
+      Layer.provide(CheckpointRepositoryLive, SqlitePersistenceMemory),
       Layer.succeed(ProviderAdapterRegistry, registry),
       ProviderSessionDirectoryLive,
+      NodeServices.layer,
     );
 
     const layer = CheckpointServiceLive.pipe(Layer.provideMerge(dependencies));
@@ -236,87 +233,84 @@ function makeFixture(turns: ReadonlyArray<ProviderThreadTurnSnapshot>) {
   });
 }
 
-it.effect(
-  "CheckpointServiceLive captures checkpoints, diffs refs, and reverts workspace + turns",
-  () =>
-    Effect.gen(function* () {
-      const firstTurn: ProviderThreadTurnSnapshot = {
-        id: "turn-1",
-        items: [{ type: "userMessage", content: [{ type: "text", text: "first" }] }],
-      };
-      const secondTurn: ProviderThreadTurnSnapshot = {
-        id: "turn-2",
-        items: [{ type: "agentMessage", text: "second" }],
-      };
+it.effect("captures checkpoints, diffs refs, and reverts workspace + turns", () =>
+  Effect.gen(function* () {
+    const firstTurn: ProviderThreadTurnSnapshot = {
+      id: "turn-1",
+      items: [{ type: "userMessage", content: [{ type: "text", text: "first" }] }],
+    };
+    const secondTurn: ProviderThreadTurnSnapshot = {
+      id: "turn-2",
+      items: [{ type: "agentMessage", text: "second" }],
+    };
 
-      const fixture = yield* makeFixture([]);
+    const fixture = yield* makeFixture([]);
 
-      yield* Effect.gen(function* () {
-        const service = yield* CheckpointService;
-        const directory = yield* ProviderSessionDirectory;
+    yield* Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
 
-        yield* directory.upsert({
-          sessionId: fixture.sessionId,
-          provider: "codex",
-          threadId: "thread-1",
-        });
+      const service = yield* CheckpointService;
+      const directory = yield* ProviderSessionDirectory;
 
-        yield* service.initializeForSession({
-          providerSessionId: fixture.sessionId,
-          cwd: fixture.cwd,
-        });
+      yield* directory.upsert({
+        sessionId: fixture.sessionId,
+        provider: "codex",
+        threadId: "thread-1",
+      });
 
-        yield* Effect.promise(() => writeFile(path.join(fixture.cwd, "README.md"), "v2\n"));
-        fixture.adapter.setTurns([firstTurn]);
+      yield* service.initializeForSession({
+        providerSessionId: fixture.sessionId,
+        cwd: fixture.cwd,
+      });
 
-        yield* service.captureCurrentTurn({
-          providerSessionId: fixture.sessionId,
-        });
+      yield* fs.writeFileString(path.join(fixture.cwd, "README.md"), "v2\n");
+      fixture.adapter.setTurns([firstTurn]);
 
-        const listed = yield* service.listCheckpoints({ sessionId: fixture.sessionId });
-        assert.equal(listed.checkpoints.length, 2);
-        assert.equal(listed.checkpoints[1]?.id, "turn-1");
-        assert.equal(listed.checkpoints[1]?.isCurrent, true);
+      yield* service.captureCurrentTurn({
+        providerSessionId: fixture.sessionId,
+      });
 
-        const diff = yield* service.getCheckpointDiff({
-          sessionId: fixture.sessionId,
-          fromTurnCount: 0,
-          toTurnCount: 1,
-        });
-        assert.equal(diff.threadId, "thread-1");
-        assert.equal(diff.diff.includes("diff --git a/README.md b/README.md"), true);
-        assert.equal(diff.diff.includes("-v1"), true);
-        assert.equal(diff.diff.includes("+v2"), true);
+      const listed = yield* service.listCheckpoints({ sessionId: fixture.sessionId });
+      assert.equal(listed.checkpoints.length, 2);
+      assert.equal(listed.checkpoints[1]?.id, "turn-1");
+      assert.equal(listed.checkpoints[1]?.isCurrent, true);
 
-        yield* Effect.promise(() => writeFile(path.join(fixture.cwd, "README.md"), "v3\n"));
-        fixture.adapter.setTurns([firstTurn, secondTurn]);
+      const diff = yield* service.getCheckpointDiff({
+        sessionId: fixture.sessionId,
+        fromTurnCount: 0,
+        toTurnCount: 1,
+      });
+      assert.equal(diff.threadId, "thread-1");
+      assert.equal(diff.diff.includes("diff --git a/README.md b/README.md"), true);
+      assert.equal(diff.diff.includes("-v1"), true);
+      assert.equal(diff.diff.includes("+v2"), true);
 
-        yield* service.captureCurrentTurn({
-          providerSessionId: fixture.sessionId,
-        });
+      yield* fs.writeFileString(path.join(fixture.cwd, "README.md"), "v3\n");
+      fixture.adapter.setTurns([firstTurn, secondTurn]);
 
-        const beforeRevert = yield* Effect.promise(() =>
-          readFile(path.join(fixture.cwd, "README.md"), "utf8"),
-        );
-        assert.equal(beforeRevert, "v3\n");
+      yield* service.captureCurrentTurn({
+        providerSessionId: fixture.sessionId,
+      });
 
-        const reverted = yield* service.revertToCheckpoint({
-          sessionId: fixture.sessionId,
-          turnCount: 1,
-        });
+      const beforeRevert = yield* fs.readFileString(path.join(fixture.cwd, "README.md"));
+      assert.equal(beforeRevert, "v3\n");
 
-        const afterRevert = yield* Effect.promise(() =>
-          readFile(path.join(fixture.cwd, "README.md"), "utf8"),
-        );
-        assert.equal(afterRevert, "v2\n");
-        assert.equal(reverted.turnCount, 1);
-        assert.equal(reverted.rolledBackTurns, 1);
-        assert.equal(reverted.checkpoints.length, 2);
-        assert.equal(reverted.checkpoints[1]?.id, "turn-1");
-        assert.equal(reverted.checkpoints[1]?.isCurrent, true);
-        assert.equal(fixture.adapter.getTurns().length, 1);
-      }).pipe(Effect.provide(fixture.layer));
-    }),
+      const reverted = yield* service.revertToCheckpoint({
+        sessionId: fixture.sessionId,
+        turnCount: 1,
+      });
+
+      const afterRevert = yield* fs.readFileString(path.join(fixture.cwd, "README.md"));
+      assert.equal(afterRevert, "v2\n");
+      assert.equal(reverted.turnCount, 1);
+      assert.equal(reverted.rolledBackTurns, 1);
+      assert.equal(reverted.checkpoints.length, 2);
+      assert.equal(reverted.checkpoints[1]?.id, "turn-1");
+      assert.equal(reverted.checkpoints[1]?.isCurrent, true);
+      assert.equal(fixture.adapter.getTurns().length, 1);
+    }).pipe(Effect.provide(fixture.layer));
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
@@ -338,7 +332,7 @@ it.effect(
           assert.equal(result.failure._tag, "CheckpointSessionNotFoundError");
         }
       }).pipe(Effect.provide(fixture.layer));
-    }),
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
@@ -353,6 +347,8 @@ it.effect(
       const fixture = yield* makeFixture([]);
 
       yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const service = yield* CheckpointService;
         const store = yield* CheckpointStore;
         const checkpointRepository = yield* CheckpointRepository;
@@ -369,7 +365,7 @@ it.effect(
           cwd: fixture.cwd,
         });
 
-        yield* Effect.promise(() => writeFile(path.join(fixture.cwd, "README.md"), "v2\n"));
+        yield* fs.writeFileString(path.join(fixture.cwd, "README.md"), "v2\n");
         fixture.adapter.setTurns([firstTurn]);
         yield* service.captureCurrentTurn({
           providerSessionId: fixture.sessionId,
@@ -400,5 +396,44 @@ it.effect(
           assert.equal(result.failure._tag, "CheckpointUnavailableError");
         }
       }).pipe(Effect.provide(fixture.layer));
-    }),
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("CheckpointServiceLive initializes root checkpoints without requiring thread/read", () =>
+  Effect.gen(function* () {
+    const fixture = yield* makeFixture([]);
+
+    yield* Effect.gen(function* () {
+      const service = yield* CheckpointService;
+      const checkpointRepository = yield* CheckpointRepository;
+      const directory = yield* ProviderSessionDirectory;
+
+      yield* directory.upsert({
+        sessionId: fixture.sessionId,
+        provider: "codex",
+        threadId: "thread-1",
+      });
+      fixture.adapter.setReadThreadFailure(
+        new ProviderAdapterValidationError({
+          provider: "codex",
+          operation: "readThread",
+          issue: "thread/read is temporarily unavailable",
+        }),
+      );
+
+      yield* service.initializeForSession({
+        providerSessionId: fixture.sessionId,
+        cwd: fixture.cwd,
+      });
+
+      const root = yield* checkpointRepository.getCheckpoint({
+        providerSessionId: fixture.sessionId,
+        turnCount: 0,
+      });
+      assert.equal(root._tag, "Some");
+      if (root._tag === "Some") {
+        assert.equal(root.value.threadId, "thread-1");
+      }
+    }).pipe(Effect.provide(fixture.layer));
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

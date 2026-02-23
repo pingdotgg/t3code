@@ -6,8 +6,9 @@ import { Effect, Layer } from "effect";
 
 import { CodexAdapter, CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
-import { makeProviderAdapterRegistryLive } from "./ProviderAdapterRegistry.ts";
+import { ProviderAdapterRegistryLive } from "./ProviderAdapterRegistry.ts";
 import { ProviderUnsupportedError } from "../Errors.ts";
+import { NodeServices } from "@effect/platform-node";
 
 const fakeCodexAdapter: CodexAdapterShape = {
   provider: "codex",
@@ -25,13 +26,14 @@ const fakeCodexAdapter: CodexAdapterShape = {
 };
 
 const layer = it.layer(
-  makeProviderAdapterRegistryLive().pipe(
-    Layer.provide(Layer.succeed(CodexAdapter, fakeCodexAdapter)),
+  Layer.mergeAll(
+    Layer.provide(ProviderAdapterRegistryLive, Layer.succeed(CodexAdapter, fakeCodexAdapter)),
+    NodeServices.layer,
   ),
 );
 
 layer("ProviderAdapterRegistryLive", (it) => {
-  it("resolves a registered provider adapter", () =>
+  it.effect("resolves a registered provider adapter", () =>
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry;
       const adapter = yield* registry.getByProvider("codex");
@@ -39,12 +41,14 @@ layer("ProviderAdapterRegistryLive", (it) => {
 
       const providers = yield* registry.listProviders();
       assert.deepEqual(providers, ["codex"]);
-    }));
+    }),
+  );
 
-  it("fails with ProviderUnsupportedError for unknown providers", () =>
+  it.effect("fails with ProviderUnsupportedError for unknown providers", () =>
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry;
       const adapter = yield* registry.getByProvider("unknown" as ProviderKind).pipe(Effect.result);
       assertFailure(adapter, new ProviderUnsupportedError({ provider: "unknown" }));
-    }));
+    }),
+  );
 });

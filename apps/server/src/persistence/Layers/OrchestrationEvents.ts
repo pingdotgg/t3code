@@ -11,7 +11,6 @@ import {
   toPersistenceSqlError,
   type OrchestrationEventRepositoryError,
 } from "../Errors.ts";
-import { makeSqlitePersistenceLive } from "./Sqlite.ts";
 import {
   OrchestrationEventRepository,
   type OrchestrationEventRepositoryShape,
@@ -177,7 +176,3 @@ export const OrchestrationEventRepositoryLive = Layer.effect(
   OrchestrationEventRepository,
   makeRepository,
 );
-
-export function makeSqliteOrchestrationEventRepositoryLive(dbPath: string) {
-  return OrchestrationEventRepositoryLive.pipe(Layer.provide(makeSqlitePersistenceLive(dbPath)));
-}

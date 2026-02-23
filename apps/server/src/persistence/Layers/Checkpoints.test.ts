@@ -1,29 +1,16 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-
 import { it, assert } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
 import { CheckpointRepository } from "../Services/Checkpoints.ts";
 import { CheckpointRepositoryLive } from "./Checkpoints.ts";
-import { makeSqlitePersistenceLive } from "./Sqlite.ts";
+import { SqlitePersistenceMemory } from "./Sqlite.ts";
 
-const makeTemporaryDirectoryScoped = (prefix: string) =>
-  Effect.acquireRelease(
-    Effect.promise(() => mkdtemp(path.join(os.tmpdir(), prefix))),
-    (directory) => Effect.promise(() => rm(directory, { recursive: true, force: true })),
-  );
-
-function makeCheckpointRepositoryLayer(dbPath: string) {
-  return CheckpointRepositoryLive.pipe(Layer.provide(makeSqlitePersistenceLive(dbPath)));
+function makeCheckpointRepositoryLayer() {
+  return CheckpointRepositoryLive.pipe(Layer.provide(SqlitePersistenceMemory));
 }
 
 it.effect("CheckpointRepositoryLive upserts, lists, reads, and prunes checkpoint metadata", () =>
   Effect.gen(function* () {
-    const stateDir = yield* makeTemporaryDirectoryScoped("t3code-checkpoint-repository-");
-    const dbPath = path.join(stateDir, "orchestration.sqlite");
-
     yield* Effect.gen(function* () {
       const repository = yield* CheckpointRepository;
 
@@ -90,6 +77,6 @@ it.effect("CheckpointRepositoryLive upserts, lists, reads, and prunes checkpoint
       yield* repository.deleteAllForSession({ providerSessionId: "sess-1" });
       const empty = yield* repository.listCheckpoints({ providerSessionId: "sess-1" });
       assert.equal(empty.length, 0);
-    }).pipe(Effect.provide(makeCheckpointRepositoryLayer(dbPath)));
+    }).pipe(Effect.provide(makeCheckpointRepositoryLayer()));
   }),
 );

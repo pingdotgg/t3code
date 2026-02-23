@@ -161,10 +161,20 @@ const makeProviderService = Effect.gen(function* () {
         );
       }
 
+      const threadId = session.threadId?.trim();
+      if (!threadId) {
+        return yield* Effect.fail(
+          toValidationError(
+            "ProviderService.startSession",
+            `Provider '${adapter.provider}' returned a session without threadId. threadId is required for checkpoint initialization.`,
+          ),
+        );
+      }
+
       yield* directory.upsert({
         sessionId: session.sessionId,
         provider: session.provider,
-        ...(session.threadId !== undefined ? { threadId: session.threadId } : {}),
+        threadId,
       });
 
       const checkpointCwd = session.cwd ?? input.cwd ?? process.cwd();

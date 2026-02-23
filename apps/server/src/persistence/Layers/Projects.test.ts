@@ -1,83 +1,56 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
-import { Effect, Layer, ManagedRuntime } from "effect";
-import { afterEach, describe, expect, it } from "vitest";
+import { Effect, Layer, FileSystem } from "effect";
+import { assert, it } from "@effect/vitest";
 
 import { ProjectRepository } from "../Services/Projects.ts";
 import { ProjectRepositoryLive } from "./Projects.ts";
-import { makeSqlitePersistenceLive } from "./Sqlite.ts";
+import { SqlitePersistenceMemory } from "./Sqlite.ts";
+import { NodeServices } from "@effect/platform-node";
 
-function makeProjectRepositoryTest(dbPath: string) {
-  return ProjectRepositoryLive.pipe(Layer.provide(makeSqlitePersistenceLive(dbPath)));
-}
+const layer = it.layer(
+  Layer.mergeAll(Layer.provide(ProjectRepositoryLive, SqlitePersistenceMemory), NodeServices.layer),
+);
 
-const tempDirs: string[] = [];
+layer("ProjectRepository", (it) => {
+  it.effect("stores projects and deduplicates adds by cwd", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const projectDir = yield* fs.makeTempDirectoryScoped();
 
-function makeTempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
+      const repository = yield* ProjectRepository;
 
-afterEach(() => {
-  for (const dir of tempDirs.splice(0, tempDirs.length)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
+      const created = yield* repository.add({ cwd: projectDir });
+      assert.equal(created.created, true);
 
-describe("ProjectRepository", () => {
-  it("persists projects and deduplicates adds by cwd", async () => {
-    const stateDir = makeTempDir("t3code-project-repo-state-");
-    const projectDir = makeTempDir("t3code-project-repo-project-");
-    const dbPath = path.join(stateDir, "orchestration.sqlite");
+      const duplicate = yield* repository.add({ cwd: projectDir });
+      assert.equal(duplicate.created, false);
+      assert.equal(duplicate.project.id, created.project.id);
 
-    const firstRuntime = ManagedRuntime.make(makeProjectRepositoryTest(dbPath));
-    const first = await firstRuntime.runPromise(Effect.service(ProjectRepository));
+      const listed = yield* repository.list();
+      assert.equal(listed.length, 1);
+      assert.equal(listed[0]?.cwd, projectDir);
+    }),
+  );
 
-    const created = await firstRuntime.runPromise(first.add({ cwd: projectDir }));
-    expect(created.created).toBe(true);
+  it.effect("prunes missing project paths", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const existing = yield* fs.makeTempDirectoryScoped();
+      const missing = yield* fs.makeTempDirectory();
 
-    const duplicate = await firstRuntime.runPromise(first.add({ cwd: projectDir }));
-    expect(duplicate.created).toBe(false);
-    expect(duplicate.project.id).toBe(created.project.id);
+      const repository = yield* ProjectRepository;
 
-    await firstRuntime.dispose();
+      const existingProject = yield* repository.add({ cwd: existing });
+      const missingProject = yield* repository.add({ cwd: missing });
 
-    const secondRuntime = ManagedRuntime.make(makeProjectRepositoryTest(dbPath));
-    const second = await secondRuntime.runPromise(Effect.service(ProjectRepository));
-    const listed = await secondRuntime.runPromise(second.list());
+      assert.isTrue(existingProject.created);
+      assert.isTrue(missingProject.created);
 
-    expect(listed).toHaveLength(1);
-    expect(listed[0]?.cwd).toBe(projectDir);
+      yield* fs.remove(missing, { recursive: true, force: true });
 
-    await secondRuntime.dispose();
-  });
-
-  it("prunes missing project paths", async () => {
-    const stateDir = makeTempDir("t3code-project-repo-prune-state-");
-    const existing = makeTempDir("t3code-project-repo-prune-existing-");
-    const missing = makeTempDir("t3code-project-repo-prune-missing-");
-    const dbPath = path.join(stateDir, "orchestration.sqlite");
-
-    const runtime = ManagedRuntime.make(makeProjectRepositoryTest(dbPath));
-    const repository = await runtime.runPromise(Effect.service(ProjectRepository));
-
-    const existingProject = await runtime.runPromise(repository.add({ cwd: existing }));
-    const missingProject = await runtime.runPromise(repository.add({ cwd: missing }));
-
-    expect(existingProject.created).toBe(true);
-    expect(missingProject.created).toBe(true);
-
-    fs.rmSync(missing, { recursive: true, force: true });
-
-    await runtime.runPromise(repository.pruneMissing());
-    const listed = await runtime.runPromise(repository.list());
-
-    expect(listed).toHaveLength(1);
-    expect(listed[0]?.cwd).toBe(existing);
-
-    await runtime.dispose();
-  });
+      yield* repository.pruneMissing();
+      const listed = yield* repository.list();
+      assert.equal(listed.length, 1);
+      assert.equal(listed[0]?.cwd, existing);
+    }),
+  );
 });

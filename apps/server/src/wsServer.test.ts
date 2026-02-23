@@ -30,7 +30,9 @@ import type {
 } from "@t3tools/contracts";
 import type { TerminalManager } from "./terminalManager";
 import { ProjectRepositoryLive } from "./persistence/Layers/Projects";
-import { makeSqlitePersistenceLive } from "./persistence/Layers/Sqlite";
+import { makeSqlitePersistenceLive, SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
+import { NodeServices } from "@effect/platform-node";
+import { SqlClient } from "effect/unstable/sql";
 
 interface PendingMessages {
   queue: unknown[];
@@ -237,6 +239,7 @@ describe("WebSocket Server", () => {
 
   function createTestServer(
     options: {
+      persistenceLayer?: Layer.Layer<SqlClient.SqlClient, any>;
       cwd?: string;
       devUrl?: string;
       authToken?: string;
@@ -253,6 +256,7 @@ describe("WebSocket Server", () => {
       port: 0,
       cwd: options.cwd ?? "/test/project",
       stateDir,
+      persistenceLayer: options.persistenceLayer ?? SqlitePersistenceMemory,
       ...(options.devUrl ? { devUrl: options.devUrl } : {}),
       ...(options.authToken ? { authToken: options.authToken } : {}),
       ...(options.gitManager ? { gitManager: options.gitManager as never } : {}),
@@ -1033,11 +1037,11 @@ describe("WebSocket Server", () => {
     const stateDir = makeTempDir("t3code-ws-prune-state-");
     const existing = makeTempDir("t3code-ws-existing-project-");
     const missing = makeTempDir("t3code-ws-missing-project-");
+    const dbPath = path.join(stateDir, "test-prune.sqlite");
+    const persistenceLayer = Layer.provide(makeSqlitePersistenceLive(dbPath), NodeServices.layer);
 
     const projectRuntime = ManagedRuntime.make(
-      ProjectRepositoryLive.pipe(
-        Layer.provide(makeSqlitePersistenceLive(path.join(stateDir, "orchestration.sqlite"))),
-      ),
+      ProjectRepositoryLive.pipe(Layer.provide(persistenceLayer)),
     );
     const projectRepository = await projectRuntime.runPromise(Effect.service(ProjectRepository));
     await projectRuntime.runPromise(projectRepository.add({ cwd: existing }));
@@ -1045,7 +1049,11 @@ describe("WebSocket Server", () => {
     await projectRuntime.dispose();
     fs.rmSync(missing, { recursive: true, force: true });
 
-    server = createTestServer({ stateDir, cwd: "/test" });
+    server = createTestServer({
+      stateDir,
+      cwd: "/test",
+      persistenceLayer,
+    });
     await server.start();
     const addr = server.httpServer.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
