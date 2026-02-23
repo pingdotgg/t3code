@@ -187,10 +187,19 @@ CheckpointCatalog        ------> SQLite
   - provider service routing stays intact
   - checkpoint capture still triggered by turn completion through new coordinator
 
-### Commit 9: Remove dead legacy path and finalize docs
+### Commit 9: Look over schemas (contracts and events)
+- Scan for unused schemas.
+- Use effect/Schema everywhere
+- Analyze which we need
+  - RPC Input/Output (both for routeRequest and command handler)
+  - Event payloads
+  - Persistence entities
+
+### Commit 10: Remove dead legacy path and finalize docs
 - Remove unused legacy manager/store path from active architecture:
   - `providerManager.ts`
   - `filesystemCheckpointStore.ts` (if no longer needed by tests/tools)
+- Look over effect services for unused methods, errors, etc
 - Update architecture docs with final service boundaries and boot/runtime graph.
 - Expected files:
   - legacy files + references
