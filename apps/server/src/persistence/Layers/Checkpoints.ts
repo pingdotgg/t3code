@@ -20,7 +20,6 @@ import {
   CheckpointRepositoryValidationError,
   type CheckpointRepositoryError,
 } from "../Errors.ts";
-import { makeSqlitePersistenceLive } from "./Sqlite.ts";
 import {
   CheckpointRepository,
   type CheckpointRepositoryEntry,
@@ -357,7 +356,3 @@ export const CheckpointRepositoryLive = Layer.effect(
   CheckpointRepository,
   makeCheckpointRepository,
 );
-
-export function makeSqliteCheckpointRepositoryLive(dbPath: string) {
-  return CheckpointRepositoryLive.pipe(Layer.provide(makeSqlitePersistenceLive(dbPath)));
-}

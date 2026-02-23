@@ -59,7 +59,7 @@ export const runMigrations = run({ loader });
  * @example
  * ```typescript
  * import { MigrationsLive } from "@acme/db/Migrations"
- * import { SqliteClient } from "@effect/sql-sqlite-node"
+ * import * as SqliteClient from "@acme/db/SqliteClient"
  *
  * // Migrations run automatically when SqliteClient is provided
  * const AppLayer = MigrationsLive.pipe(
