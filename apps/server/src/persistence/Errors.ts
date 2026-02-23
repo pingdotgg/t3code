@@ -1,5 +1,9 @@
 import { Schema, SchemaIssue } from "effect";
 
+// ===============================
+// Core Persistence Errors
+// ===============================
+
 export class PersistenceSqlError extends Schema.TaggedErrorClass<PersistenceSqlError>()(
   "PersistenceSqlError",
   {
@@ -39,6 +43,46 @@ export class PersistenceSerializationError extends Schema.TaggedErrorClass<Persi
   }
 }
 
+export function toPersistenceSqlError(operation: string) {
+  return (cause: unknown): PersistenceSqlError =>
+    new PersistenceSqlError({
+      operation,
+      detail: `Failed to execute ${operation}`,
+      cause,
+    });
+}
+
+export function toPersistenceDecodeError(operation: string) {
+  return (error: Schema.SchemaError): PersistenceDecodeError =>
+    new PersistenceDecodeError({
+      operation,
+      issue: SchemaIssue.makeFormatterDefault()(error.issue),
+      cause: error,
+    });
+}
+
+export function toPersistenceDecodeCauseError(operation: string) {
+  return (cause: unknown): PersistenceDecodeError =>
+    new PersistenceDecodeError({
+      operation,
+      issue: `Failed to execute ${operation}`,
+      cause,
+    });
+}
+
+export function toPersistenceSerializationError(operation: string) {
+  return (cause: unknown): PersistenceSerializationError =>
+    new PersistenceSerializationError({
+      operation,
+      detail: `Failed to execute ${operation}`,
+      cause,
+    });
+}
+
+// ===============================
+// Project Repository Errors
+// ===============================
+
 export class ProjectValidationError extends Schema.TaggedErrorClass<ProjectValidationError>()(
   "ProjectValidationError",
   {
@@ -76,6 +120,36 @@ export class ProjectNotFoundError extends Schema.TaggedErrorClass<ProjectNotFoun
   }
 }
 
+// ===============================
+// Checkpoint Repository Errors
+// ===============================
+
+export class CheckpointRepositoryValidationError extends Schema.TaggedErrorClass<CheckpointRepositoryValidationError>()(
+  "CheckpointRepositoryValidationError",
+  {
+    operation: Schema.String,
+    issue: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Checkpoint repository validation failed in ${this.operation}: ${this.issue}`;
+  }
+}
+
+export class CheckpointRepositoryPersistenceError extends Schema.TaggedErrorClass<CheckpointRepositoryPersistenceError>()(
+  "CheckpointRepositoryPersistenceError",
+  {
+    operation: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Checkpoint repository persistence error in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export type ProjectRepositoryError =
   | PersistenceSqlError
   | PersistenceDecodeError
@@ -89,38 +163,6 @@ export type OrchestrationEventRepositoryError =
   | PersistenceDecodeError
   | PersistenceSerializationError;
 
-export function toPersistenceSqlError(operation: string) {
-  return (cause: unknown): PersistenceSqlError =>
-    new PersistenceSqlError({
-      operation,
-      detail: `Failed to execute ${operation}`,
-      cause,
-    });
-}
-
-export function toPersistenceDecodeError(operation: string) {
-  return (error: Schema.SchemaError): PersistenceDecodeError =>
-    new PersistenceDecodeError({
-      operation,
-      issue: SchemaIssue.makeFormatterDefault()(error.issue),
-      cause: error,
-    });
-}
-
-export function toPersistenceDecodeCauseError(operation: string) {
-  return (cause: unknown): PersistenceDecodeError =>
-    new PersistenceDecodeError({
-      operation,
-      issue: `Failed to execute ${operation}`,
-      cause,
-    });
-}
-
-export function toPersistenceSerializationError(operation: string) {
-  return (cause: unknown): PersistenceSerializationError =>
-    new PersistenceSerializationError({
-      operation,
-      detail: `Failed to execute ${operation}`,
-      cause,
-    });
-}
+export type CheckpointRepositoryError =
+  | CheckpointRepositoryValidationError
+  | CheckpointRepositoryPersistenceError;

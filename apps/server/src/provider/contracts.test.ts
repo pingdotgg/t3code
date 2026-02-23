@@ -11,14 +11,18 @@ import {
   type ProviderServiceError,
 } from "./Errors.ts";
 import {
-  CheckpointValidationError,
-  type CheckpointCatalogError,
+  CheckpointGitCommandError,
+  CheckpointServiceValidationError,
   type CheckpointServiceError,
   type CheckpointStoreError,
 } from "../checkpointing/Errors.ts";
-import { CheckpointCatalog } from "../checkpointing/Services/CheckpointCatalog.ts";
+import {
+  CheckpointRepositoryValidationError,
+  type CheckpointRepositoryError,
+} from "../persistence/Errors.ts";
 import { CheckpointService } from "../checkpointing/Services/CheckpointService.ts";
 import { CheckpointStore } from "../checkpointing/Services/CheckpointStore.ts";
+import { CheckpointRepository } from "../persistence/Services/Checkpoints.ts";
 import { CodexAdapter } from "./Services/CodexAdapter.ts";
 import { ProviderAdapterRegistry } from "./Services/ProviderAdapterRegistry.ts";
 import { ProviderService } from "./Services/ProviderService.ts";
@@ -107,20 +111,22 @@ describe("provider/checkpoint service contracts", () => {
     const checkpointStoreLive: typeof CheckpointStore.Service = {
       isGitRepository: () => Effect.succeed(false),
       captureCheckpoint: () => Effect.void,
-      hasCheckpoint: () => Effect.succeed(false),
+      hasCheckpointRef: () => Effect.succeed(false),
       ensureRootCheckpoint: () => Effect.succeed(false),
       restoreCheckpoint: () => Effect.succeed(false),
       diffCheckpoints: () =>
         Effect.fail<CheckpointStoreError>(
-          new CheckpointValidationError({
+          new CheckpointGitCommandError({
             operation: "diffCheckpoints",
-            issue: "not implemented",
+            command: "git diff",
+            cwd: "/tmp",
+            detail: "not implemented",
           }),
         ),
-      pruneAfterTurn: () => Effect.void,
+      deleteCheckpointRefs: () => Effect.void,
     };
 
-    const checkpointCatalogLive: typeof CheckpointCatalog.Service = {
+    const checkpointRepositoryLive: typeof CheckpointRepository.Service = {
       upsertCheckpoint: () => Effect.void,
       listCheckpoints: () => Effect.succeed([]),
       getCheckpoint: () => Effect.succeed(Option.none()),
@@ -133,18 +139,21 @@ describe("provider/checkpoint service contracts", () => {
       captureCurrentTurn: () => Effect.void,
       listCheckpoints: () =>
         Effect.fail<CheckpointServiceError>(
-          new CheckpointValidationError({ operation: "listCheckpoints", issue: "not implemented" }),
+          new CheckpointServiceValidationError({
+            operation: "listCheckpoints",
+            issue: "not implemented",
+          }),
         ),
       getCheckpointDiff: () =>
         Effect.fail<CheckpointServiceError>(
-          new CheckpointValidationError({
+          new CheckpointServiceValidationError({
             operation: "getCheckpointDiff",
             issue: "not implemented",
           }),
         ),
       revertToCheckpoint: () =>
         Effect.fail<CheckpointServiceError>(
-          new CheckpointValidationError({
+          new CheckpointServiceValidationError({
             operation: "revertToCheckpoint",
             issue: "not implemented",
           }),
@@ -174,7 +183,7 @@ describe("provider/checkpoint service contracts", () => {
         Layer.succeed(ProviderService, providerLive),
         Layer.succeed(CodexAdapter, codexLive),
         Layer.succeed(CheckpointStore, checkpointStoreLive),
-        Layer.succeed(CheckpointCatalog, checkpointCatalogLive),
+        Layer.succeed(CheckpointRepository, checkpointRepositoryLive),
         Layer.succeed(CheckpointService, checkpointServiceLive),
         Layer.succeed(ProviderAdapterRegistry, providerAdapterRegistryLive),
         Layer.succeed(ProviderSessionDirectory, providerSessionDirectoryLive),
@@ -185,7 +194,7 @@ describe("provider/checkpoint service contracts", () => {
       provider,
       codex,
       checkpointStore,
-      checkpointCatalog,
+      checkpointRepository,
       checkpointService,
       providerAdapterRegistry,
       providerSessionDirectory,
@@ -193,7 +202,7 @@ describe("provider/checkpoint service contracts", () => {
       runtime.runPromise(Effect.service(ProviderService)),
       runtime.runPromise(Effect.service(CodexAdapter)),
       runtime.runPromise(Effect.service(CheckpointStore)),
-      runtime.runPromise(Effect.service(CheckpointCatalog)),
+      runtime.runPromise(Effect.service(CheckpointRepository)),
       runtime.runPromise(Effect.service(CheckpointService)),
       runtime.runPromise(Effect.service(ProviderAdapterRegistry)),
       runtime.runPromise(Effect.service(ProviderSessionDirectory)),
@@ -202,7 +211,7 @@ describe("provider/checkpoint service contracts", () => {
     expect(provider).toBe(providerLive);
     expect(codex).toBe(codexLive);
     expect(checkpointStore).toBe(checkpointStoreLive);
-    expect(checkpointCatalog).toBe(checkpointCatalogLive);
+    expect(checkpointRepository).toBe(checkpointRepositoryLive);
     expect(checkpointService).toBe(checkpointServiceLive);
     expect(providerAdapterRegistry).toBe(providerAdapterRegistryLive);
     expect(providerSessionDirectory).toBe(providerSessionDirectoryLive);
@@ -225,12 +234,12 @@ describe("provider/checkpoint errors", () => {
     expect(fsError.cause).toBe(fsCause);
   });
 
-  it("accepts checkpoint catalog error channel type", () => {
-    const error: CheckpointCatalogError = new CheckpointValidationError({
+  it("accepts checkpoint repository error channel type", () => {
+    const error: CheckpointRepositoryError = new CheckpointRepositoryValidationError({
       operation: "upsertCheckpoint",
       issue: "turnCount must be >= 0",
     });
 
-    expect(error._tag).toBe("CheckpointValidationError");
+    expect(error._tag).toBe("CheckpointRepositoryValidationError");
   });
 });

@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
 import Migration0002 from "./Migrations/002_Projects.ts";
+import Migration0003 from "./Migrations/003_Checkpoints.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -28,6 +29,7 @@ import Migration0002 from "./Migrations/002_Projects.ts";
 const loader = Migrator.fromRecord({
   "1_OrchestrationEvents": Migration0001,
   "2_Projects": Migration0002,
+  "3_CheckpointCatalog": Migration0003,
 });
 
 /**

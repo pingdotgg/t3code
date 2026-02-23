@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import type { CheckpointRepositoryError as CheckpointMetadataRepositoryError } from "../persistence/Errors.ts";
 
 /**
  * CheckpointValidationError - Invalid checkpoint API input.
@@ -68,22 +69,6 @@ export class CheckpointRepositoryError extends Schema.TaggedErrorClass<Checkpoin
 }
 
 /**
- * CheckpointCatalogPersistenceError - Metadata persistence/read failure.
- */
-export class CheckpointCatalogPersistenceError extends Schema.TaggedErrorClass<CheckpointCatalogPersistenceError>()(
-  "CheckpointCatalogPersistenceError",
-  {
-    operation: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Checkpoint catalog persistence error in ${this.operation}: ${this.detail}`;
-  }
-}
-
-/**
  * CheckpointServiceValidationError - Invalid application-level checkpoint request.
  */
 export class CheckpointServiceValidationError extends Schema.TaggedErrorClass<CheckpointServiceValidationError>()(
@@ -131,18 +116,13 @@ export class CheckpointInvariantError extends Schema.TaggedErrorClass<Checkpoint
 }
 
 export type CheckpointStoreError =
-  | CheckpointValidationError
   | CheckpointGitCommandError
   | CheckpointUnavailableError
   | CheckpointRepositoryError;
 
-export type CheckpointCatalogError =
-  | CheckpointValidationError
-  | CheckpointCatalogPersistenceError;
-
 export type CheckpointServiceError =
   | CheckpointStoreError
-  | CheckpointCatalogError
+  | CheckpointMetadataRepositoryError
   | CheckpointServiceValidationError
   | CheckpointSessionNotFoundError
   | CheckpointInvariantError;

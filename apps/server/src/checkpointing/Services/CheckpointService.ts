@@ -1,7 +1,7 @@
 /**
  * CheckpointService - Application orchestrator for checkpoint workflows.
  *
- * Coordinates `CheckpointStore` (Git refs), `CheckpointCatalog` (metadata), and
+ * Coordinates `CheckpointStore` (Git refs), `CheckpointRepository` (metadata), and
  * provider timeline operations resolved through `ProviderSessionDirectory` and
  * `ProviderAdapterRegistry` (read/rollback/hasSession on adapters).
  *
@@ -45,7 +45,9 @@ export interface CheckpointServiceShape {
   /**
    * Capture the current thread turn into checkpoint refs/metadata.
    */
-  readonly captureCurrentTurn: (input: CaptureCurrentTurnInput) => Effect.Effect<void, CheckpointServiceError>;
+  readonly captureCurrentTurn: (
+    input: CaptureCurrentTurnInput,
+  ) => Effect.Effect<void, CheckpointServiceError>;
 
   /**
    * List checkpoints for a provider session.
