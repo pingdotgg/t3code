@@ -131,7 +131,7 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
       }
 
       const assistantDeltas: string[] = [];
-      let hasCompletedEvent = false;
+      const deferredTurnCompletedEvents: ProviderRuntimeEvent[] = [];
       for (const fixtureEvent of response.events) {
         const rawEvent: Record<string, unknown> = {
           ...(fixtureEvent as Record<string, unknown>),
@@ -152,7 +152,8 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
           assistantDeltas.push(runtimeEvent.delta);
         }
         if (runtimeEvent.type === "turn.completed") {
-          hasCompletedEvent = true;
+          deferredTurnCompletedEvents.push(runtimeEvent);
+          continue;
         }
 
         yield* emit(runtimeEvent);
@@ -182,7 +183,7 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
         turns: [...state.snapshot.turns, nextTurn],
       };
 
-      if (!hasCompletedEvent) {
+      if (deferredTurnCompletedEvents.length === 0) {
         yield* emit({
           type: "turn.completed",
           eventId: randomUUID(),
@@ -193,6 +194,10 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
           turnId,
           status: "completed",
         });
+      } else {
+        for (const completedEvent of deferredTurnCompletedEvents) {
+          yield* emit(completedEvent);
+        }
       }
 
       return {

@@ -3,15 +3,18 @@ import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 
-import { Effect, Layer, ManagedRuntime } from "effect";
+import { Effect, Layer, ManagedRuntime, PubSub, Stream } from "effect";
 import { describe, expect, it, afterEach, vi } from "vitest";
 import { createServer } from "./wsServer";
 import WebSocket from "ws";
 
 import {
   DEFAULT_TERMINAL_ID,
+  ORCHESTRATION_WS_CHANNELS,
+  ORCHESTRATION_WS_METHODS,
   WS_CHANNELS,
   WS_METHODS,
+  type ProviderRuntimeEvent,
   type KeybindingsConfig,
   type ResolvedKeybindingsConfig,
   type WsPush,
@@ -33,6 +36,7 @@ import { ProjectRepositoryLive } from "./persistence/Layers/Projects";
 import { makeSqlitePersistenceLive, SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
 import { NodeServices } from "@effect/platform-node";
 import { SqlClient } from "effect/unstable/sql";
+import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
 
 interface PendingMessages {
   queue: unknown[];
@@ -200,6 +204,28 @@ async function sendRequest(ws: WebSocket, method: string, params?: unknown): Pro
   }
 }
 
+async function waitForPush(
+  ws: WebSocket,
+  channel: string,
+  predicate?: (push: WsPush) => boolean,
+  maxMessages = 120,
+): Promise<WsPush> {
+  const take = async (remaining: number): Promise<WsPush> => {
+    if (remaining <= 0) {
+      throw new Error(`Timed out waiting for push on ${channel}`);
+    }
+    const message = (await waitForMessage(ws)) as WsPush;
+    if (message.type !== "push" || message.channel !== channel) {
+      return take(remaining - 1);
+    }
+    if (!predicate || predicate(message)) {
+      return message;
+    }
+    return take(remaining - 1);
+  };
+  return take(maxMessages);
+}
+
 function compileKeybindings(bindings: KeybindingsConfig): ResolvedKeybindingsConfig {
   const resolved: ResolvedKeybindingsConfig = [];
   for (const binding of bindings) {
@@ -244,6 +270,7 @@ describe("WebSocket Server", () => {
       devUrl?: string;
       authToken?: string;
       stateDir?: string;
+      providerLayer?: Layer.Layer<ProviderService, unknown>;
       gitManager?: {
         status: (input: { cwd: string }) => Promise<unknown>;
         runStackedAction: (input: { cwd: string; action: string }) => Promise<unknown>;
@@ -259,6 +286,7 @@ describe("WebSocket Server", () => {
       persistenceLayer: options.persistenceLayer ?? SqlitePersistenceMemory,
       ...(options.devUrl ? { devUrl: options.devUrl } : {}),
       ...(options.authToken ? { authToken: options.authToken } : {}),
+      ...(options.providerLayer ? { providerLayer: options.providerLayer } : {}),
       ...(options.gitManager ? { gitManager: options.gitManager as never } : {}),
       ...(options.terminalManager ? { terminalManager: options.terminalManager } : {}),
     });
@@ -666,6 +694,99 @@ describe("WebSocket Server", () => {
     });
     expect(diffResponse.result).toBeUndefined();
     expect(diffResponse.error?.message).toContain("Unknown provider session");
+  });
+
+  it("keeps orchestration domain push behavior for provider runtime events", async () => {
+    const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
+    const emitRuntimeEvent = (event: ProviderRuntimeEvent) => {
+      Effect.runSync(PubSub.publish(runtimeEventPubSub, event));
+    };
+    const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
+    const providerService: ProviderServiceShape = {
+      startSession: () => unsupported(),
+      sendTurn: () => unsupported(),
+      interruptTurn: () => unsupported(),
+      respondToRequest: () => unsupported(),
+      stopSession: () => unsupported(),
+      listSessions: () => Effect.succeed([]),
+      listCheckpoints: () => unsupported(),
+      getCheckpointDiff: (input) =>
+        Effect.succeed({
+          threadId: "thread-1",
+          fromTurnCount: input.fromTurnCount,
+          toTurnCount: input.toTurnCount,
+          diff: "",
+        }),
+      revertToCheckpoint: () => unsupported(),
+      stopAll: () => Effect.void,
+      streamEvents: Stream.fromPubSub(runtimeEventPubSub),
+    };
+    const providerLayer = Layer.succeed(ProviderService, providerService);
+
+    server = createTestServer({
+      cwd: "/test",
+      providerLayer,
+    });
+    await server.start();
+    const addr = server.httpServer.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const createdAt = new Date().toISOString();
+    const createThreadResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "thread.create",
+      commandId: "cmd-ws-runtime-thread-create",
+      threadId: "thread-1",
+      projectId: "project-1",
+      title: "Thread 1",
+      model: "gpt-5-codex",
+      branch: null,
+      worktreePath: null,
+      createdAt,
+    });
+    expect(createThreadResponse.error).toBeUndefined();
+
+    const setSessionResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "thread.session",
+      commandId: "cmd-ws-runtime-session-set",
+      threadId: "thread-1",
+      session: {
+        sessionId: "sess-test",
+        provider: "codex",
+        status: "ready",
+        threadId: "thread-1",
+        activeTurnId: null,
+        createdAt,
+        updatedAt: createdAt,
+        lastError: null,
+      },
+      createdAt,
+    });
+    expect(setSessionResponse.error).toBeUndefined();
+
+    emitRuntimeEvent({
+      type: "message.delta",
+      eventId: "evt-ws-runtime-message-delta",
+      provider: "codex",
+      sessionId: "sess-test",
+      createdAt: new Date().toISOString(),
+      turnId: "turn-1",
+      itemId: "item-1",
+      delta: "hello from runtime",
+    });
+
+    const domainPush = await waitForPush(ws, ORCHESTRATION_WS_CHANNELS.domainEvent, (push) => {
+      const event = push.data as { type?: string; payload?: { id?: string; text?: string } };
+      return event.type === "message.sent" && event.payload?.id === "assistant:item-1";
+    });
+
+    const domainEvent = domainPush.data as { type: string; payload: { id: string; text: string } };
+    expect(domainEvent.type).toBe("message.sent");
+    expect(domainEvent.payload.id).toBe("assistant:item-1");
+    expect(domainEvent.payload.text).toBe("hello from runtime");
   });
 
   it("routes terminal RPC methods and broadcasts terminal events", async () => {
