@@ -158,7 +158,7 @@ export type ProjectRepositoryError =
   | ProjectPathMissingError
   | ProjectNotFoundError;
 
-export type OrchestrationEventRepositoryError =
+export type OrchestrationEventStoreError =
   | PersistenceSqlError
   | PersistenceDecodeError
   | PersistenceSerializationError;

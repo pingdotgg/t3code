@@ -2,19 +2,19 @@ import type { OrchestrationEvent } from "@t3tools/contracts";
 import { OrchestrationEventSchema } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Schema, Stream } from "effect";
 
 import {
   toPersistenceDecodeCauseError,
   toPersistenceDecodeError,
   toPersistenceSerializationError,
   toPersistenceSqlError,
-  type OrchestrationEventRepositoryError,
+  type OrchestrationEventStoreError,
 } from "../Errors.ts";
 import {
-  OrchestrationEventRepository,
-  type OrchestrationEventRepositoryShape,
-} from "../Services/OrchestrationEvents.ts";
+  OrchestrationEventStore,
+  type OrchestrationEventStoreShape,
+} from "../Services/OrchestrationEventStore.ts";
 
 const decodeEvent = Schema.decodeUnknownEffect(OrchestrationEventSchema);
 
@@ -43,11 +43,13 @@ const ReadFromSequenceRequestSchema = Schema.Struct({
   sequenceExclusive: Schema.Number,
   limit: Schema.Number,
 });
+const DEFAULT_READ_FROM_SEQUENCE_LIMIT = 1_000;
+const READ_PAGE_SIZE = 500;
 
 function eventRowToOrchestrationEvent(
   row: Schema.Schema.Type<typeof EventRowSchema>,
   operation: string,
-): Effect.Effect<OrchestrationEvent, OrchestrationEventRepositoryError> {
+): Effect.Effect<OrchestrationEvent, OrchestrationEventStoreError> {
   return Effect.try({
     try: () => JSON.parse(row.payloadJson) as unknown,
     catch: toPersistenceDecodeCauseError(`${operation}:parsePayloadJson`),
@@ -67,7 +69,7 @@ function eventRowToOrchestrationEvent(
   );
 }
 
-const makeRepository = Effect.gen(function* () {
+const makeEventStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   const appendEventRow = SqlSchema.findOne({
@@ -126,10 +128,10 @@ const makeRepository = Effect.gen(function* () {
       `,
   });
 
-  const append: OrchestrationEventRepositoryShape["append"] = (event) =>
+  const append: OrchestrationEventStoreShape["append"] = (event) =>
     Effect.try({
       try: () => JSON.stringify(event.payload),
-      catch: toPersistenceSerializationError("OrchestrationEventRepository.append:encodePayload"),
+      catch: toPersistenceSerializationError("OrchestrationEventStore.append:encodePayload"),
     }).pipe(
       Effect.flatMap((payloadJson) =>
         appendEventRow({
@@ -141,38 +143,68 @@ const makeRepository = Effect.gen(function* () {
           commandId: event.commandId,
           payloadJson,
         }).pipe(
-          Effect.mapError(toPersistenceSqlError("OrchestrationEventRepository.append:insert")),
+          Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.append:insert")),
           Effect.flatMap((row) =>
-            eventRowToOrchestrationEvent(row, "OrchestrationEventRepository.append:rowToEvent"),
+            eventRowToOrchestrationEvent(row, "OrchestrationEventStore.append:rowToEvent"),
           ),
         ),
       ),
     );
 
-  const readFromSequence: OrchestrationEventRepositoryShape["readFromSequence"] = (
+  const readFromSequence: OrchestrationEventStoreShape["readFromSequence"] = (
     sequenceExclusive,
-    limit = 1_000,
-  ) =>
-    readEventRowsFromSequence({ sequenceExclusive, limit }).pipe(
-      Effect.mapError(toPersistenceSqlError("OrchestrationEventRepository.readFromSequence:query")),
-      Effect.flatMap((rows) =>
-        Effect.forEach(rows, (row) =>
-          eventRowToOrchestrationEvent(
-            row,
-            "OrchestrationEventRepository.readFromSequence:rowToEvent",
+    limit = DEFAULT_READ_FROM_SEQUENCE_LIMIT,
+  ) => {
+    const normalizedLimit = Math.max(0, Math.floor(limit));
+    if (normalizedLimit === 0) {
+      return Stream.empty;
+    }
+    const readPage = (cursor: number, remaining: number): Stream.Stream<
+      OrchestrationEvent,
+      OrchestrationEventStoreError
+    > =>
+      Stream.fromEffect(
+        readEventRowsFromSequence({
+          sequenceExclusive: cursor,
+          limit: Math.min(remaining, READ_PAGE_SIZE),
+        }).pipe(
+          Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.readFromSequence:query")),
+          Effect.flatMap((rows) =>
+            Effect.forEach(rows, (row) =>
+              eventRowToOrchestrationEvent(
+                row,
+                "OrchestrationEventStore.readFromSequence:rowToEvent",
+              ),
+            ),
           ),
         ),
-      ),
-    );
+      ).pipe(
+        Stream.flatMap((events) => {
+          if (events.length === 0) {
+            return Stream.empty;
+          }
+          const nextRemaining = remaining - events.length;
+          if (nextRemaining <= 0) {
+            return Stream.fromIterable(events);
+          }
+          return Stream.concat(
+            Stream.fromIterable(events),
+            readPage(events[events.length - 1]!.sequence, nextRemaining),
+          );
+        }),
+      );
+
+    return readPage(sequenceExclusive, normalizedLimit);
+  };
 
   return {
     append,
     readFromSequence,
     readAll: () => readFromSequence(0, Number.MAX_SAFE_INTEGER),
-  } satisfies OrchestrationEventRepositoryShape;
+  } satisfies OrchestrationEventStoreShape;
 });
 
-export const OrchestrationEventRepositoryLive = Layer.effect(
-  OrchestrationEventRepository,
-  makeRepository,
+export const OrchestrationEventStoreLive = Layer.effect(
+  OrchestrationEventStore,
+  makeEventStore,
 );

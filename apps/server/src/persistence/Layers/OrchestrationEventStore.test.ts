@@ -1,25 +1,25 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Stream } from "effect";
 import { assert, it } from "@effect/vitest";
 
-import { OrchestrationEventRepository } from "../Services/OrchestrationEvents.ts";
+import { OrchestrationEventStore } from "../Services/OrchestrationEventStore.ts";
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
-import { OrchestrationEventRepositoryLive } from "./OrchestrationEvents.ts";
+import { OrchestrationEventStoreLive } from "./OrchestrationEventStore.ts";
 import { NodeServices } from "@effect/platform-node";
 
 const layer = it.layer(
   Layer.mergeAll(
-    Layer.provide(OrchestrationEventRepositoryLive, SqlitePersistenceMemory),
+    Layer.provide(OrchestrationEventStoreLive, SqlitePersistenceMemory),
     NodeServices.layer,
   ),
 );
 
-layer("OrchestrationEventRepository", (it) => {
+layer("OrchestrationEventStore", (it) => {
   it.effect("stores and replays events", () =>
     Effect.gen(function* () {
       const createdAt = new Date().toISOString();
 
-      const repository = yield* OrchestrationEventRepository;
-      const saved = yield* repository.append({
+      const eventStore = yield* OrchestrationEventStore;
+      const saved = yield* eventStore.append({
         eventId: "event-1",
         type: "thread.created",
         aggregateType: "thread",
@@ -30,7 +30,9 @@ layer("OrchestrationEventRepository", (it) => {
       });
       assert.equal(saved.sequence, 1);
 
-      const replayed = yield* repository.readFromSequence(0);
+      const replayed = yield* Stream.runCollect(eventStore.readFromSequence(0)).pipe(
+        Effect.map(Array.from),
+      );
       assert.deepEqual(replayed, [saved]);
     }),
   );

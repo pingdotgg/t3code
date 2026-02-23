@@ -3,18 +3,18 @@ import { Effect, Layer, ManagedRuntime, Queue, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
-  OrchestrationEventRepository,
-  type OrchestrationEventRepositoryShape,
-} from "../persistence/Services/OrchestrationEvents.ts";
+  OrchestrationEventStore,
+  type OrchestrationEventStoreShape,
+} from "../persistence/Services/OrchestrationEventStore.ts";
 import { PersistenceSqlError } from "../persistence/Errors.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import { OrchestrationEngineLive } from "./Layer.ts";
-import { OrchestrationEngineService } from "./Service.ts";
-import { OrchestrationEventRepositoryLive } from "../persistence/Layers/OrchestrationEvents.ts";
+import { OrchestrationEngineLive } from "./Layers/OrchestrationEngine.ts";
+import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
+import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
 
 export async function createOrchestrationSystem() {
   const orchestrationLayer = OrchestrationEngineLive.pipe(
-    Layer.provide(OrchestrationEventRepositoryLive),
+    Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(SqlitePersistenceMemory),
   );
   const runtime = ManagedRuntime.make(orchestrationLayer);
@@ -27,7 +27,7 @@ export async function createOrchestrationSystem() {
 }
 
 describe("OrchestrationEngine", () => {
-  it("returns deterministic snapshots for repeated reads", async () => {
+  it("returns deterministic read models for repeated reads", async () => {
     const createdAt = new Date().toISOString();
     const projectId = "project-1";
     const threadId = "thread-1";
@@ -59,9 +59,9 @@ describe("OrchestrationEngine", () => {
         createdAt,
       }),
     );
-    const snapshotA = await system.run(engine.getSnapshot());
-    const snapshotB = await system.run(engine.getSnapshot());
-    expect(snapshotB).toEqual(snapshotA);
+    const readModelA = await system.run(engine.getReadModel());
+    const readModelB = await system.run(engine.getReadModel());
+    expect(readModelB).toEqual(readModelA);
     await system.dispose();
   });
 
@@ -89,7 +89,11 @@ describe("OrchestrationEngine", () => {
         createdAt: new Date().toISOString(),
       }),
     );
-    const events = await system.run(engine.replayEvents(0));
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
     expect(events.length).toBe(2);
     expect(events[0]?.type).toBe("thread.created");
     expect(events[1]?.type).toBe("thread.deleted");
@@ -167,7 +171,7 @@ describe("OrchestrationEngine", () => {
       }),
     );
 
-    const firstThread = (await system.run(engine.getSnapshot())).threads.find(
+    const firstThread = (await system.run(engine.getReadModel())).threads.find(
       (thread) => thread.id === "thread-turn-diff",
     );
     expect(firstThread?.turnDiffSummaries).toEqual([
@@ -289,7 +293,7 @@ describe("OrchestrationEngine", () => {
       }),
     );
 
-    const thread = (await system.run(engine.getSnapshot())).threads.find(
+    const thread = (await system.run(engine.getReadModel())).threads.find(
       (entry) => entry.id === "thread-revert",
     );
     expect(thread?.messages.map((message) => message.id)).toEqual(["user-1", "assistant:turn-1"]);
@@ -299,20 +303,20 @@ describe("OrchestrationEngine", () => {
   });
 
   it("allows stop to be called multiple times", async () => {
-    const inMemoryStore: OrchestrationEventRepositoryShape = {
+    const inMemoryStore: OrchestrationEventStoreShape = {
       append(event) {
         return Effect.succeed({ ...event, sequence: 1 });
       },
       readFromSequence() {
-        return Effect.succeed([]);
+        return Stream.empty;
       },
       readAll() {
-        return Effect.succeed([]);
+        return Stream.empty;
       },
     };
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
-        Layer.provide(Layer.succeed(OrchestrationEventRepository, inMemoryStore)),
+        Layer.provide(Layer.succeed(OrchestrationEventStore, inMemoryStore)),
       ),
     );
     await runtime.runPromise(Effect.service(OrchestrationEngineService));
@@ -325,7 +329,7 @@ describe("OrchestrationEngine", () => {
     let nextSequence = 1;
     let shouldFailFirstAppend = true;
 
-    const flakyStore: OrchestrationEventRepositoryShape = {
+    const flakyStore: OrchestrationEventStoreShape = {
       append(event) {
         if (shouldFailFirstAppend) {
           shouldFailFirstAppend = false;
@@ -345,16 +349,16 @@ describe("OrchestrationEngine", () => {
         return Effect.succeed(savedEvent);
       },
       readFromSequence(sequenceExclusive) {
-        return Effect.succeed(events.filter((event) => event.sequence > sequenceExclusive));
+        return Stream.fromIterable(events.filter((event) => event.sequence > sequenceExclusive));
       },
       readAll() {
-        return Effect.succeed(events);
+        return Stream.fromIterable(events);
       },
     };
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
-        Layer.provide(Layer.succeed(OrchestrationEventRepository, flakyStore)),
+        Layer.provide(Layer.succeed(OrchestrationEventStore, flakyStore)),
       ),
     );
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
@@ -391,8 +395,69 @@ describe("OrchestrationEngine", () => {
     );
 
     expect(result.sequence).toBe(1);
-    expect((await runtime.runPromise(engine.getSnapshot())).sequence).toBe(1);
+    expect((await runtime.runPromise(engine.getReadModel())).sequence).toBe(1);
 
     await runtime.dispose();
+  });
+
+  it("fails command dispatch when command invariants are violated", async () => {
+    const system = await createOrchestrationSystem();
+    const engine = system.engine;
+    const createdAt = new Date().toISOString();
+
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "message.send",
+          commandId: "cmd-invariant-missing-thread",
+          threadId: "thread-missing",
+          messageId: "msg-missing",
+          role: "user",
+          text: "hello",
+          streaming: false,
+          createdAt,
+        }),
+      ),
+    ).rejects.toThrow("Thread 'thread-missing' does not exist");
+
+    await system.dispose();
+  });
+
+  it("rejects duplicate thread creation", async () => {
+    const system = await createOrchestrationSystem();
+    const engine = system.engine;
+    const createdAt = new Date().toISOString();
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: "cmd-thread-duplicate-1",
+        threadId: "thread-duplicate",
+        projectId: "project-duplicate",
+        title: "duplicate",
+        model: "gpt-5-codex",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: "cmd-thread-duplicate-2",
+          threadId: "thread-duplicate",
+          projectId: "project-duplicate",
+          title: "duplicate",
+          model: "gpt-5-codex",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        }),
+      ),
+    ).rejects.toThrow("already exists");
+
+    await system.dispose();
   });
 });

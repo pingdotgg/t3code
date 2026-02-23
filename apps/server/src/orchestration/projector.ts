@@ -17,7 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { Effect, Schema } from "effect";
 
-import { toReducerDecodeError, type OrchestrationReducerDecodeError } from "./Errors.ts";
+import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 
@@ -34,10 +34,10 @@ function decodeForEvent<A>(
   value: unknown,
   eventType: string,
   field: string,
-): Effect.Effect<A, OrchestrationReducerDecodeError> {
+): Effect.Effect<A, OrchestrationProjectorDecodeError> {
   return Schema.decodeUnknownEffect(schema)(value).pipe(
-    Effect.mapError(toReducerDecodeError(`${eventType}:${field}`)),
-  ) as Effect.Effect<A, OrchestrationReducerDecodeError>;
+    Effect.mapError(toProjectorDecodeError(`${eventType}:${field}`)),
+  ) as Effect.Effect<A, OrchestrationProjectorDecodeError>;
 }
 
 const ThreadCreatedPayloadSchema = Schema.Struct({
@@ -104,10 +104,10 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   };
 }
 
-export function reduceEvent(
+export function projectEvent(
   model: OrchestrationReadModel,
   event: OrchestrationEvent,
-): Effect.Effect<OrchestrationReadModel, OrchestrationReducerDecodeError> {
+): Effect.Effect<OrchestrationReadModel, OrchestrationProjectorDecodeError> {
   const nextBase: OrchestrationReadModel = {
     ...model,
     sequence: event.sequence,

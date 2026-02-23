@@ -36,13 +36,16 @@ import {
 import { TerminalManager } from "./terminalManager";
 import { loadResolvedKeybindingsConfig, upsertKeybindingRule } from "./keybindings";
 import { searchWorkspaceEntries } from "./workspaceEntries";
-import { OrchestrationEngineLive } from "./orchestration/Layer";
-import { OrchestrationEngineService, type OrchestrationEngineShape } from "./orchestration/Service";
+import { OrchestrationEngineLive } from "./orchestration/Layers/OrchestrationEngine";
+import {
+  OrchestrationEngineService,
+  type OrchestrationEngineShape,
+} from "./orchestration/Services/OrchestrationEngine";
 import { ProjectRepositoryLive } from "./persistence/Layers/Projects";
 import { makeSqlitePersistenceLive } from "./persistence/Layers/Sqlite";
 import { ProjectRepository, type ProjectRepositoryShape } from "./persistence/Services/Projects";
 import assert from "node:assert";
-import { OrchestrationEventRepositoryLive } from "./persistence/Layers/OrchestrationEvents";
+import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
 import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
@@ -358,8 +361,8 @@ export function createServer(options: ServerOptions) {
 
     const processEvent = (event: ProviderRuntimeEvent) =>
       Effect.gen(function* () {
-        const snapshot = yield* orchestrationEngine.getSnapshot();
-        const thread = snapshot.threads.find(
+        const readModel = yield* orchestrationEngine.getReadModel();
+        const thread = readModel.threads.find(
           (entry) => entry.session?.sessionId === event.sessionId,
         );
         if (!thread) return;
@@ -735,8 +738,8 @@ export function createServer(options: ServerOptions) {
         const params = request.params as { sessionId?: string };
         const sessionId = params.sessionId;
         if (typeof sessionId === "string") {
-          const snapshot = await effectRuntime.runPromise(orchestrationEngine.getSnapshot());
-          const thread = snapshot.threads.find((entry) => entry.session?.sessionId === sessionId);
+          const readModel = await effectRuntime.runPromise(orchestrationEngine.getReadModel());
+          const thread = readModel.threads.find((entry) => entry.session?.sessionId === sessionId);
           if (thread) {
             const now = new Date().toISOString();
             await effectRuntime.runPromise(
@@ -909,7 +912,7 @@ export function createServer(options: ServerOptions) {
         };
 
       case ORCHESTRATION_WS_METHODS.getSnapshot:
-        return effectRuntime.runPromise(orchestrationEngine.getSnapshot());
+        return effectRuntime.runPromise(orchestrationEngine.getReadModel());
 
       case ORCHESTRATION_WS_METHODS.dispatchCommand:
         orchestrationCommandLogger?.write({
@@ -917,21 +920,23 @@ export function createServer(options: ServerOptions) {
           requestId: request.id,
           command: request.params,
         });
-        return effectRuntime.runPromise(orchestrationEngine.dispatchUnknown(request.params));
+        return effectRuntime.runPromise(orchestrationEngine.dispatchUnknownCommand(request.params));
 
       case ORCHESTRATION_WS_METHODS.replayEvents:
         return effectRuntime.runPromise(
-          orchestrationEngine.replayEvents(
-            Math.max(
-              0,
-              Math.floor(
-                Number(
-                  (request.params as { fromSequenceExclusive?: number } | undefined)
-                    ?.fromSequenceExclusive ?? 0,
+          Stream.runCollect(
+            orchestrationEngine.readEvents(
+              Math.max(
+                0,
+                Math.floor(
+                  Number(
+                    (request.params as { fromSequenceExclusive?: number } | undefined)
+                      ?.fromSequenceExclusive ?? 0,
+                  ),
                 ),
               ),
             ),
-          ),
+          ).pipe(Effect.map((events) => Array.from(events))),
         );
 
       default:
@@ -952,7 +957,7 @@ export function createServer(options: ServerOptions) {
     const persistenceLayer = customPersistenceLayer ?? makeSqlitePersistenceLive(dbPath);
     const orchestrationLayer = Layer.provide(
       OrchestrationEngineLive,
-      OrchestrationEventRepositoryLive,
+      OrchestrationEventStoreLive,
     );
     const codexAdapterLayer = makeCodexAdapterLive({
       nativeEventLogPath: path.join(providerLogsDir, "provider-native.ndjson"),

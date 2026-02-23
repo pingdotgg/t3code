@@ -2,9 +2,9 @@ import type { OrchestrationEvent } from "@t3tools/contracts";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { createEmptyReadModel, reduceEvent } from "./reducer.ts";
+import { createEmptyReadModel, projectEvent } from "./projector.ts";
 
-describe("orchestration reducer", () => {
+describe("orchestration projector", () => {
   it("applies thread.created events using runtime schema decoding", async () => {
     const now = new Date().toISOString();
     const model = createEmptyReadModel(now);
@@ -28,7 +28,7 @@ describe("orchestration reducer", () => {
       },
     };
 
-    const next = await Effect.runPromise(reduceEvent(model, event));
+    const next = await Effect.runPromise(projectEvent(model, event));
     expect(next.sequence).toBe(1);
     expect(next.threads).toEqual([
       {
@@ -73,10 +73,10 @@ describe("orchestration reducer", () => {
       },
     };
 
-    await expect(Effect.runPromise(reduceEvent(model, event))).rejects.toBeDefined();
+    await expect(Effect.runPromise(projectEvent(model, event))).rejects.toBeDefined();
   });
 
-  it("keeps reducer forward-compatible for unknown event types", async () => {
+  it("keeps projector forward-compatible for unknown event types", async () => {
     const now = new Date().toISOString();
     const model = createEmptyReadModel(now);
     const event: OrchestrationEvent = {
@@ -90,7 +90,7 @@ describe("orchestration reducer", () => {
       payload: { test: true },
     };
 
-    const next = await Effect.runPromise(reduceEvent(model, event));
+    const next = await Effect.runPromise(projectEvent(model, event));
     expect(next.sequence).toBe(7);
     expect(next.updatedAt).toBe("2026-01-01T00:00:00.000Z");
     expect(next.threads).toEqual([]);
@@ -168,9 +168,9 @@ describe("orchestration reducer", () => {
       },
     };
 
-    const afterCreate = await Effect.runPromise(reduceEvent(model, createdEvent));
-    const afterRunning = await Effect.runPromise(reduceEvent(afterCreate, runningSessionEvent));
-    const afterReady = await Effect.runPromise(reduceEvent(afterRunning, readySessionEvent));
+    const afterCreate = await Effect.runPromise(projectEvent(model, createdEvent));
+    const afterRunning = await Effect.runPromise(projectEvent(afterCreate, runningSessionEvent));
+    const afterReady = await Effect.runPromise(projectEvent(afterRunning, readySessionEvent));
     const thread = afterReady.threads[0];
 
     expect(thread?.latestTurnId).toBe("turn-1");
@@ -241,9 +241,9 @@ describe("orchestration reducer", () => {
       },
     };
 
-    const afterCreate = await Effect.runPromise(reduceEvent(model, createdEvent));
-    const afterDelta = await Effect.runPromise(reduceEvent(afterCreate, deltaEvent));
-    const afterComplete = await Effect.runPromise(reduceEvent(afterDelta, completionEvent));
+    const afterCreate = await Effect.runPromise(projectEvent(model, createdEvent));
+    const afterDelta = await Effect.runPromise(projectEvent(afterCreate, deltaEvent));
+    const afterComplete = await Effect.runPromise(projectEvent(afterDelta, completionEvent));
     const message = afterComplete.threads[0]?.messages[0];
 
     expect(message).toEqual({

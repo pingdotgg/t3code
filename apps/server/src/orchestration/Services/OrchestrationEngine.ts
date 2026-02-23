@@ -2,7 +2,7 @@
  * OrchestrationEngineService - Service interface for orchestration command handling.
  *
  * Owns command validation/dispatch and in-memory read-model updates backed by
- * `OrchestrationEventRepository` persistence. It does not own provider process
+ * `OrchestrationEventStore` persistence. It does not own provider process
  * management or transport concerns (e.g. websocket request parsing).
  *
  * Uses Effect `ServiceMap.Service` for dependency injection. Command dispatch,
@@ -18,26 +18,26 @@ import type {
 import { ServiceMap } from "effect";
 import type { Effect, Stream } from "effect";
 
-import type { OrchestrationDispatchError, OrchestrationEngineError } from "./Errors.ts";
-import type { OrchestrationEventRepositoryError } from "../persistence/Errors.ts";
+import type { OrchestrationDispatchError, OrchestrationEngineError } from "../Errors.ts";
+import type { OrchestrationEventStoreError } from "../../persistence/Errors.ts";
 
 export interface OrchestrationEngineShape {
   /**
-   * Read the current in-memory orchestration snapshot.
+   * Read the current in-memory orchestration read model.
    *
    * @returns Effect containing the latest read model.
    */
-  readonly getSnapshot: () => Effect.Effect<OrchestrationReadModel, never, never>;
+  readonly getReadModel: () => Effect.Effect<OrchestrationReadModel, never, never>;
 
   /**
    * Replay persisted orchestration events from an exclusive sequence cursor.
    *
    * @param fromSequenceExclusive - Sequence cursor (exclusive).
-   * @returns Effect containing ordered events.
+   * @returns Stream containing ordered events.
    */
-  readonly replayEvents: (
+  readonly readEvents: (
     fromSequenceExclusive: number,
-  ) => Effect.Effect<OrchestrationEvent[], OrchestrationEventRepositoryError, never>;
+  ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError, never>;
 
   /**
    * Validate and dispatch an unknown command payload.
@@ -47,7 +47,7 @@ export interface OrchestrationEngineShape {
    * @param command - Unknown command payload.
    * @returns Effect containing the sequence of the persisted event.
    */
-  readonly dispatchUnknown: (
+  readonly dispatchUnknownCommand: (
     command: unknown,
   ) => Effect.Effect<{ sequence: number }, OrchestrationEngineError, never>;
 
@@ -74,7 +74,7 @@ export interface OrchestrationEngineShape {
  * ```ts
  * const program = Effect.gen(function* () {
  *   const engine = yield* OrchestrationEngineService
- *   return yield* engine.getSnapshot()
+ *   return yield* engine.getReadModel()
  * })
  * ```
  */

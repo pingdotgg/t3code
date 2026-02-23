@@ -3,28 +3,31 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "@t3tools/contracts";
-import { OrchestrationCommandSchema } from "@t3tools/contracts";
-import { Deferred, Effect, Layer, PubSub, Queue, Schema, Stream } from "effect";
+import { Effect } from "effect";
 
-import { createLogger } from "../logger.ts";
-import { OrchestrationEventRepository } from "../persistence/Services/OrchestrationEvents.ts";
+import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
-  toOrchestrationCommandDecodeError,
-  toOrchestrationJsonParseError,
-  type OrchestrationDispatchError,
-} from "./Errors.ts";
-import { createEmptyReadModel, reduceEvent } from "./reducer.ts";
-import { OrchestrationEngineService, type OrchestrationEngineShape } from "./Service.ts";
+  requireNonNegativeInteger,
+  requireThread,
+  requireThreadAbsent,
+} from "./commandInvariants.ts";
 
-interface CommandEnvelope {
-  command: OrchestrationCommand;
-  result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
-}
-
-function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEvent, "sequence"> {
+export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
+  command,
+  readModel,
+}: {
+  readonly command: OrchestrationCommand;
+  readonly readModel: OrchestrationReadModel;
+}): Effect.fn.Return<Omit<OrchestrationEvent, "sequence">, OrchestrationCommandInvariantError> {
   const eventId = crypto.randomUUID();
+
   switch (command.type) {
     case "thread.create":
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
       return {
         eventId,
         type: "thread.created",
@@ -44,6 +47,11 @@ function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEve
         },
       };
     case "thread.delete":
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
       return {
         eventId,
         type: "thread.deleted",
@@ -57,6 +65,11 @@ function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEve
         },
       };
     case "thread.meta.update":
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
       return {
         eventId,
         type: "thread.meta-updated",
@@ -74,6 +87,11 @@ function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEve
         },
       };
     case "message.send":
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
       return {
         eventId,
         type: "message.sent",
@@ -91,6 +109,11 @@ function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEve
         },
       };
     case "thread.session":
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
       return {
         eventId,
         type: "thread.session-set",
@@ -121,6 +144,11 @@ function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEve
         },
       };
     case "thread.turnDiff.complete":
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
       return {
         eventId,
         type: "thread.turn-diff-completed",
@@ -143,6 +171,11 @@ function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEve
         },
       };
     case "thread.activity.append":
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
       return {
         eventId,
         type: "thread.activity-appended",
@@ -156,6 +189,21 @@ function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEve
         },
       };
     case "thread.revert":
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      yield* requireNonNegativeInteger({
+        commandType: command.type,
+        field: "turnCount",
+        value: command.turnCount,
+      });
+      yield* requireNonNegativeInteger({
+        commandType: command.type,
+        field: "messageCount",
+        value: command.messageCount,
+      });
       return {
         eventId,
         type: "thread.reverted",
@@ -169,90 +217,13 @@ function mapCommandToEvent(command: OrchestrationCommand): Omit<OrchestrationEve
           messageCount: command.messageCount,
         },
       };
+    default: {
+      command satisfies never;
+      const fallback = command as any;
+      return yield* new OrchestrationCommandInvariantError({
+        commandType: fallback.type,
+        detail: `Unknown command type: ${fallback.type}`,
+      });
+    }
   }
-}
-
-const decodeUnknownCommand = Schema.decodeUnknownEffect(OrchestrationCommandSchema);
-
-const makeOrchestrationEngine = Effect.gen(function* () {
-  const logger = createLogger("orchestration");
-  const eventStore = yield* OrchestrationEventRepository;
-
-  let readModel = createEmptyReadModel(new Date().toISOString());
-
-  const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
-  const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
-
-  const processEnvelope = (envelope: CommandEnvelope): Effect.Effect<void> =>
-    Effect.gen(function* () {
-      const eventBase = mapCommandToEvent(envelope.command);
-      const savedEvent = yield* eventStore.append(eventBase);
-      readModel = yield* reduceEvent(readModel, savedEvent);
-      yield* PubSub.publish(eventPubSub, savedEvent);
-
-      yield* Deferred.succeed(envelope.result, { sequence: savedEvent.sequence });
-    }).pipe(Effect.catch((error) => Deferred.fail(envelope.result, error).pipe(Effect.asVoid)));
-
-  const bootstrapReadModel: Effect.Effect<void, OrchestrationDispatchError> = Effect.gen(
-    function* () {
-      const existingEvents = yield* eventStore.readAll();
-      for (const event of existingEvents) {
-        readModel = yield* reduceEvent(readModel, event);
-      }
-    },
-  );
-
-  yield* bootstrapReadModel;
-
-  const worker = Effect.forever(Queue.take(commandQueue).pipe(Effect.flatMap(processEnvelope)));
-  yield* Effect.forkScoped(worker);
-  logger.info("orchestration engine started", {
-    sequence: readModel.sequence,
-  });
-
-  const getSnapshot: OrchestrationEngineShape["getSnapshot"] = () =>
-    Effect.sync((): OrchestrationReadModel => readModel);
-
-  const replayEvents: OrchestrationEngineShape["replayEvents"] = (fromSequenceExclusive) =>
-    eventStore.readFromSequence(fromSequenceExclusive);
-
-  const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
-    Effect.gen(function* () {
-      const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
-      yield* Queue.offer(commandQueue, { command, result });
-      return yield* Deferred.await(result);
-    });
-
-  const dispatchUnknown: OrchestrationEngineShape["dispatchUnknown"] = (command) =>
-    Effect.gen(function* () {
-      const payload =
-        typeof command === "string"
-          ? yield* Effect.try({
-              try: () => JSON.parse(command) as unknown,
-              catch: toOrchestrationJsonParseError,
-            })
-          : command;
-
-      const decoded = yield* decodeUnknownCommand(payload).pipe(
-        Effect.mapError(toOrchestrationCommandDecodeError),
-      );
-
-      return yield* dispatch(decoded);
-    });
-
-  const streamDomainEvents: OrchestrationEngineShape["streamDomainEvents"] =
-    Stream.fromPubSub(eventPubSub);
-
-  return {
-    getSnapshot,
-    replayEvents,
-    dispatchUnknown,
-    dispatch,
-    streamDomainEvents,
-  } satisfies OrchestrationEngineShape;
 });
-
-export const OrchestrationEngineLive = Layer.effect(
-  OrchestrationEngineService,
-  makeOrchestrationEngine,
-);
