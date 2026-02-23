@@ -4,12 +4,11 @@ import type {
   OrchestrationReadModel,
 } from "@t3tools/contracts";
 import { OrchestrationCommandSchema } from "@t3tools/contracts";
-import { Deferred, Effect, Layer, PubSub, Queue, Schema } from "effect";
+import { Deferred, Effect, Layer, PubSub, Queue, Schema, Stream } from "effect";
 
 import { createLogger } from "../logger.ts";
 import { OrchestrationEventRepository } from "../persistence/Services/OrchestrationEvents.ts";
 import {
-  toListenerCallbackError,
   toOrchestrationCommandDecodeError,
   toOrchestrationJsonParseError,
   type OrchestrationDispatchError,
@@ -182,42 +181,14 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   let readModel = createEmptyReadModel(new Date().toISOString());
 
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
-  const readModelPubSub = yield* PubSub.unbounded<OrchestrationReadModel>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
-
-  const readModelListeners = new Set<(snapshot: OrchestrationReadModel) => void>();
-  const domainEventListeners = new Set<(event: OrchestrationEvent) => void>();
-
-  const notifyReadModelListeners = (snapshot: OrchestrationReadModel) =>
-    Effect.forEach(readModelListeners, (listener) =>
-      Effect.try({
-        try: () => listener(snapshot),
-        catch: toListenerCallbackError("read-model"),
-      }),
-    ).pipe(Effect.asVoid);
-
-  const notifyDomainEventListeners = (event: OrchestrationEvent) =>
-    Effect.forEach(domainEventListeners, (listener) =>
-      Effect.try({
-        try: () => listener(event),
-        catch: toListenerCallbackError("domain-event"),
-      }),
-    ).pipe(Effect.asVoid);
 
   const processEnvelope = (envelope: CommandEnvelope): Effect.Effect<void> =>
     Effect.gen(function* () {
       const eventBase = mapCommandToEvent(envelope.command);
       const savedEvent = yield* eventStore.append(eventBase);
       readModel = yield* reduceEvent(readModel, savedEvent);
-
-      const snapshot = readModel;
-      yield* Effect.all([
-        PubSub.publish(eventPubSub, savedEvent),
-        PubSub.publish(readModelPubSub, snapshot),
-      ]);
-
-      yield* notifyDomainEventListeners(savedEvent);
-      yield* notifyReadModelListeners(snapshot);
+      yield* PubSub.publish(eventPubSub, savedEvent);
 
       yield* Deferred.succeed(envelope.result, { sequence: savedEvent.sequence });
     }).pipe(Effect.catch((error) => Deferred.fail(envelope.result, error).pipe(Effect.asVoid)));
@@ -269,29 +240,15 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       return yield* dispatch(decoded);
     });
 
-  const subscribeToReadModel: OrchestrationEngineShape["subscribeToReadModel"] = (callback) =>
-    Effect.sync(() => {
-      readModelListeners.add(callback);
-      return () => {
-        readModelListeners.delete(callback);
-      };
-    });
-
-  const subscribeToDomainEvents: OrchestrationEngineShape["subscribeToDomainEvents"] = (callback) =>
-    Effect.sync(() => {
-      domainEventListeners.add(callback);
-      return () => {
-        domainEventListeners.delete(callback);
-      };
-    });
+  const streamDomainEvents: OrchestrationEngineShape["streamDomainEvents"] =
+    Stream.fromPubSub(eventPubSub);
 
   return {
     getSnapshot,
     replayEvents,
     dispatchUnknown,
     dispatch,
-    subscribeToReadModel,
-    subscribeToDomainEvents,
+    streamDomainEvents,
   } satisfies OrchestrationEngineShape;
 });
 

@@ -95,4 +95,164 @@ describe("orchestration reducer", () => {
     expect(next.updatedAt).toBe("2026-01-01T00:00:00.000Z");
     expect(next.threads).toEqual([]);
   });
+
+  it("tracks latest turn timing from session lifecycle events", async () => {
+    const createdAt = "2026-02-23T08:00:00.000Z";
+    const startedAt = "2026-02-23T08:00:05.000Z";
+    const completedAt = "2026-02-23T08:00:11.250Z";
+    const model = createEmptyReadModel(createdAt);
+
+    const createdEvent: OrchestrationEvent = {
+      sequence: 1,
+      eventId: "thread-created",
+      type: "thread.created",
+      aggregateType: "thread",
+      aggregateId: "thread-1",
+      occurredAt: createdAt,
+      commandId: "cmd-create",
+      payload: {
+        id: "thread-1",
+        projectId: "project-1",
+        title: "demo",
+        model: "gpt-5.3-codex",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+        updatedAt: createdAt,
+      },
+    };
+
+    const runningSessionEvent: OrchestrationEvent = {
+      sequence: 2,
+      eventId: "session-running",
+      type: "thread.session-set",
+      aggregateType: "thread",
+      aggregateId: "thread-1",
+      occurredAt: startedAt,
+      commandId: "cmd-running",
+      payload: {
+        threadId: "thread-1",
+        session: {
+          sessionId: "session-1",
+          status: "running",
+          provider: "codex",
+          threadId: "thread-1",
+          activeTurnId: "turn-1",
+          createdAt,
+          updatedAt: startedAt,
+          lastError: null,
+        },
+      },
+    };
+
+    const readySessionEvent: OrchestrationEvent = {
+      sequence: 3,
+      eventId: "session-ready",
+      type: "thread.session-set",
+      aggregateType: "thread",
+      aggregateId: "thread-1",
+      occurredAt: completedAt,
+      commandId: "cmd-ready",
+      payload: {
+        threadId: "thread-1",
+        session: {
+          sessionId: "session-1",
+          status: "ready",
+          provider: "codex",
+          threadId: "thread-1",
+          activeTurnId: null,
+          createdAt,
+          updatedAt: completedAt,
+          lastError: null,
+        },
+      },
+    };
+
+    const afterCreate = await Effect.runPromise(reduceEvent(model, createdEvent));
+    const afterRunning = await Effect.runPromise(reduceEvent(afterCreate, runningSessionEvent));
+    const afterReady = await Effect.runPromise(reduceEvent(afterRunning, readySessionEvent));
+    const thread = afterReady.threads[0];
+
+    expect(thread?.latestTurnId).toBe("turn-1");
+    expect(thread?.latestTurnStartedAt).toBe(startedAt);
+    expect(thread?.latestTurnCompletedAt).toBe(completedAt);
+    expect(thread?.latestTurnDurationMs).toBe(6250);
+  });
+
+  it("marks assistant messages completed using non-streaming updates", async () => {
+    const createdAt = "2026-02-23T09:00:00.000Z";
+    const deltaAt = "2026-02-23T09:00:01.000Z";
+    const completeAt = "2026-02-23T09:00:03.500Z";
+    const model = createEmptyReadModel(createdAt);
+
+    const createdEvent: OrchestrationEvent = {
+      sequence: 1,
+      eventId: "thread-created",
+      type: "thread.created",
+      aggregateType: "thread",
+      aggregateId: "thread-1",
+      occurredAt: createdAt,
+      commandId: "cmd-create",
+      payload: {
+        id: "thread-1",
+        projectId: "project-1",
+        title: "demo",
+        model: "gpt-5.3-codex",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+        updatedAt: createdAt,
+      },
+    };
+
+    const deltaEvent: OrchestrationEvent = {
+      sequence: 2,
+      eventId: "assistant-delta",
+      type: "message.sent",
+      aggregateType: "thread",
+      aggregateId: "thread-1",
+      occurredAt: deltaAt,
+      commandId: "cmd-delta",
+      payload: {
+        id: "assistant:msg-1",
+        role: "assistant",
+        text: "hello",
+        threadId: "thread-1",
+        createdAt: deltaAt,
+        streaming: true,
+      },
+    };
+
+    const completionEvent: OrchestrationEvent = {
+      sequence: 3,
+      eventId: "assistant-complete",
+      type: "message.sent",
+      aggregateType: "thread",
+      aggregateId: "thread-1",
+      occurredAt: completeAt,
+      commandId: "cmd-complete",
+      payload: {
+        id: "assistant:msg-1",
+        role: "assistant",
+        text: "",
+        threadId: "thread-1",
+        createdAt: completeAt,
+        streaming: false,
+      },
+    };
+
+    const afterCreate = await Effect.runPromise(reduceEvent(model, createdEvent));
+    const afterDelta = await Effect.runPromise(reduceEvent(afterCreate, deltaEvent));
+    const afterComplete = await Effect.runPromise(reduceEvent(afterDelta, completionEvent));
+    const message = afterComplete.threads[0]?.messages[0];
+
+    expect(message).toEqual({
+      id: "assistant:msg-1",
+      role: "assistant",
+      text: "hello",
+      createdAt: deltaAt,
+      completedAt: completeAt,
+      streaming: false,
+    });
+  });
 });

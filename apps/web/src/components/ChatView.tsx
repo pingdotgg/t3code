@@ -26,12 +26,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { type VirtualItem, useVirtualizer } from "@tanstack/react-virtual";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
-import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 
@@ -55,7 +54,6 @@ import {
 import {
   derivePendingApprovals,
   derivePhase,
-  deriveTurnDiffFilesFromUnifiedDiff,
   deriveTimelineEntries,
   type PendingApproval,
   deriveWorkLogEntries,
@@ -70,7 +68,6 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_THREAD_TERMINAL_COUNT,
   type ChatImageAttachment,
-  type TurnDiffFileChange,
   type TurnDiffSummary,
 } from "../types";
 import { basenameOfPath, getVscodeIconUrlForEntry } from "../vscode-icons";
@@ -184,33 +181,6 @@ interface ComposerImageAttachment extends Omit<ChatImageAttachment, "previewUrl"
 interface ExpandedImagePreview {
   src: string;
   name: string;
-}
-
-type TurnCheckpointFilesState =
-  | {
-      status: "pending" | "loading";
-      files: TurnDiffFileChange[];
-      errorMessage?: undefined;
-    }
-  | {
-      status: "error";
-      files: TurnDiffFileChange[];
-      errorMessage: string;
-    }
-  | {
-      status: "ready";
-      files: TurnDiffFileChange[];
-      errorMessage?: undefined;
-    };
-
-function checkpointErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
-  }
-  if (typeof error === "string" && error.trim().length > 0) {
-    return error;
-  }
-  return "Checkpoint diff is unavailable.";
 }
 
 type ComposerCommandItem =
@@ -432,17 +402,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const phase = derivePhase(activeThread?.session ?? null);
   const isWorking = phase === "running" || isSending || isConnecting || isRevertingCheckpoint;
-  const activeTurnId = activeThread?.session?.activeTurnId ?? undefined;
   const nowIso = new Date(nowTick).toISOString();
   const threadActivities = activeThread?.activities ?? [];
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(threadActivities, undefined),
     [threadActivities],
   );
-  const latestTurnWorkEntries = useMemo(
-    () => deriveWorkLogEntries(threadActivities, activeTurnId ?? activeThread?.latestTurnId),
-    [activeThread?.latestTurnId, activeTurnId, threadActivities],
-  );
+  const latestTurnHasToolActivity = useMemo(() => {
+    const latestTurnId = activeThread?.latestTurnId;
+    if (!latestTurnId) {
+      return false;
+    }
+    return threadActivities.some(
+      (activity) => activity.turnId === latestTurnId && activity.tone === "tool",
+    );
+  }, [activeThread?.latestTurnId, threadActivities]);
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -453,14 +427,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
-  const assistantCompletionByItemId = useMemo(() => {
-    const completionByMessageId = new Map<string, string>();
-    for (const summary of turnDiffSummaries) {
-      if (!summary.assistantMessageId) continue;
-      completionByMessageId.set(summary.assistantMessageId, summary.completedAt);
-    }
-    return completionByMessageId;
-  }, [turnDiffSummaries]);
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
     const byMessageId = new Map<string, TurnDiffSummary>();
     for (const summary of turnDiffSummaries) {
@@ -469,69 +435,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     return byMessageId;
   }, [turnDiffSummaries]);
-  const checkpointDiffInputsByTurn = useMemo(
-    () =>
-      turnDiffSummaries
-        .filter((summary) => summary.assistantMessageId)
-        .map((summary) => {
-          const checkpointTurnCount =
-            summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
-          return {
-            turnId: summary.turnId,
-            checkpointTurnCount:
-              typeof checkpointTurnCount === "number" ? checkpointTurnCount : null,
-          };
-        }),
-    [inferredCheckpointTurnCountByTurnId, turnDiffSummaries],
-  );
-  const checkpointDiffQueriesByTurn = useQueries({
-    queries: checkpointDiffInputsByTurn.map((input) =>
-      checkpointDiffQueryOptions(api, {
-        sessionId: activeSessionId,
-        threadRuntimeId: activeThreadRuntimeId,
-        fromTurnCount:
-          typeof input.checkpointTurnCount === "number"
-            ? Math.max(0, input.checkpointTurnCount - 1)
-            : null,
-        toTurnCount: input.checkpointTurnCount,
-        cacheScope: `turn:${input.turnId}`,
-      }),
-    ),
-  });
-  const turnCheckpointFilesByTurnId = useMemo(() => {
-    const byTurnId = new Map<string, TurnCheckpointFilesState>();
-    for (let index = 0; index < checkpointDiffInputsByTurn.length; index += 1) {
-      const input = checkpointDiffInputsByTurn[index];
-      const query = checkpointDiffQueriesByTurn[index];
-      if (!input || !query) continue;
-
-      if (!activeSessionId || typeof input.checkpointTurnCount !== "number") {
-        byTurnId.set(input.turnId, { status: "pending", files: [] });
-        continue;
-      }
-
-      const diff = query.data?.diff;
-      if (typeof diff === "string") {
-        byTurnId.set(input.turnId, {
-          status: "ready",
-          files: deriveTurnDiffFilesFromUnifiedDiff(diff),
-        });
-        continue;
-      }
-
-      if (query.isError) {
-        byTurnId.set(input.turnId, {
-          status: "error",
-          files: [],
-          errorMessage: checkpointErrorMessage(query.error),
-        });
-        continue;
-      }
-
-      byTurnId.set(input.turnId, { status: "loading", files: [] });
-    }
-    return byTurnId;
-  }, [activeSessionId, checkpointDiffInputsByTurn, checkpointDiffQueriesByTurn]);
   const revertTurnCountByUserMessageId = useMemo(() => {
     const byUserMessageId = new Map<string, number>();
     for (let index = 0; index < timelineEntries.length; index += 1) {
@@ -568,9 +471,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const completionSummary = useMemo(() => {
     if (!activeThread?.latestTurnStartedAt) return null;
     if (!activeThread.latestTurnCompletedAt) return null;
-    if (!latestTurnWorkEntries.some((entry) => entry.tone === "tool")) {
-      return null;
-    }
+    if (!latestTurnHasToolActivity) return null;
 
     if (
       typeof activeThread.latestTurnDurationMs === "number" &&
@@ -589,7 +490,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeThread?.latestTurnStartedAt,
     activeThread?.latestTurnCompletedAt,
     activeThread?.latestTurnDurationMs,
-    latestTurnWorkEntries,
+    latestTurnHasToolActivity,
   ]);
   const completionDividerBeforeEntryId = useMemo(() => {
     if (!activeThread?.latestTurnStartedAt) return null;
@@ -2039,9 +1940,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           timelineEntries={timelineEntries}
           completionDividerBeforeEntryId={completionDividerBeforeEntryId}
           completionSummary={completionSummary}
-          assistantCompletionByItemId={assistantCompletionByItemId}
           turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
-          turnCheckpointFilesByTurnId={turnCheckpointFilesByTurnId}
           nowIso={nowIso}
           expandedWorkGroups={expandedWorkGroups}
           onToggleWorkGroup={onToggleWorkGroup}
@@ -2505,9 +2404,7 @@ interface MessagesTimelineProps {
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   completionDividerBeforeEntryId: string | null;
   completionSummary: string | null;
-  assistantCompletionByItemId: Map<string, string>;
   turnDiffSummaryByAssistantMessageId: Map<string, TurnDiffSummary>;
-  turnCheckpointFilesByTurnId: Map<string, TurnCheckpointFilesState>;
   nowIso: string;
   expandedWorkGroups: Record<string, boolean>;
   onToggleWorkGroup: (groupId: string) => void;
@@ -2542,9 +2439,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   timelineEntries,
   completionDividerBeforeEntryId,
   completionSummary,
-  assistantCompletionByItemId,
   turnDiffSummaryByAssistantMessageId,
-  turnCheckpointFilesByTurnId,
   nowIso,
   expandedWorkGroups,
   onToggleWorkGroup,
@@ -2793,10 +2688,8 @@ const MessagesTimeline = memo(function MessagesTimeline({
                             row.message.id,
                           );
                           if (!turnSummary) return null;
-                          const checkpointFilesState = turnCheckpointFilesByTurnId.get(
-                            turnSummary.turnId,
-                          );
-                          const checkpointFiles = checkpointFilesState?.files ?? [];
+                          const checkpointFiles = turnSummary.files;
+                          if (checkpointFiles.length === 0) return null;
                           const summaryStat = checkpointFiles.reduce(
                             (acc, file) => {
                               if (
@@ -2812,10 +2705,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                             },
                             { additions: 0, deletions: 0 },
                           );
-                          const changedFileCountLabel =
-                            checkpointFilesState?.status === "ready"
-                              ? String(checkpointFiles.length)
-                              : "...";
+                          const changedFileCountLabel = String(checkpointFiles.length);
                           return (
                             <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
                               <div className="mb-1.5 flex items-center justify-between gap-2">
@@ -2843,66 +2733,40 @@ const MessagesTimeline = memo(function MessagesTimeline({
                                   View diff
                                 </Button>
                               </div>
-                              {!checkpointFilesState ||
-                              checkpointFilesState.status === "pending" ? (
-                                <p className="text-[11px] text-muted-foreground/70">
-                                  Waiting for checkpoint metadata...
-                                </p>
-                              ) : checkpointFilesState?.status === "loading" ? (
-                                <p className="text-[11px] text-muted-foreground/70">
-                                  Loading checkpoint diff...
-                                </p>
-                              ) : checkpointFilesState?.status === "error" ? (
-                                <p
-                                  className="truncate text-[11px] text-muted-foreground/70"
-                                  title={checkpointFilesState.errorMessage}
-                                >
-                                  {checkpointFilesState.errorMessage}
-                                </p>
-                              ) : checkpointFiles.length > 0 ? (
-                                <div className="flex flex-wrap gap-1.5">
-                                  {checkpointFiles.map((file) => (
-                                    <button
-                                      key={`${turnSummary.turnId}:${file.path}`}
-                                      type="button"
-                                      className="rounded-md border border-border/70 bg-background/70 px-2 py-1 font-mono text-[11px] text-muted-foreground/80 transition-colors hover:border-border hover:text-foreground/90"
-                                      onClick={() => onOpenTurnDiff(turnSummary.turnId, file.path)}
-                                    >
-                                      {(() => {
-                                        const stat =
-                                          typeof file.additions === "number" &&
-                                          typeof file.deletions === "number"
-                                            ? {
-                                                additions: file.additions,
-                                                deletions: file.deletions,
-                                              }
-                                            : null;
-                                        if (!stat) {
-                                          return file.path;
-                                        }
-                                        return (
-                                          <>
-                                            <span>{file.path}</span>
-                                            <span className="ml-1 text-muted-foreground/70">(</span>
-                                            <span className="text-success">+{stat.additions}</span>
-                                            <span className="mx-0.5 text-muted-foreground/70">
-                                              /
-                                            </span>
-                                            <span className="text-destructive">
-                                              -{stat.deletions}
-                                            </span>
-                                            <span className="text-muted-foreground/70">)</span>
-                                          </>
-                                        );
-                                      })()}
-                                    </button>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className="text-[11px] text-muted-foreground/70">
-                                  No changed files.
-                                </p>
-                              )}
+                              <div className="flex flex-wrap gap-1.5">
+                                {checkpointFiles.map((file) => (
+                                  <button
+                                    key={`${turnSummary.turnId}:${file.path}`}
+                                    type="button"
+                                    className="rounded-md border border-border/70 bg-background/70 px-2 py-1 font-mono text-[11px] text-muted-foreground/80 transition-colors hover:border-border hover:text-foreground/90"
+                                    onClick={() => onOpenTurnDiff(turnSummary.turnId, file.path)}
+                                  >
+                                    {(() => {
+                                      const stat =
+                                        typeof file.additions === "number" &&
+                                        typeof file.deletions === "number"
+                                          ? {
+                                              additions: file.additions,
+                                              deletions: file.deletions,
+                                            }
+                                          : null;
+                                      if (!stat) {
+                                        return file.path;
+                                      }
+                                      return (
+                                        <>
+                                          <span>{file.path}</span>
+                                          <span className="ml-1 text-muted-foreground/70">(</span>
+                                          <span className="text-success">+{stat.additions}</span>
+                                          <span className="mx-0.5 text-muted-foreground/70">/</span>
+                                          <span className="text-destructive">-{stat.deletions}</span>
+                                          <span className="text-muted-foreground/70">)</span>
+                                        </>
+                                      );
+                                    })()}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
                           );
                         })()}
@@ -2911,10 +2775,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                             row.message.createdAt,
                             row.message.streaming
                               ? formatElapsed(row.message.createdAt, nowIso)
-                              : formatElapsed(
-                                  row.message.createdAt,
-                                  assistantCompletionByItemId.get(row.message.id),
-                                ),
+                              : formatElapsed(row.message.createdAt, row.message.completedAt),
                           )}
                         </p>
                       </div>

@@ -85,6 +85,17 @@ export const ProviderRuntimeMessageDeltaEventSchema = Schema.Struct({
   delta: Schema.String,
 });
 
+export const ProviderRuntimeMessageCompletedEventSchema = Schema.Struct({
+  type: Schema.Literal("message.completed"),
+  eventId: IdSchema,
+  provider: ProviderRuntimeProviderSchema,
+  sessionId: IdSchema,
+  createdAt: IsoDateTimeSchema,
+  itemId: IdSchema,
+  threadId: Schema.optional(Schema.String),
+  turnId: Schema.optional(Schema.String),
+});
+
 export const ProviderRuntimeToolStartedEventSchema = Schema.Struct({
   type: Schema.Literal("tool.started"),
   eventId: IdSchema,
@@ -172,6 +183,7 @@ export const ProviderRuntimeEventSchema = Schema.Union([
   ProviderRuntimeTurnStartedEventSchema,
   ProviderRuntimeTurnCompletedEventSchema,
   ProviderRuntimeMessageDeltaEventSchema,
+  ProviderRuntimeMessageCompletedEventSchema,
   ProviderRuntimeToolStartedEventSchema,
   ProviderRuntimeToolCompletedEventSchema,
   ProviderRuntimeApprovalRequestedEventSchema,
@@ -197,6 +209,9 @@ export type ProviderRuntimeTurnCompletedEvent = Schema.Schema.Type<
 >;
 export type ProviderRuntimeMessageDeltaEvent = Schema.Schema.Type<
   typeof ProviderRuntimeMessageDeltaEventSchema
+>;
+export type ProviderRuntimeMessageCompletedEvent = Schema.Schema.Type<
+  typeof ProviderRuntimeMessageCompletedEventSchema
 >;
 export type ProviderRuntimeToolStartedEvent = Schema.Schema.Type<
   typeof ProviderRuntimeToolStartedEventSchema

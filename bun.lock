@@ -35,6 +35,7 @@
       },
       "dependencies": {
         "@effect/platform-node": "4.0.0-beta.10",
+        "@pierre/diffs": "^1.1.0-beta.16",
         "effect": "4.0.0-beta.10",
         "node-pty": "^1.1.0",
         "open": "^10.1.0",

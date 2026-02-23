@@ -1,5 +1,5 @@
 import type { OrchestrationEvent } from "@t3tools/contracts";
-import { Effect, Layer, ManagedRuntime } from "effect";
+import { Effect, Layer, ManagedRuntime, Queue, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -65,33 +65,6 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
-  it("fans out read-model updates to subscribers", async () => {
-    const system = await createOrchestrationSystem();
-    const engine = system.engine;
-    const updates: number[] = [];
-    const unsubscribe = await system.run(
-      engine.subscribeToReadModel((snapshot) => {
-        updates.push(snapshot.sequence);
-      }),
-    );
-    await system.run(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: "cmd-thread",
-        threadId: "thread-2",
-        projectId: "project-2",
-        title: "fanout",
-        model: "gpt-5-codex",
-        branch: null,
-        worktreePath: null,
-        createdAt: new Date().toISOString(),
-      }),
-    );
-    unsubscribe();
-    expect(updates.length).toBeGreaterThan(0);
-    await system.dispose();
-  });
-
   it("replays append-only events from sequence", async () => {
     const system = await createOrchestrationSystem();
     const engine = system.engine;
@@ -120,6 +93,46 @@ describe("OrchestrationEngine", () => {
     expect(events.length).toBe(2);
     expect(events[0]?.type).toBe("thread.created");
     expect(events[1]?.type).toBe("thread.deleted");
+    await system.dispose();
+  });
+
+  it("streams persisted domain events in order", async () => {
+    const system = await createOrchestrationSystem();
+    const engine = system.engine;
+    const eventTypes: string[] = [];
+    await system.run(
+      Effect.gen(function* () {
+        const eventQueue = yield* Queue.unbounded<OrchestrationEvent>();
+        yield* Effect.forkScoped(
+          Stream.take(engine.streamDomainEvents, 2).pipe(
+            Stream.runForEach((event) => Queue.offer(eventQueue, event).pipe(Effect.asVoid)),
+          ),
+        );
+        yield* Effect.sleep("10 millis");
+        const createdAt = new Date().toISOString();
+        yield* engine.dispatch({
+          type: "thread.create",
+          commandId: "cmd-stream-domain-a",
+          threadId: "thread-stream-domain",
+          projectId: "project-stream-domain",
+          title: "domain-stream",
+          model: "gpt-5-codex",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        });
+        yield* engine.dispatch({
+          type: "thread.meta.update",
+          commandId: "cmd-stream-domain-b",
+          threadId: "thread-stream-domain",
+          title: "domain-stream-updated",
+          createdAt,
+        });
+        eventTypes.push((yield* Queue.take(eventQueue)).type);
+        eventTypes.push((yield* Queue.take(eventQueue)).type);
+      }).pipe(Effect.scoped),
+    );
+    expect(eventTypes).toEqual(["thread.created", "thread.meta-updated"]);
     await system.dispose();
   });
 

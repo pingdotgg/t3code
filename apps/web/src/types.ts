@@ -34,6 +34,7 @@ export interface ChatMessage {
   text: string;
   attachments?: ChatAttachment[];
   createdAt: string;
+  completedAt?: string | undefined;
   streaming: boolean;
 }
 
