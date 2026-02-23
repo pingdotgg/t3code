@@ -2,7 +2,7 @@
  * CheckpointRepository - Repository interface for checkpoint metadata persistence.
  *
  * Stores and queries checkpoint metadata and checkpoint Git refs keyed by
- * provider session + turn count. It does not read/write Git refs itself and it
+ * thread + turn count. It does not read/write Git refs itself and it
  * does not coordinate provider rollback workflows.
  *
  * @module CheckpointRepository
@@ -14,7 +14,7 @@ import type { Effect } from "effect";
 import type { CheckpointRepositoryError } from "../Errors.ts";
 
 export interface UpsertCheckpointInput {
-  readonly providerSessionId: string;
+  readonly providerSessionId?: string;
   readonly threadId: string;
   readonly checkpointId: string;
   readonly checkpointRef: string;
@@ -31,22 +31,22 @@ export interface CheckpointRepositoryEntry extends ProviderCheckpoint {
   readonly createdAt: string;
 }
 
-export interface ListSessionCheckpointsInput {
-  readonly providerSessionId: string;
+export interface ListThreadCheckpointsInput {
+  readonly threadId: string;
 }
 
 export interface GetCheckpointInput {
-  readonly providerSessionId: string;
+  readonly threadId: string;
   readonly turnCount: number;
 }
 
 export interface DeleteAfterTurnInput {
-  readonly providerSessionId: string;
+  readonly threadId: string;
   readonly maxTurnCount: number;
 }
 
-export interface DeleteAllForSessionInput {
-  readonly providerSessionId: string;
+export interface DeleteAllForThreadInput {
+  readonly threadId: string;
 }
 
 export interface CheckpointRepositoryShape {
@@ -58,10 +58,10 @@ export interface CheckpointRepositoryShape {
   ) => Effect.Effect<void, CheckpointRepositoryError>;
 
   /**
-   * List user-facing checkpoints for a provider session.
+   * List user-facing checkpoints for a thread.
    */
   readonly listCheckpoints: (
-    input: ListSessionCheckpointsInput,
+    input: ListThreadCheckpointsInput,
   ) => Effect.Effect<ReadonlyArray<ProviderCheckpoint>, CheckpointRepositoryError>;
 
   /**
@@ -79,10 +79,10 @@ export interface CheckpointRepositoryShape {
   ) => Effect.Effect<void, CheckpointRepositoryError>;
 
   /**
-   * Delete all checkpoint metadata for a provider session.
+   * Delete all checkpoint metadata for a thread.
    */
-  readonly deleteAllForSession: (
-    input: DeleteAllForSessionInput,
+  readonly deleteAllForThread: (
+    input: DeleteAllForThreadInput,
   ) => Effect.Effect<void, CheckpointRepositoryError>;
 }
 

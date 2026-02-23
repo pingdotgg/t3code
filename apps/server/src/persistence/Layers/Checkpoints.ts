@@ -29,7 +29,7 @@ import {
 const NonEmptyString = Schema.NonEmptyString;
 
 const CheckpointRowSchema = Schema.Struct({
-  providerSessionId: Schema.String,
+  providerSessionId: Schema.NullOr(Schema.String),
   threadId: Schema.String,
   checkpointId: Schema.String,
   checkpointRef: Schema.String,
@@ -40,12 +40,12 @@ const CheckpointRowSchema = Schema.Struct({
   createdAt: Schema.String,
 });
 
-const SessionRequestSchema = Schema.Struct({
-  providerSessionId: NonEmptyString,
+const ThreadRequestSchema = Schema.Struct({
+  threadId: NonEmptyString,
 });
 
 const UpsertRequestSchema = Schema.Struct({
-  providerSessionId: NonEmptyString,
+  providerSessionId: Schema.NullOr(NonEmptyString),
   threadId: NonEmptyString,
   checkpointId: NonEmptyString,
   checkpointRef: NonEmptyString,
@@ -57,12 +57,12 @@ const UpsertRequestSchema = Schema.Struct({
 });
 
 const GetCheckpointRequestSchema = Schema.Struct({
-  providerSessionId: NonEmptyString,
+  threadId: NonEmptyString,
   turnCount: Schema.Int,
 });
 
 const DeleteAfterTurnRequestSchema = Schema.Struct({
-  providerSessionId: NonEmptyString,
+  threadId: NonEmptyString,
   maxTurnCount: Schema.Int,
 });
 
@@ -176,8 +176,9 @@ const makeCheckpointRepository = Effect.gen(function* () {
           ${request.preview},
           ${request.createdAt}
         )
-        ON CONFLICT (provider_session_id, turn_count)
+        ON CONFLICT (thread_id, turn_count)
         DO UPDATE SET
+          provider_session_id = excluded.provider_session_id,
           thread_id = excluded.thread_id,
           checkpoint_id = excluded.checkpoint_id,
           checkpoint_ref = excluded.checkpoint_ref,
@@ -199,9 +200,9 @@ const makeCheckpointRepository = Effect.gen(function* () {
   });
 
   const listCheckpointRows = SqlSchema.findAll({
-    Request: SessionRequestSchema,
+    Request: ThreadRequestSchema,
     Result: CheckpointRowSchema,
-    execute: ({ providerSessionId }) =>
+    execute: ({ threadId }) =>
       sql`
         SELECT
           provider_session_id AS "providerSessionId",
@@ -214,15 +215,15 @@ const makeCheckpointRepository = Effect.gen(function* () {
           preview,
           created_at AS "createdAt"
         FROM provider_checkpoints
-        WHERE provider_session_id = ${providerSessionId}
+        WHERE thread_id = ${threadId}
         ORDER BY turn_count ASC
       `,
   });
 
-  const listForSession = (
-    providerSessionId: string,
+  const listForThread = (
+    threadId: string,
   ): Effect.Effect<ReadonlyArray<CheckpointRepositoryEntry>, CheckpointRepositoryError> =>
-    listCheckpointRows({ providerSessionId }).pipe(
+    listCheckpointRows({ threadId }).pipe(
       Effect.mapError((cause) =>
         toPersistenceError("CheckpointRepository.listCheckpoints:query", cause),
       ),
@@ -238,7 +239,7 @@ const makeCheckpointRepository = Effect.gen(function* () {
       const parsed = yield* decodeInput(
         UpsertRequestSchema,
         {
-          providerSessionId: input.providerSessionId.trim(),
+          providerSessionId: input.providerSessionId?.trim() || null,
           threadId: input.threadId.trim(),
           checkpointId: input.checkpointId.trim(),
           checkpointRef: input.checkpointRef.trim(),
@@ -264,14 +265,14 @@ const makeCheckpointRepository = Effect.gen(function* () {
   const listCheckpoints: CheckpointRepositoryShape["listCheckpoints"] = (input) =>
     Effect.gen(function* () {
       const parsed = yield* decodeInput(
-        SessionRequestSchema,
+        ThreadRequestSchema,
         {
-          providerSessionId: input.providerSessionId.trim(),
+          threadId: input.threadId.trim(),
         },
         "CheckpointRepository.listCheckpoints",
       );
 
-      const entries = yield* listForSession(parsed.providerSessionId);
+      const entries = yield* listForThread(parsed.threadId);
       return entries.map(toProviderCheckpoint);
     });
 
@@ -280,7 +281,7 @@ const makeCheckpointRepository = Effect.gen(function* () {
       const parsed = yield* decodeInput(
         GetCheckpointRequestSchema,
         {
-          providerSessionId: input.providerSessionId.trim(),
+          threadId: input.threadId.trim(),
           turnCount: input.turnCount,
         },
         "CheckpointRepository.getCheckpoint",
@@ -291,7 +292,7 @@ const makeCheckpointRepository = Effect.gen(function* () {
         parsed.turnCount,
       );
 
-      const entries = yield* listForSession(parsed.providerSessionId);
+      const entries = yield* listForThread(parsed.threadId);
       const checkpoint = entries.find((entry) => entry.turnCount === parsed.turnCount);
       return Option.fromNullishOr(checkpoint);
     });
@@ -301,7 +302,7 @@ const makeCheckpointRepository = Effect.gen(function* () {
       const parsed = yield* decodeInput(
         DeleteAfterTurnRequestSchema,
         {
-          providerSessionId: input.providerSessionId.trim(),
+          threadId: input.threadId.trim(),
           maxTurnCount: input.maxTurnCount,
         },
         "CheckpointRepository.deleteAfterTurn",
@@ -314,7 +315,7 @@ const makeCheckpointRepository = Effect.gen(function* () {
 
       yield* sql`
         DELETE FROM provider_checkpoints
-        WHERE provider_session_id = ${parsed.providerSessionId}
+        WHERE thread_id = ${parsed.threadId}
           AND turn_count > ${parsed.maxTurnCount}
       `.pipe(
         Effect.mapError((cause) =>
@@ -323,22 +324,22 @@ const makeCheckpointRepository = Effect.gen(function* () {
       );
     });
 
-  const deleteAllForSession: CheckpointRepositoryShape["deleteAllForSession"] = (input) =>
+  const deleteAllForThread: CheckpointRepositoryShape["deleteAllForThread"] = (input) =>
     Effect.gen(function* () {
       const parsed = yield* decodeInput(
-        SessionRequestSchema,
+        ThreadRequestSchema,
         {
-          providerSessionId: input.providerSessionId.trim(),
+          threadId: input.threadId.trim(),
         },
-        "CheckpointRepository.deleteAllForSession",
+        "CheckpointRepository.deleteAllForThread",
       );
 
       yield* sql`
         DELETE FROM provider_checkpoints
-        WHERE provider_session_id = ${parsed.providerSessionId}
+        WHERE thread_id = ${parsed.threadId}
       `.pipe(
         Effect.mapError((cause) =>
-          toPersistenceError("CheckpointRepository.deleteAllForSession:query", cause),
+          toPersistenceError("CheckpointRepository.deleteAllForThread:query", cause),
         ),
       );
     });
@@ -348,7 +349,7 @@ const makeCheckpointRepository = Effect.gen(function* () {
     listCheckpoints,
     getCheckpoint,
     deleteAfterTurn,
-    deleteAllForSession,
+    deleteAllForThread,
   } satisfies CheckpointRepositoryShape;
 });
 

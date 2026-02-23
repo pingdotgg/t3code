@@ -109,45 +109,12 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
   const listSessionIds: ProviderSessionDirectoryShape["listSessionIds"] = () =>
     listBindings().pipe(Effect.map((bindings) => bindings.map((binding) => binding.sessionId)));
 
-  const reconcileWithAdapters: ProviderSessionDirectoryShape["reconcileWithAdapters"] = (
-    adapters,
-  ) =>
-    Effect.gen(function* () {
-      const byProvider = new Map(adapters.map((adapter) => [adapter.provider, adapter]));
-      const bindings = yield* listBindings();
-      const staleSessionIds: string[] = [];
-
-      for (const binding of bindings) {
-        const adapter = byProvider.get(binding.provider);
-        if (!adapter) {
-          staleSessionIds.push(binding.sessionId);
-          continue;
-        }
-
-        const hasSession = yield* adapter.hasSession(binding.sessionId);
-        if (!hasSession) {
-          staleSessionIds.push(binding.sessionId);
-        }
-      }
-
-      if (staleSessionIds.length === 0) {
-        return [] as ReadonlyArray<string>;
-      }
-
-      yield* Effect.forEach(staleSessionIds, (sessionId) => persistDelete(sessionId)).pipe(
-        Effect.asVoid,
-      );
-
-      return staleSessionIds as ReadonlyArray<string>;
-    });
-
   return {
     upsert,
     getProvider,
     getThreadId,
     remove,
     listSessionIds,
-    reconcileWithAdapters,
   } satisfies ProviderSessionDirectoryShape;
 });
 

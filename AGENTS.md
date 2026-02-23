@@ -41,3 +41,5 @@ Docs:
 - Codex-Monitor (Tauri, feature-complete, strong reference implementation): https://github.com/Dimillian/CodexMonitor
 
 Use these as implementation references when designing protocol handling, UX flows, and operational safeguards.
+
+<!-- Dummy edit marker for workflow testing. -->

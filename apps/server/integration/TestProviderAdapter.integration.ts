@@ -70,13 +70,11 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
   const startSession: ProviderAdapterShape<ProviderAdapterError>["startSession"] = (input) =>
     Effect.gen(function* () {
       if (input.provider !== undefined && input.provider !== PROVIDER) {
-        return yield* Effect.fail(
-          new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "startSession",
-            issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
-          }),
-        );
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "startSession",
+          issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
+        });
       }
 
       sessionCount += 1;
@@ -121,13 +119,11 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
 
       const response = state.queuedResponses.shift();
       if (!response) {
-        return yield* Effect.fail(
-          new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "sendTurn",
-            issue: `No queued turn response for session ${input.sessionId}.`,
-          }),
-        );
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue: `No queued turn response for session ${input.sessionId}.`,
+        });
       }
 
       const assistantDeltas: string[] = [];

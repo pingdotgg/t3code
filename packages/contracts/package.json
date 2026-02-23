@@ -19,6 +19,7 @@
   "scripts": {
     "dev": "tsdown src/index.ts --format esm,cjs --dts --watch --clean",
     "build": "tsdown src/index.ts --format esm,cjs --dts --clean",
+    "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -27,6 +28,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@effect/language-service": "0.75.1",
     "tsdown": "^0.20.3",
     "typescript": "^5.7.3"
   }

@@ -55,7 +55,7 @@ function makeFakeCodexAdapter() {
         sessionId: `sess-${nextSession}`,
         provider: "codex",
         status: "ready",
-        threadId: `thread-${nextSession}`,
+        threadId: input.resumeThreadId ?? `thread-${nextSession}`,
         cwd: input.cwd ?? process.cwd(),
         createdAt: now,
         updatedAt: now,
@@ -281,7 +281,7 @@ function makeProviderServiceLayer() {
 }
 
 const routing = makeProviderServiceLayer();
-it.effect("ProviderServiceLive reconciles stale persisted sessions on startup", () =>
+it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", () =>
   Effect.gen(function* () {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-"));
     const dbPath = path.join(tempDir, "orchestration.sqlite");
@@ -322,7 +322,100 @@ it.effect("ProviderServiceLive reconciles stale persisted sessions on startup", 
       yield* ProviderService;
     }).pipe(Effect.provide(providerLayer));
 
-    assert.deepEqual(checkpoint.releaseSession.mock.calls, [[{ providerSessionId: "sess-stale" }]]);
+    assert.deepEqual(checkpoint.releaseSession.mock.calls, []);
+    const persistedProvider = yield* Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      return yield* directory.getProvider("sess-stale");
+    }).pipe(Effect.provide(directoryLayer));
+    assert.equal(persistedProvider, "codex");
+
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("ProviderServiceLive restores checkpoint RPC routing after restart using persisted thread mapping", () =>
+  Effect.gen(function* () {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-restart-"));
+    const dbPath = path.join(tempDir, "orchestration.sqlite");
+    const persistenceLayer = makeSqlitePersistenceLive(dbPath);
+
+    const checkpoint = makeCheckpointServiceDouble();
+    const firstCodex = makeFakeCodexAdapter();
+    const firstRegistry: typeof ProviderAdapterRegistry.Service = {
+      getByProvider: (provider) =>
+        provider === "codex"
+          ? Effect.succeed(firstCodex.adapter)
+          : Effect.fail(new ProviderUnsupportedError({ provider })),
+      listProviders: () => Effect.succeed(["codex"]),
+    };
+
+    const firstDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+      Layer.provide(ProviderSessionRepositoryLive),
+      Layer.provide(persistenceLayer),
+    );
+    const firstProviderLayer = ProviderServiceLive.pipe(
+      Layer.provide(Layer.succeed(ProviderAdapterRegistry, firstRegistry)),
+      Layer.provide(firstDirectoryLayer),
+      Layer.provide(Layer.succeed(CheckpointService, checkpoint.service)),
+    );
+
+    const startedSession = yield* Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      return yield* provider.startSession({
+        provider: "codex",
+        cwd: "/tmp/project",
+      });
+    }).pipe(Effect.provide(firstProviderLayer));
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      yield* provider.stopAll();
+    }).pipe(Effect.provide(firstProviderLayer));
+
+    const secondCodex = makeFakeCodexAdapter();
+    const secondRegistry: typeof ProviderAdapterRegistry.Service = {
+      getByProvider: (provider) =>
+        provider === "codex"
+          ? Effect.succeed(secondCodex.adapter)
+          : Effect.fail(new ProviderUnsupportedError({ provider })),
+      listProviders: () => Effect.succeed(["codex"]),
+    };
+    const secondDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+      Layer.provide(ProviderSessionRepositoryLive),
+      Layer.provide(persistenceLayer),
+    );
+    const secondProviderLayer = ProviderServiceLive.pipe(
+      Layer.provide(Layer.succeed(ProviderAdapterRegistry, secondRegistry)),
+      Layer.provide(secondDirectoryLayer),
+      Layer.provide(Layer.succeed(CheckpointService, checkpoint.service)),
+    );
+
+    checkpoint.getCheckpointDiff.mockClear();
+    secondCodex.startSession.mockClear();
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      yield* provider.getCheckpointDiff({
+        sessionId: startedSession.sessionId,
+        fromTurnCount: 0,
+        toTurnCount: 0,
+      });
+    }).pipe(Effect.provide(secondProviderLayer));
+
+    assert.deepEqual(secondCodex.startSession.mock.calls, [
+      [
+        {
+          provider: "codex",
+          resumeThreadId: startedSession.threadId,
+        },
+      ],
+    ]);
+    assert.equal(checkpoint.getCheckpointDiff.mock.calls.length, 1);
+    const recoveredDiffInput = checkpoint.getCheckpointDiff.mock.calls[0]?.[0];
+    assert.equal(typeof recoveredDiffInput?.sessionId, "string");
+    assert.equal((recoveredDiffInput?.sessionId?.length ?? 0) > 0, true);
+    assert.equal(recoveredDiffInput?.fromTurnCount, 0);
+    assert.equal(recoveredDiffInput?.toTurnCount, 0);
 
     fs.rmSync(tempDir, { recursive: true, force: true });
   }).pipe(Effect.provide(NodeServices.layer)),
@@ -400,6 +493,51 @@ routing.layer("ProviderServiceLive routing", (it) => {
         sendAfterStop,
         new ProviderSessionNotFoundError({ sessionId: session.sessionId }),
       );
+    }),
+  );
+
+  it.effect("recovers stale persisted sessions for checkpoint RPCs by resuming thread identity", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      const initial = yield* provider.startSession({
+        provider: "codex",
+        cwd: "/tmp/project",
+      });
+      yield* routing.codex.stopSession(initial.sessionId);
+
+      routing.checkpoint.getCheckpointDiff.mockClear();
+      routing.checkpoint.revertToCheckpoint.mockClear();
+      routing.codex.startSession.mockClear();
+
+      yield* provider.getCheckpointDiff({
+        sessionId: initial.sessionId,
+        fromTurnCount: 0,
+        toTurnCount: 0,
+      });
+      yield* provider.revertToCheckpoint({
+        sessionId: initial.sessionId,
+        turnCount: 0,
+      });
+
+      assert.deepEqual(routing.codex.startSession.mock.calls, [
+        [
+          {
+            provider: "codex",
+            resumeThreadId: initial.threadId,
+          },
+        ],
+      ]);
+      assert.equal(routing.checkpoint.getCheckpointDiff.mock.calls.length, 1);
+      assert.equal(routing.checkpoint.revertToCheckpoint.mock.calls.length, 1);
+
+      const diffInput = routing.checkpoint.getCheckpointDiff.mock.calls[0]?.[0];
+      const revertInput = routing.checkpoint.revertToCheckpoint.mock.calls[0]?.[0];
+      assert.equal(diffInput?.fromTurnCount, 0);
+      assert.equal(diffInput?.toTurnCount, 0);
+      assert.equal(diffInput?.sessionId === initial.sessionId, false);
+      assert.equal(revertInput?.sessionId, diffInput?.sessionId);
+      assert.equal(revertInput?.turnCount, 0);
     }),
   );
 

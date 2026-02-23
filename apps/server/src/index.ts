@@ -11,6 +11,8 @@ import { createServer } from "./wsServer";
 fixPath();
 
 const DEFAULT_PORT = 3773;
+// Dummy comment for a no-op change request.
+// Additional dummy comment requested in chat.
 const cwd = process.cwd();
 const logger = createLogger("server");
 
