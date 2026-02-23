@@ -12,12 +12,10 @@ import { Option, ServiceMap } from "effect";
 import type { Effect } from "effect";
 
 import type {
-  ProviderAdapterError,
   ProviderSessionDirectoryPersistenceError,
   ProviderSessionNotFoundError,
   ProviderValidationError,
 } from "../Errors.ts";
-import type { ProviderAdapterShape } from "./ProviderAdapter.ts";
 
 export interface ProviderSessionBinding {
   readonly sessionId: string;
@@ -70,17 +68,6 @@ export interface ProviderSessionDirectoryShape {
     ProviderSessionDirectoryPersistenceError
   >;
 
-  /**
-   * Remove stale persisted sessions that are no longer active in adapters.
-   *
-   * Returns pruned session ids.
-   */
-  readonly reconcileWithAdapters: (
-    adapters: ReadonlyArray<ProviderAdapterShape<ProviderAdapterError>>,
-  ) => Effect.Effect<
-    ReadonlyArray<string>,
-    ProviderSessionDirectoryPersistenceError | ProviderAdapterError
-  >;
 }
 
 /**

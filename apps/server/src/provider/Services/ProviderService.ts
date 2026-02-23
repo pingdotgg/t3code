@@ -95,7 +95,10 @@ export interface ProviderServiceShape {
   ) => Effect.Effect<ProviderRevertToCheckpointResult, ProviderServiceError>;
 
   /**
-   * Stop all provider sessions.
+   * Stop all active provider sessions.
+   *
+   * Persisted session bindings remain so stale sessions can be resumed after
+   * process restart.
    */
   readonly stopAll: () => Effect.Effect<void, ProviderServiceError>;
 

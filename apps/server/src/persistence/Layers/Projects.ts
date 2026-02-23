@@ -333,7 +333,7 @@ const makeRepository = Effect.gen(function* () {
       const input = yield* decodeAddInput(rawInput);
       const normalizedCwd = normalizeCwd(input.cwd);
       if (!isDirectory(normalizedCwd)) {
-        return yield* Effect.fail(new ProjectPathMissingError({ cwd: normalizedCwd }));
+        return yield* new ProjectPathMissingError({ cwd: normalizedCwd });
       }
 
       const existing = yield* findProjectByCwd({ cwd: normalizedCwd }).pipe(

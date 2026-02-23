@@ -481,11 +481,7 @@ const makeCheckpointService = Effect.gen(function* () {
   ): Effect.Effect<string, CheckpointServiceError> =>
     directory.getThreadId(sessionId).pipe(
       Effect.mapError((cause) =>
-        mapDirectoryLookupError(
-          sessionId,
-          `${operation}:getThreadId`,
-          cause,
-        ),
+        mapDirectoryLookupError(sessionId, `${operation}:getThreadId`, cause),
       ),
       Effect.flatMap((threadId) =>
         Option.match(threadId, {
@@ -495,10 +491,7 @@ const makeCheckpointService = Effect.gen(function* () {
               return Effect.succeed(normalizedThreadId);
             }
             return Effect.fail(
-              invariantError(
-                operation,
-                `Resolved empty thread id for session ${sessionId}.`,
-              ),
+              invariantError(operation, `Resolved empty thread id for session ${sessionId}.`),
             );
           },
           onNone: () =>
@@ -511,6 +504,30 @@ const makeCheckpointService = Effect.gen(function* () {
         }),
       ),
     );
+
+  const ensureThreadMatchesSnapshot = (
+    resolvedThreadId: string,
+    snapshot: ProviderThreadSnapshot,
+    operation: string,
+  ): Effect.Effect<void, CheckpointInvariantError> => {
+    const snapshotThreadId = snapshot.threadId.trim();
+    if (snapshotThreadId.length === 0) {
+      return Effect.fail(
+        invariantError(operation, "Provider thread snapshot is missing threadId."),
+      );
+    }
+
+    if (snapshotThreadId !== resolvedThreadId) {
+      return Effect.fail(
+        invariantError(
+          operation,
+          `Resolved thread ${resolvedThreadId} does not match provider snapshot thread ${snapshotThreadId}.`,
+        ),
+      );
+    }
+
+    return Effect.void;
+  };
 
   const rollbackThreadSnapshot = (
     sessionId: string,
@@ -601,29 +618,30 @@ const makeCheckpointService = Effect.gen(function* () {
   };
 
   const ensureRootCheckpointMetadata = (
-    providerSessionId: string,
+    threadId: string,
     operation: string,
   ): Effect.Effect<void, CheckpointServiceError> =>
-    checkpointRepository.getCheckpoint({ providerSessionId, turnCount: 0 }).pipe(
-      Effect.flatMap((rootEntry) =>
-        Option.isSome(rootEntry)
-          ? Effect.void
-          : Effect.fail(
-              invariantError(
-                operation,
-                `Missing root checkpoint metadata for session ${providerSessionId}.`,
+    checkpointRepository
+      .getCheckpoint({ threadId, turnCount: 0 })
+      .pipe(
+        Effect.flatMap((rootEntry) =>
+          Option.isSome(rootEntry)
+            ? Effect.void
+            : Effect.fail(
+                invariantError(
+                  operation,
+                  `Missing root checkpoint metadata for thread ${threadId}.`,
+                ),
               ),
-            ),
-      ),
-    );
+        ),
+      );
 
   const getCheckpointRefOrFail = (
-    providerSessionId: string,
     threadId: string,
     turnCount: number,
     operation: string,
   ): Effect.Effect<string, CheckpointServiceError> =>
-    checkpointRepository.getCheckpoint({ providerSessionId, turnCount }).pipe(
+    checkpointRepository.getCheckpoint({ threadId, turnCount }).pipe(
       Effect.mapError((error): CheckpointServiceError => error),
       Effect.flatMap((checkpoint): Effect.Effect<string, CheckpointServiceError> => {
         if (Option.isNone(checkpoint)) {
@@ -716,17 +734,15 @@ const makeCheckpointService = Effect.gen(function* () {
             }
 
             const existingRoot = yield* checkpointRepository.getCheckpoint({
-              providerSessionId: input.providerSessionId,
+              threadId,
               turnCount: 0,
             });
             if (Option.isSome(existingRoot)) {
               const existingRef = existingRoot.value.checkpointRef.trim();
               if (existingRef.length === 0) {
-                return yield* Effect.fail(
-                  invariantError(
-                    "CheckpointService.initializeForSession",
-                    "Existing root checkpoint metadata is missing checkpointRef.",
-                  ),
+                return yield* invariantError(
+                  "CheckpointService.initializeForSession",
+                  "Existing root checkpoint metadata is missing checkpointRef.",
                 );
               }
               const exists = yield* store.hasCheckpointRef({
@@ -734,11 +750,9 @@ const makeCheckpointService = Effect.gen(function* () {
                 checkpointRef: existingRef,
               });
               if (!exists) {
-                return yield* Effect.fail(
-                  invariantError(
-                    "CheckpointService.initializeForSession",
-                    "Root checkpoint metadata exists but filesystem ref is missing.",
-                  ),
+                return yield* invariantError(
+                  "CheckpointService.initializeForSession",
+                  "Root checkpoint metadata exists but filesystem ref is missing.",
                 );
               }
               yield* setTrackedCheckpointCwd(input.providerSessionId, input.cwd);
@@ -770,6 +784,15 @@ const makeCheckpointService = Effect.gen(function* () {
               adapter,
               "CheckpointService.captureCurrentTurn:readThread",
             );
+            const threadId = yield* resolveThreadIdForSession(
+              input.providerSessionId,
+              "CheckpointService.captureCurrentTurn",
+            );
+            yield* ensureThreadMatchesSnapshot(
+              threadId,
+              snapshot,
+              "CheckpointService.captureCurrentTurn",
+            );
             if (snapshot.turns.length === 0) {
               return;
             }
@@ -784,23 +807,18 @@ const makeCheckpointService = Effect.gen(function* () {
               "CheckpointService.captureCurrentTurn",
             );
 
-            yield* ensureRootCheckpointMetadata(
-              input.providerSessionId,
-              "CheckpointService.captureCurrentTurn",
-            );
+            yield* ensureRootCheckpointMetadata(threadId, "CheckpointService.captureCurrentTurn");
 
             const existing = yield* checkpointRepository.getCheckpoint({
-              providerSessionId: input.providerSessionId,
+              threadId,
               turnCount: checkpoint.turnCount,
             });
             if (Option.isSome(existing)) {
               const checkpointRef = existing.value.checkpointRef.trim();
               if (checkpointRef.length === 0) {
-                return yield* Effect.fail(
-                  invariantError(
-                    "CheckpointService.captureCurrentTurn",
-                    `Checkpoint metadata for turn ${checkpoint.turnCount} is missing checkpointRef.`,
-                  ),
+                return yield* invariantError(
+                  "CheckpointService.captureCurrentTurn",
+                  `Checkpoint metadata for turn ${checkpoint.turnCount} is missing checkpointRef.`,
                 );
               }
               const exists = yield* store.hasCheckpointRef({
@@ -808,11 +826,9 @@ const makeCheckpointService = Effect.gen(function* () {
                 checkpointRef,
               });
               if (!exists) {
-                return yield* Effect.fail(
-                  invariantError(
-                    "CheckpointService.captureCurrentTurn",
-                    `Checkpoint metadata exists for turn ${checkpoint.turnCount} but filesystem ref is missing.`,
-                  ),
+                return yield* invariantError(
+                  "CheckpointService.captureCurrentTurn",
+                  `Checkpoint metadata exists for turn ${checkpoint.turnCount} but filesystem ref is missing.`,
                 );
               }
               return;
@@ -821,7 +837,7 @@ const makeCheckpointService = Effect.gen(function* () {
             yield* captureAndPersistCheckpoint({
               providerSessionId: input.providerSessionId,
               cwd: resolution.checkpointCwd.value,
-              threadId: snapshot.threadId,
+              threadId,
               checkpoint,
             });
           }),
@@ -842,31 +858,36 @@ const makeCheckpointService = Effect.gen(function* () {
               adapter,
               "CheckpointService.listCheckpoints:readThread",
             );
+            const threadId = yield* resolveThreadIdForSession(
+              input.sessionId,
+              "CheckpointService.listCheckpoints",
+            );
+            yield* ensureThreadMatchesSnapshot(
+              threadId,
+              snapshot,
+              "CheckpointService.listCheckpoints",
+            );
 
             const resolution = yield* resolveCheckpointCwd(input.sessionId, adapter);
             if (Option.isNone(resolution.checkpointCwd)) {
-              return yield* Effect.fail(
-                new CheckpointRepositoryError({
-                  cwd: resolution.candidateCwd,
-                  detail: "Filesystem checkpoints are unavailable for this session.",
-                }),
-              );
+              return yield* new CheckpointRepositoryError({
+                cwd: resolution.candidateCwd,
+                detail: "Filesystem checkpoints are unavailable for this session.",
+              });
             }
 
             const checkpoints = yield* checkpointRepository.listCheckpoints({
-              providerSessionId: input.sessionId,
+              threadId,
             });
             if (checkpoints.length === 0) {
-              return yield* Effect.fail(
-                invariantError(
-                  "CheckpointService.listCheckpoints",
-                  `Missing checkpoint metadata for active session ${input.sessionId}.`,
-                ),
+              return yield* invariantError(
+                "CheckpointService.listCheckpoints",
+                `Missing checkpoint metadata for active session ${input.sessionId}.`,
               );
             }
 
             return {
-              threadId: snapshot.threadId,
+              threadId,
               checkpoints: Array.from(checkpoints),
             };
           }),
@@ -887,35 +908,38 @@ const makeCheckpointService = Effect.gen(function* () {
               adapter,
               "CheckpointService.getCheckpointDiff:readThread",
             );
+            const threadId = yield* resolveThreadIdForSession(
+              input.sessionId,
+              "CheckpointService.getCheckpointDiff",
+            );
+            yield* ensureThreadMatchesSnapshot(
+              threadId,
+              snapshot,
+              "CheckpointService.getCheckpointDiff",
+            );
 
             if (input.toTurnCount > snapshot.turns.length) {
-              return yield* Effect.fail(
-                validationError(
-                  "CheckpointService.getCheckpointDiff",
-                  `Checkpoint turn count ${input.toTurnCount} exceeds current turn count ${snapshot.turns.length}.`,
-                ),
+              return yield* validationError(
+                "CheckpointService.getCheckpointDiff",
+                `Checkpoint turn count ${input.toTurnCount} exceeds current turn count ${snapshot.turns.length}.`,
               );
             }
 
             const resolution = yield* resolveCheckpointCwd(input.sessionId, adapter);
             if (Option.isNone(resolution.checkpointCwd)) {
-              return yield* Effect.fail(
-                new CheckpointRepositoryError({
-                  cwd: resolution.candidateCwd,
-                  detail: "Filesystem checkpoints are unavailable for this session.",
-                }),
-              );
+              return yield* new CheckpointRepositoryError({
+                cwd: resolution.candidateCwd,
+                detail: "Filesystem checkpoints are unavailable for this session.",
+              });
             }
 
             const fromCheckpointRef = yield* getCheckpointRefOrFail(
-              input.sessionId,
-              snapshot.threadId,
+              threadId,
               input.fromTurnCount,
               "CheckpointService.getCheckpointDiff:fromCheckpoint",
             );
             const toCheckpointRef = yield* getCheckpointRefOrFail(
-              input.sessionId,
-              snapshot.threadId,
+              threadId,
               input.toTurnCount,
               "CheckpointService.getCheckpointDiff:toCheckpoint",
             );
@@ -928,7 +952,7 @@ const makeCheckpointService = Effect.gen(function* () {
             });
 
             return {
-              threadId: snapshot.threadId,
+              threadId,
               fromTurnCount: input.fromTurnCount,
               toTurnCount: input.toTurnCount,
               diff,
@@ -951,31 +975,35 @@ const makeCheckpointService = Effect.gen(function* () {
               adapter,
               "CheckpointService.revertToCheckpoint:readThread",
             );
+            const threadId = yield* resolveThreadIdForSession(
+              input.sessionId,
+              "CheckpointService.revertToCheckpoint",
+            );
+            yield* ensureThreadMatchesSnapshot(
+              threadId,
+              beforeSnapshot,
+              "CheckpointService.revertToCheckpoint",
+            );
             const currentTurnCount = beforeSnapshot.turns.length;
 
             if (input.turnCount > currentTurnCount) {
-              return yield* Effect.fail(
-                validationError(
-                  "CheckpointService.revertToCheckpoint",
-                  `Checkpoint turn count ${input.turnCount} exceeds current turn count ${currentTurnCount}.`,
-                ),
+              return yield* validationError(
+                "CheckpointService.revertToCheckpoint",
+                `Checkpoint turn count ${input.turnCount} exceeds current turn count ${currentTurnCount}.`,
               );
             }
 
             const resolution = yield* resolveCheckpointCwd(input.sessionId, adapter);
             if (Option.isNone(resolution.checkpointCwd)) {
-              return yield* Effect.fail(
-                new CheckpointRepositoryError({
-                  cwd: resolution.candidateCwd,
-                  detail: "Filesystem checkpoints are unavailable for this session.",
-                }),
-              );
+              return yield* new CheckpointRepositoryError({
+                cwd: resolution.candidateCwd,
+                detail: "Filesystem checkpoints are unavailable for this session.",
+              });
             }
 
             const checkpointCwd = resolution.checkpointCwd.value;
             const checkpointRef = yield* getCheckpointRefOrFail(
-              input.sessionId,
-              beforeSnapshot.threadId,
+              threadId,
               input.turnCount,
               "CheckpointService.revertToCheckpoint:checkpointLookup",
             );
@@ -986,13 +1014,11 @@ const makeCheckpointService = Effect.gen(function* () {
               fallbackToHead: input.turnCount === 0,
             });
             if (!restored) {
-              return yield* Effect.fail(
-                new CheckpointUnavailableError({
-                  threadId: beforeSnapshot.threadId,
-                  turnCount: input.turnCount,
-                  detail: `Filesystem checkpoint is unavailable for turn ${input.turnCount} in thread ${beforeSnapshot.threadId}.`,
-                }),
-              );
+              return yield* new CheckpointUnavailableError({
+                threadId,
+                turnCount: input.turnCount,
+                detail: `Filesystem checkpoint is unavailable for turn ${input.turnCount} in thread ${threadId}.`,
+              });
             }
 
             const requestedRollbackTurns = currentTurnCount - input.turnCount;
@@ -1015,7 +1041,7 @@ const makeCheckpointService = Effect.gen(function* () {
               staleTurnCounts,
               (turnCount) =>
                 checkpointRepository.getCheckpoint({
-                  providerSessionId: input.sessionId,
+                  threadId,
                   turnCount,
                 }),
               { discard: false },
@@ -1034,11 +1060,11 @@ const makeCheckpointService = Effect.gen(function* () {
               checkpointRefs: staleCheckpointRefs,
             });
             yield* checkpointRepository.deleteAfterTurn({
-              providerSessionId: input.sessionId,
+              threadId,
               maxTurnCount: input.turnCount,
             });
             const checkpoints = yield* checkpointRepository.listCheckpoints({
-              providerSessionId: input.sessionId,
+              threadId,
             });
             const currentCheckpoint =
               checkpoints.find((checkpoint) => checkpoint.isCurrent) ??
@@ -1047,7 +1073,7 @@ const makeCheckpointService = Effect.gen(function* () {
             const rolledBackTurns = Math.max(0, currentTurnCount - afterSnapshot.turns.length);
 
             return {
-              threadId: afterSnapshot.threadId,
+              threadId,
               turnCount: currentCheckpoint?.turnCount ?? 0,
               messageCount: currentCheckpoint?.messageCount ?? 0,
               rolledBackTurns,

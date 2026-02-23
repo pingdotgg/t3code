@@ -6,7 +6,7 @@ export default Effect.gen(function* () {
 
   yield* sql`
     CREATE TABLE IF NOT EXISTS provider_checkpoints (
-      provider_session_id TEXT NOT NULL,
+      provider_session_id TEXT,
       thread_id TEXT NOT NULL,
       checkpoint_id TEXT NOT NULL,
       checkpoint_ref TEXT NOT NULL,
@@ -15,12 +15,17 @@ export default Effect.gen(function* () {
       label TEXT NOT NULL,
       preview TEXT,
       created_at TEXT NOT NULL,
-      PRIMARY KEY (provider_session_id, turn_count)
+      PRIMARY KEY (thread_id, turn_count)
     )
   `;
 
   yield* sql`
-    CREATE INDEX IF NOT EXISTS idx_provider_checkpoints_session_turn
-    ON provider_checkpoints(provider_session_id, turn_count ASC)
+    CREATE INDEX IF NOT EXISTS idx_provider_checkpoints_thread_turn
+    ON provider_checkpoints(thread_id, turn_count ASC)
+  `;
+
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS idx_provider_checkpoints_session
+    ON provider_checkpoints(provider_session_id)
   `;
 });

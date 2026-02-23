@@ -13,11 +13,13 @@
     "dev": "VITE_DEV_SERVER_URL=${VITE_DEV_SERVER_URL:-http://localhost:5173} bun run src/index.ts",
     "build": "tsdown && node scripts/bundle-client.ts",
     "start": "node dist/index.mjs",
+    "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
     "@effect/platform-node": "4.0.0-beta.10",
+    "@effect/sql-sqlite-bun": "4.0.0-beta.10",
     "@pierre/diffs": "^1.1.0-beta.16",
     "effect": "4.0.0-beta.10",
     "node-pty": "^1.1.0",
@@ -25,6 +27,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@effect/language-service": "0.75.1",
     "@effect/vitest": "4.0.0-beta.10",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/web": "workspace:*",

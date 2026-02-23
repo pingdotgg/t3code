@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { Effect } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import * as SqliteClient from "./SqliteClient.ts";
+import * as SqliteClient from "./NodeSqliteClient.ts";
 
 it.effect("runs prepared queries and returns positional values", () =>
   Effect.gen(function* () {
