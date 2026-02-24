@@ -157,7 +157,7 @@ const resolveCliConfig = Effect.fn(function* (input: CliInput) {
 
 const makeServerProgram = Effect.fn(function* (input: CliInput) {
   const cliConfig = yield* CliConfig;
-  const serverDeps = yield* Server;
+  const { createServer, stopSignal } = yield* Server;
   const openDeps = yield* Open;
   yield* cliConfig.fixPath;
   const config = yield* resolveCliConfig(input);
@@ -171,7 +171,7 @@ const makeServerProgram = Effect.fn(function* (input: CliInput) {
   yield* Effect.acquireRelease(
     Effect.tryPromise({
       try: async () => {
-        const server = serverDeps.createServer({
+        const server = createServer({
           port: config.port,
           host: config.mode === "desktop" ? "127.0.0.1" : undefined,
           cwd: config.cwd,
@@ -213,7 +213,7 @@ const makeServerProgram = Effect.fn(function* (input: CliInput) {
     );
   }
 
-  return yield* Effect.never;
+  return yield* stopSignal;
 }, Effect.scoped);
 
 export function makeCliCommand() {
