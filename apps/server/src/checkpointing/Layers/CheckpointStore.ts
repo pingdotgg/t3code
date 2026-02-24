@@ -132,14 +132,12 @@ const makeCheckpointStore = Effect.gen(function* () {
             });
             const treeOid = writeTreeResult.stdout.trim();
             if (treeOid.length === 0) {
-              return yield* Effect.fail(
-                new GitCommandError({
-                  operation,
-                  command: "git write-tree",
-                  cwd: normalizedCwd,
-                  detail: "git write-tree returned an empty tree oid.",
-                }),
-              );
+              return yield* new GitCommandError({
+                operation,
+                command: "git write-tree",
+                cwd: normalizedCwd,
+                detail: "git write-tree returned an empty tree oid.",
+              });
             }
 
             const message = `t3 checkpoint ref=${checkpointRef}`;
@@ -151,14 +149,12 @@ const makeCheckpointStore = Effect.gen(function* () {
             });
             const commitOid = commitTreeResult.stdout.trim();
             if (commitOid.length === 0) {
-              return yield* Effect.fail(
-                new GitCommandError({
-                  operation,
-                  command: "git commit-tree",
-                  cwd: normalizedCwd,
-                  detail: "git commit-tree returned an empty commit oid.",
-                }),
-              );
+              return yield* new GitCommandError({
+                operation,
+                command: "git commit-tree",
+                cwd: normalizedCwd,
+                detail: "git commit-tree returned an empty commit oid.",
+              });
             }
 
             yield* git.execute({
@@ -183,11 +179,9 @@ const makeCheckpointStore = Effect.gen(function* () {
     });
 
   const hasCheckpointRef: CheckpointStoreShape["hasCheckpointRef"] = (input) =>
-    Effect.gen(function* () {
-      return yield* resolveCheckpointCommit(input.cwd, input.checkpointRef).pipe(
-        Effect.map((commit) => commit !== null),
-      );
-    });
+    resolveCheckpointCommit(input.cwd, input.checkpointRef).pipe(
+      Effect.map((commit) => commit !== null),
+    );
 
   const restoreCheckpoint: CheckpointStoreShape["restoreCheckpoint"] = (input) =>
     Effect.gen(function* () {
@@ -241,14 +235,12 @@ const makeCheckpointStore = Effect.gen(function* () {
       }
 
       if (!fromCommitOid || !toCommitOid) {
-        return yield* Effect.fail(
-          new GitCommandError({
-            operation,
-            command: "git diff",
-            cwd: input.cwd,
-            detail: "Checkpoint ref is unavailable for diff operation.",
-          }),
-        );
+        return yield* new GitCommandError({
+          operation,
+          command: "git diff",
+          cwd: input.cwd,
+          detail: "Checkpoint ref is unavailable for diff operation.",
+        });
       }
 
       const result = yield* git.execute({

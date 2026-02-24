@@ -2,7 +2,6 @@
   "name": "@t3tools/desktop",
   "version": "0.0.0",
   "private": true,
-  "productName": "T3 Code (Alpha)",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "bun run --parallel dev:bundle dev:electron",
@@ -18,11 +17,13 @@
     "electron": "40.6.0"
   },
   "devDependencies": {
+    "@t3tools/contracts": "workspace:*",
     "@types/node": "^22.10.2",
     "electronmon": "^2.0.2",
     "tsdown": "^0.20.3",
     "typescript": "^5.7.3",
     "vitest": "^4.0.0",
     "wait-on": "^8.0.2"
-  }
+  },
+  "productName": "T3 Code (Alpha)"
 }

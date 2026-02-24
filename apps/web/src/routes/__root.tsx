@@ -13,6 +13,7 @@ import { isElectron } from "../env";
 import { useNativeApi } from "../hooks/useNativeApi";
 import { DEFAULT_MODEL } from "../model-logic";
 import { useStore } from "../store";
+import { newCommandId, newProjectId, newThreadId } from "../lib/orchestrationIds";
 import { onServerWelcome } from "../wsNativeApi";
 
 export const Route = createRootRouteWithContext<{
@@ -134,7 +135,7 @@ function EventRouter() {
     const flushSnapshotSync = async (): Promise<void> => {
       const snapshot = await api.orchestration.getSnapshot();
       if (disposed) return;
-      latestSequence = Math.max(latestSequence, snapshot.sequence);
+      latestSequence = Math.max(latestSequence, snapshot.snapshotSequence);
       dispatch({ type: "SYNC_SERVER_READ_MODEL", readModel: snapshot });
       if (pending) {
         pending = false;
@@ -158,12 +159,7 @@ function EventRouter() {
       }
     };
 
-    void Promise.all([api.projects.list(), syncSnapshot()])
-      .then(([projects]) => {
-        if (disposed) return;
-        dispatch({ type: "SYNC_PROJECTS", projects });
-      })
-      .catch(() => undefined);
+    void syncSnapshot().catch(() => undefined);
 
     const unsubDomainEvent = api.orchestration.onDomainEvent((event) => {
       if (event.sequence <= latestSequence) {
@@ -209,32 +205,34 @@ function AutoProjectBootstrap() {
 
       bootstrappedRef.current = true;
       const now = new Date().toISOString();
-      void api.projects
-        .add({ cwd: payload.cwd })
-        .then(async (result) => {
-          const projects = await api.projects.list();
-          dispatch({ type: "SYNC_PROJECTS", projects });
-
-          const hasThread = state.threads.some((thread) => thread.projectId === result.project.id);
-          if (hasThread) {
-            return;
-          }
-
-          return api.orchestration.dispatchCommand({
+      const projectId = newProjectId();
+      const threadId = newThreadId();
+      void api.orchestration
+        .dispatchCommand({
+          type: "project.create",
+          commandId: newCommandId(),
+          projectId,
+          title: payload.projectName,
+          workspaceRoot: payload.cwd,
+          defaultModel: DEFAULT_MODEL,
+          createdAt: now,
+        })
+        .then(() =>
+          api.orchestration.dispatchCommand({
             type: "thread.create",
-            commandId: crypto.randomUUID(),
-            threadId: crypto.randomUUID(),
-            projectId: result.project.id,
+            commandId: newCommandId(),
+            threadId,
+            projectId,
             title: "New thread",
             model: DEFAULT_MODEL,
             branch: null,
             worktreePath: null,
             createdAt: now,
-          });
-        })
+          }),
+        )
         .catch(() => undefined);
     });
-  }, [api, state.projects, state.threads, dispatch]);
+  }, [api, state.projects, dispatch]);
 
   return null;
 }

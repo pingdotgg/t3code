@@ -1,9 +1,9 @@
 import type { NativeApi } from "@t3tools/contracts";
 import { queryOptions } from "@tanstack/react-query";
+import { asThreadId } from "./orchestrationIds";
 
 export interface CheckpointDiffQueryInput {
-  sessionId: string | null;
-  threadRuntimeId: string | null;
+  threadId: string | null;
   fromTurnCount: number | null;
   toTurnCount: number | null;
   cacheScope?: string | null;
@@ -15,8 +15,7 @@ export const providerQueryKeys = {
     [
       "providers",
       "checkpointDiff",
-      input.sessionId,
-      input.threadRuntimeId,
+      input.threadId,
       input.fromTurnCount,
       input.toTurnCount,
       input.cacheScope ?? null,
@@ -58,20 +57,20 @@ export function checkpointDiffQueryOptions(
   return queryOptions({
     queryKey: providerQueryKeys.checkpointDiff(input),
     queryFn: async () => {
-      if (!api || !input.sessionId || !hasValidRange) {
+      if (!api || !input.threadId || !hasValidRange) {
         throw new Error("Checkpoint diff is unavailable.");
       }
       const { fromTurnCount, toTurnCount } = input;
       if (typeof fromTurnCount !== "number" || typeof toTurnCount !== "number") {
         throw new Error("Checkpoint diff range is invalid.");
       }
-      return api.providers.getCheckpointDiff({
-        sessionId: input.sessionId,
+      return api.orchestration.getTurnDiff({
+        threadId: asThreadId(input.threadId),
         fromTurnCount,
         toTurnCount,
       });
     },
-    enabled: !!api && !!input.sessionId && hasValidRange,
+    enabled: !!api && !!input.threadId && hasValidRange,
     staleTime: Infinity,
     retry: (failureCount, error) => {
       if (isCheckpointTemporarilyUnavailable(error)) {

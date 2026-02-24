@@ -1,16 +1,24 @@
-import type { ProviderRuntimeEvent } from "@t3tools/contracts";
+import {
+  ApprovalRequestId,
+  EventId,
+  ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
+  type ProviderRuntimeEvent,
+} from "@t3tools/contracts";
 
 const PROVIDER = "codex" as const;
-const SESSION_ID = "fixture-session";
-const THREAD_ID = "fixture-thread";
-const TURN_ID = "fixture-turn";
+const SESSION_ID = ProviderSessionId.makeUnsafe("fixture-session");
+const THREAD_ID = ProviderThreadId.makeUnsafe("fixture-thread");
+const TURN_ID = ProviderTurnId.makeUnsafe("fixture-turn");
+const REQUEST_ID = ApprovalRequestId.makeUnsafe("req-1");
 
 function baseEvent(eventId: string, createdAt: string): Pick<
   ProviderRuntimeEvent,
   "eventId" | "provider" | "sessionId" | "createdAt"
 > {
   return {
-    eventId,
+    eventId: EventId.makeUnsafe(eventId),
     provider: PROVIDER,
     sessionId: SESSION_ID,
     createdAt,
@@ -100,7 +108,7 @@ export const codexTurnApprovalFixture = [
     ...baseEvent("evt-22", "2026-02-23T00:02:00.100Z"),
     threadId: THREAD_ID,
     turnId: TURN_ID,
-    requestId: "req-1",
+    requestId: REQUEST_ID,
     requestKind: "command",
     detail: "Please approve command",
   },
@@ -109,7 +117,7 @@ export const codexTurnApprovalFixture = [
     ...baseEvent("evt-23", "2026-02-23T00:02:00.200Z"),
     threadId: THREAD_ID,
     turnId: TURN_ID,
-    requestId: "req-1",
+    requestId: REQUEST_ID,
     requestKind: "command",
     decision: "accept",
   },

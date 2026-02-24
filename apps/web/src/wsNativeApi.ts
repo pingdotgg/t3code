@@ -56,12 +56,6 @@ export function createWsNativeApi(): NativeApi {
   });
 
   const api: NativeApi = {
-    todos: {
-      list: async () => [],
-      add: async () => [],
-      toggle: async () => [],
-      remove: async () => [],
-    },
     dialogs: {
       pickFolder: async () => {
         if (!window.desktopBridge) return null;
@@ -84,30 +78,8 @@ export function createWsNativeApi(): NativeApi {
       onEvent: (callback) =>
         transport.subscribe(WS_CHANNELS.terminalEvent, callback as (data: unknown) => void),
     },
-    agent: {
-      spawn: async () => "",
-      kill: async () => {},
-      write: async () => {},
-      onOutput: () => () => {},
-      onExit: () => () => {},
-    },
-    providers: {
-      startSession: (input) => transport.request(WS_METHODS.providersStartSession, input),
-      sendTurn: (input) => transport.request(WS_METHODS.providersSendTurn, input),
-      interruptTurn: (input) => transport.request(WS_METHODS.providersInterruptTurn, input),
-      respondToRequest: (input) => transport.request(WS_METHODS.providersRespondToRequest, input),
-      stopSession: (input) => transport.request(WS_METHODS.providersStopSession, input),
-      listCheckpoints: (input) => transport.request(WS_METHODS.providersListCheckpoints, input),
-      getCheckpointDiff: (input) => transport.request(WS_METHODS.providersGetCheckpointDiff, input),
-      revertToCheckpoint: (input) =>
-        transport.request(WS_METHODS.providersRevertToCheckpoint, input),
-    },
     projects: {
-      list: () => transport.request(WS_METHODS.projectsList),
-      add: (input) => transport.request(WS_METHODS.projectsAdd, input),
-      remove: (input) => transport.request(WS_METHODS.projectsRemove, input),
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
-      updateScripts: (input) => transport.request(WS_METHODS.projectsUpdateScripts, input),
     },
     shell: {
       openInEditor: (cwd, editor) =>
@@ -157,6 +129,7 @@ export function createWsNativeApi(): NativeApi {
       getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),
       dispatchCommand: (command) =>
         transport.request(ORCHESTRATION_WS_METHODS.dispatchCommand, command),
+      getTurnDiff: (input) => transport.request(ORCHESTRATION_WS_METHODS.getTurnDiff, input),
       replayEvents: (fromSequenceExclusive) =>
         transport.request(ORCHESTRATION_WS_METHODS.replayEvents, { fromSequenceExclusive }),
       onDomainEvent: (callback) =>

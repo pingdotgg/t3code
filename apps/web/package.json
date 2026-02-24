@@ -21,6 +21,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "class-variance-authority": "^0.7.1",
+    "effect": "4.0.0-beta.10",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.564.0",
     "react": "^19.0.0",
@@ -28,8 +29,7 @@
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
-    "tailwind-merge": "^3.4.0",
-    "zod": "^3.24.1"
+    "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",

@@ -10,8 +10,7 @@ import {
 
 import {
   type OrchestrationReadModel,
-  type ProjectListResult,
-  normalizeProjectScripts,
+  type OrchestrationSessionStatus,
 } from "@t3tools/contracts";
 import { DEFAULT_MODEL, resolveModelSlug } from "./model-logic";
 import {
@@ -19,6 +18,7 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   DEFAULT_RUNTIME_MODE,
   MAX_THREAD_TERMINAL_COUNT,
+  type ChatMessage,
   type ProjectScript,
   type Project,
   type RuntimeMode,
@@ -30,7 +30,6 @@ import {
 
 type Action =
   | { type: "SYNC_SERVER_READ_MODEL"; readModel: OrchestrationReadModel }
-  | { type: "SYNC_PROJECTS"; projects: ProjectListResult }
   | { type: "SET_PROJECT_SCRIPTS"; projectId: string; scripts: ProjectScript[] }
   | { type: "SET_THREADS_HYDRATED"; hydrated: boolean }
   | { type: "TOGGLE_PROJECT"; projectId: string }
@@ -138,27 +137,54 @@ function updateThread(
   return threads.map((t) => (t.id === threadId ? updater(t) : t));
 }
 
-function mapProjects(
-  incoming: ProjectListResult,
+function cloneProjectScripts(scripts: ReadonlyArray<ProjectScript>): ProjectScript[] {
+  return scripts.map((script) => ({ ...script }));
+}
+
+function mapProjectsFromReadModel(
+  incoming: OrchestrationReadModel["projects"],
   previous: Project[],
 ): Project[] {
   return incoming.map((project) => {
     const existing =
       previous.find((entry) => entry.id === project.id) ??
-      previous.find((entry) => entry.cwd === project.cwd);
+      previous.find((entry) => entry.cwd === project.workspaceRoot);
     return {
       id: project.id,
-      name: project.name,
-      cwd: project.cwd,
-      model: existing?.model ?? DEFAULT_MODEL,
+      name: project.title,
+      cwd: project.workspaceRoot,
+      model: existing?.model ?? resolveModelSlug(project.defaultModel ?? DEFAULT_MODEL),
       expanded:
         existing?.expanded ??
         (persistedExpandedProjectCwds.size > 0
-          ? persistedExpandedProjectCwds.has(project.cwd)
+          ? persistedExpandedProjectCwds.has(project.workspaceRoot)
           : true),
-      scripts: normalizeProjectScripts(project.scripts),
+      scripts: cloneProjectScripts(project.scripts),
     };
   });
+}
+
+function toLegacySessionStatus(
+  status: OrchestrationSessionStatus,
+): "connecting" | "ready" | "running" | "error" | "closed" {
+  switch (status) {
+    case "starting":
+      return "connecting";
+    case "running":
+      return "running";
+    case "error":
+      return "error";
+    case "ready":
+    case "interrupted":
+      return "ready";
+    case "idle":
+    case "stopped":
+      return "closed";
+  }
+}
+
+function toLegacyProvider(providerName: string | null): "codex" | "claudeCode" {
+  return providerName === "claudeCode" ? "claudeCode" : "codex";
 }
 
 
@@ -354,12 +380,32 @@ function closeThreadTerminal(thread: Thread, terminalId: string): Thread {
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "SYNC_SERVER_READ_MODEL": {
+      const projects = mapProjectsFromReadModel(
+        action.readModel.projects.filter((project) => project.deletedAt === null),
+        state.projects,
+      );
       const existingThreadById = new Map(state.threads.map((thread) => [thread.id, thread] as const));
-      const threads = action.readModel.threads.map((thread) => {
+      const threads = action.readModel.threads
+        .filter((thread) => thread.deletedAt === null)
+        .map((thread) => {
         const existing = existingThreadById.get(thread.id);
+        const latestTurnStartedAt =
+          thread.latestTurnId === null
+            ? undefined
+            : thread.messages.find(
+                (message) => message.turnId === thread.latestTurnId && message.role === "user",
+              )?.createdAt;
+        const latestTurnCompletedAt = thread.checkpoints.find(
+          (checkpoint) => checkpoint.turnId === thread.latestTurnId,
+        )?.completedAt;
+        const latestTurnDurationMs =
+          latestTurnStartedAt && latestTurnCompletedAt
+            ? Math.max(0, Date.parse(latestTurnCompletedAt) - Date.parse(latestTurnStartedAt))
+            : undefined;
+
         return normalizeThreadTerminals({
           id: thread.id,
-          codexThreadId: thread.session?.threadId ?? null,
+          codexThreadId: thread.session?.providerThreadId ?? null,
           projectId: thread.projectId,
           title: thread.title,
           model: resolveModelSlug(thread.model),
@@ -374,52 +420,72 @@ export function reducer(state: AppState, action: Action): AppState {
           activeTerminalGroupId: existing?.activeTerminalGroupId ?? `group-${DEFAULT_THREAD_TERMINAL_ID}`,
           session: thread.session
             ? {
-                sessionId: thread.session.sessionId,
-                provider: thread.session.provider,
-                status: thread.session.status,
-                threadId: thread.session.threadId,
+                sessionId: thread.session.providerSessionId ?? `thread:${thread.id}`,
+                provider: toLegacyProvider(thread.session.providerName),
+                status: toLegacySessionStatus(thread.session.status),
+                orchestrationStatus: thread.session.status,
+                threadId: thread.session.providerThreadId,
                 activeTurnId: thread.session.activeTurnId ?? undefined,
-                createdAt: thread.session.createdAt,
+                createdAt: thread.session.updatedAt,
                 updatedAt: thread.session.updatedAt,
                 ...(thread.session.lastError ? { lastError: thread.session.lastError } : {}),
               }
             : null,
-          messages: thread.messages.map((message) => ({ ...message })),
-          error: thread.error,
+          messages: thread.messages.map((message) => {
+            const attachments = message.attachments?.map((attachment, index) => ({
+              type: "image" as const,
+              id: `${message.id}:${index}`,
+              name: attachment.name,
+              mimeType: attachment.mimeType,
+              sizeBytes: attachment.sizeBytes,
+              previewUrl: attachment.dataUrl,
+            }));
+            const normalizedMessage: ChatMessage = {
+              id: message.id,
+              role: message.role,
+              text: message.text,
+              createdAt: message.createdAt,
+              streaming: message.streaming,
+              ...(message.streaming ? {} : { completedAt: message.updatedAt }),
+              ...(attachments && attachments.length > 0 ? { attachments } : {}),
+            };
+            return normalizedMessage;
+          }),
+          error: thread.session?.lastError ?? null,
           createdAt: thread.createdAt,
           latestTurnId: thread.latestTurnId ?? undefined,
-          latestTurnStartedAt: thread.latestTurnStartedAt ?? undefined,
-          latestTurnCompletedAt: thread.latestTurnCompletedAt ?? undefined,
-          latestTurnDurationMs: thread.latestTurnDurationMs ?? undefined,
+          latestTurnStartedAt,
+          latestTurnCompletedAt,
+          latestTurnDurationMs,
           lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,
           branch: thread.branch,
           worktreePath: thread.worktreePath,
-          turnDiffSummaries: thread.turnDiffSummaries.map((summary) => ({
-            ...summary,
-            files: summary.files.map((file) => ({ ...file })),
+          turnDiffSummaries: thread.checkpoints.map((checkpoint) => ({
+            turnId: checkpoint.turnId,
+            completedAt: checkpoint.completedAt,
+            status: checkpoint.status,
+            assistantMessageId: checkpoint.assistantMessageId ?? undefined,
+            checkpointTurnCount: checkpoint.checkpointTurnCount,
+            checkpointRef: checkpoint.checkpointRef,
+            files: checkpoint.files.map((file) => ({ ...file })),
           })),
           activities: thread.activities.map((activity) => ({ ...activity })),
         });
       });
       return {
         ...state,
+        projects,
         threads,
         threadsHydrated: true,
       };
     }
-
-    case "SYNC_PROJECTS":
-      return {
-        ...state,
-        projects: mapProjects(action.projects, state.projects),
-      };
 
     case "SET_PROJECT_SCRIPTS":
       return {
         ...state,
         projects: state.projects.map((project) =>
           project.id === action.projectId
-            ? { ...project, scripts: normalizeProjectScripts(action.scripts) }
+            ? { ...project, scripts: cloneProjectScripts(action.scripts) }
             : project,
         ),
       };

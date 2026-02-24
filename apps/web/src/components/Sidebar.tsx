@@ -7,6 +7,7 @@ import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL } from "../branding";
 import { DEFAULT_MODEL } from "../model-logic";
+import { asProjectId, asThreadId, newCommandId, newProjectId, newThreadId } from "../lib/orchestrationIds";
 import { useStore } from "../store";
 import { isChatNewLocalShortcut, isChatNewShortcut } from "../keybindings";
 import { type Thread } from "../types";
@@ -133,14 +134,14 @@ export default function Sidebar() {
       },
     ) => {
       if (!api) return;
-      const threadId = crypto.randomUUID();
+      const threadId = newThreadId();
       const createdAt = new Date().toISOString();
       const model = state.projects.find((project) => project.id === projectId)?.model ?? DEFAULT_MODEL;
       void api.orchestration.dispatchCommand({
         type: "thread.create",
-        commandId: crypto.randomUUID(),
+        commandId: newCommandId(),
         threadId,
-        projectId,
+        projectId: asProjectId(projectId),
         title: "New thread",
         model,
         branch: options?.branch ?? null,
@@ -152,7 +153,7 @@ export default function Sidebar() {
         params: { threadId },
       });
     },
-    [api, dispatch, navigate, state.projects],
+    [api, navigate, state.projects],
   );
 
   const focusMostRecentThreadForProject = useCallback(
@@ -188,16 +189,19 @@ export default function Sidebar() {
           return;
         }
 
-        const result = await api.projects.add({ cwd });
-        const projects = await api.projects.list();
-        dispatch({ type: "SYNC_PROJECTS", projects });
-
-        const hasThread = state.threads.some((thread) => thread.projectId === result.project.id);
-        if (hasThread) {
-          focusMostRecentThreadForProject(result.project.id);
-          return;
-        }
-        handleNewThread(result.project.id);
+        const projectId = newProjectId();
+        const createdAt = new Date().toISOString();
+        const title = cwd.split(/[/\\]/).filter(Boolean).at(-1) ?? cwd;
+        await api.orchestration.dispatchCommand({
+          type: "project.create",
+          commandId: newCommandId(),
+          projectId,
+          title,
+          workspaceRoot: cwd,
+          defaultModel: DEFAULT_MODEL,
+          createdAt,
+        });
+        handleNewThread(projectId);
       } finally {
         setIsAddingProject(false);
         setNewCwd("");
@@ -206,7 +210,6 @@ export default function Sidebar() {
     },
     [
       api,
-      dispatch,
       focusMostRecentThreadForProject,
       handleNewThread,
       isAddingProject,
@@ -267,15 +270,15 @@ export default function Sidebar() {
           ].join("\n"),
         ));
 
-      // Stop active session if running
-      if (thread.session?.sessionId) {
-        try {
-          await api.providers.stopSession({
-            sessionId: thread.session.sessionId,
-          });
-        } catch {
-          // Session may already be stopped
-        }
+      if (thread.session && thread.session.status !== "closed") {
+        await api.orchestration
+          .dispatchCommand({
+            type: "thread.session.stop",
+            commandId: newCommandId(),
+            threadId: asThreadId(threadId),
+            createdAt: new Date().toISOString(),
+          })
+          .catch(() => undefined);
       }
 
       try {
@@ -291,9 +294,8 @@ export default function Sidebar() {
       const fallbackThreadId = state.threads.find((entry) => entry.id !== threadId)?.id ?? null;
       await api.orchestration.dispatchCommand({
         type: "thread.delete",
-        commandId: crypto.randomUUID(),
-        threadId,
-        createdAt: new Date().toISOString(),
+        commandId: newCommandId(),
+        threadId: asThreadId(threadId),
       });
       if (shouldNavigateToFallback) {
         if (fallbackThreadId) {
@@ -369,9 +371,11 @@ export default function Sidebar() {
       if (!confirmed) return;
 
       try {
-        await api.projects.remove({ id: projectId });
-        const projects = await api.projects.list();
-        dispatch({ type: "SYNC_PROJECTS", projects });
+        await api.orchestration.dispatchCommand({
+          type: "project.delete",
+          commandId: newCommandId(),
+          projectId: asProjectId(projectId),
+        });
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Unknown error deleting project.";
@@ -383,7 +387,7 @@ export default function Sidebar() {
         });
       }
     },
-    [api, dispatch, state.projects, state.threads],
+    [api, state.projects, state.threads],
   );
 
   useEffect(() => {

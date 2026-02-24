@@ -5,7 +5,7 @@ interface DeriveSyncedLocalBranchInput {
   activeWorktreePath: string | null;
   envMode: "local" | "worktree";
   activeThreadBranch: string | null;
-  queryBranches: GitBranch[] | undefined;
+  queryBranches: ReadonlyArray<GitBranch> | undefined;
 }
 
 export function deriveSyncedLocalBranch({

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
 import { useNativeApi } from "../hooks/useNativeApi";
+import { asThreadId, newCommandId } from "../lib/orchestrationIds";
 import {
   gitBranchesQueryOptions,
   gitCheckoutMutationOptions,
@@ -95,11 +96,10 @@ export default function BranchToolbar({
     if (api) {
       void api.orchestration.dispatchCommand({
         type: "thread.meta.update",
-        commandId: crypto.randomUUID(),
-        threadId: activeThreadId,
+        commandId: newCommandId(),
+        threadId: asThreadId(activeThreadId),
         branch: syncedBranch,
         worktreePath: null,
-        createdAt: new Date().toISOString(),
       });
     }
     dispatch({
@@ -127,17 +127,23 @@ export default function BranchToolbar({
     // If the effective cwd is about to change, stop the running session so the
     // next message creates a new one with the correct cwd.
     const sessionId = activeThread?.session?.sessionId;
-    if (sessionId && worktreePath !== activeWorktreePath) {
-      void api?.providers.stopSession({ sessionId }).catch(() => undefined);
+    if (sessionId && worktreePath !== activeWorktreePath && api) {
+      void api.orchestration
+        .dispatchCommand({
+          type: "thread.session.stop",
+          commandId: newCommandId(),
+          threadId: asThreadId(activeThreadId),
+          createdAt: new Date().toISOString(),
+        })
+        .catch(() => undefined);
     }
     if (api) {
       void api.orchestration.dispatchCommand({
         type: "thread.meta.update",
-        commandId: crypto.randomUUID(),
-        threadId: activeThreadId,
+        commandId: newCommandId(),
+        threadId: asThreadId(activeThreadId),
         branch,
         worktreePath,
-        createdAt: new Date().toISOString(),
       });
     }
     dispatch({ type: "SET_THREAD_BRANCH", threadId: activeThreadId, branch, worktreePath });

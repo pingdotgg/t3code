@@ -1,4 +1,4 @@
-import type { WsPush, WsRequest, WsResponse } from "@t3tools/contracts";
+import type { WsPush } from "@t3tools/contracts";
 
 type PushListener = (data: unknown) => void;
 
@@ -10,6 +10,14 @@ interface PendingRequest {
 
 const REQUEST_TIMEOUT_MS = 60_000;
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
+
+interface WsRequestEnvelope {
+  id: string;
+  body: {
+    _tag: string;
+    [key: string]: unknown;
+  };
+}
 
 export class WsTransport {
   private ws: WebSocket | null = null;
@@ -41,7 +49,11 @@ export class WsTransport {
       throw new Error("Request method is required");
     }
     const id = String(this.nextId++);
-    const message: WsRequest = { id, method, ...(params !== undefined ? { params } : {}) };
+    const body =
+      params !== undefined
+        ? { _tag: method, ...(params as Record<string, unknown>) }
+        : { _tag: method };
+    const message: WsRequestEnvelope = { id, body };
 
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -144,22 +156,26 @@ export class WsTransport {
 
     // Response to a request
     if (typeof message.id === "string") {
-      const response = message as unknown as WsResponse;
-      const pending = this.pending.get(response.id);
+      const responseId = message.id;
+      const pending = this.pending.get(responseId);
       if (!pending) return;
 
       clearTimeout(pending.timeout);
-      this.pending.delete(response.id);
+      this.pending.delete(responseId);
 
-      if (response.error) {
-        pending.reject(new Error(response.error.message));
+      if (
+        message.error &&
+        typeof message.error === "object" &&
+        typeof (message.error as { message?: unknown }).message === "string"
+      ) {
+        pending.reject(new Error((message.error as { message: string }).message));
       } else {
-        pending.resolve(response.result);
+        pending.resolve(message.result);
       }
     }
   }
 
-  private send(message: WsRequest) {
+  private send(message: WsRequestEnvelope) {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
       return;
