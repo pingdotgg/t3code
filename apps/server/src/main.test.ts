@@ -24,7 +24,7 @@ const testLayer = Layer.mergeAll(
     cwd: "/tmp/t3-test-workspace",
     fixPath: Effect.void,
     findAvailablePort,
-    resolveStaticDir: () => undefined,
+    resolveStaticDir: () => Effect.undefined,
   } satisfies CliConfigShape),
   Layer.succeed(Server, {
     createServer,

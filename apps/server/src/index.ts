@@ -9,9 +9,9 @@ import { Command } from "effect/unstable/cli";
 import { version } from "../package.json" with { type: "json" };
 import { ServerLive } from "./wsServer";
 
-const RuntimeLayer = Layer.mergeAll(CliConfigLive, ServerLive, OpenLive, NodeServices.layer);
-
-Command.run(makeCliCommand(), { version }).pipe(
-  Effect.provide(RuntimeLayer),
-  NodeRuntime.runMain,
+const RuntimeLayer = Layer.provideMerge(
+  Layer.mergeAll(CliConfigLive, ServerLive, OpenLive),
+  NodeServices.layer,
 );
+
+Command.run(makeCliCommand(), { version }).pipe(Effect.provide(RuntimeLayer), NodeRuntime.runMain);

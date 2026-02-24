@@ -1,17 +1,19 @@
-import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-import * as Data from "effect/Data";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Config from "effect/Config";
-import { ServiceMap } from "effect";
-import * as Command from "effect/unstable/cli/Command";
-import * as Flag from "effect/unstable/cli/Flag";
+import {
+  ServiceMap,
+  Data,
+  Effect,
+  Layer,
+  Option,
+  Config,
+  Path,
+  Schema,
+  FileSystem,
+  PlatformError,
+} from "effect";
+import { Command, Flag } from "effect/unstable/cli";
 
 import { fixPath } from "./fixPath";
 import { Open } from "./open";
@@ -31,22 +33,11 @@ interface CliInput {
   readonly token: Option.Option<string>;
 }
 
-interface ResolvedCliConfig {
-  readonly port: number;
-  readonly mode: RuntimeMode;
-  readonly cwd: string;
-  readonly stateDir: string;
-  readonly devUrl: URL | undefined;
-  readonly noBrowser: boolean;
-  readonly authToken: string | undefined;
-  readonly staticDir: string | undefined;
-}
-
 export interface CliConfigShape {
   readonly cwd: string;
   readonly fixPath: Effect.Effect<unknown, never>;
   readonly findAvailablePort: (preferred: number) => Effect.Effect<number, StartupError>;
-  readonly resolveStaticDir: () => string | undefined;
+  readonly resolveStaticDir: () => Effect.Effect<string | undefined, PlatformError.PlatformError>;
 }
 
 export class CliConfig extends ServiceMap.Service<CliConfig, CliConfigShape>()(
@@ -79,31 +70,22 @@ const CliEnvConfig = Config.all({
   ),
 });
 
-function assertValidPort(value: number, source: string): Effect.Effect<number, StartupError> {
-  if (Number.isInteger(value) && value >= 1 && value <= 65535) {
-    return Effect.succeed(value);
-  }
-  return Effect.fail(
-    new StartupError({
-      message: `Invalid ${source}: ${value}. Expected an integer between 1 and 65535.`,
-    }),
-  );
-}
-
-function expandHomePath(input: string): string {
+const expandHomePath = Effect.fn(function* (input: string) {
+  const { join } = yield* Path.Path;
   if (input === "~") return os.homedir();
   if (input.startsWith("~/")) {
-    return path.join(os.homedir(), input.slice(2));
+    return join(os.homedir(), input.slice(2));
   }
   return input;
-}
+});
 
-function resolveStateDir(raw: string | undefined): string {
+const resolveStateDir = Effect.fn(function* (raw: string | undefined) {
+  const { join, resolve } = yield* Path.Path;
   if (!raw || raw.trim().length === 0) {
-    return path.join(os.homedir(), ".t3", "userdata");
+    return join(os.homedir(), ".t3", "userdata");
   }
-  return path.resolve(expandHomePath(raw.trim()));
-}
+  return resolve(yield* expandHomePath(raw.trim()));
+});
 
 async function findAvailablePort(preferred: number): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -126,69 +108,57 @@ async function findAvailablePort(preferred: number): Promise<number> {
   });
 }
 
-function resolveStaticDir(): string | undefined {
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const resolveStaticDir = Effect.fn(function* () {
+  const { join, resolve } = yield* Path.Path;
+  const { stat } = yield* FileSystem.FileSystem;
+  const bundledClient = resolve(join(import.meta.dirname, "client"));
+  const bundledStat = yield* stat(join(bundledClient, "index.html")).pipe(
+    Effect.orElseSucceed(() => undefined),
+  );
+  if (bundledStat) return bundledClient;
 
-  const bundledClient = path.resolve(__dirname, "client");
-  try {
-    const stat = fs.statSync(path.join(bundledClient, "index.html"));
-    if (stat.isFile()) return bundledClient;
-  } catch {
-    // Not bundled — check monorepo layout.
-  }
-
-  const monorepoClient = path.resolve(__dirname, "../../web/dist");
-  try {
-    const stat = fs.statSync(path.join(monorepoClient, "index.html"));
-    if (stat.isFile()) return monorepoClient;
-  } catch {
-    // Not found — probably dev mode.
-  }
-
+  const monorepoClient = resolve(join(import.meta.dirname, "../../web/dist"));
+  const monorepoStat = yield* stat(join(monorepoClient, "index.html")).pipe(
+    Effect.orElseSucceed(() => undefined),
+  );
+  if (monorepoStat) return monorepoClient;
   return undefined;
-}
+});
 
-function resolveCliConfig(
-  input: CliInput,
-): Effect.Effect<ResolvedCliConfig, StartupError, CliConfig> {
-  return Effect.gen(function* () {
-    const cliConfig = yield* CliConfig;
-    const env = yield* CliEnvConfig.asEffect().pipe(
-      Effect.mapError(
-        (cause) =>
-          new StartupError({
-            message: "Failed to read environment configuration",
-            cause,
-          }),
-      ),
-    );
-    const mode: RuntimeMode = env.mode === "desktop" ? "desktop" : "web";
+const resolveCliConfig = Effect.fn(function* (input: CliInput) {
+  const cliConfig = yield* CliConfig;
+  const env = yield* CliEnvConfig.asEffect().pipe(
+    Effect.mapError(
+      (cause) =>
+        new StartupError({
+          message: "Failed to read environment configuration",
+          cause,
+        }),
+    ),
+  );
+  const mode: RuntimeMode = env.mode === "desktop" ? "desktop" : "web";
 
-    const cliPort = Option.getOrUndefined(input.port);
-    const requestedPort =
-      cliPort === undefined ? env.port : yield* assertValidPort(cliPort, "--port");
+  const cliPort = Option.getOrUndefined(input.port);
+  const port =
+    (cliPort === undefined ? env.port : cliPort) ??
+    (mode === "desktop" ? DEFAULT_PORT : yield* cliConfig.findAvailablePort(DEFAULT_PORT));
+  const stateDir = yield* resolveStateDir(env.stateDir);
+  const devUrl = env.devUrl;
+  const noBrowser = env.noBrowser ?? mode === "desktop";
+  const authToken = Option.getOrUndefined(input.token) ?? env.authToken;
+  const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir();
 
-    const port =
-      requestedPort ??
-      (mode === "desktop" ? DEFAULT_PORT : yield* cliConfig.findAvailablePort(DEFAULT_PORT));
-    const stateDir = resolveStateDir(env.stateDir);
-    const devUrl = env.devUrl;
-    const noBrowser = env.noBrowser ?? mode === "desktop";
-    const authToken = Option.getOrUndefined(input.token) ?? env.authToken;
-    const staticDir = devUrl ? undefined : cliConfig.resolveStaticDir();
-
-    return {
-      mode,
-      port,
-      stateDir,
-      devUrl,
-      noBrowser,
-      authToken,
-      staticDir,
-      cwd: cliConfig.cwd,
-    };
-  });
-}
+  return {
+    mode,
+    port,
+    stateDir,
+    devUrl,
+    noBrowser,
+    authToken,
+    staticDir,
+    cwd: cliConfig.cwd,
+  };
+});
 
 const makeServerProgram = Effect.fn(function* (input: CliInput) {
   const cliConfig = yield* CliConfig;
@@ -253,6 +223,7 @@ const makeServerProgram = Effect.fn(function* (input: CliInput) {
 
 export function makeCliCommand() {
   const portFlag = Flag.integer("port").pipe(
+    Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
     Flag.withDescription("Port for the HTTP/WebSocket server."),
     Flag.optional,
   );
@@ -270,14 +241,25 @@ export function makeCliCommand() {
   );
 }
 
-export const CliConfigLive = Layer.succeed(CliConfig, {
-  cwd: process.cwd(),
-  fixPath: Effect.sync(fixPath),
-  findAvailablePort: (preferred) =>
-    Effect.tryPromise({
-      try: () => findAvailablePort(preferred),
-      catch: (cause) =>
-        new StartupError({ message: "Failed to discover an available port", cause }),
-    }),
-  resolveStaticDir,
-} satisfies CliConfigShape);
+export const CliConfigLive = Layer.effect(
+  CliConfig,
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return {
+      cwd: process.cwd(),
+      fixPath: Effect.sync(fixPath),
+      findAvailablePort: (preferred) =>
+        Effect.tryPromise({
+          try: () => findAvailablePort(preferred),
+          catch: (cause) =>
+            new StartupError({ message: "Failed to discover an available port", cause }),
+        }),
+      resolveStaticDir: () =>
+        resolveStaticDir().pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+    } satisfies CliConfigShape;
+  }),
+);
