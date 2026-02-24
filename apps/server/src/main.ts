@@ -26,7 +26,7 @@ export interface CliConfigShape {
   readonly cwd: string;
   readonly fixPath: Effect.Effect<unknown, never>;
   readonly findAvailablePort: (preferred: number) => Effect.Effect<number, StartupError>;
-  readonly resolveStaticDir: () => Effect.Effect<string | undefined>;
+  readonly resolveStaticDir: Effect.Effect<string | undefined>;
 }
 
 export class CliConfig extends ServiceMap.Service<CliConfig, CliConfigShape>()(
@@ -141,7 +141,7 @@ const resolveCliConfig = Effect.fn(function* (input: CliInput) {
   const devUrl = env.devUrl;
   const noBrowser = env.noBrowser ?? mode === "desktop";
   const authToken = Option.getOrUndefined(input.token) ?? env.authToken;
-  const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir();
+  const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
 
   return {
     mode,
@@ -245,11 +245,10 @@ export const CliConfigLive = Layer.effect(
       cwd: process.cwd(),
       fixPath: Effect.sync(fixPath),
       findAvailablePort,
-      resolveStaticDir: () =>
-        resolveStaticDir().pipe(
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-        ),
+      resolveStaticDir: resolveStaticDir().pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ),
     } satisfies CliConfigShape;
   }),
 );
