@@ -247,6 +247,8 @@ const makeServerProgram = Effect.fn(function* (input: CliInput) {
       ),
     );
   }
+
+  return yield* Effect.never;
 }, Effect.scoped);
 
 export function makeCliCommand() {
