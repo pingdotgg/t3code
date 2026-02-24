@@ -35,7 +35,6 @@ export interface SqliteClientConfig {
   readonly allowExtension?: boolean | undefined;
   readonly prepareCacheSize?: number | undefined;
   readonly prepareCacheTTL?: Duration.Input | undefined;
-  readonly disableWAL?: boolean | undefined;
   readonly spanAttributes?: Record<string, unknown> | undefined;
   readonly transformResultNames?: ((str: string) => string) | undefined;
   readonly transformQueryNames?: ((str: string) => string) | undefined;
@@ -63,10 +62,6 @@ const makeWithDatabase = (
         scope,
         Effect.sync(() => db.close()),
       );
-
-      if (options.disableWAL !== true) {
-        db.exec("PRAGMA journal_mode = WAL");
-      }
 
       const statementReaderCache = new WeakMap<StatementSync, boolean>();
       const hasRows = (statement: StatementSync): boolean => {
@@ -203,7 +198,6 @@ const makeMemory = (
       ...config,
       filename: ":memory:",
       readonly: false,
-      disableWAL: config.disableWAL ?? true,
     },
     () => {
       const database = new DatabaseSync(":memory:", {
