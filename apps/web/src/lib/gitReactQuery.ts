@@ -179,7 +179,7 @@ export function gitRemoveWorktreeMutationOptions(input: {
       if (!input.api) {
         throw new Error("Git worktree removal is unavailable.");
       }
-      return input.api.git.removeWorktree({ cwd, path, force: force ?? null });
+      return input.api.git.removeWorktree({ cwd, path, force });
     },
     onSettled: async () => {
       await invalidateGitQueries(input.queryClient);
