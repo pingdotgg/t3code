@@ -28,7 +28,7 @@ const testLayer = Layer.mergeAll(
   } satisfies CliConfigShape),
   Layer.succeed(Server, {
     createServer,
-    stopSignal: Effect.never,
+    stopSignal: Effect.void,
   } satisfies ServerShape),
   Layer.succeed(Open, {
     openBrowser: (_target: string) => Effect.void,
@@ -112,6 +112,17 @@ it.layer(testLayer)("server cli", (it) => {
       const options = createServer.mock.calls[0]?.[0];
       assert.equal(options?.port, 3773);
       assert.equal(options?.host, "127.0.0.1");
+    }),
+  );
+
+  it.effect("does not start server for out-of-range --port values", () =>
+    Effect.gen(function* () {
+      yield* runCli(["--port", "70000"]);
+
+      // effect/unstable/cli renders help/errors for parse failures and returns success.
+      assert.equal(createServer.mock.calls.length, 0);
+      assert.equal(start.mock.calls.length, 0);
+      assert.equal(stop.mock.calls.length, 0);
     }),
   );
 });
