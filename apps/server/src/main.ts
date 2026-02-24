@@ -1,18 +1,7 @@
 import net from "node:net";
 import os from "node:os";
 
-import {
-  ServiceMap,
-  Data,
-  Effect,
-  Layer,
-  Option,
-  Config,
-  Path,
-  Schema,
-  FileSystem,
-  PlatformError,
-} from "effect";
+import { ServiceMap, Data, Effect, Layer, Option, Config, Path, Schema, FileSystem } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 
 import { fixPath } from "./fixPath";
@@ -37,7 +26,7 @@ export interface CliConfigShape {
   readonly cwd: string;
   readonly fixPath: Effect.Effect<unknown, never>;
   readonly findAvailablePort: (preferred: number) => Effect.Effect<number, StartupError>;
-  readonly resolveStaticDir: () => Effect.Effect<string | undefined, PlatformError.PlatformError>;
+  readonly resolveStaticDir: () => Effect.Effect<string | undefined>;
 }
 
 export class CliConfig extends ServiceMap.Service<CliConfig, CliConfigShape>()(
@@ -87,11 +76,11 @@ const resolveStateDir = Effect.fn(function* (raw: string | undefined) {
   return resolve(yield* expandHomePath(raw.trim()));
 });
 
-async function findAvailablePort(preferred: number): Promise<number> {
-  return new Promise((resolve, reject) => {
+const findAvailablePort = (preferred: number) =>
+  Effect.callback<number, StartupError>((resume) => {
     const server = net.createServer();
     server.listen(preferred, () => {
-      server.close(() => resolve(preferred));
+      server.close(() => resume(Effect.succeed(preferred)));
     });
     server.on("error", () => {
       const fallback = net.createServer();
@@ -99,14 +88,20 @@ async function findAvailablePort(preferred: number): Promise<number> {
         const addr = fallback.address();
         const port = typeof addr === "object" && addr !== null ? addr.port : 0;
         fallback.close(() => {
-          if (port > 0) resolve(port);
-          else reject(new Error("Could not find an available port."));
+          resume(
+            port > 0
+              ? Effect.succeed(port)
+              : Effect.fail(new StartupError({ message: "Could not find an available port." })),
+          );
         });
       });
-      fallback.on("error", reject);
+      fallback.on("error", (cause) => {
+        resume(
+          Effect.fail(new StartupError({ message: "Failed to find an available port", cause })),
+        );
+      });
     });
   });
-}
 
 const resolveStaticDir = Effect.fn(function* () {
   const { join, resolve } = yield* Path.Path;
@@ -249,12 +244,7 @@ export const CliConfigLive = Layer.effect(
     return {
       cwd: process.cwd(),
       fixPath: Effect.sync(fixPath),
-      findAvailablePort: (preferred) =>
-        Effect.tryPromise({
-          try: () => findAvailablePort(preferred),
-          catch: (cause) =>
-            new StartupError({ message: "Failed to discover an available port", cause }),
-        }),
+      findAvailablePort,
       resolveStaticDir: () =>
         resolveStaticDir().pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
