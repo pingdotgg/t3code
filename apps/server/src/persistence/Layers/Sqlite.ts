@@ -5,7 +5,6 @@ import { runMigrations } from "../Migrations.ts";
 
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
-  readonly disableWAL?: boolean | undefined;
 };
 
 type Loader = {
@@ -46,8 +45,5 @@ export const makeSqlitePersistenceLive = (dbPath: string) =>
 
 export const SqlitePersistenceMemory = Layer.provideMerge(
   setup,
-  makeRuntimeSqliteLayer({
-    filename: ":memory:",
-    disableWAL: true,
-  }),
+  makeRuntimeSqliteLayer({ filename: ":memory:" }),
 );
