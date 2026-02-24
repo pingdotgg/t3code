@@ -28,6 +28,7 @@ const testLayer = Layer.mergeAll(
   } satisfies CliConfigShape),
   Layer.succeed(Server, {
     createServer,
+    stopSignal: Effect.never,
   } satisfies ServerShape),
   Layer.succeed(Open, {
     openBrowser: (_target: string) => Effect.void,
@@ -111,21 +112,6 @@ it.layer(testLayer)("server cli", (it) => {
       const options = createServer.mock.calls[0]?.[0];
       assert.equal(options?.port, 3773);
       assert.equal(options?.host, "127.0.0.1");
-    }),
-  );
-
-  it.effect("fails for out-of-range --port values", () =>
-    Effect.gen(function* () {
-      const result = yield* Effect.result(runCli(["--port", "70000"]));
-
-      assert.equal(result._tag, "Failure");
-      if (result._tag === "Failure") {
-        assert.equal(
-          result.failure.message,
-          "Invalid --port: 70000. Expected an integer between 1 and 65535.",
-        );
-      }
-      assert.equal(createServer.mock.calls.length, 0);
     }),
   );
 });

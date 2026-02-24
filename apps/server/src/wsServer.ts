@@ -113,12 +113,14 @@ export interface ServerRuntime {
 
 export interface ServerShape {
   readonly createServer: (options: ServerOptions) => ServerRuntime;
+  readonly stopSignal: Effect.Effect<unknown, never>;
 }
 
 export class Server extends ServiceMap.Service<Server, ServerShape>()("server/Server") {}
 
 export const ServerLive = Layer.succeed(Server, {
   createServer,
+  stopSignal: Effect.never,
 } satisfies ServerShape);
 
 const isServerNotRunningError = (error: unknown): boolean => {
