@@ -60,10 +60,10 @@ const CliEnvConfig = Config.all({
 });
 
 const expandHomePath = Effect.fn(function* (input: string) {
-  const { join } = yield* Path.Path;
+  const { join, sep } = yield* Path.Path;
   if (input === "~") return os.homedir();
-  if (input.startsWith("~/")) {
-    return join(os.homedir(), input.slice(2));
+  if (input.startsWith(`~${sep}`)) {
+    return join(os.homedir(), input.slice(sep.length));
   }
   return input;
 });
