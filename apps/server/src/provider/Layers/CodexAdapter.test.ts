@@ -1,10 +1,16 @@
-import type {
-  ProviderApprovalDecision,
-  ProviderEvent,
-  ProviderSendTurnInput,
-  ProviderSession,
-  ProviderSessionStartInput,
-  ProviderTurnStartResult,
+import {
+  ApprovalRequestId,
+  EventId,
+  ProviderItemId,
+  type ProviderApprovalDecision,
+  type ProviderEvent,
+  type ProviderSendTurnInput,
+  ProviderSessionId,
+  type ProviderSession,
+  type ProviderSessionStartInput,
+  ProviderThreadId,
+  ProviderTurnId,
+  type ProviderTurnStartResult,
 } from "@t3tools/contracts";
 import { afterAll, assert, it, vi } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
@@ -16,15 +22,21 @@ import { ProviderAdapterValidationError } from "../Errors.ts";
 import { CodexAdapter } from "../Services/CodexAdapter.ts";
 import { makeCodexAdapterLive } from "./CodexAdapter.ts";
 
+const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
+const asThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
+const asTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
+const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
+const asItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
+
 class FakeCodexManager extends CodexAppServerManager {
   public startSessionImpl = vi.fn(
     async (input: ProviderSessionStartInput): Promise<ProviderSession> => {
       const now = new Date().toISOString();
       return {
-        sessionId: "sess-1",
+        sessionId: asSessionId("sess-1"),
         provider: "codex",
         status: "ready",
-        threadId: "thread-1",
+        threadId: asThreadId("thread-1"),
         cwd: input.cwd,
         createdAt: now,
         updatedAt: now,
@@ -34,29 +46,29 @@ class FakeCodexManager extends CodexAppServerManager {
 
   public sendTurnImpl = vi.fn(
     async (_input: ProviderSendTurnInput): Promise<ProviderTurnStartResult> => ({
-      threadId: "thread-1",
-      turnId: "turn-1",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
     }),
   );
 
   public interruptTurnImpl = vi.fn(
-    async (_sessionId: string, _turnId?: string): Promise<void> => undefined,
+    async (_sessionId: ProviderSessionId, _turnId?: ProviderTurnId): Promise<void> => undefined,
   );
 
-  public readThreadImpl = vi.fn(async (_sessionId: string) => ({
-    threadId: "thread-1",
+  public readThreadImpl = vi.fn(async (_sessionId: ProviderSessionId) => ({
+    threadId: asThreadId("thread-1"),
     turns: [],
   }));
 
-  public rollbackThreadImpl = vi.fn(async (_sessionId: string, _numTurns: number) => ({
-    threadId: "thread-1",
+  public rollbackThreadImpl = vi.fn(async (_sessionId: ProviderSessionId, _numTurns: number) => ({
+    threadId: asThreadId("thread-1"),
     turns: [],
   }));
 
   public respondToRequestImpl = vi.fn(
     async (
-      _sessionId: string,
-      _requestId: string,
+      _sessionId: ProviderSessionId,
+      _requestId: ApprovalRequestId,
       _decision: ProviderApprovalDecision,
     ): Promise<void> => undefined,
   );
@@ -71,33 +83,33 @@ class FakeCodexManager extends CodexAppServerManager {
     return this.sendTurnImpl(input);
   }
 
-  override interruptTurn(sessionId: string, turnId?: string): Promise<void> {
+  override interruptTurn(sessionId: ProviderSessionId, turnId?: ProviderTurnId): Promise<void> {
     return this.interruptTurnImpl(sessionId, turnId);
   }
 
-  override readThread(sessionId: string) {
+  override readThread(sessionId: ProviderSessionId) {
     return this.readThreadImpl(sessionId);
   }
 
-  override rollbackThread(sessionId: string, numTurns: number) {
+  override rollbackThread(sessionId: ProviderSessionId, numTurns: number) {
     return this.rollbackThreadImpl(sessionId, numTurns);
   }
 
   override respondToRequest(
-    sessionId: string,
-    requestId: string,
+    sessionId: ProviderSessionId,
+    requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
   ): Promise<void> {
     return this.respondToRequestImpl(sessionId, requestId, decision);
   }
 
-  override stopSession(_sessionId: string): void {}
+  override stopSession(_sessionId: ProviderSessionId): void {}
 
   override listSessions(): ProviderSession[] {
     return [];
   }
 
-  override hasSession(_sessionId: string): boolean {
+  override hasSession(_sessionId: ProviderSessionId): boolean {
     return false;
   }
 
@@ -144,7 +156,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       const adapter = yield* CodexAdapter;
       const result = yield* adapter
         .sendTurn({
-          sessionId: "sess-missing",
+          sessionId: asSessionId("sess-missing"),
           input: "hello",
           attachments: [],
         })
@@ -176,15 +188,15 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
 
       const event: ProviderEvent = {
-        id: "evt-msg-complete",
+        id: asEventId("evt-msg-complete"),
         kind: "notification",
         provider: "codex",
-        sessionId: "sess-1",
+        sessionId: asSessionId("sess-1"),
         createdAt: new Date().toISOString(),
         method: "item/completed",
-        threadId: "thread-1",
-        turnId: "turn-1",
-        itemId: "msg_1",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("msg_1"),
         payload: {
           item: {
             type: "agentMessage",
@@ -220,13 +232,13 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       ).pipe(Effect.forkChild);
 
       const event: ProviderEvent = {
-        id: "evt-1",
+        id: asEventId("evt-1"),
         kind: "notification",
         provider: "codex",
-        sessionId: "sess-1",
+        sessionId: asSessionId("sess-1"),
         createdAt: new Date().toISOString(),
         method: "turn/started",
-        turnId: "turn-1",
+        turnId: asTurnId("turn-1"),
       };
 
       lifecycleManager.emit("event", event);

@@ -1,8 +1,15 @@
+import { CommandId, EventId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import { Effect } from "effect";
 
 import { decideOrchestrationCommand } from "./decider.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
+
+const asCommandId = (value: string): CommandId => CommandId.makeUnsafe(value);
+const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
+const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
+const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
+const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
 
 describe("decider project scripts", () => {
   it("emits empty scripts on project.create", async () => {
@@ -13,8 +20,8 @@ describe("decider project scripts", () => {
       decideOrchestrationCommand({
         command: {
           type: "project.create",
-          commandId: "cmd-project-create-scripts",
-          projectId: "project-scripts",
+          commandId: asCommandId("cmd-project-create-scripts"),
+          projectId: asProjectId("project-scripts"),
           title: "Scripts",
           workspaceRoot: "/tmp/scripts",
           createdAt: now,
@@ -34,17 +41,17 @@ describe("decider project scripts", () => {
     const readModel = await Effect.runPromise(
       projectEvent(initial, {
         sequence: 1,
-        eventId: "evt-project-create-scripts",
-        aggregateType: "project",
-        aggregateId: "project-scripts",
+        eventId: asEventId("evt-project-create-scripts"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-scripts"),
         type: "project.created",
         occurredAt: now,
-        commandId: "cmd-project-create-scripts",
+        commandId: asCommandId("cmd-project-create-scripts"),
         causationEventId: null,
-        correlationId: "cmd-project-create-scripts",
+        correlationId: asCommandId("cmd-project-create-scripts"),
         metadata: {},
         payload: {
-          projectId: "project-scripts",
+          projectId: asProjectId("project-scripts"),
           title: "Scripts",
           workspaceRoot: "/tmp/scripts",
           defaultModel: null,
@@ -69,8 +76,8 @@ describe("decider project scripts", () => {
       decideOrchestrationCommand({
         command: {
           type: "project.meta.update",
-          commandId: "cmd-project-update-scripts",
-          projectId: "project-scripts",
+          commandId: asCommandId("cmd-project-update-scripts"),
+          projectId: asProjectId("project-scripts"),
           scripts: Array.from(scripts),
         },
         readModel,
@@ -88,17 +95,17 @@ describe("decider project scripts", () => {
     const withProject = await Effect.runPromise(
       projectEvent(initial, {
         sequence: 1,
-        eventId: "evt-project-create",
-        aggregateType: "project",
-        aggregateId: "project-1",
+        eventId: asEventId("evt-project-create"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-1"),
         type: "project.created",
         occurredAt: now,
-        commandId: "cmd-project-create",
+        commandId: asCommandId("cmd-project-create"),
         causationEventId: null,
-        correlationId: "cmd-project-create",
+        correlationId: asCommandId("cmd-project-create"),
         metadata: {},
         payload: {
-          projectId: "project-1",
+          projectId: asProjectId("project-1"),
           title: "Project",
           workspaceRoot: "/tmp/project",
           defaultModel: null,
@@ -111,18 +118,18 @@ describe("decider project scripts", () => {
     const readModel = await Effect.runPromise(
       projectEvent(withProject, {
         sequence: 2,
-        eventId: "evt-thread-create",
-        aggregateType: "thread",
-        aggregateId: "thread-1",
+        eventId: asEventId("evt-thread-create"),
+        aggregateKind: "thread",
+        aggregateId: asThreadId("thread-1"),
         type: "thread.created",
         occurredAt: now,
-        commandId: "cmd-thread-create",
+        commandId: asCommandId("cmd-thread-create"),
         causationEventId: null,
-        correlationId: "cmd-thread-create",
+        correlationId: asCommandId("cmd-thread-create"),
         metadata: {},
         payload: {
-          threadId: "thread-1",
-          projectId: "project-1",
+          threadId: asThreadId("thread-1"),
+          projectId: asProjectId("project-1"),
           title: "Thread",
           model: "gpt-5-codex",
           branch: null,
@@ -137,10 +144,10 @@ describe("decider project scripts", () => {
       decideOrchestrationCommand({
         command: {
           type: "thread.turn.start",
-          commandId: "cmd-turn-start",
-          threadId: "thread-1",
+          commandId: asCommandId("cmd-turn-start"),
+          threadId: asThreadId("thread-1"),
           message: {
-            messageId: "message-user-1",
+            messageId: asMessageId("message-user-1"),
             role: "user",
             text: "hello",
             attachments: [],

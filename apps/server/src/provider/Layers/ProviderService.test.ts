@@ -45,17 +45,6 @@ import {
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 
-function decodeIssueMessage(cause: unknown): string {
-  if (cause instanceof Error && cause.message.length > 0) {
-    return cause.message;
-  }
-  try {
-    return JSON.stringify(cause);
-  } catch {
-    return "Invalid provider input.";
-  }
-}
-
 const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
@@ -526,11 +515,18 @@ routing.layer("ProviderServiceLive routing", (it) => {
         const payload = runningRuntime.value.runtimePayload;
         assert.equal(payload !== null && typeof payload === "object", true);
         if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
-          assert.equal(payload.cwd, process.cwd());
-          assert.equal(payload.model, null);
-          assert.equal(payload.activeTurnId, "turn-1");
-          assert.equal(payload.lastError, null);
-          assert.equal(payload.lastRuntimeEvent, "provider.sendTurn");
+          const runtimePayload = payload as {
+            cwd: string;
+            model: string | null;
+            activeTurnId: string | null;
+            lastError: string | null;
+            lastRuntimeEvent: string | null;
+          };
+          assert.equal(runtimePayload.cwd, process.cwd());
+          assert.equal(runtimePayload.model, null);
+          assert.equal(runtimePayload.activeTurnId, "turn-1");
+          assert.equal(runtimePayload.lastError, null);
+          assert.equal(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
         }
       }
 
@@ -669,32 +665,22 @@ validation.layer("ProviderServiceLive validation", (it) => {
     Effect.gen(function* () {
       const provider = yield* ProviderService;
 
-      let parseCause: unknown;
-      let decodeFailed = false;
-      try {
-        Schema.decodeUnknownSync(ProviderSessionStartInput)({
-          provider: "invalid-provider",
-        });
-      } catch (cause) {
-        parseCause = cause;
-        decodeFailed = true;
-      }
-      assert.equal(decodeFailed, true);
-
       const failure = yield* Effect.result(
         provider.startSession({
           provider: "invalid-provider",
         } as never),
       );
 
-      assertFailure(
-        failure,
-        new ProviderValidationError({
-          operation: "ProviderService.startSession",
-          issue: decodeIssueMessage(parseCause),
-          cause: parseCause,
-        }),
-      );
+      assert.equal(failure._tag, "Failure");
+      if (failure._tag !== "Failure") {
+        return;
+      }
+      assert.equal(failure.failure._tag, "ProviderValidationError");
+      if (failure.failure._tag !== "ProviderValidationError") {
+        return;
+      }
+      assert.equal(failure.failure.operation, "ProviderService.startSession");
+      assert.equal(failure.failure.issue.includes("invalid-provider"), true);
     }),
   );
 

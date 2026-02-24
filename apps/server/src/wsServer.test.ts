@@ -10,15 +10,20 @@ import WebSocket from "ws";
 
 import {
   DEFAULT_TERMINAL_ID,
+  EventId,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
+  ProviderItemId,
+  ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
   WS_CHANNELS,
   WS_METHODS,
+  type WebSocketResponse,
   type ProviderRuntimeEvent,
   type KeybindingsConfig,
   type ResolvedKeybindingsConfig,
   type WsPush,
-  type WsResponse,
 } from "@t3tools/contracts";
 import { compileResolvedKeybindingRule, DEFAULT_KEYBINDINGS } from "./keybindings";
 import type {
@@ -34,6 +39,7 @@ import type { TerminalManager } from "./terminalManager";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
 import { SqlClient } from "effect/unstable/sql";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
+import type { OpenShape } from "./open";
 
 interface PendingMessages {
   queue: unknown[];
@@ -41,6 +47,12 @@ interface PendingMessages {
 }
 
 const pendingBySocket = new WeakMap<WebSocket, PendingMessages>();
+
+const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
+const asProviderSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
+const asProviderThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
+const asProviderTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
+const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
 
 class MockTerminalManager extends EventEmitter<{ event: [event: TerminalEvent] }> {
   private readonly sessions = new Map<string, TerminalSessionSnapshot>();
@@ -187,7 +199,19 @@ function waitForMessage(ws: WebSocket): Promise<unknown> {
   });
 }
 
-async function sendRequest(ws: WebSocket, method: string, params?: unknown): Promise<WsResponse> {
+function asWebSocketResponse(message: unknown): WebSocketResponse | null {
+  if (typeof message !== "object" || message === null) return null;
+  if (!("id" in message)) return null;
+  const id = (message as { id?: unknown }).id;
+  if (typeof id !== "string") return null;
+  return message as WebSocketResponse;
+}
+
+async function sendRequest(
+  ws: WebSocket,
+  method: string,
+  params?: unknown,
+): Promise<WebSocketResponse> {
   const id = crypto.randomUUID();
   const body =
     method === ORCHESTRATION_WS_METHODS.dispatchCommand
@@ -200,12 +224,15 @@ async function sendRequest(ws: WebSocket, method: string, params?: unknown): Pro
 
   // Wait for response with matching id
   while (true) {
-    const parsed = (await waitForMessage(ws)) as Record<string, unknown>;
+    const parsed = asWebSocketResponse(await waitForMessage(ws));
+    if (!parsed) {
+      continue;
+    }
     if (parsed.id === id) {
-      return parsed as WsResponse;
+      return parsed;
     }
     if (parsed.id === "unknown") {
-      return parsed as WsResponse;
+      return parsed;
     }
   }
 }
@@ -233,7 +260,7 @@ async function waitForPush(
 }
 
 function compileKeybindings(bindings: KeybindingsConfig): ResolvedKeybindingsConfig {
-  const resolved: ResolvedKeybindingsConfig = [];
+  const resolved: Array<ResolvedKeybindingsConfig[number]> = [];
   for (const binding of bindings) {
     const compiled = compileResolvedKeybindingRule(binding);
     if (!compiled) {
@@ -278,6 +305,7 @@ describe("WebSocket Server", () => {
       authToken?: string;
       stateDir?: string;
       providerLayer?: Layer.Layer<ProviderService, unknown>;
+      open?: OpenShape;
       gitManager?: {
         status: (input: { cwd: string }) => Promise<unknown>;
         runStackedAction: (input: { cwd: string; action: string }) => Promise<unknown>;
@@ -297,6 +325,7 @@ describe("WebSocket Server", () => {
       ...(options.devUrl ? { devUrl: options.devUrl } : {}),
       ...(options.authToken ? { authToken: options.authToken } : {}),
       ...(options.providerLayer ? { providerLayer: options.providerLayer } : {}),
+      ...(options.open ? { open: options.open } : {}),
       ...(options.gitManager ? { gitManager: options.gitManager as never } : {}),
       ...(options.terminalManager ? { terminalManager: options.terminalManager } : {}),
     });
@@ -418,6 +447,33 @@ describe("WebSocket Server", () => {
       cwd: "/my/workspace",
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
     });
+  });
+
+  it("routes shell.openInEditor through the injected open service", async () => {
+    const openCalls: Array<{ cwd: string; editor: string }> = [];
+    const openService: OpenShape = {
+      openBrowser: () => Effect.void,
+      openInEditor: (input) => {
+        openCalls.push({ cwd: input.cwd, editor: input.editor });
+        return Effect.void;
+      },
+    };
+
+    server = createTestServer({ cwd: "/my/workspace", open: openService });
+    await server.start();
+    const addr = server.httpServer.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.shellOpenInEditor, {
+      cwd: "/my/workspace",
+      editor: "cursor",
+    });
+    expect(response.error).toBeUndefined();
+    expect(openCalls).toEqual([{ cwd: "/my/workspace", editor: "cursor" }]);
   });
 
   it("reads keybindings from ~/.t3/keybindings.json", async () => {
@@ -787,7 +843,7 @@ describe("WebSocket Server", () => {
 
   it("keeps orchestration domain push behavior for provider runtime events", async () => {
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
-    const sessionId = "sess-test";
+    const sessionId = asProviderSessionId("sess-test");
     const emitRuntimeEvent = (event: ProviderRuntimeEvent) => {
       Effect.runSync(PubSub.publish(runtimeEventPubSub, event));
     };
@@ -798,11 +854,15 @@ describe("WebSocket Server", () => {
           sessionId,
           provider: "codex",
           status: "ready",
-          threadId: "provider-thread-1",
+          threadId: asProviderThreadId("provider-thread-1"),
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         }),
-      sendTurn: () => Effect.succeed({ threadId: "provider-thread-1", turnId: "provider-turn-1" }),
+      sendTurn: () =>
+        Effect.succeed({
+          threadId: asProviderThreadId("provider-thread-1"),
+          turnId: asProviderTurnId("provider-turn-1"),
+        }),
       interruptTurn: () => unsupported(),
       respondToRequest: () => unsupported(),
       stopSession: () => unsupported(),
@@ -870,12 +930,12 @@ describe("WebSocket Server", () => {
 
     emitRuntimeEvent({
       type: "message.delta",
-      eventId: "evt-ws-runtime-message-delta",
+      eventId: asEventId("evt-ws-runtime-message-delta"),
       provider: "codex",
       sessionId,
       createdAt: new Date().toISOString(),
-      turnId: "turn-1",
-      itemId: "item-1",
+      turnId: asProviderTurnId("turn-1"),
+      itemId: asProviderItemId("item-1"),
       delta: "hello from runtime",
     });
 
@@ -1015,15 +1075,18 @@ describe("WebSocket Server", () => {
     // Send garbage
     ws.send("not json at all");
 
-    let response: WsResponse | null = null;
+    let response: WebSocketResponse | null = null;
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      const message = (await waitForMessage(ws)) as Record<string, unknown>;
-      if (typeof message.id === "string" && message.id === "unknown") {
-        response = message as WsResponse;
+      const message = asWebSocketResponse(await waitForMessage(ws));
+      if (!message) {
+        continue;
+      }
+      if (message.id === "unknown") {
+        response = message;
         break;
       }
       if (message.error) {
-        response = message as WsResponse;
+        response = message;
         break;
       }
     }

@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -7,7 +6,6 @@ import type { Duplex } from "node:stream";
 
 import {
   CheckpointRef,
-  EDITORS,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   TerminalEvent,
@@ -18,7 +16,7 @@ import {
   WsResponse,
 } from "@t3tools/contracts";
 import { NodeServices } from "@effect/platform-node";
-import { Effect, Exit, Layer, ManagedRuntime, Schema, Scope, Stream } from "effect";
+import { Effect, Exit, Layer, ManagedRuntime, Schema, Scope, ServiceMap, Stream } from "effect";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { createLogger } from "./logger";
@@ -62,12 +60,16 @@ import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionD
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime";
-import { CheckpointStore, type CheckpointStoreShape } from "./checkpointing/Services/CheckpointStore";
+import {
+  CheckpointStore,
+  type CheckpointStoreShape,
+} from "./checkpointing/Services/CheckpointStore";
 import { makeEventNdjsonLogger, type EventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlError from "effect/unstable/sql/SqlError";
 import * as Migrator from "effect/unstable/sql/Migrator";
 import { clamp } from "effect/Number";
+import { OpenDefaultService, type OpenShape } from "./open";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -100,7 +102,24 @@ export interface ServerOptions {
   terminalManager?: TerminalManager | undefined;
   providerLayer?: Layer.Layer<ProviderService, unknown> | undefined;
   authToken?: string | undefined;
+  open?: OpenShape | undefined;
 }
+
+export interface ServerRuntime {
+  readonly start: () => Promise<void>;
+  readonly stop: () => Promise<void>;
+  readonly httpServer: http.Server;
+}
+
+export interface ServerShape {
+  readonly createServer: (options: ServerOptions) => ServerRuntime;
+}
+
+export class Server extends ServiceMap.Service<Server, ServerShape>()("server/Server") {}
+
+export const ServerLive = Layer.succeed(Server, {
+  createServer,
+} satisfies ServerShape);
 
 const isServerNotRunningError = (error: unknown): boolean => {
   if (!(error instanceof Error)) return false;
@@ -162,9 +181,7 @@ function websocketRawToString(raw: unknown): string | null {
   return null;
 }
 
-function stripRequestTag<T extends { _tag: string }>(
-  body: T,
-): Omit<T, "_tag"> {
+function stripRequestTag<T extends { _tag: string }>(body: T): Omit<T, "_tag"> {
   const { _tag: _ignoredTag, ...rest } = body;
   return rest;
 }
@@ -185,7 +202,7 @@ type EffectRuntime = ManagedRuntime.ManagedRuntime<
   unknown
 >;
 
-export function createServer(options: ServerOptions) {
+export function createServer(options: ServerOptions): ServerRuntime {
   const {
     port,
     host,
@@ -200,6 +217,7 @@ export function createServer(options: ServerOptions) {
     terminalManager = new TerminalManager(),
     providerLayer: customProviderLayer,
     authToken,
+    open: openService = OpenDefaultService,
   } = options;
 
   const resolvedStateDir = stateDir ?? path.join(os.homedir(), ".t3", "userdata");
@@ -626,42 +644,7 @@ export function createServer(options: ServerOptions) {
         return searchWorkspaceEntries(stripRequestTag(request.body));
 
       case WS_METHODS.shellOpenInEditor: {
-        const body = request.body;
-        const editorDef = EDITORS.find((e) => e.id === body.editor);
-        if (!editorDef) throw new Error(`Unknown editor: ${body.editor}`);
-
-        let command: string;
-        let args: string[];
-
-        if (editorDef.command) {
-          command = editorDef.command;
-          args = [body.cwd];
-        } else if (editorDef.id === "file-manager") {
-          // Use platform-specific file manager command
-          switch (process.platform) {
-            case "darwin":
-              command = "open";
-              break;
-            case "win32":
-              command = "explorer";
-              break;
-            default:
-              command = "xdg-open";
-              break;
-          }
-          args = [body.cwd];
-        } else {
-          return undefined;
-        }
-
-        const child = spawn(command, args, {
-          detached: true,
-          stdio: "ignore",
-        });
-        child.on("error", () => {
-          /* ignore spawn failures for detached editors */
-        });
-        child.unref();
+        await Effect.runPromise(openService.openInEditor(stripRequestTag(request.body)));
         return undefined;
       }
 
@@ -763,10 +746,7 @@ export function createServer(options: ServerOptions) {
         );
         return makeProviderServiceLive({
           canonicalEventLogPath: path.join(providerLogsDir, "provider-canonical.ndjson"),
-        }).pipe(
-          Layer.provide(adapterRegistryLayer),
-          Layer.provide(providerSessionDirectoryLayer),
-        );
+        }).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer));
       })();
 
     const runtimeServicesLayer = Layer.mergeAll(

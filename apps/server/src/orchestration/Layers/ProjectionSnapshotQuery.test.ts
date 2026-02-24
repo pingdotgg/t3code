@@ -1,3 +1,13 @@
+import {
+  CheckpointRef,
+  EventId,
+  MessageId,
+  ProjectId,
+  ProviderSessionId,
+  ProviderThreadId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -6,6 +16,15 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+
+const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
+const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
+const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
+const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
+const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
+const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.makeUnsafe(value);
+const asProviderSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
+const asProviderThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
 
 const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
@@ -185,7 +204,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.equal(snapshot.updatedAt, "2026-02-24T00:00:09.000Z");
       assert.deepEqual(snapshot.projects, [
         {
-          id: "project-1",
+          id: asProjectId("project-1"),
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
           defaultModel: "gpt-5-codex",
@@ -205,22 +224,22 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       ]);
       assert.deepEqual(snapshot.threads, [
         {
-          id: "thread-1",
-          projectId: "project-1",
+          id: asThreadId("thread-1"),
+          projectId: asProjectId("project-1"),
           title: "Thread 1",
           model: "gpt-5-codex",
           branch: null,
           worktreePath: null,
-          latestTurnId: "turn-1",
+          latestTurnId: asTurnId("turn-1"),
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
           deletedAt: null,
           messages: [
             {
-              id: "message-1",
+              id: asMessageId("message-1"),
               role: "assistant",
               text: "hello from projection",
-              turnId: "turn-1",
+              turnId: asTurnId("turn-1"),
               streaming: false,
               createdAt: "2026-02-24T00:00:04.000Z",
               updatedAt: "2026-02-24T00:00:05.000Z",
@@ -228,33 +247,33 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           ],
           activities: [
             {
-              id: "activity-1",
+              id: asEventId("activity-1"),
               tone: "info",
               kind: "runtime.note",
               summary: "provider started",
               payload: { stage: "start" },
-              turnId: "turn-1",
+              turnId: asTurnId("turn-1"),
               createdAt: "2026-02-24T00:00:06.000Z",
             },
           ],
           checkpoints: [
             {
-              turnId: "turn-1",
+              turnId: asTurnId("turn-1"),
               checkpointTurnCount: 1,
-              checkpointRef: "checkpoint-1",
+              checkpointRef: asCheckpointRef("checkpoint-1"),
               status: "ready",
               files: [{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }],
-              assistantMessageId: "message-1",
+              assistantMessageId: asMessageId("message-1"),
               completedAt: "2026-02-24T00:00:08.000Z",
             },
           ],
           session: {
-            threadId: "thread-1",
+            threadId: asThreadId("thread-1"),
             status: "running",
             providerName: "codex",
-            providerSessionId: "provider-session-1",
-            providerThreadId: "provider-thread-1",
-            activeTurnId: "turn-1",
+            providerSessionId: asProviderSessionId("provider-session-1"),
+            providerThreadId: asProviderThreadId("provider-thread-1"),
+            activeTurnId: asTurnId("turn-1"),
             lastError: null,
             updatedAt: "2026-02-24T00:00:07.000Z",
           },

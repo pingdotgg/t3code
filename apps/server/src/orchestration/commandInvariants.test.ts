@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { OrchestrationCommand, OrchestrationReadModel } from "@t3tools/contracts";
+import {
+  MessageId,
+  CommandId,
+  ProjectId,
+  ThreadId,
+  type OrchestrationCommand,
+  type OrchestrationReadModel,
+} from "@t3tools/contracts";
 import { Effect } from "effect";
 
 import {
@@ -17,7 +24,7 @@ const readModel: OrchestrationReadModel = {
   updatedAt: now,
   projects: [
     {
-      id: "project-a",
+      id: ProjectId.makeUnsafe("project-a"),
       title: "Project A",
       workspaceRoot: "/tmp/project-a",
       defaultModel: "gpt-5-codex",
@@ -27,7 +34,7 @@ const readModel: OrchestrationReadModel = {
       deletedAt: null,
     },
     {
-      id: "project-b",
+      id: ProjectId.makeUnsafe("project-b"),
       title: "Project B",
       workspaceRoot: "/tmp/project-b",
       defaultModel: "gpt-5-codex",
@@ -39,8 +46,8 @@ const readModel: OrchestrationReadModel = {
   ],
   threads: [
     {
-      id: "thread-1",
-      projectId: "project-a",
+      id: ThreadId.makeUnsafe("thread-1"),
+      projectId: ProjectId.makeUnsafe("project-a"),
       title: "Thread A",
       model: "gpt-5-codex",
       branch: null,
@@ -52,10 +59,11 @@ const readModel: OrchestrationReadModel = {
       session: null,
       activities: [],
       checkpoints: [],
+      deletedAt: null,
     },
     {
-      id: "thread-2",
-      projectId: "project-b",
+      id: ThreadId.makeUnsafe("thread-2"),
+      projectId: ProjectId.makeUnsafe("project-b"),
       title: "Thread B",
       model: "gpt-5-codex",
       branch: null,
@@ -67,16 +75,17 @@ const readModel: OrchestrationReadModel = {
       session: null,
       activities: [],
       checkpoints: [],
+      deletedAt: null,
     },
   ],
 };
 
 const messageSendCommand: OrchestrationCommand = {
   type: "thread.turn.start",
-  commandId: "cmd-1",
-  threadId: "thread-1",
+  commandId: CommandId.makeUnsafe("cmd-1"),
+  threadId: ThreadId.makeUnsafe("thread-1"),
   message: {
-    messageId: "msg-1",
+    messageId: MessageId.makeUnsafe("msg-1"),
     role: "user",
     text: "hello",
     attachments: [],
@@ -86,11 +95,13 @@ const messageSendCommand: OrchestrationCommand = {
 
 describe("commandInvariants", () => {
   it("finds threads by id and project", () => {
-    expect(findThreadById(readModel, "thread-1")?.projectId).toBe("project-a");
-    expect(findThreadById(readModel, "missing")).toBeUndefined();
-    expect(listThreadsByProjectId(readModel, "project-b").map((thread) => thread.id)).toEqual([
-      "thread-2",
-    ]);
+    expect(findThreadById(readModel, ThreadId.makeUnsafe("thread-1"))?.projectId).toBe("project-a");
+    expect(findThreadById(readModel, ThreadId.makeUnsafe("missing"))).toBeUndefined();
+    expect(
+      listThreadsByProjectId(readModel, ProjectId.makeUnsafe("project-b")).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual([ThreadId.makeUnsafe("thread-2")]);
   });
 
   it("requires existing thread", async () => {
@@ -98,17 +109,17 @@ describe("commandInvariants", () => {
       requireThread({
         readModel,
         command: messageSendCommand,
-        threadId: "thread-1",
+        threadId: ThreadId.makeUnsafe("thread-1"),
       }),
     );
-    expect(thread.id).toBe("thread-1");
+    expect(thread.id).toBe(ThreadId.makeUnsafe("thread-1"));
 
     await expect(
       Effect.runPromise(
         requireThread({
           readModel,
           command: messageSendCommand,
-          threadId: "missing",
+          threadId: ThreadId.makeUnsafe("missing"),
         }),
       ),
     ).rejects.toThrow("does not exist");
@@ -120,16 +131,16 @@ describe("commandInvariants", () => {
         readModel,
         command: {
           type: "thread.create",
-          commandId: "cmd-2",
-          threadId: "thread-3",
-          projectId: "project-a",
+          commandId: CommandId.makeUnsafe("cmd-2"),
+          threadId: ThreadId.makeUnsafe("thread-3"),
+          projectId: ProjectId.makeUnsafe("project-a"),
           title: "new",
           model: "gpt-5-codex",
           branch: null,
           worktreePath: null,
           createdAt: now,
         },
-        threadId: "thread-3",
+        threadId: ThreadId.makeUnsafe("thread-3"),
       }),
     );
 
@@ -139,16 +150,16 @@ describe("commandInvariants", () => {
           readModel,
           command: {
             type: "thread.create",
-            commandId: "cmd-3",
-            threadId: "thread-1",
-            projectId: "project-a",
+            commandId: CommandId.makeUnsafe("cmd-3"),
+            threadId: ThreadId.makeUnsafe("thread-1"),
+            projectId: ProjectId.makeUnsafe("project-a"),
             title: "dup",
             model: "gpt-5-codex",
             branch: null,
             worktreePath: null,
             createdAt: now,
           },
-          threadId: "thread-1",
+          threadId: ThreadId.makeUnsafe("thread-1"),
         }),
       ),
     ).rejects.toThrow("already exists");
@@ -157,7 +168,7 @@ describe("commandInvariants", () => {
   it("requires non-negative integers", async () => {
     await Effect.runPromise(
       requireNonNegativeInteger({
-        commandType: "thread.revert",
+        commandType: "thread.checkpoint.revert",
         field: "turnCount",
         value: 0,
       }),
@@ -166,7 +177,7 @@ describe("commandInvariants", () => {
     await expect(
       Effect.runPromise(
         requireNonNegativeInteger({
-          commandType: "thread.revert",
+          commandType: "thread.checkpoint.revert",
           field: "turnCount",
           value: -1,
         }),

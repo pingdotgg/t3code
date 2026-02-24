@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { ProviderSessionId } from "@t3tools/contracts";
 
 import {
   CodexAppServerManager,
@@ -6,6 +7,8 @@ import {
   isRecoverableThreadResumeError,
   normalizeCodexModelSlug,
 } from "./codexAppServerManager";
+
+const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
 
 function createSendTurnHarness() {
   const manager = new CodexAppServerManager();
@@ -183,7 +186,7 @@ describe("sendTurn", () => {
       createSendTurnHarness();
 
     const result = await manager.sendTurn({
-      sessionId: "sess_1",
+      sessionId: asSessionId("sess_1"),
       input: "Inspect this image",
       attachments: [
         {
@@ -229,7 +232,7 @@ describe("sendTurn", () => {
     const { manager, context, sendRequest } = createSendTurnHarness();
 
     await manager.sendTurn({
-      sessionId: "sess_1",
+      sessionId: asSessionId("sess_1"),
       attachments: [
         {
           type: "image",
@@ -257,7 +260,7 @@ describe("sendTurn", () => {
 
     await expect(
       manager.sendTurn({
-        sessionId: "sess_1",
+        sessionId: asSessionId("sess_1"),
       }),
     ).rejects.toThrow("Turn input must include text or attachments.");
   });
@@ -278,7 +281,7 @@ describe("thread checkpoint control", () => {
       },
     });
 
-    const result = await manager.readThread("sess_1");
+    const result = await manager.readThread(asSessionId("sess_1"));
 
     expect(requireSession).toHaveBeenCalledWith("sess_1");
     expect(sendRequest).toHaveBeenCalledWith(context, "thread/read", {
@@ -308,7 +311,7 @@ describe("thread checkpoint control", () => {
       ],
     });
 
-    const result = await manager.readThread("sess_1");
+    const result = await manager.readThread(asSessionId("sess_1"));
 
     expect(sendRequest).toHaveBeenCalledWith(context, "thread/read", {
       threadId: "thread_1",
@@ -334,7 +337,7 @@ describe("thread checkpoint control", () => {
       },
     });
 
-    const result = await manager.rollbackThread("sess_1", 2);
+    const result = await manager.rollbackThread(asSessionId("sess_1"), 2);
 
     expect(sendRequest).toHaveBeenCalledWith(context, "thread/rollback", {
       threadId: "thread_1",

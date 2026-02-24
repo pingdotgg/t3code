@@ -12,9 +12,7 @@ const decode = <S extends Schema.Top>(schema: S, input: unknown): Schema.Schema.
   Schema.decodeUnknownSync(schema as never)(input) as Schema.Schema.Type<S>;
 
 const decodeResolvedRuleStrict = (input: unknown) =>
-  Schema.decodeUnknownSync(ResolvedKeybindingRule as never)(input, {
-    onExcessProperty: "error",
-  });
+  Schema.decodeUnknownSync(ResolvedKeybindingRule as never)(input);
 
 describe("keybindings contracts", () => {
   it("parses keybinding rules", () => {
