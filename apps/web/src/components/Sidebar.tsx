@@ -132,28 +132,39 @@ export default function Sidebar() {
         branch?: string | null;
         worktreePath?: string | null;
       },
-    ) => {
-      if (!api) return;
+    ): Promise<void> => {
+      if (!api) return Promise.resolve();
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
       const model = state.projects.find((project) => project.id === projectId)?.model ?? DEFAULT_MODEL;
-      void api.orchestration.dispatchCommand({
-        type: "thread.create",
-        commandId: newCommandId(),
-        threadId,
-        projectId: asProjectId(projectId),
-        title: "New thread",
-        model,
-        branch: options?.branch ?? null,
-        worktreePath: options?.worktreePath ?? null,
-        createdAt,
-      });
-      void navigate({
-        to: "/$threadId",
-        params: { threadId },
-      });
+      return (async () => {
+        await api.orchestration.dispatchCommand({
+          type: "thread.create",
+          commandId: newCommandId(),
+          threadId,
+          projectId: asProjectId(projectId),
+          title: "New thread",
+          model,
+          branch: options?.branch ?? null,
+          worktreePath: options?.worktreePath ?? null,
+          createdAt,
+        });
+
+        // Ensure route guards can see the new thread before navigating.
+        try {
+          const snapshot = await api.orchestration.getSnapshot();
+          dispatch({ type: "SYNC_SERVER_READ_MODEL", readModel: snapshot });
+        } catch {
+          // Event stream can still hydrate the thread shortly after dispatch.
+        }
+
+        await navigate({
+          to: "/$threadId",
+          params: { threadId },
+        });
+      })();
     },
-    [api, navigate, state.projects],
+    [api, dispatch, navigate, state.projects],
   );
 
   const focusMostRecentThreadForProject = useCallback(
@@ -201,7 +212,7 @@ export default function Sidebar() {
           defaultModel: DEFAULT_MODEL,
           createdAt,
         });
-        handleNewThread(projectId);
+        await handleNewThread(projectId);
       } finally {
         setIsAddingProject(false);
         setNewCwd("");
@@ -399,7 +410,7 @@ export default function Sidebar() {
         const projectId = activeThread?.projectId ?? state.projects[0]?.id;
         if (!projectId) return;
         event.preventDefault();
-        handleNewThread(projectId);
+        void handleNewThread(projectId);
         return;
       }
 
@@ -407,7 +418,7 @@ export default function Sidebar() {
       const projectId = activeThread?.projectId ?? state.projects[0]?.id;
       if (!projectId) return;
       event.preventDefault();
-      handleNewThread(projectId, {
+      void handleNewThread(projectId, {
         branch: activeThread?.branch ?? null,
         worktreePath: activeThread?.worktreePath ?? null,
       });
@@ -446,7 +457,7 @@ export default function Sidebar() {
               return;
             }
             const firstProject = state.projects[0];
-            if (firstProject) handleNewThread(firstProject.id);
+            if (firstProject) void handleNewThread(firstProject.id);
           }}
         >
           <span className="text-foreground">+</span>
@@ -561,7 +572,9 @@ export default function Sidebar() {
                   <button
                     type="button"
                     className="flex w-full items-center gap-1 px-2 py-1 text-[10px] text-muted-foreground/60 transition-colors duration-150 hover:text-muted-foreground/80"
-                    onClick={() => handleNewThread(project.id)}
+                    onClick={() => {
+                      void handleNewThread(project.id);
+                    }}
                   >
                     <span>+</span> New thread
                   </button>

@@ -273,6 +273,7 @@ describe("WebSocket Server", () => {
     options: {
       persistenceLayer?: Layer.Layer<SqlClient.SqlClient, any>;
       cwd?: string;
+      autoBootstrapProjectFromCwd?: boolean;
       devUrl?: string;
       authToken?: string;
       stateDir?: string;
@@ -290,6 +291,9 @@ describe("WebSocket Server", () => {
       cwd: options.cwd ?? "/test/project",
       stateDir,
       persistenceLayer: options.persistenceLayer ?? SqlitePersistenceMemory,
+      ...(options.autoBootstrapProjectFromCwd !== undefined
+        ? { autoBootstrapProjectFromCwd: options.autoBootstrapProjectFromCwd }
+        : {}),
       ...(options.devUrl ? { devUrl: options.devUrl } : {}),
       ...(options.authToken ? { authToken: options.authToken } : {}),
       ...(options.providerLayer ? { providerLayer: options.providerLayer } : {}),
@@ -331,6 +335,37 @@ describe("WebSocket Server", () => {
       cwd: "/test/project",
       projectName: "project",
     });
+  });
+
+  it("bootstraps the cwd project on startup when enabled", async () => {
+    server = createTestServer({
+      cwd: "/test/bootstrap-workspace",
+      autoBootstrapProjectFromCwd: true,
+    });
+    await server.start();
+    const addr = server.httpServer.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws); // welcome
+
+    const snapshotResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.getSnapshot);
+    expect(snapshotResponse.error).toBeUndefined();
+    const snapshot = snapshotResponse.result as {
+      projects: Array<{ workspaceRoot: string; title: string; defaultModel: string | null }>;
+    };
+
+    expect(snapshot.projects).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workspaceRoot: "/test/bootstrap-workspace",
+          title: "bootstrap-workspace",
+          defaultModel: "gpt-5-codex",
+        }),
+      ]),
+    );
   });
 
   it("logs outbound websocket push events in dev mode", async () => {
@@ -668,6 +703,86 @@ describe("WebSocket Server", () => {
     const response = await sendRequest(ws, "nonexistent.method");
     expect(response.error).toBeDefined();
     expect(response.error!.message).toContain("Invalid request format");
+  });
+
+  it("returns error when requesting turn diff for unknown thread", async () => {
+    server = createTestServer({ cwd: "/test" });
+    await server.start();
+    const addr = server.httpServer.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, ORCHESTRATION_WS_METHODS.getTurnDiff, {
+      threadId: "thread-missing",
+      fromTurnCount: 1,
+      toTurnCount: 2,
+    });
+    expect(response.result).toBeUndefined();
+    expect(response.error?.message).toContain("Thread 'thread-missing' not found.");
+  });
+
+  it("returns error when requesting full thread diff for unknown thread", async () => {
+    server = createTestServer({ cwd: "/test" });
+    await server.start();
+    const addr = server.httpServer.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, ORCHESTRATION_WS_METHODS.getFullThreadDiff, {
+      threadId: "thread-missing",
+      toTurnCount: 2,
+    });
+    expect(response.result).toBeUndefined();
+    expect(response.error?.message).toContain("Thread 'thread-missing' not found.");
+  });
+
+  it("returns retryable error when requested turn exceeds current checkpoint turn count", async () => {
+    server = createTestServer({ cwd: "/test" });
+    await server.start();
+    const addr = server.httpServer.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const createdAt = new Date().toISOString();
+    const createProjectResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "project.create",
+      commandId: "cmd-diff-project-create",
+      projectId: "project-diff",
+      title: "Diff Project",
+      workspaceRoot: "/tmp/ws-diff-project",
+      defaultModel: "gpt-5-codex",
+      createdAt,
+    });
+    expect(createProjectResponse.error).toBeUndefined();
+    const createThreadResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "thread.create",
+      commandId: "cmd-diff-thread-create",
+      threadId: "thread-diff",
+      projectId: "project-diff",
+      title: "Diff Thread",
+      model: "gpt-5-codex",
+      branch: null,
+      worktreePath: null,
+      createdAt,
+    });
+    expect(createThreadResponse.error).toBeUndefined();
+
+    const response = await sendRequest(ws, ORCHESTRATION_WS_METHODS.getTurnDiff, {
+      threadId: "thread-diff",
+      fromTurnCount: 0,
+      toTurnCount: 1,
+    });
+    expect(response.result).toBeUndefined();
+    expect(response.error?.message).toContain("exceeds current turn count");
   });
 
   it("keeps orchestration domain push behavior for provider runtime events", async () => {
@@ -1011,21 +1126,23 @@ describe("WebSocket Server", () => {
     expect(pullResponse.error?.message).not.toContain("Unknown method");
   });
 
-  it("returns error for git.status", async () => {
+  it("supports git.status over websocket", async () => {
+    const statusResult = {
+      branch: "feature/test",
+      hasWorkingTreeChanges: true,
+      workingTree: {
+        files: [{ path: "src/index.ts", insertions: 7, deletions: 2 }],
+        insertions: 7,
+        deletions: 2,
+      },
+      hasUpstream: false,
+      aheadCount: 0,
+      behindCount: 0,
+      openPr: null,
+    };
+
     const gitManager = {
-      status: vi.fn().mockResolvedValue({
-        branch: "feature/test",
-        hasWorkingTreeChanges: true,
-        workingTree: {
-          files: [{ path: "src/index.ts", insertions: 7, deletions: 2 }],
-          insertions: 7,
-          deletions: 2,
-        },
-        hasUpstream: false,
-        aheadCount: 0,
-        behindCount: 0,
-        openPr: null,
-      }),
+      status: vi.fn().mockResolvedValue(statusResult),
       runStackedAction: vi.fn(),
     };
 
@@ -1041,9 +1158,9 @@ describe("WebSocket Server", () => {
     const response = await sendRequest(ws, WS_METHODS.gitStatus, {
       cwd: "/test",
     });
-    expect(response.result).toBeUndefined();
-    expect(response.error?.message).toContain("Unknown method");
-    expect(gitManager.status).not.toHaveBeenCalled();
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual(statusResult);
+    expect(gitManager.status).toHaveBeenCalledWith({ cwd: "/test" });
   });
 
   it("returns errors from git.runStackedAction", async () => {

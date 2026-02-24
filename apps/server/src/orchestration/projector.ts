@@ -47,6 +47,68 @@ function decodeForEvent<A>(
   ) as Effect.Effect<A, OrchestrationProjectorDecodeError>;
 }
 
+function retainThreadMessagesAfterRevert(
+  messages: ReadonlyArray<OrchestrationMessage>,
+  retainedTurnIds: ReadonlySet<string>,
+  turnCount: number,
+): ReadonlyArray<OrchestrationMessage> {
+  const retainedMessageIds = new Set<string>();
+  for (const message of messages) {
+    if (message.role === "system") {
+      retainedMessageIds.add(message.id);
+      continue;
+    }
+    if (message.turnId !== null && retainedTurnIds.has(message.turnId)) {
+      retainedMessageIds.add(message.id);
+    }
+  }
+
+  const retainedUserCount = messages.filter(
+    (message) => message.role === "user" && retainedMessageIds.has(message.id),
+  ).length;
+  const missingUserCount = Math.max(0, turnCount - retainedUserCount);
+  if (missingUserCount > 0) {
+    const fallbackUserMessages = messages
+      .filter((message) => message.role === "user" && !retainedMessageIds.has(message.id))
+      .toSorted(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+      )
+      .slice(0, missingUserCount);
+    for (const message of fallbackUserMessages) {
+      retainedMessageIds.add(message.id);
+    }
+  }
+
+  const retainedAssistantCount = messages.filter(
+    (message) => message.role === "assistant" && retainedMessageIds.has(message.id),
+  ).length;
+  const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
+  if (missingAssistantCount > 0) {
+    const fallbackAssistantMessages = messages
+      .filter((message) => message.role === "assistant" && !retainedMessageIds.has(message.id))
+      .toSorted(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+      )
+      .slice(0, missingAssistantCount);
+    for (const message of fallbackAssistantMessages) {
+      retainedMessageIds.add(message.id);
+    }
+  }
+
+  return messages.filter((message) => retainedMessageIds.has(message.id));
+}
+
+function retainThreadActivitiesAfterRevert(
+  activities: ReadonlyArray<OrchestrationThread["activities"][number]>,
+  retainedTurnIds: ReadonlySet<string>,
+): ReadonlyArray<OrchestrationThread["activities"][number]> {
+  return activities.filter(
+    (activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId),
+  );
+}
+
 export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
@@ -347,6 +409,16 @@ export function projectEvent(
           const checkpoints = thread.checkpoints
             .filter((entry) => entry.checkpointTurnCount <= payload.turnCount)
             .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount);
+          const retainedTurnIds = new Set(checkpoints.map((checkpoint) => checkpoint.turnId));
+          const messages = retainThreadMessagesAfterRevert(
+            thread.messages,
+            retainedTurnIds,
+            payload.turnCount,
+          );
+          const activities = retainThreadActivitiesAfterRevert(
+            thread.activities,
+            retainedTurnIds,
+          );
 
           const latestTurnId =
             checkpoints.length > 0 ? checkpoints[checkpoints.length - 1]?.turnId ?? null : null;
@@ -355,6 +427,8 @@ export function projectEvent(
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               checkpoints,
+              messages,
+              activities,
               latestTurnId,
               updatedAt: event.occurredAt,
             }),

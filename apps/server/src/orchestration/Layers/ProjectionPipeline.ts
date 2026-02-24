@@ -12,7 +12,11 @@ import { ProjectionPendingApprovalRepository } from "../../persistence/Services/
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionStateRepository } from "../../persistence/Services/ProjectionState.ts";
 import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
-import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
+import { type ProjectionThreadActivity } from "../../persistence/Services/ProjectionThreadActivities.ts";
+import {
+  type ProjectionThreadMessage,
+  ProjectionThreadMessageRepository,
+} from "../../persistence/Services/ProjectionThreadMessages.ts";
 import { ProjectionThreadSessionRepository } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { type ProjectionThreadTurn } from "../../persistence/Services/ProjectionThreadTurns.ts";
 import { ProjectionThreadTurnRepository } from "../../persistence/Services/ProjectionThreadTurns.ts";
@@ -60,6 +64,91 @@ function extractActivityRequestId(payload: unknown): ApprovalRequestId | null {
 
 function nextTurnCount(turns: ReadonlyArray<ProjectionThreadTurn>): number {
   return turns.reduce((maxTurnCount, turn) => Math.max(maxTurnCount, turn.turnCount), 0) + 1;
+}
+
+function retainProjectionMessagesAfterRevert(
+  messages: ReadonlyArray<ProjectionThreadMessage>,
+  turns: ReadonlyArray<ProjectionThreadTurn>,
+  turnCount: number,
+): ReadonlyArray<ProjectionThreadMessage> {
+  const retainedMessageIds = new Set<string>();
+  const retainedTurnIds = new Set<string>();
+  const keptTurns = turns.filter((turn) => turn.turnCount <= turnCount);
+  for (const turn of keptTurns) {
+    retainedTurnIds.add(turn.turnId);
+    if (turn.userMessageId !== null) {
+      retainedMessageIds.add(turn.userMessageId);
+    }
+    if (turn.assistantMessageId !== null) {
+      retainedMessageIds.add(turn.assistantMessageId);
+    }
+  }
+
+  for (const message of messages) {
+    if (message.role === "system") {
+      retainedMessageIds.add(message.messageId);
+      continue;
+    }
+    if (message.turnId !== null && retainedTurnIds.has(message.turnId)) {
+      retainedMessageIds.add(message.messageId);
+    }
+  }
+
+  const retainedUserCount = messages.filter(
+    (message) => message.role === "user" && retainedMessageIds.has(message.messageId),
+  ).length;
+  const missingUserCount = Math.max(0, turnCount - retainedUserCount);
+  if (missingUserCount > 0) {
+    const fallbackUserMessages = messages
+      .filter((message) => message.role === "user" && !retainedMessageIds.has(message.messageId))
+      .toSorted(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) ||
+          left.messageId.localeCompare(right.messageId),
+      )
+      .slice(0, missingUserCount);
+    for (const message of fallbackUserMessages) {
+      retainedMessageIds.add(message.messageId);
+    }
+  }
+
+  const retainedAssistantCount = messages.filter(
+    (message) => message.role === "assistant" && retainedMessageIds.has(message.messageId),
+  ).length;
+  const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
+  if (missingAssistantCount > 0) {
+    const fallbackAssistantMessages = messages
+      .filter(
+        (message) =>
+          message.role === "assistant" && !retainedMessageIds.has(message.messageId),
+      )
+      .toSorted(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) ||
+          left.messageId.localeCompare(right.messageId),
+      )
+      .slice(0, missingAssistantCount);
+    for (const message of fallbackAssistantMessages) {
+      retainedMessageIds.add(message.messageId);
+    }
+  }
+
+  return messages.filter((message) => retainedMessageIds.has(message.messageId));
+}
+
+function retainProjectionActivitiesAfterRevert(
+  activities: ReadonlyArray<ProjectionThreadActivity>,
+  turns: ReadonlyArray<ProjectionThreadTurn>,
+  turnCount: number,
+): ReadonlyArray<ProjectionThreadActivity> {
+  const retainedTurnIds = new Set(
+    turns
+      .filter((turn) => turn.turnCount <= turnCount)
+      .map((turn) => turn.turnId),
+  );
+  return activities.filter(
+    (activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId),
+  );
 }
 
 const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
@@ -260,44 +349,111 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
 
   const applyThreadMessagesProjection: ProjectorDefinition["apply"] = (event) =>
     Effect.gen(function* () {
-      if (event.type !== "thread.message-sent") {
-        return;
+      switch (event.type) {
+        case "thread.message-sent": {
+          const existingRows = yield* projectionThreadMessageRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const existingMessage = existingRows.find((row) => row.messageId === event.payload.messageId);
+          const nextText =
+            existingMessage && event.payload.streaming
+              ? `${existingMessage.text}${event.payload.text}`
+              : existingMessage && event.payload.text.length === 0
+                ? existingMessage.text
+                : event.payload.text;
+          yield* projectionThreadMessageRepository.upsert({
+            messageId: event.payload.messageId,
+            threadId: event.payload.threadId,
+            turnId: event.payload.turnId,
+            role: event.payload.role,
+            text: nextText,
+            isStreaming: event.payload.streaming,
+            createdAt: existingMessage?.createdAt ?? event.payload.createdAt,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.reverted": {
+          const existingRows = yield* projectionThreadMessageRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          if (existingRows.length === 0) {
+            return;
+          }
+
+          const existingTurns = yield* projectionThreadTurnRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const keptRows = retainProjectionMessagesAfterRevert(
+            existingRows,
+            existingTurns,
+            event.payload.turnCount,
+          );
+          if (keptRows.length === existingRows.length) {
+            return;
+          }
+
+          yield* projectionThreadMessageRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          yield* Effect.forEach(keptRows, projectionThreadMessageRepository.upsert, {
+            concurrency: 1,
+          }).pipe(Effect.asVoid);
+          return;
+        }
+
+        default:
+          return;
       }
-      const existingRows = yield* projectionThreadMessageRepository.listByThreadId({
-        threadId: event.payload.threadId,
-      });
-      const existingMessage = existingRows.find((row) => row.messageId === event.payload.messageId);
-      const nextText =
-        existingMessage && event.payload.streaming
-          ? `${existingMessage.text}${event.payload.text}`
-          : event.payload.text;
-      yield* projectionThreadMessageRepository.upsert({
-        messageId: event.payload.messageId,
-        threadId: event.payload.threadId,
-        turnId: event.payload.turnId,
-        role: event.payload.role,
-        text: nextText,
-        isStreaming: event.payload.streaming,
-        createdAt: existingMessage?.createdAt ?? event.payload.createdAt,
-        updatedAt: event.payload.updatedAt,
-      });
     });
 
   const applyThreadActivitiesProjection: ProjectorDefinition["apply"] = (event) =>
     Effect.gen(function* () {
-      if (event.type !== "thread.activity-appended") {
-        return;
+      switch (event.type) {
+        case "thread.activity-appended":
+          yield* projectionThreadActivityRepository.upsert({
+            activityId: event.payload.activity.id,
+            threadId: event.payload.threadId,
+            turnId: event.payload.activity.turnId,
+            tone: event.payload.activity.tone,
+            kind: event.payload.activity.kind,
+            summary: event.payload.activity.summary,
+            payload: event.payload.activity.payload,
+            createdAt: event.payload.activity.createdAt,
+          });
+          return;
+
+        case "thread.reverted": {
+          const existingRows = yield* projectionThreadActivityRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          if (existingRows.length === 0) {
+            return;
+          }
+          const existingTurns = yield* projectionThreadTurnRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const keptRows = retainProjectionActivitiesAfterRevert(
+            existingRows,
+            existingTurns,
+            event.payload.turnCount,
+          );
+          if (keptRows.length === existingRows.length) {
+            return;
+          }
+          yield* projectionThreadActivityRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          yield* Effect.forEach(keptRows, projectionThreadActivityRepository.upsert, {
+            concurrency: 1,
+          }).pipe(Effect.asVoid);
+          return;
+        }
+
+        default:
+          return;
       }
-      yield* projectionThreadActivityRepository.upsert({
-        activityId: event.payload.activity.id,
-        threadId: event.payload.threadId,
-        turnId: event.payload.activity.turnId,
-        tone: event.payload.activity.tone,
-        kind: event.payload.activity.kind,
-        summary: event.payload.activity.summary,
-        payload: event.payload.activity.payload,
-        createdAt: event.payload.activity.createdAt,
-      });
     });
 
   const applyThreadSessionsProjection: ProjectorDefinition["apply"] = (event) =>

@@ -24,11 +24,9 @@ import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts
 import { CheckpointReactorLive } from "./CheckpointReactor.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
-import { CheckpointDiffBlobRepositoryLive } from "../../persistence/Layers/CheckpointDiffBlobs.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
-import { CheckpointDiffBlobRepository } from "../../persistence/Services/CheckpointDiffBlobs.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -145,26 +143,6 @@ async function waitForEvent(
   return poll();
 }
 
-async function waitForDiffBlob(
-  repository: CheckpointDiffBlobRepository["Service"],
-  input: { threadId: ThreadId; fromTurnCount: number; toTurnCount: number },
-  timeoutMs = 2000,
-) {
-  const deadline = Date.now() + timeoutMs;
-  const poll = async () => {
-    const blob = await Effect.runPromise(repository.get(input));
-    if (blob._tag === "Some") {
-      return blob.value;
-    }
-    if (Date.now() >= deadline) {
-      throw new Error("Timed out waiting for checkpoint diff blob persistence.");
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    return poll();
-  };
-  return poll();
-}
-
 function runGit(cwd: string, args: ReadonlyArray<string>) {
   return execFileSync("git", args, {
     cwd,
@@ -214,7 +192,7 @@ async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 2000) {
 
 describe("CheckpointReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | CheckpointReactor | CheckpointDiffBlobRepository | CheckpointStore,
+    OrchestrationEngineService | CheckpointReactor | CheckpointStore,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -250,23 +228,16 @@ describe("CheckpointReactor", () => {
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
     );
-    const diffBlobLayer = CheckpointDiffBlobRepositoryLive.pipe(
-      Layer.provide(SqlitePersistenceMemory),
-    );
     const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(NodeServices.layer));
     const layer = CheckpointReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
-      Layer.provideMerge(diffBlobLayer),
       Layer.provideMerge(checkpointStoreLayer),
     );
 
     runtime = ManagedRuntime.make(layer);
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const reactor = await runtime.runPromise(Effect.service(CheckpointReactor));
-    const diffBlobRepository = await runtime.runPromise(
-      Effect.service(CheckpointDiffBlobRepository),
-    );
     const checkpointStore = await runtime.runPromise(Effect.service(CheckpointStore));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
@@ -325,7 +296,6 @@ describe("CheckpointReactor", () => {
       engine,
       provider,
       cwd,
-      diffBlobRepository,
     };
   }
 
@@ -561,50 +531,4 @@ describe("CheckpointReactor", () => {
     expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
   });
 
-  it("persists full checkpoint diff blobs on thread.turn-diff-completed", async () => {
-    const harness = await createHarness();
-    const createdAt = new Date().toISOString();
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.session.set",
-        commandId: asCommandId("cmd-session-set-diff"),
-        threadId: asThreadId("thread-1"),
-        session: {
-          threadId: asThreadId("thread-1"),
-          status: "ready",
-          providerName: "codex",
-          providerSessionId: asSessionId("sess-1"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-          activeTurnId: null,
-          lastError: null,
-          updatedAt: createdAt,
-        },
-        createdAt,
-      }),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.diff.complete",
-        commandId: asCommandId("cmd-diff-persist"),
-        threadId: asThreadId("thread-1"),
-        turnId: asTurnId("turn-1"),
-        completedAt: createdAt,
-        checkpointRef: checkpointRefForTurn(asThreadId("thread-1"), 1),
-        status: "ready",
-        files: [],
-        checkpointTurnCount: 1,
-        createdAt,
-      }),
-    );
-
-    const persistedBlob = await waitForDiffBlob(harness.diffBlobRepository, {
-      threadId: asThreadId("thread-1"),
-      fromTurnCount: 0,
-      toTurnCount: 1,
-    });
-    expect(persistedBlob.diff).toContain("diff --git");
-    expect(persistedBlob.diff).toContain("README.md");
-  });
 });

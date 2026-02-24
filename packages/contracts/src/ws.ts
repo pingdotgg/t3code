@@ -2,6 +2,7 @@ import { Schema } from "effect";
 
 import {
   ClientOrchestrationCommand,
+  OrchestrationGetFullThreadDiffInput,
   ORCHESTRATION_WS_METHODS,
   OrchestrationGetSnapshotInput,
   OrchestrationGetTurnDiffInput,
@@ -80,6 +81,7 @@ export const WebSocketRequestBody = Schema.TaggedUnion({
   [ORCHESTRATION_WS_METHODS.dispatchCommand]: { command: ClientOrchestrationCommand },
   [ORCHESTRATION_WS_METHODS.getSnapshot]: OrchestrationGetSnapshotInput.fields,
   [ORCHESTRATION_WS_METHODS.getTurnDiff]: OrchestrationGetTurnDiffInput.fields,
+  [ORCHESTRATION_WS_METHODS.getFullThreadDiff]: OrchestrationGetFullThreadDiffInput.fields,
   [ORCHESTRATION_WS_METHODS.replayEvents]: OrchestrationReplayEventsInput.fields,
 
   // Project Search

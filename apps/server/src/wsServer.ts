@@ -6,6 +6,7 @@ import path from "node:path";
 import type { Duplex } from "node:stream";
 
 import {
+  CheckpointRef,
   EDITORS,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
@@ -17,7 +18,7 @@ import {
   WsResponse,
 } from "@t3tools/contracts";
 import { NodeServices } from "@effect/platform-node";
-import { Effect, Exit, Layer, ManagedRuntime, Option, Schema, Scope, Stream } from "effect";
+import { Effect, Exit, Layer, ManagedRuntime, Schema, Scope, Stream } from "effect";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { createLogger } from "./logger";
@@ -52,7 +53,6 @@ import {
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
 import { makeSqlitePersistenceLive } from "./persistence/Layers/Sqlite";
 import assert from "node:assert";
-import { CheckpointDiffBlobRepositoryLive } from "./persistence/Layers/CheckpointDiffBlobs";
 import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore";
 import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/OrchestrationCommandReceipts";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
@@ -62,10 +62,7 @@ import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionD
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime";
-import {
-  CheckpointDiffBlobRepository,
-  type CheckpointDiffBlobRepositoryShape,
-} from "./persistence/Services/CheckpointDiffBlobs";
+import { CheckpointStore, type CheckpointStoreShape } from "./checkpointing/Services/CheckpointStore";
 import { makeEventNdjsonLogger, type EventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlError from "effect/unstable/sql/SqlError";
@@ -91,6 +88,7 @@ export interface ServerOptions {
   port: number;
   host?: string | undefined;
   cwd: string;
+  autoBootstrapProjectFromCwd?: boolean | undefined;
   stateDir?: string | undefined;
   persistenceLayer?:
     | Layer.Layer<SqlClient.SqlClient, SqlError.SqlError | Migrator.MigrationError>
@@ -171,11 +169,18 @@ function stripRequestTag<T extends { _tag: string }>(
   return rest;
 }
 
+const CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
+
+function checkpointRefForThreadTurn(threadId: string, turnCount: number): CheckpointRef {
+  const encodedThreadId = Buffer.from(threadId, "utf8").toString("base64url");
+  return CheckpointRef.makeUnsafe(`${CHECKPOINT_REFS_PREFIX}/${encodedThreadId}/turn/${turnCount}`);
+}
+
 type EffectRuntime = ManagedRuntime.ManagedRuntime<
   | OrchestrationEngineService
   | ProjectionSnapshotQuery
   | ProviderService
-  | CheckpointDiffBlobRepository
+  | CheckpointStore
   | OrchestrationReactor,
   unknown
 >;
@@ -185,6 +190,7 @@ export function createServer(options: ServerOptions) {
     port,
     host,
     cwd,
+    autoBootstrapProjectFromCwd = false,
     stateDir,
     persistenceLayer: customPersistenceLayer,
     staticDir,
@@ -201,7 +207,7 @@ export function createServer(options: ServerOptions) {
   let orchestrationEngine: OrchestrationEngineShape | null = null;
   let projectionSnapshotQuery: ProjectionSnapshotQueryShape | null = null;
   let providerService: ProviderServiceShape | null = null;
-  let checkpointDiffBlobRepository: CheckpointDiffBlobRepositoryShape | null = null;
+  let checkpointStore: CheckpointStoreShape | null = null;
   const clients = new Set<WebSocket>();
   const logger = createLogger("ws");
   const logWebSocketEvents =
@@ -235,10 +241,39 @@ export function createServer(options: ServerOptions) {
     return projectionSnapshotQuery;
   };
 
-  const getCheckpointDiffBlobRepository = () => {
-    assert(checkpointDiffBlobRepository, "Checkpoint diff blob repository is not started");
-    return checkpointDiffBlobRepository;
+  const getCheckpointStore = () => {
+    assert(checkpointStore, "Checkpoint store is not started");
+    return checkpointStore;
   };
+
+  async function bootstrapProjectForCwd() {
+    if (!autoBootstrapProjectFromCwd) {
+      return;
+    }
+
+    const runtime = getEffectRuntime();
+    const snapshotQuery = getProjectionSnapshotQuery();
+    const engine = getOrchestrationEngine();
+    const snapshot = await runtime.runPromise(snapshotQuery.getSnapshot());
+    const existing = snapshot.projects.find((project) => project.workspaceRoot === cwd);
+    if (existing) {
+      return;
+    }
+
+    const createdAt = new Date().toISOString();
+    const projectName = path.basename(cwd) || "project";
+    await runtime.runPromise(
+      engine.dispatchUnknownCommand({
+        type: "project.create",
+        commandId: crypto.randomUUID(),
+        projectId: crypto.randomUUID(),
+        title: projectName,
+        workspaceRoot: cwd,
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
+  }
 
   const attachSubscriptionss = Effect.gen(function* () {
     const orchestrationEngine = yield* OrchestrationEngineService;
@@ -439,7 +474,114 @@ export function createServer(options: ServerOptions) {
     const orchestrationEngine = getOrchestrationEngine();
     const projectionReadModelQuery = getProjectionSnapshotQuery();
     const effectRuntime = getEffectRuntime();
-    const diffBlobRepository = getCheckpointDiffBlobRepository();
+    const liveCheckpointStore = getCheckpointStore();
+
+    const computeTurnDiff = async (input: {
+      readonly threadId: string;
+      readonly fromTurnCount: number;
+      readonly toTurnCount: number;
+    }) => {
+      if (input.fromTurnCount > input.toTurnCount) {
+        throw new Error(
+          `Invalid turn diff range for thread '${input.threadId}': from ${input.fromTurnCount} exceeds to ${input.toTurnCount}.`,
+        );
+      }
+
+      if (input.fromTurnCount === input.toTurnCount) {
+        return {
+          threadId: input.threadId,
+          fromTurnCount: input.fromTurnCount,
+          toTurnCount: input.toTurnCount,
+          diff: "",
+        };
+      }
+
+      const snapshot = await effectRuntime.runPromise(projectionReadModelQuery.getSnapshot());
+      const thread = snapshot.threads.find((entry) => entry.id === input.threadId);
+      if (!thread) {
+        throw new Error(`Thread '${input.threadId}' not found.`);
+      }
+
+      const maxTurnCount = thread.checkpoints.reduce(
+        (max, checkpoint) => Math.max(max, checkpoint.checkpointTurnCount),
+        0,
+      );
+      if (input.toTurnCount > maxTurnCount) {
+        throw new Error(
+          `Turn diff range exceeds current turn count for thread '${input.threadId}': requested ${input.toTurnCount}, current ${maxTurnCount}.`,
+        );
+      }
+
+      const workspaceCwd =
+        thread.worktreePath?.trim() ||
+        snapshot.projects.find((project) => project.id === thread.projectId)?.workspaceRoot?.trim();
+      if (!workspaceCwd) {
+        throw new Error(
+          `Invariant violation: workspace path missing for thread '${input.threadId}' when computing turn diff.`,
+        );
+      }
+
+      const fromCheckpointRef =
+        input.fromTurnCount === 0
+          ? checkpointRefForThreadTurn(input.threadId, 0)
+          : thread.checkpoints.find(
+              (checkpoint) => checkpoint.checkpointTurnCount === input.fromTurnCount,
+            )?.checkpointRef;
+      if (!fromCheckpointRef) {
+        throw new Error(
+          `Checkpoint is unavailable for turn ${input.fromTurnCount} in thread ${input.threadId}.`,
+        );
+      }
+
+      const toCheckpointRef = thread.checkpoints.find(
+        (checkpoint) => checkpoint.checkpointTurnCount === input.toTurnCount,
+      )?.checkpointRef;
+      if (!toCheckpointRef) {
+        throw new Error(
+          `Checkpoint is unavailable for turn ${input.toTurnCount} in thread ${input.threadId}.`,
+        );
+      }
+
+      const [fromExists, toExists] = await Promise.all([
+        effectRuntime.runPromise(
+          liveCheckpointStore.hasCheckpointRef({
+            cwd: workspaceCwd,
+            checkpointRef: fromCheckpointRef,
+          }),
+        ),
+        effectRuntime.runPromise(
+          liveCheckpointStore.hasCheckpointRef({
+            cwd: workspaceCwd,
+            checkpointRef: toCheckpointRef,
+          }),
+        ),
+      ]);
+      if (!fromExists) {
+        throw new Error(
+          `Filesystem checkpoint is unavailable for turn ${input.fromTurnCount} in thread ${input.threadId}.`,
+        );
+      }
+      if (!toExists) {
+        throw new Error(
+          `Filesystem checkpoint is unavailable for turn ${input.toTurnCount} in thread ${input.threadId}.`,
+        );
+      }
+
+      const diff = await effectRuntime.runPromise(
+        liveCheckpointStore.diffCheckpoints({
+          cwd: workspaceCwd,
+          fromCheckpointRef,
+          toCheckpointRef,
+          fallbackFromToHead: false,
+        }),
+      );
+      return {
+        threadId: input.threadId,
+        fromTurnCount: input.fromTurnCount,
+        toTurnCount: input.toTurnCount,
+        diff,
+      };
+    };
 
     switch (request.body._tag) {
       case ORCHESTRATION_WS_METHODS.getSnapshot: {
@@ -456,19 +598,16 @@ export function createServer(options: ServerOptions) {
 
       case ORCHESTRATION_WS_METHODS.getTurnDiff: {
         const body = stripRequestTag(request.body);
-        const blob = await effectRuntime.runPromise(diffBlobRepository.get(body));
-        if (Option.isNone(blob)) {
-          throw new Error(
-            `Turn diff not found for thread '${body.threadId}' from ${body.fromTurnCount} to ${body.toTurnCount}.`,
-          );
-        }
+        return computeTurnDiff(body);
+      }
 
-        return {
+      case ORCHESTRATION_WS_METHODS.getFullThreadDiff: {
+        const body = stripRequestTag(request.body);
+        return computeTurnDiff({
           threadId: body.threadId,
-          fromTurnCount: body.fromTurnCount,
+          fromTurnCount: 0,
           toTurnCount: body.toTurnCount,
-          diff: blob.value?.diff,
-        };
+        });
       }
 
       case ORCHESTRATION_WS_METHODS.replayEvents:
@@ -526,28 +665,8 @@ export function createServer(options: ServerOptions) {
         return undefined;
       }
 
-      // TODO: Bring back
-      // case WS_METHODS.gitStatus: {
-      //   const params = request.params as { cwd: string };
-      //   const status = await gitManager.status(request.params as never);
-      //   const projects = await effectRuntime.runPromise(projectRepository.list());
-      //   const project = projects.find((entry) => entry.cwd === params.cwd);
-      //   if (project) {
-      //     await effectRuntime.runPromise(
-      //       orchestrationEngine.dispatch({
-      //         type: "git.readModel.upsert",
-      //         commandId: crypto.randomUUID(),
-      //         projectId: project.id,
-      //         branch: status.branch,
-      //         hasWorkingTreeChanges: status.hasWorkingTreeChanges,
-      //         aheadCount: status.aheadCount,
-      //         behindCount: status.behindCount,
-      //         createdAt: new Date().toISOString(),
-      //       }),
-      //     );
-      //   }
-      //   return status;
-      // }
+      case WS_METHODS.gitStatus:
+        return gitManager.status(stripRequestTag(request.body));
 
       case WS_METHODS.gitPull:
         return pullGitBranch(stripRequestTag(request.body));
@@ -606,8 +725,10 @@ export function createServer(options: ServerOptions) {
           keybindings: keybindingsConfig,
         };
 
-      default:
-        throw new Error(`Unknown method: ${request.body._tag}`);
+      default: {
+        const _exhaustiveCheck: never = request.body;
+        throw new Error(`Unknown method: ${String(_exhaustiveCheck)}`);
+      }
     }
   }
 
@@ -651,7 +772,6 @@ export function createServer(options: ServerOptions) {
     const runtimeServicesLayer = Layer.mergeAll(
       orchestrationLayer,
       OrchestrationProjectionSnapshotQueryLive,
-      CheckpointDiffBlobRepositoryLive,
       checkpointStoreLayer,
       providerLayer,
     );
@@ -679,17 +799,17 @@ export function createServer(options: ServerOptions) {
       const [
         nextOrchestrationEngine,
         nextProjectionSnapshotQuery,
-        nextCheckpointDiffBlobRepository,
+        nextCheckpointStore,
         nextProviderService,
       ] = await Promise.all([
         runtime.runPromise(Effect.service(OrchestrationEngineService)),
         runtime.runPromise(Effect.service(ProjectionSnapshotQuery)),
-        runtime.runPromise(Effect.service(CheckpointDiffBlobRepository)),
+        runtime.runPromise(Effect.service(CheckpointStore)),
         runtime.runPromise(Effect.service(ProviderService)),
       ]);
       orchestrationEngine = nextOrchestrationEngine;
       projectionSnapshotQuery = nextProjectionSnapshotQuery;
-      checkpointDiffBlobRepository = nextCheckpointDiffBlobRepository;
+      checkpointStore = nextCheckpointStore;
       providerService = nextProviderService;
       await runtime.runPromise(attachSubscriptionss);
     } catch (error) {
@@ -715,7 +835,7 @@ export function createServer(options: ServerOptions) {
     effectRuntime = null;
     orchestrationEngine = null;
     projectionSnapshotQuery = null;
-    checkpointDiffBlobRepository = null;
+    checkpointStore = null;
     providerService = null;
 
     if (!runtime) {
@@ -731,6 +851,7 @@ export function createServer(options: ServerOptions) {
 
   async function start() {
     effectRuntime = await createEffectRuntime();
+    await bootstrapProjectForCwd();
 
     return new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => {

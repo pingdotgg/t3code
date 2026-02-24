@@ -282,4 +282,213 @@ describe("orchestration projector", () => {
     expect(message?.streaming).toBe(false);
     expect(message?.updatedAt).toBe(completeAt);
   });
+
+  it("prunes reverted turn messages from in-memory thread snapshot", async () => {
+    const createdAt = "2026-02-23T10:00:00.000Z";
+    const model = createEmptyReadModel(createdAt);
+
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateType: "thread",
+          aggregateId: "thread-1",
+          occurredAt: createdAt,
+          commandId: "cmd-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            model: "gpt-5.3-codex",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    const events: ReadonlyArray<OrchestrationEvent> = [
+      makeEvent({
+        sequence: 2,
+        type: "thread.message-sent",
+        aggregateType: "thread",
+        aggregateId: "thread-1",
+        occurredAt: "2026-02-23T10:00:01.000Z",
+        commandId: "cmd-user-1",
+        payload: {
+          threadId: "thread-1",
+          messageId: "user-msg-1",
+          role: "user",
+          text: "First edit",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-02-23T10:00:01.000Z",
+          updatedAt: "2026-02-23T10:00:01.000Z",
+        },
+      }),
+      makeEvent({
+        sequence: 3,
+        type: "thread.message-sent",
+        aggregateType: "thread",
+        aggregateId: "thread-1",
+        occurredAt: "2026-02-23T10:00:02.000Z",
+        commandId: "cmd-assistant-1",
+        payload: {
+          threadId: "thread-1",
+          messageId: "assistant-msg-1",
+          role: "assistant",
+          text: "Updated README to v2.\n",
+          turnId: "turn-1",
+          streaming: false,
+          createdAt: "2026-02-23T10:00:02.000Z",
+          updatedAt: "2026-02-23T10:00:02.000Z",
+        },
+      }),
+      makeEvent({
+        sequence: 4,
+        type: "thread.turn-diff-completed",
+        aggregateType: "thread",
+        aggregateId: "thread-1",
+        occurredAt: "2026-02-23T10:00:02.500Z",
+        commandId: "cmd-turn-1-complete",
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          checkpointTurnCount: 1,
+          checkpointRef: "refs/t3/checkpoints/thread-1/turn/1",
+          status: "ready",
+          files: [],
+          assistantMessageId: "assistant-msg-1",
+          completedAt: "2026-02-23T10:00:02.500Z",
+        },
+      }),
+      makeEvent({
+        sequence: 5,
+        type: "thread.activity-appended",
+        aggregateType: "thread",
+        aggregateId: "thread-1",
+        occurredAt: "2026-02-23T10:00:02.750Z",
+        commandId: "cmd-activity-1",
+        payload: {
+          threadId: "thread-1",
+          activity: {
+            id: "activity-1",
+            tone: "tool",
+            kind: "tool.started",
+            summary: "Edit file started",
+            payload: { toolKind: "command" },
+            turnId: "turn-1",
+            createdAt: "2026-02-23T10:00:02.750Z",
+          },
+        },
+      }),
+      makeEvent({
+        sequence: 6,
+        type: "thread.message-sent",
+        aggregateType: "thread",
+        aggregateId: "thread-1",
+        occurredAt: "2026-02-23T10:00:03.000Z",
+        commandId: "cmd-user-2",
+        payload: {
+          threadId: "thread-1",
+          messageId: "user-msg-2",
+          role: "user",
+          text: "Second edit",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-02-23T10:00:03.000Z",
+          updatedAt: "2026-02-23T10:00:03.000Z",
+        },
+      }),
+      makeEvent({
+        sequence: 7,
+        type: "thread.message-sent",
+        aggregateType: "thread",
+        aggregateId: "thread-1",
+        occurredAt: "2026-02-23T10:00:04.000Z",
+        commandId: "cmd-assistant-2",
+        payload: {
+          threadId: "thread-1",
+          messageId: "assistant-msg-2",
+          role: "assistant",
+          text: "Updated README to v3.\n",
+          turnId: "turn-2",
+          streaming: false,
+          createdAt: "2026-02-23T10:00:04.000Z",
+          updatedAt: "2026-02-23T10:00:04.000Z",
+        },
+      }),
+      makeEvent({
+        sequence: 8,
+        type: "thread.turn-diff-completed",
+        aggregateType: "thread",
+        aggregateId: "thread-1",
+        occurredAt: "2026-02-23T10:00:04.500Z",
+        commandId: "cmd-turn-2-complete",
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-2",
+          checkpointTurnCount: 2,
+          checkpointRef: "refs/t3/checkpoints/thread-1/turn/2",
+          status: "ready",
+          files: [],
+          assistantMessageId: "assistant-msg-2",
+          completedAt: "2026-02-23T10:00:04.500Z",
+        },
+      }),
+      makeEvent({
+        sequence: 9,
+        type: "thread.activity-appended",
+        aggregateType: "thread",
+        aggregateId: "thread-1",
+        occurredAt: "2026-02-23T10:00:04.750Z",
+        commandId: "cmd-activity-2",
+        payload: {
+          threadId: "thread-1",
+          activity: {
+            id: "activity-2",
+            tone: "tool",
+            kind: "tool.completed",
+            summary: "Edit file complete",
+            payload: { toolKind: "command" },
+            turnId: "turn-2",
+            createdAt: "2026-02-23T10:00:04.750Z",
+          },
+        },
+      }),
+      makeEvent({
+        sequence: 10,
+        type: "thread.reverted",
+        aggregateType: "thread",
+        aggregateId: "thread-1",
+        occurredAt: "2026-02-23T10:00:05.000Z",
+        commandId: "cmd-revert",
+        payload: {
+          threadId: "thread-1",
+          turnCount: 1,
+        },
+      }),
+    ];
+
+    const afterRevert = await events.reduce<Promise<ReturnType<typeof createEmptyReadModel>>>(
+      (statePromise, event) =>
+        statePromise.then((state) => Effect.runPromise(projectEvent(state, event))),
+      Promise.resolve(afterCreate),
+    );
+
+    const thread = afterRevert.threads[0];
+    expect(thread?.messages.map((message) => ({ role: message.role, text: message.text }))).toEqual([
+      { role: "user", text: "First edit" },
+      { role: "assistant", text: "Updated README to v2.\n" },
+    ]);
+    expect(thread?.activities.map((activity) => ({ id: activity.id, turnId: activity.turnId }))).toEqual([
+      { id: "activity-1", turnId: "turn-1" },
+    ]);
+    expect(thread?.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount)).toEqual([1]);
+    expect(thread?.latestTurnId).toBe("turn-1");
+  });
 });

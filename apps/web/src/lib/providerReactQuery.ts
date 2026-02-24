@@ -64,6 +64,12 @@ export function checkpointDiffQueryOptions(
       if (typeof fromTurnCount !== "number" || typeof toTurnCount !== "number") {
         throw new Error("Checkpoint diff range is invalid.");
       }
+      if (fromTurnCount === 0) {
+        return api.orchestration.getFullThreadDiff({
+          threadId: asThreadId(input.threadId),
+          toTurnCount,
+        });
+      }
       return api.orchestration.getTurnDiff({
         threadId: asThreadId(input.threadId),
         fromTurnCount,

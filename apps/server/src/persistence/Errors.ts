@@ -205,8 +205,6 @@ export type OrchestrationCommandReceiptRepositoryError =
   | PersistenceSqlError
   | PersistenceDecodeError;
 
-export type CheckpointDiffBlobRepositoryError = PersistenceSqlError | PersistenceDecodeError;
-
 export type ProviderSessionRuntimeRepositoryError =
   | PersistenceSqlError
   | PersistenceDecodeError

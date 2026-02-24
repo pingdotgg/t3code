@@ -6,21 +6,20 @@ import { execFileSync } from "node:child_process";
 import { NodeServices } from "@effect/platform-node";
 import {
   ApprovalRequestId,
+  CheckpointRef,
   type OrchestrationEvent,
   type OrchestrationThread,
-  type ThreadId,
 } from "@t3tools/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, Option, Schedule, Scope, Stream } from "effect";
 
 import { CheckpointStoreLive } from "../src/checkpointing/Layers/CheckpointStore.ts";
-import { CheckpointDiffBlobRepositoryLive } from "../src/persistence/Layers/CheckpointDiffBlobs.ts";
+import { CheckpointStore } from "../src/checkpointing/Services/CheckpointStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../src/persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../src/persistence/Layers/OrchestrationEventStore.ts";
 import { ProjectionCheckpointRepositoryLive } from "../src/persistence/Layers/ProjectionCheckpoints.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../src/persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../src/persistence/Layers/ProviderSessionRuntime.ts";
 import { makeSqlitePersistenceLive } from "../src/persistence/Layers/Sqlite.ts";
-import { CheckpointDiffBlobRepository } from "../src/persistence/Services/CheckpointDiffBlobs.ts";
 import { ProjectionCheckpointRepository } from "../src/persistence/Services/ProjectionCheckpoints.ts";
 import { ProjectionPendingApprovalRepository } from "../src/persistence/Services/ProjectionPendingApprovals.ts";
 import { ProviderUnsupportedError } from "../src/provider/Errors.ts";
@@ -64,9 +63,9 @@ function initializeGitWorkspace(cwd: string) {
   runGit(cwd, ["commit", "-m", "Initial"]);
 }
 
-export function checkpointRefForTurn(threadId: string, turnCount: number): string {
+export function checkpointRefForTurn(threadId: string, turnCount: number): CheckpointRef {
   const encodedThreadId = Buffer.from(threadId, "utf8").toString("base64url");
-  return `refs/t3/checkpoints/${encodedThreadId}/turn/${turnCount}`;
+  return CheckpointRef.makeUnsafe(`refs/t3/checkpoints/${encodedThreadId}/turn/${turnCount}`);
 }
 
 export function gitRefExists(cwd: string, ref: string): boolean {
@@ -127,7 +126,7 @@ export interface OrchestrationIntegrationHarness {
   readonly engine: OrchestrationEngineShape;
   readonly snapshotQuery: ProjectionSnapshotQuery["Service"];
   readonly providerService: ProviderService["Service"];
-  readonly diffBlobRepository: CheckpointDiffBlobRepository["Service"];
+  readonly checkpointStore: CheckpointStore["Service"];
   readonly checkpointRepository: ProjectionCheckpointRepository["Service"];
   readonly pendingApprovalRepository: ProjectionPendingApprovalRepository["Service"];
   readonly waitForThread: (
@@ -152,23 +151,6 @@ export interface OrchestrationIntegrationHarness {
       readonly status: "pending" | "resolved";
       readonly decision: "accept" | "acceptForSession" | "decline" | "cancel" | null;
       readonly resolvedAt: string | null;
-    },
-    never
-  >;
-  readonly waitForDiffBlob: (
-    input: {
-      readonly threadId: ThreadId;
-      readonly fromTurnCount: number;
-      readonly toTurnCount: number;
-    },
-    timeoutMs?: number,
-  ) => Effect.Effect<
-    {
-      readonly threadId: ThreadId;
-      readonly fromTurnCount: number;
-      readonly toTurnCount: number;
-      readonly diff: string;
-      readonly createdAt: string;
     },
     never
   >;
@@ -214,7 +196,6 @@ export const makeOrchestrationIntegrationHarness = Effect.gen(function* () {
   const runtimeServicesLayer = Layer.mergeAll(
     orchestrationLayer,
     OrchestrationProjectionSnapshotQueryLive,
-    CheckpointDiffBlobRepositoryLive,
     ProjectionCheckpointRepositoryLive,
     ProjectionPendingApprovalRepositoryLive,
     checkpointStoreLayer,
@@ -252,8 +233,8 @@ export const makeOrchestrationIntegrationHarness = Effect.gen(function* () {
   const providerService = yield* Effect.promise(() =>
     runtime.runPromise(Effect.service(ProviderService)),
   );
-  const diffBlobRepository = yield* Effect.promise(() =>
-    runtime.runPromise(Effect.service(CheckpointDiffBlobRepository)),
+  const checkpointStore = yield* Effect.promise(() =>
+    runtime.runPromise(Effect.service(CheckpointStore)),
   );
   const checkpointRepository = yield* Effect.promise(() =>
     runtime.runPromise(Effect.service(ProjectionCheckpointRepository)),
@@ -335,38 +316,6 @@ export const makeOrchestrationIntegrationHarness = Effect.gen(function* () {
       never
     >;
 
-  const waitForDiffBlob: OrchestrationIntegrationHarness["waitForDiffBlob"] = (input, timeoutMs) =>
-    waitFor(
-      diffBlobRepository.get(input).pipe(
-        Effect.map((blob) =>
-          Option.match(blob, {
-            onNone: () => null,
-            onSome: (value) => value,
-          }),
-        ),
-      ),
-      (
-        blob,
-      ): blob is {
-        readonly threadId: ThreadId;
-        readonly fromTurnCount: number;
-        readonly toTurnCount: number;
-        readonly diff: string;
-        readonly createdAt: string;
-      } => blob !== null,
-      `checkpoint diff blob ${input.threadId}:${input.fromTurnCount}->${input.toTurnCount}`,
-      timeoutMs,
-    ) as Effect.Effect<
-      {
-        readonly threadId: ThreadId;
-        readonly fromTurnCount: number;
-        readonly toTurnCount: number;
-        readonly diff: string;
-        readonly createdAt: string;
-      },
-      never
-    >;
-
   let disposed = false;
   const dispose = Effect.gen(function* () {
     if (disposed) {
@@ -390,13 +339,12 @@ export const makeOrchestrationIntegrationHarness = Effect.gen(function* () {
     engine,
     snapshotQuery,
     providerService,
-    diffBlobRepository,
+    checkpointStore,
     checkpointRepository,
     pendingApprovalRepository,
     waitForThread,
     waitForDomainEvent,
     waitForPendingApproval,
-    waitForDiffBlob,
     dispose,
   } satisfies OrchestrationIntegrationHarness;
 });

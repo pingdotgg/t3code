@@ -4,6 +4,7 @@ export const ORCHESTRATION_WS_METHODS = {
   getSnapshot: "orchestration.getSnapshot",
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
+  getFullThreadDiff: "orchestration.getFullThreadDiff",
   replayEvents: "orchestration.replayEvents",
 } as const;
 
@@ -837,6 +838,15 @@ export type OrchestrationGetTurnDiffInput = typeof OrchestrationGetTurnDiffInput
 export const OrchestrationGetTurnDiffResult = ThreadTurnDiff;
 export type OrchestrationGetTurnDiffResult = typeof OrchestrationGetTurnDiffResult.Type;
 
+export const OrchestrationGetFullThreadDiffInput = Schema.Struct({
+  threadId: ThreadId,
+  toTurnCount: NonNegativeInt,
+});
+export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThreadDiffInput.Type;
+
+export const OrchestrationGetFullThreadDiffResult = ThreadTurnDiff;
+export type OrchestrationGetFullThreadDiffResult = typeof OrchestrationGetFullThreadDiffResult.Type;
+
 export const OrchestrationReplayEventsInput = Schema.Struct({
   fromSequenceExclusive: NonNegativeInt,
 });
@@ -857,6 +867,10 @@ export const OrchestrationRpcSchemas = {
   getTurnDiff: {
     input: OrchestrationGetTurnDiffInput,
     output: OrchestrationGetTurnDiffResult,
+  },
+  getFullThreadDiff: {
+    input: OrchestrationGetFullThreadDiffInput,
+    output: OrchestrationGetFullThreadDiffResult,
   },
   replayEvents: {
     input: OrchestrationReplayEventsInput,

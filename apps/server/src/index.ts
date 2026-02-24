@@ -118,6 +118,7 @@ async function main() {
     port,
     host: mode === "desktop" ? "127.0.0.1" : undefined,
     cwd,
+    autoBootstrapProjectFromCwd: mode === "web",
     stateDir,
     staticDir,
     devUrl,

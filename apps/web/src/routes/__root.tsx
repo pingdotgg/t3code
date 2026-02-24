@@ -3,18 +3,16 @@ import {
   createRootRouteWithContext,
   type ErrorComponentProps,
 } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
-import { QueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { QueryClient, useQueryClient } from "@tanstack/react-query";
 
 import { APP_DISPLAY_NAME } from "../branding";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider } from "../components/ui/toast";
-import { isElectron } from "../env";
 import { useNativeApi } from "../hooks/useNativeApi";
-import { DEFAULT_MODEL } from "../model-logic";
 import { useStore } from "../store";
-import { newCommandId, newProjectId, newThreadId } from "../lib/orchestrationIds";
 import { onServerWelcome } from "../wsNativeApi";
+import { providerQueryKeys } from "../lib/providerReactQuery";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -42,7 +40,6 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <EventRouter />
-        <AutoProjectBootstrap />
         <DesktopProjectBootstrap />
         <Outlet />
       </AnchoredToastProvider>
@@ -124,6 +121,7 @@ function errorDetails(error: unknown): string {
 function EventRouter() {
   const api = useNativeApi();
   const { dispatch } = useStore();
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     if (!api) return;
@@ -166,6 +164,9 @@ function EventRouter() {
         return;
       }
       latestSequence = event.sequence;
+      if (event.type === "thread.turn-diff-completed" || event.type === "thread.reverted") {
+        void queryClient.invalidateQueries({ queryKey: providerQueryKeys.all });
+      }
       void syncSnapshot();
     });
     const unsubWelcome = onServerWelcome(() => {
@@ -176,63 +177,7 @@ function EventRouter() {
       unsubDomainEvent();
       unsubWelcome();
     };
-  }, [api, dispatch]);
-
-  return null;
-}
-
-function AutoProjectBootstrap() {
-  const api = useNativeApi();
-  const { state, dispatch } = useStore();
-  const bootstrappedRef = useRef(false);
-
-  useEffect(() => {
-    if (!api) return;
-    // Browser mode auto-adds the current cwd project via server welcome.
-    // Desktop skips this because projects are already loaded from the repository.
-    if (isElectron) return;
-
-    return onServerWelcome((payload) => {
-      if (bootstrappedRef.current) return;
-
-      // Don't create duplicate projects for the same cwd
-      const existing = state.projects.find((project) => project.cwd === payload.cwd);
-      if (existing) {
-        bootstrappedRef.current = true;
-        dispatch({ type: "SET_THREADS_HYDRATED", hydrated: true });
-        return;
-      }
-
-      bootstrappedRef.current = true;
-      const now = new Date().toISOString();
-      const projectId = newProjectId();
-      const threadId = newThreadId();
-      void api.orchestration
-        .dispatchCommand({
-          type: "project.create",
-          commandId: newCommandId(),
-          projectId,
-          title: payload.projectName,
-          workspaceRoot: payload.cwd,
-          defaultModel: DEFAULT_MODEL,
-          createdAt: now,
-        })
-        .then(() =>
-          api.orchestration.dispatchCommand({
-            type: "thread.create",
-            commandId: newCommandId(),
-            threadId,
-            projectId,
-            title: "New thread",
-            model: DEFAULT_MODEL,
-            branch: null,
-            worktreePath: null,
-            createdAt: now,
-          }),
-        )
-        .catch(() => undefined);
-    });
-  }, [api, state.projects, dispatch]);
+  }, [api, dispatch, queryClient]);
 
   return null;
 }

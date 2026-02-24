@@ -28,9 +28,11 @@ describe("providerQueryKeys.checkpointDiff", () => {
 describe("checkpointDiffQueryOptions", () => {
   it("forwards checkpoint range to the provider API", async () => {
     const getTurnDiff = vi.fn().mockResolvedValue({ diff: "patch" });
+    const getFullThreadDiff = vi.fn().mockResolvedValue({ diff: "patch" });
     const api = {
       orchestration: {
         getTurnDiff,
+        getFullThreadDiff,
       },
     } as unknown as NativeApi;
 
@@ -49,6 +51,34 @@ describe("checkpointDiffQueryOptions", () => {
       fromTurnCount: 3,
       toTurnCount: 4,
     });
+    expect(getFullThreadDiff).not.toHaveBeenCalled();
+  });
+
+  it("uses explicit full thread diff API when range starts from zero", async () => {
+    const getTurnDiff = vi.fn().mockResolvedValue({ diff: "patch" });
+    const getFullThreadDiff = vi.fn().mockResolvedValue({ diff: "patch" });
+    const api = {
+      orchestration: {
+        getTurnDiff,
+        getFullThreadDiff,
+      },
+    } as unknown as NativeApi;
+
+    const options = checkpointDiffQueryOptions(api, {
+      threadId: "thread-id",
+      fromTurnCount: 0,
+      toTurnCount: 2,
+      cacheScope: "thread:all",
+    });
+
+    const queryClient = new QueryClient();
+    await queryClient.fetchQuery(options);
+
+    expect(getFullThreadDiff).toHaveBeenCalledWith({
+      threadId: "thread-id",
+      toTurnCount: 2,
+    });
+    expect(getTurnDiff).not.toHaveBeenCalled();
   });
 
   it("retries checkpoint-not-ready errors longer than generic failures", () => {

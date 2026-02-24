@@ -13,7 +13,6 @@ import { Effect, Layer, Option, Queue, Stream } from "effect";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
-import { CheckpointDiffBlobRepository } from "../../persistence/Services/CheckpointDiffBlobs.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -67,7 +66,6 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const checkpointStore = yield* CheckpointStore;
-  const checkpointDiffBlobRepository = yield* CheckpointDiffBlobRepository;
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -158,62 +156,6 @@ const make = Effect.gen(function* () {
 
     const matchedSession = sessions.find((session) => session.threadId?.trim() === threadId.trim());
     return findSessionWithCwd(matchedSession);
-  });
-
-  const persistDiffBlobFromTurnCompletion = Effect.fnUntraced(function* (
-    event: Extract<OrchestrationEvent, { type: "thread.turn-diff-completed" }>,
-  ) {
-    const toTurnCount = event.payload.checkpointTurnCount;
-    const fromTurnCount = Math.max(0, toTurnCount - 1);
-
-    const readModel = yield* orchestrationEngine.getReadModel();
-    const thread = readModel.threads.find((entry) => entry.id === event.payload.threadId);
-    if (!thread) {
-      return;
-    }
-
-    const sessionRuntime = yield* resolveSessionRuntimeForThread(event.payload.threadId);
-    if (Option.isNone(sessionRuntime)) {
-      yield* Effect.logWarning(
-        "checkpoint diff blob skipped: no active provider session cwd for thread",
-        {
-          threadId: event.payload.threadId,
-          fromTurnCount,
-          toTurnCount,
-        },
-      );
-      return;
-    }
-
-    const fromCheckpointRef =
-      fromTurnCount === 0
-        ? checkpointRefForThreadTurn(event.payload.threadId, 0)
-        : thread.checkpoints.find((checkpoint) => checkpoint.checkpointTurnCount === fromTurnCount)
-            ?.checkpointRef;
-
-    if (!fromCheckpointRef) {
-      yield* Effect.logWarning("checkpoint diff blob skipped: missing from checkpoint ref", {
-        threadId: event.payload.threadId,
-        fromTurnCount,
-        toTurnCount,
-      });
-      return;
-    }
-
-    const diff = yield* checkpointStore.diffCheckpoints({
-      cwd: sessionRuntime.value.cwd,
-      fromCheckpointRef,
-      toCheckpointRef: event.payload.checkpointRef,
-      fallbackFromToHead: false,
-    });
-
-    yield* checkpointDiffBlobRepository.upsert({
-      threadId: event.payload.threadId,
-      fromTurnCount,
-      toTurnCount,
-      diff,
-      createdAt: event.payload.completedAt,
-    });
   });
 
   const captureCheckpointFromTurnCompletion = Effect.fnUntraced(function* (
@@ -565,20 +507,6 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    if (event.type === "thread.turn-diff-completed") {
-      yield* persistDiffBlobFromTurnCompletion(event).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("checkpoint diff blob persistence failed", {
-            threadId: event.payload.threadId,
-            turnId: event.payload.turnId,
-            checkpointTurnCount: event.payload.checkpointTurnCount,
-            detail: error.message,
-          }),
-        ),
-      );
-      return;
-    }
-
     if (event.type === "thread.checkpoint-revert-requested") {
       yield* handleRevertRequested(event).pipe(
         Effect.catch((error) =>
@@ -714,7 +642,6 @@ const make = Effect.gen(function* () {
         if (
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.message-sent" &&
-          event.type !== "thread.turn-diff-completed" &&
           event.type !== "thread.checkpoint-revert-requested"
         ) {
           return Effect.void;

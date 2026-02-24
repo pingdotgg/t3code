@@ -202,7 +202,7 @@ it.live("runs a single turn end-to-end and persists checkpoint state in sqlite +
   ),
 );
 
-it.live("runs multi-turn file edits and persists checkpoint diffs + blobs", () =>
+it.live("runs multi-turn file edits and persists checkpoint diffs", () =>
   withHarness((harness) =>
     Effect.gen(function* () {
       yield* seedProjectAndThread(harness);
@@ -327,12 +327,21 @@ it.live("runs multi-turn file edits and persists checkpoint diffs + blobs", () =
         [1, 2],
       );
 
-      const diffBlob = yield* harness.waitForDiffBlob({
-        threadId: THREAD_ID,
-        fromTurnCount: 1,
-        toTurnCount: 2,
+      const incrementalDiff = yield* harness.checkpointStore.diffCheckpoints({
+        cwd: harness.workspaceDir,
+        fromCheckpointRef: checkpointRefForTurn(THREAD_ID, 1),
+        toCheckpointRef: checkpointRefForTurn(THREAD_ID, 2),
+        fallbackFromToHead: false,
       });
-      assert.equal(diffBlob.diff.includes("README.md"), true);
+      assert.equal(incrementalDiff.includes("README.md"), true);
+
+      const fullDiff = yield* harness.checkpointStore.diffCheckpoints({
+        cwd: harness.workspaceDir,
+        fromCheckpointRef: checkpointRefForTurn(THREAD_ID, 0),
+        toCheckpointRef: checkpointRefForTurn(THREAD_ID, 2),
+        fallbackFromToHead: false,
+      });
+      assert.equal(fullDiff.includes("README.md"), true);
 
       assert.equal(
         gitShowFileAtRef(harness.workspaceDir, checkpointRefForTurn(THREAD_ID, 1), "README.md"),
@@ -512,6 +521,31 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
             turnId: FIXTURE_TURN_ID,
           },
           {
+            type: "tool.started",
+            ...runtimeBase("evt-revert-1-tool-started", "2026-02-24T10:05:00.025Z"),
+            threadId: FIXTURE_THREAD_ID,
+            turnId: FIXTURE_TURN_ID,
+            toolKind: "command",
+            title: "Edit file",
+            detail: "README.md",
+          },
+          {
+            type: "tool.completed",
+            ...runtimeBase("evt-revert-1-tool-completed", "2026-02-24T10:05:00.035Z"),
+            threadId: FIXTURE_THREAD_ID,
+            turnId: FIXTURE_TURN_ID,
+            toolKind: "command",
+            title: "Edit file",
+            detail: "README.md",
+          },
+          {
+            type: "message.delta",
+            ...runtimeBase("evt-revert-1a", "2026-02-24T10:05:00.050Z"),
+            threadId: FIXTURE_THREAD_ID,
+            turnId: FIXTURE_TURN_ID,
+            delta: "Updated README to v2.\n",
+          },
+          {
             type: "turn.completed",
             ...runtimeBase("evt-revert-2", "2026-02-24T10:05:00.100Z"),
             threadId: FIXTURE_THREAD_ID,
@@ -550,6 +584,31 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
             turnId: FIXTURE_TURN_ID,
           },
           {
+            type: "tool.started",
+            ...runtimeBase("evt-revert-3-tool-started", "2026-02-24T10:05:01.025Z"),
+            threadId: FIXTURE_THREAD_ID,
+            turnId: FIXTURE_TURN_ID,
+            toolKind: "command",
+            title: "Edit file",
+            detail: "README.md",
+          },
+          {
+            type: "tool.completed",
+            ...runtimeBase("evt-revert-3-tool-completed", "2026-02-24T10:05:01.035Z"),
+            threadId: FIXTURE_THREAD_ID,
+            turnId: FIXTURE_TURN_ID,
+            toolKind: "command",
+            title: "Edit file",
+            detail: "README.md",
+          },
+          {
+            type: "message.delta",
+            ...runtimeBase("evt-revert-3a", "2026-02-24T10:05:01.050Z"),
+            threadId: FIXTURE_THREAD_ID,
+            turnId: FIXTURE_TURN_ID,
+            delta: "Updated README to v3.\n",
+          },
+          {
             type: "turn.completed",
             ...runtimeBase("evt-revert-4", "2026-02-24T10:05:01.100Z"),
             threadId: FIXTURE_THREAD_ID,
@@ -571,7 +630,10 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
 
       yield* harness.waitForThread(
         THREAD_ID,
-        (entry) => entry.latestTurnId === "turn-2" && entry.checkpoints.length === 2,
+        (entry) =>
+          entry.latestTurnId === "turn-2" &&
+          entry.checkpoints.length === 2 &&
+          entry.activities.some((activity) => activity.turnId === "turn-2"),
         8000,
       );
 
@@ -590,6 +652,29 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
           entry.checkpoints.length === 1 && entry.checkpoints[0]?.checkpointTurnCount === 1,
       );
       assert.equal(revertedThread.checkpoints[0]?.checkpointTurnCount, 1);
+      assert.deepEqual(
+        revertedThread.messages.map((message) => ({ role: message.role, text: message.text })),
+        [
+          { role: "user", text: "First edit" },
+          { role: "assistant", text: "Updated README to v2.\n" },
+        ],
+      );
+      assert.equal(
+        revertedThread.activities.some((activity) => activity.turnId === "turn-2"),
+        false,
+      );
+      assert.equal(
+        revertedThread.activities.some(
+          (activity) => activity.turnId === "turn-1" && activity.kind === "tool.started",
+        ),
+        true,
+      );
+      assert.equal(
+        revertedThread.activities.some(
+          (activity) => activity.turnId === "turn-1" && activity.kind === "tool.completed",
+        ),
+        true,
+      );
       assert.equal(fs.readFileSync(path.join(harness.workspaceDir, "README.md"), "utf8"), "v2\n");
       assert.equal(gitRefExists(harness.workspaceDir, checkpointRefForTurn(THREAD_ID, 2)), false);
       assert.deepEqual(harness.adapterHarness.getRollbackCalls(sessionId), [1]);

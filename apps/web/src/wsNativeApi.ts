@@ -128,8 +128,10 @@ export function createWsNativeApi(): NativeApi {
     orchestration: {
       getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),
       dispatchCommand: (command) =>
-        transport.request(ORCHESTRATION_WS_METHODS.dispatchCommand, command),
+        transport.request(ORCHESTRATION_WS_METHODS.dispatchCommand, { command }),
       getTurnDiff: (input) => transport.request(ORCHESTRATION_WS_METHODS.getTurnDiff, input),
+      getFullThreadDiff: (input) =>
+        transport.request(ORCHESTRATION_WS_METHODS.getFullThreadDiff, input),
       replayEvents: (fromSequenceExclusive) =>
         transport.request(ORCHESTRATION_WS_METHODS.replayEvents, { fromSequenceExclusive }),
       onDomainEvent: (callback) =>
