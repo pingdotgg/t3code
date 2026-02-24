@@ -277,10 +277,7 @@ export const CliConfigLive = Layer.succeed(CliConfig, {
     Effect.tryPromise({
       try: () => findAvailablePort(preferred),
       catch: (cause) =>
-        new StartupError({
-          message: "Failed to discover an available port",
-          cause,
-        }),
+        new StartupError({ message: "Failed to discover an available port", cause }),
     }),
   resolveStaticDir,
 } satisfies CliConfigShape);
