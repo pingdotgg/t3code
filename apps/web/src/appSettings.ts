@@ -4,10 +4,10 @@ import { Option, Schema } from "effect";
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 
 const AppSettingsSchema = Schema.Struct({
-  codexBinaryPath: Schema.NonEmptyString.check(Schema.isMaxLength(4096)).pipe(
+  codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
   ),
-  codexHomePath: Schema.NonEmptyString.check(Schema.isMaxLength(4096)).pipe(
+  codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
   ),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
