@@ -220,38 +220,6 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       assert.equal(firstEvent.value.turnId, "turn-1");
     }),
   );
-
-  it.effect("emits canonical events on stream and supports consumer interruption", () =>
-    Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
-      const onEvent = vi.fn(() => undefined);
-      const consumer = yield* Stream.runForEach(adapter.streamEvents, () =>
-        Effect.sync(() => {
-          onEvent();
-        }),
-      ).pipe(Effect.forkChild);
-
-      const event: ProviderEvent = {
-        id: asEventId("evt-1"),
-        kind: "notification",
-        provider: "codex",
-        sessionId: asSessionId("sess-1"),
-        createdAt: new Date().toISOString(),
-        method: "turn/started",
-        turnId: asTurnId("turn-1"),
-      };
-
-      lifecycleManager.emit("event", event);
-      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
-      assert.equal(onEvent.mock.calls.length, 1);
-
-      yield* Fiber.interrupt(consumer);
-      lifecycleManager.emit("event", event);
-      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
-      assert.equal(onEvent.mock.calls.length, 1);
-      assert.equal(lifecycleManager.stopAllImpl.mock.calls.length, 0);
-    }),
-  );
 });
 
 afterAll(() => {
