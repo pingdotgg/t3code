@@ -4,13 +4,10 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  gitRunStackedActionInputSchema,
-  gitRunStackedActionResultSchema,
-  gitStatusInputSchema,
-  type GitRunStackedActionInput,
-  type GitRunStackedActionResult,
-  type GitStatusInput,
-  type GitStatusResult,
+  GitRunStackedActionInput,
+  GitRunStackedActionResult,
+  GitStatusInput,
+  GitStatusResult,
 } from "@t3tools/contracts";
 
 import type {
@@ -187,8 +184,7 @@ export class GitManager {
     this.gitCore = deps.gitCore ?? new GitCoreService();
   }
 
-  async status(raw: GitStatusInput): Promise<GitStatusResult> {
-    const input = gitStatusInputSchema.parse(raw);
+  async status(input: GitStatusInput): Promise<GitStatusResult> {
     const details = await this.gitCore.statusDetails(input.cwd);
 
     let openPr: ReturnType<typeof toStatusOpenPr> | null = null;
@@ -214,8 +210,7 @@ export class GitManager {
     };
   }
 
-  async runStackedAction(raw: GitRunStackedActionInput): Promise<GitRunStackedActionResult> {
-    const input = gitRunStackedActionInputSchema.parse(raw);
+  async runStackedAction(input: GitRunStackedActionInput): Promise<GitRunStackedActionResult> {
     const wantsPush = input.action !== "commit";
     const wantsPr = input.action === "commit_push_pr";
 
@@ -237,12 +232,12 @@ export class GitManager {
       ? await this.runPrStep(input.cwd, initialStatus.branch)
       : { status: "skipped_not_requested" as const };
 
-    return gitRunStackedActionResultSchema.parse({
+    return {
       action: input.action,
       commit,
       push,
       pr,
-    });
+    };
   }
 
   private async runCommitStep(

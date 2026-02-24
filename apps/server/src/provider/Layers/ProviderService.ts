@@ -5,29 +5,25 @@
  * `ProviderAdapterRegistry` and `ProviderSessionDirectory`, and exposes a
  * unified provider event stream for subscribers.
  *
- * It does not implement provider protocol details (adapter concern) and does
- * not implement checkpoint persistence mechanics (checkpointing concern).
+ * It does not implement provider protocol details (adapter concern).
  *
  * @module ProviderServiceLive
  */
-import { randomUUID } from "node:crypto";
-
 import {
-  providerGetCheckpointDiffInputSchema,
-  providerInterruptTurnInputSchema,
-  providerListCheckpointsInputSchema,
-  providerRespondToRequestInputSchema,
-  providerRevertToCheckpointInputSchema,
-  providerSendTurnInputSchema,
-  providerSessionStartInputSchema,
-  providerStopSessionInputSchema,
+  NonNegativeInt,
+  ProviderSessionId,
+  ProviderThreadId,
+  ThreadId,
+  ProviderInterruptTurnInput,
+  ProviderRespondToRequestInput,
+  ProviderSendTurnInput,
+  ProviderSessionStartInput,
+  ProviderStopSessionInput,
   type ProviderRuntimeEvent,
-  type ProviderRuntimeTurnCompletedEvent,
   type ProviderSession,
 } from "@t3tools/contracts";
-import { Effect, Layer, Option, PubSub, Queue, Ref, Stream } from "effect";
+import { Effect, Layer, Option, PubSub, Queue, Ref, Schema, Stream } from "effect";
 
-import { CheckpointService } from "../../checkpointing/Services/CheckpointService.ts";
 import { ProviderValidationError } from "../Errors.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderService, type ProviderServiceShape } from "../Services/ProviderService.ts";
@@ -38,40 +34,10 @@ export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogPath?: string;
 }
 
-function toCheckpointCaptureErrorEvent(
-  event: ProviderRuntimeTurnCompletedEvent,
-  error: { readonly message: string },
-): ProviderRuntimeEvent {
-  return {
-    type: "runtime.error",
-    eventId: randomUUID(),
-    provider: event.provider,
-    sessionId: event.sessionId,
-    createdAt: new Date().toISOString(),
-    ...(event.threadId !== undefined ? { threadId: event.threadId } : {}),
-    ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
-    message: error.message,
-  };
-}
-
-function toCheckpointCapturedEvent(input: {
-  readonly event: ProviderRuntimeTurnCompletedEvent;
-  readonly threadId: string;
-  readonly turnCount: number;
-}): ProviderRuntimeEvent {
-  const { event, threadId, turnCount } = input;
-  return {
-    type: "checkpoint.captured",
-    eventId: randomUUID(),
-    provider: event.provider,
-    sessionId: event.sessionId,
-    createdAt: new Date().toISOString(),
-    threadId,
-    ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
-    turnCount,
-    ...(event.status !== undefined ? { status: event.status } : {}),
-  };
-}
+const ProviderRollbackConversationInput = Schema.Struct({
+  sessionId: ProviderSessionId,
+  numTurns: NonNegativeInt,
+});
 
 function toValidationError(
   operation: string,
@@ -85,6 +51,63 @@ function toValidationError(
   });
 }
 
+function decodeIssueMessage(cause: unknown): string {
+  if (cause instanceof Error && cause.message.length > 0) {
+    return cause.message;
+  }
+  try {
+    return JSON.stringify(cause);
+  } catch {
+    return "Invalid provider input.";
+  }
+}
+
+function decodeInputOrValidationError<S extends Schema.Top>(input: {
+  readonly operation: string;
+  readonly schema: S;
+  readonly payload: unknown;
+}): Effect.Effect<Schema.Schema.Type<S>, ProviderValidationError> {
+  try {
+    return Effect.succeed(
+      Schema.decodeUnknownSync(input.schema as never)(input.payload) as Schema.Schema.Type<S>,
+    );
+  } catch (cause) {
+    return Effect.fail(toValidationError(input.operation, decodeIssueMessage(cause), cause));
+  }
+}
+
+function toRuntimeStatus(session: ProviderSession): "starting" | "running" | "stopped" | "error" {
+  switch (session.status) {
+    case "connecting":
+      return "starting";
+    case "error":
+      return "error";
+    case "closed":
+      return "stopped";
+    case "ready":
+    case "running":
+    default:
+      return "running";
+  }
+}
+
+function toRuntimePayloadFromSession(session: ProviderSession): Record<string, unknown> {
+  return {
+    cwd: session.cwd ?? null,
+    model: session.model ?? null,
+    activeTurnId: session.activeTurnId ?? null,
+    lastError: session.lastError ?? null,
+  };
+}
+
+function asProviderSessionId(value: string | ProviderSessionId): ProviderSessionId {
+  return typeof value === "string" ? ProviderSessionId.makeUnsafe(value) : value;
+}
+
+function asProviderThreadId(value: string | ProviderThreadId): ProviderThreadId {
+  return typeof value === "string" ? ProviderThreadId.makeUnsafe(value) : value;
+}
+
 const makeProviderService = (options?: ProviderServiceLiveOptions) =>
   Effect.gen(function* () {
     const canonicalEventLogger =
@@ -94,11 +117,11 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
 
     const registry = yield* ProviderAdapterRegistry;
     const directory = yield* ProviderSessionDirectory;
-    const checkpointService = yield* CheckpointService;
-
     const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
-    const routedSessionAliasesRef = yield* Ref.make<Map<string, string>>(new Map());
+    const routedSessionAliasesRef = yield* Ref.make<Map<ProviderSessionId, ProviderSessionId>>(
+      new Map(),
+    );
 
     const canonicalizeRuntimeEventSession = (
       event: ProviderRuntimeEvent,
@@ -109,7 +132,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
             if (liveSessionId === event.sessionId) {
               return {
                 ...event,
-                sessionId: staleSessionId,
+                sessionId: ProviderSessionId.makeUnsafe(staleSessionId),
               } satisfies ProviderRuntimeEvent;
             }
           }
@@ -131,29 +154,32 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         Effect.asVoid,
       );
 
-    const upsertSessionBinding = (
-      session: ProviderSession,
-      operation: string,
-    ) =>
+    const upsertSessionBinding = (session: ProviderSession, operation: string) =>
       Effect.gen(function* () {
-        const threadId = session.threadId?.trim();
-        if (!threadId) {
+        const providerThreadId = session.threadId;
+        if (!providerThreadId) {
           return yield* toValidationError(
             operation,
-            `Provider '${session.provider}' returned a session without threadId. threadId is required for checkpoint initialization.`,
+            `Provider '${session.provider}' returned a session without threadId.`,
           );
         }
 
+        const providerSessionId = asProviderSessionId(session.sessionId);
+        const brandedThreadId = ThreadId.makeUnsafe(providerThreadId);
         yield* directory.upsert({
-          sessionId: session.sessionId,
+          sessionId: providerSessionId,
           provider: session.provider,
-          threadId,
+          threadId: brandedThreadId,
+          providerThreadId,
+          status: toRuntimeStatus(session),
+          resumeCursor: { resumeThreadId: providerThreadId },
+          runtimePayload: toRuntimePayloadFromSession(session),
         });
 
-        return threadId;
+        return brandedThreadId;
       });
 
-    const clearAliasKey = (staleSessionId: string) =>
+    const clearAliasKey = (staleSessionId: ProviderSessionId) =>
       Ref.update(routedSessionAliasesRef, (current) => {
         if (!current.has(staleSessionId)) {
           return current;
@@ -163,10 +189,10 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         return next;
       });
 
-    const clearAliasesReferencing = (sessionId: string) =>
+    const clearAliasesReferencing = (sessionId: ProviderSessionId) =>
       Ref.update(routedSessionAliasesRef, (current) => {
         let changed = false;
-        const next = new Map<string, string>();
+        const next = new Map<ProviderSessionId, ProviderSessionId>();
         for (const [key, value] of current) {
           if (key === sessionId || value === sessionId) {
             changed = true;
@@ -177,7 +203,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         return changed ? next : current;
       });
 
-    const setAlias = (staleSessionId: string, liveSessionId: string) =>
+    const setAlias = (staleSessionId: ProviderSessionId, liveSessionId: ProviderSessionId) =>
       Ref.update(routedSessionAliasesRef, (current) => {
         const existing = current.get(staleSessionId);
         if (existing === liveSessionId) {
@@ -193,43 +219,8 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       registry.getByProvider(provider),
     );
 
-    const onTurnCompleted = (event: ProviderRuntimeTurnCompletedEvent): Effect.Effect<void> =>
-      checkpointService
-        .captureCurrentTurn({
-          providerSessionId: event.sessionId,
-          ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
-          ...(event.status !== undefined ? { status: event.status } : {}),
-        })
-        .pipe(
-          Effect.flatMap(() => checkpointService.listCheckpoints({ sessionId: event.sessionId })),
-          Effect.flatMap((result) => {
-            const currentCheckpoint =
-              result.checkpoints.find((checkpoint) => checkpoint.isCurrent) ??
-              result.checkpoints[result.checkpoints.length - 1];
-            if (!currentCheckpoint) {
-              return Effect.void;
-            }
-
-            return publishRuntimeEvent(
-              toCheckpointCapturedEvent({
-                event,
-                threadId: result.threadId,
-                turnCount: currentCheckpoint.turnCount,
-              }),
-            );
-          }),
-          Effect.catch((error) => publishRuntimeEvent(toCheckpointCaptureErrorEvent(event, error))),
-        );
-
     const processRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
-      publishRuntimeEvent(event).pipe(
-        Effect.flatMap(() => {
-          if (event.type !== "turn.completed") {
-            return Effect.void;
-          }
-          return onTurnCompleted(event);
-        }),
-      );
+      publishRuntimeEvent(event);
 
     const worker = Effect.forever(
       Queue.take(runtimeEventQueue).pipe(Effect.flatMap(processRuntimeEvent)),
@@ -243,16 +234,16 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
     ).pipe(Effect.asVoid);
 
     const recoverSessionForThread = (input: {
-      readonly staleSessionId: string;
+      readonly staleSessionId: ProviderSessionId;
       readonly provider: ProviderSession["provider"];
-      readonly threadId: string;
+      readonly threadId: ThreadId;
       readonly operation: string;
     }) =>
       Effect.gen(function* () {
         const adapter = yield* registry.getByProvider(input.provider);
         const activeSessions = yield* adapter.listSessions();
         const existing = activeSessions.find(
-          (session) => session.threadId?.trim() === input.threadId,
+          (session) => session.threadId?.trim() === input.threadId.trim(),
         );
         if (existing) {
           const existingThreadId = yield* upsertSessionBinding(
@@ -277,7 +268,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
 
         const resumed = yield* adapter.startSession({
           provider: input.provider,
-          resumeThreadId: input.threadId,
+          resumeThreadId: ProviderThreadId.makeUnsafe(input.threadId),
         });
         if (resumed.provider !== adapter.provider) {
           return yield* toValidationError(
@@ -303,12 +294,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           threadId: resumedThreadId,
         });
 
-        const checkpointCwd = resumed.cwd ?? process.cwd();
-        yield* checkpointService.initializeForSession({
-          providerSessionId: resumed.sessionId,
-          cwd: checkpointCwd,
-        });
-
         if (resumed.sessionId !== input.staleSessionId) {
           yield* setAlias(input.staleSessionId, resumed.sessionId);
         } else {
@@ -322,7 +307,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       });
 
     const resolveRoutableSession = (input: {
-      readonly sessionId: string;
+      readonly sessionId: ProviderSessionId;
       readonly operation: string;
       readonly allowRecovery: boolean;
     }) =>
@@ -364,7 +349,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         }
 
         const threadIdOption = yield* directory.getThreadId(input.sessionId);
-        const threadId = Option.getOrUndefined(threadIdOption)?.trim();
+        const threadId = Option.getOrUndefined(threadIdOption);
         if (!threadId) {
           return yield* toValidationError(
             input.operation,
@@ -388,16 +373,18 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
 
     const startSession: ProviderServiceShape["startSession"] = (rawInput) =>
       Effect.gen(function* () {
-        const parsed = providerSessionStartInputSchema.safeParse(rawInput);
-        if (!parsed.success) {
-          return yield* toValidationError(
-            "ProviderService.startSession",
-            parsed.error.message,
-            parsed.error.cause,
-          );
-        }
+        const parsed = yield* decodeInputOrValidationError({
+          operation: "ProviderService.startSession",
+          schema: ProviderSessionStartInput,
+          payload: rawInput,
+        });
 
-        const input = parsed.data;
+        const input = {
+          ...parsed,
+          provider: parsed.provider ?? "codex",
+          approvalPolicy: parsed.approvalPolicy ?? "never",
+          sandboxMode: parsed.sandboxMode ?? "workspace-write",
+        };
         const adapter = yield* registry.getByProvider(input.provider);
         const session = yield* adapter.startSession(input);
 
@@ -410,50 +397,68 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
 
         yield* upsertSessionBinding(session, "ProviderService.startSession");
 
-        const checkpointCwd = session.cwd ?? input.cwd ?? process.cwd();
-        yield* checkpointService.initializeForSession({
-          providerSessionId: session.sessionId,
-          cwd: checkpointCwd,
-        });
-
         return session;
       });
 
     const sendTurn: ProviderServiceShape["sendTurn"] = (rawInput) =>
       Effect.gen(function* () {
-        const parsed = providerSendTurnInputSchema.safeParse(rawInput);
-        if (!parsed.success) {
+        const parsed = yield* decodeInputOrValidationError({
+          operation: "ProviderService.sendTurn",
+          schema: ProviderSendTurnInput,
+          payload: rawInput,
+        });
+
+        const input = {
+          ...parsed,
+          attachments: parsed.attachments ?? [],
+        };
+        if (!input.input && input.attachments.length === 0) {
           return yield* toValidationError(
             "ProviderService.sendTurn",
-            parsed.error.message,
-            parsed.error.cause,
+            "Either input text or at least one attachment is required",
           );
         }
-
-        const input = parsed.data;
         const routed = yield* resolveRoutableSession({
           sessionId: input.sessionId,
           operation: "ProviderService.sendTurn",
           allowRecovery: true,
         });
-        return yield* routed.adapter.sendTurn({
+        const turn = yield* routed.adapter.sendTurn({
           ...input,
           sessionId: routed.sessionId,
         });
+        const threadId = yield* directory
+          .getThreadId(asProviderSessionId(input.sessionId))
+          .pipe(Effect.map(Option.getOrUndefined));
+        if (!threadId) {
+          return yield* toValidationError(
+            "ProviderService.sendTurn",
+            `No thread id is tracked for provider session '${input.sessionId}'.`,
+          );
+        }
+        yield* directory.upsert({
+          sessionId: asProviderSessionId(input.sessionId),
+          provider: routed.adapter.provider,
+          threadId,
+          providerThreadId: asProviderThreadId(turn.threadId),
+          status: "running",
+          resumeCursor: { resumeThreadId: turn.threadId },
+          runtimePayload: {
+            activeTurnId: turn.turnId,
+            lastRuntimeEvent: "provider.sendTurn",
+            lastRuntimeEventAt: new Date().toISOString(),
+          },
+        });
+        return turn;
       });
 
     const interruptTurn: ProviderServiceShape["interruptTurn"] = (rawInput) =>
       Effect.gen(function* () {
-        const parsed = providerInterruptTurnInputSchema.safeParse(rawInput);
-        if (!parsed.success) {
-          return yield* toValidationError(
-            "ProviderService.interruptTurn",
-            parsed.error.message,
-            parsed.error.cause,
-          );
-        }
-
-        const input = parsed.data;
+        const input = yield* decodeInputOrValidationError({
+          operation: "ProviderService.interruptTurn",
+          schema: ProviderInterruptTurnInput,
+          payload: rawInput,
+        });
         const routed = yield* resolveRoutableSession({
           sessionId: input.sessionId,
           operation: "ProviderService.interruptTurn",
@@ -464,16 +469,11 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
 
     const respondToRequest: ProviderServiceShape["respondToRequest"] = (rawInput) =>
       Effect.gen(function* () {
-        const parsed = providerRespondToRequestInputSchema.safeParse(rawInput);
-        if (!parsed.success) {
-          return yield* toValidationError(
-            "ProviderService.respondToRequest",
-            parsed.error.message,
-            parsed.error.cause,
-          );
-        }
-
-        const input = parsed.data;
+        const input = yield* decodeInputOrValidationError({
+          operation: "ProviderService.respondToRequest",
+          schema: ProviderRespondToRequestInput,
+          payload: rawInput,
+        });
         const routed = yield* resolveRoutableSession({
           sessionId: input.sessionId,
           operation: "ProviderService.respondToRequest",
@@ -484,16 +484,11 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
 
     const stopSession: ProviderServiceShape["stopSession"] = (rawInput) =>
       Effect.gen(function* () {
-        const parsed = providerStopSessionInputSchema.safeParse(rawInput);
-        if (!parsed.success) {
-          return yield* toValidationError(
-            "ProviderService.stopSession",
-            parsed.error.message,
-            parsed.error.cause,
-          );
-        }
-
-        const input = parsed.data;
+        const input = yield* decodeInputOrValidationError({
+          operation: "ProviderService.stopSession",
+          schema: ProviderStopSessionInput,
+          payload: rawInput,
+        });
         const routed = yield* resolveRoutableSession({
           sessionId: input.sessionId,
           operation: "ProviderService.stopSession",
@@ -503,12 +498,10 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           yield* routed.adapter.stopSession(routed.sessionId);
         }
         if (routed.sessionId !== input.sessionId) {
-          yield* checkpointService.releaseSession({ providerSessionId: routed.sessionId });
-          yield* directory.remove(routed.sessionId);
+          yield* directory.remove(asProviderSessionId(routed.sessionId));
           yield* clearAliasesReferencing(routed.sessionId);
         }
-        yield* checkpointService.releaseSession({ providerSessionId: input.sessionId });
-        yield* directory.remove(input.sessionId);
+        yield* directory.remove(asProviderSessionId(input.sessionId));
         yield* clearAliasesReferencing(input.sessionId);
       });
 
@@ -517,84 +510,46 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         Effect.map((sessionsByProvider) => sessionsByProvider.flatMap((sessions) => sessions)),
       );
 
-    const listCheckpoints: ProviderServiceShape["listCheckpoints"] = (rawInput) =>
+    const rollbackConversation: ProviderServiceShape["rollbackConversation"] = (rawInput) =>
       Effect.gen(function* () {
-        const parsed = providerListCheckpointsInputSchema.safeParse(rawInput);
-        if (!parsed.success) {
-          return yield* toValidationError(
-            "ProviderService.listCheckpoints",
-            parsed.error.message,
-            parsed.error.cause,
-          );
+        const input = yield* decodeInputOrValidationError({
+          operation: "ProviderService.rollbackConversation",
+          schema: ProviderRollbackConversationInput,
+          payload: rawInput,
+        });
+        if (input.numTurns === 0) {
+          return;
         }
-
-        const input = parsed.data;
         const routed = yield* resolveRoutableSession({
           sessionId: input.sessionId,
-          operation: "ProviderService.listCheckpoints",
+          operation: "ProviderService.rollbackConversation",
           allowRecovery: true,
         });
-        return yield* checkpointService.listCheckpoints({
-          ...input,
-          sessionId: routed.sessionId,
-        });
-      });
-
-    const getCheckpointDiff: ProviderServiceShape["getCheckpointDiff"] = (rawInput) =>
-      Effect.gen(function* () {
-        const parsed = providerGetCheckpointDiffInputSchema.safeParse(rawInput);
-        if (!parsed.success) {
-          return yield* toValidationError(
-            "ProviderService.getCheckpointDiff",
-            parsed.error.message,
-            parsed.error.cause,
-          );
-        }
-
-        const input = parsed.data;
-        const routed = yield* resolveRoutableSession({
-          sessionId: input.sessionId,
-          operation: "ProviderService.getCheckpointDiff",
-          allowRecovery: true,
-        });
-        return yield* checkpointService.getCheckpointDiff({
-          ...input,
-          sessionId: routed.sessionId,
-        });
-      });
-
-    const revertToCheckpoint: ProviderServiceShape["revertToCheckpoint"] = (rawInput) =>
-      Effect.gen(function* () {
-        const parsed = providerRevertToCheckpointInputSchema.safeParse(rawInput);
-        if (!parsed.success) {
-          return yield* toValidationError(
-            "ProviderService.revertToCheckpoint",
-            parsed.error.message,
-            parsed.error.cause,
-          );
-        }
-
-        const input = parsed.data;
-        const routed = yield* resolveRoutableSession({
-          sessionId: input.sessionId,
-          operation: "ProviderService.revertToCheckpoint",
-          allowRecovery: true,
-        });
-        return yield* checkpointService.revertToCheckpoint({
-          ...input,
-          sessionId: routed.sessionId,
-        });
+        yield* routed.adapter.rollbackThread(routed.sessionId, input.numTurns);
       });
 
     const stopAll: ProviderServiceShape["stopAll"] = () =>
       Effect.gen(function* () {
         const sessionIds = yield* directory.listSessionIds();
         yield* Effect.forEach(adapters, (adapter) => adapter.stopAll()).pipe(Effect.asVoid);
+        yield* Effect.forEach(sessionIds, (sessionId) =>
+          directory.getProvider(sessionId).pipe(
+            Effect.flatMap((provider) =>
+              directory.upsert({
+                sessionId,
+                provider,
+                status: "stopped",
+                runtimePayload: {
+                  activeTurnId: null,
+                  lastRuntimeEvent: "provider.stopAll",
+                  lastRuntimeEventAt: new Date().toISOString(),
+                },
+              }),
+            ),
+          ),
+        ).pipe(Effect.asVoid);
         // Keep persisted session bindings so stale sessions can be resumed after
         // process restart via resumeThreadId.
-        yield* Effect.forEach(sessionIds, (sessionId) =>
-          checkpointService.releaseSession({ providerSessionId: sessionId }),
-        ).pipe(Effect.asVoid);
         yield* Ref.set(routedSessionAliasesRef, new Map());
       });
 
@@ -605,9 +560,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       respondToRequest,
       stopSession,
       listSessions,
-      listCheckpoints,
-      getCheckpointDiff,
-      revertToCheckpoint,
+      rollbackConversation,
       stopAll,
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
     } satisfies ProviderServiceShape;

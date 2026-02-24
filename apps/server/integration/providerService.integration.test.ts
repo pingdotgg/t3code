@@ -3,20 +3,16 @@ import { NodeServices } from "@effect/platform-node";
 import { it, assert } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Queue, Stream } from "effect";
 
-import { runGit as runGitProcess } from "../src/git/Process.ts";
-import { CheckpointServiceLive } from "../src/checkpointing/Layers/CheckpointService.ts";
-import { CheckpointStoreLive } from "../src/checkpointing/Layers/CheckpointStore.ts";
 import { ProviderUnsupportedError } from "../src/provider/Errors.ts";
 import { ProviderAdapterRegistry } from "../src/provider/Services/ProviderAdapterRegistry.ts";
 import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
-import { ProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
+import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
 } from "../src/provider/Services/ProviderService.ts";
 import { SqlitePersistenceMemory } from "../src/persistence/Layers/Sqlite.ts";
-import { CheckpointRepositoryLive } from "../src/persistence/Layers/Checkpoints.ts";
-import { ProviderSessionRepositoryLive } from "../src/persistence/Layers/ProviderSessions.ts";
+import { ProviderSessionRuntimeRepositoryLive } from "../src/persistence/Layers/ProviderSessionRuntime.ts";
 
 import {
   makeTestProviderAdapterHarness,
@@ -29,34 +25,11 @@ import {
   codexTurnTextFixture,
 } from "./fixtures/providerRuntime.ts";
 
-const runGit = (cwd: string, args: ReadonlyArray<string>, allowNonZeroExit = false) =>
-  runGitProcess({
-    operation: "providerService.integration.git",
-    cwd,
-    args,
-    allowNonZeroExit,
-  }).pipe(Effect.provide(NodeServices.layer));
-
-const gitRefExists = (cwd: string, ref: string) =>
-  runGit(cwd, ["show-ref", "--verify", "--quiet", ref], true).pipe(
-    Effect.map((result) => result.code === 0),
-  );
-
-const checkpointRefForTurn = (threadId: string, turnCount: number) =>
-  `refs/t3/checkpoints/${Buffer.from(threadId, "utf8").toString("base64url")}/turn/${turnCount}`;
-
-const makeGitRepository = Effect.gen(function* () {
+const makeWorkspaceDirectory = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const cwd = yield* fs.makeTempDirectory();
-
-  yield* runGit(cwd, ["init", "--initial-branch=main"]);
-  yield* runGit(cwd, ["config", "user.email", "test@example.com"]);
-  yield* runGit(cwd, ["config", "user.name", "Test User"]);
   yield* fs.writeFileString(pathService.join(cwd, "README.md"), "v1\n");
-  yield* runGit(cwd, ["add", "."]);
-  yield* runGit(cwd, ["commit", "-m", "Initial"]);
-
   return cwd;
 }).pipe(Effect.provide(NodeServices.layer));
 
@@ -67,7 +40,7 @@ interface IntegrationFixture {
 }
 
 const makeIntegrationFixture = Effect.gen(function* () {
-  const cwd = yield* makeGitRepository;
+  const cwd = yield* makeWorkspaceDirectory;
   const harness = yield* makeTestProviderAdapterHarness;
 
   const registry: typeof ProviderAdapterRegistry.Service = {
@@ -79,22 +52,15 @@ const makeIntegrationFixture = Effect.gen(function* () {
   };
 
   const directoryLayer = ProviderSessionDirectoryLive.pipe(
-    Layer.provide(ProviderSessionRepositoryLive),
+    Layer.provide(ProviderSessionRuntimeRepositoryLive),
   );
 
   const shared = Layer.mergeAll(
     directoryLayer,
     Layer.succeed(ProviderAdapterRegistry, registry),
-    Layer.provide(CheckpointStoreLive, NodeServices.layer),
-    CheckpointRepositoryLive,
   ).pipe(Layer.provide(SqlitePersistenceMemory));
 
-  const checkpointLayer = CheckpointServiceLive.pipe(Layer.provide(shared));
-
-  const layer = ProviderServiceLive.pipe(
-    Layer.provide(Layer.mergeAll(shared, checkpointLayer)),
-    Layer.merge(NodeServices.layer),
-  );
+  const layer = makeProviderServiceLive().pipe(Layer.provide(shared));
 
   return {
     cwd,
@@ -135,7 +101,7 @@ const runTurn = (input: {
 
     return yield* collectEventsDuring(
       input.provider.streamEvents,
-      input.response.events.length + 1,
+      input.response.events.length,
       input.provider.sendTurn({
         sessionId: input.sessionId,
         input: input.userText,
@@ -144,7 +110,7 @@ const runTurn = (input: {
     );
   });
 
-it.effect("replays typed runtime fixture and emits checkpoint.captured", () =>
+it.effect("replays typed runtime fixture events", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIntegrationFixture;
 
@@ -154,42 +120,25 @@ it.effect("replays typed runtime fixture and emits checkpoint.captured", () =>
         provider: "codex",
         cwd: fixture.cwd,
       });
-      const threadId = session.threadId ?? "";
-      assert.equal(threadId.length > 0, true);
+      assert.equal((session.threadId ?? "").length > 0, true);
 
       const observedEvents = yield* runTurn({
         provider,
         harness: fixture.harness,
         sessionId: session.sessionId,
         userText: "hello",
-        response: { events: codexTurnTextFixture },
+      response: { events: codexTurnTextFixture },
       });
 
       assert.deepEqual(
         observedEvents.map((event) => event.type),
-        [...codexTurnTextFixture.map((event) => event.type), "checkpoint.captured"],
+        codexTurnTextFixture.map((event) => event.type),
       );
-
-      const checkpoints = yield* provider.listCheckpoints({ sessionId: session.sessionId });
-      assert.deepEqual(
-        checkpoints.checkpoints.map((checkpoint) => checkpoint.turnCount),
-        [0, 1],
-      );
-
-      const diff = yield* provider.getCheckpointDiff({
-        sessionId: session.sessionId,
-        fromTurnCount: 0,
-        toTurnCount: 1,
-      });
-      assert.equal(diff.diff.trim(), "");
-
-      const turnOneRefExists = yield* gitRefExists(fixture.cwd, checkpointRefForTurn(threadId, 1));
-      assert.equal(turnOneRefExists, true);
     }).pipe(Effect.provide(fixture.layer));
-  }),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("captures file-changing fixture turn and produces a non-empty diff", () =>
+it.effect("replays file-changing fixture turn events", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIntegrationFixture;
     const { join } = yield* Path.Path;
@@ -201,8 +150,7 @@ it.effect("captures file-changing fixture turn and produces a non-empty diff", (
         provider: "codex",
         cwd: fixture.cwd,
       });
-      const threadId = session.threadId ?? "";
-      assert.equal(threadId.length > 0, true);
+      assert.equal((session.threadId ?? "").length > 0, true);
 
       const observedEvents = yield* runTurn({
         provider,
@@ -218,23 +166,13 @@ it.effect("captures file-changing fixture turn and produces a non-empty diff", (
 
       assert.deepEqual(
         observedEvents.map((event) => event.type),
-        [...codexTurnToolFixture.map((event) => event.type), "checkpoint.captured"],
+        codexTurnToolFixture.map((event) => event.type),
       );
-
-      const diff = yield* provider.getCheckpointDiff({
-        sessionId: session.sessionId,
-        fromTurnCount: 0,
-        toTurnCount: 1,
-      });
-      assert.equal(diff.diff.includes("README.md"), true);
-
-      const turnOneRefExists = yield* gitRefExists(fixture.cwd, checkpointRefForTurn(threadId, 1));
-      assert.equal(turnOneRefExists, true);
     }).pipe(Effect.provide(fixture.layer));
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("runs multi-turn tool/approval flow with contiguous checkpoints", () =>
+it.effect("runs multi-turn tool/approval flow", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIntegrationFixture;
     const { join } = yield* Path.Path;
@@ -246,8 +184,7 @@ it.effect("runs multi-turn tool/approval flow with contiguous checkpoints", () =
         provider: "codex",
         cwd: fixture.cwd,
       });
-      const threadId = session.threadId ?? "";
-      assert.equal(threadId.length > 0, true);
+      assert.equal((session.threadId ?? "").length > 0, true);
 
       const firstTurnEvents = yield* runTurn({
         provider,
@@ -262,7 +199,7 @@ it.effect("runs multi-turn tool/approval flow with contiguous checkpoints", () =
       });
       assert.deepEqual(
         firstTurnEvents.map((event) => event.type),
-        [...codexTurnToolFixture.map((event) => event.type), "checkpoint.captured"],
+        codexTurnToolFixture.map((event) => event.type),
       );
 
       const secondTurnEvents = yield* runTurn({
@@ -278,25 +215,13 @@ it.effect("runs multi-turn tool/approval flow with contiguous checkpoints", () =
       });
       assert.deepEqual(
         secondTurnEvents.map((event) => event.type),
-        [...codexTurnApprovalFixture.map((event) => event.type), "checkpoint.captured"],
+        codexTurnApprovalFixture.map((event) => event.type),
       );
-
-      const turnStateBeforeRevert = yield* provider.listCheckpoints({
-        sessionId: session.sessionId,
-      });
-      assert.deepEqual(
-        turnStateBeforeRevert.checkpoints.map((checkpoint) => checkpoint.turnCount),
-        [0, 1, 2],
-      );
-      const current =
-        turnStateBeforeRevert.checkpoints.find((checkpoint) => checkpoint.isCurrent) ??
-        turnStateBeforeRevert.checkpoints[turnStateBeforeRevert.checkpoints.length - 1];
-      assert.equal(current?.turnCount, 2);
     }).pipe(Effect.provide(fixture.layer));
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("reverts to turn 1 and prunes later checkpoint refs", () =>
+it.effect("rolls back provider conversation state only", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIntegrationFixture;
     const { join } = yield* Path.Path;
@@ -308,8 +233,7 @@ it.effect("reverts to turn 1 and prunes later checkpoint refs", () =>
         provider: "codex",
         cwd: fixture.cwd,
       });
-      const threadId = session.threadId ?? "";
-      assert.equal(threadId.length > 0, true);
+      assert.equal((session.threadId ?? "").length > 0, true);
 
       yield* runTurn({
         provider,
@@ -335,32 +259,16 @@ it.effect("reverts to turn 1 and prunes later checkpoint refs", () =>
         },
       });
 
-      const turnTwoRef = checkpointRefForTurn(threadId, 2);
-      const turnTwoRefBefore = yield* gitRefExists(fixture.cwd, turnTwoRef);
-      assert.equal(turnTwoRefBefore, true);
-
-      const revert = yield* provider.revertToCheckpoint({
+      yield* provider.rollbackConversation({
         sessionId: session.sessionId,
-        turnCount: 1,
+        numTurns: 1,
       });
-      assert.equal(revert.rolledBackTurns, 1);
 
       const rollbackCalls = fixture.harness.getRollbackCalls(session.sessionId);
       assert.deepEqual(rollbackCalls, [1]);
 
       const readme = yield* readFileString(join(fixture.cwd, "README.md"));
-      assert.equal(readme, "v2\n");
-
-      const afterRevertCheckpoints = yield* provider.listCheckpoints({
-        sessionId: session.sessionId,
-      });
-      assert.deepEqual(
-        afterRevertCheckpoints.checkpoints.map((checkpoint) => checkpoint.turnCount),
-        [0, 1],
-      );
-
-      const turnTwoRefAfter = yield* gitRefExists(fixture.cwd, turnTwoRef);
-      assert.equal(turnTwoRefAfter, false);
+      assert.equal(readme, "v3\n");
     }).pipe(Effect.provide(fixture.layer));
   }).pipe(Effect.provide(NodeServices.layer)),
 );

@@ -13,9 +13,10 @@ import * as Layer from "effect/Layer";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
-import Migration0002 from "./Migrations/002_Projects.ts";
-import Migration0003 from "./Migrations/003_Checkpoints.ts";
-import Migration0004 from "./Migrations/004_ProviderSessions.ts";
+import Migration0002 from "./Migrations/002_OrchestrationCommandReceipts.ts";
+import Migration0003 from "./Migrations/003_CheckpointDiffBlobs.ts";
+import Migration0004 from "./Migrations/004_ProviderSessionRuntime.ts";
+import Migration0005 from "./Migrations/005_Projections.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -29,9 +30,10 @@ import Migration0004 from "./Migrations/004_ProviderSessions.ts";
  */
 const loader = Migrator.fromRecord({
   "1_OrchestrationEvents": Migration0001,
-  "2_Projects": Migration0002,
-  "3_CheckpointCatalog": Migration0003,
-  "4_ProviderSessions": Migration0004,
+  "2_OrchestrationCommandReceipts": Migration0002,
+  "3_CheckpointDiffBlobs": Migration0003,
+  "4_ProviderSessionRuntime": Migration0004,
+  "5_Projections": Migration0005,
 });
 
 /**

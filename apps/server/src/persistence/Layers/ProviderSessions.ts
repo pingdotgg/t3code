@@ -1,3 +1,4 @@
+import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { Effect, Layer, Option, Schema } from "effect";
@@ -12,26 +13,24 @@ import {
   type ProviderSessionRepositoryShape,
 } from "../Services/ProviderSessions.ts";
 
-const NonEmptyString = Schema.NonEmptyString;
-
-const ProviderKindSchema = Schema.Literals(["codex", "claudeCode"]);
+const ProviderKind = Schema.Literals(["codex", "claudeCode"]);
 
 const ProviderSessionRowSchema = Schema.Struct({
-  sessionId: Schema.String,
-  provider: ProviderKindSchema,
-  threadId: Schema.NullOr(Schema.String),
+  sessionId: ProviderSessionId,
+  provider: ProviderKind,
+  threadId: Schema.NullOr(ThreadId),
   createdAt: Schema.String,
   updatedAt: Schema.String,
 });
 
 const SessionIdRequestSchema = Schema.Struct({
-  sessionId: NonEmptyString,
+  sessionId: ProviderSessionId,
 });
 
 const UpsertSessionRequestSchema = Schema.Struct({
-  sessionId: NonEmptyString,
-  provider: ProviderKindSchema,
-  threadId: Schema.NullOr(NonEmptyString),
+  sessionId: ProviderSessionId,
+  provider: ProviderKind,
+  threadId: Schema.NullOr(ThreadId),
 });
 
 function errorMessage(cause: unknown, fallback: string): string {
@@ -163,9 +162,9 @@ const makeProviderSessionRepository = Effect.gen(function* () {
       const parsed = yield* decodeInput(
         UpsertSessionRequestSchema,
         {
-          sessionId: input.sessionId.trim(),
+          sessionId: input.sessionId,
           provider: input.provider,
-          threadId: input.threadId?.trim() || null,
+          threadId: input.threadId ?? null,
         },
         "ProviderSessionRepository.upsertSession",
       );
@@ -182,7 +181,7 @@ const makeProviderSessionRepository = Effect.gen(function* () {
     Effect.gen(function* () {
       const parsed = yield* decodeInput(
         SessionIdRequestSchema,
-        { sessionId: input.sessionId.trim() },
+        { sessionId: input.sessionId },
         "ProviderSessionRepository.getSession",
       );
 
@@ -207,7 +206,7 @@ const makeProviderSessionRepository = Effect.gen(function* () {
     Effect.gen(function* () {
       const parsed = yield* decodeInput(
         SessionIdRequestSchema,
-        { sessionId: input.sessionId.trim() },
+        { sessionId: input.sessionId },
         "ProviderSessionRepository.deleteSession",
       );
 

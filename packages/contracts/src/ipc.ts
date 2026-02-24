@@ -1,4 +1,3 @@
-import type { AgentConfig, AgentExit, OutputChunk } from "./agent";
 import type {
   GitCheckoutInput,
   GitCreateBranchInput,
@@ -15,31 +14,7 @@ import type {
   GitStatusInput,
   GitStatusResult,
 } from "./git";
-import type {
-  ProviderGetCheckpointDiffInput,
-  ProviderGetCheckpointDiffResult,
-  ProviderInterruptTurnInput,
-  ProviderListCheckpointsInput,
-  ProviderListCheckpointsResult,
-  ProviderRevertToCheckpointInput,
-  ProviderRevertToCheckpointResult,
-  ProviderRespondToRequestInput,
-  ProviderSendTurnInput,
-  ProviderSession,
-  ProviderSessionStartInput,
-  ProviderStopSessionInput,
-  ProviderTurnStartResult,
-} from "./provider";
-import type {
-  ProjectAddInput,
-  ProjectAddResult,
-  ProjectListResult,
-  ProjectSearchEntriesInput,
-  ProjectSearchEntriesResult,
-  ProjectRemoveInput,
-  ProjectUpdateScriptsInput,
-  ProjectUpdateScriptsResult,
-} from "./project";
+import type { ProjectSearchEntriesInput, ProjectSearchEntriesResult } from "./project";
 import type { ServerConfig } from "./server";
 import type {
   TerminalClearInput,
@@ -50,28 +25,17 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal";
-import type { NewTodoInput, Todo } from "./todo";
 import type { ServerUpsertKeybindingInput, ServerUpsertKeybindingResult } from "./server";
 import type {
-  OrchestrationCommand,
+  ClientOrchestrationCommand,
+  OrchestrationGetTurnDiffInput,
+  OrchestrationGetTurnDiffResult,
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "./orchestration";
-
-export const EDITORS = [
-  { id: "cursor", label: "Cursor", command: "cursor" },
-  { id: "file-manager", label: "File Manager", command: null },
-] as const;
-
-export type EditorId = (typeof EDITORS)[number]["id"];
+import { EditorId } from "./editor";
 
 export interface NativeApi {
-  todos: {
-    list: () => Promise<Todo[]>;
-    add: (input: NewTodoInput) => Promise<Todo[]>;
-    toggle: (id: string) => Promise<Todo[]>;
-    remove: (id: string) => Promise<Todo[]>;
-  };
   dialogs: {
     pickFolder: () => Promise<string | null>;
     confirm: (message: string) => Promise<boolean>;
@@ -85,35 +49,8 @@ export interface NativeApi {
     close: (input: TerminalCloseInput) => Promise<void>;
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;
   };
-  agent: {
-    spawn: (config: AgentConfig) => Promise<string>;
-    kill: (sessionId: string) => Promise<void>;
-    write: (sessionId: string, data: string) => Promise<void>;
-    onOutput: (callback: (chunk: OutputChunk) => void) => () => void;
-    onExit: (callback: (exit: AgentExit) => void) => () => void;
-  };
-  providers: {
-    startSession: (input: ProviderSessionStartInput) => Promise<ProviderSession>;
-    sendTurn: (input: ProviderSendTurnInput) => Promise<ProviderTurnStartResult>;
-    interruptTurn: (input: ProviderInterruptTurnInput) => Promise<void>;
-    respondToRequest: (input: ProviderRespondToRequestInput) => Promise<void>;
-    stopSession: (input: ProviderStopSessionInput) => Promise<void>;
-    listCheckpoints: (
-      input: ProviderListCheckpointsInput,
-    ) => Promise<ProviderListCheckpointsResult>;
-    getCheckpointDiff: (
-      input: ProviderGetCheckpointDiffInput,
-    ) => Promise<ProviderGetCheckpointDiffResult>;
-    revertToCheckpoint: (
-      input: ProviderRevertToCheckpointInput,
-    ) => Promise<ProviderRevertToCheckpointResult>;
-  };
   projects: {
-    list: () => Promise<ProjectListResult>;
-    add: (input: ProjectAddInput) => Promise<ProjectAddResult>;
-    remove: (input: ProjectRemoveInput) => Promise<void>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
-    updateScripts: (input: ProjectUpdateScriptsInput) => Promise<ProjectUpdateScriptsResult>;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
@@ -144,7 +81,8 @@ export interface NativeApi {
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;
-    dispatchCommand: (command: OrchestrationCommand) => Promise<{ sequence: number }>;
+    dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;
+    getTurnDiff: (input: OrchestrationGetTurnDiffInput) => Promise<OrchestrationGetTurnDiffResult>;
     replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
     onDomainEvent: (callback: (event: OrchestrationEvent) => void) => () => void;
   };

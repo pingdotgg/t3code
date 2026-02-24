@@ -1,11 +1,14 @@
-import type { ProviderRuntimeEvent } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  ProviderThreadId,
+  TurnId,
+  type OrchestrationThreadActivity,
+  type ProviderRuntimeEvent,
+  type ProviderSessionId,
+} from "@t3tools/contracts";
 import { Effect, Layer, Queue, Stream } from "effect";
 
-import {
-  parseTurnDiffFilesFromUnifiedDiff,
-  type TurnDiffFileSummary,
-} from "../../checkpointing/Diffs.ts";
-import { createLogger } from "../../logger.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
@@ -13,87 +16,108 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 
-const providerTurnKey = (sessionId: string, turnId: string) => `${sessionId}:${turnId}`;
+const providerTurnKey = (sessionId: ProviderSessionId, turnId: TurnId) => `${sessionId}:${turnId}`;
+const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
+  CommandId.makeUnsafe(`provider:${event.eventId}:${tag}:${crypto.randomUUID()}`);
 
-type ActivityTone = "thinking" | "tool" | "info" | "error";
-
-interface ThreadActivityInput {
-  readonly id: string;
-  readonly createdAt: string;
-  readonly label: string;
-  readonly detail?: string;
-  readonly tone: ActivityTone;
-  readonly turnId?: string;
-  readonly requestId?: string;
-  readonly requestKind?: "command" | "file-change";
+function toTurnId(value: string | undefined): TurnId | undefined {
+  const normalized = value?.trim();
+  return normalized?.length ? TurnId.makeUnsafe(normalized) : undefined;
 }
 
 function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 1)}...` : value;
 }
 
-function runtimeEventToActivities(event: ProviderRuntimeEvent): ReadonlyArray<ThreadActivityInput> {
+function runtimeEventToActivities(event: ProviderRuntimeEvent): ReadonlyArray<OrchestrationThreadActivity> {
   switch (event.type) {
-    case "approval.requested":
+    case "approval.requested": {
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          label:
+          tone: "approval",
+          kind: "approval.requested",
+          summary:
             event.requestKind === "command"
               ? "Command approval requested"
               : "File-change approval requested",
-          ...(event.detail ? { detail: truncateDetail(event.detail) } : {}),
-          tone: "tool",
-          ...(event.turnId ? { turnId: event.turnId } : {}),
-          requestId: event.requestId,
-          requestKind: event.requestKind,
+          payload: {
+            requestId: event.requestId,
+            requestKind: event.requestKind,
+            ...(event.detail ? { detail: truncateDetail(event.detail) } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
         },
       ];
-    case "approval.resolved":
+    }
+
+    case "approval.resolved": {
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          label: "Approval resolved",
-          tone: "info",
-          ...(event.turnId ? { turnId: event.turnId } : {}),
-          requestId: event.requestId,
-          ...(event.requestKind ? { requestKind: event.requestKind } : {}),
+          tone: "approval",
+          kind: "approval.resolved",
+          summary: "Approval resolved",
+          payload: {
+            requestId: event.requestId,
+            ...(event.requestKind ? { requestKind: event.requestKind } : {}),
+            ...(event.decision ? { decision: event.decision } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
         },
       ];
-    case "runtime.error":
+    }
+
+    case "runtime.error": {
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          label: "Runtime error",
-          detail: truncateDetail(event.message),
           tone: "error",
-          ...(event.turnId ? { turnId: event.turnId } : {}),
+          kind: "runtime.error",
+          summary: "Runtime error",
+          payload: {
+            message: truncateDetail(event.message),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
         },
       ];
-    case "checkpoint.captured":
+    }
+    case "tool.completed": {
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          label: "Checkpoint captured",
-          tone: "info",
-          ...(event.turnId ? { turnId: event.turnId } : {}),
-        },
-      ];
-    case "tool.completed":
-      return [
-        {
-          id: event.eventId,
-          createdAt: event.createdAt,
-          label: `${event.title} complete`,
-          ...(event.detail ? { detail: truncateDetail(event.detail) } : {}),
           tone: "tool",
-          ...(event.turnId ? { turnId: event.turnId } : {}),
+          kind: "tool.completed",
+          summary: `${event.title} complete`,
+          payload: {
+            toolKind: event.toolKind,
+            ...(event.detail ? { detail: truncateDetail(event.detail) } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
         },
       ];
+    }
+    case "tool.started": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "tool",
+          kind: "tool.started",
+          summary: `${event.title} started`,
+          payload: {
+            toolKind: event.toolKind,
+            ...(event.detail ? { detail: truncateDetail(event.detail) } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+        },
+      ];
+    }
+
     default:
       return [];
   }
@@ -102,12 +126,15 @@ function runtimeEventToActivities(event: ProviderRuntimeEvent): ReadonlyArray<Th
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
-  const logger = createLogger("provider-runtime-ingestion");
 
-  const turnMessageIdsByTurnKey = new Map<string, Set<string>>();
-  const latestMessageIdByTurnKey = new Map<string, string>();
+  const turnMessageIdsByTurnKey = new Map<string, Set<MessageId>>();
+  const latestMessageIdByTurnKey = new Map<string, MessageId>();
 
-  const rememberAssistantMessageId = (sessionId: string, turnId: string, messageId: string) => {
+  const rememberAssistantMessageId = (
+    sessionId: ProviderSessionId,
+    turnId: TurnId,
+    messageId: MessageId,
+  ) => {
     const key = providerTurnKey(sessionId, turnId);
     const existingIds = turnMessageIdsByTurnKey.get(key);
     if (existingIds) {
@@ -118,19 +145,15 @@ const make = Effect.gen(function* () {
     latestMessageIdByTurnKey.set(key, messageId);
   };
 
-  const getAssistantMessageIdsForTurn = (sessionId: string, turnId: string) => {
-    return turnMessageIdsByTurnKey.get(providerTurnKey(sessionId, turnId)) ?? new Set<string>();
+  const getAssistantMessageIdsForTurn = (sessionId: ProviderSessionId, turnId: TurnId) => {
+    return turnMessageIdsByTurnKey.get(providerTurnKey(sessionId, turnId)) ?? new Set<MessageId>();
   };
 
-  const clearAssistantMessageIdsForTurn = (sessionId: string, turnId: string) => {
+  const clearAssistantMessageIdsForTurn = (sessionId: ProviderSessionId, turnId: TurnId) => {
     turnMessageIdsByTurnKey.delete(providerTurnKey(sessionId, turnId));
   };
 
-  const getLatestAssistantMessageIdForTurn = (sessionId: string, turnId: string) => {
-    return latestMessageIdByTurnKey.get(providerTurnKey(sessionId, turnId));
-  };
-
-  const clearTurnStateForSession = (sessionId: string) => {
+  const clearTurnStateForSession = (sessionId: ProviderSessionId) => {
     const prefix = `${sessionId}:`;
     for (const key of turnMessageIdsByTurnKey.keys()) {
       if (key.startsWith(prefix)) {
@@ -148,144 +171,138 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const readModel = yield* orchestrationEngine.getReadModel();
       const thread = readModel.threads.find(
-        (entry) => entry.session?.sessionId === event.sessionId,
+        (entry) => entry.session?.providerSessionId === event.sessionId,
       );
       if (!thread) return;
 
       const now = event.createdAt;
-      if (event.type === "turn.started" || event.type === "turn.completed") {
+
+      if (
+        event.type === "session.started" ||
+        event.type === "session.exited" ||
+        event.type === "thread.started" ||
+        event.type === "turn.started" ||
+        event.type === "turn.completed"
+      ) {
+        const activeTurnId = event.type === "turn.started" ? (toTurnId(event.turnId) ?? null) : null;
+        const providerThreadIdFromEvent =
+          event.type === "thread.started"
+            ? ProviderThreadId.makeUnsafe(event.threadId)
+            : event.threadId !== undefined
+              ? ProviderThreadId.makeUnsafe(event.threadId)
+              : null;
+        const providerThreadId = providerThreadIdFromEvent ?? (thread.session?.providerThreadId ?? null);
+        const status =
+          event.type === "turn.started"
+            ? "running"
+            : event.type === "session.exited"
+              ? "stopped"
+              : event.type === "turn.completed" && event.status === "failed"
+                ? "error"
+              : "ready";
+        const lastError =
+          event.type === "turn.completed" && event.status === "failed"
+            ? (event.errorMessage ?? thread.session?.lastError ?? "Turn failed")
+            : status === "ready"
+              ? null
+              : (thread.session?.lastError ?? null);
+
         yield* orchestrationEngine.dispatch({
-          type: "thread.session",
-          commandId: crypto.randomUUID(),
+          type: "thread.session.set",
+          commandId: providerCommandId(event, "thread-session-set"),
           threadId: thread.id,
           session: {
-            sessionId: event.sessionId,
-            provider: event.provider,
-            status: event.type === "turn.started" ? "running" : "ready",
             threadId: thread.id,
-            activeTurnId: event.type === "turn.started" ? event.turnId : null,
-            createdAt: thread.session?.createdAt ?? now,
+            status,
+            providerName: event.provider,
+            providerSessionId: event.sessionId,
+            providerThreadId,
+            activeTurnId,
+            lastError,
             updatedAt: now,
-            lastError:
-              event.type === "turn.completed" && event.status === "failed"
-                ? (event.errorMessage ?? null)
-                : null,
           },
           createdAt: now,
         });
       }
 
       if (event.type === "message.delta" && event.delta.length > 0) {
-        const assistantMessageId = `assistant:${event.itemId ?? event.turnId ?? event.sessionId}`;
-        if (event.turnId) {
-          rememberAssistantMessageId(event.sessionId, event.turnId, assistantMessageId);
+        const assistantMessageId = MessageId.makeUnsafe(
+          `assistant:${event.itemId ?? event.turnId ?? event.sessionId}`,
+        );
+        const turnId = toTurnId(event.turnId);
+        if (turnId) {
+          rememberAssistantMessageId(event.sessionId, turnId, assistantMessageId);
         }
+
         yield* orchestrationEngine.dispatch({
-          type: "message.send",
-          commandId: crypto.randomUUID(),
+          type: "thread.message.assistant.delta",
+          commandId: providerCommandId(event, "assistant-delta"),
           threadId: thread.id,
           messageId: assistantMessageId,
-          role: "assistant",
-          text: event.delta,
-          streaming: true,
+          delta: event.delta,
+          ...(turnId ? { turnId } : {}),
           createdAt: now,
         });
       }
 
       if (event.type === "message.completed") {
-        const assistantMessageId = `assistant:${event.itemId}`;
-        if (event.turnId) {
-          rememberAssistantMessageId(event.sessionId, event.turnId, assistantMessageId);
+        const assistantMessageId = MessageId.makeUnsafe(`assistant:${event.itemId}`);
+        const turnId = toTurnId(event.turnId);
+        if (turnId) {
+          rememberAssistantMessageId(event.sessionId, turnId, assistantMessageId);
         }
+
         yield* orchestrationEngine.dispatch({
-          type: "message.send",
-          commandId: crypto.randomUUID(),
+          type: "thread.message.assistant.complete",
+          commandId: providerCommandId(event, "assistant-complete"),
           threadId: thread.id,
           messageId: assistantMessageId,
-          role: "assistant",
-          text: "",
-          streaming: false,
+          ...(turnId ? { turnId } : {}),
           createdAt: now,
         });
       }
 
-      if (event.type === "turn.completed" && event.turnId) {
-        const assistantMessageIds = getAssistantMessageIdsForTurn(event.sessionId, event.turnId);
-        yield* Effect.forEach(assistantMessageIds, (assistantMessageId) =>
-          orchestrationEngine.dispatch({
-            type: "message.send",
-            commandId: crypto.randomUUID(),
-            threadId: thread.id,
-            messageId: assistantMessageId,
-            role: "assistant",
-            text: "",
-            streaming: false,
-            createdAt: now,
-          }),
-        ).pipe(Effect.asVoid);
-        clearAssistantMessageIdsForTurn(event.sessionId, event.turnId);
+      if (event.type === "turn.completed") {
+        const turnId = toTurnId(event.turnId);
+        if (turnId) {
+          const assistantMessageIds = getAssistantMessageIdsForTurn(event.sessionId, turnId);
+          yield* Effect.forEach(assistantMessageIds, (assistantMessageId) =>
+            orchestrationEngine.dispatch({
+              type: "thread.message.assistant.complete",
+              commandId: providerCommandId(event, "assistant-complete-finalize"),
+              threadId: thread.id,
+              messageId: assistantMessageId,
+              turnId,
+              createdAt: now,
+            }),
+          ).pipe(Effect.asVoid);
+          clearAssistantMessageIdsForTurn(event.sessionId, turnId);
+        }
       }
 
       if (event.type === "session.exited") {
         clearTurnStateForSession(event.sessionId);
       }
 
-      if (event.type === "checkpoint.captured" && event.turnId) {
-        const files: ReadonlyArray<TurnDiffFileSummary> = yield* providerService
-          .getCheckpointDiff({
-            sessionId: event.sessionId,
-            fromTurnCount: Math.max(0, event.turnCount - 1),
-            toTurnCount: event.turnCount,
-          })
-          .pipe(
-            Effect.map((result) => parseTurnDiffFilesFromUnifiedDiff(result.diff)),
-            Effect.catch((error) =>
-              Effect.sync(() => {
-                logger.warn("failed to derive checkpoint file summary", {
-                  sessionId: event.sessionId,
-                  turnId: event.turnId,
-                  turnCount: event.turnCount,
-                  error:
-                    error instanceof Error
-                      ? error.message
-                      : typeof error === "string"
-                        ? error
-                        : "unknown error",
-                });
-              }).pipe(Effect.as([] as ReadonlyArray<TurnDiffFileSummary>)),
-            ),
-          );
-        const assistantMessageId =
-          getLatestAssistantMessageIdForTurn(event.sessionId, event.turnId) ??
-          `assistant:${event.turnId}`;
-        yield* orchestrationEngine.dispatch({
-          type: "thread.turnDiff.complete",
-          commandId: crypto.randomUUID(),
-          threadId: thread.id,
-          turnId: event.turnId,
-          completedAt: now,
-          ...(event.status ? { status: event.status } : {}),
-          files,
-          assistantMessageId,
-          checkpointTurnCount: event.turnCount,
-          createdAt: now,
-        });
-      }
-
       if (event.type === "runtime.error") {
+        const providerThreadId =
+          event.threadId !== undefined
+            ? ProviderThreadId.makeUnsafe(event.threadId)
+            : (thread.session?.providerThreadId ?? null);
+
         yield* orchestrationEngine.dispatch({
-          type: "thread.session",
-          commandId: crypto.randomUUID(),
+          type: "thread.session.set",
+          commandId: providerCommandId(event, "runtime-error-session-set"),
           threadId: thread.id,
           session: {
-            sessionId: event.sessionId,
-            provider: event.provider,
-            status: "error",
             threadId: thread.id,
-            activeTurnId: event.turnId ?? null,
-            createdAt: thread.session?.createdAt ?? now,
-            updatedAt: now,
+            status: "error",
+            providerName: event.provider,
+            providerSessionId: event.sessionId,
+            providerThreadId,
+            activeTurnId: toTurnId(event.turnId) ?? null,
             lastError: event.message,
+            updatedAt: now,
           },
           createdAt: now,
         });
@@ -295,7 +312,7 @@ const make = Effect.gen(function* () {
       yield* Effect.forEach(activities, (activity) =>
         orchestrationEngine.dispatch({
           type: "thread.activity.append",
-          commandId: crypto.randomUUID(),
+          commandId: providerCommandId(event, "thread-activity-append"),
           threadId: thread.id,
           activity,
           createdAt: activity.createdAt,

@@ -1,6 +1,10 @@
 import { SchemaIssue, Schema } from "effect";
 
-import type { OrchestrationEventStoreError } from "../persistence/Errors.ts";
+import type {
+  OrchestrationCommandReceiptRepositoryError,
+  OrchestrationEventStoreError,
+  ProjectionRepositoryError,
+} from "../persistence/Errors.ts";
 
 export class OrchestrationCommandJsonParseError extends Schema.TaggedErrorClass<OrchestrationCommandJsonParseError>()(
   "OrchestrationCommandJsonParseError",
@@ -39,6 +43,19 @@ export class OrchestrationCommandInvariantError extends Schema.TaggedErrorClass<
   }
 }
 
+export class OrchestrationCommandPreviouslyRejectedError extends Schema.TaggedErrorClass<OrchestrationCommandPreviouslyRejectedError>()(
+  "OrchestrationCommandPreviouslyRejectedError",
+  {
+    commandId: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Command previously rejected (${this.commandId}): ${this.detail}`;
+  }
+}
+
 export class OrchestrationProjectorDecodeError extends Schema.TaggedErrorClass<OrchestrationProjectorDecodeError>()(
   "OrchestrationProjectorDecodeError",
   {
@@ -67,7 +84,10 @@ export class OrchestrationListenerCallbackError extends Schema.TaggedErrorClass<
 
 export type OrchestrationDispatchError =
   | OrchestrationEventStoreError
+  | OrchestrationCommandReceiptRepositoryError
+  | ProjectionRepositoryError
   | OrchestrationCommandInvariantError
+  | OrchestrationCommandPreviouslyRejectedError
   | OrchestrationProjectorDecodeError
   | OrchestrationListenerCallbackError;
 

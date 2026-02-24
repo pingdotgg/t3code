@@ -1,17 +1,21 @@
-import { z } from "zod";
-import { keybindingRuleSchema, resolvedKeybindingsConfigSchema } from "./keybindings";
+import { Schema } from "effect";
+import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 
-export const serverConfigSchema = z.object({
-  cwd: z.string().min(1),
-  keybindings: resolvedKeybindingsConfigSchema.default([]),
+export const ServerConfig = Schema.Struct({
+  cwd: Schema.NonEmptyString,
+  keybindings: ResolvedKeybindingsConfig,
 });
+export type ServerConfig = Schema.Codec.Encoded<typeof ServerConfig>;
 
-export const serverUpsertKeybindingInputSchema = keybindingRuleSchema;
+export const ServerUpsertKeybindingInput = KeybindingRule;
+export type ServerUpsertKeybindingInput = Schema.Codec.Encoded<
+  typeof ServerUpsertKeybindingInput
+>;
 
-export const serverUpsertKeybindingResultSchema = z.object({
-  keybindings: resolvedKeybindingsConfigSchema.default([]),
+export const ServerUpsertKeybindingResult = Schema.Struct({
+  keybindings: ResolvedKeybindingsConfig,
 });
+export type ServerUpsertKeybindingResult = Schema.Codec.Encoded<
+  typeof ServerUpsertKeybindingResult
+>;
 
-export type ServerConfig = z.infer<typeof serverConfigSchema>;
-export type ServerUpsertKeybindingInput = z.infer<typeof serverUpsertKeybindingInputSchema>;
-export type ServerUpsertKeybindingResult = z.infer<typeof serverUpsertKeybindingResultSchema>;

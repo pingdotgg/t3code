@@ -1,29 +1,36 @@
 import type {
   OrchestrationEvent,
-  OrchestrationGitReadModel,
-  OrchestrationMessage,
   OrchestrationReadModel,
-  OrchestrationSession,
-  OrchestrationThread,
+  ThreadId,
 } from "@t3tools/contracts";
 import {
-  OrchestrationThreadActivitySchema,
-  OrchestrationGitReadModelSchema,
-  OrchestrationMessageSchema,
-  OrchestrationSessionSchema,
-  OrchestrationThreadSchema,
-  OrchestrationTurnDiffFileSchema,
-  OrchestrationTurnDiffSummarySchema,
+  OrchestrationCheckpointSummary,
+  OrchestrationMessage,
+  OrchestrationSession,
+  OrchestrationThread,
 } from "@t3tools/contracts";
 import { Effect, Schema } from "effect";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
+import {
+  MessageSentPayloadSchema,
+  ProjectCreatedPayload,
+  ProjectDeletedPayload,
+  ProjectMetaUpdatedPayload,
+  ThreadActivityAppendedPayload,
+  ThreadCreatedPayload,
+  ThreadDeletedPayload,
+  ThreadMetaUpdatedPayload,
+  ThreadRevertedPayload,
+  ThreadSessionSetPayload,
+  ThreadTurnDiffCompletedPayload,
+} from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 
 function updateThread(
   threads: ReadonlyArray<OrchestrationThread>,
-  threadId: string,
+  threadId: ThreadId,
   patch: ThreadPatch,
 ): OrchestrationThread[] {
   return threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread));
@@ -32,7 +39,7 @@ function updateThread(
 function decodeForEvent<A>(
   schema: Schema.Schema<A>,
   value: unknown,
-  eventType: string,
+  eventType: OrchestrationEvent["type"],
   field: string,
 ): Effect.Effect<A, OrchestrationProjectorDecodeError> {
   return Schema.decodeUnknownEffect(schema)(value).pipe(
@@ -40,66 +47,11 @@ function decodeForEvent<A>(
   ) as Effect.Effect<A, OrchestrationProjectorDecodeError>;
 }
 
-const ThreadCreatedPayloadSchema = Schema.Struct({
-  id: Schema.String,
-  projectId: Schema.String,
-  title: Schema.String,
-  model: Schema.String,
-  branch: Schema.NullOr(Schema.String),
-  worktreePath: Schema.NullOr(Schema.String),
-  createdAt: Schema.String,
-  updatedAt: Schema.String,
-});
-
-const ThreadMetaUpdatedPayloadSchema = Schema.Struct({
-  threadId: Schema.String,
-  title: Schema.optional(Schema.String),
-  model: Schema.optional(Schema.String),
-  branch: Schema.optional(Schema.NullOr(Schema.String)),
-  worktreePath: Schema.optional(Schema.NullOr(Schema.String)),
-  updatedAt: Schema.String,
-});
-
-const MessageSentPayloadSchema = Schema.Struct({
-  id: Schema.String,
-  role: Schema.Literals(["user", "assistant"]),
-  text: Schema.String,
-  threadId: Schema.String,
-  createdAt: Schema.String,
-  streaming: Schema.Boolean,
-});
-
-const ThreadSessionSetPayloadSchema = Schema.Struct({
-  threadId: Schema.String,
-  session: OrchestrationSessionSchema,
-});
-
-const ThreadTurnDiffCompletedPayloadSchema = Schema.Struct({
-  threadId: Schema.String,
-  turnId: Schema.String,
-  completedAt: Schema.String,
-  status: Schema.optional(Schema.String),
-  files: Schema.Array(OrchestrationTurnDiffFileSchema),
-  assistantMessageId: Schema.optional(Schema.String),
-  checkpointTurnCount: Schema.optional(Schema.Number),
-});
-
-const ThreadRevertedPayloadSchema = Schema.Struct({
-  threadId: Schema.String,
-  turnCount: Schema.Number,
-  messageCount: Schema.Number,
-});
-
-const ThreadActivityAppendedPayloadSchema = Schema.Struct({
-  threadId: Schema.String,
-  activity: OrchestrationThreadActivitySchema,
-});
-
 export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   return {
-    sequence: 0,
+    snapshotSequence: 0,
+    projects: [],
     threads: [],
-    gitByProjectId: {},
     updatedAt: nowIso,
   };
 }
@@ -110,39 +62,104 @@ export function projectEvent(
 ): Effect.Effect<OrchestrationReadModel, OrchestrationProjectorDecodeError> {
   const nextBase: OrchestrationReadModel = {
     ...model,
-    sequence: event.sequence,
+    snapshotSequence: event.sequence,
     updatedAt: event.occurredAt,
   };
 
   switch (event.type) {
+    case "project.created":
+      return decodeForEvent(ProjectCreatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const existing = nextBase.projects.find((entry) => entry.id === payload.projectId);
+          const nextProject = {
+            id: payload.projectId,
+            title: payload.title,
+            workspaceRoot: payload.workspaceRoot,
+            defaultModel: payload.defaultModel,
+            scripts: payload.scripts,
+            createdAt: payload.createdAt,
+            updatedAt: payload.updatedAt,
+            deletedAt: null,
+          };
+
+          return {
+            ...nextBase,
+            projects: existing
+              ? nextBase.projects.map((entry) => (entry.id === payload.projectId ? nextProject : entry))
+              : [...nextBase.projects, nextProject],
+          };
+        }),
+      );
+
+    case "project.meta-updated":
+      return decodeForEvent(
+        ProjectMetaUpdatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          projects: nextBase.projects.map((project) =>
+            project.id === payload.projectId
+              ? {
+                  ...project,
+                  ...(payload.title !== undefined ? { title: payload.title } : {}),
+                  ...(payload.workspaceRoot !== undefined
+                    ? { workspaceRoot: payload.workspaceRoot }
+                    : {}),
+                  ...(payload.defaultModel !== undefined
+                    ? { defaultModel: payload.defaultModel }
+                    : {}),
+                  ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
+                  updatedAt: payload.updatedAt,
+                }
+              : project,
+          ),
+        })),
+      );
+
+    case "project.deleted":
+      return decodeForEvent(ProjectDeletedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          projects: nextBase.projects.map((project) =>
+            project.id === payload.projectId
+              ? {
+                  ...project,
+                  deletedAt: payload.deletedAt,
+                  updatedAt: payload.deletedAt,
+                }
+              : project,
+          ),
+        })),
+      );
+
     case "thread.created":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
-          ThreadCreatedPayloadSchema,
+          ThreadCreatedPayload,
           event.payload,
           event.type,
           "payload",
         );
         const thread: OrchestrationThread = yield* decodeForEvent(
-          OrchestrationThreadSchema,
+          OrchestrationThread,
           {
-            id: payload.id,
+            id: payload.threadId,
             projectId: payload.projectId,
             title: payload.title,
             model: payload.model,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            latestTurnId: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
-            latestTurnId: null,
-            latestTurnStartedAt: null,
-            latestTurnCompletedAt: null,
-            latestTurnDurationMs: null,
+            deletedAt: null,
             messages: [],
-            session: null,
-            turnDiffSummaries: [],
             activities: [],
-            error: null,
+            checkpoints: [],
+            session: null,
           },
           event.type,
           "thread",
@@ -155,36 +172,38 @@ export function projectEvent(
             : [...nextBase.threads, thread],
         };
       });
+
     case "thread.deleted":
-      return Effect.succeed({
-        ...nextBase,
-        threads: nextBase.threads.filter((thread) => thread.id !== event.aggregateId),
-      });
+      return decodeForEvent(ThreadDeletedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            deletedAt: payload.deletedAt,
+            updatedAt: payload.deletedAt,
+          }),
+        })),
+      );
+
     case "thread.meta-updated":
       return decodeForEvent(
-        ThreadMetaUpdatedPayloadSchema,
+        ThreadMetaUpdatedPayload,
         event.payload,
         event.type,
         "payload",
       ).pipe(
-        Effect.map((payload) => {
-          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
-          if (!thread) {
-            return nextBase;
-          }
-          return {
-            ...nextBase,
-            threads: updateThread(nextBase.threads, payload.threadId, {
-              ...(payload.title !== undefined ? { title: payload.title } : {}),
-              ...(payload.model !== undefined ? { model: payload.model } : {}),
-              ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
-              ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
-              updatedAt: payload.updatedAt,
-            }),
-          };
-        }),
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            ...(payload.title !== undefined ? { title: payload.title } : {}),
+            ...(payload.model !== undefined ? { model: payload.model } : {}),
+            ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
+            ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+            updatedAt: payload.updatedAt,
+          }),
+        })),
       );
-    case "message.sent":
+
+    case "thread.message-sent":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
           MessageSentPayloadSchema,
@@ -192,27 +211,30 @@ export function projectEvent(
           event.type,
           "payload",
         );
-        const targetThread = nextBase.threads.find((thread) => thread.id === payload.threadId);
-        if (!targetThread) {
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        if (!thread) {
           return nextBase;
         }
 
         const message: OrchestrationMessage = yield* decodeForEvent(
-          OrchestrationMessageSchema,
+          OrchestrationMessage,
           {
-            id: payload.id,
+            id: payload.messageId,
             role: payload.role,
             text: payload.text,
-            createdAt: payload.createdAt,
-            ...(payload.streaming ? {} : { completedAt: event.occurredAt }),
+            ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
+            turnId: payload.turnId,
             streaming: payload.streaming,
+            createdAt: payload.createdAt,
+            updatedAt: payload.updatedAt,
           },
           event.type,
           "message",
         );
-        const existingMessage = targetThread.messages.find((entry) => entry.id === message.id);
-        const nextMessages = existingMessage
-          ? targetThread.messages.map((entry) =>
+
+        const existingMessage = thread.messages.find((entry) => entry.id === message.id);
+        const messages = existingMessage
+          ? thread.messages.map((entry) =>
               entry.id === message.id
                 ? {
                     ...entry,
@@ -222,29 +244,29 @@ export function projectEvent(
                         ? message.text
                         : entry.text,
                     streaming: message.streaming,
-                    createdAt: entry.createdAt,
-                    ...(message.streaming
-                      ? { completedAt: undefined }
-                      : { completedAt: message.completedAt ?? event.occurredAt }),
+                    updatedAt: message.updatedAt,
+                    turnId: message.turnId,
+                    ...(message.attachments !== undefined
+                      ? { attachments: message.attachments }
+                      : {}),
                   }
                 : entry,
             )
-          : !message.streaming && message.text.length === 0
-            ? targetThread.messages
-            : [...targetThread.messages, message];
+          : [...thread.messages, message];
 
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
-            messages: nextMessages,
+            messages,
             updatedAt: event.occurredAt,
           }),
         };
       });
+
     case "thread.session-set":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
-          ThreadSessionSetPayloadSchema,
+          ThreadSessionSetPayload,
           event.payload,
           event.type,
           "payload",
@@ -255,67 +277,26 @@ export function projectEvent(
         }
 
         const session: OrchestrationSession = yield* decodeForEvent(
-          OrchestrationSessionSchema,
-          {
-            ...payload.session,
-            threadId: payload.threadId,
-          },
+          OrchestrationSession,
+          payload.session,
           event.type,
           "session",
         );
-
-        const sessionUpdatedAt = session.updatedAt;
-        const turnTimingPatch: ThreadPatch =
-          session.status === "running" && session.activeTurnId
-            ? (() => {
-                const isSameTurn = thread.latestTurnId === session.activeTurnId;
-                return {
-                  latestTurnId: session.activeTurnId,
-                  latestTurnStartedAt:
-                    isSameTurn && thread.latestTurnStartedAt
-                      ? thread.latestTurnStartedAt
-                      : sessionUpdatedAt,
-                  ...(isSameTurn
-                    ? {}
-                    : {
-                        latestTurnCompletedAt: null,
-                        latestTurnDurationMs: null,
-                      }),
-                };
-              })()
-            : session.activeTurnId === null && thread.latestTurnId && thread.latestTurnStartedAt
-              ? (() => {
-                  const latestTurnCompletedAt = thread.latestTurnCompletedAt ?? sessionUpdatedAt;
-                  const startedAtMs = Date.parse(thread.latestTurnStartedAt);
-                  const completedAtMs = Date.parse(latestTurnCompletedAt);
-                  const latestTurnDurationMs =
-                    !Number.isNaN(startedAtMs) &&
-                    !Number.isNaN(completedAtMs) &&
-                    completedAtMs >= startedAtMs
-                      ? completedAtMs - startedAtMs
-                      : thread.latestTurnDurationMs;
-
-                  return {
-                    latestTurnCompletedAt,
-                    latestTurnDurationMs,
-                  };
-                })()
-              : {};
 
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             session,
+            latestTurnId: session.activeTurnId,
             updatedAt: event.occurredAt,
-            error: session.lastError,
-            ...turnTimingPatch,
           }),
         };
       });
+
     case "thread.turn-diff-completed":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
-          ThreadTurnDiffCompletedPayloadSchema,
+          ThreadTurnDiffCompletedPayload,
           event.payload,
           event.type,
           "payload",
@@ -325,110 +306,65 @@ export function projectEvent(
           return nextBase;
         }
 
-        const nextSummary = yield* decodeForEvent(
-          OrchestrationTurnDiffSummarySchema,
+        const checkpoint = yield* decodeForEvent(
+          OrchestrationCheckpointSummary,
           {
             turnId: payload.turnId,
-            completedAt: payload.completedAt,
-            ...(payload.status !== undefined ? { status: payload.status } : {}),
+            checkpointTurnCount: payload.checkpointTurnCount,
+            checkpointRef: payload.checkpointRef,
+            status: payload.status,
             files: payload.files,
-            ...(payload.assistantMessageId !== undefined
-              ? { assistantMessageId: payload.assistantMessageId }
-              : {}),
-            ...(payload.checkpointTurnCount !== undefined
-              ? { checkpointTurnCount: payload.checkpointTurnCount }
-              : {}),
+            assistantMessageId: payload.assistantMessageId,
+            completedAt: payload.completedAt,
           },
           event.type,
-          "turnDiffSummary",
+          "checkpoint",
         );
-        const turnDiffSummaries = [
-          ...thread.turnDiffSummaries.filter((summary) => summary.turnId !== payload.turnId),
-          nextSummary,
-        ].toSorted((left, right) => left.completedAt.localeCompare(right.completedAt));
-        const startedAtMs = thread.latestTurnStartedAt
-          ? Date.parse(thread.latestTurnStartedAt)
-          : Number.NaN;
-        const completedAtMs = Date.parse(nextSummary.completedAt);
-        const latestTurnDurationMs =
-          !Number.isNaN(startedAtMs) &&
-          !Number.isNaN(completedAtMs) &&
-          completedAtMs >= startedAtMs
-            ? completedAtMs - startedAtMs
-            : thread.latestTurnDurationMs;
+
+        const checkpoints = [
+          ...thread.checkpoints.filter((entry) => entry.turnId !== checkpoint.turnId),
+          checkpoint,
+        ].toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount);
 
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
+            checkpoints,
             latestTurnId: payload.turnId,
-            latestTurnCompletedAt: nextSummary.completedAt,
-            latestTurnDurationMs,
-            turnDiffSummaries,
             updatedAt: event.occurredAt,
           }),
         };
       });
+
     case "thread.reverted":
-      return decodeForEvent(ThreadRevertedPayloadSchema, event.payload, event.type, "payload").pipe(
+      return decodeForEvent(ThreadRevertedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => {
           const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
           if (!thread) {
             return nextBase;
           }
 
-          const targetTurnCount = Math.max(0, Math.floor(payload.turnCount));
-          const targetMessageCount = Math.max(0, Math.floor(payload.messageCount));
-          const sortedSummaries = [...thread.turnDiffSummaries].toSorted((left, right) =>
-            left.completedAt.localeCompare(right.completedAt),
-          );
-          const inferredTurnCountByTurnId = new Map<string, number>();
-          for (let index = 0; index < sortedSummaries.length; index += 1) {
-            const summary = sortedSummaries[index];
-            if (!summary) continue;
-            inferredTurnCountByTurnId.set(summary.turnId, index + 1);
-          }
+          const checkpoints = thread.checkpoints
+            .filter((entry) => entry.checkpointTurnCount <= payload.turnCount)
+            .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount);
 
-          const turnDiffSummaries = thread.turnDiffSummaries
-            .filter((summary) => {
-              const checkpointTurnCount =
-                summary.checkpointTurnCount ?? inferredTurnCountByTurnId.get(summary.turnId) ?? 0;
-              return checkpointTurnCount <= targetTurnCount;
-            })
-            .toSorted((left, right) => left.completedAt.localeCompare(right.completedAt));
-          const latestSummary =
-            turnDiffSummaries.length > 0 ? turnDiffSummaries[turnDiffSummaries.length - 1] : null;
-          const activities = thread.activities.filter((activity) => {
-            if (!activity.turnId) {
-              return true;
-            }
-            const checkpointTurnCount = inferredTurnCountByTurnId.get(activity.turnId);
-            if (checkpointTurnCount === undefined) {
-              return true;
-            }
-            return checkpointTurnCount <= targetTurnCount;
-          });
+          const latestTurnId =
+            checkpoints.length > 0 ? checkpoints[checkpoints.length - 1]?.turnId ?? null : null;
 
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
-              messages: thread.messages.slice(
-                0,
-                Math.min(targetMessageCount, thread.messages.length),
-              ),
-              turnDiffSummaries,
-              latestTurnId: latestSummary?.turnId ?? null,
-              latestTurnStartedAt: null,
-              latestTurnCompletedAt: latestSummary?.completedAt ?? null,
-              latestTurnDurationMs: null,
-              activities,
+              checkpoints,
+              latestTurnId,
               updatedAt: event.occurredAt,
             }),
           };
         }),
       );
+
     case "thread.activity-appended":
       return decodeForEvent(
-        ThreadActivityAppendedPayloadSchema,
+        ThreadActivityAppendedPayload,
         event.payload,
         event.type,
         "payload",
@@ -438,8 +374,9 @@ export function projectEvent(
           if (!thread) {
             return nextBase;
           }
+
           const activities = [
-            ...thread.activities.filter((activity) => activity.id !== payload.activity.id),
+            ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
             payload.activity,
           ]
             .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
@@ -454,21 +391,7 @@ export function projectEvent(
           };
         }),
       );
-    case "git.read-model-upsert":
-      return decodeForEvent(
-        OrchestrationGitReadModelSchema,
-        event.payload,
-        event.type,
-        "payload",
-      ).pipe(
-        Effect.map((gitReadModel: OrchestrationGitReadModel) => ({
-          ...nextBase,
-          gitByProjectId: {
-            ...nextBase.gitByProjectId,
-            [gitReadModel.projectId]: gitReadModel,
-          },
-        })),
-      );
+
     default:
       return Effect.succeed(nextBase);
   }

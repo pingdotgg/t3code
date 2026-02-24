@@ -13,9 +13,30 @@ import {
 const now = new Date().toISOString();
 
 const readModel: OrchestrationReadModel = {
-  sequence: 2,
+  snapshotSequence: 2,
   updatedAt: now,
-  gitByProjectId: {},
+  projects: [
+    {
+      id: "project-a",
+      title: "Project A",
+      workspaceRoot: "/tmp/project-a",
+      defaultModel: "gpt-5-codex",
+      scripts: [],
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    },
+    {
+      id: "project-b",
+      title: "Project B",
+      workspaceRoot: "/tmp/project-b",
+      defaultModel: "gpt-5-codex",
+      scripts: [],
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    },
+  ],
   threads: [
     {
       id: "thread-1",
@@ -27,14 +48,10 @@ const readModel: OrchestrationReadModel = {
       createdAt: now,
       updatedAt: now,
       latestTurnId: null,
-      latestTurnStartedAt: null,
-      latestTurnCompletedAt: null,
-      latestTurnDurationMs: null,
       messages: [],
       session: null,
-      turnDiffSummaries: [],
       activities: [],
-      error: null,
+      checkpoints: [],
     },
     {
       id: "thread-2",
@@ -46,26 +63,24 @@ const readModel: OrchestrationReadModel = {
       createdAt: now,
       updatedAt: now,
       latestTurnId: null,
-      latestTurnStartedAt: null,
-      latestTurnCompletedAt: null,
-      latestTurnDurationMs: null,
       messages: [],
       session: null,
-      turnDiffSummaries: [],
       activities: [],
-      error: null,
+      checkpoints: [],
     },
   ],
 };
 
 const messageSendCommand: OrchestrationCommand = {
-  type: "message.send",
+  type: "thread.turn.start",
   commandId: "cmd-1",
   threadId: "thread-1",
-  messageId: "msg-1",
-  role: "user",
-  text: "hello",
-  streaming: false,
+  message: {
+    messageId: "msg-1",
+    role: "user",
+    text: "hello",
+    attachments: [],
+  },
   createdAt: now,
 };
 

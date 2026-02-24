@@ -55,7 +55,7 @@ Output for every command: `DispatchResultSchema = { sequence: number }`.
 - Input:
   - `commandId: CommandId`
   - `projectId: ProjectId`
-  - optional `{ title, workspaceRoot, defaultModel }`
+  - optional `{ title, workspaceRoot, defaultModel, scripts }`
 - Output: `DispatchResult`
 
 3. `project.delete`
@@ -427,6 +427,7 @@ Rules:
 - `title: string`
 - `workspaceRoot: string`
 - `defaultModel: string | null`
+- `scripts: ProjectScript[]`
 - `createdAt: IsoDateTime`
 - `updatedAt: IsoDateTime`
 - `deletedAt: IsoDateTime | null`

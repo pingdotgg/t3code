@@ -1,232 +1,219 @@
 import { Schema } from "effect";
 
-const IsoDateTimeSchema = Schema.String;
-const IdSchema = Schema.String;
+import {
+  ApprovalRequestId,
+  EventId,
+  IsoDateTime,
+  NonNegativeInt,
+  ProviderApprovalDecision,
+  ProviderItemId,
+  ProviderKind,
+  ProviderRequestKind,
+  ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
+  ThreadId,
+  TurnId,
+} from "./orchestration";
 
-export const ProviderRuntimeProviderSchema = Schema.Literals(["codex", "claudeCode"]);
-export type ProviderRuntimeProvider = Schema.Schema.Type<typeof ProviderRuntimeProviderSchema>;
+const RuntimeThreadIdSchema = Schema.Union([ThreadId, ProviderThreadId]);
+const RuntimeTurnIdSchema = Schema.Union([TurnId, ProviderTurnId]);
 
-export const ProviderRuntimeApprovalKindSchema = Schema.Literals(["command", "file-change"]);
-export type ProviderRuntimeApprovalKind = Schema.Schema.Type<
-  typeof ProviderRuntimeApprovalKindSchema
->;
+export const ProviderRuntimeToolKind = Schema.Union([
+  ProviderRequestKind,
+  Schema.Literal("other"),
+]);
+export type ProviderRuntimeToolKind = typeof ProviderRuntimeToolKind.Type;
 
-export const ProviderRuntimeToolKindSchema = Schema.Literals(["command", "file-change", "other"]);
-export type ProviderRuntimeToolKind = Schema.Schema.Type<typeof ProviderRuntimeToolKindSchema>;
-
-export const ProviderRuntimeTurnStatusSchema = Schema.Literals([
+export const ProviderRuntimeTurnStatus = Schema.Literals([
   "completed",
   "failed",
   "cancelled",
   "interrupted",
 ]);
-export type ProviderRuntimeTurnStatus = Schema.Schema.Type<typeof ProviderRuntimeTurnStatusSchema>;
+export type ProviderRuntimeTurnStatus = typeof ProviderRuntimeTurnStatus.Type;
 
-export const ProviderRuntimeSessionStartedEventSchema = Schema.Struct({
+export const ProviderRuntimeSessionStartedEvent = Schema.Struct({
   type: Schema.Literal("session.started"),
-  eventId: IdSchema,
-  provider: ProviderRuntimeProviderSchema,
-  sessionId: IdSchema,
-  createdAt: IsoDateTimeSchema,
-  threadId: Schema.optional(Schema.String),
+  eventId: EventId,
+  provider: ProviderKind,
+  sessionId: ProviderSessionId,
+  createdAt: IsoDateTime,
+  threadId: Schema.optional(RuntimeThreadIdSchema),
   message: Schema.optional(Schema.String),
 });
+export type ProviderRuntimeSessionStartedEvent = typeof ProviderRuntimeSessionStartedEvent.Type;
 
-export const ProviderRuntimeSessionExitedEventSchema = Schema.Struct({
+export const ProviderRuntimeSessionExitedEvent = Schema.Struct({
   type: Schema.Literal("session.exited"),
-  eventId: IdSchema,
-  provider: ProviderRuntimeProviderSchema,
-  sessionId: IdSchema,
-  createdAt: IsoDateTimeSchema,
-  threadId: Schema.optional(Schema.String),
+  eventId: EventId,
+  provider: ProviderKind,
+  sessionId: ProviderSessionId,
+  createdAt: IsoDateTime,
+  threadId: Schema.optional(RuntimeThreadIdSchema),
   message: Schema.optional(Schema.String),
 });
+export type ProviderRuntimeSessionExitedEvent = typeof ProviderRuntimeSessionExitedEvent.Type;
 
-export const ProviderRuntimeThreadStartedEventSchema = Schema.Struct({
+export const ProviderRuntimeThreadStartedEvent = Schema.Struct({
   type: Schema.Literal("thread.started"),
-  eventId: IdSchema,
-  provider: ProviderRuntimeProviderSchema,
-  sessionId: IdSchema,
-  createdAt: IsoDateTimeSchema,
-  threadId: IdSchema,
+  eventId: EventId,
+  provider: ProviderKind,
+  sessionId: ProviderSessionId,
+  createdAt: IsoDateTime,
+  threadId: RuntimeThreadIdSchema,
 });
+export type ProviderRuntimeThreadStartedEvent = typeof ProviderRuntimeThreadStartedEvent.Type;
 
-export const ProviderRuntimeTurnStartedEventSchema = Schema.Struct({
+export const ProviderRuntimeTurnStartedEvent = Schema.Struct({
   type: Schema.Literal("turn.started"),
-  eventId: IdSchema,
-  provider: ProviderRuntimeProviderSchema,
-  sessionId: IdSchema,
-  createdAt: IsoDateTimeSchema,
-  threadId: Schema.optional(Schema.String),
-  turnId: IdSchema,
+  eventId: EventId,
+  provider: ProviderKind,
+  sessionId: ProviderSessionId,
+  createdAt: IsoDateTime,
+  threadId: Schema.optional(RuntimeThreadIdSchema),
+  turnId: RuntimeTurnIdSchema,
 });
+export type ProviderRuntimeTurnStartedEvent = typeof ProviderRuntimeTurnStartedEvent.Type;
 
-export const ProviderRuntimeTurnCompletedEventSchema = Schema.Struct({
+export const ProviderRuntimeTurnCompletedEvent = Schema.Struct({
   type: Schema.Literal("turn.completed"),
-  eventId: IdSchema,
-  provider: ProviderRuntimeProviderSchema,
-  sessionId: IdSchema,
-  createdAt: IsoDateTimeSchema,
-  threadId: Schema.optional(Schema.String),
-  turnId: Schema.optional(Schema.String),
-  status: Schema.optional(ProviderRuntimeTurnStatusSchema),
+  eventId: EventId,
+  provider: ProviderKind,
+  sessionId: ProviderSessionId,
+  createdAt: IsoDateTime,
+  threadId: Schema.optional(RuntimeThreadIdSchema),
+  turnId: Schema.optional(RuntimeTurnIdSchema),
+  status: Schema.optional(ProviderRuntimeTurnStatus),
   errorMessage: Schema.optional(Schema.String),
 });
+export type ProviderRuntimeTurnCompletedEvent = typeof ProviderRuntimeTurnCompletedEvent.Type;
 
-export const ProviderRuntimeMessageDeltaEventSchema = Schema.Struct({
+export const ProviderRuntimeMessageDeltaEvent = Schema.Struct({
   type: Schema.Literal("message.delta"),
-  eventId: IdSchema,
-  provider: ProviderRuntimeProviderSchema,
-  sessionId: IdSchema,
-  createdAt: IsoDateTimeSchema,
-  threadId: Schema.optional(Schema.String),
-  turnId: Schema.optional(Schema.String),
-  itemId: Schema.optional(Schema.String),
+  eventId: EventId,
+  provider: ProviderKind,
+  sessionId: ProviderSessionId,
+  createdAt: IsoDateTime,
+  threadId: Schema.optional(RuntimeThreadIdSchema),
+  turnId: Schema.optional(RuntimeTurnIdSchema),
+  itemId: Schema.optional(ProviderItemId),
   delta: Schema.String,
 });
+export type ProviderRuntimeMessageDeltaEvent = typeof ProviderRuntimeMessageDeltaEvent.Type;
 
-export const ProviderRuntimeMessageCompletedEventSchema = Schema.Struct({
+export const ProviderRuntimeMessageCompletedEvent = Schema.Struct({
   type: Schema.Literal("message.completed"),
-  eventId: IdSchema,
-  provider: ProviderRuntimeProviderSchema,
-  sessionId: IdSchema,
-  createdAt: IsoDateTimeSchema,
-  itemId: IdSchema,
-  threadId: Schema.optional(Schema.String),
-  turnId: Schema.optional(Schema.String),
+  eventId: EventId,
+  provider: ProviderKind,
+  sessionId: ProviderSessionId,
+  createdAt: IsoDateTime,
+  itemId: ProviderItemId,
+  threadId: Schema.optional(RuntimeThreadIdSchema),
+  turnId: Schema.optional(RuntimeTurnIdSchema),
 });
+export type ProviderRuntimeMessageCompletedEvent = typeof ProviderRuntimeMessageCompletedEvent.Type;
 
-export const ProviderRuntimeToolStartedEventSchema = Schema.Struct({
+export const ProviderRuntimeToolStartedEvent = Schema.Struct({
   type: Schema.Literal("tool.started"),
-  eventId: IdSchema,
-  provider: ProviderRuntimeProviderSchema,
-  sessionId: IdSchema,
-  createdAt: IsoDateTimeSchema,
-  threadId: Schema.optional(Schema.String),
-  turnId: Schema.optional(Schema.String),
-  itemId: Schema.optional(Schema.String),
-  toolKind: ProviderRuntimeToolKindSchema,
+  eventId: EventId,
+  provider: ProviderKind,
+  sessionId: ProviderSessionId,
+  createdAt: IsoDateTime,
+  threadId: Schema.optional(RuntimeThreadIdSchema),
+  turnId: Schema.optional(RuntimeTurnIdSchema),
+  itemId: Schema.optional(ProviderItemId),
+  toolKind: ProviderRuntimeToolKind,
   title: Schema.String,
   detail: Schema.optional(Schema.String),
 });
+export type ProviderRuntimeToolStartedEvent = typeof ProviderRuntimeToolStartedEvent.Type;
 
-export const ProviderRuntimeToolCompletedEventSchema = Schema.Struct({
+export const ProviderRuntimeToolCompletedEvent = Schema.Struct({
   type: Schema.Literal("tool.completed"),
-  eventId: IdSchema,
-  provider: ProviderRuntimeProviderSchema,
-  sessionId: IdSchema,
-  createdAt: IsoDateTimeSchema,
-  threadId: Schema.optional(Schema.String),
-  turnId: Schema.optional(Schema.String),
-  itemId: Schema.optional(Schema.String),
-  toolKind: ProviderRuntimeToolKindSchema,
+  eventId: EventId,
+  provider: ProviderKind,
+  sessionId: ProviderSessionId,
+  createdAt: IsoDateTime,
+  threadId: Schema.optional(RuntimeThreadIdSchema),
+  turnId: Schema.optional(RuntimeTurnIdSchema),
+  itemId: Schema.optional(ProviderItemId),
+  toolKind: ProviderRuntimeToolKind,
   title: Schema.String,
   detail: Schema.optional(Schema.String),
 });
+export type ProviderRuntimeToolCompletedEvent = typeof ProviderRuntimeToolCompletedEvent.Type;
 
-export const ProviderRuntimeApprovalRequestedEventSchema = Schema.Struct({
+export const ProviderRuntimeApprovalRequestedEvent = Schema.Struct({
   type: Schema.Literal("approval.requested"),
-  eventId: IdSchema,
-  provider: ProviderRuntimeProviderSchema,
-  sessionId: IdSchema,
-  createdAt: IsoDateTimeSchema,
-  threadId: Schema.optional(Schema.String),
-  turnId: Schema.optional(Schema.String),
-  itemId: Schema.optional(Schema.String),
-  requestId: IdSchema,
-  requestKind: ProviderRuntimeApprovalKindSchema,
+  eventId: EventId,
+  provider: ProviderKind,
+  sessionId: ProviderSessionId,
+  createdAt: IsoDateTime,
+  threadId: Schema.optional(RuntimeThreadIdSchema),
+  turnId: Schema.optional(RuntimeTurnIdSchema),
+  itemId: Schema.optional(ProviderItemId),
+  requestId: ApprovalRequestId,
+  requestKind: ProviderRequestKind,
   detail: Schema.optional(Schema.String),
 });
+export type ProviderRuntimeApprovalRequestedEvent = typeof ProviderRuntimeApprovalRequestedEvent.Type;
 
-export const ProviderRuntimeApprovalResolvedEventSchema = Schema.Struct({
+export const ProviderRuntimeApprovalResolvedEvent = Schema.Struct({
   type: Schema.Literal("approval.resolved"),
-  eventId: IdSchema,
-  provider: ProviderRuntimeProviderSchema,
-  sessionId: IdSchema,
-  createdAt: IsoDateTimeSchema,
-  threadId: Schema.optional(Schema.String),
-  turnId: Schema.optional(Schema.String),
-  itemId: Schema.optional(Schema.String),
-  requestId: IdSchema,
-  requestKind: Schema.optional(ProviderRuntimeApprovalKindSchema),
-  decision: Schema.optional(Schema.String),
+  eventId: EventId,
+  provider: ProviderKind,
+  sessionId: ProviderSessionId,
+  createdAt: IsoDateTime,
+  threadId: Schema.optional(RuntimeThreadIdSchema),
+  turnId: Schema.optional(RuntimeTurnIdSchema),
+  itemId: Schema.optional(ProviderItemId),
+  requestId: ApprovalRequestId,
+  requestKind: Schema.optional(ProviderRequestKind),
+  decision: Schema.optional(ProviderApprovalDecision),
 });
+export type ProviderRuntimeApprovalResolvedEvent = typeof ProviderRuntimeApprovalResolvedEvent.Type;
 
-export const ProviderRuntimeCheckpointCapturedEventSchema = Schema.Struct({
+export const ProviderRuntimeCheckpointCapturedEvent = Schema.Struct({
   type: Schema.Literal("checkpoint.captured"),
-  eventId: IdSchema,
-  provider: ProviderRuntimeProviderSchema,
-  sessionId: IdSchema,
-  createdAt: IsoDateTimeSchema,
-  threadId: IdSchema,
-  turnId: Schema.optional(Schema.String),
-  turnCount: Schema.Number,
-  status: Schema.optional(ProviderRuntimeTurnStatusSchema),
+  eventId: EventId,
+  provider: ProviderKind,
+  sessionId: ProviderSessionId,
+  createdAt: IsoDateTime,
+  threadId: RuntimeThreadIdSchema,
+  turnId: Schema.optional(RuntimeTurnIdSchema),
+  turnCount: NonNegativeInt,
+  status: Schema.optional(ProviderRuntimeTurnStatus),
 });
+export type ProviderRuntimeCheckpointCapturedEvent = typeof ProviderRuntimeCheckpointCapturedEvent.Type;
 
-export const ProviderRuntimeErrorEventSchema = Schema.Struct({
+export const ProviderRuntimeErrorEvent = Schema.Struct({
   type: Schema.Literal("runtime.error"),
-  eventId: IdSchema,
-  provider: ProviderRuntimeProviderSchema,
-  sessionId: IdSchema,
-  createdAt: IsoDateTimeSchema,
-  threadId: Schema.optional(Schema.String),
-  turnId: Schema.optional(Schema.String),
-  itemId: Schema.optional(Schema.String),
+  eventId: EventId,
+  provider: ProviderKind,
+  sessionId: ProviderSessionId,
+  createdAt: IsoDateTime,
+  threadId: Schema.optional(RuntimeThreadIdSchema),
+  turnId: Schema.optional(RuntimeTurnIdSchema),
+  itemId: Schema.optional(ProviderItemId),
   message: Schema.String,
 });
+export type ProviderRuntimeErrorEvent = typeof ProviderRuntimeErrorEvent.Type;
 
-export const ProviderRuntimeEventSchema = Schema.Union([
-  ProviderRuntimeSessionStartedEventSchema,
-  ProviderRuntimeSessionExitedEventSchema,
-  ProviderRuntimeThreadStartedEventSchema,
-  ProviderRuntimeTurnStartedEventSchema,
-  ProviderRuntimeTurnCompletedEventSchema,
-  ProviderRuntimeMessageDeltaEventSchema,
-  ProviderRuntimeMessageCompletedEventSchema,
-  ProviderRuntimeToolStartedEventSchema,
-  ProviderRuntimeToolCompletedEventSchema,
-  ProviderRuntimeApprovalRequestedEventSchema,
-  ProviderRuntimeApprovalResolvedEventSchema,
-  ProviderRuntimeCheckpointCapturedEventSchema,
-  ProviderRuntimeErrorEventSchema,
+export const ProviderRuntimeEvent = Schema.Union([
+  ProviderRuntimeSessionStartedEvent,
+  ProviderRuntimeSessionExitedEvent,
+  ProviderRuntimeThreadStartedEvent,
+  ProviderRuntimeTurnStartedEvent,
+  ProviderRuntimeTurnCompletedEvent,
+  ProviderRuntimeMessageDeltaEvent,
+  ProviderRuntimeMessageCompletedEvent,
+  ProviderRuntimeToolStartedEvent,
+  ProviderRuntimeToolCompletedEvent,
+  ProviderRuntimeApprovalRequestedEvent,
+  ProviderRuntimeApprovalResolvedEvent,
+  ProviderRuntimeCheckpointCapturedEvent,
+  ProviderRuntimeErrorEvent,
 ]);
+export type ProviderRuntimeEvent = typeof ProviderRuntimeEvent.Type;
 
-export type ProviderRuntimeSessionStartedEvent = Schema.Schema.Type<
-  typeof ProviderRuntimeSessionStartedEventSchema
->;
-export type ProviderRuntimeSessionExitedEvent = Schema.Schema.Type<
-  typeof ProviderRuntimeSessionExitedEventSchema
->;
-export type ProviderRuntimeThreadStartedEvent = Schema.Schema.Type<
-  typeof ProviderRuntimeThreadStartedEventSchema
->;
-export type ProviderRuntimeTurnStartedEvent = Schema.Schema.Type<
-  typeof ProviderRuntimeTurnStartedEventSchema
->;
-export type ProviderRuntimeTurnCompletedEvent = Schema.Schema.Type<
-  typeof ProviderRuntimeTurnCompletedEventSchema
->;
-export type ProviderRuntimeMessageDeltaEvent = Schema.Schema.Type<
-  typeof ProviderRuntimeMessageDeltaEventSchema
->;
-export type ProviderRuntimeMessageCompletedEvent = Schema.Schema.Type<
-  typeof ProviderRuntimeMessageCompletedEventSchema
->;
-export type ProviderRuntimeToolStartedEvent = Schema.Schema.Type<
-  typeof ProviderRuntimeToolStartedEventSchema
->;
-export type ProviderRuntimeToolCompletedEvent = Schema.Schema.Type<
-  typeof ProviderRuntimeToolCompletedEventSchema
->;
-export type ProviderRuntimeApprovalRequestedEvent = Schema.Schema.Type<
-  typeof ProviderRuntimeApprovalRequestedEventSchema
->;
-export type ProviderRuntimeApprovalResolvedEvent = Schema.Schema.Type<
-  typeof ProviderRuntimeApprovalResolvedEventSchema
->;
-export type ProviderRuntimeCheckpointCapturedEvent = Schema.Schema.Type<
-  typeof ProviderRuntimeCheckpointCapturedEventSchema
->;
-export type ProviderRuntimeErrorEvent = Schema.Schema.Type<typeof ProviderRuntimeErrorEventSchema>;
-export type ProviderRuntimeEvent = Schema.Schema.Type<typeof ProviderRuntimeEventSchema>;

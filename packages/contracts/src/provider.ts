@@ -1,221 +1,169 @@
-import { z } from "zod";
+import { Schema } from "effect";
 
-export const providerKindSchema = z.enum(["codex", "claudeCode"]);
+import {
+  ApprovalRequestId,
+  ChatAttachment,
+  EventId,
+  IsoDateTime,
+  NonNegativeInt,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  ProviderApprovalDecision,
+  ProviderApprovalPolicy,
+  ProviderKind,
+  ProviderItemId,
+  ProviderRequestKind,
+  ProviderSandboxMode,
+  ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
+  ThreadId,
+  TurnCountRange,
+} from "./orchestration";
 
-export const providerApprovalPolicySchema = z.enum([
-  "untrusted",
-  "on-failure",
-  "on-request",
-  "never",
-]);
+const TrimmedNonEmptyStringSchema = Schema.Trimmed.check(Schema.isNonEmpty());
 
-export const providerSandboxModeSchema = z.enum([
-  "read-only",
-  "workspace-write",
-  "danger-full-access",
-]);
-
-export const providerRequestKindSchema = z.enum(["command", "file-change"]);
-
-export const providerApprovalDecisionSchema = z.enum([
-  "accept",
-  "acceptForSession",
-  "decline",
-  "cancel",
-]);
-
-export const providerSessionStatusSchema = z.enum([
+export const ProviderSessionStatus = Schema.Literals([
   "connecting",
   "ready",
   "running",
   "error",
   "closed",
 ]);
+export type ProviderSessionStatus = typeof ProviderSessionStatus.Type;
 
-export const providerSessionSchema = z.object({
-  sessionId: z.string().min(1),
-  provider: providerKindSchema,
-  status: providerSessionStatusSchema,
-  cwd: z.string().min(1).optional(),
-  model: z.string().min(1).optional(),
-  threadId: z.string().min(1).optional(),
-  activeTurnId: z.string().min(1).optional(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-  lastError: z.string().min(1).optional(),
+export const ProviderSession = Schema.Struct({
+  sessionId: ProviderSessionId,
+  provider: ProviderKind,
+  status: ProviderSessionStatus,
+  cwd: Schema.optional(TrimmedNonEmptyStringSchema),
+  model: Schema.optional(TrimmedNonEmptyStringSchema),
+  threadId: Schema.optional(ProviderThreadId),
+  activeTurnId: Schema.optional(ProviderTurnId),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  lastError: Schema.optional(TrimmedNonEmptyStringSchema),
 });
+export type ProviderSession = typeof ProviderSession.Type;
 
-export const providerSessionStartInputSchema = z.object({
-  provider: providerKindSchema.default("codex"),
-  cwd: z.string().min(1).optional(),
-  model: z.string().trim().min(1).optional(),
-  resumeThreadId: z.string().trim().min(1).optional(),
-  codexBinaryPath: z.string().trim().min(1).optional(),
-  codexHomePath: z.string().trim().min(1).optional(),
-  approvalPolicy: providerApprovalPolicySchema.default("never"),
-  sandboxMode: providerSandboxModeSchema.default("workspace-write"),
+export const ProviderSessionStartInput = Schema.Struct({
+  provider: Schema.optional(ProviderKind),
+  cwd: Schema.optional(TrimmedNonEmptyStringSchema),
+  model: Schema.optional(TrimmedNonEmptyStringSchema),
+  resumeThreadId: Schema.optional(ProviderThreadId),
+  codexBinaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
+  codexHomePath: Schema.optional(TrimmedNonEmptyStringSchema),
+  approvalPolicy: Schema.optional(ProviderApprovalPolicy),
+  sandboxMode: Schema.optional(ProviderSandboxMode),
 });
+export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
-export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
-export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
-export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-export const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
-
-export const providerSendTurnImageAttachmentSchema = z.object({
-  type: z.literal("image"),
-  name: z.string().trim().min(1).max(255),
-  mimeType: z
-    .string()
-    .trim()
-    .min(1)
-    .max(100)
-    .regex(/^image\//i, "mimeType must be an image/* MIME type"),
-  sizeBytes: z.number().int().min(1).max(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES),
-  dataUrl: z.string().trim().min(1).max(PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS),
+export const ProviderSendTurnInput = Schema.Struct({
+  sessionId: ProviderSessionId,
+  input: Schema.optional(
+    TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
+  ),
+  attachments: Schema.optional(
+    Schema.Array(ChatAttachment).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
+  ),
+  model: Schema.optional(TrimmedNonEmptyStringSchema),
+  effort: Schema.optional(TrimmedNonEmptyStringSchema),
 });
+export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 
-export const providerSendTurnAttachmentInputSchema = z.discriminatedUnion("type", [
-  providerSendTurnImageAttachmentSchema,
-]);
-
-export const providerSendTurnInputSchema = z
-  .object({
-    sessionId: z.string().min(1),
-    input: z.string().trim().min(1).max(PROVIDER_SEND_TURN_MAX_INPUT_CHARS).optional(),
-    attachments: z
-      .array(providerSendTurnAttachmentInputSchema)
-      .max(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)
-      .default([]),
-    model: z.string().trim().min(1).optional(),
-    effort: z.string().trim().min(1).optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (!value.input && value.attachments.length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Either input text or at least one attachment is required",
-        path: ["input"],
-      });
-    }
-  });
-
-export const providerTurnStartResultSchema = z.object({
-  threadId: z.string().min(1),
-  turnId: z.string().min(1),
+export const ProviderTurnStartResult = Schema.Struct({
+  threadId: ProviderThreadId,
+  turnId: ProviderTurnId,
 });
+export type ProviderTurnStartResult = typeof ProviderTurnStartResult.Type;
 
-export const providerInterruptTurnInputSchema = z.object({
-  sessionId: z.string().min(1),
-  turnId: z.string().min(1).optional(),
+export const ProviderInterruptTurnInput = Schema.Struct({
+  sessionId: ProviderSessionId,
+  turnId: Schema.optional(ProviderTurnId),
 });
+export type ProviderInterruptTurnInput = typeof ProviderInterruptTurnInput.Type;
 
-export const providerStopSessionInputSchema = z.object({
-  sessionId: z.string().min(1),
+export const ProviderStopSessionInput = Schema.Struct({
+  sessionId: ProviderSessionId,
 });
+export type ProviderStopSessionInput = typeof ProviderStopSessionInput.Type;
 
-export const providerListCheckpointsInputSchema = z.object({
-  sessionId: z.string().min(1),
+export const ProviderListCheckpointsInput = Schema.Struct({
+  sessionId: ProviderSessionId,
 });
+export type ProviderListCheckpointsInput = typeof ProviderListCheckpointsInput.Type;
 
-export const providerCheckpointSchema = z.object({
-  id: z.string().min(1),
-  turnCount: z.number().int().min(0),
-  messageCount: z.number().int().min(0),
-  label: z.string().min(1),
-  preview: z.string().min(1).optional(),
-  isCurrent: z.boolean(),
+export const ProviderCheckpoint = Schema.Struct({
+  id: TrimmedNonEmptyStringSchema,
+  turnCount: NonNegativeInt,
+  messageCount: NonNegativeInt,
+  label: TrimmedNonEmptyStringSchema,
+  preview: Schema.optional(TrimmedNonEmptyStringSchema),
+  isCurrent: Schema.Boolean,
 });
+export type ProviderCheckpoint = typeof ProviderCheckpoint.Type;
 
-export const providerListCheckpointsResultSchema = z.object({
-  threadId: z.string().min(1),
-  checkpoints: z.array(providerCheckpointSchema),
+export const ProviderListCheckpointsResult = Schema.Struct({
+  threadId: ThreadId,
+  checkpoints: Schema.Array(ProviderCheckpoint),
 });
+export type ProviderListCheckpointsResult = typeof ProviderListCheckpointsResult.Type;
 
-export const providerRevertToCheckpointInputSchema = z.object({
-  sessionId: z.string().min(1),
-  turnCount: z.number().int().min(0),
+export const ProviderRevertToCheckpointInput = Schema.Struct({
+  sessionId: ProviderSessionId,
+  turnCount: NonNegativeInt,
 });
+export type ProviderRevertToCheckpointInput = typeof ProviderRevertToCheckpointInput.Type;
 
-export const providerRevertToCheckpointResultSchema = z.object({
-  threadId: z.string().min(1),
-  turnCount: z.number().int().min(0),
-  messageCount: z.number().int().min(0),
-  rolledBackTurns: z.number().int().min(0),
-  checkpoints: z.array(providerCheckpointSchema),
+export const ProviderRevertToCheckpointResult = Schema.Struct({
+  threadId: ThreadId,
+  turnCount: NonNegativeInt,
+  messageCount: NonNegativeInt,
+  rolledBackTurns: NonNegativeInt,
+  checkpoints: Schema.Array(ProviderCheckpoint),
 });
+export type ProviderRevertToCheckpointResult = typeof ProviderRevertToCheckpointResult.Type;
 
-export const providerGetCheckpointDiffInputSchema = z
-  .object({
-    sessionId: z.string().min(1),
-    fromTurnCount: z.number().int().min(0),
-    toTurnCount: z.number().int().min(0),
-  })
-  .superRefine((value, ctx) => {
-    if (value.fromTurnCount > value.toTurnCount) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "fromTurnCount must be less than or equal to toTurnCount",
-        path: ["fromTurnCount"],
-      });
-    }
-  });
-
-export const providerGetCheckpointDiffResultSchema = z.object({
-  threadId: z.string().min(1),
-  fromTurnCount: z.number().int().min(0),
-  toTurnCount: z.number().int().min(0),
-  diff: z.string(),
+export const ProviderGetCheckpointDiffInput = Schema.Struct({
+  sessionId: ProviderSessionId,
+  ...TurnCountRange.fields,
 });
+export type ProviderGetCheckpointDiffInput = typeof ProviderGetCheckpointDiffInput.Type;
 
-export const providerRespondToRequestInputSchema = z.object({
-  sessionId: z.string().min(1),
-  requestId: z.string().min(1),
-  decision: providerApprovalDecisionSchema,
+export const ProviderGetCheckpointDiffResult = Schema.Struct({
+  threadId: ThreadId,
+  ...TurnCountRange.fields,
+  diff: Schema.String,
 });
+export type ProviderGetCheckpointDiffResult = typeof ProviderGetCheckpointDiffResult.Type;
 
-export const providerEventKindSchema = z.enum(["session", "notification", "request", "error"]);
-
-export const providerEventSchema = z.object({
-  id: z.string().min(1),
-  kind: providerEventKindSchema,
-  provider: providerKindSchema,
-  sessionId: z.string().min(1),
-  createdAt: z.string().datetime(),
-  method: z.string().min(1),
-  message: z.string().min(1).optional(),
-  threadId: z.string().min(1).optional(),
-  turnId: z.string().min(1).optional(),
-  itemId: z.string().min(1).optional(),
-  requestId: z.string().min(1).optional(),
-  requestKind: providerRequestKindSchema.optional(),
-  textDelta: z.string().optional(),
-  payload: z.unknown().optional(),
+export const ProviderRespondToRequestInput = Schema.Struct({
+  sessionId: ProviderSessionId,
+  requestId: ApprovalRequestId,
+  decision: ProviderApprovalDecision,
 });
+export type ProviderRespondToRequestInput = typeof ProviderRespondToRequestInput.Type;
 
-export type ProviderKind = z.infer<typeof providerKindSchema>;
-export type ProviderApprovalPolicy = z.infer<typeof providerApprovalPolicySchema>;
-export type ProviderSandboxMode = z.infer<typeof providerSandboxModeSchema>;
-export type ProviderRequestKind = z.infer<typeof providerRequestKindSchema>;
-export type ProviderApprovalDecision = z.infer<typeof providerApprovalDecisionSchema>;
-export type ProviderSessionStatus = z.infer<typeof providerSessionStatusSchema>;
-export type ProviderSession = z.infer<typeof providerSessionSchema>;
-export type ProviderSessionStartInput = z.input<typeof providerSessionStartInputSchema>;
-export type ProviderSendTurnImageAttachment = z.infer<typeof providerSendTurnImageAttachmentSchema>;
-export type ProviderSendTurnAttachment = z.infer<typeof providerSendTurnAttachmentInputSchema>;
-export type ProviderSendTurnAttachmentInput = z.input<typeof providerSendTurnAttachmentInputSchema>;
-export type ProviderSendTurnInput = z.input<typeof providerSendTurnInputSchema>;
-export type ProviderTurnStartResult = z.infer<typeof providerTurnStartResultSchema>;
-export type ProviderInterruptTurnInput = z.input<typeof providerInterruptTurnInputSchema>;
-export type ProviderStopSessionInput = z.input<typeof providerStopSessionInputSchema>;
-export type ProviderListCheckpointsInput = z.input<typeof providerListCheckpointsInputSchema>;
-export type ProviderCheckpoint = z.infer<typeof providerCheckpointSchema>;
-export type ProviderListCheckpointsResult = z.infer<typeof providerListCheckpointsResultSchema>;
-export type ProviderRevertToCheckpointInput = z.input<typeof providerRevertToCheckpointInputSchema>;
-export type ProviderRevertToCheckpointResult = z.infer<
-  typeof providerRevertToCheckpointResultSchema
->;
-export type ProviderGetCheckpointDiffInput = z.input<typeof providerGetCheckpointDiffInputSchema>;
-export type ProviderGetCheckpointDiffResult = z.infer<typeof providerGetCheckpointDiffResultSchema>;
-export type ProviderRespondToRequestInput = z.input<typeof providerRespondToRequestInputSchema>;
-export type ProviderEventKind = z.infer<typeof providerEventKindSchema>;
-export type ProviderEvent = z.infer<typeof providerEventSchema>;
+export const ProviderEventKind = Schema.Literals(["session", "notification", "request", "error"]);
+export type ProviderEventKind = typeof ProviderEventKind.Type;
+
+export const ProviderEvent = Schema.Struct({
+  id: EventId,
+  kind: ProviderEventKind,
+  provider: ProviderKind,
+  sessionId: ProviderSessionId,
+  createdAt: IsoDateTime,
+  method: TrimmedNonEmptyStringSchema,
+  message: Schema.optional(TrimmedNonEmptyStringSchema),
+  threadId: Schema.optional(ProviderThreadId),
+  turnId: Schema.optional(ProviderTurnId),
+  itemId: Schema.optional(ProviderItemId),
+  requestId: Schema.optional(ApprovalRequestId),
+  requestKind: Schema.optional(ProviderRequestKind),
+  textDelta: Schema.optional(Schema.String),
+  payload: Schema.optional(Schema.Unknown),
+});
+export type ProviderEvent = typeof ProviderEvent.Type;
+
+export type ProviderSendTurnAttachment = typeof ChatAttachment.Type;
+export type ProviderSendTurnAttachmentInput = typeof ChatAttachment.Type;

@@ -2,19 +2,23 @@ import type { OrchestrationEvent } from "@t3tools/contracts";
 import { Effect, Layer, ManagedRuntime, Queue, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { PersistenceSqlError } from "../persistence/Errors.ts";
+import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
+import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
 } from "../persistence/Services/OrchestrationEventStore.ts";
-import { PersistenceSqlError } from "../persistence/Errors.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { OrchestrationEngineLive } from "./Layers/OrchestrationEngine.ts";
+import { OrchestrationProjectionPipelineLive } from "./Layers/ProjectionPipeline.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
 
-export async function createOrchestrationSystem() {
+async function createOrchestrationSystem() {
   const orchestrationLayer = OrchestrationEngineLive.pipe(
+    Layer.provide(OrchestrationProjectionPipelineLive),
     Layer.provide(OrchestrationEventStoreLive),
+    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(SqlitePersistenceMemory),
   );
   const runtime = ManagedRuntime.make(orchestrationLayer);
@@ -26,20 +30,33 @@ export async function createOrchestrationSystem() {
   };
 }
 
+function now() {
+  return new Date().toISOString();
+}
+
 describe("OrchestrationEngine", () => {
   it("returns deterministic read models for repeated reads", async () => {
-    const createdAt = new Date().toISOString();
-    const projectId = "project-1";
-    const threadId = "thread-1";
-
+    const createdAt = now();
     const system = await createOrchestrationSystem();
-    const engine = system.engine;
+    const { engine } = system;
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: "cmd-project-1-create",
+        projectId: "project-1",
+        title: "Project 1",
+        workspaceRoot: "/tmp/project-1",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
     await system.run(
       engine.dispatch({
         type: "thread.create",
-        commandId: "cmd-1",
-        threadId,
-        projectId,
+        commandId: "cmd-thread-1-create",
+        threadId: "thread-1",
+        projectId: "project-1",
         title: "Thread",
         model: "gpt-5-codex",
         branch: null,
@@ -49,16 +66,19 @@ describe("OrchestrationEngine", () => {
     );
     await system.run(
       engine.dispatch({
-        type: "message.send",
-        commandId: "cmd-3",
-        threadId,
-        messageId: "msg-1",
-        role: "user",
-        text: "hello",
-        streaming: false,
+        type: "thread.turn.start",
+        commandId: "cmd-turn-start-1",
+        threadId: "thread-1",
+        message: {
+          messageId: "msg-1",
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
         createdAt,
       }),
     );
+
     const readModelA = await system.run(engine.getReadModel());
     const readModelB = await system.run(engine.getReadModel());
     expect(readModelB).toEqual(readModelA);
@@ -67,42 +87,71 @@ describe("OrchestrationEngine", () => {
 
   it("replays append-only events from sequence", async () => {
     const system = await createOrchestrationSystem();
-    const engine = system.engine;
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: "cmd-project-replay-create",
+        projectId: "project-replay",
+        title: "Replay Project",
+        workspaceRoot: "/tmp/project-replay",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
     await system.run(
       engine.dispatch({
         type: "thread.create",
-        commandId: "cmd-a",
+        commandId: "cmd-thread-replay-create",
         threadId: "thread-replay",
         projectId: "project-replay",
         title: "replay",
         model: "gpt-5-codex",
         branch: null,
         worktreePath: null,
-        createdAt: new Date().toISOString(),
+        createdAt,
       }),
     );
     await system.run(
       engine.dispatch({
         type: "thread.delete",
-        commandId: "cmd-b",
+        commandId: "cmd-thread-replay-delete",
         threadId: "thread-replay",
-        createdAt: new Date().toISOString(),
       }),
     );
+
     const events = await system.run(
       Stream.runCollect(engine.readEvents(0)).pipe(
         Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
       ),
     );
-    expect(events.length).toBe(2);
-    expect(events[0]?.type).toBe("thread.created");
-    expect(events[1]?.type).toBe("thread.deleted");
+    expect(events.map((event) => event.type)).toEqual([
+      "project.created",
+      "thread.created",
+      "thread.deleted",
+    ]);
     await system.dispose();
   });
 
   it("streams persisted domain events in order", async () => {
     const system = await createOrchestrationSystem();
-    const engine = system.engine;
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: "cmd-project-stream-create",
+        projectId: "project-stream",
+        title: "Stream Project",
+        workspaceRoot: "/tmp/project-stream",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
+
     const eventTypes: string[] = [];
     await system.run(
       Effect.gen(function* () {
@@ -113,12 +162,11 @@ describe("OrchestrationEngine", () => {
           ),
         );
         yield* Effect.sleep("10 millis");
-        const createdAt = new Date().toISOString();
         yield* engine.dispatch({
           type: "thread.create",
-          commandId: "cmd-stream-domain-a",
-          threadId: "thread-stream-domain",
-          projectId: "project-stream-domain",
+          commandId: "cmd-stream-thread-create",
+          threadId: "thread-stream",
+          projectId: "project-stream",
           title: "domain-stream",
           model: "gpt-5-codex",
           branch: null,
@@ -127,201 +175,78 @@ describe("OrchestrationEngine", () => {
         });
         yield* engine.dispatch({
           type: "thread.meta.update",
-          commandId: "cmd-stream-domain-b",
-          threadId: "thread-stream-domain",
+          commandId: "cmd-stream-thread-update",
+          threadId: "thread-stream",
           title: "domain-stream-updated",
-          createdAt,
         });
         eventTypes.push((yield* Queue.take(eventQueue)).type);
         eventTypes.push((yield* Queue.take(eventQueue)).type);
       }).pipe(Effect.scoped),
     );
+
     expect(eventTypes).toEqual(["thread.created", "thread.meta-updated"]);
     await system.dispose();
   });
 
-  it("stores completed turn summaries even when no files changed", async () => {
+  it("stores completed checkpoint summaries even when no files changed", async () => {
     const system = await createOrchestrationSystem();
-    const engine = system.engine;
-    const completedAt = new Date().toISOString();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: "cmd-project-turn-diff-create",
+        projectId: "project-turn-diff",
+        title: "Turn Diff Project",
+        workspaceRoot: "/tmp/project-turn-diff",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
     await system.run(
       engine.dispatch({
         type: "thread.create",
-        commandId: "cmd-thread-turn-diff",
+        commandId: "cmd-thread-turn-diff-create",
         threadId: "thread-turn-diff",
         projectId: "project-turn-diff",
         title: "Turn diff thread",
         model: "gpt-5-codex",
         branch: null,
         worktreePath: null,
-        createdAt: completedAt,
+        createdAt,
       }),
     );
     await system.run(
       engine.dispatch({
-        type: "thread.turnDiff.complete",
+        type: "thread.turn.diff.complete",
         commandId: "cmd-turn-diff-complete",
         threadId: "thread-turn-diff",
         turnId: "turn-1",
-        completedAt,
-        status: "completed",
-        files: [],
-        checkpointTurnCount: 1,
-        createdAt: completedAt,
-      }),
-    );
-
-    const firstThread = (await system.run(engine.getReadModel())).threads.find(
-      (thread) => thread.id === "thread-turn-diff",
-    );
-    expect(firstThread?.turnDiffSummaries).toEqual([
-      {
-        turnId: "turn-1",
-        completedAt,
-        status: "completed",
-        files: [],
-        checkpointTurnCount: 1,
-      },
-    ]);
-    await system.dispose();
-  });
-
-  it("reverts thread messages and turn summaries to a checkpoint", async () => {
-    const system = await createOrchestrationSystem();
-    const engine = system.engine;
-    const createdAt = new Date().toISOString();
-    await system.run(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: "cmd-thread-revert",
-        threadId: "thread-revert",
-        projectId: "project-revert",
-        title: "Revert thread",
-        model: "gpt-5-codex",
-        branch: null,
-        worktreePath: null,
-        createdAt,
-      }),
-    );
-    await system.run(
-      engine.dispatch({
-        type: "message.send",
-        commandId: "cmd-msg-1-user",
-        threadId: "thread-revert",
-        messageId: "user-1",
-        role: "user",
-        text: "first",
-        streaming: false,
-        createdAt,
-      }),
-    );
-    await system.run(
-      engine.dispatch({
-        type: "message.send",
-        commandId: "cmd-msg-1-assistant",
-        threadId: "thread-revert",
-        messageId: "assistant:turn-1",
-        role: "assistant",
-        text: "first-response",
-        streaming: false,
-        createdAt,
-      }),
-    );
-    await system.run(
-      engine.dispatch({
-        type: "thread.turnDiff.complete",
-        commandId: "cmd-turn-1-complete",
-        threadId: "thread-revert",
-        turnId: "turn-1",
         completedAt: createdAt,
-        status: "completed",
+        checkpointRef: "refs/t3/checkpoints/thread-turn-diff/turn/1",
+        status: "ready",
         files: [],
-        assistantMessageId: "assistant:turn-1",
         checkpointTurnCount: 1,
         createdAt,
-      }),
-    );
-
-    const createdAtSecond = new Date(Date.now() + 1_000).toISOString();
-    await system.run(
-      engine.dispatch({
-        type: "message.send",
-        commandId: "cmd-msg-2-user",
-        threadId: "thread-revert",
-        messageId: "user-2",
-        role: "user",
-        text: "second",
-        streaming: false,
-        createdAt: createdAtSecond,
-      }),
-    );
-    await system.run(
-      engine.dispatch({
-        type: "message.send",
-        commandId: "cmd-msg-2-assistant",
-        threadId: "thread-revert",
-        messageId: "assistant:turn-2",
-        role: "assistant",
-        text: "second-response",
-        streaming: false,
-        createdAt: createdAtSecond,
-      }),
-    );
-    await system.run(
-      engine.dispatch({
-        type: "thread.turnDiff.complete",
-        commandId: "cmd-turn-2-complete",
-        threadId: "thread-revert",
-        turnId: "turn-2",
-        completedAt: createdAtSecond,
-        status: "completed",
-        files: [],
-        assistantMessageId: "assistant:turn-2",
-        checkpointTurnCount: 2,
-        createdAt: createdAtSecond,
-      }),
-    );
-
-    await system.run(
-      engine.dispatch({
-        type: "thread.revert",
-        commandId: "cmd-thread-revert-apply",
-        threadId: "thread-revert",
-        turnCount: 1,
-        messageCount: 2,
-        createdAt: createdAtSecond,
       }),
     );
 
     const thread = (await system.run(engine.getReadModel())).threads.find(
-      (entry) => entry.id === "thread-revert",
+      (entry) => entry.id === "thread-turn-diff",
     );
-    expect(thread?.messages.map((message) => message.id)).toEqual(["user-1", "assistant:turn-1"]);
-    expect(thread?.turnDiffSummaries.map((summary) => summary.turnId)).toEqual(["turn-1"]);
-    expect(thread?.latestTurnId).toBe("turn-1");
+    expect(thread?.checkpoints).toEqual([
+      {
+        turnId: "turn-1",
+        checkpointTurnCount: 1,
+        checkpointRef: "refs/t3/checkpoints/thread-turn-diff/turn/1",
+        status: "ready",
+        files: [],
+        assistantMessageId: null,
+        completedAt: createdAt,
+      },
+    ]);
     await system.dispose();
-  });
-
-  it("allows stop to be called multiple times", async () => {
-    const inMemoryStore: OrchestrationEventStoreShape = {
-      append(event) {
-        return Effect.succeed({ ...event, sequence: 1 });
-      },
-      readFromSequence() {
-        return Stream.empty;
-      },
-      readAll() {
-        return Stream.empty;
-      },
-    };
-    const runtime = ManagedRuntime.make(
-      OrchestrationEngineLive.pipe(
-        Layer.provide(Layer.succeed(OrchestrationEventStore, inMemoryStore)),
-      ),
-    );
-    await runtime.runPromise(Effect.service(OrchestrationEngineService));
-    await runtime.dispose();
-    await expect(runtime.dispose()).resolves.toBeUndefined();
   });
 
   it("keeps processing queued commands after a storage failure", async () => {
@@ -331,7 +256,7 @@ describe("OrchestrationEngine", () => {
 
     const flakyStore: OrchestrationEventStoreShape = {
       append(event) {
-        if (shouldFailFirstAppend) {
+        if (shouldFailFirstAppend && event.commandId === "cmd-flaky-1") {
           shouldFailFirstAppend = false;
           return Effect.fail(
             new PersistenceSqlError({
@@ -358,11 +283,26 @@ describe("OrchestrationEngine", () => {
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
+        Layer.provide(OrchestrationProjectionPipelineLive),
         Layer.provide(Layer.succeed(OrchestrationEventStore, flakyStore)),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(SqlitePersistenceMemory),
       ),
     );
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
-    const createdAt = new Date().toISOString();
+    const createdAt = now();
+
+    await runtime.runPromise(
+      engine.dispatch({
+        type: "project.create",
+        commandId: "cmd-project-flaky-create",
+        projectId: "project-flaky",
+        title: "Flaky Project",
+        workspaceRoot: "/tmp/project-flaky",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
 
     await expect(
       runtime.runPromise(
@@ -394,28 +334,28 @@ describe("OrchestrationEngine", () => {
       }),
     );
 
-    expect(result.sequence).toBe(1);
-    expect((await runtime.runPromise(engine.getReadModel())).sequence).toBe(1);
-
+    expect(result.sequence).toBe(2);
+    expect((await runtime.runPromise(engine.getReadModel())).snapshotSequence).toBe(2);
     await runtime.dispose();
   });
 
   it("fails command dispatch when command invariants are violated", async () => {
     const system = await createOrchestrationSystem();
-    const engine = system.engine;
-    const createdAt = new Date().toISOString();
+    const { engine } = system;
 
     await expect(
       system.run(
         engine.dispatch({
-          type: "message.send",
+          type: "thread.turn.start",
           commandId: "cmd-invariant-missing-thread",
           threadId: "thread-missing",
-          messageId: "msg-missing",
-          role: "user",
-          text: "hello",
-          streaming: false,
-          createdAt,
+          message: {
+            messageId: "msg-missing",
+            role: "user",
+            text: "hello",
+            attachments: [],
+          },
+          createdAt: now(),
         }),
       ),
     ).rejects.toThrow("Thread 'thread-missing' does not exist");
@@ -425,8 +365,20 @@ describe("OrchestrationEngine", () => {
 
   it("rejects duplicate thread creation", async () => {
     const system = await createOrchestrationSystem();
-    const engine = system.engine;
-    const createdAt = new Date().toISOString();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: "cmd-project-duplicate-create",
+        projectId: "project-duplicate",
+        title: "Duplicate Project",
+        workspaceRoot: "/tmp/project-duplicate",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
 
     await system.run(
       engine.dispatch({

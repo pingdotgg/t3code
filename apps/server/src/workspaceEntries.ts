@@ -4,10 +4,9 @@ import path from "node:path";
 import { runProcess } from "./processRunner";
 
 import {
-  projectSearchEntriesInputSchema,
-  type ProjectEntry,
-  type ProjectSearchEntriesInput,
-  type ProjectSearchEntriesResult,
+  ProjectEntry,
+  ProjectSearchEntriesInput,
+  ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 
 const WORKSPACE_CACHE_TTL_MS = 15_000;
@@ -413,9 +412,8 @@ async function getWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
 export async function searchWorkspaceEntries(
   input: ProjectSearchEntriesInput,
 ): Promise<ProjectSearchEntriesResult> {
-  const parsed = projectSearchEntriesInputSchema.parse(input);
-  const index = await getWorkspaceIndex(parsed.cwd);
-  const normalizedQuery = normalizeQuery(parsed.query);
+  const index = await getWorkspaceIndex(input.cwd);
+  const normalizedQuery = normalizeQuery(input.query);
   const candidates = normalizedQuery
     ? index.entries.filter((entry) => entry.path.toLowerCase().includes(normalizedQuery))
     : index.entries;
@@ -427,7 +425,7 @@ export async function searchWorkspaceEntries(
   });
 
   return {
-    entries: ranked.slice(0, parsed.limit),
-    truncated: index.truncated || ranked.length > parsed.limit,
+    entries: ranked.slice(0, input.limit),
+    truncated: index.truncated || ranked.length > input.limit,
   };
 }

@@ -1,4 +1,11 @@
-import type { OrchestrationCommand, OrchestrationReadModel, OrchestrationThread } from "@t3tools/contracts";
+import type {
+  OrchestrationCommand,
+  OrchestrationProject,
+  OrchestrationReadModel,
+  OrchestrationThread,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
@@ -12,23 +19,67 @@ function invariantError(commandType: string, detail: string): OrchestrationComma
 
 export function findThreadById(
   readModel: OrchestrationReadModel,
-  threadId: string,
+  threadId: ThreadId,
 ): OrchestrationThread | undefined {
   return readModel.threads.find((thread) => thread.id === threadId);
 }
 
+export function findProjectById(
+  readModel: OrchestrationReadModel,
+  projectId: ProjectId,
+): OrchestrationProject | undefined {
+  return readModel.projects.find((project) => project.id === projectId);
+}
+
 export function listThreadsByProjectId(
   readModel: OrchestrationReadModel,
-  projectId: string,
+  projectId: ProjectId,
 ): ReadonlyArray<OrchestrationThread> {
   return readModel.threads.filter((thread) => thread.projectId === projectId);
+}
+
+export function requireProject(
+  input: {
+    readonly readModel: OrchestrationReadModel;
+    readonly command: OrchestrationCommand;
+    readonly projectId: ProjectId;
+  },
+): Effect.Effect<OrchestrationProject, OrchestrationCommandInvariantError> {
+  const project = findProjectById(input.readModel, input.projectId);
+  if (project) {
+    return Effect.succeed(project);
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Project '${input.projectId}' does not exist for command '${input.command.type}'.`,
+    ),
+  );
+}
+
+export function requireProjectAbsent(
+  input: {
+    readonly readModel: OrchestrationReadModel;
+    readonly command: OrchestrationCommand;
+    readonly projectId: ProjectId;
+  },
+): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (!findProjectById(input.readModel, input.projectId)) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Project '${input.projectId}' already exists and cannot be created twice.`,
+    ),
+  );
 }
 
 export function requireThread(
   input: {
     readonly readModel: OrchestrationReadModel;
     readonly command: OrchestrationCommand;
-    readonly threadId: string;
+    readonly threadId: ThreadId;
   },
 ): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
   const thread = findThreadById(input.readModel, input.threadId);
@@ -47,7 +98,7 @@ export function requireThreadAbsent(
   input: {
     readonly readModel: OrchestrationReadModel;
     readonly command: OrchestrationCommand;
-    readonly threadId: string;
+    readonly threadId: ThreadId;
   },
 ): Effect.Effect<void, OrchestrationCommandInvariantError> {
   if (!findThreadById(input.readModel, input.threadId)) {

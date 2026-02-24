@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { Schema } from "effect";
 
 export const STATIC_KEYBINDING_COMMANDS = [
   "terminal.toggle",
@@ -10,80 +10,73 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "editor.openFavorite",
 ] as const;
 
-export const keybindingCommandSchema = z.union([
-  z.enum(STATIC_KEYBINDING_COMMANDS),
-  z
-    .string()
-    .trim()
-    .min(1)
-    .max(96)
-    .regex(/^script\.[a-z0-9][a-z0-9-]*\.run$/),
+export const KeybindingCommand = Schema.Union([
+  Schema.Literals(STATIC_KEYBINDING_COMMANDS),
+  Schema.NonEmptyString.check(
+    Schema.isMaxLength(96),
+    Schema.isPattern(/^script\.[a-z0-9][a-z0-9-]*\.run$/),
+  ),
 ]);
+export type KeybindingCommand = typeof KeybindingCommand.Type;
 
-const keybindingValueSchema = z.string().trim().min(1).max(64);
-const keybindingWhenSchema = z.string().trim().min(1).max(256);
+export const KeybindingValue = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(64));
+export type KeybindingValue = typeof KeybindingValue.Type;
 
-export const keybindingRuleSchema = z.object({
-  key: keybindingValueSchema,
-  command: keybindingCommandSchema,
-  when: keybindingWhenSchema.optional(),
-});
+export const KeybindingWhen = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(256));
+export type KeybindingWhen = typeof KeybindingWhen.Type;
+export class KeybindingRule extends Schema.Class<KeybindingRule>("KeybindingRule")({
+  key: KeybindingValue,
+  command: KeybindingCommand,
+  when: Schema.optional(KeybindingWhen),
+}) {}
 
-export const keybindingsConfigSchema = z.array(keybindingRuleSchema).max(256);
+export const KeybindingsConfig = Schema.Array(KeybindingRule).check(Schema.isMaxLength(256));
+export type KeybindingsConfig = typeof KeybindingsConfig.Type;
 
-export const keybindingShortcutSchema = z
-  .object({
-    key: z.string().trim().min(1).max(32),
-    metaKey: z.boolean(),
-    ctrlKey: z.boolean(),
-    shiftKey: z.boolean(),
-    altKey: z.boolean(),
-    modKey: z.boolean(),
-  })
-  .strict();
+export class KeybindingShortcut extends Schema.Class<KeybindingShortcut>("KeybindingShortcut")({
+  key: KeybindingValue,
+  metaKey: Schema.Boolean,
+  ctrlKey: Schema.Boolean,
+  shiftKey: Schema.Boolean,
+  altKey: Schema.Boolean,
+  modKey: Schema.Boolean,
+}) {}
 
+export const KeybindingWhenNode: Schema.Schema<KeybindingWhenNode> = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("identifier"),
+    name: Schema.NonEmptyString,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("not"),
+    node: Schema.suspend((): Schema.Schema<KeybindingWhenNode> => KeybindingWhenNode),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("and"),
+    left: Schema.suspend((): Schema.Schema<KeybindingWhenNode> => KeybindingWhenNode),
+    right: Schema.suspend((): Schema.Schema<KeybindingWhenNode> => KeybindingWhenNode),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("or"),
+    left: Schema.suspend((): Schema.Schema<KeybindingWhenNode> => KeybindingWhenNode),
+    right: Schema.suspend((): Schema.Schema<KeybindingWhenNode> => KeybindingWhenNode),
+  }),
+]);
 export type KeybindingWhenNode =
   | { type: "identifier"; name: string }
   | { type: "not"; node: KeybindingWhenNode }
   | { type: "and"; left: KeybindingWhenNode; right: KeybindingWhenNode }
   | { type: "or"; left: KeybindingWhenNode; right: KeybindingWhenNode };
 
-export const keybindingWhenNodeSchema: z.ZodType<KeybindingWhenNode> = z.lazy(() =>
-  z.union([
-    z.object({
-      type: z.literal("identifier"),
-      name: z.string().min(1),
-    }),
-    z.object({
-      type: z.literal("not"),
-      node: keybindingWhenNodeSchema,
-    }),
-    z.object({
-      type: z.literal("and"),
-      left: keybindingWhenNodeSchema,
-      right: keybindingWhenNodeSchema,
-    }),
-    z.object({
-      type: z.literal("or"),
-      left: keybindingWhenNodeSchema,
-      right: keybindingWhenNodeSchema,
-    }),
-  ]),
+export class ResolvedKeybindingRule extends Schema.Class<ResolvedKeybindingRule>(
+  "ResolvedKeybindingRule",
+)({
+  command: KeybindingCommand,
+  shortcut: KeybindingShortcut,
+  whenAst: Schema.optional(KeybindingWhenNode),
+}) {}
+
+export const ResolvedKeybindingsConfig = Schema.Array(ResolvedKeybindingRule).check(
+  Schema.isMaxLength(256),
 );
-
-export const resolvedKeybindingRuleSchema = z
-  .object({
-    command: keybindingCommandSchema,
-    shortcut: keybindingShortcutSchema,
-    whenAst: keybindingWhenNodeSchema.optional(),
-  })
-  .strict();
-
-export const resolvedKeybindingsConfigSchema = z.array(resolvedKeybindingRuleSchema).max(256);
-
-export type KeybindingCommand = z.infer<typeof keybindingCommandSchema>;
-export type KeybindingRule = z.infer<typeof keybindingRuleSchema>;
-export type KeybindingsConfig = z.infer<typeof keybindingsConfigSchema>;
-export type KeybindingShortcut = z.infer<typeof keybindingShortcutSchema>;
-export type ResolvedKeybindingRule = z.infer<typeof resolvedKeybindingRuleSchema>;
-export type ResolvedKeybindingsConfig = z.infer<typeof resolvedKeybindingsConfigSchema>;
+export type ResolvedKeybindingsConfig = typeof ResolvedKeybindingsConfig.Type;

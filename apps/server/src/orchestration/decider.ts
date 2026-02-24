@@ -7,10 +7,44 @@ import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
-  requireNonNegativeInteger,
+  requireProject,
+  requireProjectAbsent,
   requireThread,
   requireThreadAbsent,
 } from "./commandInvariants.ts";
+
+const nowIso = () => new Date().toISOString();
+
+const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
+  eventId: crypto.randomUUID() as OrchestrationEvent["eventId"],
+  aggregateKind: "thread",
+  aggregateId: "" as OrchestrationEvent["aggregateId"],
+  occurredAt: nowIso(),
+  commandId: null,
+  causationEventId: null,
+  correlationId: null,
+  metadata: {},
+};
+
+function withEventBase(
+  input: Pick<OrchestrationCommand, "commandId"> & {
+    readonly aggregateKind: OrchestrationEvent["aggregateKind"];
+    readonly aggregateId: OrchestrationEvent["aggregateId"];
+    readonly occurredAt: string;
+    readonly metadata?: OrchestrationEvent["metadata"];
+  },
+): Omit<OrchestrationEvent, "sequence" | "type" | "payload"> {
+  return {
+    ...defaultMetadata,
+    eventId: crypto.randomUUID() as OrchestrationEvent["eventId"],
+    aggregateKind: input.aggregateKind,
+    aggregateId: input.aggregateId,
+    occurredAt: input.occurredAt,
+    commandId: input.commandId,
+    correlationId: input.commandId,
+    metadata: input.metadata ?? {},
+  };
+}
 
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
   command,
@@ -18,25 +52,107 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
-}): Effect.fn.Return<Omit<OrchestrationEvent, "sequence">, OrchestrationCommandInvariantError> {
-  const eventId = crypto.randomUUID();
-
+}): Effect.fn.Return<
+  Omit<OrchestrationEvent, "sequence"> | ReadonlyArray<Omit<OrchestrationEvent, "sequence">>,
+  OrchestrationCommandInvariantError
+> {
   switch (command.type) {
-    case "thread.create":
+    case "project.create": {
+      yield* requireProjectAbsent({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+
+      return {
+        ...withEventBase({
+          aggregateKind: "project",
+          aggregateId: command.projectId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "project.created",
+        payload: {
+          projectId: command.projectId,
+          title: command.title,
+          workspaceRoot: command.workspaceRoot,
+          defaultModel: command.defaultModel ?? null,
+          scripts: [],
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "project.meta.update": {
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "project",
+          aggregateId: command.projectId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "project.meta-updated",
+        payload: {
+          projectId: command.projectId,
+          ...(command.title !== undefined ? { title: command.title } : {}),
+          ...(command.workspaceRoot !== undefined ? { workspaceRoot: command.workspaceRoot } : {}),
+          ...(command.defaultModel !== undefined ? { defaultModel: command.defaultModel } : {}),
+          ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "project.delete": {
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "project",
+          aggregateId: command.projectId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "project.deleted",
+        payload: {
+          projectId: command.projectId,
+          deletedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.create": {
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
       yield* requireThreadAbsent({
         readModel,
         command,
         threadId: command.threadId,
       });
       return {
-        eventId,
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
         type: "thread.created",
-        aggregateType: "thread",
-        aggregateId: command.threadId,
-        occurredAt: command.createdAt,
-        commandId: command.commandId,
         payload: {
-          id: command.threadId,
+          threadId: command.threadId,
           projectId: command.projectId,
           title: command.title,
           model: command.model,
@@ -46,180 +162,356 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
-    case "thread.delete":
+    }
+
+    case "thread.delete": {
       yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const occurredAt = nowIso();
       return {
-        eventId,
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
         type: "thread.deleted",
-        aggregateType: "thread",
-        aggregateId: command.threadId,
-        occurredAt: command.createdAt,
-        commandId: command.commandId,
         payload: {
-          id: command.threadId,
-          deletedAt: command.createdAt,
+          threadId: command.threadId,
+          deletedAt: occurredAt,
         },
       };
-    case "thread.meta.update":
+    }
+
+    case "thread.meta.update": {
       yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const occurredAt = nowIso();
       return {
-        eventId,
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
         type: "thread.meta-updated",
-        aggregateType: "thread",
-        aggregateId: command.threadId,
-        occurredAt: command.createdAt,
-        commandId: command.commandId,
         payload: {
           threadId: command.threadId,
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.model !== undefined ? { model: command.model } : {}),
           ...(command.branch !== undefined ? { branch: command.branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.turn.start": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.message.messageId,
+          role: "user",
+          text: command.message.text,
+          attachments: command.message.attachments,
+          turnId: null,
+          streaming: false,
+          createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
       };
-    case "message.send":
-      yield* requireThread({
-        readModel,
-        command,
-        threadId: command.threadId,
-      });
-      return {
-        eventId,
-        type: "message.sent",
-        aggregateType: "thread",
-        aggregateId: command.threadId,
-        occurredAt: command.createdAt,
-        commandId: command.commandId,
+      const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        causationEventId: userMessageEvent.eventId,
+        type: "thread.turn-start-requested",
         payload: {
-          id: command.messageId,
-          role: command.role,
-          text: command.text,
           threadId: command.threadId,
+          messageId: command.message.messageId,
+          ...(command.model !== undefined ? { model: command.model } : {}),
+          ...(command.effort !== undefined ? { effort: command.effort } : {}),
           createdAt: command.createdAt,
-          streaming: command.streaming === true,
         },
       };
-    case "thread.session":
+      return [userMessageEvent, turnStartRequestedEvent];
+    }
+
+    case "thread.turn.interrupt": {
       yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
       return {
-        eventId,
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.turn-interrupt-requested",
+        payload: {
+          threadId: command.threadId,
+          ...(command.turnId !== undefined ? { turnId: command.turnId } : {}),
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.approval.respond": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+          metadata: {
+            requestId: command.requestId,
+          },
+        }),
+        type: "thread.approval-response-requested",
+        payload: {
+          threadId: command.threadId,
+          requestId: command.requestId,
+          decision: command.decision,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.checkpoint.revert": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.checkpoint-revert-requested",
+        payload: {
+          threadId: command.threadId,
+          turnCount: command.turnCount,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.session.stop": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.session-stop-requested",
+        payload: {
+          threadId: command.threadId,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.session.set": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+          metadata: {
+            ...(command.session.providerSessionId !== null
+              ? { providerSessionId: command.session.providerSessionId }
+              : {}),
+            ...(command.session.providerThreadId !== null
+              ? { providerThreadId: command.session.providerThreadId }
+              : {}),
+          },
+        }),
         type: "thread.session-set",
-        aggregateType: "thread",
-        aggregateId: command.threadId,
-        occurredAt: command.createdAt,
-        commandId: command.commandId,
         payload: {
           threadId: command.threadId,
           session: command.session,
         },
       };
-    case "git.readModel.upsert":
+    }
+
+    case "thread.message.assistant.delta": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
       return {
-        eventId,
-        type: "git.read-model-upsert",
-        aggregateType: "project",
-        aggregateId: command.projectId,
-        occurredAt: command.createdAt,
-        commandId: command.commandId,
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.message-sent",
         payload: {
-          projectId: command.projectId,
-          branch: command.branch,
-          hasWorkingTreeChanges: command.hasWorkingTreeChanges,
-          aheadCount: command.aheadCount,
-          behindCount: command.behindCount,
+          threadId: command.threadId,
+          messageId: command.messageId,
+          role: "assistant",
+          text: command.delta,
+          turnId: command.turnId ?? null,
+          streaming: true,
+          createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
       };
-    case "thread.turnDiff.complete":
+    }
+
+    case "thread.message.assistant.complete": {
       yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
       return {
-        eventId,
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          role: "assistant",
+          text: "",
+          turnId: command.turnId ?? null,
+          streaming: false,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.turn.diff.complete": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
         type: "thread.turn-diff-completed",
-        aggregateType: "thread",
-        aggregateId: command.threadId,
-        occurredAt: command.createdAt,
-        commandId: command.commandId,
         payload: {
           threadId: command.threadId,
           turnId: command.turnId,
-          completedAt: command.completedAt,
-          ...(command.status !== undefined ? { status: command.status } : {}),
+          checkpointTurnCount: command.checkpointTurnCount,
+          checkpointRef: command.checkpointRef,
+          status: command.status,
           files: command.files,
-          ...(command.assistantMessageId !== undefined
-            ? { assistantMessageId: command.assistantMessageId }
-            : {}),
-          ...(command.checkpointTurnCount !== undefined
-            ? { checkpointTurnCount: command.checkpointTurnCount }
-            : {}),
+          assistantMessageId: command.assistantMessageId ?? null,
+          completedAt: command.completedAt,
         },
       };
-    case "thread.activity.append":
+    }
+
+    case "thread.revert.complete": {
       yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
       return {
-        eventId,
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.reverted",
+        payload: {
+          threadId: command.threadId,
+          turnCount: command.turnCount,
+        },
+      };
+    }
+
+    case "thread.activity.append": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const requestId =
+        typeof command.activity.payload === "object" &&
+        command.activity.payload !== null &&
+        "requestId" in command.activity.payload &&
+        typeof (command.activity.payload as { requestId?: unknown }).requestId === "string"
+          ? ((command.activity.payload as { requestId: string }).requestId as OrchestrationEvent["metadata"]["requestId"])
+          : undefined;
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+          ...(requestId !== undefined ? { metadata: { requestId } } : {}),
+        }),
         type: "thread.activity-appended",
-        aggregateType: "thread",
-        aggregateId: command.threadId,
-        occurredAt: command.createdAt,
-        commandId: command.commandId,
         payload: {
           threadId: command.threadId,
           activity: command.activity,
         },
       };
-    case "thread.revert":
-      yield* requireThread({
-        readModel,
-        command,
-        threadId: command.threadId,
-      });
-      yield* requireNonNegativeInteger({
-        commandType: command.type,
-        field: "turnCount",
-        value: command.turnCount,
-      });
-      yield* requireNonNegativeInteger({
-        commandType: command.type,
-        field: "messageCount",
-        value: command.messageCount,
-      });
-      return {
-        eventId,
-        type: "thread.reverted",
-        aggregateType: "thread",
-        aggregateId: command.threadId,
-        occurredAt: command.createdAt,
-        commandId: command.commandId,
-        payload: {
-          threadId: command.threadId,
-          turnCount: command.turnCount,
-          messageCount: command.messageCount,
-        },
-      };
+    }
+
     default: {
       command satisfies never;
-      const fallback = command as any;
+      const fallback = command as never as { type: string };
       return yield* new OrchestrationCommandInvariantError({
         commandType: fallback.type,
         detail: `Unknown command type: ${fallback.type}`,

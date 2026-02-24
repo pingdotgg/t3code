@@ -200,3 +200,19 @@ export type CheckpointRepositoryError =
 export type ProviderSessionRepositoryError =
   | ProviderSessionRepositoryValidationError
   | ProviderSessionRepositoryPersistenceError;
+
+export type OrchestrationCommandReceiptRepositoryError =
+  | PersistenceSqlError
+  | PersistenceDecodeError;
+
+export type CheckpointDiffBlobRepositoryError = PersistenceSqlError | PersistenceDecodeError;
+
+export type ProviderSessionRuntimeRepositoryError =
+  | PersistenceSqlError
+  | PersistenceDecodeError
+  | PersistenceSerializationError;
+
+export type ProjectionRepositoryError =
+  | PersistenceSqlError
+  | PersistenceDecodeError
+  | PersistenceSerializationError;

@@ -1,29 +1,29 @@
-import type { ProviderKind } from "@t3tools/contracts";
+import type { ProviderKind, ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import { Option, ServiceMap } from "effect";
 import type { Effect } from "effect";
 
 import type { ProviderSessionRepositoryError } from "../Errors.ts";
 
 export interface ProviderSessionEntry {
-  readonly sessionId: string;
+  readonly sessionId: ProviderSessionId;
   readonly provider: ProviderKind;
-  readonly threadId?: string;
+  readonly threadId?: ThreadId;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
 
 export interface UpsertProviderSessionInput {
-  readonly sessionId: string;
+  readonly sessionId: ProviderSessionId;
   readonly provider: ProviderKind;
-  readonly threadId?: string;
+  readonly threadId?: ThreadId;
 }
 
 export interface DeleteProviderSessionInput {
-  readonly sessionId: string;
+  readonly sessionId: ProviderSessionId;
 }
 
 export interface GetProviderSessionInput {
-  readonly sessionId: string;
+  readonly sessionId: ProviderSessionId;
 }
 
 export interface ProviderSessionRepositoryShape {

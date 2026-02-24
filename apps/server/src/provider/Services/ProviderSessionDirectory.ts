@@ -7,7 +7,13 @@
  *
  * @module ProviderSessionDirectory
  */
-import type { ProviderKind } from "@t3tools/contracts";
+import type {
+  ProviderKind,
+  ProviderSessionId,
+  ProviderSessionRuntimeStatus,
+  ProviderThreadId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { Option, ServiceMap } from "effect";
 import type { Effect } from "effect";
 
@@ -18,9 +24,14 @@ import type {
 } from "../Errors.ts";
 
 export interface ProviderSessionBinding {
-  readonly sessionId: string;
+  readonly sessionId: ProviderSessionId;
   readonly provider: ProviderKind;
-  readonly threadId?: string;
+  readonly threadId?: ThreadId;
+  readonly adapterKey?: string;
+  readonly providerThreadId?: ProviderThreadId | null;
+  readonly status?: ProviderSessionRuntimeStatus;
+  readonly resumeCursor?: unknown | null;
+  readonly runtimePayload?: unknown | null;
 }
 
 export type ProviderSessionDirectoryReadError =
@@ -43,28 +54,28 @@ export interface ProviderSessionDirectoryShape {
    * Resolve the provider owner for a session id.
    */
   readonly getProvider: (
-    sessionId: string,
+    sessionId: ProviderSessionId,
   ) => Effect.Effect<ProviderKind, ProviderSessionDirectoryReadError>;
 
   /**
    * Resolve the tracked thread id for a session, if known.
    */
   readonly getThreadId: (
-    sessionId: string,
-  ) => Effect.Effect<Option.Option<string>, ProviderSessionDirectoryReadError>;
+    sessionId: ProviderSessionId,
+  ) => Effect.Effect<Option.Option<ThreadId>, ProviderSessionDirectoryReadError>;
 
   /**
    * Remove a session binding.
    */
   readonly remove: (
-    sessionId: string,
+    sessionId: ProviderSessionId,
   ) => Effect.Effect<void, ProviderSessionDirectoryPersistenceError>;
 
   /**
    * List tracked session ids.
    */
   readonly listSessionIds: () => Effect.Effect<
-    ReadonlyArray<string>,
+    ReadonlyArray<ProviderSessionId>,
     ProviderSessionDirectoryPersistenceError
   >;
 

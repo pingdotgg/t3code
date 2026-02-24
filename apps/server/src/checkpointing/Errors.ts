@@ -1,39 +1,6 @@
 import { Schema } from "effect";
-import type { CheckpointRepositoryError as CheckpointMetadataRepositoryError } from "../persistence/Errors.ts";
-
-/**
- * CheckpointValidationError - Invalid checkpoint API input.
- */
-export class CheckpointValidationError extends Schema.TaggedErrorClass<CheckpointValidationError>()(
-  "CheckpointValidationError",
-  {
-    operation: Schema.String,
-    issue: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Checkpoint validation failed in ${this.operation}: ${this.issue}`;
-  }
-}
-
-/**
- * CheckpointGitCommandError - Git command execution failed in checkpoint store.
- */
-export class CheckpointGitCommandError extends Schema.TaggedErrorClass<CheckpointGitCommandError>()(
-  "CheckpointGitCommandError",
-  {
-    operation: Schema.String,
-    command: Schema.String,
-    cwd: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Checkpoint git command failed in ${this.operation}: ${this.command} (${this.cwd}) - ${this.detail}`;
-  }
-}
+import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
+import { GitCommandError } from "../git/Errors.ts";
 
 /**
  * CheckpointUnavailableError - Expected checkpoint does not exist.
@@ -69,22 +36,6 @@ export class CheckpointRepositoryError extends Schema.TaggedErrorClass<Checkpoin
 }
 
 /**
- * CheckpointServiceValidationError - Invalid application-level checkpoint request.
- */
-export class CheckpointServiceValidationError extends Schema.TaggedErrorClass<CheckpointServiceValidationError>()(
-  "CheckpointServiceValidationError",
-  {
-    operation: Schema.String,
-    issue: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Checkpoint service validation failed in ${this.operation}: ${this.issue}`;
-  }
-}
-
-/**
  * CheckpointSessionNotFoundError - Session is missing in checkpoint workflow.
  */
 export class CheckpointSessionNotFoundError extends Schema.TaggedErrorClass<CheckpointSessionNotFoundError>()(
@@ -116,13 +67,13 @@ export class CheckpointInvariantError extends Schema.TaggedErrorClass<Checkpoint
 }
 
 export type CheckpointStoreError =
-  | CheckpointGitCommandError
+  | GitCommandError
+  | CheckpointInvariantError
   | CheckpointUnavailableError
   | CheckpointRepositoryError;
 
 export type CheckpointServiceError =
   | CheckpointStoreError
-  | CheckpointMetadataRepositoryError
-  | CheckpointServiceValidationError
+  | ProjectionRepositoryError
   | CheckpointSessionNotFoundError
   | CheckpointInvariantError;

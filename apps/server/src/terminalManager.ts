@@ -4,20 +4,16 @@ import path from "node:path";
 
 import {
   DEFAULT_TERMINAL_ID,
-  type TerminalClearInput,
-  type TerminalCloseInput,
+  TerminalClearInput,
+  TerminalCloseInput,
+  TerminalOpenInput,
+  TerminalResizeInput,
+  TerminalWriteInput,
   type TerminalEvent,
-  type TerminalOpenInput,
-  type TerminalResizeInput,
   type TerminalSessionSnapshot,
   type TerminalSessionStatus,
-  type TerminalWriteInput,
-  terminalClearInputSchema,
-  terminalCloseInputSchema,
-  terminalOpenInputSchema,
-  terminalResizeInputSchema,
-  terminalWriteInputSchema,
 } from "@t3tools/contracts";
+import { Schema } from "effect";
 
 import { createLogger } from "./logger";
 import { NodePtyAdapter, type PtyAdapter, type PtyExitEvent, type PtyProcess } from "./ptyAdapter";
@@ -29,6 +25,12 @@ const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
 const DEFAULT_OPEN_COLS = 120;
 const DEFAULT_OPEN_ROWS = 30;
 const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
+
+const decodeTerminalOpenInput = Schema.decodeUnknownSync(TerminalOpenInput);
+const decodeTerminalWriteInput = Schema.decodeUnknownSync(TerminalWriteInput);
+const decodeTerminalResizeInput = Schema.decodeUnknownSync(TerminalResizeInput);
+const decodeTerminalClearInput = Schema.decodeUnknownSync(TerminalClearInput);
+const decodeTerminalCloseInput = Schema.decodeUnknownSync(TerminalCloseInput);
 
 type TerminalSubprocessChecker = (terminalPid: number) => Promise<boolean>;
 
@@ -332,7 +334,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
   }
 
   async open(raw: TerminalOpenInput): Promise<TerminalSessionSnapshot> {
-    const input = terminalOpenInputSchema.parse(raw);
+    const input = decodeTerminalOpenInput(raw);
     return this.runWithThreadLock(input.threadId, async () => {
       await this.assertValidCwd(input.cwd);
 
@@ -404,7 +406,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
   }
 
   async write(raw: TerminalWriteInput): Promise<void> {
-    const input = terminalWriteInputSchema.parse(raw);
+    const input = decodeTerminalWriteInput(raw);
     const session = this.requireSession(input.threadId, input.terminalId);
     if (!session.process || session.status !== "running") {
       throw new Error(
@@ -415,7 +417,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
   }
 
   async resize(raw: TerminalResizeInput): Promise<void> {
-    const input = terminalResizeInputSchema.parse(raw);
+    const input = decodeTerminalResizeInput(raw);
     const session = this.requireSession(input.threadId, input.terminalId);
     if (!session.process || session.status !== "running") {
       throw new Error(
@@ -429,7 +431,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
   }
 
   async clear(raw: TerminalClearInput): Promise<void> {
-    const input = terminalClearInputSchema.parse(raw);
+    const input = decodeTerminalClearInput(raw);
     await this.runWithThreadLock(input.threadId, async () => {
       const session = this.requireSession(input.threadId, input.terminalId);
       session.history = "";
@@ -445,7 +447,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
   }
 
   async restart(raw: TerminalOpenInput): Promise<TerminalSessionSnapshot> {
-    const input = terminalOpenInputSchema.parse(raw);
+    const input = decodeTerminalOpenInput(raw);
     return this.runWithThreadLock(input.threadId, async () => {
       await this.assertValidCwd(input.cwd);
 
@@ -490,7 +492,7 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
   }
 
   async close(raw: TerminalCloseInput): Promise<void> {
-    const input = terminalCloseInputSchema.parse(raw);
+    const input = decodeTerminalCloseInput(raw);
     await this.runWithThreadLock(input.threadId, async () => {
       if (input.terminalId) {
         await this.closeSession(input.threadId, input.terminalId, input.deleteHistory === true);

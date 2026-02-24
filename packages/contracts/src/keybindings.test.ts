@@ -1,27 +1,36 @@
+import { Schema } from "effect";
 import { assert, describe, it } from "vitest";
 
 import {
-  keybindingRuleSchema,
-  keybindingsConfigSchema,
-  resolvedKeybindingRuleSchema,
-  resolvedKeybindingsConfigSchema,
+  KeybindingsConfig,
+  KeybindingRule,
+  ResolvedKeybindingRule,
+  ResolvedKeybindingsConfig,
 } from "./keybindings";
+
+const decode = <S extends Schema.Top>(schema: S, input: unknown): Schema.Schema.Type<S> =>
+  Schema.decodeUnknownSync(schema as never)(input) as Schema.Schema.Type<S>;
+
+const decodeResolvedRuleStrict = (input: unknown) =>
+  Schema.decodeUnknownSync(ResolvedKeybindingRule as never)(input, {
+    onExcessProperty: "error",
+  });
 
 describe("keybindings contracts", () => {
   it("parses keybinding rules", () => {
-    const parsed = keybindingRuleSchema.parse({
+    const parsed = decode(KeybindingRule, {
       key: "mod+j",
       command: "terminal.toggle",
     });
     assert.strictEqual(parsed.command, "terminal.toggle");
 
-    const parsedClose = keybindingRuleSchema.parse({
+    const parsedClose = decode(KeybindingRule, {
       key: "mod+w",
       command: "terminal.close",
     });
     assert.strictEqual(parsedClose.command, "terminal.close");
 
-    const parsedLocal = keybindingRuleSchema.parse({
+    const parsedLocal = decode(KeybindingRule, {
       key: "mod+shift+n",
       command: "chat.newLocal",
     });
@@ -30,7 +39,7 @@ describe("keybindings contracts", () => {
 
   it("rejects invalid command values", () => {
     assert.throws(() =>
-      keybindingRuleSchema.parse({
+      decode(KeybindingRule, {
         key: "mod+j",
         command: "script.Test.run",
       }),
@@ -38,7 +47,7 @@ describe("keybindings contracts", () => {
   });
 
   it("accepts dynamic script run commands", () => {
-    const parsed = keybindingRuleSchema.parse({
+    const parsed = decode(KeybindingRule, {
       key: "mod+r",
       command: "script.setup.run",
     });
@@ -46,7 +55,7 @@ describe("keybindings contracts", () => {
   });
 
   it("parses keybindings array payload", () => {
-    const parsed = keybindingsConfigSchema.parse([
+    const parsed = decode(KeybindingsConfig, [
       { key: "mod+j", command: "terminal.toggle" },
       { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
     ]);
@@ -54,7 +63,7 @@ describe("keybindings contracts", () => {
   });
 
   it("parses resolved keybinding rules", () => {
-    const parsed = resolvedKeybindingRuleSchema.parse({
+    const parsed = decode(ResolvedKeybindingRule, {
       command: "terminal.split",
       shortcut: {
         key: "d",
@@ -77,7 +86,7 @@ describe("keybindings contracts", () => {
   });
 
   it("parses resolved keybindings arrays", () => {
-    const parsed = resolvedKeybindingsConfigSchema.parse([
+    const parsed = decode(ResolvedKeybindingsConfig, [
       {
         command: "terminal.toggle",
         shortcut: {
@@ -95,7 +104,7 @@ describe("keybindings contracts", () => {
 
   it("rejects unknown fields in resolved keybinding rules", () => {
     assert.throws(() =>
-      resolvedKeybindingRuleSchema.parse({
+      decodeResolvedRuleStrict({
         command: "terminal.toggle",
         shortcut: {
           key: "j",

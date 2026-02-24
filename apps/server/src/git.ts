@@ -3,10 +3,10 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  gitPullInputSchema,
-  gitPullResultSchema,
-  gitStatusInputSchema,
-  gitStatusResultSchema,
+  GitPullInput,
+  GitPullResult,
+  GitStatusInput,
+  GitStatusResult,
   type GitCheckoutInput,
   type GitCreateBranchInput,
   type GitCreateWorktreeInput,
@@ -14,11 +14,7 @@ import {
   type GitInitInput,
   type GitListBranchesInput,
   type GitListBranchesResult,
-  type GitPullInput,
-  type GitPullResult,
   type GitRemoveWorktreeInput,
-  type GitStatusInput,
-  type GitStatusResult,
 } from "@t3tools/contracts";
 import { type ProcessRunResult, runProcess } from "./processRunner";
 
@@ -28,8 +24,6 @@ export interface TerminalCommandInput {
   timeoutMs?: number;
   maxOutputBytes?: number;
 }
-
-
 
 export interface GitStatusDetails extends Omit<GitStatusResult, "openPr"> {
   upstreamRef: string | null;
@@ -220,10 +214,9 @@ async function executeGit(
 export class GitCoreService {
   private readonly lastUpstreamRefreshAt = new Map<string, number>();
 
-  async status(raw: GitStatusInput): Promise<GitStatusResult> {
-    const input = gitStatusInputSchema.parse(raw);
+  async status(input: GitStatusInput): Promise<GitStatusResult> {
     const details = await this.statusDetails(input.cwd);
-    return gitStatusResultSchema.parse({
+    return GitStatusResult.makeUnsafe({
       branch: details.branch,
       hasWorkingTreeChanges: details.hasWorkingTreeChanges,
       workingTree: details.workingTree,
@@ -392,10 +385,10 @@ export class GitCoreService {
     });
     const afterSha = trimStdout(await this.gitStdout(cwd, ["rev-parse", "HEAD"], true));
     const refreshed = await this.statusDetails(cwd);
-    return gitPullResultSchema.parse({
+    return GitPullResult.makeUnsafe({
       status: beforeSha.length > 0 && beforeSha === afterSha ? "skipped_up_to_date" : "pulled",
       branch,
-      ...(refreshed.upstreamRef ? { upstreamBranch: refreshed.upstreamRef } : {}),
+      upstreamBranch: refreshed.upstreamRef,
     });
   }
 
@@ -678,9 +671,7 @@ export class GitCoreService {
 
 const defaultGitCoreService = new GitCoreService();
 
-export async function runTerminalCommand(
-  input: TerminalCommandInput,
-): Promise<ProcessRunResult> {
+export async function runTerminalCommand(input: TerminalCommandInput): Promise<ProcessRunResult> {
   const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const shellPath =
     process.platform === "win32"
@@ -712,8 +703,7 @@ export async function listGitBranches(input: GitListBranchesInput): Promise<GitL
   return defaultGitCoreService.listBranches(input);
 }
 
-export async function pullGitBranch(raw: GitPullInput): Promise<GitPullResult> {
-  const input = gitPullInputSchema.parse(raw);
+export async function pullGitBranch(input: GitPullInput): Promise<GitPullResult> {
   return defaultGitCoreService.pullCurrentBranch(input.cwd);
 }
 

@@ -12,20 +12,15 @@
  * @module ProviderService
  */
 import type {
-  ProviderGetCheckpointDiffInput,
-  ProviderGetCheckpointDiffResult,
   ProviderInterruptTurnInput,
-  ProviderListCheckpointsInput,
-  ProviderListCheckpointsResult,
   ProviderRespondToRequestInput,
-  ProviderRevertToCheckpointInput,
-  ProviderRevertToCheckpointResult,
+  ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
+  ProviderSessionId,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
   ProviderTurnStartResult,
-  ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import { ServiceMap } from "effect";
 import type { Effect, Stream } from "effect";
@@ -74,25 +69,12 @@ export interface ProviderServiceShape {
   readonly listSessions: () => Effect.Effect<ReadonlyArray<ProviderSession>>;
 
   /**
-   * List checkpoints for a provider session.
+   * Roll back provider conversation state by a number of turns.
    */
-  readonly listCheckpoints: (
-    input: ProviderListCheckpointsInput,
-  ) => Effect.Effect<ProviderListCheckpointsResult, ProviderServiceError>;
-
-  /**
-   * Diff two checkpoints for a provider session.
-   */
-  readonly getCheckpointDiff: (
-    input: ProviderGetCheckpointDiffInput,
-  ) => Effect.Effect<ProviderGetCheckpointDiffResult, ProviderServiceError>;
-
-  /**
-   * Revert a provider session to a checkpoint.
-   */
-  readonly revertToCheckpoint: (
-    input: ProviderRevertToCheckpointInput,
-  ) => Effect.Effect<ProviderRevertToCheckpointResult, ProviderServiceError>;
+  readonly rollbackConversation: (input: {
+    readonly sessionId: ProviderSessionId;
+    readonly numTurns: number;
+  }) => Effect.Effect<void, ProviderServiceError>;
 
   /**
    * Stop all active provider sessions.

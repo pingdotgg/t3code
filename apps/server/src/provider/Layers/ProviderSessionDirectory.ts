@@ -1,6 +1,12 @@
+import {
+  ProviderSessionId,
+  ProviderThreadId,
+  ThreadId,
+  type ProviderKind,
+} from "@t3tools/contracts";
 import { Effect, Layer, Option } from "effect";
 
-import { ProviderSessionRepository } from "../../persistence/Services/ProviderSessions.ts";
+import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import {
   ProviderSessionDirectoryPersistenceError,
   ProviderSessionNotFoundError,
@@ -22,51 +28,154 @@ function toPersistenceError(operation: string) {
 }
 
 function normalizeBinding(binding: ProviderSessionBinding): ProviderSessionBinding {
+  const sessionId = binding.sessionId.trim();
+  const threadId = binding.threadId?.trim();
+  const adapterKey = binding.adapterKey?.trim();
+  const providerThreadId =
+    binding.providerThreadId === null ? null : binding.providerThreadId?.trim();
+
   return {
-    sessionId: binding.sessionId.trim(),
+    sessionId: ProviderSessionId.makeUnsafe(sessionId),
     provider: binding.provider,
-    ...(binding.threadId?.trim() ? { threadId: binding.threadId.trim() } : {}),
+    ...(adapterKey !== undefined && adapterKey.length > 0 ? { adapterKey } : {}),
+    ...(threadId !== undefined && threadId.length > 0
+      ? { threadId: ThreadId.makeUnsafe(threadId) }
+      : {}),
+    ...(providerThreadId === null
+      ? { providerThreadId: null }
+      : providerThreadId !== undefined && providerThreadId.length > 0
+        ? { providerThreadId: ProviderThreadId.makeUnsafe(providerThreadId) }
+        : {}),
+    ...(binding.status !== undefined ? { status: binding.status } : {}),
+    ...(binding.resumeCursor !== undefined ? { resumeCursor: binding.resumeCursor } : {}),
+    ...(binding.runtimePayload !== undefined ? { runtimePayload: binding.runtimePayload } : {}),
   };
 }
 
+function decodeProviderKind(
+  providerName: string,
+  operation: string,
+): Effect.Effect<ProviderKind, ProviderSessionDirectoryPersistenceError> {
+  if (providerName === "codex" || providerName === "claudeCode") {
+    return Effect.succeed(providerName);
+  }
+  return Effect.fail(
+    new ProviderSessionDirectoryPersistenceError({
+      operation,
+      detail: `Unknown persisted provider '${providerName}'.`,
+    }),
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeRuntimePayload(
+  existing: unknown | null,
+  next: unknown | null | undefined,
+): unknown | null {
+  if (next === undefined) {
+    return existing ?? null;
+  }
+  if (isRecord(existing) && isRecord(next)) {
+    return {
+      ...existing,
+      ...next,
+    };
+  }
+  return next;
+}
+
 const makeProviderSessionDirectory = Effect.gen(function* () {
-  const repository = yield* ProviderSessionRepository;
+  const repository = yield* ProviderSessionRuntimeRepository;
 
   const persistUpsert = (binding: ProviderSessionBinding) =>
-    repository
-      .upsertSession({
-        sessionId: binding.sessionId,
-        provider: binding.provider,
-        ...(binding.threadId !== undefined ? { threadId: binding.threadId } : {}),
-      })
-      .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:upsertSession")));
+    Effect.gen(function* () {
+      const existing = yield* repository
+        .getBySessionId({
+          providerSessionId: binding.sessionId,
+        })
+        .pipe(
+          Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:getBySessionId")),
+        );
 
-  const persistDelete = (sessionId: string) =>
-    repository
-      .deleteSession({ sessionId })
-      .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.remove:deleteSession")));
+      const existingRuntime = Option.getOrUndefined(existing);
+      const resolvedThreadId = binding.threadId ?? existingRuntime?.threadId;
+      if (!resolvedThreadId) {
+        return yield* Effect.fail(
+          new ProviderValidationError({
+            operation: "ProviderSessionDirectory.upsert",
+            issue: "threadId must be a non-empty string.",
+          }),
+        );
+      }
 
-  const getBinding = (sessionId: string) =>
-    repository.getSession({ sessionId }).pipe(
-      Effect.mapError(toPersistenceError("ProviderSessionDirectory.getBinding:getSession")),
-      Effect.map((entry) =>
-        Option.map(entry, (value) => ({
-          sessionId: value.sessionId,
-          provider: value.provider,
-          ...(value.threadId !== undefined ? { threadId: value.threadId } : {}),
-        })),
+      const now = new Date().toISOString();
+      yield* repository
+        .upsert({
+          providerSessionId: binding.sessionId,
+          threadId: resolvedThreadId,
+          providerName: binding.provider,
+          adapterKey: binding.adapterKey ?? existingRuntime?.adapterKey ?? binding.provider,
+          providerThreadId: binding.providerThreadId ?? existingRuntime?.providerThreadId ?? null,
+          status: binding.status ?? existingRuntime?.status ?? "running",
+          lastSeenAt: now,
+          resumeCursor:
+            binding.resumeCursor !== undefined
+              ? binding.resumeCursor
+              : (existingRuntime?.resumeCursor ?? null),
+          runtimePayload: mergeRuntimePayload(
+            existingRuntime?.runtimePayload ?? null,
+            binding.runtimePayload,
+          ),
+        })
+        .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:upsert")));
+    });
+
+  const persistDelete = (sessionId: ProviderSessionId) =>
+    repository
+      .deleteBySessionId({ providerSessionId: sessionId })
+      .pipe(
+        Effect.mapError(toPersistenceError("ProviderSessionDirectory.remove:deleteBySessionId")),
+      );
+
+  const getBinding = (sessionId: ProviderSessionId) =>
+    repository.getBySessionId({ providerSessionId: sessionId }).pipe(
+      Effect.mapError(toPersistenceError("ProviderSessionDirectory.getBinding:getBySessionId")),
+      Effect.flatMap((runtime) =>
+        Option.match(runtime, {
+          onNone: () => Effect.succeed(Option.none<ProviderSessionBinding>()),
+          onSome: (value) =>
+            decodeProviderKind(value.providerName, "ProviderSessionDirectory.getBinding").pipe(
+              Effect.map((provider) =>
+                Option.some({
+                  sessionId: value.providerSessionId,
+                  provider,
+                  threadId: value.threadId,
+                }),
+              ),
+            ),
+        }),
       ),
     );
 
   const listBindings = () =>
-    repository.listSessions().pipe(
-      Effect.mapError(toPersistenceError("ProviderSessionDirectory.listSessionIds:listSessions")),
-      Effect.map((rows) =>
-        rows.map((row) => ({
-          sessionId: row.sessionId,
-          provider: row.provider,
-          ...(row.threadId !== undefined ? { threadId: row.threadId } : {}),
-        })),
+    repository.list().pipe(
+      Effect.mapError(toPersistenceError("ProviderSessionDirectory.listSessionIds:list")),
+      Effect.flatMap((rows) =>
+        Effect.forEach(
+          rows,
+          (row) =>
+            decodeProviderKind(row.providerName, "ProviderSessionDirectory.listSessionIds").pipe(
+              Effect.map((provider) => ({
+                sessionId: row.providerSessionId,
+                provider,
+                threadId: row.threadId,
+              })),
+            ),
+          { concurrency: "unbounded" },
+        ),
       ),
     );
 

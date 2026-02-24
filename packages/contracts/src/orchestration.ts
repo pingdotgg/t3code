@@ -3,6 +3,7 @@ import { Schema } from "effect";
 export const ORCHESTRATION_WS_METHODS = {
   getSnapshot: "orchestration.getSnapshot",
   dispatchCommand: "orchestration.dispatchCommand",
+  getTurnDiff: "orchestration.getTurnDiff",
   replayEvents: "orchestration.replayEvents",
 } as const;
 
@@ -10,234 +11,854 @@ export const ORCHESTRATION_WS_CHANNELS = {
   domainEvent: "orchestration.domainEvent",
 } as const;
 
-const IsoDateTimeSchema = Schema.String;
-const IdSchema = Schema.String;
+export const IsoDateTime = Schema.String;
+export type IsoDateTime = typeof IsoDateTime.Type;
 
-export const OrchestrationMessageSchema = Schema.Struct({
-  id: IdSchema,
-  role: Schema.Literals(["user", "assistant"]),
-  text: Schema.String,
-  createdAt: IsoDateTimeSchema,
-  completedAt: Schema.optional(IsoDateTimeSchema),
-  streaming: Schema.Boolean,
+export const ThreadId = Schema.String.pipe(Schema.brand("ThreadId"));
+export type ThreadId = typeof ThreadId.Type;
+export const ProjectId = Schema.String.pipe(Schema.brand("ProjectId"));
+export type ProjectId = typeof ProjectId.Type;
+export const CommandId = Schema.String.pipe(Schema.brand("CommandId"));
+export type CommandId = typeof CommandId.Type;
+export const EventId = Schema.String.pipe(Schema.brand("EventId"));
+export type EventId = typeof EventId.Type;
+export const MessageId = Schema.String.pipe(Schema.brand("MessageId"));
+export type MessageId = typeof MessageId.Type;
+export const TurnId = Schema.String.pipe(Schema.brand("TurnId"));
+export type TurnId = typeof TurnId.Type;
+
+export const ProviderSessionId = Schema.String.pipe(Schema.brand("ProviderSessionId"));
+export type ProviderSessionId = typeof ProviderSessionId.Type;
+export const ProviderThreadId = Schema.String.pipe(Schema.brand("ProviderThreadId"));
+export type ProviderThreadId = typeof ProviderThreadId.Type;
+export const ProviderTurnId = Schema.String.pipe(Schema.brand("ProviderTurnId"));
+export type ProviderTurnId = typeof ProviderTurnId.Type;
+export const ProviderItemId = Schema.String.pipe(Schema.brand("ProviderItemId"));
+export type ProviderItemId = typeof ProviderItemId.Type;
+export const ApprovalRequestId = Schema.String.pipe(Schema.brand("ApprovalRequestId"));
+export type ApprovalRequestId = typeof ApprovalRequestId.Type;
+export const CheckpointRef = Schema.String.pipe(Schema.brand("CheckpointRef"));
+export type CheckpointRef = typeof CheckpointRef.Type;
+
+export const ProviderKind = Schema.Literals(["codex", "claudeCode"]);
+export type ProviderKind = typeof ProviderKind.Type;
+export const ProviderApprovalPolicy = Schema.Literals([
+  "untrusted",
+  "on-failure",
+  "on-request",
+  "never",
+]);
+export type ProviderApprovalPolicy = typeof ProviderApprovalPolicy.Type;
+export const ProviderSandboxMode = Schema.Literals([
+  "read-only",
+  "workspace-write",
+  "danger-full-access",
+]);
+export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
+export const ProviderRequestKind = Schema.Literals(["command", "file-change"]);
+export type ProviderRequestKind = typeof ProviderRequestKind.Type;
+export const ProviderApprovalDecision = Schema.Literals([
+  "accept",
+  "acceptForSession",
+  "decline",
+  "cancel",
+]);
+export type ProviderApprovalDecision = typeof ProviderApprovalDecision.Type;
+
+export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
+export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
+export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+export const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
+
+// Correlation id is command id by design in this model.
+export const CorrelationId = CommandId;
+export type CorrelationId = typeof CorrelationId.Type;
+
+export const NonNegativeInt = Schema.Number.check(Schema.isInt()).check(
+  Schema.isGreaterThanOrEqualTo(0),
+);
+
+const TrimmedNonEmptyStringSchema = Schema.Trimmed.check(Schema.isNonEmpty());
+
+export const ChatImageAttachment = Schema.Struct({
+  type: Schema.Literal("image"),
+  name: TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyStringSchema.check(
+    Schema.isMaxLength(100),
+    Schema.isPattern(/^image\//i),
+  ),
+  sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)),
+  dataUrl: TrimmedNonEmptyStringSchema.check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS),
+  ),
 });
+export type ChatImageAttachment = typeof ChatImageAttachment.Type;
 
-export type OrchestrationMessage = Schema.Schema.Type<typeof OrchestrationMessageSchema>;
+export const ChatAttachment = Schema.Union([ChatImageAttachment]);
+export type ChatAttachment = typeof ChatAttachment.Type;
 
-export const OrchestrationSessionSchema = Schema.Struct({
-  sessionId: IdSchema,
-  status: Schema.Literals(["connecting", "ready", "running", "error", "closed"]),
-  provider: Schema.Literals(["codex", "claudeCode"]),
-  threadId: IdSchema,
-  activeTurnId: Schema.NullOr(Schema.String),
-  createdAt: IsoDateTimeSchema,
-  updatedAt: IsoDateTimeSchema,
-  lastError: Schema.NullOr(Schema.String),
-});
-
-export type OrchestrationSession = Schema.Schema.Type<typeof OrchestrationSessionSchema>;
-
-export const OrchestrationTurnDiffFileSchema = Schema.Struct({
-  path: Schema.String,
-  kind: Schema.optional(Schema.String),
-  additions: Schema.optional(Schema.Number),
-  deletions: Schema.optional(Schema.Number),
-});
-
-export type OrchestrationTurnDiffFile = Schema.Schema.Type<typeof OrchestrationTurnDiffFileSchema>;
-
-export const OrchestrationTurnDiffSummarySchema = Schema.Struct({
-  turnId: IdSchema,
-  completedAt: IsoDateTimeSchema,
-  status: Schema.optional(Schema.String),
-  files: Schema.Array(OrchestrationTurnDiffFileSchema),
-  assistantMessageId: Schema.optional(Schema.String),
-  checkpointTurnCount: Schema.optional(Schema.Number),
-});
-
-export type OrchestrationTurnDiffSummary = Schema.Schema.Type<
-  typeof OrchestrationTurnDiffSummarySchema
->;
-
-export const OrchestrationThreadActivityToneSchema = Schema.Literals([
-  "thinking",
-  "tool",
-  "info",
-  "error",
+export const ProjectScriptIcon = Schema.Literals([
+  "play",
+  "test",
+  "lint",
+  "configure",
+  "build",
+  "debug",
 ]);
 
-export type OrchestrationThreadActivityTone = Schema.Schema.Type<
-  typeof OrchestrationThreadActivityToneSchema
->;
-
-export const OrchestrationThreadActivitySchema = Schema.Struct({
-  id: IdSchema,
-  createdAt: IsoDateTimeSchema,
-  label: Schema.String,
-  detail: Schema.optional(Schema.String),
-  tone: OrchestrationThreadActivityToneSchema,
-  turnId: Schema.optional(Schema.String),
-  requestId: Schema.optional(Schema.String),
-  requestKind: Schema.optional(Schema.Literals(["command", "file-change"])),
+export const ProjectScript = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  command: Schema.String,
+  icon: ProjectScriptIcon,
+  runOnWorktreeCreate: Schema.Boolean,
 });
+export type ProjectScript = typeof ProjectScript.Type;
 
-export type OrchestrationThreadActivity = Schema.Schema.Type<typeof OrchestrationThreadActivitySchema>;
+export const OrchestrationProject = Schema.Struct({
+  id: ProjectId,
+  title: Schema.String,
+  workspaceRoot: Schema.String,
+  defaultModel: Schema.NullOr(Schema.String),
+  scripts: Schema.Array(ProjectScript),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  deletedAt: Schema.NullOr(IsoDateTime),
+});
+export type OrchestrationProject = typeof OrchestrationProject.Type;
 
-export const OrchestrationThreadSchema = Schema.Struct({
-  id: IdSchema,
-  projectId: IdSchema,
+export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
+export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
+
+export const OrchestrationMessage = Schema.Struct({
+  id: MessageId,
+  role: OrchestrationMessageRole,
+  text: Schema.String,
+  attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  turnId: Schema.NullOr(TurnId),
+  streaming: Schema.Boolean,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type OrchestrationMessage = typeof OrchestrationMessage.Type;
+
+export const OrchestrationSessionStatus = Schema.Literals([
+  "idle",
+  "starting",
+  "running",
+  "ready",
+  "interrupted",
+  "stopped",
+  "error",
+]);
+export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
+
+export const OrchestrationSession = Schema.Struct({
+  threadId: ThreadId,
+  status: OrchestrationSessionStatus,
+  providerName: Schema.NullOr(Schema.String),
+  providerSessionId: Schema.NullOr(ProviderSessionId),
+  providerThreadId: Schema.NullOr(ProviderThreadId),
+  activeTurnId: Schema.NullOr(TurnId),
+  lastError: Schema.NullOr(Schema.String),
+  updatedAt: IsoDateTime,
+});
+export type OrchestrationSession = typeof OrchestrationSession.Type;
+
+export const OrchestrationCheckpointFile = Schema.Struct({
+  path: Schema.String,
+  kind: Schema.String,
+  additions: NonNegativeInt,
+  deletions: NonNegativeInt,
+});
+export type OrchestrationCheckpointFile = typeof OrchestrationCheckpointFile.Type;
+
+export const OrchestrationCheckpointStatus = Schema.Literals(["ready", "missing", "error"]);
+export type OrchestrationCheckpointStatus = typeof OrchestrationCheckpointStatus.Type;
+
+export const OrchestrationCheckpointSummary = Schema.Struct({
+  turnId: TurnId,
+  checkpointTurnCount: NonNegativeInt,
+  checkpointRef: CheckpointRef,
+  status: OrchestrationCheckpointStatus,
+  files: Schema.Array(OrchestrationCheckpointFile),
+  assistantMessageId: Schema.NullOr(MessageId),
+  completedAt: IsoDateTime,
+});
+export type OrchestrationCheckpointSummary = typeof OrchestrationCheckpointSummary.Type;
+
+export const OrchestrationThreadActivityTone = Schema.Literals([
+  "info",
+  "tool",
+  "approval",
+  "error",
+]);
+export type OrchestrationThreadActivityTone = typeof OrchestrationThreadActivityTone.Type;
+
+export const OrchestrationThreadActivity = Schema.Struct({
+  id: EventId,
+  tone: OrchestrationThreadActivityTone,
+  kind: Schema.String,
+  summary: Schema.String,
+  payload: Schema.Unknown,
+  turnId: Schema.NullOr(TurnId),
+  createdAt: IsoDateTime,
+});
+export type OrchestrationThreadActivity = typeof OrchestrationThreadActivity.Type;
+
+export const OrchestrationThread = Schema.Struct({
+  id: ThreadId,
+  projectId: ProjectId,
   title: Schema.String,
   model: Schema.String,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
-  createdAt: IsoDateTimeSchema,
-  updatedAt: IsoDateTimeSchema,
-  latestTurnId: Schema.NullOr(Schema.String),
-  latestTurnStartedAt: Schema.NullOr(Schema.String),
-  latestTurnCompletedAt: Schema.NullOr(Schema.String),
-  latestTurnDurationMs: Schema.NullOr(Schema.Number),
-  messages: Schema.Array(OrchestrationMessageSchema),
-  session: Schema.NullOr(OrchestrationSessionSchema),
-  turnDiffSummaries: Schema.Array(OrchestrationTurnDiffSummarySchema),
-  activities: Schema.Array(OrchestrationThreadActivitySchema),
-  error: Schema.NullOr(Schema.String),
+  latestTurnId: Schema.NullOr(TurnId),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  deletedAt: Schema.NullOr(IsoDateTime),
+  messages: Schema.Array(OrchestrationMessage),
+  activities: Schema.Array(OrchestrationThreadActivity),
+  checkpoints: Schema.Array(OrchestrationCheckpointSummary),
+  session: Schema.NullOr(OrchestrationSession),
+});
+export type OrchestrationThread = typeof OrchestrationThread.Type;
+
+export const OrchestrationReadModel = Schema.Struct({
+  snapshotSequence: NonNegativeInt,
+  projects: Schema.Array(OrchestrationProject),
+  threads: Schema.Array(OrchestrationThread),
+  updatedAt: IsoDateTime,
+});
+export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;
+
+export const ProjectCreateCommand = Schema.Struct({
+  type: Schema.Literal("project.create"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  title: Schema.String,
+  workspaceRoot: Schema.String,
+  defaultModel: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
 });
 
-export type OrchestrationThread = Schema.Schema.Type<typeof OrchestrationThreadSchema>;
-
-export const OrchestrationGitReadModelSchema = Schema.Struct({
-  projectId: IdSchema,
-  branch: Schema.NullOr(Schema.String),
-  hasWorkingTreeChanges: Schema.Boolean,
-  aheadCount: Schema.Number,
-  behindCount: Schema.Number,
-  updatedAt: IsoDateTimeSchema,
+export const ProjectMetaUpdateCommand = Schema.Struct({
+  type: Schema.Literal("project.meta.update"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  title: Schema.optional(Schema.String),
+  workspaceRoot: Schema.optional(Schema.String),
+  defaultModel: Schema.optional(Schema.String),
+  scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 
-export type OrchestrationGitReadModel = Schema.Schema.Type<typeof OrchestrationGitReadModelSchema>;
-
-export const OrchestrationReadModelSchema = Schema.Struct({
-  sequence: Schema.Number,
-  threads: Schema.Array(OrchestrationThreadSchema),
-  gitByProjectId: Schema.Record( Schema.String,  OrchestrationGitReadModelSchema),
-  updatedAt: IsoDateTimeSchema,
+export const ProjectDeleteCommand = Schema.Struct({
+  type: Schema.Literal("project.delete"),
+  commandId: CommandId,
+  projectId: ProjectId,
 });
 
-export type OrchestrationReadModel = Schema.Schema.Type<typeof OrchestrationReadModelSchema>;
-
-export const CreateThreadCommandSchema = Schema.Struct({
+export const ThreadCreateCommand = Schema.Struct({
   type: Schema.Literal("thread.create"),
-  commandId: IdSchema,
-  threadId: IdSchema,
-  projectId: IdSchema,
+  commandId: CommandId,
+  threadId: ThreadId,
+  projectId: ProjectId,
   title: Schema.String,
   model: Schema.String,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
-  createdAt: IsoDateTimeSchema,
+  createdAt: IsoDateTime,
 });
 
-export const DeleteThreadCommandSchema = Schema.Struct({
+export const ThreadDeleteCommand = Schema.Struct({
   type: Schema.Literal("thread.delete"),
-  commandId: IdSchema,
-  threadId: IdSchema,
-  createdAt: IsoDateTimeSchema,
+  commandId: CommandId,
+  threadId: ThreadId,
 });
 
-export const UpdateThreadMetaCommandSchema = Schema.Struct({
+export const ThreadMetaUpdateCommand = Schema.Struct({
   type: Schema.Literal("thread.meta.update"),
-  commandId: IdSchema,
-  threadId: IdSchema,
+  commandId: CommandId,
+  threadId: ThreadId,
   title: Schema.optional(Schema.String),
   model: Schema.optional(Schema.String),
   branch: Schema.optional(Schema.NullOr(Schema.String)),
   worktreePath: Schema.optional(Schema.NullOr(Schema.String)),
-  createdAt: IsoDateTimeSchema,
 });
 
-export const SendMessageCommandSchema = Schema.Struct({
-  type: Schema.Literal("message.send"),
-  commandId: IdSchema,
-  threadId: IdSchema,
-  messageId: IdSchema,
-  role: Schema.Literals(["user", "assistant"]),
-  text: Schema.String,
-  streaming: Schema.optional(Schema.Boolean),
-  createdAt: IsoDateTimeSchema,
+export const ThreadTurnStartCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.start"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  message: Schema.Struct({
+    messageId: MessageId,
+    role: Schema.Literal("user"),
+    text: Schema.String,
+    attachments: Schema.Array(ChatAttachment),
+  }),
+  model: Schema.optional(Schema.String),
+  effort: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
 });
 
-export const SetThreadSessionSchema = Schema.Struct({
-  type: Schema.Literal("thread.session"),
-  commandId: IdSchema,
-  threadId: IdSchema,
-  session: OrchestrationSessionSchema,
-  createdAt: IsoDateTimeSchema,
+export const ThreadTurnInterruptCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.interrupt"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: Schema.optional(TurnId),
+  createdAt: IsoDateTime,
 });
 
-export const UpsertGitReadModelCommandSchema = Schema.Struct({
-  type: Schema.Literal("git.readModel.upsert"),
-  commandId: IdSchema,
-  projectId: IdSchema,
-  branch: Schema.NullOr(Schema.String),
-  hasWorkingTreeChanges: Schema.Boolean,
-  aheadCount: Schema.Number,
-  behindCount: Schema.Number,
-  createdAt: IsoDateTimeSchema,
+export const ThreadApprovalRespondCommand = Schema.Struct({
+  type: Schema.Literal("thread.approval.respond"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  requestId: ApprovalRequestId,
+  decision: ProviderApprovalDecision,
+  createdAt: IsoDateTime,
 });
 
-export const CompleteThreadTurnDiffCommandSchema = Schema.Struct({
-  type: Schema.Literal("thread.turnDiff.complete"),
-  commandId: IdSchema,
-  threadId: IdSchema,
-  turnId: IdSchema,
-  completedAt: IsoDateTimeSchema,
-  status: Schema.optional(Schema.String),
-  files: Schema.Array(OrchestrationTurnDiffFileSchema),
-  assistantMessageId: Schema.optional(Schema.String),
-  checkpointTurnCount: Schema.optional(Schema.Number),
-  createdAt: IsoDateTimeSchema,
+export const ThreadCheckpointRevertCommand = Schema.Struct({
+  type: Schema.Literal("thread.checkpoint.revert"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnCount: NonNegativeInt,
+  createdAt: IsoDateTime,
 });
 
-export const RevertThreadCommandSchema = Schema.Struct({
-  type: Schema.Literal("thread.revert"),
-  commandId: IdSchema,
-  threadId: IdSchema,
-  turnCount: Schema.Number,
-  messageCount: Schema.Number,
-  createdAt: IsoDateTimeSchema,
+export const ThreadSessionStopCommand = Schema.Struct({
+  type: Schema.Literal("thread.session.stop"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  createdAt: IsoDateTime,
 });
 
-export const AppendThreadActivityCommandSchema = Schema.Struct({
+export const ClientOrchestrationCommand = Schema.Union([
+  ProjectCreateCommand,
+  ProjectMetaUpdateCommand,
+  ProjectDeleteCommand,
+  ThreadCreateCommand,
+  ThreadDeleteCommand,
+  ThreadMetaUpdateCommand,
+  ThreadTurnStartCommand,
+  ThreadTurnInterruptCommand,
+  ThreadApprovalRespondCommand,
+  ThreadCheckpointRevertCommand,
+  ThreadSessionStopCommand,
+]);
+export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
+
+export const ThreadSessionSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.session.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  session: OrchestrationSession,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadMessageAssistantDeltaCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.assistant.delta"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  delta: Schema.String,
+  turnId: Schema.optional(TurnId),
+  createdAt: IsoDateTime,
+});
+
+export const ThreadMessageAssistantCompleteCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.assistant.complete"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  turnId: Schema.optional(TurnId),
+  createdAt: IsoDateTime,
+});
+
+export const ThreadTurnDiffCompleteCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.diff.complete"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: TurnId,
+  completedAt: IsoDateTime,
+  checkpointRef: CheckpointRef,
+  status: OrchestrationCheckpointStatus,
+  files: Schema.Array(OrchestrationCheckpointFile),
+  assistantMessageId: Schema.optional(MessageId),
+  checkpointTurnCount: NonNegativeInt,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadActivityAppendCommand = Schema.Struct({
   type: Schema.Literal("thread.activity.append"),
-  commandId: IdSchema,
-  threadId: IdSchema,
-  activity: OrchestrationThreadActivitySchema,
-  createdAt: IsoDateTimeSchema,
+  commandId: CommandId,
+  threadId: ThreadId,
+  activity: OrchestrationThreadActivity,
+  createdAt: IsoDateTime,
 });
 
-export const OrchestrationCommandSchema = Schema.Union([
-  CreateThreadCommandSchema,
-  DeleteThreadCommandSchema,
-  UpdateThreadMetaCommandSchema,
-  SendMessageCommandSchema,
-  SetThreadSessionSchema,
-  UpsertGitReadModelCommandSchema,
-  CompleteThreadTurnDiffCommandSchema,
-  AppendThreadActivityCommandSchema,
-  RevertThreadCommandSchema,]
-);
-
-export type OrchestrationCommand = Schema.Schema.Type<typeof OrchestrationCommandSchema>;
-
-export const OrchestrationEventSchema = Schema.Struct({
-  sequence: Schema.Number,
-  eventId: IdSchema,
-  type: Schema.String,
-  aggregateType: Schema.String,
-  aggregateId: Schema.String,
-  occurredAt: IsoDateTimeSchema,
-  commandId: Schema.NullOr(Schema.String),
-  payload: Schema.Unknown,
+export const ThreadRevertCompleteCommand = Schema.Struct({
+  type: Schema.Literal("thread.revert.complete"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnCount: NonNegativeInt,
+  createdAt: IsoDateTime,
 });
 
-export type OrchestrationEvent = Schema.Schema.Type<typeof OrchestrationEventSchema>;
+export const InternalOrchestrationCommand = Schema.Union([
+  ThreadSessionSetCommand,
+  ThreadMessageAssistantDeltaCommand,
+  ThreadMessageAssistantCompleteCommand,
+  ThreadTurnDiffCompleteCommand,
+  ThreadActivityAppendCommand,
+  ThreadRevertCompleteCommand,
+]);
+export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
+
+export const OrchestrationCommand = Schema.Union([
+  ClientOrchestrationCommand,
+  InternalOrchestrationCommand,
+]);
+export type OrchestrationCommand = typeof OrchestrationCommand.Type;
+
+export const OrchestrationEventType = Schema.Literals([
+  "project.created",
+  "project.meta-updated",
+  "project.deleted",
+  "thread.created",
+  "thread.deleted",
+  "thread.meta-updated",
+  "thread.message-sent",
+  "thread.turn-start-requested",
+  "thread.turn-interrupt-requested",
+  "thread.approval-response-requested",
+  "thread.checkpoint-revert-requested",
+  "thread.reverted",
+  "thread.session-stop-requested",
+  "thread.session-set",
+  "thread.turn-diff-completed",
+  "thread.activity-appended",
+]);
+export type OrchestrationEventType = typeof OrchestrationEventType.Type;
+
+export const OrchestrationAggregateKind = Schema.Literals(["project", "thread"]);
+export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
+export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
+
+export const ProjectCreatedPayload = Schema.Struct({
+  projectId: ProjectId,
+  title: Schema.String,
+  workspaceRoot: Schema.String,
+  defaultModel: Schema.NullOr(Schema.String),
+  scripts: Schema.Array(ProjectScript),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const ProjectMetaUpdatedPayload = Schema.Struct({
+  projectId: ProjectId,
+  title: Schema.optional(Schema.String),
+  workspaceRoot: Schema.optional(Schema.String),
+  defaultModel: Schema.optional(Schema.NullOr(Schema.String)),
+  scripts: Schema.optional(Schema.Array(ProjectScript)),
+  updatedAt: IsoDateTime,
+});
+
+export const ProjectDeletedPayload = Schema.Struct({
+  projectId: ProjectId,
+  deletedAt: IsoDateTime,
+});
+
+export const ThreadCreatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  title: Schema.String,
+  model: Schema.String,
+  branch: Schema.NullOr(Schema.String),
+  worktreePath: Schema.NullOr(Schema.String),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadDeletedPayload = Schema.Struct({
+  threadId: ThreadId,
+  deletedAt: IsoDateTime,
+});
+
+export const ThreadMetaUpdatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  title: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.String),
+  branch: Schema.optional(Schema.NullOr(Schema.String)),
+  worktreePath: Schema.optional(Schema.NullOr(Schema.String)),
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadMessageSentPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  role: OrchestrationMessageRole,
+  text: Schema.String,
+  attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  turnId: Schema.NullOr(TurnId),
+  streaming: Schema.Boolean,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadTurnStartRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  model: Schema.optional(Schema.String),
+  effort: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+});
+
+export const ThreadTurnInterruptRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  turnId: Schema.optional(TurnId),
+  createdAt: IsoDateTime,
+});
+
+export const ThreadApprovalResponseRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  requestId: ApprovalRequestId,
+  decision: ProviderApprovalDecision,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadCheckpointRevertRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  turnCount: NonNegativeInt,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadRevertedPayload = Schema.Struct({
+  threadId: ThreadId,
+  turnCount: NonNegativeInt,
+});
+
+export const ThreadSessionStopRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadSessionSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  session: OrchestrationSession,
+});
+
+export const ThreadTurnDiffCompletedPayload = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  checkpointTurnCount: NonNegativeInt,
+  checkpointRef: CheckpointRef,
+  status: OrchestrationCheckpointStatus,
+  files: Schema.Array(OrchestrationCheckpointFile),
+  assistantMessageId: Schema.NullOr(MessageId),
+  completedAt: IsoDateTime,
+});
+
+export const ThreadActivityAppendedPayload = Schema.Struct({
+  threadId: ThreadId,
+  activity: OrchestrationThreadActivity,
+});
+
+export const OrchestrationEventMetadata = Schema.Struct({
+  providerSessionId: Schema.optional(ProviderSessionId),
+  providerThreadId: Schema.optional(ProviderThreadId),
+  providerTurnId: Schema.optional(ProviderTurnId),
+  providerItemId: Schema.optional(ProviderItemId),
+  adapterKey: Schema.optional(Schema.String),
+  requestId: Schema.optional(ApprovalRequestId),
+  ingestedAt: Schema.optional(IsoDateTime),
+});
+export type OrchestrationEventMetadata = typeof OrchestrationEventMetadata.Type;
+
+const EventBaseFields = {
+  sequence: NonNegativeInt,
+  eventId: EventId,
+  aggregateKind: OrchestrationAggregateKind,
+  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  occurredAt: IsoDateTime,
+  commandId: Schema.NullOr(CommandId),
+  causationEventId: Schema.NullOr(EventId),
+  correlationId: Schema.NullOr(CommandId),
+  metadata: OrchestrationEventMetadata,
+} as const;
+
+const PersistedEventBaseFields = {
+  sequence: NonNegativeInt,
+  eventId: EventId,
+  aggregateKind: OrchestrationAggregateKind,
+  streamId: Schema.Union([ProjectId, ThreadId]),
+  streamVersion: NonNegativeInt,
+  occurredAt: IsoDateTime,
+  commandId: Schema.NullOr(CommandId),
+  causationEventId: Schema.NullOr(EventId),
+  correlationId: Schema.NullOr(CommandId),
+  actorKind: OrchestrationActorKind,
+  metadata: OrchestrationEventMetadata,
+} as const;
+
+export const OrchestrationEvent = Schema.Union([
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("project.created"),
+    payload: ProjectCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("project.meta-updated"),
+    payload: ProjectMetaUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("project.deleted"),
+    payload: ProjectDeletedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.created"),
+    payload: ThreadCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.deleted"),
+    payload: ThreadDeletedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.meta-updated"),
+    payload: ThreadMetaUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.message-sent"),
+    payload: ThreadMessageSentPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-start-requested"),
+    payload: ThreadTurnStartRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-interrupt-requested"),
+    payload: ThreadTurnInterruptRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.approval-response-requested"),
+    payload: ThreadApprovalResponseRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.checkpoint-revert-requested"),
+    payload: ThreadCheckpointRevertRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.reverted"),
+    payload: ThreadRevertedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.session-stop-requested"),
+    payload: ThreadSessionStopRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.session-set"),
+    payload: ThreadSessionSetPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-diff-completed"),
+    payload: ThreadTurnDiffCompletedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.activity-appended"),
+    payload: ThreadActivityAppendedPayload,
+  }),
+]);
+export type OrchestrationEvent = typeof OrchestrationEvent.Type;
+
+export const OrchestrationPersistedEvent = Schema.Union([
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("project.created"),
+    payload: ProjectCreatedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("project.meta-updated"),
+    payload: ProjectMetaUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("project.deleted"),
+    payload: ProjectDeletedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.created"),
+    payload: ThreadCreatedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.deleted"),
+    payload: ThreadDeletedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.meta-updated"),
+    payload: ThreadMetaUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.message-sent"),
+    payload: ThreadMessageSentPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.turn-start-requested"),
+    payload: ThreadTurnStartRequestedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.turn-interrupt-requested"),
+    payload: ThreadTurnInterruptRequestedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.approval-response-requested"),
+    payload: ThreadApprovalResponseRequestedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.checkpoint-revert-requested"),
+    payload: ThreadCheckpointRevertRequestedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.reverted"),
+    payload: ThreadRevertedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.session-stop-requested"),
+    payload: ThreadSessionStopRequestedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.session-set"),
+    payload: ThreadSessionSetPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.turn-diff-completed"),
+    payload: ThreadTurnDiffCompletedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.activity-appended"),
+    payload: ThreadActivityAppendedPayload,
+  }),
+]);
+export type OrchestrationPersistedEvent = typeof OrchestrationPersistedEvent.Type;
+
+export const OrchestrationCommandReceiptStatus = Schema.Literals(["accepted", "rejected"]);
+export type OrchestrationCommandReceiptStatus = typeof OrchestrationCommandReceiptStatus.Type;
+
+export const TurnCountRange = Schema.Struct({
+  fromTurnCount: NonNegativeInt,
+  toTurnCount: NonNegativeInt,
+});
+
+export const ThreadTurnDiff = Schema.Struct({
+  threadId: ThreadId,
+  ...TurnCountRange.fields,
+  diff: Schema.String,
+});
+
+export const ProviderSessionRuntimeStatus = Schema.Literals([
+  "starting",
+  "running",
+  "stopped",
+  "error",
+]);
+export type ProviderSessionRuntimeStatus = typeof ProviderSessionRuntimeStatus.Type;
+
+export const ProjectionThreadTurnStatus = Schema.Literals([
+  "running",
+  "completed",
+  "interrupted",
+  "error",
+]);
+export type ProjectionThreadTurnStatus = typeof ProjectionThreadTurnStatus.Type;
+
+export const ProjectionCheckpointRow = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  checkpointTurnCount: NonNegativeInt,
+  checkpointRef: CheckpointRef,
+  status: OrchestrationCheckpointStatus,
+  files: Schema.Array(OrchestrationCheckpointFile),
+  assistantMessageId: Schema.NullOr(MessageId),
+  completedAt: IsoDateTime,
+});
+export type ProjectionCheckpointRow = typeof ProjectionCheckpointRow.Type;
+
+export const ProjectionPendingApprovalStatus = Schema.Literals(["pending", "resolved"]);
+export type ProjectionPendingApprovalStatus = typeof ProjectionPendingApprovalStatus.Type;
+
+export const ProjectionPendingApprovalDecision = Schema.NullOr(ProviderApprovalDecision);
+export type ProjectionPendingApprovalDecision = typeof ProjectionPendingApprovalDecision.Type;
+
+export const DispatchResult = Schema.Struct({
+  sequence: NonNegativeInt,
+});
+export type DispatchResult = typeof DispatchResult.Type;
+
+export const OrchestrationGetSnapshotInput = Schema.Struct({});
+export type OrchestrationGetSnapshotInput = typeof OrchestrationGetSnapshotInput.Type;
+export const OrchestrationGetSnapshotResult = OrchestrationReadModel;
+export type OrchestrationGetSnapshotResult = typeof OrchestrationGetSnapshotResult.Type;
+
+export const OrchestrationGetTurnDiffInput = Schema.Struct({
+  threadId: ThreadId,
+  ...TurnCountRange.fields,
+});
+export type OrchestrationGetTurnDiffInput = typeof OrchestrationGetTurnDiffInput.Type;
+
+export const OrchestrationGetTurnDiffResult = ThreadTurnDiff;
+export type OrchestrationGetTurnDiffResult = typeof OrchestrationGetTurnDiffResult.Type;
+
+export const OrchestrationReplayEventsInput = Schema.Struct({
+  fromSequenceExclusive: NonNegativeInt,
+});
+export type OrchestrationReplayEventsInput = typeof OrchestrationReplayEventsInput.Type;
+
+export const OrchestrationReplayEventsResult = Schema.Array(OrchestrationEvent);
+export type OrchestrationReplayEventsResult = typeof OrchestrationReplayEventsResult.Type;
+
+export const OrchestrationRpcSchemas = {
+  getSnapshot: {
+    input: OrchestrationGetSnapshotInput,
+    output: OrchestrationGetSnapshotResult,
+  },
+  dispatchCommand: {
+    input: ClientOrchestrationCommand,
+    output: DispatchResult,
+  },
+  getTurnDiff: {
+    input: OrchestrationGetTurnDiffInput,
+    output: OrchestrationGetTurnDiffResult,
+  },
+  replayEvents: {
+    input: OrchestrationReplayEventsInput,
+    output: OrchestrationReplayEventsResult,
+  },
+} as const;

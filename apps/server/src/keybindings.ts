@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type {
+import {
   KeybindingRule,
   KeybindingsConfig,
   KeybindingShortcut,
@@ -10,7 +10,8 @@ import type {
   ResolvedKeybindingRule,
   ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { keybindingRuleSchema } from "@t3tools/contracts";
+import { Mutable } from "effect/Types";
+import { Schema } from "effect";
 
 interface KeybindingsLogger {
   warn(message: string, context?: Record<string, unknown>): void;
@@ -267,7 +268,7 @@ export function compileResolvedKeybindingRule(rule: KeybindingRule): ResolvedKey
 export function compileResolvedKeybindingsConfig(
   config: KeybindingsConfig,
 ): ResolvedKeybindingsConfig {
-  const compiled: ResolvedKeybindingsConfig = [];
+  const compiled: Mutable<ResolvedKeybindingsConfig> = [];
   for (const rule of config) {
     const resolved = compileResolvedKeybindingRule(rule);
     if (!resolved) continue;
@@ -277,7 +278,7 @@ export function compileResolvedKeybindingsConfig(
 }
 
 function compileDefaultKeybindings(): ResolvedKeybindingsConfig {
-  const resolved: ResolvedKeybindingsConfig = [];
+  const resolved: Mutable<ResolvedKeybindingsConfig> = [];
   for (const rule of DEFAULT_KEYBINDINGS) {
     const compiled = compileResolvedKeybindingRule(rule);
     if (!compiled) {
@@ -322,16 +323,16 @@ function loadCustomKeybindingsConfig(
       return [];
     }
 
-    const sanitized: KeybindingsConfig = [];
+    const sanitized: Mutable<KeybindingsConfig> = [];
     let invalidEntries = 0;
     for (const entry of parsed) {
-      const result = keybindingRuleSchema.safeParse(entry);
-      if (result.success) {
-        if (!compileResolvedKeybindingRule(result.data)) {
+      const result = Schema.decodeUnknownExit(KeybindingRule)(entry);
+      if (result._tag === "Success") {
+        if (!compileResolvedKeybindingRule(result.value)) {
           invalidEntries += 1;
           continue;
         }
-        sanitized.push(result.data);
+        sanitized.push(result.value);
         continue;
       }
       invalidEntries += 1;
@@ -417,13 +418,8 @@ export function loadResolvedKeybindingsConfig(
 
 export function upsertKeybindingRule(
   logger: KeybindingsLogger,
-  rawRule: unknown,
+  rule: KeybindingRule,
 ): ResolvedKeybindingsConfig {
-  const rule = keybindingRuleSchema.parse(rawRule);
-  if (!compileResolvedKeybindingRule(rule)) {
-    throw new Error(`Invalid keybinding shortcut: "${rule.key}"`);
-  }
-
   const configPath = resolveKeybindingsConfigPath();
   const customConfig = loadCustomKeybindingsConfig(logger, {
     throwOnUnreadableConfig: true,

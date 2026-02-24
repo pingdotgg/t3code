@@ -6,13 +6,18 @@
  *
  * @module CodexAdapterLive
  */
-import type {
-  ProviderEvent,
-  ProviderRuntimeEvent,
-  ProviderRuntimeTurnStatus,
-  ProviderRuntimeToolKind,
+import {
+  type ProviderEvent,
+  type ProviderRuntimeEvent,
+  type ProviderRuntimeTurnStatus,
+  type ProviderRuntimeToolKind,
+  ProviderItemId,
+  ProviderApprovalDecision,
+  ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
 } from "@t3tools/contracts";
-import { Effect, Layer, Queue, Stream } from "effect";
+import { Effect, Layer, Queue, Schema, Stream } from "effect";
 
 import {
   ProviderAdapterProcessError,
@@ -42,7 +47,7 @@ function toMessage(cause: unknown, fallback: string): string {
 }
 
 function toSessionError(
-  sessionId: string,
+  sessionId: ProviderSessionId,
   cause: unknown,
 ): ProviderAdapterSessionNotFoundError | ProviderAdapterSessionClosedError | undefined {
   const normalized = toMessage(cause, "").toLowerCase();
@@ -63,7 +68,11 @@ function toSessionError(
   return undefined;
 }
 
-function toRequestError(sessionId: string, method: string, cause: unknown): ProviderAdapterError {
+function toRequestError(
+  sessionId: ProviderSessionId,
+  method: string,
+  cause: unknown,
+): ProviderAdapterError {
   const sessionError = toSessionError(sessionId, cause);
   if (sessionError) {
     return sessionError;
@@ -188,7 +197,7 @@ function mapMessageCompletedEvent(event: ProviderEvent): ProviderRuntimeEvent | 
     provider: event.provider,
     sessionId: event.sessionId,
     createdAt: event.createdAt,
-    itemId,
+    itemId: ProviderItemId.makeUnsafe(itemId),
     ...(event.threadId ? { threadId: event.threadId } : {}),
     ...(event.turnId ? { turnId: event.turnId } : {}),
   };
@@ -282,7 +291,7 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   }
 
   if (event.method === "item/requestApproval/decision" && event.requestId) {
-    const decision = asString(payload?.decision);
+    const decision = Schema.decodeUnknownSync(ProviderApprovalDecision)(payload?.decision);
     return [
       {
         type: "approval.resolved",
@@ -339,7 +348,10 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   }
 
   if (event.method === "thread/started") {
-    const threadId = event.threadId ?? asString(asObject(payload?.thread)?.id);
+    const payloadThreadId = asString(asObject(payload?.thread)?.id);
+    const threadId =
+      event.threadId ??
+      (payloadThreadId ? ProviderThreadId.makeUnsafe(payloadThreadId) : undefined);
     if (!threadId) {
       return [];
     }
@@ -356,7 +368,9 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   }
 
   if (event.method === "turn/started") {
-    const turnId = event.turnId ?? asString(turn?.id);
+    const payloadTurnId = asString(turn?.id);
+    const turnId =
+      event.turnId ?? (payloadTurnId ? ProviderTurnId.makeUnsafe(payloadTurnId) : undefined);
     if (!turnId) {
       return [];
     }

@@ -1,119 +1,155 @@
-import { z } from "zod";
+import { Schema } from "effect";
 
 export const DEFAULT_TERMINAL_ID = "default";
 
-const terminalColsSchema = z.number().int().min(20).max(400);
-const terminalRowsSchema = z.number().int().min(5).max(200);
-const terminalIdSchema = z.string().trim().min(1).max(128);
-const terminalEnvKeySchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).max(128);
-const terminalEnvValueSchema = z.string().max(8_192);
-const terminalEnvSchema = z
-  .record(terminalEnvKeySchema, terminalEnvValueSchema)
-  .refine((env) => Object.keys(env).length <= 128, "Too many terminal env vars");
+const TrimmedNonEmptyStringSchema = Schema.Trim.check(Schema.isNonEmpty());
+const TerminalColsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(20)).check(
+  Schema.isLessThanOrEqualTo(400),
+);
+const TerminalRowsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(5)).check(
+  Schema.isLessThanOrEqualTo(200),
+);
+const TerminalIdSchema = Schema.Trim.check(Schema.isNonEmpty()).check(Schema.isMaxLength(128));
+const TerminalEnvKeySchema = Schema.String.check(Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/)).check(
+  Schema.isMaxLength(128),
+);
+const TerminalEnvValueSchema = Schema.String.check(Schema.isMaxLength(8_192));
+const TerminalEnvSchema = Schema.Record(TerminalEnvKeySchema, TerminalEnvValueSchema).check(
+  Schema.makeFilter<Record<string, string>>((env) => {
+    if (Object.keys(env).length > 128) {
+      return { path: [], message: "Too many terminal env vars" };
+    }
+    return true;
+  }),
+);
 
-export const terminalThreadInputSchema = z.object({
-  threadId: z.string().trim().min(1),
+const TerminalIdWithDefaultSchema = TerminalIdSchema.pipe(
+  Schema.withDecodingDefault(() => DEFAULT_TERMINAL_ID),
+);
+
+export const TerminalThreadInput = Schema.Struct({
+  threadId: TrimmedNonEmptyStringSchema,
+});
+export type TerminalThreadInput = Schema.Codec.Encoded<typeof TerminalThreadInput>;
+
+export const TerminalSessionInput = Schema.Struct({
+  ...TerminalThreadInput.fields,
+  terminalId: TerminalIdWithDefaultSchema,
+});
+export type TerminalSessionInput = Schema.Codec.Encoded<typeof TerminalSessionInput>;
+
+export const TerminalOpenInput = Schema.Struct({
+  ...TerminalSessionInput.fields,
+  cwd: TrimmedNonEmptyStringSchema,
+  cols: Schema.optional(TerminalColsSchema),
+  rows: Schema.optional(TerminalRowsSchema),
+  env: Schema.optional(TerminalEnvSchema),
+});
+export type TerminalOpenInput = Schema.Codec.Encoded<typeof TerminalOpenInput>;
+
+export const TerminalWriteInput = Schema.Struct({
+  ...TerminalSessionInput.fields,
+  data: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536)),
+});
+export type TerminalWriteInput = Schema.Codec.Encoded<typeof TerminalWriteInput>;
+
+export const TerminalResizeInput = Schema.Struct({
+  ...TerminalSessionInput.fields,
+  cols: TerminalColsSchema,
+  rows: TerminalRowsSchema,
+});
+export type TerminalResizeInput = Schema.Codec.Encoded<typeof TerminalResizeInput>;
+
+export const TerminalClearInput = TerminalSessionInput;
+export type TerminalClearInput = Schema.Codec.Encoded<typeof TerminalClearInput>;
+
+export const TerminalRestartInput = Schema.Struct({
+  ...TerminalThreadInput.fields,
+  cwd: TrimmedNonEmptyStringSchema,
+  cols: TerminalColsSchema,
+  rows: TerminalRowsSchema,
+  env: Schema.optional(TerminalEnvSchema),
 });
 
-export const terminalSessionInputSchema = terminalThreadInputSchema.extend({
-  terminalId: terminalIdSchema.default(DEFAULT_TERMINAL_ID),
+export const TerminalCloseInput = Schema.Struct({
+  ...TerminalThreadInput.fields,
+  terminalId: Schema.optional(TerminalIdSchema),
+  deleteHistory: Schema.optional(Schema.Boolean),
+});
+export type TerminalCloseInput = Schema.Codec.Encoded<typeof TerminalCloseInput>;
+
+export const TerminalSessionStatus = Schema.Literals(["starting", "running", "exited", "error"]);
+export type TerminalSessionStatus = typeof TerminalSessionStatus.Type;
+
+export const TerminalSessionSnapshot = Schema.Struct({
+  threadId: Schema.String.check(Schema.isNonEmpty()),
+  terminalId: Schema.String.check(Schema.isNonEmpty()),
+  cwd: Schema.String.check(Schema.isNonEmpty()),
+  status: TerminalSessionStatus,
+  pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  history: Schema.String,
+  exitCode: Schema.NullOr(Schema.Int),
+  exitSignal: Schema.NullOr(Schema.Int),
+  updatedAt: Schema.String,
+});
+export type TerminalSessionSnapshot = typeof TerminalSessionSnapshot.Type;
+
+const TerminalEventBaseSchema = Schema.Struct({
+  threadId: Schema.String.check(Schema.isNonEmpty()),
+  terminalId: Schema.String.check(Schema.isNonEmpty()),
+  createdAt: Schema.String,
 });
 
-export const terminalOpenInputSchema = terminalSessionInputSchema.extend({
-  cwd: z.string().trim().min(1),
-  cols: terminalColsSchema.optional(),
-  rows: terminalRowsSchema.optional(),
-  env: terminalEnvSchema.optional(),
+export const TerminalStartedEvent = Schema.Struct({
+  ...TerminalEventBaseSchema.fields,
+  type: Schema.Literal("started"),
+  snapshot: TerminalSessionSnapshot,
 });
 
-export const terminalWriteInputSchema = terminalSessionInputSchema.extend({
-  data: z.string().min(1).max(65_536),
+export const TerminalOutputEvent = Schema.Struct({
+  ...TerminalEventBaseSchema.fields,
+  type: Schema.Literal("output"),
+  data: Schema.String,
 });
 
-export const terminalResizeInputSchema = terminalSessionInputSchema.extend({
-  cols: terminalColsSchema,
-  rows: terminalRowsSchema,
+export const TerminalExitedEvent = Schema.Struct({
+  ...TerminalEventBaseSchema.fields,
+  type: Schema.Literal("exited"),
+  exitCode: Schema.NullOr(Schema.Int),
+  exitSignal: Schema.NullOr(Schema.Int),
 });
 
-export const terminalClearInputSchema = terminalSessionInputSchema;
-
-export const terminalCloseInputSchema = terminalThreadInputSchema.extend({
-  terminalId: terminalIdSchema.optional(),
-  deleteHistory: z.boolean().optional(),
+export const TerminalErrorEvent = Schema.Struct({
+  ...TerminalEventBaseSchema.fields,
+  type: Schema.Literal("error"),
+  message: Schema.String.check(Schema.isNonEmpty()),
 });
 
-export const terminalSessionStatusSchema = z.enum(["starting", "running", "exited", "error"]);
-
-export const terminalSessionSnapshotSchema = z.object({
-  threadId: z.string().min(1),
-  terminalId: z.string().min(1),
-  cwd: z.string().min(1),
-  status: terminalSessionStatusSchema,
-  pid: z.number().int().positive().nullable(),
-  history: z.string(),
-  exitCode: z.number().int().nullable(),
-  exitSignal: z.number().int().nullable(),
-  updatedAt: z.string().datetime(),
+export const TerminalClearedEvent = Schema.Struct({
+  ...TerminalEventBaseSchema.fields,
+  type: Schema.Literal("cleared"),
 });
 
-const terminalEventBaseSchema = z.object({
-  threadId: z.string().min(1),
-  terminalId: z.string().min(1),
-  createdAt: z.string().datetime(),
+export const TerminalRestartedEvent = Schema.Struct({
+  ...TerminalEventBaseSchema.fields,
+  type: Schema.Literal("restarted"),
+  snapshot: TerminalSessionSnapshot,
 });
 
-export const terminalStartedEventSchema = terminalEventBaseSchema.extend({
-  type: z.literal("started"),
-  snapshot: terminalSessionSnapshotSchema,
+export const TerminalActivityEvent = Schema.Struct({
+  ...TerminalEventBaseSchema.fields,
+  type: Schema.Literal("activity"),
+  hasRunningSubprocess: Schema.Boolean,
 });
 
-export const terminalOutputEventSchema = terminalEventBaseSchema.extend({
-  type: z.literal("output"),
-  data: z.string(),
-});
-
-export const terminalExitedEventSchema = terminalEventBaseSchema.extend({
-  type: z.literal("exited"),
-  exitCode: z.number().int().nullable(),
-  exitSignal: z.number().int().nullable(),
-});
-
-export const terminalErrorEventSchema = terminalEventBaseSchema.extend({
-  type: z.literal("error"),
-  message: z.string().min(1),
-});
-
-export const terminalClearedEventSchema = terminalEventBaseSchema.extend({
-  type: z.literal("cleared"),
-});
-
-export const terminalRestartedEventSchema = terminalEventBaseSchema.extend({
-  type: z.literal("restarted"),
-  snapshot: terminalSessionSnapshotSchema,
-});
-
-export const terminalActivityEventSchema = terminalEventBaseSchema.extend({
-  type: z.literal("activity"),
-  hasRunningSubprocess: z.boolean(),
-});
-
-export const terminalEventSchema = z.discriminatedUnion("type", [
-  terminalStartedEventSchema,
-  terminalOutputEventSchema,
-  terminalExitedEventSchema,
-  terminalErrorEventSchema,
-  terminalClearedEventSchema,
-  terminalRestartedEventSchema,
-  terminalActivityEventSchema,
+export const TerminalEvent = Schema.Union([
+  TerminalStartedEvent,
+  TerminalOutputEvent,
+  TerminalExitedEvent,
+  TerminalErrorEvent,
+  TerminalClearedEvent,
+  TerminalRestartedEvent,
+  TerminalActivityEvent,
 ]);
+export type TerminalEvent = typeof TerminalEvent.Type;
 
-export type TerminalThreadInput = z.input<typeof terminalThreadInputSchema>;
-export type TerminalSessionInput = z.input<typeof terminalSessionInputSchema>;
-export type TerminalOpenInput = z.input<typeof terminalOpenInputSchema>;
-export type TerminalWriteInput = z.input<typeof terminalWriteInputSchema>;
-export type TerminalResizeInput = z.input<typeof terminalResizeInputSchema>;
-export type TerminalClearInput = z.input<typeof terminalClearInputSchema>;
-export type TerminalCloseInput = z.input<typeof terminalCloseInputSchema>;
-export type TerminalSessionStatus = z.infer<typeof terminalSessionStatusSchema>;
-export type TerminalSessionSnapshot = z.infer<typeof terminalSessionSnapshotSchema>;
-export type TerminalEvent = z.infer<typeof terminalEventSchema>;

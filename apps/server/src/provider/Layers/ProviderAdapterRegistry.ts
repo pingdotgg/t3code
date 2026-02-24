@@ -7,7 +7,6 @@
  *
  * @module ProviderAdapterRegistryLive
  */
-import type { ProviderKind } from "@t3tools/contracts";
 import { Effect, Layer } from "effect";
 
 import { ProviderUnsupportedError, type ProviderAdapterError } from "../Errors.ts";
@@ -25,10 +24,7 @@ export interface ProviderAdapterRegistryLiveOptions {
 const makeProviderAdapterRegistry = (options?: ProviderAdapterRegistryLiveOptions) =>
   Effect.gen(function* () {
     const adapters = options?.adapters !== undefined ? options.adapters : [yield* CodexAdapter];
-    const byProvider = new Map<ProviderKind, ProviderAdapterShape<ProviderAdapterError>>();
-    for (const adapter of adapters) {
-      byProvider.set(adapter.provider, adapter);
-    }
+    const byProvider = new Map(adapters.map((adapter) => [adapter.provider, adapter]));
 
     const getByProvider: ProviderAdapterRegistryShape["getByProvider"] = (provider) => {
       const adapter = byProvider.get(provider);

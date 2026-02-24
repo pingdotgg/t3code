@@ -1,14 +1,26 @@
 import type { ProviderRuntimeEvent } from "@t3tools/contracts";
+import {
+  CommandId,
+  EventId,
+  ProjectId,
+  ProviderItemId,
+  ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
+import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
+import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
 import {
   OrchestrationEngineService,
@@ -16,17 +28,16 @@ import {
 } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 
+const asCommandId = (value: string): CommandId => CommandId.makeUnsafe(value);
+const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
+const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
+const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
+const asProviderTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
+const asItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
+const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
+
 function createProviderServiceHarness() {
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
-  const getCheckpointDiff = vi.fn(
-    (input: { sessionId: string; fromTurnCount: number; toTurnCount: number }) =>
-      Effect.succeed({
-        threadId: "thread-1",
-        fromTurnCount: input.fromTurnCount,
-        toTurnCount: input.toTurnCount,
-        diff: "",
-      }),
-  );
 
   const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
   const service: ProviderServiceShape = {
@@ -36,9 +47,7 @@ function createProviderServiceHarness() {
     respondToRequest: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions: () => Effect.succeed([]),
-    listCheckpoints: () => unsupported(),
-    getCheckpointDiff,
-    revertToCheckpoint: () => unsupported(),
+    rollbackConversation: () => unsupported(),
     stopAll: () => Effect.void,
     streamEvents: Stream.fromPubSub(runtimeEventPubSub),
   };
@@ -50,7 +59,6 @@ function createProviderServiceHarness() {
   return {
     service,
     emit,
-    getCheckpointDiff,
   };
 }
 
@@ -59,6 +67,7 @@ async function waitForThread(
   predicate: (thread: {
     session: { status: string; activeTurnId: string | null; lastError: string | null } | null;
     messages: ReadonlyArray<{ id: string; text: string; streaming: boolean }>;
+    activities: ReadonlyArray<{ kind: string }>;
   }) => boolean,
   timeoutMs = 2000,
 ) {
@@ -66,9 +75,10 @@ async function waitForThread(
   const poll = async (): Promise<{
     session: { status: string; activeTurnId: string | null; lastError: string | null } | null;
     messages: ReadonlyArray<{ id: string; text: string; streaming: boolean }>;
+    activities: ReadonlyArray<{ kind: string }>;
   }> => {
     const readModel = await Effect.runPromise(engine.getReadModel());
-    const thread = readModel.threads.find((entry) => entry.id === "thread-1");
+    const thread = readModel.threads.find((entry) => entry.id === asThreadId("thread-1"));
     if (thread && predicate(thread)) {
       return thread;
     }
@@ -102,7 +112,9 @@ describe("ProviderRuntimeIngestion", () => {
   async function createHarness() {
     const provider = createProviderServiceHarness();
     const orchestrationLayer = OrchestrationEngineLive.pipe(
+      Layer.provide(OrchestrationProjectionPipelineLive),
       Layer.provide(OrchestrationEventStoreLive),
+      Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
     );
     const layer = ProviderRuntimeIngestionLive.pipe(
@@ -119,10 +131,21 @@ describe("ProviderRuntimeIngestion", () => {
     const createdAt = new Date().toISOString();
     await Effect.runPromise(
       engine.dispatch({
+        type: "project.create",
+        commandId: asCommandId("cmd-provider-project-create"),
+        projectId: asProjectId("project-1"),
+        title: "Provider Project",
+        workspaceRoot: "/tmp/provider-project",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      engine.dispatch({
         type: "thread.create",
-        commandId: "cmd-thread-create",
-        threadId: "thread-1",
-        projectId: "project-1",
+        commandId: asCommandId("cmd-thread-create"),
+        threadId: asThreadId("thread-1"),
+        projectId: asProjectId("project-1"),
         title: "Thread",
         model: "gpt-5-codex",
         branch: null,
@@ -132,16 +155,16 @@ describe("ProviderRuntimeIngestion", () => {
     );
     await Effect.runPromise(
       engine.dispatch({
-        type: "thread.session",
-        commandId: "cmd-session-seed",
-        threadId: "thread-1",
+        type: "thread.session.set",
+        commandId: asCommandId("cmd-session-seed"),
+        threadId: asThreadId("thread-1"),
         session: {
-          sessionId: "sess-1",
-          provider: "codex",
+          threadId: asThreadId("thread-1"),
           status: "ready",
-          threadId: "thread-1",
+          providerName: "codex",
+          providerSessionId: asSessionId("sess-1"),
+          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
           activeTurnId: null,
-          createdAt,
           updatedAt: createdAt,
           lastError: null,
         },
@@ -161,11 +184,11 @@ describe("ProviderRuntimeIngestion", () => {
 
     harness.emit({
       type: "turn.started",
-      eventId: "evt-turn-started",
+      eventId: asEventId("evt-turn-started"),
       provider: "codex",
-      sessionId: "sess-1",
+      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: "turn-1",
+      turnId: asProviderTurnId("turn-1"),
     });
 
     await waitForThread(
@@ -175,11 +198,11 @@ describe("ProviderRuntimeIngestion", () => {
 
     harness.emit({
       type: "turn.completed",
-      eventId: "evt-turn-completed",
+      eventId: asEventId("evt-turn-completed"),
       provider: "codex",
-      sessionId: "sess-1",
+      sessionId: asSessionId("sess-1"),
       createdAt: new Date().toISOString(),
-      turnId: "turn-1",
+      turnId: asProviderTurnId("turn-1"),
       status: "failed",
       errorMessage: "turn failed",
     });
@@ -187,11 +210,11 @@ describe("ProviderRuntimeIngestion", () => {
     const thread = await waitForThread(
       harness.engine,
       (entry) =>
-        entry.session?.status === "ready" &&
+        entry.session?.status === "error" &&
         entry.session?.activeTurnId === null &&
         entry.session?.lastError === "turn failed",
     );
-    expect(thread.session?.status).toBe("ready");
+    expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
@@ -201,32 +224,32 @@ describe("ProviderRuntimeIngestion", () => {
 
     harness.emit({
       type: "message.delta",
-      eventId: "evt-message-delta-1",
+      eventId: asEventId("evt-message-delta-1"),
       provider: "codex",
-      sessionId: "sess-1",
+      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: "turn-2",
-      itemId: "item-1",
+      turnId: asProviderTurnId("turn-2"),
+      itemId: asItemId("item-1"),
       delta: "hello",
     });
     harness.emit({
       type: "message.delta",
-      eventId: "evt-message-delta-2",
+      eventId: asEventId("evt-message-delta-2"),
       provider: "codex",
-      sessionId: "sess-1",
+      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: "turn-2",
-      itemId: "item-1",
+      turnId: asProviderTurnId("turn-2"),
+      itemId: asItemId("item-1"),
       delta: " world",
     });
     harness.emit({
       type: "message.completed",
-      eventId: "evt-message-completed",
+      eventId: asEventId("evt-message-completed"),
       provider: "codex",
-      sessionId: "sess-1",
+      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: "turn-2",
-      itemId: "item-1",
+      turnId: asProviderTurnId("turn-2"),
+      itemId: asItemId("item-1"),
     });
 
     const thread = await waitForThread(harness.engine, (entry) =>
@@ -243,11 +266,11 @@ describe("ProviderRuntimeIngestion", () => {
 
     harness.emit({
       type: "runtime.error",
-      eventId: "evt-runtime-error",
+      eventId: asEventId("evt-runtime-error"),
       provider: "codex",
-      sessionId: "sess-1",
+      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: "turn-3",
+      turnId: asProviderTurnId("turn-3"),
       message: "runtime exploded",
     });
 
@@ -260,5 +283,50 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime exploded");
+  });
+
+  it("maps session/thread lifecycle and tool.started into session/activity projections", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "session.started",
+      eventId: asEventId("evt-session-started"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: now,
+      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
+      message: "session started",
+    });
+    harness.emit({
+      type: "thread.started",
+      eventId: asEventId("evt-thread-started"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: now,
+      threadId: ProviderThreadId.makeUnsafe("provider-thread-2"),
+    });
+    harness.emit({
+      type: "tool.started",
+      eventId: asEventId("evt-tool-started"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: now,
+      turnId: asProviderTurnId("turn-9"),
+      toolKind: "read",
+      title: "Read file",
+      detail: "/tmp/file.ts",
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        entry.session?.activeTurnId === null &&
+        entry.activities.some((activity) => activity.kind === "tool.started"),
+    );
+
+    expect(thread.session?.status).toBe("ready");
+    expect(thread.activities.some((activity) => activity.kind === "tool.started")).toBe(true);
   });
 });

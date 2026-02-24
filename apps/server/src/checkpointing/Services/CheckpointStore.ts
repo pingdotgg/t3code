@@ -14,33 +14,29 @@ import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 
 import type { CheckpointStoreError } from "../Errors.ts";
+import { CheckpointRef } from "@t3tools/contracts";
 
 export interface CaptureCheckpointInput {
   readonly cwd: string;
-  readonly checkpointRef: string;
-}
-
-export interface EnsureRootCheckpointInput {
-  readonly cwd: string;
-  readonly checkpointRef: string;
+  readonly checkpointRef: CheckpointRef;
 }
 
 export interface RestoreCheckpointInput {
   readonly cwd: string;
-  readonly checkpointRef: string;
+  readonly checkpointRef: CheckpointRef;
   readonly fallbackToHead?: boolean;
 }
 
 export interface DiffCheckpointsInput {
   readonly cwd: string;
-  readonly fromCheckpointRef: string;
-  readonly toCheckpointRef: string;
+  readonly fromCheckpointRef: CheckpointRef;
+  readonly toCheckpointRef: CheckpointRef;
   readonly fallbackFromToHead?: boolean;
 }
 
 export interface DeleteCheckpointRefsInput {
   readonly cwd: string;
-  readonly checkpointRefs: ReadonlyArray<string>;
+  readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
 }
 
 export interface CheckpointStoreShape {
@@ -61,13 +57,6 @@ export interface CheckpointStoreShape {
    */
   readonly hasCheckpointRef: (
     input: Omit<RestoreCheckpointInput, "fallbackToHead">,
-  ) => Effect.Effect<boolean, CheckpointStoreError>;
-
-  /**
-   * Ensure a root checkpoint ref exists.
-   */
-  readonly ensureRootCheckpoint: (
-    input: EnsureRootCheckpointInput,
   ) => Effect.Effect<boolean, CheckpointStoreError>;
 
   /**

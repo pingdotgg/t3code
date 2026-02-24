@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 
-import { Effect, Layer, ManagedRuntime, PubSub, Stream } from "effect";
+import { Effect, Layer, PubSub, Stream } from "effect";
 import { describe, expect, it, afterEach, vi } from "vitest";
 import { createServer } from "./wsServer";
 import WebSocket from "ws";
@@ -21,7 +21,6 @@ import {
   type WsResponse,
 } from "@t3tools/contracts";
 import { compileResolvedKeybindingRule, DEFAULT_KEYBINDINGS } from "./keybindings";
-import { ProjectRepository } from "./persistence/Services/Projects";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -32,9 +31,7 @@ import type {
   TerminalWriteInput,
 } from "@t3tools/contracts";
 import type { TerminalManager } from "./terminalManager";
-import { ProjectRepositoryLive } from "./persistence/Layers/Projects";
-import { makeSqlitePersistenceLive, SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
-import { NodeServices } from "@effect/platform-node";
+import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
 import { SqlClient } from "effect/unstable/sql";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
 
@@ -664,38 +661,6 @@ describe("WebSocket Server", () => {
     expect(response.error!.message).toContain("Unknown method");
   });
 
-  it("returns unknown-session errors for checkpoint RPCs without an active provider session", async () => {
-    server = createTestServer({ cwd: "/test" });
-    await server.start();
-    const addr = server.httpServer.address();
-    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
-
-    const ws = await connectWs(port);
-    connections.push(ws);
-    await waitForMessage(ws);
-
-    const listResponse = await sendRequest(ws, WS_METHODS.providersListCheckpoints, {
-      sessionId: "missing-session",
-    });
-    expect(listResponse.result).toBeUndefined();
-    expect(listResponse.error?.message).toContain("Unknown provider session");
-
-    const revertResponse = await sendRequest(ws, WS_METHODS.providersRevertToCheckpoint, {
-      sessionId: "missing-session",
-      turnCount: 0,
-    });
-    expect(revertResponse.result).toBeUndefined();
-    expect(revertResponse.error?.message).toContain("Unknown provider session");
-
-    const diffResponse = await sendRequest(ws, WS_METHODS.providersGetCheckpointDiff, {
-      sessionId: "missing-session",
-      fromTurnCount: 0,
-      toTurnCount: 1,
-    });
-    expect(diffResponse.result).toBeUndefined();
-    expect(diffResponse.error?.message).toContain("Unknown provider session");
-  });
-
   it("keeps orchestration domain push behavior for provider runtime events", async () => {
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     const emitRuntimeEvent = (event: ProviderRuntimeEvent) => {
@@ -709,15 +674,7 @@ describe("WebSocket Server", () => {
       respondToRequest: () => unsupported(),
       stopSession: () => unsupported(),
       listSessions: () => Effect.succeed([]),
-      listCheckpoints: () => unsupported(),
-      getCheckpointDiff: (input) =>
-        Effect.succeed({
-          threadId: "thread-1",
-          fromTurnCount: input.fromTurnCount,
-          toTurnCount: input.toTurnCount,
-          diff: "",
-        }),
-      revertToCheckpoint: () => unsupported(),
+      rollbackConversation: () => unsupported(),
       stopAll: () => Effect.void,
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
     };
@@ -736,6 +693,16 @@ describe("WebSocket Server", () => {
     await waitForMessage(ws);
 
     const createdAt = new Date().toISOString();
+    const createProjectResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "project.create",
+      commandId: "cmd-ws-project-create",
+      projectId: "project-1",
+      title: "WS Project",
+      workspaceRoot: "/tmp/ws-project",
+      defaultModel: "gpt-5-codex",
+      createdAt,
+    });
+    expect(createProjectResponse.error).toBeUndefined();
     const createThreadResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
       type: "thread.create",
       commandId: "cmd-ws-runtime-thread-create",
@@ -928,11 +895,8 @@ describe("WebSocket Server", () => {
     expect(response!.error!.message).toContain("Invalid request format");
   });
 
-  it("supports projects list/add/dedupe/remove", async () => {
-    const stateDir = makeTempDir("t3code-ws-projects-state-");
-    const firstProjectCwd = makeTempDir("t3code-ws-project-a-");
-
-    server = createTestServer({ stateDir, cwd: "/test" });
+  it("returns unknown method for removed projects CRUD methods", async () => {
+    server = createTestServer({ cwd: "/test" });
     await server.start();
     const addr = server.httpServer.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
@@ -941,75 +905,21 @@ describe("WebSocket Server", () => {
     connections.push(ws);
     await waitForMessage(ws);
 
-    const emptyList = await sendRequest(ws, WS_METHODS.projectsList);
-    expect(emptyList.error).toBeUndefined();
-    expect(emptyList.result).toEqual([]);
+    const listResponse = await sendRequest(ws, WS_METHODS.projectsList);
+    expect(listResponse.result).toBeUndefined();
+    expect(listResponse.error?.message).toContain("Unknown method");
 
-    const created = await sendRequest(ws, WS_METHODS.projectsAdd, {
-      cwd: firstProjectCwd,
+    const addResponse = await sendRequest(ws, WS_METHODS.projectsAdd, {
+      cwd: "/tmp/project-a",
     });
-    expect(created.error).toBeUndefined();
-    expect((created.result as { created: boolean }).created).toBe(true);
+    expect(addResponse.result).toBeUndefined();
+    expect(addResponse.error?.message).toContain("Unknown method");
 
-    const duplicate = await sendRequest(ws, WS_METHODS.projectsAdd, {
-      cwd: firstProjectCwd,
+    const removeResponse = await sendRequest(ws, WS_METHODS.projectsRemove, {
+      id: "project-a",
     });
-    expect(duplicate.error).toBeUndefined();
-    expect((duplicate.result as { created: boolean }).created).toBe(false);
-
-    const listed = await sendRequest(ws, WS_METHODS.projectsList);
-    expect(listed.error).toBeUndefined();
-    const listedProjects = listed.result as Array<{ id: string; cwd: string }>;
-    expect(listedProjects).toHaveLength(1);
-
-    const projectId = listedProjects[0]?.id;
-    expect(projectId).toBeTruthy();
-    if (!projectId) return;
-
-    const updatedScripts = await sendRequest(ws, WS_METHODS.projectsUpdateScripts, {
-      id: projectId,
-      scripts: [
-        {
-          id: "setup",
-          name: "Setup",
-          command: "bun install",
-          icon: "configure",
-          runOnWorktreeCreate: true,
-        },
-      ],
-    });
-    expect(updatedScripts.error).toBeUndefined();
-    const scriptPayload = (
-      updatedScripts.result as {
-        project: {
-          scripts: Array<{
-            id: string;
-            name: string;
-            command: string;
-            icon: string;
-            runOnWorktreeCreate: boolean;
-          }>;
-        };
-      }
-    ).project.scripts;
-    expect(scriptPayload).toEqual([
-      {
-        id: "setup",
-        name: "Setup",
-        command: "bun install",
-        icon: "configure",
-        runOnWorktreeCreate: true,
-      },
-    ]);
-
-    const removed = await sendRequest(ws, WS_METHODS.projectsRemove, {
-      id: projectId,
-    });
-    expect(removed.error).toBeUndefined();
-
-    const afterRemove = await sendRequest(ws, WS_METHODS.projectsList);
-    expect(afterRemove.error).toBeUndefined();
-    expect(afterRemove.result).toEqual([]);
+    expect(removeResponse.result).toBeUndefined();
+    expect(removeResponse.error?.message).toContain("Unknown method");
   });
 
   it("supports projects.searchEntries", async () => {
@@ -1079,7 +989,7 @@ describe("WebSocket Server", () => {
     expect(pullResponse.error?.message).not.toContain("Unknown method");
   });
 
-  it("responds to git.status via the git manager", async () => {
+  it("returns unknown method for git.status", async () => {
     const gitManager = {
       status: vi.fn().mockResolvedValue({
         branch: "feature/test",
@@ -1109,21 +1019,9 @@ describe("WebSocket Server", () => {
     const response = await sendRequest(ws, WS_METHODS.gitStatus, {
       cwd: "/test",
     });
-    expect(response.error).toBeUndefined();
-    expect(response.result).toEqual({
-      branch: "feature/test",
-      hasWorkingTreeChanges: true,
-      workingTree: {
-        files: [{ path: "src/index.ts", insertions: 7, deletions: 2 }],
-        insertions: 7,
-        deletions: 2,
-      },
-      hasUpstream: false,
-      aheadCount: 0,
-      behindCount: 0,
-      openPr: null,
-    });
-    expect(gitManager.status).toHaveBeenCalledWith({ cwd: "/test" });
+    expect(response.result).toBeUndefined();
+    expect(response.error?.message).toContain("Unknown method");
+    expect(gitManager.status).not.toHaveBeenCalled();
   });
 
   it("returns errors from git.runStackedAction", async () => {
@@ -1151,42 +1049,6 @@ describe("WebSocket Server", () => {
       cwd: "/test",
       action: "commit_push",
     });
-  });
-
-  it("prunes missing projects on startup", async () => {
-    const stateDir = makeTempDir("t3code-ws-prune-state-");
-    const existing = makeTempDir("t3code-ws-existing-project-");
-    const missing = makeTempDir("t3code-ws-missing-project-");
-    const dbPath = path.join(stateDir, "test-prune.sqlite");
-    const persistenceLayer = Layer.provide(makeSqlitePersistenceLive(dbPath), NodeServices.layer);
-
-    const projectRuntime = ManagedRuntime.make(
-      ProjectRepositoryLive.pipe(Layer.provide(persistenceLayer)),
-    );
-    const projectRepository = await projectRuntime.runPromise(Effect.service(ProjectRepository));
-    await projectRuntime.runPromise(projectRepository.add({ cwd: existing }));
-    await projectRuntime.runPromise(projectRepository.add({ cwd: missing }));
-    await projectRuntime.dispose();
-    fs.rmSync(missing, { recursive: true, force: true });
-
-    server = createTestServer({
-      stateDir,
-      cwd: "/test",
-      persistenceLayer,
-    });
-    await server.start();
-    const addr = server.httpServer.address();
-    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
-
-    const ws = await connectWs(port);
-    connections.push(ws);
-    await waitForMessage(ws);
-
-    const response = await sendRequest(ws, WS_METHODS.projectsList);
-    expect(response.error).toBeUndefined();
-    const listed = response.result as Array<{ cwd: string }>;
-    expect(listed).toHaveLength(1);
-    expect(listed[0]?.cwd).toBe(existing);
   });
 
   it("rejects websocket connections without a valid auth token", async () => {
