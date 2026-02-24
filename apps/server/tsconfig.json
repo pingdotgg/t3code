@@ -12,6 +12,5 @@
       }
     ]
   },
-  "include": ["src", "tsdown.config.ts", "scripts", "integration"],
-  "exclude": ["src/**/*.test.ts"]
+  "include": ["src", "tsdown.config.ts", "scripts", "integration"]
 }

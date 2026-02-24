@@ -2,11 +2,13 @@ import type { ProviderRuntimeEvent } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
   CommandId,
+  MessageId,
   ProjectId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -30,6 +32,8 @@ const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
 const asProviderTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.makeUnsafe(value);
+const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
+const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
 async function waitFor(
   predicate: () => boolean,
@@ -166,7 +170,7 @@ describe("ProviderCommandReactor", () => {
         commandId: asCommandId("cmd-turn-start-1"),
         threadId: asThreadId("thread-1"),
         message: {
-          messageId: "user-message-1",
+          messageId: asMessageId("user-message-1"),
           role: "user",
           text: "hello reactor",
           attachments: [],
@@ -198,7 +202,7 @@ describe("ProviderCommandReactor", () => {
           providerName: "codex",
           providerSessionId: asSessionId("sess-1"),
           providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-          activeTurnId: "turn-1",
+          activeTurnId: asTurnId("turn-1"),
           lastError: null,
           updatedAt: now,
         },
@@ -211,7 +215,7 @@ describe("ProviderCommandReactor", () => {
         type: "thread.turn.interrupt",
         commandId: asCommandId("cmd-turn-interrupt"),
         threadId: asThreadId("thread-1"),
-        turnId: "turn-1",
+        turnId: asTurnId("turn-1"),
         createdAt: now,
       }),
     );

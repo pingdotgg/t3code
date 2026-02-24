@@ -70,11 +70,14 @@ export type KeybindingWhenNode =
 
 export class ResolvedKeybindingRule extends Schema.Class<ResolvedKeybindingRule>(
   "ResolvedKeybindingRule",
-)({
-  command: KeybindingCommand,
-  shortcut: KeybindingShortcut,
-  whenAst: Schema.optional(KeybindingWhenNode),
-}) {}
+)(
+  {
+    command: KeybindingCommand,
+    shortcut: KeybindingShortcut,
+    whenAst: Schema.optional(KeybindingWhenNode),
+  },
+  { parseOptions: { onExcessProperty: "error" } },
+) {}
 
 export const ResolvedKeybindingsConfig = Schema.Array(ResolvedKeybindingRule).check(
   Schema.isMaxLength(256),

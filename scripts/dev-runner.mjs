@@ -84,6 +84,15 @@ function main() {
     VITE_WS_URL: `ws://localhost:${serverPort}`,
     VITE_DEV_SERVER_URL: `http://localhost:${webPort}`,
   };
+
+  if (mode === "dev" || mode === "dev:server" || mode === "dev:web") {
+    // Running server/web in browser mode should not inherit desktop launcher state.
+    env.T3CODE_MODE = "web";
+    delete env.T3CODE_NO_BROWSER;
+    delete env.T3CODE_AUTH_TOKEN;
+    delete env.T3CODE_DESKTOP_WS_URL;
+  }
+
   if (mode === "dev" && !env.T3CODE_LOG_WS_EVENTS) {
     env.T3CODE_LOG_WS_EVENTS = "1";
   }

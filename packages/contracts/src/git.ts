@@ -68,7 +68,7 @@ export class GitRemoveWorktreeInput extends Schema.Class<GitRemoveWorktreeInput>
 )({
   cwd: TrimmedNonEmptyString,
   path: TrimmedNonEmptyString,
-  force: Schema.Boolean.pipe(Schema.NullOr),
+  force: Schema.optional(Schema.Boolean),
 }) {}
 
 export class GitCreateBranchInput extends Schema.Class<GitCreateBranchInput>(

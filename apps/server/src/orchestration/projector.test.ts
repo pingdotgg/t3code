@@ -1,4 +1,4 @@
-import type { OrchestrationEvent } from "@t3tools/contracts";
+import { CommandId, EventId, ProjectId, ThreadId, type OrchestrationEvent } from "@t3tools/contracts";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -8,24 +8,27 @@ function makeEvent(input: {
   sequence: number;
   type: OrchestrationEvent["type"];
   occurredAt: string;
-  aggregateType: OrchestrationEvent["aggregateType"];
+  aggregateKind: OrchestrationEvent["aggregateKind"];
   aggregateId: string;
   commandId: string | null;
   payload: unknown;
 }): OrchestrationEvent {
   return {
     sequence: input.sequence,
-    eventId: `event-${input.sequence}`,
+    eventId: EventId.makeUnsafe(`event-${input.sequence}`),
     type: input.type,
-    aggregateType: input.aggregateType,
-    aggregateId: input.aggregateId as OrchestrationEvent["aggregateId"],
+    aggregateKind: input.aggregateKind,
+    aggregateId:
+      input.aggregateKind === "project"
+        ? ProjectId.makeUnsafe(input.aggregateId)
+        : ThreadId.makeUnsafe(input.aggregateId),
     occurredAt: input.occurredAt,
-    commandId: input.commandId as OrchestrationEvent["commandId"],
+    commandId: input.commandId === null ? null : CommandId.makeUnsafe(input.commandId),
     causationEventId: null,
     correlationId: null,
     metadata: {},
-    payload: input.payload,
-  };
+    payload: input.payload as never,
+  } as OrchestrationEvent;
 }
 
 describe("orchestration projector", () => {
@@ -39,7 +42,7 @@ describe("orchestration projector", () => {
         makeEvent({
           sequence: 1,
           type: "thread.created",
-          aggregateType: "thread",
+          aggregateKind: "thread",
           aggregateId: "thread-1",
           occurredAt: now,
           commandId: "cmd-thread-create",
@@ -89,7 +92,7 @@ describe("orchestration projector", () => {
           makeEvent({
             sequence: 1,
             type: "thread.created",
-            aggregateType: "thread",
+            aggregateKind: "thread",
             aggregateId: "thread-1",
             occurredAt: now,
             commandId: "cmd-invalid",
@@ -119,7 +122,7 @@ describe("orchestration projector", () => {
         makeEvent({
           sequence: 7,
           type: "thread.turn-start-requested",
-          aggregateType: "thread",
+          aggregateKind: "thread",
           aggregateId: "thread-1",
           occurredAt: "2026-01-01T00:00:00.000Z",
           commandId: "cmd-unhandled",
@@ -148,7 +151,7 @@ describe("orchestration projector", () => {
         makeEvent({
           sequence: 1,
           type: "thread.created",
-          aggregateType: "thread",
+          aggregateKind: "thread",
           aggregateId: "thread-1",
           occurredAt: createdAt,
           commandId: "cmd-create",
@@ -172,7 +175,7 @@ describe("orchestration projector", () => {
         makeEvent({
           sequence: 2,
           type: "thread.session-set",
-          aggregateType: "thread",
+          aggregateKind: "thread",
           aggregateId: "thread-1",
           occurredAt: startedAt,
           commandId: "cmd-running",
@@ -210,7 +213,7 @@ describe("orchestration projector", () => {
         makeEvent({
           sequence: 1,
           type: "thread.created",
-          aggregateType: "thread",
+          aggregateKind: "thread",
           aggregateId: "thread-1",
           occurredAt: createdAt,
           commandId: "cmd-create",
@@ -234,7 +237,7 @@ describe("orchestration projector", () => {
         makeEvent({
           sequence: 2,
           type: "thread.message-sent",
-          aggregateType: "thread",
+          aggregateKind: "thread",
           aggregateId: "thread-1",
           occurredAt: deltaAt,
           commandId: "cmd-delta",
@@ -258,7 +261,7 @@ describe("orchestration projector", () => {
         makeEvent({
           sequence: 3,
           type: "thread.message-sent",
-          aggregateType: "thread",
+          aggregateKind: "thread",
           aggregateId: "thread-1",
           occurredAt: completeAt,
           commandId: "cmd-complete",
@@ -293,7 +296,7 @@ describe("orchestration projector", () => {
         makeEvent({
           sequence: 1,
           type: "thread.created",
-          aggregateType: "thread",
+          aggregateKind: "thread",
           aggregateId: "thread-1",
           occurredAt: createdAt,
           commandId: "cmd-create",
@@ -315,7 +318,7 @@ describe("orchestration projector", () => {
       makeEvent({
         sequence: 2,
         type: "thread.message-sent",
-        aggregateType: "thread",
+        aggregateKind: "thread",
         aggregateId: "thread-1",
         occurredAt: "2026-02-23T10:00:01.000Z",
         commandId: "cmd-user-1",
@@ -333,7 +336,7 @@ describe("orchestration projector", () => {
       makeEvent({
         sequence: 3,
         type: "thread.message-sent",
-        aggregateType: "thread",
+        aggregateKind: "thread",
         aggregateId: "thread-1",
         occurredAt: "2026-02-23T10:00:02.000Z",
         commandId: "cmd-assistant-1",
@@ -351,7 +354,7 @@ describe("orchestration projector", () => {
       makeEvent({
         sequence: 4,
         type: "thread.turn-diff-completed",
-        aggregateType: "thread",
+        aggregateKind: "thread",
         aggregateId: "thread-1",
         occurredAt: "2026-02-23T10:00:02.500Z",
         commandId: "cmd-turn-1-complete",
@@ -369,7 +372,7 @@ describe("orchestration projector", () => {
       makeEvent({
         sequence: 5,
         type: "thread.activity-appended",
-        aggregateType: "thread",
+        aggregateKind: "thread",
         aggregateId: "thread-1",
         occurredAt: "2026-02-23T10:00:02.750Z",
         commandId: "cmd-activity-1",
@@ -389,7 +392,7 @@ describe("orchestration projector", () => {
       makeEvent({
         sequence: 6,
         type: "thread.message-sent",
-        aggregateType: "thread",
+        aggregateKind: "thread",
         aggregateId: "thread-1",
         occurredAt: "2026-02-23T10:00:03.000Z",
         commandId: "cmd-user-2",
@@ -407,7 +410,7 @@ describe("orchestration projector", () => {
       makeEvent({
         sequence: 7,
         type: "thread.message-sent",
-        aggregateType: "thread",
+        aggregateKind: "thread",
         aggregateId: "thread-1",
         occurredAt: "2026-02-23T10:00:04.000Z",
         commandId: "cmd-assistant-2",
@@ -425,7 +428,7 @@ describe("orchestration projector", () => {
       makeEvent({
         sequence: 8,
         type: "thread.turn-diff-completed",
-        aggregateType: "thread",
+        aggregateKind: "thread",
         aggregateId: "thread-1",
         occurredAt: "2026-02-23T10:00:04.500Z",
         commandId: "cmd-turn-2-complete",
@@ -443,7 +446,7 @@ describe("orchestration projector", () => {
       makeEvent({
         sequence: 9,
         type: "thread.activity-appended",
-        aggregateType: "thread",
+        aggregateKind: "thread",
         aggregateId: "thread-1",
         occurredAt: "2026-02-23T10:00:04.750Z",
         commandId: "cmd-activity-2",
@@ -463,7 +466,7 @@ describe("orchestration projector", () => {
       makeEvent({
         sequence: 10,
         type: "thread.reverted",
-        aggregateType: "thread",
+        aggregateKind: "thread",
         aggregateId: "thread-1",
         occurredAt: "2026-02-23T10:00:05.000Z",
         commandId: "cmd-revert",

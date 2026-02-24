@@ -326,7 +326,7 @@ function loadCustomKeybindingsConfig(
     const sanitized: Mutable<KeybindingsConfig> = [];
     let invalidEntries = 0;
     for (const entry of parsed) {
-      const result = Schema.decodeUnknownExit(KeybindingRule)(entry);
+      const result = Schema.decodeExit(KeybindingRule)(entry);
       if (result._tag === "Success") {
         if (!compileResolvedKeybindingRule(result.value)) {
           invalidEntries += 1;

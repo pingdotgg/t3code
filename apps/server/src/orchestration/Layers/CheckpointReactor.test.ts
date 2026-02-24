@@ -41,6 +41,8 @@ const asCommandId = (value: string): CommandId => CommandId.makeUnsafe(value);
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
+const asProviderThreadId = (value: string): ProviderThreadId =>
+  ProviderThreadId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
 function checkpointRefForTurn(threadId: ThreadId, turnCount: number): CheckpointRef {
@@ -62,7 +64,7 @@ function createProviderServiceHarness(cwd: string, hasSession = true) {
             sessionId: asSessionId("sess-1"),
             provider: "codex",
             status: "ready",
-            threadId: asThreadId("thread-1"),
+            threadId: asProviderThreadId("provider-thread-1"),
             cwd,
             createdAt: now,
             updatedAt: now,

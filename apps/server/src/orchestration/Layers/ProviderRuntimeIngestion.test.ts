@@ -313,7 +313,7 @@ describe("ProviderRuntimeIngestion", () => {
       sessionId: asSessionId("sess-1"),
       createdAt: now,
       turnId: asProviderTurnId("turn-9"),
-      toolKind: "read",
+      toolKind: "other",
       title: "Read file",
       detail: "/tmp/file.ts",
     });
