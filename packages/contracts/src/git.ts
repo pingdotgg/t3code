@@ -5,6 +5,7 @@ const TrimmedNonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
 // Domain Types
 
 export const GitStackedAction = Schema.Literals(["commit", "commit_push", "commit_push_pr"]);
+export type GitStackedAction = typeof GitStackedAction.Type;
 export const GitCommitStepStatus = Schema.Literals(["created", "skipped_no_changes"]);
 export const GitPushStepStatus = Schema.Literals([
   "pushed",

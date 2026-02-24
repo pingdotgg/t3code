@@ -35,6 +35,18 @@ import type {
 } from "./orchestration";
 import { EditorId } from "./editor";
 
+export interface DesktopBridge {
+  getWsUrl: () => string | null;
+  pickFolder: () => Promise<string | null>;
+  confirm: (message: string) => Promise<boolean>;
+  showContextMenu: <T extends string>(
+    items: readonly { id: T; label: string }[],
+    position?: { x: number; y: number },
+  ) => Promise<T | null>;
+  openExternal: (url: string) => Promise<boolean>;
+  onMenuAction: (listener: (action: string) => void) => () => void;
+}
+
 export interface NativeApi {
   dialogs: {
     pickFolder: () => Promise<string | null>;

@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { DesktopBridge } from "@t3tools/contracts";
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
@@ -9,12 +10,11 @@ const wsUrl = process.env.T3CODE_DESKTOP_WS_URL ?? null;
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: () => wsUrl,
-  pickFolder: () => ipcRenderer.invoke(PICK_FOLDER_CHANNEL) as Promise<string | null>,
-  confirm: (message: string) => ipcRenderer.invoke(CONFIRM_CHANNEL, message) as Promise<boolean>,
-  showContextMenu: (items: { id: string; label: string }[]) =>
-    ipcRenderer.invoke(CONTEXT_MENU_CHANNEL, items) as Promise<string | null>,
-  openExternal: (url: string) => ipcRenderer.invoke(OPEN_EXTERNAL_CHANNEL, url) as Promise<boolean>,
-  onMenuAction: (listener: (action: string) => void) => {
+  pickFolder: () => ipcRenderer.invoke(PICK_FOLDER_CHANNEL),
+  confirm: (message) => ipcRenderer.invoke(CONFIRM_CHANNEL, message),
+  showContextMenu: (items) => ipcRenderer.invoke(CONTEXT_MENU_CHANNEL, items),
+  openExternal: (url: string) => ipcRenderer.invoke(OPEN_EXTERNAL_CHANNEL, url),
+  onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
       if (typeof action !== "string") return;
       listener(action);
@@ -25,4 +25,4 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(MENU_ACTION_CHANNEL, wrappedListener);
     };
   },
-});
+} satisfies DesktopBridge);

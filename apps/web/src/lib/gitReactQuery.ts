@@ -152,15 +152,17 @@ export function gitCreateWorktreeMutationOptions(input: {
       cwd,
       branch,
       newBranch,
+      path,
     }: {
       cwd: string;
       branch: string;
       newBranch: string;
+      path?: string | null;
     }) => {
       if (!input.api) {
         throw new Error("Git worktree creation is unavailable.");
       }
-      return input.api.git.createWorktree({ cwd, branch, newBranch });
+      return input.api.git.createWorktree({ cwd, branch, newBranch, path: path ?? null });
     },
     onSettled: async () => {
       await invalidateGitQueries(input.queryClient);
@@ -177,7 +179,7 @@ export function gitRemoveWorktreeMutationOptions(input: {
       if (!input.api) {
         throw new Error("Git worktree removal is unavailable.");
       }
-      return input.api.git.removeWorktree({ cwd, path, force });
+      return input.api.git.removeWorktree({ cwd, path, force: force ?? null });
     },
     onSettled: async () => {
       await invalidateGitQueries(input.queryClient);

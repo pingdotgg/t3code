@@ -1,7 +1,7 @@
 import type {
+  OrchestrationSessionStatus,
   OrchestrationThreadActivity,
   ProjectScript as ContractProjectScript,
-  ProviderSession,
 } from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -30,7 +30,7 @@ export type ChatAttachment = ChatImageAttachment;
 
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   text: string;
   attachments?: ChatAttachment[];
   createdAt: string;
@@ -50,6 +50,7 @@ export interface TurnDiffSummary {
   completedAt: string;
   status?: string | undefined;
   files: TurnDiffFileChange[];
+  checkpointRef?: string | undefined;
   assistantMessageId?: string | undefined;
   checkpointTurnCount?: number | undefined;
 }
@@ -76,7 +77,7 @@ export interface Thread {
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
   activeTerminalGroupId: string;
-  session: ProviderSession | null;
+  session: ThreadSession | null;
   messages: ChatMessage[];
   error: string | null;
   createdAt: string;
@@ -89,4 +90,16 @@ export interface Thread {
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
+}
+
+export interface ThreadSession {
+  sessionId: string;
+  provider: "codex" | "claudeCode";
+  status: SessionPhase | "error" | "closed";
+  threadId: string | null;
+  activeTurnId?: string | undefined;
+  createdAt: string;
+  updatedAt: string;
+  lastError?: string;
+  orchestrationStatus: OrchestrationSessionStatus;
 }

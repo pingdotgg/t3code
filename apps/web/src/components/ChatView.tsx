@@ -5,12 +5,10 @@ import {
   type ProjectEntry,
   type ProjectScript,
   ModelSlug,
-  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ResolvedKeybindingsConfig,
   type ProviderApprovalDecision,
-  type ProviderSendTurnAttachmentInput,
 } from "@t3tools/contracts";
 import {
   type ClipboardEvent,
@@ -36,8 +34,6 @@ import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuer
 
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
-import { useAppSettings } from "../appSettings";
-import { buildBootstrapInput } from "../historyBootstrap";
 import {
   type ComposerTriggerKind,
   detectComposerTrigger,
@@ -116,6 +112,13 @@ import {
   setupProjectScript,
 } from "~/projectScripts";
 import { Toggle } from "./ui/toggle";
+import {
+  asApprovalRequestId,
+  asProjectId,
+  asThreadId,
+  newCommandId,
+  newMessageId,
+} from "~/lib/orchestrationIds";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
   if (!duration) return formatTimestamp(createdAt);
@@ -163,14 +166,6 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   if (tone === "tool") return "text-muted-foreground/70";
   if (tone === "thinking") return "text-muted-foreground/50";
   return "text-muted-foreground/40";
-}
-
-type SessionContinuityState = "resumed" | "new" | "fallback_new";
-
-interface EnsuredSessionInfo {
-  sessionId: string;
-  resolvedThreadId: string | null;
-  continuityState: SessionContinuityState;
 }
 
 interface ComposerImageAttachment extends Omit<ChatImageAttachment, "previewUrl"> {
@@ -351,7 +346,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const rawSearch = useSearch({ strict: false });
   const api = useNativeApi();
   const { resolvedTheme } = useTheme();
-  const { settings: appSettings } = useAppSettings();
   const queryClient = useQueryClient();
   const createWorktreeMutation = useMutation(
     gitCreateWorktreeMutationOptions({ api, queryClient }),
@@ -383,8 +377,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
-  const checkpointHydrationSessionRequestRef = useRef(new Set<string>());
-  const checkpointTurnCountSyncFingerprintRef = useRef(new Map<string, string>());
 
   const activeThread = state.threads.find((t) => t.id === threadId);
   const diffSearch = useMemo(
@@ -393,9 +385,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const diffOpen = diffSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
-  const activeSessionId = activeThread?.session?.sessionId ?? null;
-  const activeThreadRuntimeId =
-    activeThread?.codexThreadId ?? activeThread?.session?.threadId ?? null;
   const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
   const selectedModel = resolveModelSlug(
     activeThread?.model ?? activeProject?.model ?? DEFAULT_MODEL,
@@ -521,11 +510,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     completionSummary,
     timelineEntries,
   ]);
-  const runtimeApprovalPolicy = state.runtimeMode === "full-access" ? "never" : "on-request";
-  const runtimeSandboxMode =
-    state.runtimeMode === "full-access" ? "danger-full-access" : "workspace-write";
-  const codexBinaryPath = appSettings.codexBinaryPath.trim();
-  const codexHomePath = appSettings.codexHomePath.trim();
   const gitCwd = activeThread?.worktreePath ?? activeProject?.cwd ?? null;
   const composerTrigger = useMemo(
     () => detectComposerTrigger(prompt, composerCursor),
@@ -820,17 +804,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
         scripts: input.nextScripts,
       });
 
-      if (!isElectron || !api) return;
-
-      let scriptsPersisted = false;
+      if (!api) return;
       try {
-        const updated = await api.projects.updateScripts({
-          id: input.projectId,
+        await api.orchestration.dispatchCommand({
+          type: "project.meta.update",
+          commandId: newCommandId(),
+          projectId: asProjectId(input.projectId),
           scripts: input.nextScripts,
         });
-        scriptsPersisted = true;
 
-        if (input.keybinding) {
+        if (isElectron && input.keybinding) {
           const keybindingUpdate = await api.server.upsertKeybinding({
             key: input.keybinding,
             command: input.keybindingCommand,
@@ -843,24 +826,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 : {
                     cwd: input.projectCwd,
                     keybindings: keybindingUpdate.keybindings,
-                  },
+                },
           );
         }
-
-        dispatch({
-          type: "SET_PROJECT_SCRIPTS",
-          projectId: updated.project.id,
-          scripts: updated.project.scripts,
-        });
       } catch (error) {
-        if (scriptsPersisted) {
-          await api.projects
-            .updateScripts({
-              id: input.projectId,
-              scripts: input.previousScripts,
-            })
-            .catch(() => undefined);
-        }
         dispatch({
           type: "SET_PROJECT_SCRIPTS",
           projectId: input.projectId,
@@ -946,17 +915,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
     scheduleComposerFocus();
     if (!api) return;
 
-    const sessionIds = state.threads
-      .map((t) => t.session)
-      .filter((s): s is NonNullable<typeof s> => s !== null && s.status !== "closed")
-      .map((s) => s.sessionId);
+    const runningThreadIds = state.threads
+      .filter((thread) => thread.session !== null && thread.session.status !== "closed")
+      .map((thread) => thread.id);
 
-    if (sessionIds.length === 0) return;
+    if (runningThreadIds.length === 0) return;
 
     setIsSwitchingRuntimeMode(true);
     try {
       await Promise.all(
-        sessionIds.map((id) => api.providers.stopSession({ sessionId: id }).catch(() => undefined)),
+        runningThreadIds.map((threadId) =>
+          api.orchestration
+            .dispatchCommand({
+              type: "thread.session.stop",
+              commandId: newCommandId(),
+              threadId: asThreadId(threadId),
+              createdAt: new Date().toISOString(),
+            })
+            .catch(() => undefined),
+        ),
       );
     } finally {
       setIsSwitchingRuntimeMode(false);
@@ -1321,167 +1298,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     focusComposer();
   };
 
-  const syncCheckpointTurnCounts = useCallback(
-    async (input: {
-      threadId: string;
-      sessionId: string;
-      threadRuntimeId: string | null;
-    }): Promise<void> => {
-      if (!api || turnDiffSummaries.length === 0) {
-        return;
-      }
-
-      const turnIds = turnDiffSummaries.map((summary) => summary.turnId);
-      if (turnIds.length === 0) {
-        return;
-      }
-
-      const syncKey = `${input.threadId}:${input.sessionId}:${input.threadRuntimeId ?? "none"}`;
-      const turnFingerprint = turnIds.join(",");
-      if (checkpointTurnCountSyncFingerprintRef.current.get(syncKey) === turnFingerprint) {
-        return;
-      }
-      checkpointTurnCountSyncFingerprintRef.current.set(syncKey, turnFingerprint);
-
-      try {
-        await api.providers.listCheckpoints({
-          sessionId: input.sessionId,
-        });
-      } catch {
-        checkpointTurnCountSyncFingerprintRef.current.delete(syncKey);
-      }
-    },
-    [api, turnDiffSummaries],
-  );
-
-  const ensureSession = useCallback(
-    async (cwdOverride?: string): Promise<EnsuredSessionInfo | null> => {
-      if (!api || !activeThread || !activeProject) return null;
-      if (activeThread.session && activeThread.session.status !== "closed") {
-        const sessionThreadId = activeThread.session.threadId ?? null;
-        const continuityState: SessionContinuityState =
-          activeThread.codexThreadId === null
-            ? "new"
-            : sessionThreadId === activeThread.codexThreadId
-              ? "resumed"
-              : "fallback_new";
-        await syncCheckpointTurnCounts({
-          threadId: activeThread.id,
-          sessionId: activeThread.session.sessionId,
-          threadRuntimeId: sessionThreadId,
-        });
-        return {
-          sessionId: activeThread.session.sessionId,
-          resolvedThreadId: sessionThreadId,
-          continuityState,
-        } satisfies EnsuredSessionInfo;
-      }
-
-      const priorCodexThreadId = activeThread.codexThreadId;
-      setIsConnecting(true);
-      try {
-        const session = await api.providers.startSession({
-          provider: "codex",
-          cwd: cwdOverride ?? activeThread.worktreePath ?? activeProject.cwd,
-          model: selectedModel || undefined,
-          resumeThreadId: priorCodexThreadId ?? undefined,
-          ...(codexBinaryPath.length > 0 ? { codexBinaryPath } : {}),
-          ...(codexHomePath.length > 0 ? { codexHomePath } : {}),
-          approvalPolicy: runtimeApprovalPolicy,
-          sandboxMode: runtimeSandboxMode,
-        });
-        await api.orchestration.dispatchCommand({
-          type: "thread.session",
-          commandId: crypto.randomUUID(),
-          threadId: activeThread.id,
-          session: {
-            sessionId: session.sessionId,
-            provider: session.provider,
-            status: session.status,
-            threadId: session.threadId ?? activeThread.id,
-            activeTurnId: session.activeTurnId ?? null,
-            createdAt: session.createdAt,
-            updatedAt: session.updatedAt,
-            lastError: session.lastError ?? null,
-          },
-          createdAt: new Date().toISOString(),
-        });
-        const resolvedThreadId = session.threadId ?? null;
-        const continuityState: SessionContinuityState =
-          priorCodexThreadId === null
-            ? "new"
-            : resolvedThreadId === priorCodexThreadId
-              ? "resumed"
-              : "fallback_new";
-        await syncCheckpointTurnCounts({
-          threadId: activeThread.id,
-          sessionId: session.sessionId,
-          threadRuntimeId: resolvedThreadId,
-        });
-        return {
-          sessionId: session.sessionId,
-          resolvedThreadId,
-          continuityState,
-        };
-      } catch (err) {
-        dispatch({
-          type: "SET_ERROR",
-          threadId: activeThread.id,
-          error: err instanceof Error ? err.message : "Failed to connect.",
-        });
-        return null;
-      } finally {
-        setIsConnecting(false);
-      }
-    },
-    [
-      activeProject,
-      activeThread,
-      api,
-      codexBinaryPath,
-      codexHomePath,
-      runtimeApprovalPolicy,
-      runtimeSandboxMode,
-      selectedModel,
-      syncCheckpointTurnCounts,
-    ],
-  );
-
-  useEffect(() => {
-    if (!api || !activeThreadId || activeSessionId) return;
-    if (phase === "running" || isSending || isConnecting || isRevertingCheckpoint) return;
-    const hasThreadIdentity = Boolean(activeThreadRuntimeId);
-    if (!hasThreadIdentity) return;
-    if (turnDiffSummaries.length === 0) return;
-
-    const requestKey = `${activeThreadId}:${activeThreadRuntimeId ?? "none"}`;
-    if (checkpointHydrationSessionRequestRef.current.has(requestKey)) {
-      return;
-    }
-    checkpointHydrationSessionRequestRef.current.add(requestKey);
-    setThreadError(activeThreadId, null);
-    void ensureSession().then(
-      () => {
-        checkpointHydrationSessionRequestRef.current.delete(requestKey);
-      },
-      () => {
-        // Keep the key on failure so this effect does not re-enter in a tight loop.
-      },
-    );
-  }, [
-    activeThreadId,
-    activeThreadRuntimeId,
-    activeSessionId,
-    api,
-    ensureSession,
-    isConnecting,
-    isRevertingCheckpoint,
-    isSending,
-    phase,
-    setThreadError,
-    turnDiffSummaries,
-  ]);
-
   const onRevertToTurnCount = useCallback(
     async (turnCount: number) => {
       if (!api || !activeThread || isRevertingCheckpoint) {
@@ -1505,13 +1321,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setIsRevertingCheckpoint(true);
       setThreadError(activeThread.id, null);
       try {
-        const sessionInfo = await ensureSession();
-        if (!sessionInfo) {
-          return;
-        }
-        await api.providers.revertToCheckpoint({
-          sessionId: sessionInfo.sessionId,
+        await api.orchestration.dispatchCommand({
+          type: "thread.checkpoint.revert",
+          commandId: newCommandId(),
+          threadId: asThreadId(activeThread.id),
           turnCount,
+          createdAt: new Date().toISOString(),
         });
       } catch (err) {
         setThreadError(
@@ -1525,8 +1340,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [
       activeThread,
       api,
-      dispatch,
-      ensureSession,
       isConnecting,
       isRevertingCheckpoint,
       isSending,
@@ -1544,7 +1357,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const composerImagesSnapshot = [...composerImages];
 
     // On first message: lock in branch + create worktree if needed.
-    let sessionCwd: string | undefined;
     if (
       activeThread.messages.length === 0 &&
       activeThread.branch &&
@@ -1558,17 +1370,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
           branch: activeThread.branch,
           newBranch,
         });
-        sessionCwd = result.worktree.path;
-        if (api) {
-          await api.orchestration.dispatchCommand({
-            type: "thread.meta.update",
-            commandId: crypto.randomUUID(),
-            threadId: activeThread.id,
-            branch: result.worktree.branch,
-            worktreePath: result.worktree.path,
-            createdAt: new Date().toISOString(),
-          });
-        }
+        await api.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId: asThreadId(activeThread.id),
+          branch: result.worktree.branch,
+          worktreePath: result.worktree.path,
+        });
         const setupScript = setupProjectScript(activeProject.scripts);
         if (setupScript) {
           void runProjectScript(setupScript, {
@@ -1598,51 +1406,31 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (api) {
         await api.orchestration.dispatchCommand({
           type: "thread.meta.update",
-          commandId: crypto.randomUUID(),
-          threadId: activeThread.id,
+          commandId: newCommandId(),
+          threadId: asThreadId(activeThread.id),
           title,
-          createdAt: new Date().toISOString(),
         });
       }
     }
 
     setThreadError(activeThread.id, null);
-    const messageAttachments: ChatImageAttachment[] = composerImagesSnapshot.map((image) => ({
-      type: "image",
-      id: image.id,
-      name: image.name,
-      mimeType: image.mimeType,
-      sizeBytes: image.sizeBytes,
-      previewUrl: image.previewUrl,
-    }));
-    const userMessageId = crypto.randomUUID();
-    if (api) {
-      await api.orchestration.dispatchCommand({
-        type: "message.send",
-        commandId: crypto.randomUUID(),
-        threadId: activeThread.id,
-        messageId: userMessageId,
-        role: "user",
-        text: trimmed,
-        streaming: false,
-        createdAt: new Date().toISOString(),
-      });
-    }
-    const previousMessages = activeThread.messages;
     promptRef.current = "";
     setPrompt("");
     setComposerImages([]);
     setComposerCursor(0);
     setComposerHighlightedItemId(null);
 
-    const sessionInfo = await ensureSession(sessionCwd);
-    if (!sessionInfo) return;
-
     setIsSending(true);
     try {
       const turnAttachments = await Promise.all(
         composerImagesSnapshot.map(
-          async (image): Promise<ProviderSendTurnAttachmentInput> => ({
+          async (image): Promise<{
+            type: "image";
+            name: string;
+            mimeType: string;
+            sizeBytes: number;
+            dataUrl: string;
+          }> => ({
             type: "image",
             name: image.name,
             mimeType: image.mimeType,
@@ -1651,23 +1439,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }),
         ),
       );
-      const shouldBootstrap =
-        previousMessages.length > 0 &&
-        (sessionInfo.continuityState === "new" || sessionInfo.continuityState === "fallback_new");
-      const latestPromptForBootstrap = trimmed || IMAGE_ONLY_BOOTSTRAP_PROMPT;
-      const input = shouldBootstrap
-        ? buildBootstrapInput(
-            previousMessages,
-            latestPromptForBootstrap,
-            PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
-          ).text
-        : trimmed || undefined;
-      await api.providers.sendTurn({
-        sessionId: sessionInfo.sessionId,
-        ...(input ? { input } : {}),
-        ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
+      await api.orchestration.dispatchCommand({
+        type: "thread.turn.start",
+        commandId: newCommandId(),
+        threadId: asThreadId(activeThread.id),
+        message: {
+          messageId: newMessageId(),
+          role: "user",
+          text: trimmed || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+          attachments: turnAttachments,
+        },
         model: selectedModel || undefined,
         effort: selectedEffort || undefined,
+        createdAt: new Date().toISOString(),
       });
     } catch (err) {
       setThreadError(
@@ -1680,25 +1464,30 @@ export default function ChatView({ threadId }: ChatViewProps) {
   };
 
   const onInterrupt = async () => {
-    if (!api || !activeThread?.session) return;
-    await api.providers.interruptTurn({
-      sessionId: activeThread.session.sessionId,
-      turnId: activeThread.session.activeTurnId,
+    if (!api || !activeThread) return;
+    await api.orchestration.dispatchCommand({
+      type: "thread.turn.interrupt",
+      commandId: newCommandId(),
+      threadId: asThreadId(activeThread.id),
+      createdAt: new Date().toISOString(),
     });
   };
 
   const onRespondToApproval = useCallback(
     async (requestId: string, decision: ProviderApprovalDecision) => {
-      if (!api || !activeSessionId || !activeThreadId) return;
+      if (!api || !activeThreadId) return;
 
       setRespondingRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
       try {
-        await api.providers.respondToRequest({
-          sessionId: activeSessionId,
-          requestId,
+        await api.orchestration.dispatchCommand({
+          type: "thread.approval.respond",
+          commandId: newCommandId(),
+          threadId: asThreadId(activeThreadId),
+          requestId: asApprovalRequestId(requestId),
           decision,
+          createdAt: new Date().toISOString(),
         });
       } catch (err) {
         dispatch({
@@ -1710,7 +1499,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
       }
     },
-    [activeSessionId, activeThreadId, api, dispatch],
+    [activeThreadId, api, dispatch],
   );
 
   const onModelSelect = useCallback(
@@ -1719,10 +1508,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (api) {
         void api.orchestration.dispatchCommand({
           type: "thread.meta.update",
-          commandId: crypto.randomUUID(),
-          threadId: activeThread.id,
+          commandId: newCommandId(),
+          threadId: asThreadId(activeThread.id),
           model: resolveModelSlug(model),
-          createdAt: new Date().toISOString(),
         });
       }
       scheduleComposerFocus();

@@ -1,17 +1,20 @@
 import { useCallback, useSyncExternalStore } from "react";
-import { z } from "zod";
+import { Option, Schema } from "effect";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 
-const appSettingsSchema = z.object({
-  codexBinaryPath: z.string().trim().max(4096).default(""),
-  codexHomePath: z.string().trim().max(4096).default(""),
-  confirmThreadDelete: z.boolean().default(true),
+const AppSettingsSchema = Schema.Struct({
+  codexBinaryPath: Schema.NonEmptyString.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  codexHomePath: Schema.NonEmptyString.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
 });
+export type AppSettings = typeof AppSettingsSchema.Type;
 
-export type AppSettings = z.infer<typeof appSettingsSchema>;
-
-const DEFAULT_APP_SETTINGS: AppSettings = appSettingsSchema.parse({});
+const DEFAULT_APP_SETTINGS = AppSettingsSchema.makeUnsafe({});
 
 let listeners: Array<() => void> = [];
 let cachedRawSettings: string | null | undefined;
@@ -29,8 +32,7 @@ function parsePersistedSettings(value: string | null): AppSettings {
   }
 
   try {
-    const parsed = JSON.parse(value) as unknown;
-    return appSettingsSchema.parse(parsed);
+    return Schema.decodeSync(Schema.fromJsonString(AppSettingsSchema))(value);
   } catch {
     return DEFAULT_APP_SETTINGS;
   }
@@ -84,10 +86,14 @@ function subscribe(listener: () => void): () => void {
 }
 
 export function useAppSettings() {
-  const settings = useSyncExternalStore(subscribe, getAppSettingsSnapshot, () => DEFAULT_APP_SETTINGS);
+  const settings = useSyncExternalStore(
+    subscribe,
+    getAppSettingsSnapshot,
+    () => DEFAULT_APP_SETTINGS,
+  );
 
   const updateSettings = useCallback((patch: Partial<AppSettings>) => {
-    const next = appSettingsSchema.parse({
+    const next = Schema.decodeSync(AppSettingsSchema)({
       ...getAppSettingsSnapshot(),
       ...patch,
     });

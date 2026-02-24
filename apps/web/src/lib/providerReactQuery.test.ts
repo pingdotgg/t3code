@@ -6,8 +6,7 @@ import { checkpointDiffQueryOptions, providerQueryKeys } from "./providerReactQu
 describe("providerQueryKeys.checkpointDiff", () => {
   it("includes cacheScope so reused turn counts do not collide", () => {
     const baseInput = {
-      sessionId: "session-id",
-      threadRuntimeId: "thread-id",
+      threadId: "thread-id",
       fromTurnCount: 1,
       toTurnCount: 2,
     } as const;
@@ -28,16 +27,15 @@ describe("providerQueryKeys.checkpointDiff", () => {
 
 describe("checkpointDiffQueryOptions", () => {
   it("forwards checkpoint range to the provider API", async () => {
-    const getCheckpointDiff = vi.fn().mockResolvedValue({ diff: "patch" });
+    const getTurnDiff = vi.fn().mockResolvedValue({ diff: "patch" });
     const api = {
-      providers: {
-        getCheckpointDiff,
+      orchestration: {
+        getTurnDiff,
       },
     } as unknown as NativeApi;
 
     const options = checkpointDiffQueryOptions(api, {
-      sessionId: "session-id",
-      threadRuntimeId: "thread-id",
+      threadId: "thread-id",
       fromTurnCount: 3,
       toTurnCount: 4,
       cacheScope: "turn:abc",
@@ -46,8 +44,8 @@ describe("checkpointDiffQueryOptions", () => {
     const queryClient = new QueryClient();
     await queryClient.fetchQuery(options);
 
-    expect(getCheckpointDiff).toHaveBeenCalledWith({
-      sessionId: "session-id",
+    expect(getTurnDiff).toHaveBeenCalledWith({
+      threadId: "thread-id",
       fromTurnCount: 3,
       toTurnCount: 4,
     });
@@ -55,8 +53,7 @@ describe("checkpointDiffQueryOptions", () => {
 
   it("retries checkpoint-not-ready errors longer than generic failures", () => {
     const options = checkpointDiffQueryOptions(undefined, {
-      sessionId: "session-id",
-      threadRuntimeId: "thread-id",
+      threadId: "thread-id",
       fromTurnCount: 1,
       toTurnCount: 2,
       cacheScope: "turn:abc",
@@ -86,8 +83,7 @@ describe("checkpointDiffQueryOptions", () => {
 
   it("backs off longer for checkpoint-not-ready errors", () => {
     const options = checkpointDiffQueryOptions(undefined, {
-      sessionId: "session-id",
-      threadRuntimeId: "thread-id",
+      threadId: "thread-id",
       fromTurnCount: 1,
       toTurnCount: 2,
       cacheScope: "turn:abc",

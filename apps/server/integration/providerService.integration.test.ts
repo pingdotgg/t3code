@@ -1,4 +1,4 @@
-import type { ProviderRuntimeEvent } from "@t3tools/contracts";
+import type { ProviderRuntimeEvent, ProviderSessionId } from "@t3tools/contracts";
 import { NodeServices } from "@effect/platform-node";
 import { it, assert } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Queue, Stream } from "effect";
@@ -92,7 +92,7 @@ const collectEventsDuring = <A, E, R>(
 const runTurn = (input: {
   readonly provider: ProviderServiceShape;
   readonly harness: TestProviderAdapterHarness;
-  readonly sessionId: string;
+  readonly sessionId: ProviderSessionId;
   readonly userText: string;
   readonly response: TestTurnResponse;
 }) =>

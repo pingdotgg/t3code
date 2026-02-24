@@ -1,10 +1,15 @@
 import type {
   OrchestrationThreadActivity,
   ProviderKind,
-  ProviderSession,
 } from "@t3tools/contracts";
 
-import type { ChatMessage, SessionPhase, TurnDiffFileChange, TurnDiffSummary } from "./types";
+import type {
+  ChatMessage,
+  SessionPhase,
+  ThreadSession,
+  TurnDiffFileChange,
+  TurnDiffSummary,
+} from "./types";
 
 export const PROVIDER_OPTIONS: Array<{
   value: ProviderKind;
@@ -83,18 +88,29 @@ export function derivePendingApprovals(
   );
 
   for (const activity of ordered) {
-    if (activity.requestId && activity.requestKind) {
-      openByRequestId.set(activity.requestId, {
-        requestId: activity.requestId,
-        requestKind: activity.requestKind,
+    const payload =
+      activity.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+    const requestId = payload && typeof payload.requestId === "string" ? payload.requestId : null;
+    const requestKind =
+      payload && (payload.requestKind === "command" || payload.requestKind === "file-change")
+        ? payload.requestKind
+        : null;
+    const detail = payload && typeof payload.detail === "string" ? payload.detail : undefined;
+
+    if (activity.kind === "approval.requested" && requestId && requestKind) {
+      openByRequestId.set(requestId, {
+        requestId,
+        requestKind,
         createdAt: activity.createdAt,
-        ...(activity.detail ? { detail: activity.detail } : {}),
+        ...(detail ? { detail } : {}),
       });
       continue;
     }
 
-    if (activity.requestId && activity.label === "Approval resolved") {
-      openByRequestId.delete(activity.requestId);
+    if (activity.kind === "approval.resolved" && requestId) {
+      openByRequestId.delete(requestId);
     }
   }
 
@@ -112,16 +128,20 @@ export function deriveWorkLogEntries(
   );
   return ordered
     .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
-    .filter((activity) => activity.label !== "Checkpoint captured")
+    .filter((activity) => activity.summary !== "Checkpoint captured")
     .map((activity) => {
+      const payload =
+        activity.payload && typeof activity.payload === "object"
+          ? (activity.payload as Record<string, unknown>)
+          : null;
       const entry: WorkLogEntry = {
         id: activity.id,
         createdAt: activity.createdAt,
-        label: activity.label,
-        tone: activity.tone,
+        label: activity.summary,
+        tone: activity.tone === "approval" ? "info" : activity.tone,
       };
-      if (activity.detail) {
-        entry.detail = activity.detail;
+      if (payload && typeof payload.detail === "string" && payload.detail.length > 0) {
+        entry.detail = payload.detail;
       }
       return entry;
     });
@@ -207,7 +227,7 @@ export function deriveTurnDiffSummaries(_events: ReadonlyArray<OrchestrationThre
   return [];
 }
 
-export function derivePhase(session: ProviderSession | null): SessionPhase {
+export function derivePhase(session: ThreadSession | null): SessionPhase {
   if (!session || session.status === "closed") return "disconnected";
   if (session.status === "connecting") return "connecting";
   if (session.status === "running") return "running";

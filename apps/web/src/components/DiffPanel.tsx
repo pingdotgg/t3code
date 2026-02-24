@@ -99,9 +99,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   );
   const activeThreadId = routeThreadId;
   const activeThread = state.threads.find((thread) => thread.id === activeThreadId);
-  const activeThreadRuntimeId =
-    activeThread?.codexThreadId ?? activeThread?.session?.threadId ?? null;
-  const activeSessionId = activeThread?.session?.sessionId ?? null;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const orderedTurnDiffSummaries = useMemo(
@@ -173,8 +170,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   }, [orderedTurnDiffSummaries, selectedTurn]);
   const activeCheckpointDiffQuery = useQuery(
     checkpointDiffQueryOptions(api, {
-      sessionId: activeSessionId,
-      threadRuntimeId: activeThreadRuntimeId,
+      threadId: activeThreadId,
       fromTurnCount: activeCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: activeCheckpointRange?.toTurnCount ?? null,
       cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : conversationCacheScope,

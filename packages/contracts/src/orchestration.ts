@@ -105,6 +105,7 @@ export const ProjectScriptIcon = Schema.Literals([
   "build",
   "debug",
 ]);
+export type ProjectScriptIcon = typeof ProjectScriptIcon.Type;
 
 export const ProjectScript = Schema.Struct({
   id: Schema.String,

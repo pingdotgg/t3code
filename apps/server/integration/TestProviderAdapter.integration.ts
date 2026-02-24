@@ -1,8 +1,14 @@
 import { randomUUID } from "node:crypto";
 
-import type {
+import {
+  ApprovalRequestId,
+  EventId,
+  ProviderApprovalDecision,
   ProviderRuntimeEvent,
   ProviderSession,
+  ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
 import { Effect, Queue, Stream } from "effect";
@@ -40,7 +46,15 @@ export interface TestProviderAdapterHarness {
     sessionId: string,
     response: TestTurnResponse,
   ) => Effect.Effect<void, ProviderAdapterSessionNotFoundError>;
+  readonly queueTurnResponseForNextSession: (
+    response: TestTurnResponse,
+  ) => Effect.Effect<void, never>;
   readonly getRollbackCalls: (sessionId: string) => ReadonlyArray<number>;
+  readonly getApprovalResponses: (sessionId: string) => ReadonlyArray<{
+    readonly sessionId: ProviderSessionId;
+    readonly requestId: ApprovalRequestId;
+    readonly decision: ProviderApprovalDecision;
+  }>;
 }
 
 const PROVIDER = "codex" as const;
@@ -64,6 +78,15 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
   const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
   let sessionCount = 0;
   const sessions = new Map<string, SessionState>();
+  const queuedResponsesForNextSession: TestTurnResponse[] = [];
+  const approvalResponsesBySession = new Map<
+    string,
+    Array<{
+      readonly sessionId: ProviderSessionId;
+      readonly requestId: ApprovalRequestId;
+      readonly decision: ProviderApprovalDecision;
+    }>
+  >();
 
   const emit = (event: ProviderRuntimeEvent) => Queue.offer(runtimeEvents, event);
 
@@ -78,8 +101,8 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
       }
 
       sessionCount += 1;
-      const sessionId = `test-session-${sessionCount}`;
-      const threadId = `test-thread-${sessionCount}`;
+      const sessionId = ProviderSessionId.makeUnsafe(`test-session-${sessionCount}`);
+      const threadId = ProviderThreadId.makeUnsafe(`test-thread-${sessionCount}`);
       const createdAt = nowIso();
 
       const session: ProviderSession = {
@@ -99,7 +122,7 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
           turns: [],
         },
         turnCount: 0,
-        queuedResponses: [],
+        queuedResponses: queuedResponsesForNextSession.splice(0),
         rollbackCalls: [],
       });
 
@@ -115,7 +138,7 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
 
       state.turnCount += 1;
       const turnCount = state.turnCount;
-      const turnId = `turn-${turnCount}`;
+      const turnId = ProviderTurnId.makeUnsafe(`turn-${turnCount}`);
 
       const response = state.queuedResponses.shift();
       if (!response) {
@@ -182,7 +205,7 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
       if (deferredTurnCompletedEvents.length === 0) {
         yield* emit({
           type: "turn.completed",
-          eventId: randomUUID(),
+          eventId: EventId.makeUnsafe(randomUUID()),
           provider: PROVIDER,
           sessionId: input.sessionId,
           createdAt: nowIso(),
@@ -209,9 +232,20 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
 
   const respondToRequest: ProviderAdapterShape<ProviderAdapterError>["respondToRequest"] = (
     sessionId,
-    _requestId,
-    _decision,
-  ) => (sessions.has(sessionId) ? Effect.void : missingSessionEffect(sessionId));
+    requestId,
+    decision,
+  ) =>
+    sessions.has(sessionId)
+      ? Effect.sync(() => {
+          const existing = approvalResponsesBySession.get(sessionId) ?? [];
+          existing.push({
+            sessionId,
+            requestId,
+            decision,
+          });
+          approvalResponsesBySession.set(sessionId, existing);
+        })
+      : missingSessionEffect(sessionId);
 
   const stopSession: ProviderAdapterShape<ProviderAdapterError>["stopSession"] = (sessionId) =>
     Effect.sync(() => {
@@ -295,6 +329,13 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
       ),
     );
 
+  const queueTurnResponseForNextSession = (
+    response: TestTurnResponse,
+  ): Effect.Effect<void, never> =>
+    Effect.sync(() => {
+      queuedResponsesForNextSession.push(response);
+    });
+
   const getRollbackCalls = (sessionId: string): ReadonlyArray<number> => {
     const state = sessions.get(sessionId);
     if (!state) {
@@ -303,9 +344,25 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
     return [...state.rollbackCalls];
   };
 
+  const getApprovalResponses = (
+    sessionId: string,
+  ): ReadonlyArray<{
+    readonly sessionId: ProviderSessionId;
+    readonly requestId: ApprovalRequestId;
+    readonly decision: ProviderApprovalDecision;
+  }> => {
+    const responses = approvalResponsesBySession.get(sessionId);
+    if (!responses) {
+      return [];
+    }
+    return [...responses];
+  };
+
   return {
     adapter,
     queueTurnResponse,
+    queueTurnResponseForNextSession,
     getRollbackCalls,
+    getApprovalResponses,
   } satisfies TestProviderAdapterHarness;
 });

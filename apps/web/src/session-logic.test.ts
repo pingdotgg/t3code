@@ -1,4 +1,4 @@
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import { EventId, TurnId, type OrchestrationThreadActivity } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -7,18 +7,24 @@ import {
   deriveWorkLogEntries,
 } from "./session-logic";
 
-function makeActivity(
-  overrides: Partial<OrchestrationThreadActivity>,
-): OrchestrationThreadActivity {
+function makeActivity(overrides: {
+  id?: string;
+  createdAt?: string;
+  kind?: string;
+  summary?: string;
+  tone?: OrchestrationThreadActivity["tone"];
+  payload?: Record<string, unknown>;
+  turnId?: string;
+}): OrchestrationThreadActivity {
+  const payload = overrides.payload ?? {};
   return {
-    id: overrides.id ?? crypto.randomUUID(),
+    id: EventId.makeUnsafe(overrides.id ?? crypto.randomUUID()),
     createdAt: overrides.createdAt ?? "2026-02-23T00:00:00.000Z",
-    label: overrides.label ?? "Tool call",
+    kind: overrides.kind ?? "tool.started",
+    summary: overrides.summary ?? "Tool call",
     tone: overrides.tone ?? "tool",
-    ...(overrides.detail !== undefined ? { detail: overrides.detail } : {}),
-    ...(overrides.turnId !== undefined ? { turnId: overrides.turnId } : {}),
-    ...(overrides.requestId !== undefined ? { requestId: overrides.requestId } : {}),
-    ...(overrides.requestKind !== undefined ? { requestKind: overrides.requestKind } : {}),
+    payload,
+    turnId: overrides.turnId ? TurnId.makeUnsafe(overrides.turnId) : null,
   };
 }
 
@@ -28,26 +34,30 @@ describe("derivePendingApprovals", () => {
       makeActivity({
         id: "approval-open",
         createdAt: "2026-02-23T00:00:01.000Z",
-        label: "Command approval requested",
-        detail: "bun run lint",
-        tone: "tool",
-        requestId: "req-1",
-        requestKind: "command",
+        kind: "approval.requested",
+        summary: "Command approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-1",
+          requestKind: "command",
+          detail: "bun run lint",
+        },
       }),
       makeActivity({
         id: "approval-close",
         createdAt: "2026-02-23T00:00:02.000Z",
-        label: "Approval resolved",
+        kind: "approval.resolved",
+        summary: "Approval resolved",
         tone: "info",
-        requestId: "req-2",
+        payload: { requestId: "req-2" },
       }),
       makeActivity({
         id: "approval-closed-request",
         createdAt: "2026-02-23T00:00:01.500Z",
-        label: "File-change approval requested",
-        tone: "tool",
-        requestId: "req-2",
-        requestKind: "file-change",
+        kind: "approval.requested",
+        summary: "File-change approval requested",
+        tone: "approval",
+        payload: { requestId: "req-2", requestKind: "file-change" },
       }),
     ];
 
@@ -68,12 +78,14 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "tool-complete",
         createdAt: "2026-02-23T00:00:03.000Z",
-        label: "Tool call complete",
+        summary: "Tool call complete",
+        kind: "tool.completed",
       }),
       makeActivity({
         id: "tool-start",
         createdAt: "2026-02-23T00:00:02.000Z",
-        label: "Tool call",
+        summary: "Tool call",
+        kind: "tool.started",
       }),
     ];
 
@@ -83,9 +95,14 @@ describe("deriveWorkLogEntries", () => {
 
   it("filters by turn id when provided", () => {
     const activities: OrchestrationThreadActivity[] = [
-      makeActivity({ id: "turn-1", turnId: "turn-1", label: "Tool call" }),
-      makeActivity({ id: "turn-2", turnId: "turn-2", label: "Tool call complete" }),
-      makeActivity({ id: "no-turn", label: "Checkpoint captured", tone: "info" }),
+      makeActivity({ id: "turn-1", turnId: "turn-1", summary: "Tool call", kind: "tool.started" }),
+      makeActivity({
+        id: "turn-2",
+        turnId: "turn-2",
+        summary: "Tool call complete",
+        kind: "tool.completed",
+      }),
+      makeActivity({ id: "no-turn", summary: "Checkpoint captured", tone: "info" }),
     ];
 
     const entries = deriveWorkLogEntries(activities, "turn-2");
@@ -97,14 +114,15 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "checkpoint",
         createdAt: "2026-02-23T00:00:01.000Z",
-        label: "Checkpoint captured",
+        summary: "Checkpoint captured",
         tone: "info",
       }),
       makeActivity({
         id: "tool-complete",
         createdAt: "2026-02-23T00:00:02.000Z",
-        label: "Command run complete",
+        summary: "Command run complete",
         tone: "tool",
+        kind: "tool.completed",
       }),
     ];
 

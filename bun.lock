@@ -19,6 +19,7 @@
         "electron": "40.6.0",
       },
       "devDependencies": {
+        "@t3tools/contracts": "workspace:*",
         "@types/node": "^22.10.2",
         "electronmon": "^2.0.2",
         "tsdown": "^0.20.3",
@@ -68,6 +69,7 @@
         "@xterm/addon-fit": "^0.11.0",
         "@xterm/xterm": "^6.0.0",
         "class-variance-authority": "^0.7.1",
+        "effect": "4.0.0-beta.10",
         "highlight.js": "^11.11.1",
         "lucide-react": "^0.564.0",
         "react": "^19.0.0",
@@ -76,7 +78,6 @@
         "rehype-highlight": "^7.0.2",
         "remark-gfm": "^4.0.1",
         "tailwind-merge": "^3.4.0",
-        "zod": "^3.24.1",
       },
       "devDependencies": {
         "@tailwindcss/vite": "^4.0.0",
@@ -95,7 +96,6 @@
       "version": "0.0.0",
       "dependencies": {
         "effect": "4.0.0-beta.10",
-        "zod": "^3.24.1",
       },
       "devDependencies": {
         "@effect/language-service": "0.75.1",

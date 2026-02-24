@@ -132,6 +132,45 @@ function parseBooleanEnv(value: string | undefined): boolean | undefined {
   return undefined;
 }
 
+function websocketRawToString(raw: unknown): string | null {
+  if (typeof raw === "string") {
+    return raw;
+  }
+  if (raw instanceof Uint8Array) {
+    return Buffer.from(raw).toString("utf8");
+  }
+  if (raw instanceof ArrayBuffer) {
+    return Buffer.from(new Uint8Array(raw)).toString("utf8");
+  }
+  if (Array.isArray(raw)) {
+    const chunks: string[] = [];
+    for (const chunk of raw) {
+      if (typeof chunk === "string") {
+        chunks.push(chunk);
+        continue;
+      }
+      if (chunk instanceof Uint8Array) {
+        chunks.push(Buffer.from(chunk).toString("utf8"));
+        continue;
+      }
+      if (chunk instanceof ArrayBuffer) {
+        chunks.push(Buffer.from(new Uint8Array(chunk)).toString("utf8"));
+        continue;
+      }
+      return null;
+    }
+    return chunks.join("");
+  }
+  return null;
+}
+
+function stripRequestTag<T extends { _tag: string }>(
+  body: T,
+): Omit<T, "_tag"> {
+  const { _tag: _ignoredTag, ...rest } = body;
+  return rest;
+}
+
 type EffectRuntime = ManagedRuntime.ManagedRuntime<
   | OrchestrationEngineService
   | ProjectionSnapshotQuery
@@ -360,9 +399,19 @@ export function createServer(options: ServerOptions) {
   });
 
   async function handleMessage(ws: WebSocket, raw: unknown) {
+    const messageText = websocketRawToString(raw);
+    if (messageText === null) {
+      const errorResponse: WsResponse = {
+        id: "unknown",
+        error: { message: "Invalid request format" },
+      };
+      ws.send(JSON.stringify(errorResponse));
+      return;
+    }
+
     let request: WebSocketRequest;
     try {
-      request = Schema.decodeUnknownSync(Schema.fromJsonString(WebSocketRequest))(raw);
+      request = Schema.decodeUnknownSync(Schema.fromJsonString(WebSocketRequest))(messageText);
     } catch {
       const errorResponse: WsResponse = {
         id: "unknown",
@@ -406,17 +455,18 @@ export function createServer(options: ServerOptions) {
       }
 
       case ORCHESTRATION_WS_METHODS.getTurnDiff: {
-        const blob = await effectRuntime.runPromise(diffBlobRepository.get(request.body));
+        const body = stripRequestTag(request.body);
+        const blob = await effectRuntime.runPromise(diffBlobRepository.get(body));
         if (Option.isNone(blob)) {
           throw new Error(
-            `Turn diff not found for thread '${request.body.threadId}' from ${request.body.fromTurnCount} to ${request.body.toTurnCount}.`,
+            `Turn diff not found for thread '${body.threadId}' from ${body.fromTurnCount} to ${body.toTurnCount}.`,
           );
         }
 
         return {
-          threadId: request.body.threadId,
-          fromTurnCount: request.body.fromTurnCount,
-          toTurnCount: request.body.toTurnCount,
+          threadId: body.threadId,
+          fromTurnCount: body.fromTurnCount,
+          toTurnCount: body.toTurnCount,
           diff: blob.value?.diff,
         };
       }
@@ -434,7 +484,7 @@ export function createServer(options: ServerOptions) {
         );
 
       case WS_METHODS.projectsSearchEntries:
-        return searchWorkspaceEntries(request.body);
+        return searchWorkspaceEntries(stripRequestTag(request.body));
 
       case WS_METHODS.shellOpenInEditor: {
         const body = request.body;
@@ -500,48 +550,48 @@ export function createServer(options: ServerOptions) {
       // }
 
       case WS_METHODS.gitPull:
-        return pullGitBranch(request.body);
+        return pullGitBranch(stripRequestTag(request.body));
 
       case WS_METHODS.gitRunStackedAction:
-        return gitManager.runStackedAction(request.body);
+        return gitManager.runStackedAction(stripRequestTag(request.body));
       case WS_METHODS.gitListBranches:
-        return listGitBranches(request.body);
+        return listGitBranches(stripRequestTag(request.body));
 
       case WS_METHODS.gitCreateWorktree:
-        return createGitWorktree(request.body);
+        return createGitWorktree(stripRequestTag(request.body));
 
       case WS_METHODS.gitRemoveWorktree:
-        return removeGitWorktree(request.body);
+        return removeGitWorktree(stripRequestTag(request.body));
 
       case WS_METHODS.gitCreateBranch:
-        return createGitBranch(request.body);
+        return createGitBranch(stripRequestTag(request.body));
 
       case WS_METHODS.gitCheckout:
-        return checkoutGitBranch(request.body);
+        return checkoutGitBranch(stripRequestTag(request.body));
 
       case WS_METHODS.gitInit:
-        return initGitRepo(request.body);
+        return initGitRepo(stripRequestTag(request.body));
 
       case WS_METHODS.terminalOpen:
-        return terminalManager.open(request.body);
+        return terminalManager.open(stripRequestTag(request.body));
 
       case WS_METHODS.terminalWrite:
-        await terminalManager.write(request.body);
+        await terminalManager.write(stripRequestTag(request.body));
         return undefined;
 
       case WS_METHODS.terminalResize:
-        await terminalManager.resize(request.body);
+        await terminalManager.resize(stripRequestTag(request.body));
         return undefined;
 
       case WS_METHODS.terminalClear:
-        await terminalManager.clear(request.body);
+        await terminalManager.clear(stripRequestTag(request.body));
         return undefined;
 
       case WS_METHODS.terminalRestart:
-        return terminalManager.restart(request.body);
+        return terminalManager.restart(stripRequestTag(request.body));
 
       case WS_METHODS.terminalClose:
-        await terminalManager.close(request.body);
+        await terminalManager.close(stripRequestTag(request.body));
         return undefined;
 
       case WS_METHODS.serverGetConfig:
@@ -551,7 +601,7 @@ export function createServer(options: ServerOptions) {
         };
 
       case WS_METHODS.serverUpsertKeybinding:
-        keybindingsConfig = upsertKeybindingRule(logger, request.body);
+        keybindingsConfig = upsertKeybindingRule(logger, stripRequestTag(request.body));
         return {
           keybindings: keybindingsConfig,
         };

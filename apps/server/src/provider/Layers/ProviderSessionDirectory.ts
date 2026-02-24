@@ -103,12 +103,10 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       const existingRuntime = Option.getOrUndefined(existing);
       const resolvedThreadId = binding.threadId ?? existingRuntime?.threadId;
       if (!resolvedThreadId) {
-        return yield* Effect.fail(
-          new ProviderValidationError({
-            operation: "ProviderSessionDirectory.upsert",
-            issue: "threadId must be a non-empty string.",
-          }),
-        );
+        return yield* new ProviderValidationError({
+          operation: "ProviderSessionDirectory.upsert",
+          issue: "threadId must be a non-empty string.",
+        });
       }
 
       const now = new Date().toISOString();

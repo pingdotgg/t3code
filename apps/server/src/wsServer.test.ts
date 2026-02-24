@@ -189,13 +189,22 @@ function waitForMessage(ws: WebSocket): Promise<unknown> {
 
 async function sendRequest(ws: WebSocket, method: string, params?: unknown): Promise<WsResponse> {
   const id = crypto.randomUUID();
-  const message = JSON.stringify({ id, method, ...(params !== undefined ? { params } : {}) });
+  const body =
+    method === ORCHESTRATION_WS_METHODS.dispatchCommand
+      ? { _tag: method, command: params }
+      : params && typeof params === "object" && !Array.isArray(params)
+        ? { _tag: method, ...(params as Record<string, unknown>) }
+        : { _tag: method };
+  const message = JSON.stringify({ id, body });
   ws.send(message);
 
   // Wait for response with matching id
   while (true) {
     const parsed = (await waitForMessage(ws)) as Record<string, unknown>;
     if (parsed.id === id) {
+      return parsed as WsResponse;
+    }
+    if (parsed.id === "unknown") {
       return parsed as WsResponse;
     }
   }
@@ -658,18 +667,27 @@ describe("WebSocket Server", () => {
 
     const response = await sendRequest(ws, "nonexistent.method");
     expect(response.error).toBeDefined();
-    expect(response.error!.message).toContain("Unknown method");
+    expect(response.error!.message).toContain("Invalid request format");
   });
 
   it("keeps orchestration domain push behavior for provider runtime events", async () => {
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
+    const sessionId = "sess-test";
     const emitRuntimeEvent = (event: ProviderRuntimeEvent) => {
       Effect.runSync(PubSub.publish(runtimeEventPubSub, event));
     };
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
     const providerService: ProviderServiceShape = {
-      startSession: () => unsupported(),
-      sendTurn: () => unsupported(),
+      startSession: () =>
+        Effect.succeed({
+          sessionId,
+          provider: "codex",
+          status: "ready",
+          threadId: "provider-thread-1",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }),
+      sendTurn: () => Effect.succeed({ threadId: "provider-thread-1", turnId: "provider-turn-1" }),
       interruptTurn: () => unsupported(),
       respondToRequest: () => unsupported(),
       stopSession: () => unsupported(),
@@ -716,29 +734,30 @@ describe("WebSocket Server", () => {
     });
     expect(createThreadResponse.error).toBeUndefined();
 
-    const setSessionResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
-      type: "thread.session",
-      commandId: "cmd-ws-runtime-session-set",
+    const startTurnResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "thread.turn.start",
+      commandId: "cmd-ws-runtime-turn-start",
       threadId: "thread-1",
-      session: {
-        sessionId: "sess-test",
-        provider: "codex",
-        status: "ready",
-        threadId: "thread-1",
-        activeTurnId: null,
-        createdAt,
-        updatedAt: createdAt,
-        lastError: null,
+      message: {
+        messageId: "msg-ws-runtime-1",
+        role: "user",
+        text: "hello",
+        attachments: [],
       },
       createdAt,
     });
-    expect(setSessionResponse.error).toBeUndefined();
+    expect(startTurnResponse.error).toBeUndefined();
+
+    await waitForPush(ws, ORCHESTRATION_WS_CHANNELS.domainEvent, (push) => {
+      const event = push.data as { type?: string };
+      return event.type === "thread.session-set";
+    });
 
     emitRuntimeEvent({
       type: "message.delta",
       eventId: "evt-ws-runtime-message-delta",
       provider: "codex",
-      sessionId: "sess-test",
+      sessionId,
       createdAt: new Date().toISOString(),
       turnId: "turn-1",
       itemId: "item-1",
@@ -746,13 +765,16 @@ describe("WebSocket Server", () => {
     });
 
     const domainPush = await waitForPush(ws, ORCHESTRATION_WS_CHANNELS.domainEvent, (push) => {
-      const event = push.data as { type?: string; payload?: { id?: string; text?: string } };
-      return event.type === "message.sent" && event.payload?.id === "assistant:item-1";
+      const event = push.data as { type?: string; payload?: { messageId?: string; text?: string } };
+      return event.type === "thread.message-sent" && event.payload?.messageId === "assistant:item-1";
     });
 
-    const domainEvent = domainPush.data as { type: string; payload: { id: string; text: string } };
-    expect(domainEvent.type).toBe("message.sent");
-    expect(domainEvent.payload.id).toBe("assistant:item-1");
+    const domainEvent = domainPush.data as {
+      type: string;
+      payload: { messageId: string; text: string };
+    };
+    expect(domainEvent.type).toBe("thread.message-sent");
+    expect(domainEvent.payload.messageId).toBe("assistant:item-1");
     expect(domainEvent.payload.text).toBe("hello from runtime");
   });
 
@@ -895,7 +917,7 @@ describe("WebSocket Server", () => {
     expect(response!.error!.message).toContain("Invalid request format");
   });
 
-  it("returns unknown method for removed projects CRUD methods", async () => {
+  it("returns errors for removed projects CRUD methods", async () => {
     server = createTestServer({ cwd: "/test" });
     await server.start();
     const addr = server.httpServer.address();
@@ -907,19 +929,19 @@ describe("WebSocket Server", () => {
 
     const listResponse = await sendRequest(ws, WS_METHODS.projectsList);
     expect(listResponse.result).toBeUndefined();
-    expect(listResponse.error?.message).toContain("Unknown method");
+    expect(listResponse.error?.message).toContain("Invalid request format");
 
     const addResponse = await sendRequest(ws, WS_METHODS.projectsAdd, {
       cwd: "/tmp/project-a",
     });
     expect(addResponse.result).toBeUndefined();
-    expect(addResponse.error?.message).toContain("Unknown method");
+    expect(addResponse.error?.message).toContain("Invalid request format");
 
     const removeResponse = await sendRequest(ws, WS_METHODS.projectsRemove, {
       id: "project-a",
     });
     expect(removeResponse.result).toBeUndefined();
-    expect(removeResponse.error?.message).toContain("Unknown method");
+    expect(removeResponse.error?.message).toContain("Invalid request format");
   });
 
   it("supports projects.searchEntries", async () => {
@@ -989,7 +1011,7 @@ describe("WebSocket Server", () => {
     expect(pullResponse.error?.message).not.toContain("Unknown method");
   });
 
-  it("returns unknown method for git.status", async () => {
+  it("returns error for git.status", async () => {
     const gitManager = {
       status: vi.fn().mockResolvedValue({
         branch: "feature/test",
