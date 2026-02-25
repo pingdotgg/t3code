@@ -92,6 +92,7 @@ import { CursorIcon, Icon } from "./Icons";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { Badge } from "./ui/badge";
 import { Command, CommandInput, CommandItem, CommandList } from "./ui/command";
+import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   commandForProjectScript,
@@ -814,21 +815,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
         scripts: input.nextScripts,
       });
 
-      if (isElectron && input.keybinding) {
-        const keybindingUpdate = await api.server.upsertKeybinding({
-          key: input.keybinding,
-          command: input.keybindingCommand,
-        });
-        queryClient.setQueryData(
-          serverQueryKeys.config(),
-          (current: { cwd: string; keybindings: ResolvedKeybindingsConfig } | undefined) =>
-            current
-              ? { ...current, keybindings: keybindingUpdate.keybindings }
-              : {
-                  cwd: input.projectCwd,
-                  keybindings: keybindingUpdate.keybindings,
-                },
-        );
+      const keybindingRule = decodeProjectScriptKeybindingRule({
+        keybinding: input.keybinding,
+        command: input.keybindingCommand,
+      });
+
+      if (isElectron && keybindingRule) {
+        await api.server.upsertKeybinding(keybindingRule);
+        await queryClient.invalidateQueries({ queryKey: serverQueryKeys.all });
       }
     },
     [queryClient],

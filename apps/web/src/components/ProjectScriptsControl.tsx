@@ -16,7 +16,8 @@ import {
 } from "lucide-react";
 import React, { type FormEvent, type KeyboardEvent, useMemo, useState } from "react";
 
-import { commandForProjectScript, primaryProjectScript } from "~/projectScripts";
+import { keybindingValueForCommand, decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
+import { commandForProjectScript, nextProjectScriptId, primaryProjectScript } from "~/projectScripts";
 import { shortcutLabelForCommand } from "~/keybindings";
 import { isMacPlatform } from "~/lib/utils";
 import { Button } from "./ui/button";
@@ -129,32 +130,6 @@ function keybindingFromEvent(event: KeyboardEvent<HTMLInputElement>): string | n
   return parts.join("+");
 }
 
-function keybindingValueForCommand(
-  keybindings: ResolvedKeybindingsConfig,
-  command: string,
-): string | null {
-  for (let index = keybindings.length - 1; index >= 0; index -= 1) {
-    const binding = keybindings[index];
-    if (!binding || binding.command !== command) continue;
-
-    const parts: string[] = [];
-    if (binding.shortcut.modKey) parts.push("mod");
-    if (binding.shortcut.ctrlKey) parts.push("ctrl");
-    if (binding.shortcut.metaKey) parts.push("meta");
-    if (binding.shortcut.altKey) parts.push("alt");
-    if (binding.shortcut.shiftKey) parts.push("shift");
-    const keyToken =
-      binding.shortcut.key === " "
-        ? "space"
-        : binding.shortcut.key === "escape"
-          ? "esc"
-          : binding.shortcut.key;
-    parts.push(keyToken);
-    return parts.join("+");
-  }
-  return null;
-}
-
 export default function ProjectScriptsControl({
   scripts,
   keybindings,
@@ -212,12 +187,18 @@ export default function ProjectScriptsControl({
 
     setValidationError(null);
     try {
+      const scriptIdForValidation =
+        editingScriptId ?? nextProjectScriptId(trimmedName, scripts.map((script) => script.id));
+      const keybindingRule = decodeProjectScriptKeybindingRule({
+        keybinding,
+        command: commandForProjectScript(scriptIdForValidation),
+      });
       const payload = {
         name: trimmedName,
         command: trimmedCommand,
         icon,
         runOnWorktreeCreate,
-        keybinding: keybinding.trim() || null,
+        keybinding: keybindingRule?.key ?? null,
       } satisfies NewProjectScriptInput;
       if (editingScriptId) {
         await onUpdateScript(editingScriptId, payload);

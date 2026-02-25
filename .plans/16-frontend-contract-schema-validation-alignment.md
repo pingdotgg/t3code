@@ -97,6 +97,9 @@ Align frontend input/output validation with `@t3tools/contracts` schemas so the 
 
 ## Phase 5: Script/Keybinding Validation Consistency
 
+### Status
+Complete
+
 ### Issue
 `ProjectScriptsControl` and `ChatView` rely mostly on local non-empty checks while sending keybinding data into a contract-validated endpoint (`server.upsertKeybinding`).
 
