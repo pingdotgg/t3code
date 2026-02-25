@@ -6,7 +6,12 @@ import { Command, Flag } from "effect/unstable/cli";
 
 import { fixPath } from "./fixPath";
 import { Open } from "./open";
-import { Server } from "./wsServer";
+import {
+  makeServerPersistenceLayer,
+  makeServerProviderLayer,
+  makeServerRuntimeServicesLayer,
+  Server,
+} from "./wsServer";
 
 const DEFAULT_PORT = 3773;
 
@@ -168,29 +173,26 @@ const makeServerProgram = Effect.fn(function* (input: CliInput) {
     });
   }
 
-  yield* Effect.acquireRelease(
-    Effect.tryPromise({
-      try: async () => {
-        const server = createServer({
-          port: config.port,
-          host: config.mode === "desktop" ? "127.0.0.1" : undefined,
-          cwd: config.cwd,
-          autoBootstrapProjectFromCwd: config.mode === "web",
-          stateDir: config.stateDir,
-          staticDir: config.staticDir,
-          devUrl: config.devUrl?.href,
-          authToken: config.authToken,
-        });
-        await server.start();
-        return server;
-      },
-      catch: (cause) => new StartupError({ message: "Failed to start server", cause }),
-    }),
-    (server) =>
-      Effect.tryPromise({
-        try: () => server.stop(),
-        catch: (cause) => new StartupError({ message: "Failed to stop server", cause }),
-      }).pipe(Effect.catch((error) => Effect.logError("failed to stop server cleanly", { error }))),
+  const persistenceLayer = makeServerPersistenceLayer(config.stateDir);
+  const providerLayer = makeServerProviderLayer(config.stateDir);
+  const infrastructureLayer = providerLayer.pipe(Layer.provideMerge(persistenceLayer));
+  const serverRuntimeLayer = Layer.merge(
+    makeServerRuntimeServicesLayer().pipe(Layer.provide(infrastructureLayer)),
+    infrastructureLayer,
+  );
+
+  yield* createServer({
+    port: config.port,
+    host: config.mode === "desktop" ? "127.0.0.1" : undefined,
+    cwd: config.cwd,
+    autoBootstrapProjectFromCwd: config.mode === "web",
+    stateDir: config.stateDir,
+    staticDir: config.staticDir,
+    devUrl: config.devUrl?.href,
+    authToken: config.authToken,
+  }).pipe(
+    Effect.provide(serverRuntimeLayer),
+    Effect.mapError((cause) => new StartupError({ message: "Failed to start server", cause })),
   );
 
   const url = `http://localhost:${config.port}`;

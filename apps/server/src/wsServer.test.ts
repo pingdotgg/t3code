@@ -1,11 +1,12 @@
+import * as Http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 
-import { Effect, Layer, PubSub, Stream } from "effect";
+import { Effect, Exit, Layer, PubSub, Scope, Stream } from "effect";
 import { describe, expect, it, afterEach, vi } from "vitest";
-import { createServer } from "./wsServer";
+import { createServer, makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./wsServer";
 import WebSocket from "ws";
 
 import {
@@ -49,7 +50,8 @@ interface PendingMessages {
 const pendingBySocket = new WeakMap<WebSocket, PendingMessages>();
 
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
-const asProviderSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
+const asProviderSessionId = (value: string): ProviderSessionId =>
+  ProviderSessionId.makeUnsafe(value);
 const asProviderThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
 const asProviderTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
 const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
@@ -286,7 +288,8 @@ function mergeWithDefaultsForTest(custom: KeybindingsConfig): ResolvedKeybinding
 }
 
 describe("WebSocket Server", () => {
-  let server: ReturnType<typeof createServer> | null = null;
+  let server: Http.Server | null = null;
+  let serverScope: Scope.Closeable | null = null;
   const connections: WebSocket[] = [];
   const tempDirs: string[] = [];
 
@@ -296,7 +299,7 @@ describe("WebSocket Server", () => {
     return dir;
   }
 
-  function createTestServer(
+  async function createTestServer(
     options: {
       persistenceLayer?: Layer.Layer<SqlClient.SqlClient, any>;
       cwd?: string;
@@ -312,23 +315,53 @@ describe("WebSocket Server", () => {
       };
       terminalManager?: TerminalManager;
     } = {},
-  ): ReturnType<typeof createServer> {
+  ): Promise<Http.Server> {
+    if (serverScope) {
+      throw new Error("Test server is already running");
+    }
+
     const stateDir = options.stateDir ?? makeTempDir("t3code-ws-state-");
-    return createServer({
-      port: 0,
-      cwd: options.cwd ?? "/test/project",
-      stateDir,
-      persistenceLayer: options.persistenceLayer ?? SqlitePersistenceMemory,
-      ...(options.autoBootstrapProjectFromCwd !== undefined
-        ? { autoBootstrapProjectFromCwd: options.autoBootstrapProjectFromCwd }
-        : {}),
-      ...(options.devUrl ? { devUrl: options.devUrl } : {}),
-      ...(options.authToken ? { authToken: options.authToken } : {}),
-      ...(options.providerLayer ? { providerLayer: options.providerLayer } : {}),
-      ...(options.open ? { open: options.open } : {}),
-      ...(options.gitManager ? { gitManager: options.gitManager as never } : {}),
-      ...(options.terminalManager ? { terminalManager: options.terminalManager } : {}),
-    });
+    const scope = await Effect.runPromise(Scope.make("sequential"));
+    const persistenceLayer = options.persistenceLayer ?? SqlitePersistenceMemory;
+    const providerLayer = options.providerLayer ?? makeServerProviderLayer(stateDir);
+    const infrastructureLayer = providerLayer.pipe(Layer.provideMerge(persistenceLayer));
+    const runtimeLayer = Layer.merge(
+      makeServerRuntimeServicesLayer().pipe(Layer.provide(infrastructureLayer)),
+      infrastructureLayer,
+    );
+    const runtimeServices = await Effect.runPromise(
+      Layer.build(runtimeLayer).pipe(Scope.provide(scope)),
+    );
+
+    try {
+      const runtime = await Effect.runPromise(
+        createServer({
+          port: 0,
+          cwd: options.cwd ?? "/test/project",
+          stateDir,
+          ...(options.autoBootstrapProjectFromCwd !== undefined
+            ? { autoBootstrapProjectFromCwd: options.autoBootstrapProjectFromCwd }
+            : {}),
+          ...(options.devUrl ? { devUrl: options.devUrl } : {}),
+          ...(options.authToken ? { authToken: options.authToken } : {}),
+          ...(options.open ? { open: options.open } : {}),
+          ...(options.gitManager ? { gitManager: options.gitManager as never } : {}),
+          ...(options.terminalManager ? { terminalManager: options.terminalManager } : {}),
+        }).pipe(Effect.provide(runtimeServices), Scope.provide(scope)),
+      );
+      serverScope = scope;
+      return runtime;
+    } catch (error) {
+      await Effect.runPromise(Scope.close(scope, Exit.void));
+      throw error;
+    }
+  }
+
+  async function closeTestServer() {
+    if (!serverScope) return;
+    const scope = serverScope;
+    serverScope = null;
+    await Effect.runPromise(Scope.close(scope, Exit.void));
   }
 
   afterEach(async () => {
@@ -336,9 +369,7 @@ describe("WebSocket Server", () => {
       ws.close();
     }
     connections.length = 0;
-    if (server) {
-      await server.stop();
-    }
+    await closeTestServer();
     server = null;
     for (const dir of tempDirs.splice(0, tempDirs.length)) {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -347,10 +378,9 @@ describe("WebSocket Server", () => {
   });
 
   it("sends welcome message on connect", async () => {
-    server = createTestServer({ cwd: "/test/project" });
+    server = await createTestServer({ cwd: "/test/project" });
     // Get the actual port after listen
-    await server.start();
-    const addr = server.httpServer.address();
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
     expect(port).toBeGreaterThan(0);
 
@@ -367,12 +397,11 @@ describe("WebSocket Server", () => {
   });
 
   it("bootstraps the cwd project on startup when enabled", async () => {
-    server = createTestServer({
+    server = await createTestServer({
       cwd: "/test/bootstrap-workspace",
       autoBootstrapProjectFromCwd: true,
     });
-    await server.start();
-    const addr = server.httpServer.address();
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
     expect(port).toBeGreaterThan(0);
 
@@ -402,12 +431,11 @@ describe("WebSocket Server", () => {
       // Keep test output clean while verifying websocket logs.
     });
 
-    server = createTestServer({
+    server = await createTestServer({
       cwd: "/test/project",
       devUrl: "http://localhost:5173",
     });
-    await server.start();
-    const addr = server.httpServer.address();
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
     expect(port).toBeGreaterThan(0);
 
@@ -430,9 +458,8 @@ describe("WebSocket Server", () => {
   it("responds to server.getConfig", async () => {
     const fakeHome = makeTempDir("t3code-home-");
     vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
-    server = createTestServer({ cwd: "/my/workspace" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/my/workspace" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -459,9 +486,8 @@ describe("WebSocket Server", () => {
       },
     };
 
-    server = createTestServer({ cwd: "/my/workspace", open: openService });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/my/workspace", open: openService });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -491,9 +517,8 @@ describe("WebSocket Server", () => {
     );
     vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
 
-    server = createTestServer({ cwd: "/my/workspace" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/my/workspace" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -528,9 +553,8 @@ describe("WebSocket Server", () => {
     );
     vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
 
-    server = createTestServer({ cwd: "/my/workspace" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/my/workspace" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -563,9 +587,8 @@ describe("WebSocket Server", () => {
     );
     vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
 
-    server = createTestServer({ cwd: "/my/workspace" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/my/workspace" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -598,9 +621,8 @@ describe("WebSocket Server", () => {
     );
     vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
 
-    server = createTestServer({ cwd: "/my/workspace" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/my/workspace" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -637,9 +659,8 @@ describe("WebSocket Server", () => {
     );
     vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
 
-    server = createTestServer({ cwd: "/my/workspace" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/my/workspace" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -690,9 +711,8 @@ describe("WebSocket Server", () => {
     );
     vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
 
-    server = createTestServer({ cwd: "/my/workspace" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/my/workspace" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -721,9 +741,8 @@ describe("WebSocket Server", () => {
     fs.writeFileSync(path.join(configDir, "keybindings.json"), "{not-json", "utf8");
     vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
 
-    server = createTestServer({ cwd: "/my/workspace" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/my/workspace" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -745,9 +764,8 @@ describe("WebSocket Server", () => {
   });
 
   it("returns error for unknown methods", async () => {
-    server = createTestServer({ cwd: "/test" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -762,9 +780,8 @@ describe("WebSocket Server", () => {
   });
 
   it("returns error when requesting turn diff for unknown thread", async () => {
-    server = createTestServer({ cwd: "/test" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -781,9 +798,8 @@ describe("WebSocket Server", () => {
   });
 
   it("returns error when requesting full thread diff for unknown thread", async () => {
-    server = createTestServer({ cwd: "/test" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -799,9 +815,8 @@ describe("WebSocket Server", () => {
   });
 
   it("returns retryable error when requested turn exceeds current checkpoint turn count", async () => {
-    server = createTestServer({ cwd: "/test" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -873,12 +888,11 @@ describe("WebSocket Server", () => {
     };
     const providerLayer = Layer.succeed(ProviderService, providerService);
 
-    server = createTestServer({
+    server = await createTestServer({
       cwd: "/test",
       providerLayer,
     });
-    await server.start();
-    const addr = server.httpServer.address();
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -941,7 +955,9 @@ describe("WebSocket Server", () => {
 
     const domainPush = await waitForPush(ws, ORCHESTRATION_WS_CHANNELS.domainEvent, (push) => {
       const event = push.data as { type?: string; payload?: { messageId?: string; text?: string } };
-      return event.type === "thread.message-sent" && event.payload?.messageId === "assistant:item-1";
+      return (
+        event.type === "thread.message-sent" && event.payload?.messageId === "assistant:item-1"
+      );
     });
 
     const domainEvent = domainPush.data as {
@@ -956,12 +972,11 @@ describe("WebSocket Server", () => {
   it("routes terminal RPC methods and broadcasts terminal events", async () => {
     const cwd = makeTempDir("t3code-ws-terminal-cwd-");
     const terminalManager = new MockTerminalManager();
-    server = createTestServer({
+    server = await createTestServer({
       cwd: "/test",
       terminalManager: terminalManager as unknown as TerminalManager,
     });
-    await server.start();
-    const addr = server.httpServer.address();
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -1027,24 +1042,22 @@ describe("WebSocket Server", () => {
 
   it("detaches terminal event listener on stop for injected manager", async () => {
     const terminalManager = new MockTerminalManager();
-    server = createTestServer({
+    server = await createTestServer({
       cwd: "/test",
       terminalManager: terminalManager as unknown as TerminalManager,
     });
-    await server.start();
 
     expect(terminalManager.listenerCount("event")).toBe(1);
 
-    await server.stop();
+    await closeTestServer();
     server = null;
 
     expect(terminalManager.listenerCount("event")).toBe(0);
   });
 
   it("returns validation errors for invalid terminal open params", async () => {
-    server = createTestServer({ cwd: "/test" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -1061,9 +1074,8 @@ describe("WebSocket Server", () => {
   });
 
   it("handles invalid JSON gracefully", async () => {
-    server = createTestServer({ cwd: "/test" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -1096,9 +1108,8 @@ describe("WebSocket Server", () => {
   });
 
   it("returns errors for removed projects CRUD methods", async () => {
-    server = createTestServer({ cwd: "/test" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -1134,9 +1145,8 @@ describe("WebSocket Server", () => {
     fs.mkdirSync(path.join(workspace, ".git"), { recursive: true });
     fs.writeFileSync(path.join(workspace, ".git", "HEAD"), "ref: refs/heads/main\n", "utf8");
 
-    server = createTestServer({ cwd: "/test" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -1161,9 +1171,8 @@ describe("WebSocket Server", () => {
   it("supports git methods over websocket", async () => {
     const repoCwd = makeTempDir("t3code-ws-git-project-");
 
-    server = createTestServer({ cwd: "/test" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -1209,9 +1218,8 @@ describe("WebSocket Server", () => {
       runStackedAction: vi.fn(),
     };
 
-    server = createTestServer({ cwd: "/test", gitManager });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/test", gitManager });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -1232,9 +1240,8 @@ describe("WebSocket Server", () => {
       runStackedAction: vi.fn().mockRejectedValue(new Error("Cannot push from detached HEAD.")),
     };
 
-    server = createTestServer({ cwd: "/test", gitManager });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/test", gitManager });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     const ws = await connectWs(port);
@@ -1254,9 +1261,8 @@ describe("WebSocket Server", () => {
   });
 
   it("rejects websocket connections without a valid auth token", async () => {
-    server = createTestServer({ cwd: "/test", authToken: "secret-token" });
-    await server.start();
-    const addr = server.httpServer.address();
+    server = await createTestServer({ cwd: "/test", authToken: "secret-token" });
+    const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
     await expect(connectWs(port)).rejects.toThrow("WebSocket connection failed");
