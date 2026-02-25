@@ -1,21 +1,19 @@
-import net from "node:net";
-import os from "node:os";
-
-import { ServiceMap, Data, Effect, Layer, Option, Config, Path, Schema, FileSystem } from "effect";
+import { Config, Data, Effect, FileSystem, Layer, Option, Path, Schema, ServiceMap } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 
-import { fixPath } from "./fixPath";
-import { Open } from "./open";
 import {
-  makeServerPersistenceLayer,
-  makeServerProviderLayer,
-  makeServerRuntimeServicesLayer,
-  Server,
-} from "./wsServer";
-
-const DEFAULT_PORT = 3773;
-
-type RuntimeMode = "web" | "desktop";
+  DEFAULT_PORT,
+  NetService,
+  resolveStaticDir,
+  ServerConfig,
+  type RuntimeMode,
+  type ServerConfigShape,
+} from "./config";
+import { fixPath, resolveStateDir } from "./os-jank";
+import { Open } from "./open";
+import * as SqlitePersistence from "./persistence/Layers/Sqlite";
+import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
+import { Server } from "./wsServer";
 
 export class StartupError extends Data.TaggedError("StartupError")<{
   readonly message: string;
@@ -29,21 +27,34 @@ interface CliInput {
 
 export interface CliConfigShape {
   readonly cwd: string;
-  readonly fixPath: Effect.Effect<unknown, never>;
-  readonly findAvailablePort: (preferred: number) => Effect.Effect<number, StartupError>;
+  readonly fixPath: Effect.Effect<void>;
   readonly resolveStaticDir: Effect.Effect<string | undefined>;
 }
 
-export class CliConfig extends ServiceMap.Service<CliConfig, CliConfigShape>()(
-  "server/CliConfig",
-) {}
+export class CliConfig extends ServiceMap.Service<CliConfig, CliConfigShape>()("server/CliConfig") {
+  static readonly layer = Layer.effect(
+    CliConfig,
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      return {
+        cwd: process.cwd(),
+        fixPath: Effect.sync(fixPath),
+        resolveStaticDir: resolveStaticDir().pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+      } satisfies CliConfigShape;
+    }),
+  );
+}
 
 const CliEnvConfig = Config.all({
   mode: Config.string("T3CODE_MODE").pipe(
     Config.option,
     Config.map(
-      Option.match({
-        onNone: () => "web" as const,
+      Option.match<RuntimeMode, string>({
+        onNone: () => "web",
         onSome: (value) => (value === "desktop" ? "desktop" : "web"),
       }),
     ),
@@ -64,159 +75,102 @@ const CliEnvConfig = Config.all({
   ),
 });
 
-const expandHomePath = Effect.fn(function* (input: string) {
-  const { join, sep } = yield* Path.Path;
-  if (input === "~") return os.homedir();
-  if (input.startsWith(`~${sep}`)) {
-    return join(os.homedir(), input.slice(sep.length));
-  }
-  return input;
-});
+const ServerConfigLive = (input: CliInput) =>
+  Layer.effect(
+    ServerConfig,
+    Effect.gen(function* () {
+      const cliConfig = yield* CliConfig;
+      const { findAvailablePort } = yield* NetService;
+      const env = yield* CliEnvConfig.asEffect().pipe(
+        Effect.mapError(
+          (cause) =>
+            new StartupError({ message: "Failed to read environment configuration", cause }),
+        ),
+      );
 
-const resolveStateDir = Effect.fn(function* (raw: string | undefined) {
-  const { join, resolve } = yield* Path.Path;
-  if (!raw || raw.trim().length === 0) {
-    return join(os.homedir(), ".t3", "userdata");
-  }
-  return resolve(yield* expandHomePath(raw.trim()));
-});
-
-const findAvailablePort = (preferred: number) =>
-  Effect.callback<number, StartupError>((resume) => {
-    const server = net.createServer();
-    server.listen(preferred, () => {
-      server.close(() => resume(Effect.succeed(preferred)));
-    });
-    server.on("error", () => {
-      const fallback = net.createServer();
-      fallback.listen(0, () => {
-        const addr = fallback.address();
-        const port = typeof addr === "object" && addr !== null ? addr.port : 0;
-        fallback.close(() => {
-          resume(
-            port > 0
-              ? Effect.succeed(port)
-              : Effect.fail(new StartupError({ message: "Could not find an available port." })),
-          );
-        });
+      const port = yield* Option.match(input.port, {
+        onSome: (value) => Effect.succeed(value),
+        onNone: () => {
+          if (env.port) {
+            return Effect.succeed(env.port);
+          }
+          if (env.mode === "desktop") {
+            return Effect.succeed(DEFAULT_PORT);
+          }
+          return findAvailablePort(DEFAULT_PORT);
+        },
       });
-      fallback.on("error", (cause) => {
-        resume(
-          Effect.fail(new StartupError({ message: "Failed to find an available port", cause })),
-        );
-      });
+      const stateDir = yield* resolveStateDir(env.stateDir);
+      const devUrl = env.devUrl;
+      const noBrowser = env.noBrowser ?? env.mode === "desktop";
+      const authToken = Option.getOrUndefined(input.token) ?? env.authToken;
+      const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
+      const host = env.mode === "desktop" ? "127.0.0.1" : undefined;
+
+      return {
+        mode: env.mode,
+        port,
+        cwd: cliConfig.cwd,
+        host,
+        stateDir,
+        staticDir,
+        devUrl,
+        noBrowser,
+        authToken,
+      } satisfies ServerConfigShape;
+    }),
+  );
+
+const LayerLive = (input: CliInput) =>
+  Layer.empty.pipe(
+    Layer.provideMerge(makeServerRuntimeServicesLayer()),
+    Layer.provideMerge(makeServerProviderLayer()),
+    Layer.provideMerge(SqlitePersistence.layerConfig),
+    Layer.provideMerge(ServerConfigLive(input)),
+  );
+
+const makeServerProgram = (input: CliInput) =>
+  Effect.gen(function* () {
+    const cliConfig = yield* CliConfig;
+    const { createServer, stopSignal } = yield* Server;
+    const openDeps = yield* Open;
+    yield* cliConfig.fixPath;
+
+    const config = yield* ServerConfig;
+
+    if (!config.devUrl && !config.staticDir) {
+      yield* Effect.logWarning(
+        "web bundle missing and no VITE_DEV_SERVER_URL; web UI unavailable",
+        {
+          hint: "Run `bun run --cwd apps/web build` or set VITE_DEV_SERVER_URL for dev mode.",
+        },
+      );
+    }
+
+    yield* createServer();
+
+    const url = `http://localhost:${config.port}`;
+    yield* Effect.logInfo("T3 Code running", {
+      url,
+      cwd: config.cwd,
+      mode: config.mode,
+      stateDir: config.stateDir,
+      authEnabled: Boolean(config.authToken),
     });
-  });
 
-const resolveStaticDir = Effect.fn(function* () {
-  const { join, resolve } = yield* Path.Path;
-  const { stat } = yield* FileSystem.FileSystem;
-  const bundledClient = resolve(join(import.meta.dirname, "client"));
-  const bundledStat = yield* stat(join(bundledClient, "index.html")).pipe(
-    Effect.orElseSucceed(() => undefined),
-  );
-  if (bundledStat) return bundledClient;
+    if (!config.noBrowser) {
+      const target = config.devUrl?.toString() ?? url;
+      yield* openDeps.openBrowser(target).pipe(
+        Effect.catch(() =>
+          Effect.logInfo("browser auto-open unavailable", {
+            hint: `Open ${target} in your browser.`,
+          }),
+        ),
+      );
+    }
 
-  const monorepoClient = resolve(join(import.meta.dirname, "../../web/dist"));
-  const monorepoStat = yield* stat(join(monorepoClient, "index.html")).pipe(
-    Effect.orElseSucceed(() => undefined),
-  );
-  if (monorepoStat) return monorepoClient;
-  return undefined;
-});
-
-const resolveCliConfig = Effect.fn(function* (input: CliInput) {
-  const cliConfig = yield* CliConfig;
-  const env = yield* CliEnvConfig.asEffect().pipe(
-    Effect.mapError(
-      (cause) =>
-        new StartupError({
-          message: "Failed to read environment configuration",
-          cause,
-        }),
-    ),
-  );
-  const mode: RuntimeMode = env.mode === "desktop" ? "desktop" : "web";
-
-  const cliPort = Option.getOrUndefined(input.port);
-  const port =
-    (cliPort === undefined ? env.port : cliPort) ??
-    (mode === "desktop" ? DEFAULT_PORT : yield* cliConfig.findAvailablePort(DEFAULT_PORT));
-  const stateDir = yield* resolveStateDir(env.stateDir);
-  const devUrl = env.devUrl;
-  const noBrowser = env.noBrowser ?? mode === "desktop";
-  const authToken = Option.getOrUndefined(input.token) ?? env.authToken;
-  const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
-
-  return {
-    mode,
-    port,
-    stateDir,
-    devUrl,
-    noBrowser,
-    authToken,
-    staticDir,
-    cwd: cliConfig.cwd,
-  };
-});
-
-const makeServerProgram = Effect.fn(function* (input: CliInput) {
-  const cliConfig = yield* CliConfig;
-  const { createServer, stopSignal } = yield* Server;
-  const openDeps = yield* Open;
-  yield* cliConfig.fixPath;
-  const config = yield* resolveCliConfig(input);
-
-  if (!config.devUrl && !config.staticDir) {
-    yield* Effect.logWarning("web bundle missing and no VITE_DEV_SERVER_URL; web UI unavailable", {
-      hint: "Run `bun run --cwd apps/web build` or set VITE_DEV_SERVER_URL for dev mode.",
-    });
-  }
-
-  const persistenceLayer = makeServerPersistenceLayer(config.stateDir);
-  const providerLayer = makeServerProviderLayer(config.stateDir);
-  const infrastructureLayer = providerLayer.pipe(Layer.provideMerge(persistenceLayer));
-  const serverRuntimeLayer = Layer.merge(
-    makeServerRuntimeServicesLayer().pipe(Layer.provide(infrastructureLayer)),
-    infrastructureLayer,
-  );
-
-  yield* createServer({
-    port: config.port,
-    host: config.mode === "desktop" ? "127.0.0.1" : undefined,
-    cwd: config.cwd,
-    autoBootstrapProjectFromCwd: config.mode === "web",
-    stateDir: config.stateDir,
-    staticDir: config.staticDir,
-    devUrl: config.devUrl?.href,
-    authToken: config.authToken,
-  }).pipe(
-    Effect.provide(serverRuntimeLayer),
-    Effect.mapError((cause) => new StartupError({ message: "Failed to start server", cause })),
-  );
-
-  const url = `http://localhost:${config.port}`;
-  yield* Effect.logInfo("T3 Code running", {
-    url,
-    cwd: config.cwd,
-    mode: config.mode,
-    stateDir: config.stateDir,
-    authEnabled: Boolean(config.authToken),
-  });
-
-  if (!config.noBrowser) {
-    const target = config.devUrl ?? url;
-    yield* openDeps.openBrowser(target.toString()).pipe(
-      Effect.catch(() =>
-        Effect.logInfo("browser auto-open unavailable", {
-          hint: `Open ${target} in your browser.`,
-        }),
-      ),
-    );
-  }
-
-  return yield* stopSignal;
-}, Effect.scoped);
+    return yield* stopSignal;
+  }).pipe(Effect.provide(LayerLive(input)));
 
 export function makeCliCommand() {
   const portFlag = Flag.integer("port").pipe(
@@ -234,23 +188,6 @@ export function makeCliCommand() {
     token: tokenFlag,
   }).pipe(
     Command.withDescription("Run the T3 Code server."),
-    Command.withHandler((input) => makeServerProgram(input)),
+    Command.withHandler((input) => Effect.scoped(makeServerProgram(input))),
   );
 }
-
-export const CliConfigLive = Layer.effect(
-  CliConfig,
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    return {
-      cwd: process.cwd(),
-      fixPath: Effect.sync(fixPath),
-      findAvailablePort,
-      resolveStaticDir: resolveStaticDir().pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
-      ),
-    } satisfies CliConfigShape;
-  }),
-);

@@ -8,14 +8,17 @@ import * as Command from "effect/unstable/cli/Command";
 import { beforeEach } from "vitest";
 
 import { CliConfig, makeCliCommand, type CliConfigShape } from "./main";
+import { NetService, ServerConfig, type ServerConfigShape } from "./config";
 import { Open, type OpenShape } from "./open";
 import { Server, type ServerShape, type ServerOptions } from "./wsServer";
 
 const start = vi.fn(() => undefined);
 const stop = vi.fn(() => undefined);
-const createServer = vi.fn((_: ServerOptions) =>
+let resolvedConfig: ServerConfigShape | null = null;
+const createServer = vi.fn((_: ServerOptions | undefined) =>
   Effect.acquireRelease(
-    Effect.sync(() => {
+    Effect.gen(function* () {
+      resolvedConfig = yield* ServerConfig;
       start();
       return {} as unknown as Http.Server;
     }),
@@ -28,9 +31,11 @@ const testLayer = Layer.mergeAll(
   Layer.succeed(CliConfig, {
     cwd: "/tmp/t3-test-workspace",
     fixPath: Effect.void,
-    findAvailablePort,
     resolveStaticDir: Effect.undefined,
   } satisfies CliConfigShape),
+  Layer.succeed(NetService, {
+    findAvailablePort,
+  }),
   Layer.succeed(Server, {
     createServer,
     stopSignal: Effect.void,
@@ -52,11 +57,13 @@ const runCli = (
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resolvedConfig = null;
   start.mockImplementation(() => undefined);
   stop.mockImplementation(() => undefined);
-  createServer.mockImplementation((_: ServerOptions) =>
+  createServer.mockImplementation((_: ServerOptions | undefined) =>
     Effect.acquireRelease(
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        resolvedConfig = yield* ServerConfig;
         start();
         return {} as unknown as Http.Server;
       }),
@@ -72,9 +79,8 @@ it.layer(testLayer)("server cli", (it) => {
       yield* runCli(["--port", "4010", "--token", "secret"]);
 
       assert.equal(createServer.mock.calls.length, 1);
-      const options = createServer.mock.calls[0]?.[0];
-      assert.equal(options?.port, 4010);
-      assert.equal(options?.authToken, "secret");
+      assert.equal(resolvedConfig?.port, 4010);
+      assert.equal(resolvedConfig?.authToken, "secret");
       assert.equal(start.mock.calls.length, 1);
       assert.equal(stop.mock.calls.length, 1);
     }),
@@ -89,9 +95,8 @@ it.layer(testLayer)("server cli", (it) => {
       });
 
       assert.equal(createServer.mock.calls.length, 1);
-      const options = createServer.mock.calls[0]?.[0];
-      assert.equal(options?.port, 4999);
-      assert.equal(options?.authToken, "env-token");
+      assert.equal(resolvedConfig?.port, 4999);
+      assert.equal(resolvedConfig?.authToken, "env-token");
       assert.equal(findAvailablePort.mock.calls.length, 0);
     }),
   );
@@ -103,9 +108,8 @@ it.layer(testLayer)("server cli", (it) => {
 
       assert.deepStrictEqual(findAvailablePort.mock.calls, [[3773]]);
       assert.equal(createServer.mock.calls.length, 1);
-      const options = createServer.mock.calls[0]?.[0];
-      assert.equal(options?.port, 5444);
-      assert.equal(options?.host, undefined);
+      assert.equal(resolvedConfig?.port, 5444);
+      assert.equal(resolvedConfig?.mode, "web");
     }),
   );
 
@@ -118,9 +122,8 @@ it.layer(testLayer)("server cli", (it) => {
 
       assert.equal(findAvailablePort.mock.calls.length, 0);
       assert.equal(createServer.mock.calls.length, 1);
-      const options = createServer.mock.calls[0]?.[0];
-      assert.equal(options?.port, 3773);
-      assert.equal(options?.host, "127.0.0.1");
+      assert.equal(resolvedConfig?.port, 3773);
+      assert.equal(resolvedConfig?.mode, "desktop");
     }),
   );
 

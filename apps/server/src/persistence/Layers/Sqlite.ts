@@ -2,6 +2,7 @@ import { Effect, Layer, FileSystem, Path } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
+import { ServerConfig } from "../../config.ts";
 
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
@@ -47,3 +48,10 @@ export const SqlitePersistenceMemory = Layer.provideMerge(
   setup,
   makeRuntimeSqliteLayer({ filename: ":memory:" }),
 );
+
+export const layerConfig = Effect.gen(function* () {
+  const { stateDir } = yield* ServerConfig;
+  const { join } = yield* Path.Path;
+  const dbPath = join(stateDir, "orchestration.sqlite");
+  return makeSqlitePersistenceLive(dbPath);
+}).pipe(Layer.unwrap);

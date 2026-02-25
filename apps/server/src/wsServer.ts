@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import http from "node:http";
-import os from "node:os";
 import path from "node:path";
 import type { Duplex } from "node:stream";
 
@@ -16,7 +15,7 @@ import {
   WsPush,
   WsResponse,
 } from "@t3tools/contracts";
-import { NodeHttpServer, NodeServices } from "@effect/platform-node";
+import { NodeHttpServer } from "@effect/platform-node";
 import { Cause, Effect, Exit, Layer, Schema, Scope, ServiceMap, Stream } from "effect";
 import { WebSocketServer, type WebSocket } from "ws";
 
@@ -34,30 +33,14 @@ import {
 import { TerminalManager } from "./terminalManager";
 import { loadResolvedKeybindingsConfig, upsertKeybindingRule } from "./keybindings";
 import { searchWorkspaceEntries } from "./workspaceEntries";
-import { OrchestrationEngineLive } from "./orchestration/Layers/OrchestrationEngine";
-import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor";
-import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor";
-import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor";
-import { OrchestrationProjectionPipelineLive } from "./orchestration/Layers/ProjectionPipeline";
-import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers/ProjectionSnapshotQuery";
-import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
-import { makeSqlitePersistenceLive } from "./persistence/Layers/Sqlite";
-import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore";
-import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/OrchestrationCommandReceipts";
-import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
-import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
-import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
-import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
 import { ProviderService } from "./provider/Services/ProviderService";
-import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
-import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime";
 import { CheckpointStore } from "./checkpointing/Services/CheckpointStore";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { clamp } from "effect/Number";
-import { OpenDefaultService, type OpenShape } from "./open";
+import { Open } from "./open";
+import { ServerConfig } from "./config";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -75,24 +58,16 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 export interface ServerOptions {
-  port: number;
-  host?: string | undefined;
-  cwd: string;
   autoBootstrapProjectFromCwd?: boolean | undefined;
-  stateDir?: string | undefined;
-  staticDir?: string | undefined;
-  devUrl?: string | undefined;
   logWebSocketEvents?: boolean | undefined;
   gitManager?: GitManager | undefined;
   terminalManager?: TerminalManager | undefined;
-  authToken?: string | undefined;
-  open?: OpenShape | undefined;
 }
 
 export interface ServerShape {
   readonly createServer: (
-    options: ServerOptions,
-  ) => Effect.Effect<http.Server, unknown, Scope.Scope | ServerRuntimeServices>;
+    options?: ServerOptions,
+  ) => Effect.Effect<http.Server, unknown, Scope.Scope | ServerRuntimeServices | ServerConfig>;
   readonly stopSignal: Effect.Effect<unknown, never>;
 }
 
@@ -174,65 +149,10 @@ export type ServerCoreRuntimeServices =
   | OrchestrationEngineService
   | ProjectionSnapshotQuery
   | CheckpointStore
-  | OrchestrationReactor;
+  | OrchestrationReactor
+  | Open;
 
 export type ServerRuntimeServices = ServerCoreRuntimeServices | ProviderService;
-
-export function makeServerPersistenceLayer(stateDir: string) {
-  const dbPath = path.join(stateDir, "orchestration.sqlite");
-  return makeSqlitePersistenceLive(dbPath);
-}
-
-export function makeServerProviderLayer(
-  stateDir: string,
-): Layer.Layer<ProviderService, unknown, SqlClient.SqlClient> {
-  const providerLogsDir = path.join(stateDir, "logs", "providers");
-  const codexAdapterLayer = makeCodexAdapterLive({
-    nativeEventLogPath: path.join(providerLogsDir, "provider-native.ndjson"),
-  });
-  const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(Layer.provide(codexAdapterLayer));
-  const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
-    Layer.provide(ProviderSessionRuntimeRepositoryLive),
-  );
-  return makeProviderServiceLive({
-    canonicalEventLogPath: path.join(providerLogsDir, "provider-canonical.ndjson"),
-  }).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer));
-}
-
-export function makeServerRuntimeServicesLayer(): Layer.Layer<
-  ServerCoreRuntimeServices,
-  unknown,
-  SqlClient.SqlClient | ProviderService
-> {
-  const orchestrationLayer = OrchestrationEngineLive.pipe(
-    Layer.provide(OrchestrationProjectionPipelineLive),
-    Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-  );
-  const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(NodeServices.layer));
-
-  const runtimeServicesLayer = Layer.mergeAll(
-    orchestrationLayer,
-    OrchestrationProjectionSnapshotQueryLive,
-    checkpointStoreLayer,
-  );
-  const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
-    Layer.provideMerge(runtimeServicesLayer),
-  );
-  const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
-    Layer.provideMerge(runtimeServicesLayer),
-  );
-  const checkpointReactorLayer = CheckpointReactorLive.pipe(
-    Layer.provideMerge(runtimeServicesLayer),
-  );
-  const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
-    Layer.provideMerge(runtimeIngestionLayer),
-    Layer.provideMerge(providerCommandReactorLayer),
-    Layer.provideMerge(checkpointReactorLayer),
-  );
-
-  return orchestrationReactorLayer;
-}
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -246,22 +166,18 @@ class RouteRequestError extends Schema.TaggedErrorClass<RouteRequestError>()("Ro
   message: Schema.String,
 }) {}
 
-export const createServer = Effect.fn(function* (
-  options: ServerOptions,
-): Effect.fn.Return<http.Server, unknown, Scope.Scope | ServerRuntimeServices> {
+export const createServer = Effect.fn(function* (options: ServerOptions = {}): Effect.fn.Return<
+  http.Server,
+  unknown, // TODO: This should not be unknown
+  Scope.Scope | ServerRuntimeServices | ServerConfig
+> {
+  const { port, cwd, staticDir, devUrl, authToken, mode, host } = yield* ServerConfig;
   const {
-    port,
-    host,
-    cwd,
-    autoBootstrapProjectFromCwd = false,
-    staticDir,
-    devUrl,
     logWebSocketEvents: explicitLogWsEvents,
     gitManager = new GitManager(),
     terminalManager = new TerminalManager(),
-    authToken,
-    open: openService = OpenDefaultService,
   } = options;
+  const autoBootstrapProjectFromCwd = options.autoBootstrapProjectFromCwd ?? mode === "web";
 
   const clients = new Set<WebSocket>();
   const logger = createLogger("ws");
@@ -299,7 +215,7 @@ export const createServer = Effect.fn(function* (
   const httpServer = http.createServer((req, res) => {
     // In dev mode, redirect to Vite dev server
     if (devUrl) {
-      res.writeHead(302, { Location: devUrl });
+      res.writeHead(302, { Location: devUrl.href });
       res.end();
       return;
     }
@@ -382,6 +298,7 @@ export const createServer = Effect.fn(function* (
   const liveCheckpointStore = yield* CheckpointStore;
   const liveProviderService = yield* ProviderService;
   const orchestrationReactor = yield* OrchestrationReactor;
+  const { openInEditor } = yield* Open;
 
   const subscriptionsScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() =>
@@ -574,7 +491,7 @@ export const createServer = Effect.fn(function* (
 
       case WS_METHODS.shellOpenInEditor: {
         const body = stripRequestTag(request.body);
-        return yield* openService.openInEditor(body);
+        return yield* openInEditor(body);
       }
 
       case WS_METHODS.gitStatus: {

@@ -6,8 +6,10 @@ import { EventEmitter } from "node:events";
 
 import { Effect, Exit, Layer, PubSub, Scope, Stream } from "effect";
 import { describe, expect, it, afterEach, vi } from "vitest";
-import { createServer, makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./wsServer";
+import { createServer } from "./wsServer";
 import WebSocket from "ws";
+import { ServerConfig, type ServerConfigShape } from "./config";
+import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
 
 import {
   DEFAULT_TERMINAL_ID,
@@ -40,7 +42,7 @@ import type { TerminalManager } from "./terminalManager";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
 import { SqlClient } from "effect/unstable/sql";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
-import type { OpenShape } from "./open";
+import { Open, type OpenShape } from "./open";
 
 interface PendingMessages {
   queue: unknown[];
@@ -55,6 +57,11 @@ const asProviderSessionId = (value: string): ProviderSessionId =>
 const asProviderThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
 const asProviderTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
 const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
+
+const defaultOpenService: OpenShape = {
+  openBrowser: () => Effect.void,
+  openInEditor: () => Effect.void,
+};
 
 class MockTerminalManager extends EventEmitter<{ event: [event: TerminalEvent] }> {
   private readonly sessions = new Map<string, TerminalSessionSnapshot>();
@@ -323,28 +330,37 @@ describe("WebSocket Server", () => {
     const stateDir = options.stateDir ?? makeTempDir("t3code-ws-state-");
     const scope = await Effect.runPromise(Scope.make("sequential"));
     const persistenceLayer = options.persistenceLayer ?? SqlitePersistenceMemory;
-    const providerLayer = options.providerLayer ?? makeServerProviderLayer(stateDir);
+    const providerLayer = options.providerLayer ?? makeServerProviderLayer();
+    const openLayer = Layer.succeed(Open, options.open ?? defaultOpenService);
+    const serverConfigLayer = Layer.succeed(ServerConfig, {
+      mode: "web",
+      port: 0,
+      host: undefined,
+      cwd: options.cwd ?? "/test/project",
+      stateDir,
+      staticDir: undefined,
+      devUrl: options.devUrl ? new URL(options.devUrl) : undefined,
+      noBrowser: true,
+      authToken: options.authToken,
+    } satisfies ServerConfigShape);
     const infrastructureLayer = providerLayer.pipe(Layer.provideMerge(persistenceLayer));
     const runtimeLayer = Layer.merge(
       makeServerRuntimeServicesLayer().pipe(Layer.provide(infrastructureLayer)),
       infrastructureLayer,
     );
+    const dependenciesLayer = Layer.empty.pipe(
+      Layer.provideMerge(runtimeLayer),
+      Layer.provideMerge(openLayer),
+      Layer.provideMerge(serverConfigLayer),
+    );
     const runtimeServices = await Effect.runPromise(
-      Layer.build(runtimeLayer).pipe(Scope.provide(scope)),
+      Layer.build(dependenciesLayer).pipe(Scope.provide(scope)),
     );
 
     try {
       const runtime = await Effect.runPromise(
         createServer({
-          port: 0,
-          cwd: options.cwd ?? "/test/project",
-          stateDir,
-          ...(options.autoBootstrapProjectFromCwd !== undefined
-            ? { autoBootstrapProjectFromCwd: options.autoBootstrapProjectFromCwd }
-            : {}),
-          ...(options.devUrl ? { devUrl: options.devUrl } : {}),
-          ...(options.authToken ? { authToken: options.authToken } : {}),
-          ...(options.open ? { open: options.open } : {}),
+          autoBootstrapProjectFromCwd: options.autoBootstrapProjectFromCwd ?? false,
           ...(options.gitManager ? { gitManager: options.gitManager as never } : {}),
           ...(options.terminalManager ? { terminalManager: options.terminalManager } : {}),
         }).pipe(Effect.provide(runtimeServices), Scope.provide(scope)),
