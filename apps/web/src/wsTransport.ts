@@ -1,5 +1,5 @@
-import { WebSocketResponse, WsPush, WsResponse, WebSocketRequest } from "@t3tools/contracts";
-import { Cause, Schema, SchemaIssue } from "effect";
+import { WebSocketResponse, WsPush, WsResponse } from "@t3tools/contracts";
+import { Cause, Schema } from "effect";
 
 type PushListener = (data: unknown) => void;
 
