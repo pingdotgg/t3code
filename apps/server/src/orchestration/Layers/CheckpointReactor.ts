@@ -46,6 +46,27 @@ function trimToNonEmpty(value: string | null | undefined): string | undefined {
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
+function resolveThreadWorkspaceCwd(input: {
+  readonly thread: {
+    readonly projectId: string;
+    readonly worktreePath: string | null;
+  };
+  readonly projects: ReadonlyArray<{
+    readonly id: string;
+    readonly workspaceRoot: string;
+  }>;
+}): string | undefined {
+  const worktreeCwd = trimToNonEmpty(input.thread.worktreePath);
+  if (worktreeCwd) {
+    return worktreeCwd;
+  }
+
+  const workspaceRoot = input.projects.find(
+    (project) => project.id === input.thread.projectId,
+  )?.workspaceRoot;
+  return trimToNonEmpty(workspaceRoot);
+}
+
 function checkpointStatusFromRuntime(status: string | undefined): "ready" | "missing" | "error" {
   switch (status) {
     case "failed":
@@ -133,6 +154,7 @@ const make = Effect.gen(function* () {
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === threadId);
     const projectedSessionId = thread?.session?.providerSessionId ?? null;
+    const projectedProviderThreadId = trimToNonEmpty(thread?.session?.providerThreadId);
 
     const sessions = yield* providerService.listSessions();
 
@@ -154,8 +176,17 @@ const make = Effect.gen(function* () {
       }
     }
 
-    const matchedSession = sessions.find((session) => session.threadId?.trim() === threadId.trim());
-    return findSessionWithCwd(matchedSession);
+    if (projectedProviderThreadId) {
+      const matchedSession = sessions.find(
+        (session) => session.threadId?.trim() === projectedProviderThreadId,
+      );
+      const fromProviderThread = findSessionWithCwd(matchedSession);
+      if (Option.isSome(fromProviderThread)) {
+        return fromProviderThread;
+      }
+    }
+
+    return Option.none();
   });
 
   const captureCheckpointFromTurnCompletion = Effect.fnUntraced(function* (
@@ -179,7 +210,16 @@ const make = Effect.gen(function* () {
     }
 
     const sessionRuntime = yield* resolveSessionRuntimeForThread(thread.id);
-    if (Option.isNone(sessionRuntime)) {
+    const checkpointCwd =
+      Option.match(sessionRuntime, {
+        onNone: () => undefined,
+        onSome: (runtime) => runtime.cwd,
+      }) ??
+      resolveThreadWorkspaceCwd({
+        thread,
+        projects: readModel.projects,
+      });
+    if (!checkpointCwd) {
       yield* Effect.logWarning("checkpoint capture skipped: no active provider session cwd", {
         threadId: thread.id,
         turnId,
@@ -197,7 +237,7 @@ const make = Effect.gen(function* () {
     const targetCheckpointRef = checkpointRefForThreadTurn(thread.id, nextTurnCount);
 
     const fromCheckpointExists = yield* checkpointStore.hasCheckpointRef({
-      cwd: sessionRuntime.value.cwd,
+      cwd: checkpointCwd,
       checkpointRef: fromCheckpointRef,
     });
     if (!fromCheckpointExists) {
@@ -209,13 +249,13 @@ const make = Effect.gen(function* () {
     }
 
     yield* checkpointStore.captureCheckpoint({
-      cwd: sessionRuntime.value.cwd,
+      cwd: checkpointCwd,
       checkpointRef: targetCheckpointRef,
     });
 
     const files = yield* checkpointStore
       .diffCheckpoints({
-        cwd: sessionRuntime.value.cwd,
+        cwd: checkpointCwd,
         fromCheckpointRef,
         toCheckpointRef: targetCheckpointRef,
         fallbackFromToHead: false,
@@ -296,9 +336,12 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const checkpointCwdFromThread = trimToNonEmpty(thread.worktreePath);
+    const checkpointCwdFromThreadOrProject = resolveThreadWorkspaceCwd({
+      thread,
+      projects: readModel.projects,
+    });
     const checkpointCwd =
-      checkpointCwdFromThread ??
+      checkpointCwdFromThreadOrProject ??
       Option.match(yield* resolveSessionRuntimeForThread(thread.id), {
         onNone: () => undefined,
         onSome: (runtime) => runtime.cwd,
@@ -349,9 +392,12 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const checkpointCwdFromThread = trimToNonEmpty(thread.worktreePath);
+    const checkpointCwdFromThreadOrProject = resolveThreadWorkspaceCwd({
+      thread,
+      projects: readModel.projects,
+    });
     const checkpointCwd =
-      checkpointCwdFromThread ??
+      checkpointCwdFromThreadOrProject ??
       Option.match(yield* resolveSessionRuntimeForThread(threadId), {
         onNone: () => undefined,
         onSome: (runtime) => runtime.cwd,
