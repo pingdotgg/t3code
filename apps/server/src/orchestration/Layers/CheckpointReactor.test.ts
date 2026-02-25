@@ -220,6 +220,8 @@ describe("CheckpointReactor", () => {
   async function createHarness(options?: {
     readonly hasSession?: boolean;
     readonly seedFilesystemCheckpoints?: boolean;
+    readonly projectWorkspaceRoot?: string;
+    readonly threadWorktreePath?: string | null;
   }) {
     const cwd = createGitRepository();
     tempDirs.push(cwd);
@@ -252,7 +254,7 @@ describe("CheckpointReactor", () => {
         commandId: asCommandId("cmd-project-create"),
         projectId: asProjectId("project-1"),
         title: "Test Project",
-        workspaceRoot: "/tmp/test-project",
+        workspaceRoot: options?.projectWorkspaceRoot ?? cwd,
         defaultModel: "gpt-5-codex",
         createdAt,
       }),
@@ -266,7 +268,7 @@ describe("CheckpointReactor", () => {
         title: "Thread",
         model: "gpt-5-codex",
         branch: null,
-        worktreePath: cwd,
+        worktreePath: options?.threadWorktreePath ?? cwd,
         createdAt,
       }),
     );
@@ -363,10 +365,11 @@ describe("CheckpointReactor", () => {
     ).toBe("v2\n");
   });
 
-  it("captures pre-turn baseline from thread.turn.start domain flow before runtime turn events", async () => {
+  it("captures pre-turn baseline from project workspace root when thread worktree is unset", async () => {
     const harness = await createHarness({
       hasSession: false,
       seedFilesystemCheckpoints: false,
+      threadWorktreePath: null,
     });
 
     await Effect.runPromise(
@@ -388,6 +391,52 @@ describe("CheckpointReactor", () => {
     expect(
       gitShowFileAtRef(harness.cwd, checkpointRefForTurn(asThreadId("thread-1"), 0), "README.md"),
     ).toBe("v1\n");
+  });
+
+  it("captures turn completion checkpoint from project workspace root when provider session cwd is unavailable", async () => {
+    const harness = await createHarness({
+      hasSession: false,
+      seedFilesystemCheckpoints: false,
+      threadWorktreePath: null,
+    });
+    const createdAt = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: asCommandId("cmd-session-set-missing-provider-cwd"),
+        threadId: asThreadId("thread-1"),
+        session: {
+          threadId: asThreadId("thread-1"),
+          status: "running",
+          providerName: "codex",
+          providerSessionId: asSessionId("sess-missing"),
+          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-missing"),
+          activeTurnId: asTurnId("turn-missing-cwd"),
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    fs.writeFileSync(path.join(harness.cwd, "README.md"), "v2\n", "utf8");
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.makeUnsafe("evt-turn-completed-missing-provider-cwd"),
+      provider: "codex",
+      sessionId: asSessionId("sess-missing"),
+      createdAt: new Date().toISOString(),
+      threadId: ProviderThreadId.makeUnsafe("provider-thread-missing"),
+      turnId: asTurnId("turn-missing-cwd"),
+      status: "completed",
+    });
+
+    await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
+    expect(gitRefExists(harness.cwd, checkpointRefForTurn(asThreadId("thread-1"), 1))).toBe(true);
+    expect(
+      gitShowFileAtRef(harness.cwd, checkpointRefForTurn(asThreadId("thread-1"), 1), "README.md"),
+    ).toBe("v2\n");
   });
 
   it("maps runtime checkpoint.captured into thread.turn.diff.complete when missing in read model", async () => {

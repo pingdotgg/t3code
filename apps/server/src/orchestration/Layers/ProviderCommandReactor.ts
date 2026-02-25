@@ -5,7 +5,6 @@ import {
   type OrchestrationEvent,
   type ProviderKind,
   type OrchestrationSession,
-  type ProviderSessionId,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
@@ -32,6 +31,27 @@ type ProviderIntentEvent = Extract<
 function trimToNonEmptyOrUndefined(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+function resolveEffectiveThreadCwd(input: {
+  readonly thread: {
+    readonly projectId: string;
+    readonly worktreePath: string | null;
+  };
+  readonly projects: ReadonlyArray<{
+    readonly id: string;
+    readonly workspaceRoot: string;
+  }>;
+}): string | undefined {
+  const worktreeCwd = trimToNonEmptyOrUndefined(input.thread.worktreePath ?? undefined);
+  if (worktreeCwd) {
+    return worktreeCwd;
+  }
+
+  const workspaceRoot = input.projects.find(
+    (project) => project.id === input.thread.projectId,
+  )?.workspaceRoot;
+  return trimToNonEmptyOrUndefined(workspaceRoot);
 }
 
 function mapProviderSessionStatusToOrchestrationStatus(
@@ -115,7 +135,8 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     createdAt: string,
   ) {
-    const thread = yield* resolveThread(threadId);
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const thread = readModel.threads.find((entry) => entry.id === threadId);
     if (!thread) {
       return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
     }
@@ -129,12 +150,14 @@ const make = Effect.gen(function* () {
       thread.session?.providerName === "codex" || thread.session?.providerName === "claudeCode"
         ? thread.session.providerName
         : undefined;
+    const effectiveCwd = resolveEffectiveThreadCwd({
+      thread,
+      projects: readModel.projects,
+    });
 
     const startedSession = yield* providerService.startSession({
       ...(preferredProvider ? { provider: preferredProvider } : {}),
-      ...(trimToNonEmptyOrUndefined(thread.worktreePath ?? undefined)
-        ? { cwd: trimToNonEmptyOrUndefined(thread.worktreePath ?? undefined) }
-        : {}),
+      ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
       ...(trimToNonEmptyOrUndefined(thread.model) ? { model: thread.model } : {}),
     });
 
