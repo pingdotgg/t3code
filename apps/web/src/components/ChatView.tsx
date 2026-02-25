@@ -344,7 +344,10 @@ interface ChatViewProps {
 export default function ChatView({ threadId }: ChatViewProps) {
   const { state, dispatch } = useStore();
   const navigate = useNavigate();
-  const rawSearch = useSearch({ strict: false });
+  const rawSearch = useSearch({
+    strict: false,
+    select: (params) => parseDiffRouteSearch(params),
+  });
   const api = useNativeApi();
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
@@ -387,6 +390,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const diffOpen = diffSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
+
+  useEffect(() => {
+    if (!activeThread?.id) return;
+    if (!activeThread.latestTurnCompletedAt) return;
+    const turnCompletedAt = Date.parse(activeThread.latestTurnCompletedAt);
+    if (Number.isNaN(turnCompletedAt)) return;
+    const lastVisitedAt = activeThread.lastVisitedAt ? Date.parse(activeThread.lastVisitedAt) : NaN;
+    if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= turnCompletedAt) return;
+
+    dispatch({
+      type: "MARK_THREAD_VISITED",
+      threadId: activeThread.id,
+    });
+  }, [
+    activeThread?.id,
+    activeThread?.lastVisitedAt,
+    activeThread?.latestTurnCompletedAt,
+    dispatch,
+  ]);
+
   const selectedModel = resolveModelSlug(
     activeThread?.model ?? activeProject?.model ?? DEFAULT_MODEL,
   );
@@ -799,47 +822,33 @@ export default function ChatView({ threadId }: ChatViewProps) {
       keybinding?: string | null;
       keybindingCommand: string;
     }) => {
-      dispatch({
-        type: "SET_PROJECT_SCRIPTS",
-        projectId: input.projectId,
+      if (!api) return;
+
+      await api.orchestration.dispatchCommand({
+        type: "project.meta.update",
+        commandId: newCommandId(),
+        projectId: asProjectId(input.projectId),
         scripts: input.nextScripts,
       });
 
-      if (!api) return;
-      try {
-        await api.orchestration.dispatchCommand({
-          type: "project.meta.update",
-          commandId: newCommandId(),
-          projectId: asProjectId(input.projectId),
-          scripts: input.nextScripts,
+      if (isElectron && input.keybinding) {
+        const keybindingUpdate = await api.server.upsertKeybinding({
+          key: input.keybinding,
+          command: input.keybindingCommand,
         });
-
-        if (isElectron && input.keybinding) {
-          const keybindingUpdate = await api.server.upsertKeybinding({
-            key: input.keybinding,
-            command: input.keybindingCommand,
-          });
-          queryClient.setQueryData(
-            serverQueryKeys.config(),
-            (current: { cwd: string; keybindings: ResolvedKeybindingsConfig } | undefined) =>
-              current
-                ? { ...current, keybindings: keybindingUpdate.keybindings }
-                : {
-                    cwd: input.projectCwd,
-                    keybindings: keybindingUpdate.keybindings,
+        queryClient.setQueryData(
+          serverQueryKeys.config(),
+          (current: { cwd: string; keybindings: ResolvedKeybindingsConfig } | undefined) =>
+            current
+              ? { ...current, keybindings: keybindingUpdate.keybindings }
+              : {
+                  cwd: input.projectCwd,
+                  keybindings: keybindingUpdate.keybindings,
                 },
-          );
-        }
-      } catch (error) {
-        dispatch({
-          type: "SET_PROJECT_SCRIPTS",
-          projectId: input.projectId,
-          scripts: input.previousScripts,
-        });
-        throw error;
+        );
       }
     },
-    [api, dispatch, queryClient],
+    [api, queryClient],
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput) => {
@@ -1338,15 +1347,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setIsRevertingCheckpoint(false);
       }
     },
-    [
-      activeThread,
-      api,
-      isConnecting,
-      isRevertingCheckpoint,
-      isSending,
-      phase,
-      setThreadError,
-    ],
+    [activeThread, api, isConnecting, isRevertingCheckpoint, isSending, phase, setThreadError],
   );
 
   const onSend = async (e: FormEvent) => {
@@ -1425,7 +1426,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     try {
       const turnAttachments = await Promise.all(
         composerImagesSnapshot.map(
-          async (image): Promise<{
+          async (
+            image,
+          ): Promise<{
             type: "image";
             name: string;
             mimeType: string;
@@ -1749,12 +1752,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onRevertUserMessage={onRevertUserMessage}
           isRevertingCheckpoint={isRevertingCheckpoint}
           onImageExpand={onExpandTimelineImage}
+          markdownCwd={gitCwd ?? undefined}
         />
       </div>
 
       {/* Input bar */}
       <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
-        <form onSubmit={onSend} className="mx-auto w-full max-w-3xl">
+        <form
+          onSubmit={onSend}
+          className="mx-auto w-full min-w-fit max-w-3xl"
+          data-chat-composer-form="true"
+        >
           <div
             className={`group rounded-[20px] border bg-card transition-colors duration-200 focus-within:border-ring ${
               isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border"
@@ -1853,7 +1861,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
             {/* Bottom toolbar */}
             <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 pb-2.5 sm:flex-nowrap sm:gap-0 sm:px-3 sm:pb-3">
-              <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:overflow-visible">
+              <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible">
                 {/* Model picker */}
                 <ModelPicker model={selectedModel} onModelChange={onModelSelect} />
 
@@ -1869,7 +1877,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 {/* Runtime mode toggle */}
                 <Button
                   variant="ghost"
-                  className="shrink-0 px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                  className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
                   size="sm"
                   type="button"
                   disabled={isSwitchingRuntimeMode}
@@ -2075,19 +2083,19 @@ const ChatHeader = memo(function ChatHeader({
   onToggleDiff,
 }: ChatHeaderProps) {
   return (
-    <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
-      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+    <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-        <h2 className="truncate text-sm font-medium text-foreground" title={activeThreadTitle}>
+        <h2 className="min-w-0 shrink truncate text-sm font-medium text-foreground" title={activeThreadTitle}>
           {activeThreadTitle}
         </h2>
         {activeProjectName && (
-          <Badge variant="outline" className="max-w-28 truncate sm:max-w-none">
+          <Badge variant="outline" className="max-w-28 shrink-0 truncate">
             {activeProjectName}
           </Badge>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+      <div className="@container/header-actions flex min-w-0 flex-1 items-center justify-end gap-2 @sm/header-actions:gap-3">
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
@@ -2221,6 +2229,7 @@ interface MessagesTimelineProps {
   onRevertUserMessage: (messageId: string) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (image: ExpandedImagePreview) => void;
+  markdownCwd: string | undefined;
 }
 
 type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
@@ -2256,6 +2265,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   onRevertUserMessage,
   isRevertingCheckpoint,
   onImageExpand,
+  markdownCwd,
 }: MessagesTimelineProps) {
   const rows = useMemo<TimelineRow[]>(() => {
     const nextRows: TimelineRow[] = [];
@@ -2448,7 +2458,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                           </div>
                         )}
                         {row.message.text && (
-                          <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-foreground">
+                          <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
                             {row.message.text}
                           </pre>
                         )}
@@ -2490,7 +2500,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                         </div>
                       )}
                       <div className="min-w-0 px-1 py-0.5">
-                        <ChatMarkdown text={messageText} />
+                        <ChatMarkdown text={messageText} cwd={markdownCwd} />
                         {(() => {
                           const turnSummary = turnDiffSummaryByAssistantMessageId.get(
                             row.message.id,
@@ -2567,7 +2577,9 @@ const MessagesTimeline = memo(function MessagesTimeline({
                                           <span className="ml-1 text-muted-foreground/70">(</span>
                                           <span className="text-success">+{stat.additions}</span>
                                           <span className="mx-0.5 text-muted-foreground/70">/</span>
-                                          <span className="text-destructive">-{stat.deletions}</span>
+                                          <span className="text-destructive">
+                                            -{stat.deletions}
+                                          </span>
                                           <span className="text-muted-foreground/70">)</span>
                                         </>
                                       );
@@ -2728,9 +2740,11 @@ const OpenInPicker = memo(function OpenInPicker({
     <Group aria-label="Subscription actions">
       <Button size="xs" variant="outline" onClick={() => openInEditor(lastEditor)}>
         {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
-        <span className="sr-only sm:not-sr-only sm:ml-0.5">Open</span>
+        <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
+          Open
+        </span>
       </Button>
-      <GroupSeparator className="hidden sm:block" />
+      <GroupSeparator className="hidden @sm/header-actions:block" />
       <Menu>
         <MenuTrigger render={<Button aria-label="Copy options" size="icon-xs" variant="outline" />}>
           <ChevronDownIcon aria-hidden="true" className="size-4" />

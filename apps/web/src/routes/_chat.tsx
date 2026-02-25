@@ -33,11 +33,9 @@ function ChatRouteLayout() {
       >
         <ThreadSidebar />
       </Sidebar>
-      <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
-        <DiffWorkerPoolProvider>
-          <Outlet />
-        </DiffWorkerPoolProvider>
-      </SidebarInset>
+      <DiffWorkerPoolProvider>
+        <Outlet />
+      </DiffWorkerPoolProvider>
     </SidebarProvider>
   );
 }

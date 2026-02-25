@@ -2,7 +2,6 @@ import { spawn } from "node:child_process";
 
 import { EDITORS, type EditorId } from "@t3tools/contracts";
 import { ServiceMap, Schema, Effect, Layer } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 export class OpenError extends Schema.TaggedErrorClass<OpenError>()("OpenError", {
   message: Schema.String,
@@ -26,7 +25,7 @@ export interface OpenShape {
 
 export class Open extends ServiceMap.Service<Open, OpenShape>()("server/Open") {}
 
-function resolveEditorLaunch(
+export function resolveEditorLaunch(
   input: OpenInEditorInput,
   platform: NodeJS.Platform = process.platform,
 ): EditorLaunch {
@@ -53,9 +52,25 @@ function resolveEditorLaunch(
   }
 }
 
+export function launchDetached(command: string, args: ReadonlyArray<string>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, [...args], {
+      detached: true,
+      stdio: "ignore",
+    });
+
+    const handleSpawn = () => {
+      child.unref();
+      resolve();
+    };
+
+    child.once("spawn", handleSpawn);
+    child.once("error", (error) => reject(error));
+  });
+}
+
 const make = Effect.gen(function* () {
   const open = yield* Effect.promise(() => import("open"));
-  const { spawn } = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   return {
     openBrowser: (target) =>
@@ -64,14 +79,16 @@ const make = Effect.gen(function* () {
         catch: (cause) => new OpenError({ message: "Browser auto-open failed", cause }),
       }),
     openInEditor: (input) =>
-      Effect.gen(function* () {
-        const launch = resolveEditorLaunch(input);
-        const child = yield* spawn(ChildProcess.make(launch.command, launch.args));
-        yield* Effect.forkDetach(child.exitCode);
-      }).pipe(
-        Effect.catch((error) => Effect.logError("Failed to open editor", { cause: error })),
-        Effect.scoped,
-      ),
+      Effect.tryPromise({
+        try: () => {
+          const launch = resolveEditorLaunch(input);
+          return launchDetached(launch.command, launch.args);
+        },
+        catch: (cause) =>
+          cause instanceof OpenError
+            ? cause
+            : new OpenError({ message: "Failed to open editor", cause }),
+      }),
   } satisfies OpenShape;
 });
 

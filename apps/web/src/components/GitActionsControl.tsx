@@ -136,11 +136,7 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   return <InfoIcon className={iconClassName} />;
 }
 
-export default function GitActionsControl({
-  api,
-  gitCwd,
-  activeThreadId,
-}: GitActionsControlProps) {
+export default function GitActionsControl({ api, gitCwd, activeThreadId }: GitActionsControlProps) {
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
@@ -501,7 +497,9 @@ export default function GitActionsControl({
                 }
               >
                 <GitQuickActionIcon quickAction={quickAction} />
-                <span className="sr-only sm:not-sr-only sm:ml-0.5">{quickAction.label}</span>
+                <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
+                  {quickAction.label}
+                </span>
               </PopoverTrigger>
               <PopoverPopup tooltipStyle side="bottom" align="start">
                 {quickActionDisabledReason}
@@ -515,10 +513,12 @@ export default function GitActionsControl({
               onClick={runQuickAction}
             >
               <GitQuickActionIcon quickAction={quickAction} />
-              <span className="sr-only sm:not-sr-only sm:ml-0.5">{quickAction.label}</span>
+              <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
+                {quickAction.label}
+              </span>
             </Button>
           )}
-          <GroupSeparator className="hidden sm:block" />
+          <GroupSeparator className="hidden @sm/header-actions:block" />
           <Menu
             onOpenChange={(open) => {
               if (open) void invalidateGitQueries(queryClient);

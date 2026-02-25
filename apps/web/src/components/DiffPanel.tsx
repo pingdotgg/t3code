@@ -75,7 +75,7 @@ function formatTurnChipTimestamp(isoDate: string): string {
 }
 
 interface DiffPanelProps {
-  mode?: "inline" | "sheet";
+  mode?: "inline" | "sheet" | "sidebar";
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
@@ -271,7 +271,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
 
     updateTurnStripScrollState();
     const onScroll = () => updateTurnStripScrollState();
-    
+
     element.addEventListener("scroll", onScroll, { passive: true });
     element.addEventListener("wheel", onTurnStripWheel, { passive: false });
 
@@ -297,10 +297,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     selectedChip?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
   }, [selectedTurn?.turnId, selectedTurnId]);
 
-  const shouldUseDragRegion = isElectron && mode === "inline";
+  const shouldUseDragRegion = isElectron && mode !== "sheet";
 
   return (
-    <aside
+    <div
       className={cn(
         "flex h-full min-w-0 flex-col bg-card",
         mode === "inline"
@@ -308,18 +308,19 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           : "w-full",
       )}
     >
-      <div
-        className={cn(
-          "flex items-center justify-between gap-2 border-b border-border px-4",
-          shouldUseDragRegion ? "drag-region h-[52px]" : "py-3",
-        )}
-      >
-        <div className="relative min-w-0 flex-1 [-webkit-app-region:no-drag]">
+      <div className="border-b border-border">
+        <div
+          className={cn(
+            "flex h-12 items-center justify-between gap-2 px-4",
+            shouldUseDragRegion ? "drag-region" : undefined,
+          )}
+        >
+          <div className="relative min-w-0 flex-1 [-webkit-app-region:no-drag]">
           {canScrollTurnStripLeft && (
-            <div className="pointer-events-none absolute inset-y-0 left-8 z-10 w-7 bg-gradient-to-r from-card to-transparent" />
+            <div className="pointer-events-none absolute inset-y-0 left-8 z-10 w-7 bg-linear-to-r from-card to-transparent" />
           )}
           {canScrollTurnStripRight && (
-            <div className="pointer-events-none absolute inset-y-0 right-8 z-10 w-7 bg-gradient-to-l from-card to-transparent" />
+            <div className="pointer-events-none absolute inset-y-0 right-8 z-10 w-7 bg-linear-to-l from-card to-transparent" />
           )}
           <button
             type="button"
@@ -402,26 +403,27 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
               </button>
             ))}
           </div>
+          </div>
+          <ToggleGroup
+            className="shrink-0 [-webkit-app-region:no-drag]"
+            variant="outline"
+            size="xs"
+            value={[diffRenderMode]}
+            onValueChange={(value) => {
+              const next = value[0];
+              if (next === "stacked" || next === "split") {
+                setDiffRenderMode(next);
+              }
+            }}
+          >
+            <Toggle aria-label="Stacked diff view" value="stacked">
+              <Rows3Icon className="size-3" />
+            </Toggle>
+            <Toggle aria-label="Split diff view" value="split">
+              <Columns2Icon className="size-3" />
+            </Toggle>
+          </ToggleGroup>
         </div>
-        <ToggleGroup
-          className="shrink-0 [-webkit-app-region:no-drag]"
-          variant="outline"
-          size="xs"
-          value={[diffRenderMode]}
-          onValueChange={(value) => {
-            const next = value[0];
-            if (next === "stacked" || next === "split") {
-              setDiffRenderMode(next);
-            }
-          }}
-        >
-          <Toggle aria-label="Stacked diff view" value="stacked">
-            <Rows3Icon className="size-3" />
-          </Toggle>
-          <Toggle aria-label="Split diff view" value="split">
-            <Columns2Icon className="size-3" />
-          </Toggle>
-        </ToggleGroup>
       </div>
 
       {!activeThread ? (
@@ -488,6 +490,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           </div>
         </>
       )}
-    </aside>
+    </div>
   );
 }

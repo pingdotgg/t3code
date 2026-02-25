@@ -8,10 +8,7 @@ import {
   useReducer,
 } from "react";
 
-import {
-  type OrchestrationReadModel,
-  type OrchestrationSessionStatus,
-} from "@t3tools/contracts";
+import { type OrchestrationReadModel, type OrchestrationSessionStatus } from "@t3tools/contracts";
 import { DEFAULT_MODEL, resolveModelSlug } from "./model-logic";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
@@ -30,8 +27,7 @@ import {
 
 type Action =
   | { type: "SYNC_SERVER_READ_MODEL"; readModel: OrchestrationReadModel }
-  | { type: "SET_PROJECT_SCRIPTS"; projectId: string; scripts: ProjectScript[] }
-  | { type: "SET_THREADS_HYDRATED"; hydrated: boolean }
+  | { type: "MARK_THREAD_VISITED"; threadId: string; visitedAt?: string }
   | { type: "TOGGLE_PROJECT"; projectId: string }
   | { type: "TOGGLE_THREAD_TERMINAL"; threadId: string }
   | { type: "SET_THREAD_TERMINAL_OPEN"; threadId: string; open: boolean }
@@ -137,10 +133,6 @@ function updateThread(
   return threads.map((t) => (t.id === threadId ? updater(t) : t));
 }
 
-function cloneProjectScripts(scripts: ReadonlyArray<ProjectScript>): ProjectScript[] {
-  return scripts.map((script) => ({ ...script }));
-}
-
 function mapProjectsFromReadModel(
   incoming: OrchestrationReadModel["projects"],
   previous: Project[],
@@ -159,7 +151,7 @@ function mapProjectsFromReadModel(
         (persistedExpandedProjectCwds.size > 0
           ? persistedExpandedProjectCwds.has(project.workspaceRoot)
           : true),
-      scripts: cloneProjectScripts(project.scripts),
+      scripts: project.scripts.map((script) => ({ ...script })),
     };
   });
 }
@@ -187,7 +179,6 @@ function toLegacyProvider(providerName: string | null): "codex" | "claudeCode" {
   return providerName === "claudeCode" ? "claudeCode" : "codex";
 }
 
-
 function normalizeTerminalIds(terminalIds: string[]): string[] {
   const ids = terminalIds.map((id) => id.trim()).filter((id) => id.length > 0);
   const unique = [...new Set(ids)].slice(0, MAX_THREAD_TERMINAL_COUNT);
@@ -207,7 +198,6 @@ function normalizeRunningTerminalIds(
     .map((id) => id.trim())
     .filter((id) => id.length > 0 && validTerminalIdSet.has(id));
 }
-
 
 function normalizeTerminalGroupIds(terminalIds: string[]): string[] {
   return [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];
@@ -374,7 +364,6 @@ function closeThreadTerminal(thread: Thread, terminalId: string): Thread {
   });
 }
 
-
 // ── Reducer ──────────────────────────────────────────────────────────
 
 export function reducer(state: AppState, action: Action): AppState {
@@ -384,94 +373,100 @@ export function reducer(state: AppState, action: Action): AppState {
         action.readModel.projects.filter((project) => project.deletedAt === null),
         state.projects,
       );
-      const existingThreadById = new Map(state.threads.map((thread) => [thread.id, thread] as const));
+      const existingThreadById = new Map(
+        state.threads.map((thread) => [thread.id, thread] as const),
+      );
       const threads = action.readModel.threads
         .filter((thread) => thread.deletedAt === null)
         .map((thread) => {
-        const existing = existingThreadById.get(thread.id);
-        const latestTurnStartedAt =
-          thread.latestTurnId === null
-            ? undefined
-            : thread.messages.find(
-                (message) => message.turnId === thread.latestTurnId && message.role === "user",
-              )?.createdAt;
-        const latestTurnCompletedAt = thread.checkpoints.find(
-          (checkpoint) => checkpoint.turnId === thread.latestTurnId,
-        )?.completedAt;
-        const latestTurnDurationMs =
-          latestTurnStartedAt && latestTurnCompletedAt
-            ? Math.max(0, Date.parse(latestTurnCompletedAt) - Date.parse(latestTurnStartedAt))
-            : undefined;
+          const existing = existingThreadById.get(thread.id);
+          const latestTurnStartedAt =
+            thread.latestTurnId === null
+              ? undefined
+              : thread.messages.find(
+                  (message) => message.turnId === thread.latestTurnId && message.role === "user",
+                )?.createdAt;
+          const latestTurnCompletedAt = thread.checkpoints.find(
+            (checkpoint) => checkpoint.turnId === thread.latestTurnId,
+          )?.completedAt;
+          const latestTurnDurationMs =
+            latestTurnStartedAt && latestTurnCompletedAt
+              ? Math.max(0, Date.parse(latestTurnCompletedAt) - Date.parse(latestTurnStartedAt))
+              : undefined;
 
-        return normalizeThreadTerminals({
-          id: thread.id,
-          codexThreadId: thread.session?.providerThreadId ?? null,
-          projectId: thread.projectId,
-          title: thread.title,
-          model: resolveModelSlug(thread.model),
-          terminalOpen: existing?.terminalOpen ?? false,
-          terminalHeight: existing?.terminalHeight ?? DEFAULT_THREAD_TERMINAL_HEIGHT,
-          terminalIds: existing?.terminalIds ?? [DEFAULT_THREAD_TERMINAL_ID],
-          runningTerminalIds: existing?.runningTerminalIds ?? [],
-          activeTerminalId: existing?.activeTerminalId ?? DEFAULT_THREAD_TERMINAL_ID,
-          terminalGroups: existing?.terminalGroups ?? [
-            { id: `group-${DEFAULT_THREAD_TERMINAL_ID}`, terminalIds: [DEFAULT_THREAD_TERMINAL_ID] },
-          ],
-          activeTerminalGroupId: existing?.activeTerminalGroupId ?? `group-${DEFAULT_THREAD_TERMINAL_ID}`,
-          session: thread.session
-            ? {
-                sessionId: thread.session.providerSessionId ?? `thread:${thread.id}`,
-                provider: toLegacyProvider(thread.session.providerName),
-                status: toLegacySessionStatus(thread.session.status),
-                orchestrationStatus: thread.session.status,
-                threadId: thread.session.providerThreadId,
-                activeTurnId: thread.session.activeTurnId ?? undefined,
-                createdAt: thread.session.updatedAt,
-                updatedAt: thread.session.updatedAt,
-                ...(thread.session.lastError ? { lastError: thread.session.lastError } : {}),
-              }
-            : null,
-          messages: thread.messages.map((message) => {
-            const attachments = message.attachments?.map((attachment, index) => ({
-              type: "image" as const,
-              id: `${message.id}:${index}`,
-              name: attachment.name,
-              mimeType: attachment.mimeType,
-              sizeBytes: attachment.sizeBytes,
-              previewUrl: attachment.dataUrl,
-            }));
-            const normalizedMessage: ChatMessage = {
-              id: message.id,
-              role: message.role,
-              text: message.text,
-              createdAt: message.createdAt,
-              streaming: message.streaming,
-              ...(message.streaming ? {} : { completedAt: message.updatedAt }),
-              ...(attachments && attachments.length > 0 ? { attachments } : {}),
-            };
-            return normalizedMessage;
-          }),
-          error: thread.session?.lastError ?? null,
-          createdAt: thread.createdAt,
-          latestTurnId: thread.latestTurnId ?? undefined,
-          latestTurnStartedAt,
-          latestTurnCompletedAt,
-          latestTurnDurationMs,
-          lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,
-          branch: thread.branch,
-          worktreePath: thread.worktreePath,
-          turnDiffSummaries: thread.checkpoints.map((checkpoint) => ({
-            turnId: checkpoint.turnId,
-            completedAt: checkpoint.completedAt,
-            status: checkpoint.status,
-            assistantMessageId: checkpoint.assistantMessageId ?? undefined,
-            checkpointTurnCount: checkpoint.checkpointTurnCount,
-            checkpointRef: checkpoint.checkpointRef,
-            files: checkpoint.files.map((file) => ({ ...file })),
-          })),
-          activities: thread.activities.map((activity) => ({ ...activity })),
+          return normalizeThreadTerminals({
+            id: thread.id,
+            codexThreadId: thread.session?.providerThreadId ?? null,
+            projectId: thread.projectId,
+            title: thread.title,
+            model: resolveModelSlug(thread.model),
+            terminalOpen: existing?.terminalOpen ?? false,
+            terminalHeight: existing?.terminalHeight ?? DEFAULT_THREAD_TERMINAL_HEIGHT,
+            terminalIds: existing?.terminalIds ?? [DEFAULT_THREAD_TERMINAL_ID],
+            runningTerminalIds: existing?.runningTerminalIds ?? [],
+            activeTerminalId: existing?.activeTerminalId ?? DEFAULT_THREAD_TERMINAL_ID,
+            terminalGroups: existing?.terminalGroups ?? [
+              {
+                id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+                terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+              },
+            ],
+            activeTerminalGroupId:
+              existing?.activeTerminalGroupId ?? `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+            session: thread.session
+              ? {
+                  sessionId: thread.session.providerSessionId ?? `thread:${thread.id}`,
+                  provider: toLegacyProvider(thread.session.providerName),
+                  status: toLegacySessionStatus(thread.session.status),
+                  orchestrationStatus: thread.session.status,
+                  threadId: thread.session.providerThreadId,
+                  activeTurnId: thread.session.activeTurnId ?? undefined,
+                  createdAt: thread.session.updatedAt,
+                  updatedAt: thread.session.updatedAt,
+                  ...(thread.session.lastError ? { lastError: thread.session.lastError } : {}),
+                }
+              : null,
+            messages: thread.messages.map((message) => {
+              const attachments = message.attachments?.map((attachment, index) => ({
+                type: "image" as const,
+                id: `${message.id}:${index}`,
+                name: attachment.name,
+                mimeType: attachment.mimeType,
+                sizeBytes: attachment.sizeBytes,
+                previewUrl: attachment.dataUrl,
+              }));
+              const normalizedMessage: ChatMessage = {
+                id: message.id,
+                role: message.role,
+                text: message.text,
+                createdAt: message.createdAt,
+                streaming: message.streaming,
+                ...(message.streaming ? {} : { completedAt: message.updatedAt }),
+                ...(attachments && attachments.length > 0 ? { attachments } : {}),
+              };
+              return normalizedMessage;
+            }),
+            error: thread.session?.lastError ?? null,
+            createdAt: thread.createdAt,
+            latestTurnId: thread.latestTurnId ?? undefined,
+            latestTurnStartedAt,
+            latestTurnCompletedAt,
+            latestTurnDurationMs,
+            lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,
+            branch: thread.branch,
+            worktreePath: thread.worktreePath,
+            turnDiffSummaries: thread.checkpoints.map((checkpoint) => ({
+              turnId: checkpoint.turnId,
+              completedAt: checkpoint.completedAt,
+              status: checkpoint.status,
+              assistantMessageId: checkpoint.assistantMessageId ?? undefined,
+              checkpointTurnCount: checkpoint.checkpointTurnCount,
+              checkpointRef: checkpoint.checkpointRef,
+              files: checkpoint.files.map((file) => ({ ...file })),
+            })),
+            activities: thread.activities.map((activity) => ({ ...activity })),
+          });
         });
-      });
       return {
         ...state,
         projects,
@@ -480,24 +475,27 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     }
 
-    case "SET_PROJECT_SCRIPTS":
+    case "MARK_THREAD_VISITED": {
+      const visitedAt = action.visitedAt ?? new Date().toISOString();
+      const visitedAtMs = Date.parse(visitedAt);
       return {
         ...state,
-        projects: state.projects.map((project) =>
-          project.id === action.projectId
-            ? { ...project, scripts: cloneProjectScripts(action.scripts) }
-            : project,
-        ),
+        threads: updateThread(state.threads, action.threadId, (thread) => {
+          const previousVisitedAtMs = thread.lastVisitedAt ? Date.parse(thread.lastVisitedAt) : NaN;
+          if (
+            Number.isFinite(previousVisitedAtMs) &&
+            Number.isFinite(visitedAtMs) &&
+            previousVisitedAtMs >= visitedAtMs
+          ) {
+            return thread;
+          }
+          return {
+            ...thread,
+            lastVisitedAt: visitedAt,
+          };
+        }),
       };
-
-    case "SET_THREADS_HYDRATED":
-      if (state.threadsHydrated === action.hydrated) {
-        return state;
-      }
-      return {
-        ...state,
-        threadsHydrated: action.hydrated,
-      };
+    }
 
     case "TOGGLE_PROJECT":
       return {
@@ -540,10 +538,7 @@ export function reducer(state: AppState, action: Action): AppState {
         threads: updateThread(state.threads, action.threadId, (thread) => {
           const normalizedThread = normalizeThreadTerminals(thread);
           const isNewTerminal = !normalizedThread.terminalIds.includes(action.terminalId);
-          if (
-            isNewTerminal &&
-            normalizedThread.terminalIds.length >= MAX_THREAD_TERMINAL_COUNT
-          ) {
+          if (isNewTerminal && normalizedThread.terminalIds.length >= MAX_THREAD_TERMINAL_COUNT) {
             return normalizedThread;
           }
           const terminalIds = normalizedThread.terminalIds.includes(action.terminalId)
@@ -613,10 +608,7 @@ export function reducer(state: AppState, action: Action): AppState {
         threads: updateThread(state.threads, action.threadId, (thread) => {
           const normalizedThread = normalizeThreadTerminals(thread);
           const isNewTerminal = !normalizedThread.terminalIds.includes(action.terminalId);
-          if (
-            isNewTerminal &&
-            normalizedThread.terminalIds.length >= MAX_THREAD_TERMINAL_COUNT
-          ) {
+          if (isNewTerminal && normalizedThread.terminalIds.length >= MAX_THREAD_TERMINAL_COUNT) {
             return normalizedThread;
           }
           const terminalIds = normalizedThread.terminalIds.includes(action.terminalId)
