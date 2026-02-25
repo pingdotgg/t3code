@@ -1,4 +1,5 @@
-import type { WsPush } from "@t3tools/contracts";
+import { WebSocketResponse, WsPush, WsResponse, WebSocketRequest } from "@t3tools/contracts";
+import { Cause, Schema, SchemaIssue } from "effect";
 
 type PushListener = (data: unknown) => void;
 
@@ -10,6 +11,14 @@ interface PendingRequest {
 
 const REQUEST_TIMEOUT_MS = 60_000;
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
+const decodeWsResponseFromJson = Schema.decodeUnknownExit(Schema.fromJsonString(WsResponse));
+const isWsPushEnvelope = Schema.is(WsPush);
+
+function isWebSocketResponseEnvelope(
+  message: typeof WsResponse.Type,
+): message is WebSocketResponse {
+  return message instanceof WebSocketResponse;
+}
 
 interface WsRequestEnvelope {
   id: string;
@@ -127,25 +136,24 @@ export class WsTransport {
   }
 
   private handleMessage(raw: unknown) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(String(raw));
-    } catch {
+    const exit = decodeWsResponseFromJson(raw);
+    if (exit._tag === "Failure") {
+      console.warn("Dropped inbound WebSocket envelope", {
+        reason: "decode-failed",
+        raw,
+        issue: Cause.pretty(exit.cause),
+      });
       return;
     }
-
-    if (!parsed || typeof parsed !== "object") return;
-
-    const message = parsed as Record<string, unknown>;
+    const message = exit.value;
 
     // Push event
-    if (message.type === "push") {
-      const push = message as unknown as WsPush;
-      const channelListeners = this.listeners.get(push.channel);
+    if (isWsPushEnvelope(message)) {
+      const channelListeners = this.listeners.get(message.channel);
       if (channelListeners) {
         for (const listener of channelListeners) {
           try {
-            listener(push.data);
+            listener(message.data);
           } catch {
             // Swallow listener errors
           }
@@ -155,23 +163,20 @@ export class WsTransport {
     }
 
     // Response to a request
-    if (typeof message.id === "string") {
-      const responseId = message.id;
-      const pending = this.pending.get(responseId);
-      if (!pending) return;
+    if (!isWebSocketResponseEnvelope(message)) {
+      return;
+    }
 
-      clearTimeout(pending.timeout);
-      this.pending.delete(responseId);
+    const pending = this.pending.get(message.id);
+    if (!pending) return;
 
-      if (
-        message.error &&
-        typeof message.error === "object" &&
-        typeof (message.error as { message?: unknown }).message === "string"
-      ) {
-        pending.reject(new Error((message.error as { message: string }).message));
-      } else {
-        pending.resolve(message.result);
-      }
+    clearTimeout(pending.timeout);
+    this.pending.delete(message.id);
+
+    if (message.error) {
+      pending.reject(new Error(message.error.message));
+    } else {
+      pending.resolve(message.result);
     }
   }
 

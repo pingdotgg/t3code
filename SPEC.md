@@ -527,6 +527,7 @@ Projection consistency rules:
 1. `orchestration.getSnapshot` is fully served from projection tables and returns `snapshotSequence: number`.
 2. Snapshot must include `projects[]` from `projection_projects`.
 3. Thread snapshot must include `checkpoints[]` from `projection_checkpoints`:
+
 - `turnId: TurnId`
 - `completedAt: IsoDateTime`
 - `status`
@@ -534,15 +535,23 @@ Projection consistency rules:
 - `checkpointRef: CheckpointRef`
 - `assistantMessageId?: MessageId`
 - `checkpointTurnCount: number`
+
 4. Client does not require `listCheckpoints` RPC:
+
 - checkpoint list comes from snapshot projections
 - full diff text comes from `orchestration.getTurnDiff` backed by `checkpoint_diff_blobs`
+
 5. Provider session identity is not a client routing key:
+
 - client acts on `ThreadId`
 - server resolves provider session internally via `projection_thread_sessions`
+
 6. `snapshotSequence` is derived from `projection_state`:
+
 - if snapshot depends on multiple projectors, use the minimum `lastAppliedSequence` across those projectors.
+
 7. Event subscription handoff contract:
+
 - client performs `getSnapshot` and reads `snapshotSequence`
 - client subscribes/replays with `fromSequenceExclusive = snapshotSequence`
 - server guarantees no gap between snapshot visibility and subsequent event stream from that sequence.
@@ -557,14 +566,17 @@ Projection consistency rules:
 ### 7.6 Existing Repository Placement
 
 1. `ProjectsRepository`
+
 - Fits as projection/query access on top of `projection_projects` plus orchestration command dispatch for writes.
 - Must not bypass command->event append path for mutations.
 
 2. `CheckpointsRepository`
+
 - Fits as projection/query access on top of `projection_checkpoints` plus `checkpoint_diff_blobs` (or git-service on-demand diff implementation).
 - Represents the same concept as prior `turn_diff_summary`; canonical naming is `checkpoint`.
 - Must not be an independent source of truth outside orchestration events.
 
 3. `ProviderSessionsRepository`
+
 - Fits as server-internal runtime persistence on top of `provider_session_runtime`, with domain-visible state projected into `projection_thread_sessions`.
 - Not part of client RPC/domain aggregate boundary.

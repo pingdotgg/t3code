@@ -6,7 +6,8 @@
     "dist-electron",
     "node_modules",
     "bun.lock",
-    "*.tsbuildinfo"
+    "*.tsbuildinfo",
+    "**/routeTree.gen.ts"
   ],
   "experimentalSortPackageJson": {}
 }
