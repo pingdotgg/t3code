@@ -12,11 +12,12 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   WebSocketRequest,
+  WebSocketResponse,
   WsPush,
   WsResponse,
 } from "@t3tools/contracts";
-import { NodeServices } from "@effect/platform-node";
-import { Effect, Exit, Layer, ManagedRuntime, Schema, Scope, ServiceMap, Stream } from "effect";
+import { NodeHttpServer, NodeServices } from "@effect/platform-node";
+import { Cause, Effect, Exit, Layer, Schema, Scope, ServiceMap, Stream } from "effect";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { createLogger } from "./logger";
@@ -40,34 +41,21 @@ import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderComma
 import { OrchestrationProjectionPipelineLive } from "./orchestration/Layers/ProjectionPipeline";
 import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers/ProjectionSnapshotQuery";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion";
-import {
-  OrchestrationEngineService,
-  type OrchestrationEngineShape,
-} from "./orchestration/Services/OrchestrationEngine";
-import {
-  ProjectionSnapshotQuery,
-  type ProjectionSnapshotQueryShape,
-} from "./orchestration/Services/ProjectionSnapshotQuery";
+import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
+import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
 import { makeSqlitePersistenceLive } from "./persistence/Layers/Sqlite";
-import assert from "node:assert";
 import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore";
 import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/OrchestrationCommandReceipts";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
 import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
-import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
+import { ProviderService } from "./provider/Services/ProviderService";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime";
-import {
-  CheckpointStore,
-  type CheckpointStoreShape,
-} from "./checkpointing/Services/CheckpointStore";
-import { makeEventNdjsonLogger, type EventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
+import { CheckpointStore } from "./checkpointing/Services/CheckpointStore";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as SqlError from "effect/unstable/sql/SqlError";
-import * as Migrator from "effect/unstable/sql/Migrator";
 import { clamp } from "effect/Number";
 import { OpenDefaultService, type OpenShape } from "./open";
 
@@ -92,36 +80,23 @@ export interface ServerOptions {
   cwd: string;
   autoBootstrapProjectFromCwd?: boolean | undefined;
   stateDir?: string | undefined;
-  persistenceLayer?:
-    | Layer.Layer<SqlClient.SqlClient, SqlError.SqlError | Migrator.MigrationError>
-    | undefined;
   staticDir?: string | undefined;
   devUrl?: string | undefined;
   logWebSocketEvents?: boolean | undefined;
   gitManager?: GitManager | undefined;
   terminalManager?: TerminalManager | undefined;
-  providerLayer?: Layer.Layer<ProviderService, unknown> | undefined;
   authToken?: string | undefined;
   open?: OpenShape | undefined;
 }
 
-export interface ServerRuntime {
-  readonly start: () => Promise<void>;
-  readonly stop: () => Promise<void>;
-  readonly httpServer: http.Server;
-}
-
 export interface ServerShape {
-  readonly createServer: (options: ServerOptions) => ServerRuntime;
+  readonly createServer: (
+    options: ServerOptions,
+  ) => Effect.Effect<http.Server, unknown, Scope.Scope | ServerRuntimeServices>;
   readonly stopSignal: Effect.Effect<unknown, never>;
 }
 
 export class Server extends ServiceMap.Service<Server, ServerShape>()("server/Server") {}
-
-export const ServerLive = Layer.succeed(Server, {
-  createServer,
-  stopSignal: Effect.never,
-} satisfies ServerShape);
 
 const isServerNotRunningError = (error: unknown): boolean => {
   if (!(error instanceof Error)) return false;
@@ -195,47 +170,104 @@ function checkpointRefForThreadTurn(threadId: string, turnCount: number): Checkp
   return CheckpointRef.makeUnsafe(`${CHECKPOINT_REFS_PREFIX}/${encodedThreadId}/turn/${turnCount}`);
 }
 
-type EffectRuntime = ManagedRuntime.ManagedRuntime<
+export type ServerCoreRuntimeServices =
   | OrchestrationEngineService
   | ProjectionSnapshotQuery
-  | ProviderService
   | CheckpointStore
-  | OrchestrationReactor,
-  unknown
->;
+  | OrchestrationReactor;
 
-export function createServer(options: ServerOptions): ServerRuntime {
+export type ServerRuntimeServices = ServerCoreRuntimeServices | ProviderService;
+
+export function makeServerPersistenceLayer(stateDir: string) {
+  const dbPath = path.join(stateDir, "orchestration.sqlite");
+  return makeSqlitePersistenceLive(dbPath);
+}
+
+export function makeServerProviderLayer(
+  stateDir: string,
+): Layer.Layer<ProviderService, unknown, SqlClient.SqlClient> {
+  const providerLogsDir = path.join(stateDir, "logs", "providers");
+  const codexAdapterLayer = makeCodexAdapterLive({
+    nativeEventLogPath: path.join(providerLogsDir, "provider-native.ndjson"),
+  });
+  const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(Layer.provide(codexAdapterLayer));
+  const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+    Layer.provide(ProviderSessionRuntimeRepositoryLive),
+  );
+  return makeProviderServiceLive({
+    canonicalEventLogPath: path.join(providerLogsDir, "provider-canonical.ndjson"),
+  }).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer));
+}
+
+export function makeServerRuntimeServicesLayer(): Layer.Layer<
+  ServerCoreRuntimeServices,
+  unknown,
+  SqlClient.SqlClient | ProviderService
+> {
+  const orchestrationLayer = OrchestrationEngineLive.pipe(
+    Layer.provide(OrchestrationProjectionPipelineLive),
+    Layer.provide(OrchestrationEventStoreLive),
+    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+  );
+  const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(NodeServices.layer));
+
+  const runtimeServicesLayer = Layer.mergeAll(
+    orchestrationLayer,
+    OrchestrationProjectionSnapshotQueryLive,
+    checkpointStoreLayer,
+  );
+  const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
+    Layer.provideMerge(runtimeServicesLayer),
+  );
+  const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
+    Layer.provideMerge(runtimeServicesLayer),
+  );
+  const checkpointReactorLayer = CheckpointReactorLive.pipe(
+    Layer.provideMerge(runtimeServicesLayer),
+  );
+  const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
+    Layer.provideMerge(runtimeIngestionLayer),
+    Layer.provideMerge(providerCommandReactorLayer),
+    Layer.provideMerge(checkpointReactorLayer),
+  );
+
+  return orchestrationReactorLayer;
+}
+
+export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
+  "ServerLifecycleError",
+  {
+    operation: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+class RouteRequestError extends Schema.TaggedErrorClass<RouteRequestError>()("RouteRequestError", {
+  message: Schema.String,
+}) {}
+
+export const createServer = Effect.fn(function* (
+  options: ServerOptions,
+): Effect.fn.Return<http.Server, unknown, Scope.Scope | ServerRuntimeServices> {
   const {
     port,
     host,
     cwd,
     autoBootstrapProjectFromCwd = false,
-    stateDir,
-    persistenceLayer: customPersistenceLayer,
     staticDir,
     devUrl,
     logWebSocketEvents: explicitLogWsEvents,
     gitManager = new GitManager(),
     terminalManager = new TerminalManager(),
-    providerLayer: customProviderLayer,
     authToken,
     open: openService = OpenDefaultService,
   } = options;
 
-  const resolvedStateDir = stateDir ?? path.join(os.homedir(), ".t3", "userdata");
-  let effectRuntime: EffectRuntime | null = null;
-  let orchestrationEngine: OrchestrationEngineShape | null = null;
-  let projectionSnapshotQuery: ProjectionSnapshotQueryShape | null = null;
-  let providerService: ProviderServiceShape | null = null;
-  let checkpointStore: CheckpointStoreShape | null = null;
   const clients = new Set<WebSocket>();
   const logger = createLogger("ws");
   const logWebSocketEvents =
     explicitLogWsEvents ?? parseBooleanEnv(process.env.T3CODE_LOG_WS_EVENTS) ?? Boolean(devUrl);
   let keybindingsConfig = loadResolvedKeybindingsConfig(logger);
-  let orchestrationDomainEventLogger: EventNdjsonLogger | undefined;
-  let orchestrationCommandLogger: EventNdjsonLogger | undefined;
-  let subscriptionsScope: Scope.Closeable | null = null;
 
   function logOutgoingPush(push: WsPush, recipients: number) {
     if (!logWebSocketEvents) return;
@@ -245,86 +277,6 @@ export function createServer(options: ServerOptions): ServerRuntime {
       payload: push.data,
     });
   }
-
-  const getOrchestrationEngine = () => {
-    assert(orchestrationEngine, "Orchestration engine is not started");
-    return orchestrationEngine;
-  };
-
-  const getEffectRuntime = () => {
-    assert(effectRuntime, "Effect runtime is not started");
-    return effectRuntime;
-  };
-
-  const getProjectionSnapshotQuery = () => {
-    assert(projectionSnapshotQuery, "Projection snapshot query is not started");
-    return projectionSnapshotQuery;
-  };
-
-  const getCheckpointStore = () => {
-    assert(checkpointStore, "Checkpoint store is not started");
-    return checkpointStore;
-  };
-
-  async function bootstrapProjectForCwd() {
-    if (!autoBootstrapProjectFromCwd) {
-      return;
-    }
-
-    const runtime = getEffectRuntime();
-    const snapshotQuery = getProjectionSnapshotQuery();
-    const engine = getOrchestrationEngine();
-    const snapshot = await runtime.runPromise(snapshotQuery.getSnapshot());
-    const existing = snapshot.projects.find((project) => project.workspaceRoot === cwd);
-    if (existing) {
-      return;
-    }
-
-    const createdAt = new Date().toISOString();
-    const projectName = path.basename(cwd) || "project";
-    await runtime.runPromise(
-      engine.dispatchUnknownCommand({
-        type: "project.create",
-        commandId: crypto.randomUUID(),
-        projectId: crypto.randomUUID(),
-        title: projectName,
-        workspaceRoot: cwd,
-        defaultModel: "gpt-5-codex",
-        createdAt,
-      }),
-    );
-  }
-
-  const attachSubscriptionss = Effect.gen(function* () {
-    const orchestrationEngine = yield* OrchestrationEngineService;
-    const orchestrationReactor = yield* OrchestrationReactor;
-    subscriptionsScope = yield* Scope.make("sequential");
-
-    yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
-      Effect.sync(() => {
-        orchestrationDomainEventLogger?.write({
-          observedAt: new Date().toISOString(),
-          event,
-        });
-        const push: WsPush = {
-          type: "push",
-          channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
-          data: event,
-        };
-        const message = JSON.stringify(push);
-        let recipients = 0;
-        for (const client of clients) {
-          if (client.readyState === client.OPEN) {
-            client.send(message);
-            recipients += 1;
-          }
-        }
-        logOutgoingPush(push, recipients);
-      }),
-    ).pipe(Effect.forkIn(subscriptionsScope));
-
-    yield* orchestrationReactor.start.pipe(Scope.provide(subscriptionsScope));
-  });
 
   const onTerminalEvent = (event: TerminalEvent) => {
     const push: WsPush = {
@@ -342,7 +294,6 @@ export function createServer(options: ServerOptions): ServerRuntime {
     }
     logOutgoingPush(push, recipients);
   };
-  terminalManager.on("event", onTerminalEvent);
 
   // HTTP server — serves static files or redirects to Vite dev server
   const httpServer = http.createServer((req, res) => {
@@ -403,104 +354,85 @@ export function createServer(options: ServerOptions): ServerRuntime {
   // WebSocket server — upgrades from the HTTP server
   const wss = new WebSocketServer({ noServer: true });
 
-  httpServer.on("upgrade", (request, socket, head) => {
-    if (authToken) {
-      let providedToken: string | null = null;
-      try {
-        const url = new URL(request.url ?? "/", `http://localhost:${port}`);
-        providedToken = url.searchParams.get("token");
-      } catch {
-        rejectUpgrade(socket, 400, "Invalid WebSocket URL");
-        return;
+  const closeWebSocketServer = Effect.callback<void, ServerLifecycleError>((resume) => {
+    wss.close((error) => {
+      if (error && !isServerNotRunningError(error)) {
+        resume(
+          Effect.fail(
+            new ServerLifecycleError({ operation: "closeWebSocketServer", cause: error }),
+          ),
+        );
+      } else {
+        resume(Effect.void);
       }
-
-      if (providedToken !== authToken) {
-        rejectUpgrade(socket, 401, "Unauthorized WebSocket connection");
-        return;
-      }
-    }
-
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit("connection", ws, request);
     });
   });
 
-  wss.on("connection", (ws) => {
-    clients.add(ws);
-
-    // Send welcome message with project info
-    const segments = cwd.split(/[/\\]/).filter(Boolean);
-    const projectName = segments[segments.length - 1] ?? "project";
-
-    const welcome: WsPush = {
-      type: "push",
-      channel: WS_CHANNELS.serverWelcome,
-      data: { cwd, projectName },
-    };
-    logOutgoingPush(welcome, 1);
-    ws.send(JSON.stringify(welcome));
-
-    ws.on("message", (raw) => {
-      void handleMessage(ws, raw);
-    });
-
-    ws.on("close", () => {
-      clients.delete(ws);
-    });
-
-    ws.on("error", () => {
-      clients.delete(ws);
-    });
-  });
-
-  async function handleMessage(ws: WebSocket, raw: unknown) {
-    const messageText = websocketRawToString(raw);
-    if (messageText === null) {
-      const errorResponse: WsResponse = {
-        id: "unknown",
-        error: { message: "Invalid request format" },
-      };
-      ws.send(JSON.stringify(errorResponse));
-      return;
+  const closeAllClients = () => {
+    for (const client of clients) {
+      client.close();
     }
+    clients.clear();
+  };
 
-    let request: WebSocketRequest;
-    try {
-      request = Schema.decodeUnknownSync(Schema.fromJsonString(WebSocketRequest))(messageText);
-    } catch {
-      const errorResponse: WsResponse = {
-        id: "unknown",
-        error: { message: "Invalid request format" },
-      };
-      ws.send(JSON.stringify(errorResponse));
-      return;
-    }
+  const listenOptions = host ? { host, port } : { port };
 
-    try {
-      const result = await routeRequest(request);
-      const response: WsResponse = { id: request.id, result };
-      ws.send(JSON.stringify(response));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown server error";
-      const response: WsResponse = {
-        id: request.id,
-        error: { message },
+  const orchestrationEngine = yield* OrchestrationEngineService;
+  const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
+  const liveCheckpointStore = yield* CheckpointStore;
+  const liveProviderService = yield* ProviderService;
+  const orchestrationReactor = yield* OrchestrationReactor;
+
+  const subscriptionsScope = yield* Scope.make("sequential");
+  yield* Effect.addFinalizer(() =>
+    Scope.close(subscriptionsScope, Exit.void).pipe(Effect.orElseSucceed(() => undefined)),
+  );
+
+  yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
+    Effect.sync(() => {
+      const push: WsPush = {
+        type: "push",
+        channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
+        data: event,
       };
-      ws.send(JSON.stringify(response));
+      const message = JSON.stringify(push);
+      let recipients = 0;
+      for (const client of clients) {
+        if (client.readyState === client.OPEN) {
+          client.send(message);
+          recipients += 1;
+        }
+      }
+      logOutgoingPush(push, recipients);
+    }),
+  ).pipe(Effect.forkIn(subscriptionsScope));
+
+  yield* orchestrationReactor.start.pipe(Scope.provide(subscriptionsScope));
+
+  if (autoBootstrapProjectFromCwd) {
+    const snapshot = yield* projectionReadModelQuery.getSnapshot();
+    const existing = snapshot.projects.find((project) => project.workspaceRoot === cwd);
+    if (!existing) {
+      const createdAt = new Date().toISOString();
+      const projectName = path.basename(cwd) || "project";
+      yield* orchestrationEngine.dispatchUnknownCommand({
+        type: "project.create",
+        commandId: crypto.randomUUID(),
+        projectId: crypto.randomUUID(),
+        title: projectName,
+        workspaceRoot: cwd,
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      });
     }
   }
 
-  async function routeRequest(request: WebSocketRequest): Promise<unknown> {
-    const orchestrationEngine = getOrchestrationEngine();
-    const projectionReadModelQuery = getProjectionSnapshotQuery();
-    const effectRuntime = getEffectRuntime();
-    const liveCheckpointStore = getCheckpointStore();
-
-    const computeTurnDiff = async (input: {
+  const routeRequest = Effect.fn(function* (request: WebSocketRequest) {
+    const computeTurnDiff = Effect.fn(function* (input: {
       readonly threadId: string;
       readonly fromTurnCount: number;
       readonly toTurnCount: number;
-    }) => {
+    }) {
       if (input.fromTurnCount > input.toTurnCount) {
         throw new Error(
           `Invalid turn diff range for thread '${input.threadId}': from ${input.fromTurnCount} exceeds to ${input.toTurnCount}.`,
@@ -516,7 +448,7 @@ export function createServer(options: ServerOptions): ServerRuntime {
         };
       }
 
-      const snapshot = await effectRuntime.runPromise(projectionReadModelQuery.getSnapshot());
+      const snapshot = yield* projectionReadModelQuery.getSnapshot();
       const thread = snapshot.threads.find((entry) => entry.id === input.threadId);
       if (!thread) {
         throw new Error(`Thread '${input.threadId}' not found.`);
@@ -562,20 +494,19 @@ export function createServer(options: ServerOptions): ServerRuntime {
         );
       }
 
-      const [fromExists, toExists] = await Promise.all([
-        effectRuntime.runPromise(
+      const [fromExists, toExists] = yield* Effect.all(
+        [
           liveCheckpointStore.hasCheckpointRef({
             cwd: workspaceCwd,
             checkpointRef: fromCheckpointRef,
           }),
-        ),
-        effectRuntime.runPromise(
           liveCheckpointStore.hasCheckpointRef({
             cwd: workspaceCwd,
             checkpointRef: toCheckpointRef,
           }),
-        ),
-      ]);
+        ],
+        { concurrency: "unbounded" },
+      );
       if (!fromExists) {
         throw new Error(
           `Filesystem checkpoint is unavailable for turn ${input.fromTurnCount} in thread ${input.threadId}.`,
@@ -587,304 +518,282 @@ export function createServer(options: ServerOptions): ServerRuntime {
         );
       }
 
-      const diff = await effectRuntime.runPromise(
-        liveCheckpointStore.diffCheckpoints({
-          cwd: workspaceCwd,
-          fromCheckpointRef,
-          toCheckpointRef,
-          fallbackFromToHead: false,
-        }),
-      );
+      const diff = yield* liveCheckpointStore.diffCheckpoints({
+        cwd: workspaceCwd,
+        fromCheckpointRef,
+        toCheckpointRef,
+        fallbackFromToHead: false,
+      });
       return {
         threadId: input.threadId,
         fromTurnCount: input.fromTurnCount,
         toTurnCount: input.toTurnCount,
         diff,
       };
-    };
+    });
 
     switch (request.body._tag) {
-      case ORCHESTRATION_WS_METHODS.getSnapshot: {
-        return effectRuntime.runPromise(projectionReadModelQuery.getSnapshot());
-      }
+      case ORCHESTRATION_WS_METHODS.getSnapshot:
+        return yield* projectionReadModelQuery.getSnapshot();
 
       case ORCHESTRATION_WS_METHODS.dispatchCommand: {
-        orchestrationCommandLogger?.write({
-          observedAt: new Date().toISOString(),
-          command: request.body.command,
-        });
-        return effectRuntime.runPromise(orchestrationEngine.dispatch(request.body.command));
+        const { command } = request.body;
+        return yield* orchestrationEngine.dispatch(command);
       }
 
       case ORCHESTRATION_WS_METHODS.getTurnDiff: {
         const body = stripRequestTag(request.body);
-        return computeTurnDiff(body);
+        return yield* computeTurnDiff(body);
       }
 
       case ORCHESTRATION_WS_METHODS.getFullThreadDiff: {
         const body = stripRequestTag(request.body);
-        return computeTurnDiff({
+        return yield* computeTurnDiff({
           threadId: body.threadId,
           fromTurnCount: 0,
           toTurnCount: body.toTurnCount,
         });
       }
 
-      case ORCHESTRATION_WS_METHODS.replayEvents:
-        return effectRuntime.runPromise(
-          Stream.runCollect(
-            orchestrationEngine.readEvents(
-              clamp(request.body.fromSequenceExclusive, {
-                maximum: Number.MAX_SAFE_INTEGER,
-                minimum: 0,
-              }),
-            ),
-          ).pipe(Effect.map((events) => Array.from(events))),
-        );
-
-      case WS_METHODS.projectsSearchEntries:
-        return searchWorkspaceEntries(stripRequestTag(request.body));
-
-      case WS_METHODS.shellOpenInEditor: {
-        await Effect.runPromise(openService.openInEditor(stripRequestTag(request.body)));
-        return undefined;
+      case ORCHESTRATION_WS_METHODS.replayEvents: {
+        const { fromSequenceExclusive } = request.body;
+        return yield* Stream.runCollect(
+          orchestrationEngine.readEvents(
+            clamp(fromSequenceExclusive, {
+              maximum: Number.MAX_SAFE_INTEGER,
+              minimum: 0,
+            }),
+          ),
+        ).pipe(Effect.map((events) => Array.from(events)));
       }
 
-      case WS_METHODS.gitStatus:
-        return gitManager.status(stripRequestTag(request.body));
+      case WS_METHODS.projectsSearchEntries: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.promise(() => searchWorkspaceEntries(body));
+      }
 
-      case WS_METHODS.gitPull:
-        return pullGitBranch(stripRequestTag(request.body));
+      case WS_METHODS.shellOpenInEditor: {
+        const body = stripRequestTag(request.body);
+        return yield* openService.openInEditor(body);
+      }
 
-      case WS_METHODS.gitRunStackedAction:
-        return gitManager.runStackedAction(stripRequestTag(request.body));
-      case WS_METHODS.gitListBranches:
-        return listGitBranches(stripRequestTag(request.body));
+      case WS_METHODS.gitStatus: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.promise(() => gitManager.status(body));
+      }
 
-      case WS_METHODS.gitCreateWorktree:
-        return createGitWorktree(stripRequestTag(request.body));
+      case WS_METHODS.gitPull: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.promise(() => pullGitBranch(body));
+      }
 
-      case WS_METHODS.gitRemoveWorktree:
-        return removeGitWorktree(stripRequestTag(request.body));
+      case WS_METHODS.gitRunStackedAction: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.promise(() => gitManager.runStackedAction(body));
+      }
 
-      case WS_METHODS.gitCreateBranch:
-        return createGitBranch(stripRequestTag(request.body));
+      case WS_METHODS.gitListBranches: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.promise(() => listGitBranches(body));
+      }
 
-      case WS_METHODS.gitCheckout:
-        return checkoutGitBranch(stripRequestTag(request.body));
+      case WS_METHODS.gitCreateWorktree: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.promise(() => createGitWorktree(body));
+      }
 
-      case WS_METHODS.gitInit:
-        return initGitRepo(stripRequestTag(request.body));
+      case WS_METHODS.gitRemoveWorktree: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.promise(() => removeGitWorktree(body));
+      }
 
-      case WS_METHODS.terminalOpen:
-        return terminalManager.open(stripRequestTag(request.body));
+      case WS_METHODS.gitCreateBranch: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.promise(() => createGitBranch(body));
+      }
 
-      case WS_METHODS.terminalWrite:
-        await terminalManager.write(stripRequestTag(request.body));
-        return undefined;
+      case WS_METHODS.gitCheckout: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.promise(() => checkoutGitBranch(body));
+      }
 
-      case WS_METHODS.terminalResize:
-        await terminalManager.resize(stripRequestTag(request.body));
-        return undefined;
+      case WS_METHODS.gitInit: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.promise(() => initGitRepo(body));
+      }
 
-      case WS_METHODS.terminalClear:
-        await terminalManager.clear(stripRequestTag(request.body));
-        return undefined;
+      case WS_METHODS.terminalOpen: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.promise(() => terminalManager.open(body));
+      }
 
-      case WS_METHODS.terminalRestart:
-        return terminalManager.restart(stripRequestTag(request.body));
+      case WS_METHODS.terminalWrite: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.promise(() => terminalManager.write(body));
+      }
 
-      case WS_METHODS.terminalClose:
-        await terminalManager.close(stripRequestTag(request.body));
-        return undefined;
+      case WS_METHODS.terminalResize: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.promise(() => terminalManager.resize(body));
+      }
+
+      case WS_METHODS.terminalClear: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.promise(() => terminalManager.clear(body));
+      }
+
+      case WS_METHODS.terminalRestart: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.promise(() => terminalManager.restart(body));
+      }
+
+      case WS_METHODS.terminalClose: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.promise(() => terminalManager.close(body));
+      }
 
       case WS_METHODS.serverGetConfig:
-        return {
-          cwd,
-          keybindings: keybindingsConfig,
-        };
+        return { cwd, keybindings: keybindingsConfig };
 
-      case WS_METHODS.serverUpsertKeybinding:
-        keybindingsConfig = upsertKeybindingRule(logger, stripRequestTag(request.body));
-        return {
-          keybindings: keybindingsConfig,
-        };
+      case WS_METHODS.serverUpsertKeybinding: {
+        const body = stripRequestTag(request.body);
+        keybindingsConfig = upsertKeybindingRule(logger, body);
+        return { keybindings: keybindingsConfig };
+      }
 
       default: {
         const _exhaustiveCheck: never = request.body;
-        throw new Error(`Unknown method: ${String(_exhaustiveCheck)}`);
+        return yield* new RouteRequestError({
+          message: `Unknown method: ${String(_exhaustiveCheck)}`,
+        });
       }
     }
-  }
+  });
 
-  async function createEffectRuntime() {
-    const dbPath = path.join(resolvedStateDir, "orchestration.sqlite");
-    const providerLogsDir = path.join(resolvedStateDir, "logs", "providers");
-    const orchestrationLogsDir = path.join(resolvedStateDir, "logs", "orchestration");
-    orchestrationDomainEventLogger = makeEventNdjsonLogger(
-      path.join(orchestrationLogsDir, "orchestration-domain.ndjson"),
-    );
-    orchestrationCommandLogger = makeEventNdjsonLogger(
-      path.join(orchestrationLogsDir, "orchestration-command.ndjson"),
-    );
-    const persistenceLayer = customPersistenceLayer ?? makeSqlitePersistenceLive(dbPath);
-    const orchestrationLayer = OrchestrationEngineLive.pipe(
-      Layer.provide(OrchestrationProjectionPipelineLive),
-      Layer.provide(OrchestrationEventStoreLive),
-      Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-    );
-    const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(NodeServices.layer));
-    const providerLayer =
-      customProviderLayer ??
-      (() => {
-        const codexAdapterLayer = makeCodexAdapterLive({
-          nativeEventLogPath: path.join(providerLogsDir, "provider-native.ndjson"),
-        });
-        const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
-          Layer.provide(codexAdapterLayer),
-        );
-        const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
-          Layer.provide(ProviderSessionRuntimeRepositoryLive),
-        );
-        return makeProviderServiceLive({
-          canonicalEventLogPath: path.join(providerLogsDir, "provider-canonical.ndjson"),
-        }).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer));
-      })();
+  const handleMessage = Effect.fnUntraced(function* (ws: WebSocket, raw: unknown) {
+    const encodeResponse = Schema.encodeEffect(Schema.fromJsonString(WsResponse));
 
-    const runtimeServicesLayer = Layer.mergeAll(
-      orchestrationLayer,
-      OrchestrationProjectionSnapshotQueryLive,
-      checkpointStoreLayer,
-      providerLayer,
-    );
-    const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
-      Layer.provideMerge(runtimeServicesLayer),
-    );
-    const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
-      Layer.provideMerge(runtimeServicesLayer),
-    );
-    const checkpointReactorLayer = CheckpointReactorLive.pipe(
-      Layer.provideMerge(runtimeServicesLayer),
-    );
-    const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
-      Layer.provideMerge(runtimeIngestionLayer),
-      Layer.provideMerge(providerCommandReactorLayer),
-      Layer.provideMerge(checkpointReactorLayer),
-    );
-    const layer = orchestrationReactorLayer.pipe(
-      Layer.provide(persistenceLayer),
-      Layer.provideMerge(NodeServices.layer),
-    );
-    const runtime = ManagedRuntime.make(layer);
-
-    try {
-      const [
-        nextOrchestrationEngine,
-        nextProjectionSnapshotQuery,
-        nextCheckpointStore,
-        nextProviderService,
-      ] = await Promise.all([
-        runtime.runPromise(Effect.service(OrchestrationEngineService)),
-        runtime.runPromise(Effect.service(ProjectionSnapshotQuery)),
-        runtime.runPromise(Effect.service(CheckpointStore)),
-        runtime.runPromise(Effect.service(ProviderService)),
-      ]);
-      orchestrationEngine = nextOrchestrationEngine;
-      projectionSnapshotQuery = nextProjectionSnapshotQuery;
-      checkpointStore = nextCheckpointStore;
-      providerService = nextProviderService;
-      await runtime.runPromise(attachSubscriptionss);
-    } catch (error) {
-      await runtime.dispose().catch(() => undefined);
-      throw error;
-    }
-
-    return runtime;
-  }
-
-  async function disposeEffectRuntime() {
-    if (subscriptionsScope && effectRuntime) {
-      await effectRuntime.runPromise(Scope.close(subscriptionsScope, Exit.void));
-      subscriptionsScope = null;
-    }
-    orchestrationDomainEventLogger?.close();
-    orchestrationDomainEventLogger = undefined;
-    orchestrationCommandLogger?.close();
-    orchestrationCommandLogger = undefined;
-
-    const runtime = effectRuntime;
-    const liveProviderService = providerService;
-    effectRuntime = null;
-    orchestrationEngine = null;
-    projectionSnapshotQuery = null;
-    checkpointStore = null;
-    providerService = null;
-
-    if (!runtime) {
+    const messageText = websocketRawToString(raw);
+    if (messageText === null) {
+      const errorResponse = yield* encodeResponse(
+        new WebSocketResponse({
+          id: "unknown",
+          error: { message: "Invalid request format: Failed to read message" },
+        }),
+      );
+      ws.send(errorResponse);
       return;
     }
 
-    if (liveProviderService) {
-      await runtime.runPromise(liveProviderService.stopAll()).catch(() => undefined);
+    const request = Schema.decodeExit(Schema.fromJsonString(WebSocketRequest))(messageText);
+    if (request._tag === "Failure") {
+      const errorResponse = yield* encodeResponse(
+        new WebSocketResponse({
+          id: "unknown",
+          error: { message: `Invalid request format: ${Cause.pretty(request.cause)}` },
+        }),
+      );
+      ws.send(errorResponse);
+      return;
     }
 
-    await runtime.dispose();
-  }
+    const result = yield* Effect.exit(routeRequest(request.value));
+    if (result._tag === "Failure") {
+      const errorResponse = yield* encodeResponse(
+        new WebSocketResponse({
+          id: request.value.id,
+          error: { message: Cause.pretty(result.cause) },
+        }),
+      );
+      ws.send(errorResponse);
+      return;
+    }
 
-  async function start() {
-    effectRuntime = await createEffectRuntime();
-    await bootstrapProjectForCwd();
+    const response = yield* encodeResponse(
+      new WebSocketResponse({
+        id: request.value.id,
+        result: result.value,
+      }),
+    );
+    ws.send(response);
+  });
 
-    return new Promise<void>((resolve, reject) => {
-      const onError = (error: Error) => {
-        httpServer.off("error", onError);
-        void disposeEffectRuntime().finally(() => reject(error));
-      };
-      httpServer.once("error", onError);
-      const onListening = () => {
-        httpServer.off("error", onError);
-        resolve();
-      };
-      if (host) {
-        httpServer.listen(port, host, onListening);
+  httpServer.on("upgrade", (request, socket, head) => {
+    if (authToken) {
+      let providedToken: string | null = null;
+      try {
+        const url = new URL(request.url ?? "/", `http://localhost:${port}`);
+        providedToken = url.searchParams.get("token");
+      } catch {
+        rejectUpgrade(socket, 400, "Invalid WebSocket URL");
         return;
       }
-      httpServer.listen(port, onListening);
-    });
-  }
 
-  async function stop(): Promise<void> {
-    await disposeEffectRuntime();
-    terminalManager.off("event", onTerminalEvent);
-    terminalManager.dispose();
-
-    for (const client of clients) {
-      client.close();
+      if (providedToken !== authToken) {
+        rejectUpgrade(socket, 401, "Unauthorized WebSocket connection");
+        return;
+      }
     }
-    clients.clear();
 
-    const closeWebSocketServer = new Promise<void>((resolve, reject) => {
-      wss.close((error) => {
-        if (error && !isServerNotRunningError(error)) {
-          reject(error);
-          return;
-        }
-        resolve();
-      });
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit("connection", ws, request);
+    });
+  });
+
+  wss.on("connection", (ws) => {
+    clients.add(ws);
+
+    const segments = cwd.split(/[/\\]/).filter(Boolean);
+    const projectName = segments[segments.length - 1] ?? "project";
+
+    const welcome: WsPush = {
+      type: "push",
+      channel: WS_CHANNELS.serverWelcome,
+      data: { cwd, projectName },
+    };
+    logOutgoingPush(welcome, 1);
+    ws.send(JSON.stringify(welcome));
+
+    ws.on("message", (raw) => {
+      void Effect.runPromise(handleMessage(ws, raw));
     });
 
-    const closeHttpServer = new Promise<void>((resolve, reject) => {
-      httpServer.close((error) => {
-        if (error && !isServerNotRunningError(error)) {
-          reject(error);
-          return;
-        }
-        resolve();
-      });
+    ws.on("close", () => {
+      clients.delete(ws);
     });
 
-    await Promise.all([closeWebSocketServer, closeHttpServer]);
-  }
+    ws.on("error", () => {
+      clients.delete(ws);
+    });
+  });
 
-  return { start, stop, httpServer };
-}
+  yield* Effect.addFinalizer(() =>
+    Effect.catch(liveProviderService.stopAll(), (cause) =>
+      Effect.logWarning("failed to stop provider service", { cause }),
+    ),
+  );
+
+  terminalManager.on("event", onTerminalEvent);
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      terminalManager.off("event", onTerminalEvent);
+      terminalManager.dispose();
+    }),
+  );
+
+  yield* NodeHttpServer.make(() => httpServer, listenOptions);
+
+  yield* Effect.addFinalizer(() =>
+    Effect.all([
+      Effect.sync(() => closeAllClients()),
+      closeWebSocketServer.pipe(Effect.orElseSucceed(() => undefined)),
+    ]),
+  );
+
+  return httpServer;
+});
+
+export const ServerLive = Layer.succeed(Server, {
+  createServer,
+  stopSignal: Effect.never,
+} satisfies ServerShape);

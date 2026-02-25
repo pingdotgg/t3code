@@ -1,3 +1,4 @@
+import * as Http from "node:http";
 import { NodeServices } from "@effect/platform-node";
 import { assert, it, vi } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -10,13 +11,17 @@ import { CliConfig, makeCliCommand, type CliConfigShape } from "./main";
 import { Open, type OpenShape } from "./open";
 import { Server, type ServerShape, type ServerOptions } from "./wsServer";
 
-const start = vi.fn(async () => undefined);
-const stop = vi.fn(async () => undefined);
-const createServer = vi.fn((_: ServerOptions) => ({
-  start,
-  stop,
-  httpServer: undefined as never,
-}));
+const start = vi.fn(() => undefined);
+const stop = vi.fn(() => undefined);
+const createServer = vi.fn((_: ServerOptions) =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      start();
+      return {} as unknown as Http.Server;
+    }),
+    () => Effect.sync(() => stop()),
+  ),
+);
 const findAvailablePort = vi.fn((preferred: number) => Effect.succeed(preferred));
 
 const testLayer = Layer.mergeAll(
@@ -47,13 +52,17 @@ const runCli = (
 
 beforeEach(() => {
   vi.clearAllMocks();
-  start.mockImplementation(async () => undefined);
-  stop.mockImplementation(async () => undefined);
-  createServer.mockImplementation((_: ServerOptions) => ({
-    start,
-    stop,
-    httpServer: undefined as never,
-  }));
+  start.mockImplementation(() => undefined);
+  stop.mockImplementation(() => undefined);
+  createServer.mockImplementation((_: ServerOptions) =>
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        start();
+        return {} as unknown as Http.Server;
+      }),
+      () => Effect.sync(() => stop()),
+    ),
+  );
   findAvailablePort.mockImplementation((preferred: number) => Effect.succeed(preferred));
 });
 
