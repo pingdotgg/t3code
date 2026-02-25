@@ -26,6 +26,9 @@ import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
 import { ProviderService } from "./provider/Services/ProviderService";
 
+import { makeTerminalManagerLive, TerminalManager } from "./terminalManager";
+import { PtyAdapter } from "./ptyAdapter";
+
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService,
   unknown,
@@ -48,9 +51,13 @@ export function makeServerProviderLayer(): Layer.Layer<
 }
 
 export function makeServerRuntimeServicesLayer(): Layer.Layer<
-  OrchestrationEngineService | ProjectionSnapshotQuery | CheckpointStore | OrchestrationReactor,
+  | OrchestrationEngineService
+  | ProjectionSnapshotQuery
+  | CheckpointStore
+  | OrchestrationReactor
+  | TerminalManager,
   unknown,
-  SqlClient.SqlClient | ProviderService
+  SqlClient.SqlClient | ProviderService | ServerConfig
 > {
   const orchestrationLayer = OrchestrationEngineLive.pipe(
     Layer.provide(OrchestrationProjectionPipelineLive),
@@ -79,5 +86,12 @@ export function makeServerRuntimeServicesLayer(): Layer.Layer<
     Layer.provideMerge(checkpointReactorLayer),
   );
 
-  return orchestrationReactorLayer;
+  const terminalLayer = Effect.gen(function* () {
+    const { stateDir } = yield* ServerConfig;
+    return makeTerminalManagerLive({
+      logsDir: path.join(stateDir, "logs", "terminals"),
+    }).pipe(Layer.provide(PtyAdapter.layer()));
+  }).pipe(Layer.unwrap);
+
+  return Layer.merge(orchestrationReactorLayer, terminalLayer);
 }

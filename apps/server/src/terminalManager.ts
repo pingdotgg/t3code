@@ -13,10 +13,10 @@ import {
   type TerminalSessionSnapshot,
   type TerminalSessionStatus,
 } from "@t3tools/contracts";
-import { Schema } from "effect";
+import { Effect, Layer, Schema, ServiceMap } from "effect";
 
 import { createLogger } from "./logger";
-import { NodePtyAdapter, type PtyAdapter, type PtyExitEvent, type PtyProcess } from "./ptyAdapter";
+import { PtyAdapter, PtyAdapterShape, type PtyExitEvent, type PtyProcess } from "./ptyAdapter";
 import { runProcess } from "./processRunner";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
@@ -41,11 +41,26 @@ export interface TerminalManagerEvents {
 export interface TerminalManagerOptions {
   logsDir?: string;
   historyLineLimit?: number;
-  ptyAdapter?: PtyAdapter;
+  ptyAdapter: PtyAdapterShape;
   shellResolver?: () => string;
   subprocessChecker?: TerminalSubprocessChecker;
   subprocessPollIntervalMs?: number;
 }
+
+export interface TerminalManagerShape {
+  readonly open: (input: TerminalOpenInput) => Effect.Effect<TerminalSessionSnapshot, unknown>;
+  readonly write: (input: TerminalWriteInput) => Effect.Effect<void, unknown>;
+  readonly resize: (input: TerminalResizeInput) => Effect.Effect<void, unknown>;
+  readonly clear: (input: TerminalClearInput) => Effect.Effect<void, unknown>;
+  readonly restart: (input: TerminalOpenInput) => Effect.Effect<TerminalSessionSnapshot, unknown>;
+  readonly close: (input: TerminalCloseInput) => Effect.Effect<void, unknown>;
+  readonly subscribe: (listener: (event: TerminalEvent) => void) => Effect.Effect<() => void>;
+  readonly dispose: () => Effect.Effect<void>;
+}
+
+export class TerminalManager extends ServiceMap.Service<TerminalManager, TerminalManagerShape>()(
+  "terminal/TerminalManager",
+) {}
 
 interface TerminalSessionState {
   threadId: string;
@@ -73,8 +88,8 @@ interface ShellCandidate {
 
 interface TerminalStartInput extends TerminalOpenInput {
   cols: number;
-  rows: number
-};
+  rows: number;
+}
 
 function defaultShellResolver(): string {
   if (process.platform === "win32") {
@@ -300,14 +315,14 @@ function normalizedRuntimeEnv(
   if (!env) return null;
   const entries = Object.entries(env);
   if (entries.length === 0) return null;
-  return Object.fromEntries(entries.sort(([left], [right]) => left.localeCompare(right)));
+  return Object.fromEntries(entries.toSorted(([left], [right]) => left.localeCompare(right)));
 }
 
-export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
+export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> {
   private readonly sessions = new Map<string, TerminalSessionState>();
   private readonly logsDir: string;
   private readonly historyLineLimit: number;
-  private readonly ptyAdapter: PtyAdapter;
+  private readonly ptyAdapter: PtyAdapterShape;
   private readonly shellResolver: () => string;
   private readonly persistQueues = new Map<string, Promise<void>>();
   private readonly persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -320,11 +335,11 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
   private subprocessPollInFlight = false;
   private readonly logger = createLogger("terminal");
 
-  constructor(options: TerminalManagerOptions = {}) {
+  constructor(options: TerminalManagerOptions) {
     super();
     this.logsDir = options.logsDir ?? path.resolve(process.cwd(), ".logs", "terminals");
     this.historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
-    this.ptyAdapter = options.ptyAdapter ?? new NodePtyAdapter();
+    this.ptyAdapter = options.ptyAdapter;
     this.shellResolver = options.shellResolver ?? defaultShellResolver;
     this.persistDebounceMs = DEFAULT_PERSIST_DEBOUNCE_MS;
     this.subprocessChecker = options.subprocessChecker ?? defaultSubprocessChecker;
@@ -1045,4 +1060,36 @@ export class TerminalManager extends EventEmitter<TerminalManagerEvents> {
       }
     }
   }
+}
+
+export function makeTerminalManagerLive(
+  options: Omit<TerminalManagerOptions, "ptyAdapter"> = {},
+): Layer.Layer<TerminalManager, never, PtyAdapter> {
+  return Layer.effect(
+    TerminalManager,
+    Effect.gen(function* () {
+      const ptyAdapter = yield* PtyAdapter;
+      const runtime = new TerminalManagerRuntime({ ...options, ptyAdapter });
+
+      return {
+        open: (input) => Effect.promise(() => runtime.open(input)),
+        write: (input) => Effect.promise(() => runtime.write(input)),
+        resize: (input) => Effect.promise(() => runtime.resize(input)),
+        clear: (input) => Effect.promise(() => runtime.clear(input)),
+        restart: (input) => Effect.promise(() => runtime.restart(input)),
+        close: (input) => Effect.promise(() => runtime.close(input)),
+        subscribe: (listener) =>
+          Effect.sync(() => {
+            runtime.on("event", listener);
+            return () => {
+              runtime.off("event", listener);
+            };
+          }),
+        dispose: () =>
+          Effect.sync(() => {
+            runtime.dispose();
+          }),
+      } satisfies TerminalManagerShape;
+    }),
+  );
 }

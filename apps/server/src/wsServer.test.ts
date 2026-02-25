@@ -2,7 +2,6 @@ import * as Http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { EventEmitter } from "node:events";
 
 import { Effect, Exit, Layer, PubSub, Scope, Stream } from "effect";
 import { describe, expect, it, afterEach, vi } from "vitest";
@@ -38,7 +37,7 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "@t3tools/contracts";
-import type { TerminalManager } from "./terminalManager";
+import type { TerminalManagerShape } from "./terminalManager";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
 import { SqlClient } from "effect/unstable/sql";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
@@ -63,111 +62,135 @@ const defaultOpenService: OpenShape = {
   openInEditor: () => Effect.void,
 };
 
-class MockTerminalManager extends EventEmitter<{ event: [event: TerminalEvent] }> {
+class MockTerminalManager implements TerminalManagerShape {
   private readonly sessions = new Map<string, TerminalSessionSnapshot>();
+  private readonly listeners = new Set<(event: TerminalEvent) => void>();
 
   private key(threadId: string, terminalId: string): string {
     return `${threadId}\u0000${terminalId}`;
   }
 
-  async open(input: TerminalOpenInput): Promise<TerminalSessionSnapshot> {
-    const now = new Date().toISOString();
-    const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
-    const snapshot: TerminalSessionSnapshot = {
-      threadId: input.threadId,
-      terminalId,
-      cwd: input.cwd,
-      status: "running",
-      pid: 4242,
-      history: "",
-      exitCode: null,
-      exitSignal: null,
-      updatedAt: now,
-    };
-    this.sessions.set(this.key(input.threadId, terminalId), snapshot);
-    queueMicrotask(() => {
-      this.emit("event", {
-        type: "started",
-        threadId: input.threadId,
-        terminalId,
-        createdAt: now,
-        snapshot,
-      });
-    });
-    return snapshot;
-  }
-
-  async write(input: TerminalWriteInput): Promise<void> {
-    const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
-    const existing = this.sessions.get(this.key(input.threadId, terminalId));
-    if (!existing) {
-      throw new Error(`Unknown terminal thread: ${input.threadId}`);
+  emitEvent(event: TerminalEvent): void {
+    for (const listener of this.listeners) {
+      listener(event);
     }
-    queueMicrotask(() => {
-      this.emit("event", {
-        type: "output",
-        threadId: input.threadId,
-        terminalId,
-        createdAt: new Date().toISOString(),
-        data: input.data,
-      });
-    });
   }
 
-  async resize(_input: TerminalResizeInput): Promise<void> {}
-
-  async clear(input: TerminalClearInput): Promise<void> {
-    const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
-    queueMicrotask(() => {
-      this.emit("event", {
-        type: "cleared",
-        threadId: input.threadId,
-        terminalId,
-        createdAt: new Date().toISOString(),
-      });
-    });
+  subscriptionCount(): number {
+    return this.listeners.size;
   }
 
-  async restart(input: TerminalOpenInput): Promise<TerminalSessionSnapshot> {
-    const now = new Date().toISOString();
-    const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
-    const snapshot: TerminalSessionSnapshot = {
-      threadId: input.threadId,
-      terminalId,
-      cwd: input.cwd,
-      status: "running",
-      pid: 5252,
-      history: "",
-      exitCode: null,
-      exitSignal: null,
-      updatedAt: now,
-    };
-    this.sessions.set(this.key(input.threadId, terminalId), snapshot);
-    queueMicrotask(() => {
-      this.emit("event", {
-        type: "restarted",
+  readonly open: TerminalManagerShape["open"] = (input: TerminalOpenInput) =>
+    Effect.sync(() => {
+      const now = new Date().toISOString();
+      const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
+      const snapshot: TerminalSessionSnapshot = {
         threadId: input.threadId,
         terminalId,
-        createdAt: now,
-        snapshot,
+        cwd: input.cwd,
+        status: "running",
+        pid: 4242,
+        history: "",
+        exitCode: null,
+        exitSignal: null,
+        updatedAt: now,
+      };
+      this.sessions.set(this.key(input.threadId, terminalId), snapshot);
+      queueMicrotask(() => {
+        this.emitEvent({
+          type: "started",
+          threadId: input.threadId,
+          terminalId,
+          createdAt: now,
+          snapshot,
+        });
       });
+      return snapshot;
     });
-    return snapshot;
-  }
 
-  async close(input: TerminalCloseInput): Promise<void> {
-    if (input.terminalId) {
-      this.sessions.delete(this.key(input.threadId, input.terminalId));
-      return;
-    }
-    for (const key of [...this.sessions.keys()]) {
-      if (key.startsWith(`${input.threadId}\u0000`)) {
-        this.sessions.delete(key);
+  readonly write: TerminalManagerShape["write"] = (input: TerminalWriteInput) =>
+    Effect.sync(() => {
+      const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
+      const existing = this.sessions.get(this.key(input.threadId, terminalId));
+      if (!existing) {
+        throw new Error(`Unknown terminal thread: ${input.threadId}`);
       }
-    }
-  }
+      queueMicrotask(() => {
+        this.emitEvent({
+          type: "output",
+          threadId: input.threadId,
+          terminalId,
+          createdAt: new Date().toISOString(),
+          data: input.data,
+        });
+      });
+    });
 
-  dispose(): void {}
+  readonly resize: TerminalManagerShape["resize"] = (_input: TerminalResizeInput) => Effect.void;
+
+  readonly clear: TerminalManagerShape["clear"] = (input: TerminalClearInput) =>
+    Effect.sync(() => {
+      const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
+      queueMicrotask(() => {
+        this.emitEvent({
+          type: "cleared",
+          threadId: input.threadId,
+          terminalId,
+          createdAt: new Date().toISOString(),
+        });
+      });
+    });
+
+  readonly restart: TerminalManagerShape["restart"] = (input: TerminalOpenInput) =>
+    Effect.sync(() => {
+      const now = new Date().toISOString();
+      const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
+      const snapshot: TerminalSessionSnapshot = {
+        threadId: input.threadId,
+        terminalId,
+        cwd: input.cwd,
+        status: "running",
+        pid: 5252,
+        history: "",
+        exitCode: null,
+        exitSignal: null,
+        updatedAt: now,
+      };
+      this.sessions.set(this.key(input.threadId, terminalId), snapshot);
+      queueMicrotask(() => {
+        this.emitEvent({
+          type: "restarted",
+          threadId: input.threadId,
+          terminalId,
+          createdAt: now,
+          snapshot,
+        });
+      });
+      return snapshot;
+    });
+
+  readonly close: TerminalManagerShape["close"] = (input: TerminalCloseInput) =>
+    Effect.sync(() => {
+      if (input.terminalId) {
+        this.sessions.delete(this.key(input.threadId, input.terminalId));
+        return;
+      }
+      for (const key of [...this.sessions.keys()]) {
+        if (key.startsWith(`${input.threadId}\u0000`)) {
+          this.sessions.delete(key);
+        }
+      }
+    });
+
+  readonly subscribe: TerminalManagerShape["subscribe"] = (listener) =>
+    Effect.sync(() => {
+      this.listeners.add(listener);
+      return () => {
+        this.listeners.delete(listener);
+      };
+    });
+
+  readonly dispose: TerminalManagerShape["dispose"] = () => Effect.void;
 }
 
 function connectWs(port: number, token?: string): Promise<WebSocket> {
@@ -320,7 +343,7 @@ describe("WebSocket Server", () => {
         status: (input: { cwd: string }) => Promise<unknown>;
         runStackedAction: (input: { cwd: string; action: string }) => Promise<unknown>;
       };
-      terminalManager?: TerminalManager;
+      terminalManager?: TerminalManagerShape;
     } = {},
   ): Promise<Http.Server> {
     if (serverScope) {
@@ -990,7 +1013,7 @@ describe("WebSocket Server", () => {
     const terminalManager = new MockTerminalManager();
     server = await createTestServer({
       cwd: "/test",
-      terminalManager: terminalManager as unknown as TerminalManager,
+      terminalManager,
     });
     const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
@@ -1048,7 +1071,7 @@ describe("WebSocket Server", () => {
       createdAt: new Date().toISOString(),
       data: "manual test output\n",
     };
-    terminalManager.emit("event", manualEvent);
+    terminalManager.emitEvent(manualEvent);
 
     const push = (await waitForMessage(ws)) as WsPush;
     expect(push.type).toBe("push");
@@ -1060,15 +1083,15 @@ describe("WebSocket Server", () => {
     const terminalManager = new MockTerminalManager();
     server = await createTestServer({
       cwd: "/test",
-      terminalManager: terminalManager as unknown as TerminalManager,
+      terminalManager,
     });
 
-    expect(terminalManager.listenerCount("event")).toBe(1);
+    expect(terminalManager.subscriptionCount()).toBe(1);
 
     await closeTestServer();
     server = null;
 
-    expect(terminalManager.listenerCount("event")).toBe(0);
+    expect(terminalManager.subscriptionCount()).toBe(0);
   });
 
   it("returns validation errors for invalid terminal open params", async () => {

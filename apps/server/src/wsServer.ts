@@ -30,7 +30,7 @@ import {
   pullGitBranch,
   removeGitWorktree,
 } from "./git";
-import { TerminalManager } from "./terminalManager";
+import { TerminalManager, type TerminalManagerShape } from "./terminalManager";
 import { loadResolvedKeybindingsConfig, upsertKeybindingRule } from "./keybindings";
 import { searchWorkspaceEntries } from "./workspaceEntries";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
@@ -61,7 +61,7 @@ export interface ServerOptions {
   autoBootstrapProjectFromCwd?: boolean | undefined;
   logWebSocketEvents?: boolean | undefined;
   gitManager?: GitManager | undefined;
-  terminalManager?: TerminalManager | undefined;
+  terminalManager?: TerminalManagerShape | undefined;
 }
 
 export interface ServerShape {
@@ -152,7 +152,7 @@ export type ServerCoreRuntimeServices =
   | OrchestrationReactor
   | Open;
 
-export type ServerRuntimeServices = ServerCoreRuntimeServices | ProviderService;
+export type ServerRuntimeServices = ServerCoreRuntimeServices | ProviderService | TerminalManager;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -172,10 +172,11 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
   Scope.Scope | ServerRuntimeServices | ServerConfig
 > {
   const { port, cwd, staticDir, devUrl, authToken, mode, host } = yield* ServerConfig;
+  const defaultTerminalManager = yield* TerminalManager;
   const {
     logWebSocketEvents: explicitLogWsEvents,
     gitManager = new GitManager(),
-    terminalManager = new TerminalManager(),
+    terminalManager = defaultTerminalManager,
   } = options;
   const autoBootstrapProjectFromCwd = options.autoBootstrapProjectFromCwd ?? mode === "web";
 
@@ -541,32 +542,32 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
 
       case WS_METHODS.terminalOpen: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.promise(() => terminalManager.open(body));
+        return yield* terminalManager.open(body);
       }
 
       case WS_METHODS.terminalWrite: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.promise(() => terminalManager.write(body));
+        return yield* terminalManager.write(body);
       }
 
       case WS_METHODS.terminalResize: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.promise(() => terminalManager.resize(body));
+        return yield* terminalManager.resize(body);
       }
 
       case WS_METHODS.terminalClear: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.promise(() => terminalManager.clear(body));
+        return yield* terminalManager.clear(body);
       }
 
       case WS_METHODS.terminalRestart: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.promise(() => terminalManager.restart(body));
+        return yield* terminalManager.restart(body);
       }
 
       case WS_METHODS.terminalClose: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.promise(() => terminalManager.close(body));
+        return yield* terminalManager.close(body);
       }
 
       case WS_METHODS.serverGetConfig:
@@ -690,12 +691,14 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
     ),
   );
 
-  terminalManager.on("event", onTerminalEvent);
+  const unsubscribeTerminalEvents = yield* terminalManager.subscribe(onTerminalEvent);
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
-      terminalManager.off("event", onTerminalEvent);
-      terminalManager.dispose();
+      unsubscribeTerminalEvents();
     }),
+  );
+  yield* Effect.addFinalizer(() =>
+    terminalManager.dispose().pipe(Effect.orElseSucceed(() => undefined)),
   );
 
   yield* NodeHttpServer.make(() => httpServer, listenOptions);

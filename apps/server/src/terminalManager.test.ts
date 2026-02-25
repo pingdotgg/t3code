@@ -9,8 +9,8 @@ import {
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { PtyAdapter, PtyExitEvent, PtyProcess, PtySpawnInput } from "./ptyAdapter";
-import { TerminalManager } from "./terminalManager";
+import type { PtyAdapterShape, PtyExitEvent, PtyProcess, PtySpawnInput } from "./ptyAdapter";
+import { TerminalManagerRuntime } from "./terminalManager";
 
 class FakePtyProcess implements PtyProcess {
   readonly writes: string[] = [];
@@ -60,7 +60,7 @@ class FakePtyProcess implements PtyProcess {
   }
 }
 
-class FakePtyAdapter implements PtyAdapter {
+class FakePtyAdapter implements PtyAdapterShape {
   readonly spawnInputs: PtySpawnInput[] = [];
   readonly processes: FakePtyProcess[] = [];
   readonly spawnFailures: Error[] = [];
@@ -150,7 +150,7 @@ describe("TerminalManager", () => {
     const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-terminal-"));
     tempDirs.push(logsDir);
     const ptyAdapter = new FakePtyAdapter();
-    const manager = new TerminalManager({
+    const manager = new TerminalManagerRuntime({
       logsDir,
       ptyAdapter,
       historyLineLimit,
