@@ -21,8 +21,13 @@ export class StartupError extends Data.TaggedError("StartupError")<{
 }> {}
 
 interface CliInput {
+  readonly mode: Option.Option<RuntimeMode>;
   readonly port: Option.Option<number>;
-  readonly token: Option.Option<string>;
+  readonly host: Option.Option<string>;
+  readonly stateDir: Option.Option<string>;
+  readonly devUrl: Option.Option<URL>;
+  readonly noBrowser: Option.Option<boolean>;
+  readonly authToken: Option.Option<string>;
 }
 
 export interface CliConfigShape {
@@ -60,6 +65,7 @@ const CliEnvConfig = Config.all({
     ),
   ),
   port: Config.port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  host: Config.string("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
   stateDir: Config.string("T3CODE_STATE_DIR").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -88,27 +94,39 @@ const ServerConfigLive = (input: CliInput) =>
         ),
       );
 
+      const mode = Option.getOrElse(input.mode, () => env.mode);
+
       const port = yield* Option.match(input.port, {
         onSome: (value) => Effect.succeed(value),
         onNone: () => {
           if (env.port) {
             return Effect.succeed(env.port);
           }
-          if (env.mode === "desktop") {
+          if (mode === "desktop") {
             return Effect.succeed(DEFAULT_PORT);
           }
           return findAvailablePort(DEFAULT_PORT);
         },
       });
-      const stateDir = yield* resolveStateDir(env.stateDir);
-      const devUrl = env.devUrl;
-      const noBrowser = env.noBrowser ?? env.mode === "desktop";
-      const authToken = Option.getOrUndefined(input.token) ?? env.authToken;
+      const stateDir = yield* resolveStateDir(
+        Option.getOrUndefined(input.stateDir) ?? env.stateDir,
+      );
+      const devUrl = Option.getOrElse(input.devUrl, () => env.devUrl);
+      const noBrowser = Option.match(input.noBrowser, {
+        // effect/cli boolean flags parse to `false` when absent; in that case
+        // we still want env/mode fallbacks to apply.
+        onSome: (value) => (value ? true : (env.noBrowser ?? mode === "desktop")),
+        onNone: () => env.noBrowser ?? mode === "desktop",
+      });
+      const authToken = Option.getOrUndefined(input.authToken) ?? env.authToken;
       const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
-      const host = env.mode === "desktop" ? "127.0.0.1" : undefined;
+      const host =
+        Option.getOrUndefined(input.host) ??
+        env.host ??
+        (mode === "desktop" ? "127.0.0.1" : undefined);
 
       return {
-        mode: env.mode,
+        mode,
         port,
         cwd: cliConfig.cwd,
         host,
@@ -128,6 +146,12 @@ const LayerLive = (input: CliInput) =>
     Layer.provideMerge(SqlitePersistence.layerConfig),
     Layer.provideMerge(ServerConfigLive(input)),
   );
+
+const isWildcardHost = (host: string | undefined): boolean =>
+  host === "0.0.0.0" || host === "::" || host === "[::]";
+
+const formatHostForUrl = (host: string): string =>
+  host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 
 const makeServerProgram = (input: CliInput) =>
   Effect.gen(function* () {
@@ -149,9 +173,15 @@ const makeServerProgram = (input: CliInput) =>
 
     yield* createServer();
 
-    const url = `http://localhost:${config.port}`;
+    const localUrl = `http://localhost:${config.port}`;
+    const bindUrl =
+      config.host && !isWildcardHost(config.host)
+        ? `http://${formatHostForUrl(config.host)}:${config.port}`
+        : localUrl;
     yield* Effect.logInfo("T3 Code running", {
-      url,
+      url: bindUrl,
+      localUrl,
+      bindHost: config.host ?? "default",
       cwd: config.cwd,
       mode: config.mode,
       stateDir: config.stateDir,
@@ -159,7 +189,7 @@ const makeServerProgram = (input: CliInput) =>
     });
 
     if (!config.noBrowser) {
-      const target = config.devUrl?.toString() ?? url;
+      const target = config.devUrl?.toString() ?? bindUrl;
       yield* openDeps.openBrowser(target).pipe(
         Effect.catch(() =>
           Effect.logInfo("browser auto-open unavailable", {
@@ -172,22 +202,51 @@ const makeServerProgram = (input: CliInput) =>
     return yield* stopSignal;
   }).pipe(Effect.provide(LayerLive(input)));
 
-export function makeCliCommand() {
-  const portFlag = Flag.integer("port").pipe(
-    Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
-    Flag.withDescription("Port for the HTTP/WebSocket server."),
-    Flag.optional,
-  );
-  const tokenFlag = Flag.string("token").pipe(
-    Flag.withDescription("Auth token required for WebSocket connections."),
-    Flag.optional,
-  );
+/**
+ * These flags mirrors the environment variables and the config shape.
+ */
 
-  return Command.make("t3", {
-    port: portFlag,
-    token: tokenFlag,
-  }).pipe(
-    Command.withDescription("Run the T3 Code server."),
-    Command.withHandler((input) => Effect.scoped(makeServerProgram(input))),
-  );
-}
+const modeFlag = Flag.choice("mode", ["web", "desktop"]).pipe(
+  Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
+  Flag.optional,
+);
+const portFlag = Flag.integer("port").pipe(
+  Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
+  Flag.withDescription("Port for the HTTP/WebSocket server."),
+  Flag.optional,
+);
+const hostFlag = Flag.string("host").pipe(
+  Flag.withDescription("Host/interface to bind (for example 127.0.0.1, 0.0.0.0, or a Tailnet IP)."),
+  Flag.optional,
+);
+const stateDirFlag = Flag.string("state-dir").pipe(
+  Flag.withDescription("State directory path (equivalent to T3CODE_STATE_DIR)."),
+  Flag.optional,
+);
+const devUrlFlag = Flag.string("dev-url").pipe(
+  Flag.withSchema(Schema.URLFromString),
+  Flag.withDescription("Dev web URL to proxy/redirect to (equivalent to VITE_DEV_SERVER_URL)."),
+  Flag.optional,
+);
+const noBrowserFlag = Flag.boolean("no-browser").pipe(
+  Flag.withDescription("Disable automatic browser opening."),
+  Flag.optional,
+);
+const authTokenFlag = Flag.string("auth-token").pipe(
+  Flag.withDescription("Auth token required for WebSocket connections."),
+  Flag.withAlias("token"),
+  Flag.optional,
+);
+
+export const t3Cli = Command.make("t3", {
+  mode: modeFlag,
+  port: portFlag,
+  host: hostFlag,
+  stateDir: stateDirFlag,
+  devUrl: devUrlFlag,
+  noBrowser: noBrowserFlag,
+  authToken: authTokenFlag,
+}).pipe(
+  Command.withDescription("Run the T3 Code server."),
+  Command.withHandler((input) => Effect.scoped(makeServerProgram(input))),
+);

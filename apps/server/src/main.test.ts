@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Command from "effect/unstable/cli/Command";
 import { beforeEach } from "vitest";
 
-import { CliConfig, makeCliCommand, type CliConfigShape } from "./main";
+import { CliConfig, t3Cli, type CliConfigShape } from "./main";
 import { NetService, ServerConfig, type ServerConfigShape } from "./config";
 import { Open, type OpenShape } from "./open";
 import { Server, type ServerShape, type ServerOptions } from "./wsServer";
@@ -51,7 +51,7 @@ const runCli = (
   args: ReadonlyArray<string>,
   env: Record<string, string> = { T3CODE_NO_BROWSER: "true" },
 ) =>
-  Command.runWith(makeCliCommand(), { version: "0.0.0-test" })(args).pipe(
+  Command.runWith(t3Cli, { version: "0.0.0-test" })(args).pipe(
     Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
   );
 
@@ -74,30 +74,94 @@ beforeEach(() => {
 });
 
 it.layer(testLayer)("server cli", (it) => {
-  it.effect("parses --port and --token and wires scoped start/stop", () =>
+  it.effect("parses all CLI flags and wires scoped start/stop", () =>
     Effect.gen(function* () {
-      yield* runCli(["--port", "4010", "--token", "secret"]);
+      yield* runCli([
+        "--mode",
+        "desktop",
+        "--port",
+        "4010",
+        "--host",
+        "0.0.0.0",
+        "--state-dir",
+        "/tmp/t3-cli-state",
+        "--dev-url",
+        "http://127.0.0.1:5173",
+        "--no-browser",
+        "--auth-token",
+        "auth-secret",
+      ]);
 
       assert.equal(createServer.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.mode, "desktop");
       assert.equal(resolvedConfig?.port, 4010);
-      assert.equal(resolvedConfig?.authToken, "secret");
+      assert.equal(resolvedConfig?.host, "0.0.0.0");
+      assert.equal(resolvedConfig?.stateDir, "/tmp/t3-cli-state");
+      assert.equal(resolvedConfig?.devUrl?.toString(), "http://127.0.0.1:5173/");
+      assert.equal(resolvedConfig?.noBrowser, true);
+      assert.equal(resolvedConfig?.authToken, "auth-secret");
       assert.equal(start.mock.calls.length, 1);
       assert.equal(stop.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("supports --token as an alias for --auth-token", () =>
+    Effect.gen(function* () {
+      yield* runCli(["--token", "token-secret"]);
+
+      assert.equal(createServer.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.authToken, "token-secret");
     }),
   );
 
   it.effect("uses env fallbacks when flags are not provided", () =>
     Effect.gen(function* () {
       yield* runCli([], {
-        T3CODE_NO_BROWSER: "true",
+        T3CODE_MODE: "desktop",
         T3CODE_PORT: "4999",
+        T3CODE_HOST: "100.88.10.4",
+        T3CODE_STATE_DIR: "/tmp/t3-env-state",
+        VITE_DEV_SERVER_URL: "http://localhost:5173",
+        T3CODE_NO_BROWSER: "true",
         T3CODE_AUTH_TOKEN: "env-token",
       });
 
       assert.equal(createServer.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.mode, "desktop");
       assert.equal(resolvedConfig?.port, 4999);
+      assert.equal(resolvedConfig?.host, "100.88.10.4");
+      assert.equal(resolvedConfig?.stateDir, "/tmp/t3-env-state");
+      assert.equal(resolvedConfig?.devUrl?.toString(), "http://localhost:5173/");
+      assert.equal(resolvedConfig?.noBrowser, true);
       assert.equal(resolvedConfig?.authToken, "env-token");
       assert.equal(findAvailablePort.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("prefers --mode over T3CODE_MODE", () =>
+    Effect.gen(function* () {
+      findAvailablePort.mockImplementation((_preferred: number) => Effect.succeed(4666));
+      yield* runCli(["--mode", "web"], {
+        T3CODE_MODE: "desktop",
+        T3CODE_NO_BROWSER: "true",
+      });
+
+      assert.deepStrictEqual(findAvailablePort.mock.calls, [[3773]]);
+      assert.equal(createServer.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.mode, "web");
+      assert.equal(resolvedConfig?.port, 4666);
+      assert.equal(resolvedConfig?.host, undefined);
+    }),
+  );
+
+  it.effect("prefers --no-browser over T3CODE_NO_BROWSER", () =>
+    Effect.gen(function* () {
+      yield* runCli(["--no-browser"], {
+        T3CODE_NO_BROWSER: "false",
+      });
+
+      assert.equal(createServer.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.noBrowser, true);
     }),
   );
 
@@ -123,7 +187,41 @@ it.layer(testLayer)("server cli", (it) => {
       assert.equal(findAvailablePort.mock.calls.length, 0);
       assert.equal(createServer.mock.calls.length, 1);
       assert.equal(resolvedConfig?.port, 3773);
+      assert.equal(resolvedConfig?.host, "127.0.0.1");
       assert.equal(resolvedConfig?.mode, "desktop");
+    }),
+  );
+
+  it.effect("allows overriding desktop host with --host", () =>
+    Effect.gen(function* () {
+      yield* runCli(["--host", "0.0.0.0"], {
+        T3CODE_MODE: "desktop",
+        T3CODE_NO_BROWSER: "true",
+      });
+
+      assert.equal(createServer.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.mode, "desktop");
+      assert.equal(resolvedConfig?.host, "0.0.0.0");
+    }),
+  );
+
+  it.effect("does not start server for invalid --mode values", () =>
+    Effect.gen(function* () {
+      yield* runCli(["--mode", "invalid"]);
+
+      assert.equal(createServer.mock.calls.length, 0);
+      assert.equal(start.mock.calls.length, 0);
+      assert.equal(stop.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("does not start server for invalid --dev-url values", () =>
+    Effect.gen(function* () {
+      yield* runCli(["--dev-url", "not-a-url"]).pipe(Effect.catch(() => Effect.void));
+
+      assert.equal(createServer.mock.calls.length, 0);
+      assert.equal(start.mock.calls.length, 0);
+      assert.equal(stop.mock.calls.length, 0);
     }),
   );
 
