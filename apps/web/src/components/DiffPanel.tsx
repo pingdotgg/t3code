@@ -298,6 +298,122 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   }, [selectedTurn?.turnId, selectedTurnId]);
 
   const shouldUseDragRegion = isElectron && mode !== "sheet";
+  const headerRow = (
+    <>
+      <div className="relative min-w-0 flex-1 [-webkit-app-region:no-drag]">
+        {canScrollTurnStripLeft && (
+          <div className="pointer-events-none absolute inset-y-0 left-8 z-10 w-7 bg-linear-to-r from-card to-transparent" />
+        )}
+        {canScrollTurnStripRight && (
+          <div className="pointer-events-none absolute inset-y-0 right-8 z-10 w-7 bg-linear-to-l from-card to-transparent" />
+        )}
+        <button
+          type="button"
+          className={cn(
+            "absolute left-0 top-1/2 z-20 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md border bg-background/90 text-muted-foreground transition-colors",
+            canScrollTurnStripLeft
+              ? "border-border/70 hover:border-border hover:text-foreground"
+              : "cursor-not-allowed border-border/40 text-muted-foreground/40",
+          )}
+          onClick={() => scrollTurnStripBy(-180)}
+          disabled={!canScrollTurnStripLeft}
+          aria-label="Scroll turn list left"
+        >
+          <ChevronLeftIcon className="size-3.5" />
+        </button>
+        <button
+          type="button"
+          className={cn(
+            "absolute right-0 top-1/2 z-20 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md border bg-background/90 text-muted-foreground transition-colors",
+            canScrollTurnStripRight
+              ? "border-border/70 hover:border-border hover:text-foreground"
+              : "cursor-not-allowed border-border/40 text-muted-foreground/40",
+          )}
+          onClick={() => scrollTurnStripBy(180)}
+          disabled={!canScrollTurnStripRight}
+          aria-label="Scroll turn list right"
+        >
+          <ChevronRightIcon className="size-3.5" />
+        </button>
+        <div
+          ref={turnStripRef}
+          className="turn-chip-strip flex gap-1 overflow-x-auto px-8 py-0.5"
+        >
+          <button
+            type="button"
+            className="shrink-0 rounded-md"
+            onClick={selectWholeConversation}
+            data-turn-chip-selected={selectedTurnId === null}
+          >
+            <div
+              className={cn(
+                "rounded-md border px-2 py-1 text-left transition-colors",
+                selectedTurnId === null
+                  ? "border-border bg-accent text-accent-foreground"
+                  : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
+              )}
+            >
+              <div className="text-[10px] leading-tight font-medium">All turns</div>
+            </div>
+          </button>
+          {orderedTurnDiffSummaries.map((summary) => (
+            <button
+              key={summary.turnId}
+              type="button"
+              className="shrink-0 rounded-md"
+              onClick={() => selectTurn(summary.turnId)}
+              title={summary.turnId}
+              data-turn-chip-selected={summary.turnId === selectedTurn?.turnId}
+            >
+              <div
+                className={cn(
+                  "rounded-md border px-2 py-1 text-left transition-colors",
+                  summary.turnId === selectedTurn?.turnId
+                    ? "border-border bg-accent text-accent-foreground"
+                    : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
+                )}
+              >
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] leading-tight font-medium">
+                    Turn{" "}
+                    {summary.checkpointTurnCount ??
+                      inferredCheckpointTurnCountByTurnId[summary.turnId] ??
+                      "?"}
+                  </span>
+                  <span className="text-[9px] leading-tight opacity-70">
+                    {formatTurnChipTimestamp(summary.completedAt)}
+                  </span>
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+      <ToggleGroup
+        className="shrink-0 [-webkit-app-region:no-drag]"
+        variant="outline"
+        size="xs"
+        value={[diffRenderMode]}
+        onValueChange={(value) => {
+          const next = value[0];
+          if (next === "stacked" || next === "split") {
+            setDiffRenderMode(next);
+          }
+        }}
+      >
+        <Toggle aria-label="Stacked diff view" value="stacked">
+          <Rows3Icon className="size-3" />
+        </Toggle>
+        <Toggle aria-label="Split diff view" value="split">
+          <Columns2Icon className="size-3" />
+        </Toggle>
+      </ToggleGroup>
+    </>
+  );
+  const headerRowClassName = cn(
+    "flex items-center justify-between gap-2 px-4",
+    shouldUseDragRegion ? "drag-region h-[52px] border-b border-border" : "h-12",
+  );
 
   return (
     <div
@@ -308,123 +424,13 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           : "w-full",
       )}
     >
-      <div className="border-b border-border">
-        <div
-          className={cn(
-            "flex h-12 items-center justify-between gap-2 px-4",
-            shouldUseDragRegion ? "drag-region" : undefined,
-          )}
-        >
-          <div className="relative min-w-0 flex-1 [-webkit-app-region:no-drag]">
-          {canScrollTurnStripLeft && (
-            <div className="pointer-events-none absolute inset-y-0 left-8 z-10 w-7 bg-linear-to-r from-card to-transparent" />
-          )}
-          {canScrollTurnStripRight && (
-            <div className="pointer-events-none absolute inset-y-0 right-8 z-10 w-7 bg-linear-to-l from-card to-transparent" />
-          )}
-          <button
-            type="button"
-            className={cn(
-              "absolute left-0 top-1/2 z-20 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md border bg-background/90 text-muted-foreground transition-colors",
-              canScrollTurnStripLeft
-                ? "border-border/70 hover:border-border hover:text-foreground"
-                : "cursor-not-allowed border-border/40 text-muted-foreground/40",
-            )}
-            onClick={() => scrollTurnStripBy(-180)}
-            disabled={!canScrollTurnStripLeft}
-            aria-label="Scroll turn list left"
-          >
-            <ChevronLeftIcon className="size-3.5" />
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "absolute right-0 top-1/2 z-20 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md border bg-background/90 text-muted-foreground transition-colors",
-              canScrollTurnStripRight
-                ? "border-border/70 hover:border-border hover:text-foreground"
-                : "cursor-not-allowed border-border/40 text-muted-foreground/40",
-            )}
-            onClick={() => scrollTurnStripBy(180)}
-            disabled={!canScrollTurnStripRight}
-            aria-label="Scroll turn list right"
-          >
-            <ChevronRightIcon className="size-3.5" />
-          </button>
-          <div
-            ref={turnStripRef}
-            className="turn-chip-strip flex gap-1 overflow-x-auto px-8 py-0.5"
-          >
-            <button
-              type="button"
-              className="shrink-0 rounded-md"
-              onClick={selectWholeConversation}
-              data-turn-chip-selected={selectedTurnId === null}
-            >
-              <div
-                className={cn(
-                  "rounded-md border px-2 py-1 text-left transition-colors",
-                  selectedTurnId === null
-                    ? "border-border bg-accent text-accent-foreground"
-                    : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
-                )}
-              >
-                <div className="text-[10px] leading-tight font-medium">All turns</div>
-              </div>
-            </button>
-            {orderedTurnDiffSummaries.map((summary) => (
-              <button
-                key={summary.turnId}
-                type="button"
-                className="shrink-0 rounded-md"
-                onClick={() => selectTurn(summary.turnId)}
-                title={summary.turnId}
-                data-turn-chip-selected={summary.turnId === selectedTurn?.turnId}
-              >
-                <div
-                  className={cn(
-                    "rounded-md border px-2 py-1 text-left transition-colors",
-                    summary.turnId === selectedTurn?.turnId
-                      ? "border-border bg-accent text-accent-foreground"
-                      : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
-                  )}
-                >
-                  <div className="flex items-center gap-1">
-                    <span className="text-[10px] leading-tight font-medium">
-                      Turn{" "}
-                      {summary.checkpointTurnCount ??
-                        inferredCheckpointTurnCountByTurnId[summary.turnId] ??
-                        "?"}
-                    </span>
-                    <span className="text-[9px] leading-tight opacity-70">
-                      {formatTurnChipTimestamp(summary.completedAt)}
-                    </span>
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-          </div>
-          <ToggleGroup
-            className="shrink-0 [-webkit-app-region:no-drag]"
-            variant="outline"
-            size="xs"
-            value={[diffRenderMode]}
-            onValueChange={(value) => {
-              const next = value[0];
-              if (next === "stacked" || next === "split") {
-                setDiffRenderMode(next);
-              }
-            }}
-          >
-            <Toggle aria-label="Stacked diff view" value="stacked">
-              <Rows3Icon className="size-3" />
-            </Toggle>
-            <Toggle aria-label="Split diff view" value="split">
-              <Columns2Icon className="size-3" />
-            </Toggle>
-          </ToggleGroup>
+      {shouldUseDragRegion ? (
+        <div className={headerRowClassName}>{headerRow}</div>
+      ) : (
+        <div className="border-b border-border">
+          <div className={headerRowClassName}>{headerRow}</div>
         </div>
-      </div>
+      )}
 
       {!activeThread ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">

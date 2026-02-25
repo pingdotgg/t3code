@@ -467,40 +467,56 @@ export default function Sidebar() {
     };
   }, [handleNewThread, keybindings, routeThreadId, state.projects, state.threads]);
 
+  const onCreateThreadClick = () => {
+    if (state.projects.length === 0) {
+      setAddingProject(true);
+      return;
+    }
+    const firstProject = state.projects[0];
+    if (firstProject) void handleNewThread(firstProject.id);
+  };
+
+  const wordmark = (
+    <div className={`flex items-center gap-2 ${isElectron ? "-translate-y-px" : ""}`}>
+      <SidebarTrigger className="shrink-0 md:hidden" />
+      <div className="flex min-w-0 flex-1 items-center gap-1">
+        <T3Wordmark />
+        <span className="truncate text-base font-medium tracking-tight text-muted-foreground">
+          Code
+        </span>
+        <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-widest text-muted-foreground/60">
+          {APP_STAGE_LABEL}
+        </span>
+      </div>
+    </div>
+  );
+
+  const newThreadButton = (
+    <button
+      type="button"
+      className="flex w-full items-center gap-2 rounded-lg border border-border bg-secondary px-3 py-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-accent"
+      onClick={onCreateThreadClick}
+    >
+      <span className="text-foreground">+</span>
+      New thread
+    </button>
+  );
+
   return (
     <>
-      <SidebarHeader
-        className={`gap-3 ${isElectron ? "drag-region h-[52px] px-4 pl-[88px]" : "px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3"}`}
-      >
-        <div className="flex items-center gap-2">
-          <SidebarTrigger className="shrink-0 md:hidden" />
-          <div className="flex min-w-0 flex-1 items-center gap-1">
-            <T3Wordmark />
-            <span className="truncate text-base font-medium tracking-tight text-muted-foreground">
-              Code
-            </span>
-            <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-widest text-muted-foreground/60">
-              {APP_STAGE_LABEL}
-            </span>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          className="flex w-full items-center gap-2 rounded-lg border border-border bg-secondary px-3 py-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-accent"
-          onClick={() => {
-            if (state.projects.length === 0) {
-              setAddingProject(true);
-              return;
-            }
-            const firstProject = state.projects[0];
-            if (firstProject) void handleNewThread(firstProject.id);
-          }}
-        >
-          <span className="text-foreground">+</span>
-          New thread
-        </button>
-      </SidebarHeader>
+      {isElectron ? (
+        <>
+          <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[88px]">
+            {wordmark}
+          </SidebarHeader>
+          <div className="px-4 pb-2">{newThreadButton}</div>
+        </>
+      ) : (
+        <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
+          {wordmark}
+          {newThreadButton}
+        </SidebarHeader>
+      )}
 
       <SidebarContent className="gap-0">
         <SidebarGroup className="px-2 py-2">

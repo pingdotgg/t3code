@@ -12,7 +12,7 @@ const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const DIFF_INLINE_LAYOUT_MEDIA_QUERY = "(max-width: 1180px)";
 const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
 const DIFF_INLINE_DEFAULT_WIDTH = "clamp(28rem,48vw,44rem)";
-const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 28 * 16;
+const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 26 * 16;
 
 const DiffPanelSheet = (props: {
   children: ReactNode;
