@@ -206,9 +206,9 @@ function Sidebar({
     return {
       maxWidth: options.maxWidth ?? Number.POSITIVE_INFINITY,
       minWidth: options.minWidth ?? SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH,
-      onResize: options.onResize,
-      shouldAcceptWidth: options.shouldAcceptWidth,
       storageKey: options.storageKey ?? null,
+      ...(options.onResize ? { onResize: options.onResize } : {}),
+      ...(options.shouldAcceptWidth ? { shouldAcceptWidth: options.shouldAcceptWidth } : {}),
     };
   }, [collapsible, isMobile, resizable]);
   const instanceContextValue = React.useMemo<SidebarInstanceContextProps>(
@@ -410,7 +410,9 @@ function SidebarRail({
         return;
       }
 
-      const sidebarContainer = sidebarRoot.querySelector<HTMLElement>("[data-slot='sidebar-container']");
+      const sidebarContainer = sidebarRoot.querySelector<HTMLElement>(
+        "[data-slot='sidebar-container']",
+      );
       if (!sidebarContainer) {
         return;
       }
@@ -464,7 +466,10 @@ function SidebarRail({
       if (Math.abs(delta) > 2) {
         resizeState.moved = true;
       }
-      resizeState.pendingWidth = clampSidebarWidth(resizeState.startWidth + delta, resolvedResizable);
+      resizeState.pendingWidth = clampSidebarWidth(
+        resizeState.startWidth + delta,
+        resolvedResizable,
+      );
       if (resizeState.rafId !== null) {
         return;
       }

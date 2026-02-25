@@ -1,6 +1,7 @@
 import {
   EDITORS,
   type EditorId,
+  type KeybindingCommand,
   type NativeApi,
   type ProjectEntry,
   type ProjectScript,
@@ -10,20 +11,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ProviderApprovalDecision,
 } from "@t3tools/contracts";
-import {
-  type ClipboardEvent,
-  type DragEvent,
-  type FormEvent,
-  type KeyboardEvent,
-  memo,
-  type RefObject,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
@@ -298,7 +286,7 @@ const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   triggerKind: ComposerTriggerKind | null;
   onHighlightedItemChange: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
-  commandInputRef: RefObject<HTMLInputElement | null>;
+  commandInputRef: React.RefObject<HTMLInputElement | null>;
 }) {
   return (
     <Command
@@ -820,7 +808,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       previousScripts: ProjectScript[];
       nextScripts: ProjectScript[];
       keybinding?: string | null;
-      keybindingCommand: string;
+      keybindingCommand: KeybindingCommand;
     }) => {
       if (!api) return;
 
@@ -1250,7 +1238,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     });
   };
 
-  const onComposerPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+  const onComposerPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const files = Array.from(event.clipboardData.files);
     if (files.length === 0) {
       return;
@@ -1263,7 +1251,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     addComposerImages(imageFiles);
   };
 
-  const onComposerDragEnter = (event: DragEvent<HTMLDivElement>) => {
+  const onComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
     if (!event.dataTransfer.types.includes("Files")) {
       return;
     }
@@ -1272,7 +1260,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setIsDragOverComposer(true);
   };
 
-  const onComposerDragOver = (event: DragEvent<HTMLDivElement>) => {
+  const onComposerDragOver = (event: React.DragEvent<HTMLDivElement>) => {
     if (!event.dataTransfer.types.includes("Files")) {
       return;
     }
@@ -1281,7 +1269,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setIsDragOverComposer(true);
   };
 
-  const onComposerDragLeave = (event: DragEvent<HTMLDivElement>) => {
+  const onComposerDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
     if (!event.dataTransfer.types.includes("Files")) {
       return;
     }
@@ -1296,7 +1284,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
   };
 
-  const onComposerDrop = (event: DragEvent<HTMLDivElement>) => {
+  const onComposerDrop = (event: React.DragEvent<HTMLDivElement>) => {
     if (!event.dataTransfer.types.includes("Files")) {
       return;
     }
@@ -1350,7 +1338,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread, api, isConnecting, isRevertingCheckpoint, isSending, phase, setThreadError],
   );
 
-  const onSend = async (e: FormEvent) => {
+  const onSend = async (e: React.SubmitEvent | React.KeyboardEvent) => {
     e.preventDefault();
     if (!api || !activeThread || isSending || isConnecting) return;
     const trimmed = prompt.trim();
@@ -1594,7 +1582,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setComposerCursor(nextCursor);
   }, []);
 
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (composerMenuOpen && composerMenuItems.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -1618,7 +1606,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      void onSend(e as unknown as FormEvent);
+      void onSend(e);
     }
   };
   const onToggleWorkGroup = useCallback((groupId: string) => {
@@ -2086,7 +2074,10 @@ const ChatHeader = memo(function ChatHeader({
     <div className="flex min-w-0 flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-        <h2 className="min-w-0 shrink truncate text-sm font-medium text-foreground" title={activeThreadTitle}>
+        <h2
+          className="min-w-0 shrink truncate text-sm font-medium text-foreground"
+          title={activeThreadTitle}
+        >
           {activeThreadTitle}
         </h2>
         {activeProjectName && (
@@ -2216,7 +2207,7 @@ const PendingApprovalsPanel = memo(function PendingApprovalsPanel({
 interface MessagesTimelineProps {
   hasMessages: boolean;
   isWorking: boolean;
-  scrollContainerRef: RefObject<HTMLDivElement | null>;
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   completionDividerBeforeEntryId: string | null;
   completionSummary: string | null;

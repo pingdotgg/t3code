@@ -31,14 +31,12 @@ const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
 const asProviderTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
-const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.makeUnsafe(value);
+const asApprovalRequestId = (value: string): ApprovalRequestId =>
+  ApprovalRequestId.makeUnsafe(value);
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
-async function waitFor(
-  predicate: () => boolean,
-  timeoutMs = 2000,
-): Promise<void> {
+async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   const poll = async (): Promise<void> => {
     if (predicate()) {

@@ -1,7 +1,10 @@
-import type { ProjectScript } from "@t3tools/contracts";
-
-const SCRIPT_RUN_COMMAND_PATTERN = /^script\.([a-z0-9][a-z0-9-]*)\.run$/;
-const MAX_SCRIPT_ID_LENGTH = 64;
+import {
+  MAX_SCRIPT_ID_LENGTH,
+  SCRIPT_RUN_COMMAND_PATTERN,
+  type KeybindingCommand,
+  type ProjectScript,
+} from "@t3tools/contracts";
+import { Schema } from "effect";
 
 function normalizeScriptId(value: string): string {
   const cleaned = value
@@ -18,13 +21,16 @@ function normalizeScriptId(value: string): string {
   return cleaned.slice(0, MAX_SCRIPT_ID_LENGTH).replace(/-+$/g, "") || "script";
 }
 
-export function commandForProjectScript(scriptId: string): string {
-  return `script.${scriptId}.run`;
-}
+export const commandForProjectScript = (scriptId: string): KeybindingCommand =>
+  SCRIPT_RUN_COMMAND_PATTERN.makeUnsafe(`script.${scriptId}.run`);
 
 export function projectScriptIdFromCommand(command: string): string | null {
-  const match = SCRIPT_RUN_COMMAND_PATTERN.exec(command.trim());
-  return match?.[1] ?? null;
+  const trimmed = command.trim();
+  if (!Schema.is(SCRIPT_RUN_COMMAND_PATTERN)(trimmed)) {
+    return null;
+  }
+  const [prefix, , suffix] = SCRIPT_RUN_COMMAND_PATTERN.parts;
+  return trimmed.slice(prefix.literal.length, -suffix.literal.length);
 }
 
 export function nextProjectScriptId(name: string, existingIds: Iterable<string>): string {
@@ -57,7 +63,9 @@ interface ProjectScriptRuntimeEnvInput {
   extraEnv?: Record<string, string>;
 }
 
-export function projectScriptRuntimeEnv(input: ProjectScriptRuntimeEnvInput): Record<string, string> {
+export function projectScriptRuntimeEnv(
+  input: ProjectScriptRuntimeEnvInput,
+): Record<string, string> {
   const env: Record<string, string> = {
     T3CODE_PROJECT_ROOT: input.project.cwd,
   };

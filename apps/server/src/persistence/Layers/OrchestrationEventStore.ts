@@ -88,10 +88,7 @@ function inferActorKind(
   return "client";
 }
 
-function toPersistenceSqlOrDecodeError(
-  sqlOperation: string,
-  decodeOperation: string,
-) {
+function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
   return (cause: unknown): OrchestrationEventStoreError =>
     Schema.isSchemaError(cause)
       ? toPersistenceDecodeError(decodeOperation)(cause)

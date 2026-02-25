@@ -1,8 +1,4 @@
-import type {
-  OrchestrationEvent,
-  OrchestrationReadModel,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
 import {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
@@ -147,19 +143,16 @@ export function projectEvent(
           return {
             ...nextBase,
             projects: existing
-              ? nextBase.projects.map((entry) => (entry.id === payload.projectId ? nextProject : entry))
+              ? nextBase.projects.map((entry) =>
+                  entry.id === payload.projectId ? nextProject : entry,
+                )
               : [...nextBase.projects, nextProject],
           };
         }),
       );
 
     case "project.meta-updated":
-      return decodeForEvent(
-        ProjectMetaUpdatedPayload,
-        event.payload,
-        event.type,
-        "payload",
-      ).pipe(
+      return decodeForEvent(ProjectMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => ({
           ...nextBase,
           projects: nextBase.projects.map((project) =>
@@ -247,12 +240,7 @@ export function projectEvent(
       );
 
     case "thread.meta-updated":
-      return decodeForEvent(
-        ThreadMetaUpdatedPayload,
-        event.payload,
-        event.type,
-        "payload",
-      ).pipe(
+      return decodeForEvent(ThreadMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => ({
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
@@ -415,13 +403,10 @@ export function projectEvent(
             retainedTurnIds,
             payload.turnCount,
           );
-          const activities = retainThreadActivitiesAfterRevert(
-            thread.activities,
-            retainedTurnIds,
-          );
+          const activities = retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds);
 
           const latestTurnId =
-            checkpoints.length > 0 ? checkpoints[checkpoints.length - 1]?.turnId ?? null : null;
+            checkpoints.length > 0 ? (checkpoints[checkpoints.length - 1]?.turnId ?? null) : null;
 
           return {
             ...nextBase,

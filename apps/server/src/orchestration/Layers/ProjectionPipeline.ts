@@ -1,7 +1,4 @@
-import {
-  ApprovalRequestId,
-  type OrchestrationEvent,
-} from "@t3tools/contracts";
+import { ApprovalRequestId, type OrchestrationEvent } from "@t3tools/contracts";
 import { Effect, Layer, Option, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -119,8 +116,7 @@ function retainProjectionMessagesAfterRevert(
   if (missingAssistantCount > 0) {
     const fallbackAssistantMessages = messages
       .filter(
-        (message) =>
-          message.role === "assistant" && !retainedMessageIds.has(message.messageId),
+        (message) => message.role === "assistant" && !retainedMessageIds.has(message.messageId),
       )
       .toSorted(
         (left, right) =>
@@ -142,9 +138,7 @@ function retainProjectionActivitiesAfterRevert(
   turnCount: number,
 ): ReadonlyArray<ProjectionThreadActivity> {
   const retainedTurnIds = new Set(
-    turns
-      .filter((turn) => turn.turnCount <= turnCount)
-      .map((turn) => turn.turnId),
+    turns.filter((turn) => turn.turnCount <= turnCount).map((turn) => turn.turnId),
   );
   return activities.filter(
     (activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId),
@@ -354,7 +348,9 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           const existingRows = yield* projectionThreadMessageRepository.listByThreadId({
             threadId: event.payload.threadId,
           });
-          const existingMessage = existingRows.find((row) => row.messageId === event.payload.messageId);
+          const existingMessage = existingRows.find(
+            (row) => row.messageId === event.payload.messageId,
+          );
           const nextText =
             existingMessage && event.payload.streaming
               ? `${existingMessage.text}${event.payload.text}`
@@ -496,7 +492,8 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             yield* projectionThreadTurnRepository.upsert({
               ...existingTurn.value,
               status: existingTurn.value.status === "completed" ? "completed" : "running",
-              userMessageId: existingTurn.value.userMessageId ?? (pendingTurnStart?.messageId ?? null),
+              userMessageId:
+                existingTurn.value.userMessageId ?? pendingTurnStart?.messageId ?? null,
               startedAt: existingTurn.value.startedAt,
             });
           } else {

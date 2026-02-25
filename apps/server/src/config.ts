@@ -10,6 +10,7 @@ export interface ServerConfigShape {
   readonly port: number;
   readonly host: string | undefined;
   readonly cwd: string;
+  readonly keybindingsConfigPath: string;
   readonly stateDir: string;
   readonly staticDir: string | undefined;
   readonly devUrl: URL | undefined;

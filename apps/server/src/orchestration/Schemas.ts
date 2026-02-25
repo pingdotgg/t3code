@@ -33,7 +33,8 @@ export const ThreadRevertedPayload = ContractsThreadRevertedPayloadSchema;
 export const ThreadActivityAppendedPayload = ContractsThreadActivityAppendedPayloadSchema;
 
 export const ThreadTurnStartRequestedPayload = ContractsThreadTurnStartRequestedPayloadSchema;
-export const ThreadTurnInterruptRequestedPayload = ContractsThreadTurnInterruptRequestedPayloadSchema;
+export const ThreadTurnInterruptRequestedPayload =
+  ContractsThreadTurnInterruptRequestedPayloadSchema;
 export const ThreadApprovalResponseRequestedPayload =
   ContractsThreadApprovalResponseRequestedPayloadSchema;
 export const ThreadCheckpointRevertRequestedPayload =

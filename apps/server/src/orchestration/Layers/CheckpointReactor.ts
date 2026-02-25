@@ -347,13 +347,10 @@ const make = Effect.gen(function* () {
         onSome: (runtime) => runtime.cwd,
       });
     if (!checkpointCwd) {
-      yield* Effect.logWarning(
-        "checkpoint pre-turn capture skipped: no workspace cwd",
-        {
-          threadId: thread.id,
-          turnId,
-        },
-      );
+      yield* Effect.logWarning("checkpoint pre-turn capture skipped: no workspace cwd", {
+        threadId: thread.id,
+        turnId,
+      });
       return;
     }
 
@@ -377,10 +374,17 @@ const make = Effect.gen(function* () {
   });
 
   const ensurePreTurnBaselineFromDomainTurnStart = Effect.fnUntraced(function* (
-    event: Extract<OrchestrationEvent, { type: "thread.turn-start-requested" | "thread.message-sent" }>,
+    event: Extract<
+      OrchestrationEvent,
+      { type: "thread.turn-start-requested" | "thread.message-sent" }
+    >,
   ) {
     if (event.type === "thread.message-sent") {
-      if (event.payload.role !== "user" || event.payload.streaming || event.payload.turnId !== null) {
+      if (
+        event.payload.role !== "user" ||
+        event.payload.streaming ||
+        event.payload.turnId !== null
+      ) {
         return;
       }
     }
@@ -403,12 +407,9 @@ const make = Effect.gen(function* () {
         onSome: (runtime) => runtime.cwd,
       });
     if (!checkpointCwd) {
-      yield* Effect.logWarning(
-        "checkpoint pre-turn capture skipped: no workspace cwd",
-        {
-          threadId,
-        },
-      );
+      yield* Effect.logWarning("checkpoint pre-turn capture skipped: no workspace cwd", {
+        threadId,
+      });
       return;
     }
 

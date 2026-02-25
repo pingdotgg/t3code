@@ -111,7 +111,9 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
           "ProjectionThreadActivityRepository.listByThreadId:decodeRows",
         ),
       ),
-      Effect.map((rows) => rows as ReadonlyArray<Schema.Schema.Type<typeof ProjectionThreadActivity>>),
+      Effect.map(
+        (rows) => rows as ReadonlyArray<Schema.Schema.Type<typeof ProjectionThreadActivity>>,
+      ),
     );
 
   const deleteByThreadId: ProjectionThreadActivityRepositoryShape["deleteByThreadId"] = (input) =>

@@ -335,10 +335,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         >
           <ChevronRightIcon className="size-3.5" />
         </button>
-        <div
-          ref={turnStripRef}
-          className="turn-chip-strip flex gap-1 overflow-x-auto px-8 py-0.5"
-        >
+        <div ref={turnStripRef} className="turn-chip-strip flex gap-1 overflow-x-auto px-8 py-0.5">
           <button
             type="button"
             className="shrink-0 rounded-md"

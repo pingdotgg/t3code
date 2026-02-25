@@ -597,10 +597,14 @@ export default function ThreadTerminalDrawer({
   );
   const splitTerminalActionLabel = hasReachedTerminalLimit
     ? `Split Terminal (max ${MAX_THREAD_TERMINAL_COUNT})`
-    : (splitShortcutLabel ? `Split Terminal (${splitShortcutLabel})` : "Split Terminal");
+    : splitShortcutLabel
+      ? `Split Terminal (${splitShortcutLabel})`
+      : "Split Terminal";
   const newTerminalActionLabel = hasReachedTerminalLimit
     ? `New Terminal (max ${MAX_THREAD_TERMINAL_COUNT})`
-    : (newShortcutLabel ? `New Terminal (${newShortcutLabel})` : "New Terminal");
+    : newShortcutLabel
+      ? `New Terminal (${newShortcutLabel})`
+      : "New Terminal";
   const closeTerminalActionLabel = closeShortcutLabel
     ? `Close Terminal (${closeShortcutLabel})`
     : "Close Terminal";

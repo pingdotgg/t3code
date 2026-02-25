@@ -29,10 +29,12 @@ const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
-const asProviderSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
+const asProviderSessionId = (value: string): ProviderSessionId =>
+  ProviderSessionId.makeUnsafe(value);
 const asProviderThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
 const asProviderTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
-const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.makeUnsafe(value);
+const asApprovalRequestId = (value: string): ApprovalRequestId =>
+  ApprovalRequestId.makeUnsafe(value);
 
 const PROJECT_ID = asProjectId("project-1");
 const THREAD_ID = asThreadId("thread-1");
@@ -45,7 +47,8 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-const sleep = (ms: number) => Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+const sleep = (ms: number) =>
+  Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
 function waitForSync<A>(
   read: () => A,
@@ -78,9 +81,7 @@ function runtimeBase(eventId: string, createdAt: string) {
   };
 }
 
-function withHarness<A, E>(
-  use: (harness: OrchestrationIntegrationHarness) => Effect.Effect<A, E>,
-) {
+function withHarness<A, E>(use: (harness: OrchestrationIntegrationHarness) => Effect.Effect<A, E>) {
   return Effect.acquireUseRelease(
     makeOrchestrationIntegrationHarness,
     use,
@@ -176,7 +177,9 @@ it.live("runs a single turn end-to-end and persists checkpoint state in sqlite +
         THREAD_ID,
         (entry) =>
           entry.session?.status === "ready" &&
-          entry.messages.some((message) => message.role === "assistant" && message.streaming === false) &&
+          entry.messages.some(
+            (message) => message.role === "assistant" && message.streaming === false,
+          ) &&
           entry.checkpoints.length === 1,
       );
       assert.equal(thread.checkpoints[0]?.status, "ready");
@@ -317,7 +320,10 @@ it.live("runs multi-turn file edits and persists checkpoint diffs", () =>
       const secondCheckpoint = secondTurnThread.checkpoints.find(
         (checkpoint) => checkpoint.checkpointTurnCount === 2,
       );
-      assert.equal(secondCheckpoint?.files.some((file) => file.path === "README.md"), true);
+      assert.equal(
+        secondCheckpoint?.files.some((file) => file.path === "README.md"),
+        true,
+      );
 
       const checkpointRows = yield* harness.checkpointRepository.listByThreadId({
         threadId: THREAD_ID,
@@ -394,9 +400,8 @@ it.live("tracks approval requests and resolves pending approvals on user respons
         text: "Run command needing approval",
       });
 
-      const thread = yield* harness.waitForThread(
-        THREAD_ID,
-        (entry) => entry.activities.some((activity) => activity.kind === "approval.requested"),
+      const thread = yield* harness.waitForThread(THREAD_ID, (entry) =>
+        entry.activities.some((activity) => activity.kind === "approval.requested"),
       );
       assert.equal(
         thread.activities.some((activity) => activity.kind === "approval.requested"),
@@ -687,39 +692,39 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
   ),
 );
 
-it.live("appends checkpoint.revert.failed activity when revert is requested without an active session", () =>
-  withHarness((harness) =>
-    Effect.gen(function* () {
-      yield* seedProjectAndThread(harness);
+it.live(
+  "appends checkpoint.revert.failed activity when revert is requested without an active session",
+  () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        yield* seedProjectAndThread(harness);
 
-      yield* harness.engine.dispatch({
-        type: "thread.checkpoint.revert",
-        commandId: asCommandId("cmd-checkpoint-revert-no-session"),
-        threadId: THREAD_ID,
-        turnCount: 0,
-        createdAt: nowIso(),
-      });
+        yield* harness.engine.dispatch({
+          type: "thread.checkpoint.revert",
+          commandId: asCommandId("cmd-checkpoint-revert-no-session"),
+          threadId: THREAD_ID,
+          turnCount: 0,
+          createdAt: nowIso(),
+        });
 
-      const thread = yield* harness.waitForThread(
-        THREAD_ID,
-        (entry) =>
+        const thread = yield* harness.waitForThread(THREAD_ID, (entry) =>
           entry.activities.some(
             (activity) =>
               activity.kind === "checkpoint.revert.failed" &&
               typeof activity.payload === "object" &&
               activity.payload !== null,
           ),
-      );
-      const failureActivity = thread.activities.find(
-        (activity) => activity.kind === "checkpoint.revert.failed",
-      );
-      assert.equal(failureActivity !== undefined, true);
-      assert.equal(
-        String((failureActivity?.payload as { readonly detail?: string } | undefined)?.detail).includes(
-          "No active provider session",
-        ),
-        true,
-      );
-    }),
-  ),
+        );
+        const failureActivity = thread.activities.find(
+          (activity) => activity.kind === "checkpoint.revert.failed",
+        );
+        assert.equal(failureActivity !== undefined, true);
+        assert.equal(
+          String(
+            (failureActivity?.payload as { readonly detail?: string } | undefined)?.detail,
+          ).includes("No active provider session"),
+          true,
+        );
+      }),
+    ),
 );

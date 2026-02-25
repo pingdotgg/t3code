@@ -127,7 +127,7 @@ it.effect("replays typed runtime fixture events", () =>
         harness: fixture.harness,
         sessionId: session.sessionId,
         userText: "hello",
-      response: { events: codexTurnTextFixture },
+        response: { events: codexTurnTextFixture },
       });
 
       assert.deepEqual(

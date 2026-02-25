@@ -31,7 +31,7 @@ import {
   removeGitWorktree,
 } from "./git";
 import { TerminalManager, type TerminalManagerShape } from "./terminalManager";
-import { loadResolvedKeybindingsConfig, upsertKeybindingRule } from "./keybindings";
+import { Keybindings } from "./keybindings";
 import { searchWorkspaceEntries } from "./workspaceEntries";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
@@ -150,9 +150,13 @@ export type ServerCoreRuntimeServices =
   | ProjectionSnapshotQuery
   | CheckpointStore
   | OrchestrationReactor
-  | Open;
+  | ProviderService;
 
-export type ServerRuntimeServices = ServerCoreRuntimeServices | ProviderService | TerminalManager;
+export type ServerRuntimeServices =
+  | ServerCoreRuntimeServices
+  | TerminalManager
+  | Keybindings
+  | Open;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -171,8 +175,10 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
   unknown, // TODO: This should not be unknown
   Scope.Scope | ServerRuntimeServices | ServerConfig
 > {
-  const { port, cwd, staticDir, devUrl, authToken, mode, host } = yield* ServerConfig;
+  const serverConfig = yield* ServerConfig;
+  const { port, cwd, staticDir, devUrl, authToken, mode, host } = serverConfig;
   const defaultTerminalManager = yield* TerminalManager;
+  const keybindingsManager = yield* Keybindings;
   const {
     logWebSocketEvents: explicitLogWsEvents,
     gitManager = new GitManager(),
@@ -184,7 +190,6 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
   const logger = createLogger("ws");
   const logWebSocketEvents =
     explicitLogWsEvents ?? parseBooleanEnv(process.env.T3CODE_LOG_WS_EVENTS) ?? Boolean(devUrl);
-  let keybindingsConfig = loadResolvedKeybindingsConfig(logger);
 
   function logOutgoingPush(push: WsPush, recipients: number) {
     if (!logWebSocketEvents) return;
@@ -571,11 +576,12 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
       }
 
       case WS_METHODS.serverGetConfig:
+        const keybindingsConfig = yield* keybindingsManager.loadResolvedKeybindingsConfig;
         return { cwd, keybindings: keybindingsConfig };
 
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);
-        keybindingsConfig = upsertKeybindingRule(logger, body);
+        const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);
         return { keybindings: keybindingsConfig };
       }
 

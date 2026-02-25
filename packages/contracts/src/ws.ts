@@ -120,7 +120,6 @@ export const WebSocketRequest = Schema.Struct({
 });
 export type WebSocketRequest = typeof WebSocketRequest.Type;
 
-
 export class WebSocketResponse extends Schema.Class<WebSocketResponse>("WebSocketResponse")({
   id: Schema.String,
   result: Schema.optional(Schema.Unknown),

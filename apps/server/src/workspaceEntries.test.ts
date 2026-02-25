@@ -124,15 +124,15 @@ describe("searchWorkspaceEntries", () => {
 
     let rootReadCount = 0;
     const originalReaddir = fsPromises.readdir.bind(fsPromises);
-    vi.spyOn(fsPromises, "readdir").mockImplementation(
-      (async (...args: Parameters<typeof fsPromises.readdir>) => {
-        if (args[0] === cwd) {
-          rootReadCount += 1;
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-        return originalReaddir(...args);
-      }) as typeof fsPromises.readdir,
-    );
+    vi.spyOn(fsPromises, "readdir").mockImplementation((async (
+      ...args: Parameters<typeof fsPromises.readdir>
+    ) => {
+      if (args[0] === cwd) {
+        rootReadCount += 1;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      return originalReaddir(...args);
+    }) as typeof fsPromises.readdir);
 
     await Promise.all([
       searchWorkspaceEntries({ cwd, query: "", limit: 100 }),
@@ -152,22 +152,22 @@ describe("searchWorkspaceEntries", () => {
     let activeReads = 0;
     let peakReads = 0;
     const originalReaddir = fsPromises.readdir.bind(fsPromises);
-    vi.spyOn(fsPromises, "readdir").mockImplementation(
-      (async (...args: Parameters<typeof fsPromises.readdir>) => {
-        const target = args[0];
-        if (typeof target === "string" && target.startsWith(cwd)) {
-          activeReads += 1;
-          peakReads = Math.max(peakReads, activeReads);
-          await new Promise((resolve) => setTimeout(resolve, 4));
-          try {
-            return await originalReaddir(...args);
-          } finally {
-            activeReads -= 1;
-          }
+    vi.spyOn(fsPromises, "readdir").mockImplementation((async (
+      ...args: Parameters<typeof fsPromises.readdir>
+    ) => {
+      const target = args[0];
+      if (typeof target === "string" && target.startsWith(cwd)) {
+        activeReads += 1;
+        peakReads = Math.max(peakReads, activeReads);
+        await new Promise((resolve) => setTimeout(resolve, 4));
+        try {
+          return await originalReaddir(...args);
+        } finally {
+          activeReads -= 1;
         }
-        return originalReaddir(...args);
-      }) as typeof fsPromises.readdir,
-    );
+      }
+      return originalReaddir(...args);
+    }) as typeof fsPromises.readdir);
 
     await searchWorkspaceEntries({ cwd, query: "", limit: 200 });
 

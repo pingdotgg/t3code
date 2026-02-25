@@ -342,9 +342,7 @@ describe("cross-command precedence", () => {
 
 describe("resolveShortcutCommand", () => {
   it("returns dynamic script commands", () => {
-    const keybindings = compile([
-      { shortcut: modShortcut("r"), command: "script.setup.run" },
-    ]);
+    const keybindings = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
 
     assert.strictEqual(
       resolveShortcutCommand(event({ key: "r", ctrlKey: true }), keybindings, {

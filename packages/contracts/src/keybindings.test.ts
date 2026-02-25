@@ -1,5 +1,6 @@
 import { Schema } from "effect";
-import { assert, describe, it } from "vitest";
+import { assert, it } from "@effect/vitest";
+import { Effect } from "effect";
 
 import {
   KeybindingsConfig,
@@ -8,60 +9,75 @@ import {
   ResolvedKeybindingsConfig,
 } from "./keybindings";
 
-const decode = <S extends Schema.Top>(schema: S, input: unknown): Schema.Schema.Type<S> =>
-  Schema.decodeUnknownSync(schema as never)(input) as Schema.Schema.Type<S>;
+const decode = <S extends Schema.Top>(
+  schema: S,
+  input: unknown,
+): Effect.Effect<Schema.Schema.Type<S>, Schema.SchemaError, never> =>
+  Schema.decodeUnknownEffect(schema as never)(input) as Effect.Effect<
+    Schema.Schema.Type<S>,
+    Schema.SchemaError,
+    never
+  >;
 
-const decodeResolvedRuleStrict = (input: unknown) =>
-  Schema.decodeUnknownSync(ResolvedKeybindingRule as never)(input);
+const decodeResolvedRule = Schema.decodeUnknownEffect(ResolvedKeybindingRule as never);
 
-describe("keybindings contracts", () => {
-  it("parses keybinding rules", () => {
-    const parsed = decode(KeybindingRule, {
+it.effect("parses keybinding rules", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decode(KeybindingRule, {
       key: "mod+j",
       command: "terminal.toggle",
     });
     assert.strictEqual(parsed.command, "terminal.toggle");
 
-    const parsedClose = decode(KeybindingRule, {
+    const parsedClose = yield* decode(KeybindingRule, {
       key: "mod+w",
       command: "terminal.close",
     });
     assert.strictEqual(parsedClose.command, "terminal.close");
 
-    const parsedLocal = decode(KeybindingRule, {
+    const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",
       command: "chat.newLocal",
     });
     assert.strictEqual(parsedLocal.command, "chat.newLocal");
-  });
+  }),
+);
 
-  it("rejects invalid command values", () => {
-    assert.throws(() =>
+it.effect("rejects invalid command values", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
       decode(KeybindingRule, {
         key: "mod+j",
         command: "script.Test.run",
       }),
     );
-  });
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
 
-  it("accepts dynamic script run commands", () => {
-    const parsed = decode(KeybindingRule, {
+it.effect("accepts dynamic script run commands", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decode(KeybindingRule, {
       key: "mod+r",
       command: "script.setup.run",
     });
     assert.strictEqual(parsed.command, "script.setup.run");
-  });
+  }),
+);
 
-  it("parses keybindings array payload", () => {
-    const parsed = decode(KeybindingsConfig, [
+it.effect("parses keybindings array payload", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decode(KeybindingsConfig, [
       { key: "mod+j", command: "terminal.toggle" },
       { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
     ]);
     assert.lengthOf(parsed, 2);
-  });
+  }),
+);
 
-  it("parses resolved keybinding rules", () => {
-    const parsed = decode(ResolvedKeybindingRule, {
+it.effect("parses resolved keybinding rules", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decode(ResolvedKeybindingRule, {
       command: "terminal.split",
       shortcut: {
         key: "d",
@@ -81,10 +97,12 @@ describe("keybindings contracts", () => {
       },
     });
     assert.strictEqual(parsed.shortcut.key, "d");
-  });
+  }),
+);
 
-  it("parses resolved keybindings arrays", () => {
-    const parsed = decode(ResolvedKeybindingsConfig, [
+it.effect("parses resolved keybindings arrays", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decode(ResolvedKeybindingsConfig, [
       {
         command: "terminal.toggle",
         shortcut: {
@@ -98,22 +116,26 @@ describe("keybindings contracts", () => {
       },
     ]);
     assert.lengthOf(parsed, 1);
-  });
+  }),
+);
 
-  it("rejects unknown fields in resolved keybinding rules", () => {
-    assert.throws(() =>
-      decodeResolvedRuleStrict({
-        command: "terminal.toggle",
-        shortcut: {
-          key: "j",
-          metaKey: false,
-          ctrlKey: false,
-          shiftKey: false,
-          altKey: false,
-          modKey: true,
-        },
-        key: "mod+j",
-      }),
-    );
-  });
-});
+it.effect("drops unknown fields in resolved keybinding rules", () =>
+  decodeResolvedRule({
+    command: "terminal.toggle",
+    shortcut: {
+      key: "j",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      modKey: true,
+    },
+    key: "mod+j",
+  }).pipe(
+    Effect.map((parsed) => {
+      const view = parsed as Record<string, unknown>;
+      assert.strictEqual("key" in view, false);
+      assert.strictEqual(view.command, "terminal.toggle");
+    }),
+  ),
+);

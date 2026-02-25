@@ -129,7 +129,10 @@ function makeFakeCodexAdapter() {
     (
       _sessionId: ProviderSessionId,
     ): Effect.Effect<
-      { threadId: ProviderThreadId; turns: ReadonlyArray<{ id: ProviderTurnId; items: readonly [] }> },
+      {
+        threadId: ProviderThreadId;
+        turns: ReadonlyArray<{ id: ProviderTurnId; items: readonly [] }>;
+      },
       ProviderAdapterError
     > =>
       Effect.succeed({
@@ -290,101 +293,103 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("ProviderServiceLive restores rollback routing after restart using persisted thread mapping", () =>
-  Effect.gen(function* () {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-restart-"));
-    const dbPath = path.join(tempDir, "orchestration.sqlite");
-    const persistenceLayer = makeSqlitePersistenceLive(dbPath);
-    const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
-      Layer.provide(persistenceLayer),
-    );
+it.effect(
+  "ProviderServiceLive restores rollback routing after restart using persisted thread mapping",
+  () =>
+    Effect.gen(function* () {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-restart-"));
+      const dbPath = path.join(tempDir, "orchestration.sqlite");
+      const persistenceLayer = makeSqlitePersistenceLive(dbPath);
+      const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+        Layer.provide(persistenceLayer),
+      );
 
-    const firstCodex = makeFakeCodexAdapter();
-    const firstRegistry: typeof ProviderAdapterRegistry.Service = {
-      getByProvider: (provider) =>
-        provider === "codex"
-          ? Effect.succeed(firstCodex.adapter)
-          : Effect.fail(new ProviderUnsupportedError({ provider })),
-      listProviders: () => Effect.succeed(["codex"]),
-    };
+      const firstCodex = makeFakeCodexAdapter();
+      const firstRegistry: typeof ProviderAdapterRegistry.Service = {
+        getByProvider: (provider) =>
+          provider === "codex"
+            ? Effect.succeed(firstCodex.adapter)
+            : Effect.fail(new ProviderUnsupportedError({ provider })),
+        listProviders: () => Effect.succeed(["codex"]),
+      };
 
-    const firstDirectoryLayer = ProviderSessionDirectoryLive.pipe(
-      Layer.provide(runtimeRepositoryLayer),
-    );
-    const firstProviderLayer = makeProviderServiceLive().pipe(
-      Layer.provide(Layer.succeed(ProviderAdapterRegistry, firstRegistry)),
-      Layer.provide(firstDirectoryLayer),
-    );
+      const firstDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const firstProviderLayer = makeProviderServiceLive().pipe(
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry, firstRegistry)),
+        Layer.provide(firstDirectoryLayer),
+      );
 
-    const startedSession = yield* Effect.gen(function* () {
-      const provider = yield* ProviderService;
-      return yield* provider.startSession({
-        provider: "codex",
-        cwd: "/tmp/project",
-      });
-    }).pipe(Effect.provide(firstProviderLayer));
-
-    yield* Effect.gen(function* () {
-      const provider = yield* ProviderService;
-      yield* provider.stopAll();
-    }).pipe(Effect.provide(firstProviderLayer));
-
-    const persistedAfterStopAll = yield* Effect.gen(function* () {
-      const repository = yield* ProviderSessionRuntimeRepository;
-      return yield* repository.getBySessionId({
-        providerSessionId: startedSession.sessionId,
-      });
-    }).pipe(Effect.provide(runtimeRepositoryLayer));
-    assert.equal(Option.isSome(persistedAfterStopAll), true);
-    if (Option.isSome(persistedAfterStopAll)) {
-      assert.equal(persistedAfterStopAll.value.status, "stopped");
-      assert.deepEqual(persistedAfterStopAll.value.resumeCursor, {
-        resumeThreadId: startedSession.threadId,
-      });
-    }
-
-    const secondCodex = makeFakeCodexAdapter();
-    const secondRegistry: typeof ProviderAdapterRegistry.Service = {
-      getByProvider: (provider) =>
-        provider === "codex"
-          ? Effect.succeed(secondCodex.adapter)
-          : Effect.fail(new ProviderUnsupportedError({ provider })),
-      listProviders: () => Effect.succeed(["codex"]),
-    };
-    const secondDirectoryLayer = ProviderSessionDirectoryLive.pipe(
-      Layer.provide(runtimeRepositoryLayer),
-    );
-    const secondProviderLayer = makeProviderServiceLive().pipe(
-      Layer.provide(Layer.succeed(ProviderAdapterRegistry, secondRegistry)),
-      Layer.provide(secondDirectoryLayer),
-    );
-
-    secondCodex.startSession.mockClear();
-    secondCodex.rollbackThread.mockClear();
-
-    yield* Effect.gen(function* () {
-      const provider = yield* ProviderService;
-      yield* provider.rollbackConversation({
-        sessionId: startedSession.sessionId,
-        numTurns: 1,
-      });
-    }).pipe(Effect.provide(secondProviderLayer));
-
-    assert.deepEqual(secondCodex.startSession.mock.calls, [
-      [
-        {
+      const startedSession = yield* Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        return yield* provider.startSession({
           provider: "codex",
-          resumeThreadId: startedSession.threadId,
-        },
-      ],
-    ]);
-    assert.equal(secondCodex.rollbackThread.mock.calls.length, 1);
-    const rollbackCall = secondCodex.rollbackThread.mock.calls[0];
-    assert.equal(typeof rollbackCall?.[0], "string");
-    assert.equal(rollbackCall?.[1], 1);
+          cwd: "/tmp/project",
+        });
+      }).pipe(Effect.provide(firstProviderLayer));
 
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }).pipe(Effect.provide(NodeServices.layer)),
+      yield* Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        yield* provider.stopAll();
+      }).pipe(Effect.provide(firstProviderLayer));
+
+      const persistedAfterStopAll = yield* Effect.gen(function* () {
+        const repository = yield* ProviderSessionRuntimeRepository;
+        return yield* repository.getBySessionId({
+          providerSessionId: startedSession.sessionId,
+        });
+      }).pipe(Effect.provide(runtimeRepositoryLayer));
+      assert.equal(Option.isSome(persistedAfterStopAll), true);
+      if (Option.isSome(persistedAfterStopAll)) {
+        assert.equal(persistedAfterStopAll.value.status, "stopped");
+        assert.deepEqual(persistedAfterStopAll.value.resumeCursor, {
+          resumeThreadId: startedSession.threadId,
+        });
+      }
+
+      const secondCodex = makeFakeCodexAdapter();
+      const secondRegistry: typeof ProviderAdapterRegistry.Service = {
+        getByProvider: (provider) =>
+          provider === "codex"
+            ? Effect.succeed(secondCodex.adapter)
+            : Effect.fail(new ProviderUnsupportedError({ provider })),
+        listProviders: () => Effect.succeed(["codex"]),
+      };
+      const secondDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const secondProviderLayer = makeProviderServiceLive().pipe(
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry, secondRegistry)),
+        Layer.provide(secondDirectoryLayer),
+      );
+
+      secondCodex.startSession.mockClear();
+      secondCodex.rollbackThread.mockClear();
+
+      yield* Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        yield* provider.rollbackConversation({
+          sessionId: startedSession.sessionId,
+          numTurns: 1,
+        });
+      }).pipe(Effect.provide(secondProviderLayer));
+
+      assert.deepEqual(secondCodex.startSession.mock.calls, [
+        [
+          {
+            provider: "codex",
+            resumeThreadId: startedSession.threadId,
+          },
+        ],
+      ]);
+      assert.equal(secondCodex.rollbackThread.mock.calls.length, 1);
+      const rollbackCall = secondCodex.rollbackThread.mock.calls[0];
+      assert.equal(typeof rollbackCall?.[0], "string");
+      assert.equal(rollbackCall?.[1], 1);
+
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
@@ -574,7 +579,10 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       const events = yield* Ref.get(eventsRef);
       yield* Fiber.interrupt(consumer);
 
-      assert.equal(events.some((entry) => entry.type === "turn.completed"), true);
+      assert.equal(
+        events.some((entry) => entry.type === "turn.completed"),
+        true,
+      );
     }),
   );
 
@@ -586,11 +594,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       });
 
       const receivedByHealthy: string[] = [];
-      const expectedEventIds = new Set<string>([
-        "evt-ordered-1",
-        "evt-ordered-2",
-        "evt-ordered-3",
-      ]);
+      const expectedEventIds = new Set<string>(["evt-ordered-1", "evt-ordered-2", "evt-ordered-3"]);
       const healthyFiber = yield* Stream.take(provider.streamEvents, 3).pipe(
         Stream.runForEach((event) =>
           Effect.sync(() => {
@@ -649,11 +653,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
 
       assert.deepEqual(
         receivedByHealthy.filter((eventId) => expectedEventIds.has(eventId)).slice(0, 3),
-        [
-          "evt-ordered-1",
-          "evt-ordered-2",
-          "evt-ordered-3",
-        ],
+        ["evt-ordered-1", "evt-ordered-2", "evt-ordered-3"],
       );
     }),
   );
@@ -712,9 +712,9 @@ validation.layer("ProviderServiceLive validation", (it) => {
       assertFailure(
         failure,
         new ProviderValidationError({
-            operation: "ProviderService.startSession",
-            issue: "Provider 'codex' returned a session without threadId.",
-          }),
+          operation: "ProviderService.startSession",
+          issue: "Provider 'codex' returned a session without threadId.",
+        }),
       );
     }),
   );

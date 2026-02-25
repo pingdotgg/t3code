@@ -126,7 +126,9 @@ function registerDesktopProtocol(): void {
 
   const staticRoot = resolveDesktopStaticDir();
   if (!staticRoot) {
-    throw new Error("Desktop static bundle missing. Build apps/server (with bundled client) first.");
+    throw new Error(
+      "Desktop static bundle missing. Build apps/server (with bundled client) first.",
+    );
   }
 
   const staticRootResolved = path.resolve(staticRoot);
@@ -160,7 +162,8 @@ function registerDesktopProtocol(): void {
 }
 
 function dispatchMenuAction(action: string): void {
-  const existingWindow = BrowserWindow.getFocusedWindow() ?? mainWindow ?? BrowserWindow.getAllWindows()[0];
+  const existingWindow =
+    BrowserWindow.getFocusedWindow() ?? mainWindow ?? BrowserWindow.getAllWindows()[0];
   const targetWindow = existingWindow ?? createWindow();
   if (!existingWindow) {
     mainWindow = targetWindow;

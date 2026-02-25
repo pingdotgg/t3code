@@ -383,7 +383,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     return this.parseThreadSnapshot("thread/read", response);
   }
 
-  async rollbackThread(sessionId: ProviderSessionId, numTurns: number): Promise<CodexThreadSnapshot> {
+  async rollbackThread(
+    sessionId: ProviderSessionId,
+    numTurns: number,
+  ): Promise<CodexThreadSnapshot> {
     const context = this.requireSession(sessionId);
     const threadId = context.session.threadId;
     if (!threadId) {
@@ -822,19 +825,18 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   private parseThreadSnapshot(method: string, response: unknown): CodexThreadSnapshot {
     const responseRecord = this.readObject(response);
     const thread = this.readObject(responseRecord, "thread");
-    const threadIdRaw = this.readString(thread, "id") ??
-      this.readString(responseRecord, "threadId");
+    const threadIdRaw =
+      this.readString(thread, "id") ?? this.readString(responseRecord, "threadId");
     if (!threadIdRaw) {
       throw new Error(`${method} response did not include a thread id.`);
     }
     const threadId = ProviderThreadId.makeUnsafe(threadIdRaw);
 
-    const turnsRaw = this.readArray(thread, "turns") ?? this.readArray(responseRecord, "turns") ?? [];
+    const turnsRaw =
+      this.readArray(thread, "turns") ?? this.readArray(responseRecord, "turns") ?? [];
     const turns = turnsRaw.map((turnValue, index) => {
       const turn = this.readObject(turnValue);
-      const turnIdRaw =
-        this.readString(turn, "id") ??
-        `${threadIdRaw}:turn:${index + 1}`;
+      const turnIdRaw = this.readString(turn, "id") ?? `${threadIdRaw}:turn:${index + 1}`;
       const turnId = ProviderTurnId.makeUnsafe(turnIdRaw);
       const items = this.readArray(turn, "items") ?? [];
       return {
@@ -900,8 +902,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       this.readString(params, "turnId") ?? this.readString(this.readObject(params, "turn"), "id"),
     );
     const itemId = toProviderItemId(
-      this.readString(params, "itemId") ??
-        this.readString(this.readObject(params, "item"), "id"),
+      this.readString(params, "itemId") ?? this.readString(this.readObject(params, "item"), "id"),
     );
 
     if (threadId) {

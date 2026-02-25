@@ -479,7 +479,10 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         defaultModel: "gpt-5",
       });
 
-      const projectRows = yield* sql<{ readonly scriptsJson: string; readonly defaultModel: string }>`
+      const projectRows = yield* sql<{
+        readonly scriptsJson: string;
+        readonly defaultModel: string;
+      }>`
         SELECT
           scripts_json AS "scriptsJson",
           default_model AS "defaultModel"

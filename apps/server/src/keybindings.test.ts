@@ -1,225 +1,302 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { assert, afterEach, describe, expect, it, vi } from "vitest";
+import { KeybindingRule, KeybindingsConfig } from "@t3tools/contracts";
+import { NodeServices } from "@effect/platform-node";
+import { assert, it } from "@effect/vitest";
+import { assertFailure } from "@effect/vitest/utils";
+import { Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { ServerConfig, type ServerConfigShape } from "./config";
 
 import {
+  Keybindings,
+  KeybindingsConfigError,
+  KeybindingsLive,
   compileResolvedKeybindingRule,
   parseKeybindingShortcut,
-  upsertKeybindingRule,
 } from "./keybindings";
 
-describe("server keybindings", () => {
-  const tempDirs: string[] = [];
-  const logger = {
-    warn: vi.fn(),
-  };
+const KeybindingsConfigJson = Schema.fromJsonString(KeybindingsConfig);
+const makeKeybindingsLayer = () =>
+  KeybindingsLive.pipe(
+    Layer.provideMerge(
+      Layer.effect(
+        ServerConfig,
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const { join } = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-server-config-test-" });
+          const configPath = join(dir, "keybindings.json");
+          return { keybindingsConfigPath: configPath } as ServerConfigShape;
+        }),
+      ),
+    ),
+  );
 
-  function makeTempDir(prefix: string): string {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-    tempDirs.push(dir);
-    return dir;
-  }
+const toDetailResult = <A, R>(effect: Effect.Effect<A, KeybindingsConfigError, R>) =>
+  effect.pipe(
+    Effect.mapError((error) => error.detail),
+    Effect.result,
+  );
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-    logger.warn.mockReset();
-    for (const dir of tempDirs.splice(0, tempDirs.length)) {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
+const writeKeybindingsConfig = (configPath: string, rules: readonly KeybindingRule[]) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const encoded = yield* Schema.encodeEffect(KeybindingsConfigJson)(
+      rules.map((rule) => KeybindingRule.makeUnsafe(rule)),
+    );
+    yield* fileSystem.writeFileString(configPath, encoded);
   });
 
-  it("parses shortcuts including plus key", () => {
-    assert.deepEqual(parseKeybindingShortcut("mod+j"), {
-      key: "j",
-      metaKey: false,
-      ctrlKey: false,
-      shiftKey: false,
-      altKey: false,
-      modKey: true,
-    });
-    assert.deepEqual(parseKeybindingShortcut("mod++"), {
-      key: "+",
-      metaKey: false,
-      ctrlKey: false,
-      shiftKey: false,
-      altKey: false,
-      modKey: true,
-    });
+const readKeybindingsConfig = (configPath: string) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const rawConfig = yield* fileSystem.readFileString(configPath);
+    return yield* Schema.decodeUnknownEffect(KeybindingsConfigJson)(rawConfig);
   });
 
-  it("compiles valid rule with parsed when AST", () => {
-    const compiled = compileResolvedKeybindingRule({
-      key: "mod+d",
-      command: "terminal.split",
-      when: "terminalOpen && !terminalFocus",
-    });
-
-    assert.deepEqual(compiled, {
-      command: "terminal.split",
-      shortcut: {
-        key: "d",
+it.layer(NodeServices.layer)("keybindings", (it) => {
+  it.effect("parses shortcuts including plus key", () =>
+    Effect.sync(() => {
+      assert.deepEqual(parseKeybindingShortcut("mod+j"), {
+        key: "j",
         metaKey: false,
         ctrlKey: false,
         shiftKey: false,
         altKey: false,
         modKey: true,
-      },
-      whenAst: {
-        type: "and",
-        left: { type: "identifier", name: "terminalOpen" },
-        right: {
-          type: "not",
-          node: { type: "identifier", name: "terminalFocus" },
+      });
+      assert.deepEqual(parseKeybindingShortcut("mod++"), {
+        key: "+",
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        modKey: true,
+      });
+    }),
+  );
+
+  it.effect("compiles valid rule with parsed when AST", () =>
+    Effect.sync(() => {
+      const compiled = compileResolvedKeybindingRule({
+        key: "mod+d",
+        command: "terminal.split",
+        when: "terminalOpen && !terminalFocus",
+      });
+
+      assert.deepEqual(compiled, {
+        command: "terminal.split",
+        shortcut: {
+          key: "d",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          modKey: true,
         },
-      },
-    });
-  });
+        whenAst: {
+          type: "and",
+          left: { type: "identifier", name: "terminalOpen" },
+          right: {
+            type: "not",
+            node: { type: "identifier", name: "terminalFocus" },
+          },
+        },
+      });
+    }),
+  );
 
-  it("rejects invalid rules", () => {
-    assert.isNull(
-      compileResolvedKeybindingRule({
-        key: "mod+shift+d+o",
-        command: "terminal.new",
-      }),
-    );
+  it.effect("rejects invalid rules", () =>
+    Effect.sync(() => {
+      assert.isNull(
+        compileResolvedKeybindingRule({
+          key: "mod+shift+d+o",
+          command: "terminal.new",
+        }),
+      );
 
-    assert.isNull(
-      compileResolvedKeybindingRule({
-        key: "mod+d",
-        command: "terminal.split",
-        when: "terminalFocus && (",
-      }),
-    );
+      assert.isNull(
+        compileResolvedKeybindingRule({
+          key: "mod+d",
+          command: "terminal.split",
+          when: "terminalFocus && (",
+        }),
+      );
 
-    assert.isNull(
-      compileResolvedKeybindingRule({
-        key: "mod+d",
-        command: "terminal.split",
-        when: `${"!".repeat(300)}terminalFocus`,
-      }),
-    );
-  });
+      assert.isNull(
+        compileResolvedKeybindingRule({
+          key: "mod+d",
+          command: "terminal.split",
+          when: `${"!".repeat(300)}terminalFocus`,
+        }),
+      );
+    }),
+  );
 
-  it("upserts custom keybindings to ~/.t3/keybindings.json", () => {
-    const fakeHome = makeTempDir("t3code-keybindings-upsert-");
-    const configDir = path.join(fakeHome, ".t3");
-    fs.mkdirSync(configDir, { recursive: true });
-    const configPath = path.join(configDir, "keybindings.json");
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify([{ key: "mod+j", command: "terminal.toggle" }]),
-      "utf8",
-    );
-    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+  it.effect("upserts custom keybindings to configured path", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+j", command: "terminal.toggle" },
+      ]);
 
-    const resolved = upsertKeybindingRule(logger, {
-      key: "mod+shift+r",
-      command: "script.run-tests.run",
-    });
-    const persisted = JSON.parse(fs.readFileSync(configPath, "utf8")) as Array<{
-      key: string;
-      command: string;
-    }>;
+      const resolved = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        return yield* keybindings.upsertKeybindingRule({
+          key: "mod+shift+r",
+          command: "script.run-tests.run",
+        });
+      });
 
-    expect(persisted).toEqual([
-      { key: "mod+j", command: "terminal.toggle" },
-      { key: "mod+shift+r", command: "script.run-tests.run" },
-    ]);
-    expect(resolved.some((entry) => entry.command === "script.run-tests.run")).toBe(true);
-  });
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const persistedView = persisted.map(({ key, command }) => ({ key, command }));
 
-  it("replaces existing custom keybinding for the same command", () => {
-    const fakeHome = makeTempDir("t3code-keybindings-upsert-replace-");
-    const configDir = path.join(fakeHome, ".t3");
-    fs.mkdirSync(configDir, { recursive: true });
-    const configPath = path.join(configDir, "keybindings.json");
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify([{ key: "mod+r", command: "script.run-tests.run" }]),
-      "utf8",
-    );
-    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+      assert.deepEqual(persistedView, [
+        { key: "mod+j", command: "terminal.toggle" },
+        { key: "mod+shift+r", command: "script.run-tests.run" },
+      ]);
+      assert.isTrue(resolved.some((entry) => entry.command === "script.run-tests.run"));
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
 
-    upsertKeybindingRule(logger, {
-      key: "mod+shift+r",
-      command: "script.run-tests.run",
-    });
+  it.effect("replaces existing custom keybinding for the same command", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+r", command: "script.run-tests.run" },
+      ]);
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        return yield* keybindings.upsertKeybindingRule({
+          key: "mod+shift+r",
+          command: "script.run-tests.run",
+        });
+      });
 
-    const persisted = JSON.parse(fs.readFileSync(configPath, "utf8")) as Array<{
-      key: string;
-      command: string;
-    }>;
-    expect(persisted).toEqual([{ key: "mod+shift+r", command: "script.run-tests.run" }]);
-  });
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const persistedView = persisted.map(({ key, command }) => ({ key, command }));
+      assert.deepEqual(persistedView, [{ key: "mod+shift+r", command: "script.run-tests.run" }]);
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
 
-  it("refuses to overwrite malformed keybindings config", () => {
-    const fakeHome = makeTempDir("t3code-keybindings-malformed-");
-    const configDir = path.join(fakeHome, ".t3");
-    fs.mkdirSync(configDir, { recursive: true });
-    const configPath = path.join(configDir, "keybindings.json");
-    fs.writeFileSync(configPath, "{ not-json", "utf8");
-    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+  it.effect("refuses to overwrite malformed keybindings config", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* fs.writeFileString(keybindingsConfigPath, "{ not-json");
 
-    expect(() =>
-      upsertKeybindingRule(logger, {
-        key: "mod+shift+r",
-        command: "script.run-tests.run",
-      }),
-    ).toThrow(/Unable to parse keybindings config/);
+      const result = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        return yield* keybindings.upsertKeybindingRule({
+          key: "mod+shift+r",
+          command: "script.run-tests.run",
+        });
+      }).pipe(toDetailResult);
+      assertFailure(result, "expected JSON array");
 
-    expect(fs.readFileSync(configPath, "utf8")).toBe("{ not-json");
-  });
+      const persistedRaw = yield* fs.readFileString(keybindingsConfigPath);
+      assert.equal(persistedRaw, "{ not-json");
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
 
-  it("reports non-array config parse errors without duplicate prefix", () => {
-    const fakeHome = makeTempDir("t3code-keybindings-non-array-");
-    const configDir = path.join(fakeHome, ".t3");
-    fs.mkdirSync(configDir, { recursive: true });
-    const configPath = path.join(configDir, "keybindings.json");
-    fs.writeFileSync(configPath, JSON.stringify({ key: "mod+j", command: "terminal.toggle" }), "utf8");
-    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+  it.effect("reports non-array config parse errors without duplicate prefix", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* fs.writeFileString(
+        keybindingsConfigPath,
+        '{"key":"mod+j","command":"terminal.toggle"}',
+      );
 
-    expect(() =>
-      upsertKeybindingRule(logger, {
-        key: "mod+shift+r",
-        command: "script.run-tests.run",
-      }),
-    ).toThrow(new RegExp(`Unable to parse keybindings config at ${configPath}: expected JSON array`));
+      const firstResult = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        return yield* keybindings.upsertKeybindingRule({
+          key: "mod+shift+r",
+          command: "script.run-tests.run",
+        });
+      }).pipe(toDetailResult);
+      assertFailure(firstResult, "expected JSON array");
 
-    expect(() =>
-      upsertKeybindingRule(logger, {
-        key: "mod+shift+r",
-        command: "script.run-tests.run",
-      }),
-    ).not.toThrow(
-      new RegExp(`Unable to parse keybindings config at ${configPath}: Unable to parse keybindings config at`),
-    );
-  });
+      const secondResult = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        return yield* keybindings.upsertKeybindingRule({
+          key: "mod+shift+r",
+          command: "script.run-tests.run",
+        });
+      }).pipe(toDetailResult);
+      assertFailure(secondResult, "expected JSON array");
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
 
-  it("cleans up temp files when atomic keybinding write fails", () => {
-    const fakeHome = makeTempDir("t3code-keybindings-atomic-");
-    const configDir = path.join(fakeHome, ".t3");
-    fs.mkdirSync(configDir, { recursive: true });
-    const configPath = path.join(configDir, "keybindings.json");
-    fs.writeFileSync(configPath, JSON.stringify([{ key: "mod+j", command: "terminal.toggle" }]), "utf8");
-    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
-    vi.spyOn(fs, "renameSync").mockImplementation(() => {
-      throw new Error("rename failed");
-    });
+  it.effect("fails when config directory is not writable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      const { dirname } = yield* Path.Path;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+j", command: "terminal.toggle" },
+      ]);
+      yield* fs.chmod(dirname(keybindingsConfigPath), 0o500);
 
-    expect(() =>
-      upsertKeybindingRule(logger, {
-        key: "mod+shift+r",
-        command: "script.run-tests.run",
-      }),
-    ).toThrow(/rename failed/);
+      const result = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        return yield* keybindings.upsertKeybindingRule({
+          key: "mod+shift+r",
+          command: "script.run-tests.run",
+        });
+      }).pipe(toDetailResult);
+      assertFailure(result, "failed to write keybindings config");
 
-    expect(fs.readFileSync(configPath, "utf8")).toBe(
-      JSON.stringify([{ key: "mod+j", command: "terminal.toggle" }]),
-    );
-    const tempFiles = fs
-      .readdirSync(configDir)
-      .filter((file) => file.includes("keybindings.json.") && file.endsWith(".tmp"));
-    expect(tempFiles).toEqual([]);
-  });
+      yield* fs.chmod(dirname(keybindingsConfigPath), 0o700);
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const persistedView = persisted.map(({ key, command }) => ({ key, command }));
+      assert.deepEqual(persistedView, [{ key: "mod+j", command: "terminal.toggle" }]);
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("caches loaded resolved config across repeated reads", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+j", command: "terminal.toggle" },
+      ]);
+
+      const [first, second] = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        const firstLoad = yield* keybindings.loadResolvedKeybindingsConfig;
+        yield* writeKeybindingsConfig(keybindingsConfigPath, [
+          { key: "mod+x", command: "script.setup.run" },
+        ]);
+        const secondLoad = yield* keybindings.loadResolvedKeybindingsConfig;
+        return [firstLoad, secondLoad] as const;
+      });
+
+      assert.deepEqual(first, second);
+      assert.isTrue(second.some((entry) => entry.command === "terminal.toggle"));
+      assert.isFalse(second.some((entry) => entry.command === "script.setup.run"));
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("updates cached resolved config after upsert", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+j", command: "terminal.toggle" },
+      ]);
+
+      const loadedAfterUpsert = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        yield* keybindings.loadResolvedKeybindingsConfig;
+        yield* keybindings.upsertKeybindingRule({
+          key: "mod+shift+r",
+          command: "script.run-tests.run",
+        });
+        yield* fs.writeFileString(keybindingsConfigPath, "{ not-json");
+        return yield* keybindings.loadResolvedKeybindingsConfig;
+      });
+
+      assert.isTrue(loadedAfterUpsert.some((entry) => entry.command === "script.run-tests.run"));
+      assert.isTrue(loadedAfterUpsert.some((entry) => entry.command === "terminal.toggle"));
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
 });

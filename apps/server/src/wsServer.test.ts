@@ -360,6 +360,7 @@ describe("WebSocket Server", () => {
       port: 0,
       host: undefined,
       cwd: options.cwd ?? "/test/project",
+      keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
       stateDir,
       staticDir: undefined,
       devUrl: options.devUrl ? new URL(options.devUrl) : undefined,

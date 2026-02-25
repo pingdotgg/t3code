@@ -46,10 +46,7 @@ async function shutdown(exitCode) {
   shuttingDown = true;
 
   try {
-    await Promise.race([
-      monitor.destroy(),
-      new Promise((resolve) => setTimeout(resolve, 1_500)),
-    ]);
+    await Promise.race([monitor.destroy(), new Promise((resolve) => setTimeout(resolve, 1_500))]);
   } catch {
     // Best effort only; fallback process kill below handles stubborn children.
   }

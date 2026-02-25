@@ -29,7 +29,9 @@ function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 1)}...` : value;
 }
 
-function runtimeEventToActivities(event: ProviderRuntimeEvent): ReadonlyArray<OrchestrationThreadActivity> {
+function runtimeEventToActivities(
+  event: ProviderRuntimeEvent,
+): ReadonlyArray<OrchestrationThreadActivity> {
   switch (event.type) {
     case "approval.requested": {
       return [
@@ -184,14 +186,16 @@ const make = Effect.gen(function* () {
         event.type === "turn.started" ||
         event.type === "turn.completed"
       ) {
-        const activeTurnId = event.type === "turn.started" ? (toTurnId(event.turnId) ?? null) : null;
+        const activeTurnId =
+          event.type === "turn.started" ? (toTurnId(event.turnId) ?? null) : null;
         const providerThreadIdFromEvent =
           event.type === "thread.started"
             ? ProviderThreadId.makeUnsafe(event.threadId)
             : event.threadId !== undefined
               ? ProviderThreadId.makeUnsafe(event.threadId)
               : null;
-        const providerThreadId = providerThreadIdFromEvent ?? (thread.session?.providerThreadId ?? null);
+        const providerThreadId =
+          providerThreadIdFromEvent ?? thread.session?.providerThreadId ?? null;
         const status =
           event.type === "turn.started"
             ? "running"
@@ -199,7 +203,7 @@ const make = Effect.gen(function* () {
               ? "stopped"
               : event.type === "turn.completed" && event.status === "failed"
                 ? "error"
-              : "ready";
+                : "ready";
         const lastError =
           event.type === "turn.completed" && event.status === "failed"
             ? (event.errorMessage ?? thread.session?.lastError ?? "Turn failed")

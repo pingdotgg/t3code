@@ -1,20 +1,42 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
 import {
   KeybindingRule,
   KeybindingsConfig,
   KeybindingShortcut,
   KeybindingWhenNode,
+  MAX_KEYBINDINGS_COUNT,
+  MAX_WHEN_EXPRESSION_DEPTH,
   ResolvedKeybindingRule,
   ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { Mutable } from "effect/Types";
-import { Schema } from "effect";
+import {
+  Array,
+  Cause,
+  Effect,
+  FileSystem,
+  Path,
+  Layer,
+  Option,
+  Predicate,
+  Ref,
+  Schema,
+  SchemaIssue,
+  SchemaTransformation,
+  ServiceMap,
+} from "effect";
+import { ServerConfig } from "./config";
 
-interface KeybindingsLogger {
-  warn(message: string, context?: Record<string, unknown>): void;
+export class KeybindingsConfigError extends Schema.TaggedErrorClass<KeybindingsConfigError>()(
+  "KeybindingsConfigParseError",
+  {
+    configPath: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Unable to parse keybindings config at ${this.configPath}: ${this.detail}`;
+  }
 }
 
 type WhenToken =
@@ -24,8 +46,6 @@ type WhenToken =
   | { type: "or" }
   | { type: "lparen" }
   | { type: "rparen" };
-
-const MAX_WHEN_EXPRESSION_DEPTH = 256;
 
 export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+j", command: "terminal.toggle" },
@@ -44,6 +64,7 @@ function normalizeKeyToken(token: string): string {
   return token;
 }
 
+/** @internal - Exported for testing */
 export function parseKeybindingShortcut(value: string): KeybindingShortcut | null {
   const rawTokens = value
     .toLowerCase()
@@ -157,7 +178,7 @@ function tokenizeWhenExpression(expression: string): WhenToken[] | null {
   return tokens;
 }
 
-export function parseKeybindingWhenExpression(expression: string): KeybindingWhenNode | null {
+function parseKeybindingWhenExpression(expression: string): KeybindingWhenNode | null {
   const tokens = tokenizeWhenExpression(expression);
   if (!tokens || tokens.length === 0) return null;
   let index = 0;
@@ -242,6 +263,7 @@ export function parseKeybindingWhenExpression(expression: string): KeybindingWhe
   return ast;
 }
 
+/** @internal - Exported for testing */
 export function compileResolvedKeybindingRule(rule: KeybindingRule): ResolvedKeybindingRule | null {
   const key = rule.key.trim();
   if (key.length === 0) return null;
@@ -270,113 +292,85 @@ export function compileResolvedKeybindingsConfig(
 ): ResolvedKeybindingsConfig {
   const compiled: Mutable<ResolvedKeybindingsConfig> = [];
   for (const rule of config) {
-    const resolved = compileResolvedKeybindingRule(rule);
-    if (!resolved) continue;
-    compiled.push(resolved);
+    const result = Schema.decodeExit(ResolvedKeybindingFromConfig)(rule);
+    if (result._tag === "Success") {
+      compiled.push(result.value);
+    }
   }
   return compiled;
 }
 
-function compileDefaultKeybindings(): ResolvedKeybindingsConfig {
-  const resolved: Mutable<ResolvedKeybindingsConfig> = [];
-  for (const rule of DEFAULT_KEYBINDINGS) {
-    const compiled = compileResolvedKeybindingRule(rule);
-    if (!compiled) {
-      throw new Error(`Invalid default keybinding: ${rule.command} (${rule.key})`);
-    }
-    resolved.push(compiled);
-  }
-  return resolved;
+export const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
+  Schema.decodeTo(
+    Schema.toType(ResolvedKeybindingRule),
+    SchemaTransformation.transformOrFail({
+      decode: (rule) =>
+        Effect.succeed(compileResolvedKeybindingRule(rule)).pipe(
+          Effect.filterOrFail(
+            Predicate.isNotNull,
+            () =>
+              new SchemaIssue.InvalidValue(Option.some(rule), {
+                title: "Invalid keybinding rule",
+              }),
+          ),
+          Effect.map((resolved) => ResolvedKeybindingRule.makeUnsafe(resolved)),
+        ),
+
+      encode: (resolved) =>
+        Effect.gen(function* () {
+          const key = encodeShortcut(resolved.shortcut);
+          if (!key) {
+            return yield* Effect.fail(
+              new SchemaIssue.InvalidValue(Option.some(resolved), {
+                title: "Resolved shortcut cannot be encoded to key string",
+              }),
+            );
+          }
+
+          const when = resolved.whenAst ? encodeWhenAst(resolved.whenAst) : undefined;
+          return {
+            key,
+            command: resolved.command,
+            when,
+          };
+        }),
+    }),
+  ),
+);
+
+export const ResolvedKeybindingsFromConfig = Schema.Array(ResolvedKeybindingFromConfig).check(
+  Schema.isMaxLength(MAX_KEYBINDINGS_COUNT),
+);
+
+function encodeShortcut(shortcut: KeybindingShortcut): string | null {
+  const modifiers: string[] = [];
+  if (shortcut.modKey) modifiers.push("mod");
+  if (shortcut.metaKey) modifiers.push("meta");
+  if (shortcut.ctrlKey) modifiers.push("ctrl");
+  if (shortcut.altKey) modifiers.push("alt");
+  if (shortcut.shiftKey) modifiers.push("shift");
+  if (!shortcut.key || shortcut.key.includes("+")) return null;
+  const key = shortcut.key === " " ? "space" : shortcut.key;
+  return [...modifiers, key].join("+");
 }
 
-const DEFAULT_RESOLVED_KEYBINDINGS = compileDefaultKeybindings();
-const KEYBINDINGS_CONFIG_PATH = path.join(".t3", "keybindings.json");
-const MAX_KEYBINDINGS = 256;
-
-class KeybindingsConfigParseError extends Error {
-  constructor(configPath: string, detail: string, options?: { cause?: unknown }) {
-    super(`Unable to parse keybindings config at ${configPath}: ${detail}`, options);
-  }
-}
-
-function resolveKeybindingsConfigPath(): string {
-  return path.join(os.homedir(), KEYBINDINGS_CONFIG_PATH);
-}
-
-function loadCustomKeybindingsConfig(
-  logger: KeybindingsLogger,
-  options?: {
-    throwOnUnreadableConfig?: boolean;
-  },
-): KeybindingsConfig {
-  const configPath = resolveKeybindingsConfigPath();
-  try {
-    const raw = fs.readFileSync(configPath, "utf8");
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      if (options?.throwOnUnreadableConfig) {
-        throw new KeybindingsConfigParseError(configPath, "expected JSON array");
-      }
-      logger.warn("ignoring keybindings config with unsupported format; expected array", {
-        path: configPath,
-      });
-      return [];
-    }
-
-    const sanitized: Mutable<KeybindingsConfig> = [];
-    let invalidEntries = 0;
-    for (const entry of parsed) {
-      const result = Schema.decodeExit(KeybindingRule)(entry);
-      if (result._tag === "Success") {
-        if (!compileResolvedKeybindingRule(result.value)) {
-          invalidEntries += 1;
-          continue;
-        }
-        sanitized.push(result.value);
-        continue;
-      }
-      invalidEntries += 1;
-    }
-    if (invalidEntries > 0) {
-      logger.warn("ignoring invalid keybinding entries", {
-        path: configPath,
-        invalidEntries,
-        totalEntries: parsed.length,
-      });
-    }
-    return sanitized;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      return [];
-    }
-    if (options?.throwOnUnreadableConfig) {
-      if (error instanceof KeybindingsConfigParseError) {
-        throw error;
-      }
-      throw new KeybindingsConfigParseError(
-        configPath,
-        error instanceof Error ? error.message : String(error),
-        { cause: error },
-      );
-    }
-    logger.warn("ignoring malformed keybindings config", {
-      path: configPath,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return [];
+function encodeWhenAst(node: KeybindingWhenNode): string {
+  switch (node.type) {
+    case "identifier":
+      return node.name;
+    case "not":
+      return `!(${encodeWhenAst(node.node)})`;
+    case "and":
+      return `(${encodeWhenAst(node.left)} && ${encodeWhenAst(node.right)})`;
+    case "or":
+      return `(${encodeWhenAst(node.left)} || ${encodeWhenAst(node.right)})`;
   }
 }
 
-function writeConfigAtomically(configPath: string, config: KeybindingsConfig): void {
-  const tempPath = `${configPath}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    fs.writeFileSync(tempPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-    fs.renameSync(tempPath, configPath);
-  } catch (error) {
-    fs.rmSync(tempPath, { force: true });
-    throw error;
-  }
-}
+const DEFAULT_RESOLVED_KEYBINDINGS = compileResolvedKeybindingsConfig(DEFAULT_KEYBINDINGS);
+
+const RawKeybindingsEntries = Schema.fromJsonString(Schema.Array(Schema.Unknown));
+const KeybindingsConfigJson = Schema.fromJsonString(KeybindingsConfig);
 
 function mergeWithDefaultKeybindings(custom: ResolvedKeybindingsConfig): ResolvedKeybindingsConfig {
   if (custom.length === 0) {
@@ -389,55 +383,133 @@ function mergeWithDefaultKeybindings(custom: ResolvedKeybindingsConfig): Resolve
   );
   const merged = [...retainedDefaults, ...custom];
 
-  if (merged.length <= MAX_KEYBINDINGS) {
+  if (merged.length <= MAX_KEYBINDINGS_COUNT) {
     return merged;
   }
 
   // Keep the latest rules when the config exceeds max size; later rules have higher precedence.
-  return merged.slice(-MAX_KEYBINDINGS);
+  return merged.slice(-MAX_KEYBINDINGS_COUNT);
 }
 
-export function loadResolvedKeybindingsConfig(
-  logger: KeybindingsLogger,
-): ResolvedKeybindingsConfig {
-  const customConfig = loadCustomKeybindingsConfig(logger);
-  const compiledCustomConfig = compileResolvedKeybindingsConfig(customConfig);
-  const overriddenCommands = new Set(compiledCustomConfig.map((entry) => entry.command));
-  const mergedBeforeCapLength =
-    DEFAULT_RESOLVED_KEYBINDINGS.filter((binding) => !overriddenCommands.has(binding.command))
-      .length + compiledCustomConfig.length;
-  const merged = mergeWithDefaultKeybindings(compiledCustomConfig);
-  if (mergedBeforeCapLength > MAX_KEYBINDINGS) {
-    logger.warn("truncating merged keybindings config to max entries", {
-      path: resolveKeybindingsConfigPath(),
-      maxEntries: MAX_KEYBINDINGS,
-    });
-  }
-  return merged;
+export interface KeybindingsShape {
+  readonly loadResolvedKeybindingsConfig: Effect.Effect<
+    readonly ResolvedKeybindingRule[],
+    KeybindingsConfigError
+  >;
+  readonly upsertKeybindingRule: (
+    rule: KeybindingRule,
+  ) => Effect.Effect<ResolvedKeybindingsConfig, KeybindingsConfigError>;
 }
 
-export function upsertKeybindingRule(
-  logger: KeybindingsLogger,
-  rule: KeybindingRule,
-): ResolvedKeybindingsConfig {
-  const configPath = resolveKeybindingsConfigPath();
-  const customConfig = loadCustomKeybindingsConfig(logger, {
-    throwOnUnreadableConfig: true,
+export class Keybindings extends ServiceMap.Service<Keybindings, KeybindingsShape>()(
+  "server/Keybindings",
+) {}
+
+const makeKeybindings = Effect.gen(function* () {
+  const { keybindingsConfigPath } = yield* ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const cachedResolvedConfig = yield* Ref.make<ResolvedKeybindingsConfig | null>(null);
+
+  const loadCustomKeybindingsConfig = Effect.fn(function* (): Effect.fn.Return<
+    readonly KeybindingRule[],
+    KeybindingsConfigError
+  > {
+    const rawConfig = yield* fs.readFileString(keybindingsConfigPath).pipe(
+      Effect.flatMap(Schema.decodeEffect(RawKeybindingsEntries)),
+      Effect.mapError(
+        (cause) =>
+          new KeybindingsConfigError({
+            configPath: keybindingsConfigPath,
+            detail: "expected JSON array",
+            cause,
+          }),
+      ),
+    );
+
+    return yield* Effect.forEach(rawConfig, (entry) =>
+      Effect.gen(function* () {
+        const decodedRule = Schema.decodeUnknownExit(KeybindingRule)(entry);
+        if (decodedRule._tag === "Failure") {
+          yield* Effect.logWarning("ignoring invalid keybinding entry", {
+            path: keybindingsConfigPath,
+            entry,
+            error: Cause.pretty(decodedRule.cause),
+          });
+          return null;
+        }
+        const resolved = Schema.decodeExit(ResolvedKeybindingFromConfig)(decodedRule.value);
+        if (resolved._tag === "Failure") {
+          yield* Effect.logWarning("ignoring invalid keybinding entry", {
+            path: keybindingsConfigPath,
+            entry,
+            error: Cause.pretty(resolved.cause),
+          });
+          return null;
+        }
+        return decodedRule.value;
+      }),
+    ).pipe(Effect.map(Array.filter(Predicate.isNotNull)));
   });
-  const nextConfig = [...customConfig.filter((entry) => entry.command !== rule.command), rule];
-  const cappedConfig =
-    nextConfig.length > MAX_KEYBINDINGS ? nextConfig.slice(-MAX_KEYBINDINGS) : nextConfig;
 
-  if (nextConfig.length > MAX_KEYBINDINGS) {
-    logger.warn("truncating keybindings config to max entries", {
-      path: configPath,
-      maxEntries: MAX_KEYBINDINGS,
-    });
-  }
+  const writeConfigAtomically = (rules: readonly KeybindingRule[]) => {
+    const tempPath = `${keybindingsConfigPath}.${process.pid}.${Date.now()}.tmp`;
 
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  writeConfigAtomically(configPath, cappedConfig);
+    return Schema.encodeEffect(KeybindingsConfigJson)(
+      rules.map((rule) => KeybindingRule.makeUnsafe(rule)),
+    ).pipe(
+      Effect.tap(() => fs.makeDirectory(path.dirname(keybindingsConfigPath), { recursive: true })),
+      Effect.tap((encoded) => fs.writeFileString(tempPath, encoded)),
+      Effect.flatMap(() => fs.rename(tempPath, keybindingsConfigPath)),
+      Effect.mapError(
+        (cause) =>
+          new KeybindingsConfigError({
+            configPath: keybindingsConfigPath,
+            detail: "failed to write keybindings config",
+            cause,
+          }),
+      ),
+    );
+  };
 
-  const compiledCustomConfig = compileResolvedKeybindingsConfig(cappedConfig);
-  return mergeWithDefaultKeybindings(compiledCustomConfig);
-}
+  const loadResolvedFromCacheOrDisk = Effect.gen(function* () {
+    const cached = yield* Ref.get(cachedResolvedConfig);
+    if (cached) return cached;
+    const resolved = yield* loadCustomKeybindingsConfig().pipe(
+      Effect.map(compileResolvedKeybindingsConfig),
+      Effect.map(mergeWithDefaultKeybindings),
+    );
+    yield* Ref.set(cachedResolvedConfig, resolved);
+    return resolved;
+  });
+
+  return {
+    loadResolvedKeybindingsConfig: loadResolvedFromCacheOrDisk,
+    upsertKeybindingRule: (rule) =>
+      Effect.gen(function* () {
+        const customConfig = yield* loadCustomKeybindingsConfig();
+        const nextConfig = [
+          ...customConfig.filter((entry) => entry.command !== rule.command),
+          rule,
+        ];
+        const cappedConfig =
+          nextConfig.length > MAX_KEYBINDINGS_COUNT
+            ? nextConfig.slice(-MAX_KEYBINDINGS_COUNT)
+            : nextConfig;
+        if (nextConfig.length > MAX_KEYBINDINGS_COUNT) {
+          yield* Effect.logWarning("truncating keybindings config to max entries", {
+            path: keybindingsConfigPath,
+            maxEntries: MAX_KEYBINDINGS_COUNT,
+          });
+        }
+        yield* writeConfigAtomically(cappedConfig);
+        const nextResolved = mergeWithDefaultKeybindings(
+          compileResolvedKeybindingsConfig(cappedConfig),
+        );
+        yield* Ref.set(cachedResolvedConfig, nextResolved);
+        return nextResolved;
+      }),
+  } satisfies KeybindingsShape;
+});
+
+export const KeybindingsLive = Layer.effect(Keybindings, makeKeybindings);

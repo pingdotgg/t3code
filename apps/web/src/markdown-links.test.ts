@@ -22,9 +22,9 @@ describe("resolveMarkdownFileLinkTarget", () => {
   });
 
   it("maps #L line anchors to editor line suffixes", () => {
-    expect(
-      resolveMarkdownFileLinkTarget("/Users/julius/project/src/main.ts#L42C7"),
-    ).toBe("/Users/julius/project/src/main.ts:42:7");
+    expect(resolveMarkdownFileLinkTarget("/Users/julius/project/src/main.ts#L42C7")).toBe(
+      "/Users/julius/project/src/main.ts:42:7",
+    );
   });
 
   it("ignores external urls", () => {

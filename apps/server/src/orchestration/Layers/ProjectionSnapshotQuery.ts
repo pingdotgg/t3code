@@ -245,10 +245,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   });
 
   const getSnapshot: ProjectionSnapshotQueryShape["getSnapshot"] = () =>
-    sql.withTransaction(
-      Effect.gen(function* () {
-        const [projectRows, threadRows, messageRows, activityRows, sessionRows, checkpointRows, stateRows] =
-          yield* Effect.all([
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const [
+            projectRows,
+            threadRows,
+            messageRows,
+            activityRows,
+            sessionRows,
+            checkpointRows,
+            stateRows,
+          ] = yield* Effect.all([
             listProjectRows(undefined).pipe(
               Effect.mapError(
                 toPersistenceSqlOrDecodeError(
@@ -307,122 +315,127 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ),
           ]);
 
-        const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
-        const activitiesByThread = new Map<string, Array<OrchestrationThreadActivity>>();
-        const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
-        const sessionsByThread = new Map<string, OrchestrationSession>();
+          const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
+          const activitiesByThread = new Map<string, Array<OrchestrationThreadActivity>>();
+          const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
+          const sessionsByThread = new Map<string, OrchestrationSession>();
 
-        let updatedAt: string | null = null;
+          let updatedAt: string | null = null;
 
-        for (const row of projectRows) {
-          updatedAt = maxIso(updatedAt, row.updatedAt);
-        }
-        for (const row of threadRows) {
-          updatedAt = maxIso(updatedAt, row.updatedAt);
-        }
-        for (const row of stateRows) {
-          updatedAt = maxIso(updatedAt, row.updatedAt);
-        }
+          for (const row of projectRows) {
+            updatedAt = maxIso(updatedAt, row.updatedAt);
+          }
+          for (const row of threadRows) {
+            updatedAt = maxIso(updatedAt, row.updatedAt);
+          }
+          for (const row of stateRows) {
+            updatedAt = maxIso(updatedAt, row.updatedAt);
+          }
 
-        for (const row of messageRows) {
-          updatedAt = maxIso(updatedAt, row.updatedAt);
-          const threadMessages = messagesByThread.get(row.threadId) ?? [];
-          threadMessages.push({
-            id: row.messageId,
-            role: row.role,
-            text: row.text,
-            turnId: row.turnId,
-            streaming: row.isStreaming === 1,
+          for (const row of messageRows) {
+            updatedAt = maxIso(updatedAt, row.updatedAt);
+            const threadMessages = messagesByThread.get(row.threadId) ?? [];
+            threadMessages.push({
+              id: row.messageId,
+              role: row.role,
+              text: row.text,
+              turnId: row.turnId,
+              streaming: row.isStreaming === 1,
+              createdAt: row.createdAt,
+              updatedAt: row.updatedAt,
+            });
+            messagesByThread.set(row.threadId, threadMessages);
+          }
+
+          for (const row of activityRows) {
+            updatedAt = maxIso(updatedAt, row.createdAt);
+            const threadActivities = activitiesByThread.get(row.threadId) ?? [];
+            threadActivities.push({
+              id: row.activityId,
+              tone: row.tone,
+              kind: row.kind,
+              summary: row.summary,
+              payload: row.payload,
+              turnId: row.turnId,
+              createdAt: row.createdAt,
+            });
+            activitiesByThread.set(row.threadId, threadActivities);
+          }
+
+          for (const row of checkpointRows) {
+            updatedAt = maxIso(updatedAt, row.completedAt);
+            const threadCheckpoints = checkpointsByThread.get(row.threadId) ?? [];
+            threadCheckpoints.push({
+              turnId: row.turnId,
+              checkpointTurnCount: row.checkpointTurnCount,
+              checkpointRef: row.checkpointRef,
+              status: row.status,
+              files: row.files,
+              assistantMessageId: row.assistantMessageId,
+              completedAt: row.completedAt,
+            });
+            checkpointsByThread.set(row.threadId, threadCheckpoints);
+          }
+
+          for (const row of sessionRows) {
+            updatedAt = maxIso(updatedAt, row.updatedAt);
+            sessionsByThread.set(row.threadId, {
+              threadId: row.threadId,
+              status: row.status,
+              providerName: row.providerName,
+              providerSessionId: row.providerSessionId,
+              providerThreadId: row.providerThreadId,
+              activeTurnId: row.activeTurnId,
+              lastError: row.lastError,
+              updatedAt: row.updatedAt,
+            });
+          }
+
+          const projects: Array<OrchestrationProject> = projectRows.map((row) => ({
+            id: row.projectId,
+            title: row.title,
+            workspaceRoot: row.workspaceRoot,
+            defaultModel: row.defaultModel,
+            scripts: row.scripts,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
-          });
-          messagesByThread.set(row.threadId, threadMessages);
-        }
+            deletedAt: row.deletedAt,
+          }));
 
-        for (const row of activityRows) {
-          updatedAt = maxIso(updatedAt, row.createdAt);
-          const threadActivities = activitiesByThread.get(row.threadId) ?? [];
-          threadActivities.push({
-            id: row.activityId,
-            tone: row.tone,
-            kind: row.kind,
-            summary: row.summary,
-            payload: row.payload,
-            turnId: row.turnId,
+          const threads: Array<OrchestrationThread> = threadRows.map((row) => ({
+            id: row.threadId,
+            projectId: row.projectId,
+            title: row.title,
+            model: row.model,
+            branch: row.branch,
+            worktreePath: row.worktreePath,
+            latestTurnId: row.latestTurnId,
             createdAt: row.createdAt,
-          });
-          activitiesByThread.set(row.threadId, threadActivities);
-        }
-
-        for (const row of checkpointRows) {
-          updatedAt = maxIso(updatedAt, row.completedAt);
-          const threadCheckpoints = checkpointsByThread.get(row.threadId) ?? [];
-          threadCheckpoints.push({
-            turnId: row.turnId,
-            checkpointTurnCount: row.checkpointTurnCount,
-            checkpointRef: row.checkpointRef,
-            status: row.status,
-            files: row.files,
-            assistantMessageId: row.assistantMessageId,
-            completedAt: row.completedAt,
-          });
-          checkpointsByThread.set(row.threadId, threadCheckpoints);
-        }
-
-        for (const row of sessionRows) {
-          updatedAt = maxIso(updatedAt, row.updatedAt);
-          sessionsByThread.set(row.threadId, {
-            threadId: row.threadId,
-            status: row.status,
-            providerName: row.providerName,
-            providerSessionId: row.providerSessionId,
-            providerThreadId: row.providerThreadId,
-            activeTurnId: row.activeTurnId,
-            lastError: row.lastError,
             updatedAt: row.updatedAt,
-          });
-        }
+            deletedAt: row.deletedAt,
+            messages: messagesByThread.get(row.threadId) ?? [],
+            activities: activitiesByThread.get(row.threadId) ?? [],
+            checkpoints: checkpointsByThread.get(row.threadId) ?? [],
+            session: sessionsByThread.get(row.threadId) ?? null,
+          }));
 
-        const projects: Array<OrchestrationProject> = projectRows.map((row) => ({
-          id: row.projectId,
-          title: row.title,
-          workspaceRoot: row.workspaceRoot,
-          defaultModel: row.defaultModel,
-          scripts: row.scripts,
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt,
-          deletedAt: row.deletedAt,
-        }));
+          const snapshot = {
+            snapshotSequence: computeSnapshotSequence(stateRows),
+            projects,
+            threads,
+            updatedAt: updatedAt ?? new Date(0).toISOString(),
+          };
 
-        const threads: Array<OrchestrationThread> = threadRows.map((row) => ({
-          id: row.threadId,
-          projectId: row.projectId,
-          title: row.title,
-          model: row.model,
-          branch: row.branch,
-          worktreePath: row.worktreePath,
-          latestTurnId: row.latestTurnId,
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt,
-          deletedAt: row.deletedAt,
-          messages: messagesByThread.get(row.threadId) ?? [],
-          activities: activitiesByThread.get(row.threadId) ?? [],
-          checkpoints: checkpointsByThread.get(row.threadId) ?? [],
-          session: sessionsByThread.get(row.threadId) ?? null,
-        }));
-
-        const snapshot = {
-          snapshotSequence: computeSnapshotSequence(stateRows),
-          projects,
-          threads,
-          updatedAt: updatedAt ?? new Date(0).toISOString(),
-        };
-
-        return yield* decodeReadModel(snapshot).pipe(
-          Effect.mapError(toPersistenceDecodeError("ProjectionSnapshotQuery.getSnapshot:decodeReadModel")),
-        );
-      }),
-    ).pipe(Effect.mapError(toProjectionRepositoryError("ProjectionSnapshotQuery.getSnapshot:query")));
+          return yield* decodeReadModel(snapshot).pipe(
+            Effect.mapError(
+              toPersistenceDecodeError("ProjectionSnapshotQuery.getSnapshot:decodeReadModel"),
+            ),
+          );
+        }),
+      )
+      .pipe(
+        Effect.mapError(toProjectionRepositoryError("ProjectionSnapshotQuery.getSnapshot:query")),
+      );
 
   return {
     getSnapshot,

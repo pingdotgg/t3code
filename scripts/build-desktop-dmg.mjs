@@ -129,7 +129,14 @@ async function generateMacIconSet(sourcePng, targetIcns, tmpRoot) {
   for (const size of iconSizes) {
     await run(
       "sips",
-      ["-z", String(size), String(size), sourcePng, "--out", path.join(iconsetDir, `icon_${size}x${size}.png`)],
+      [
+        "-z",
+        String(size),
+        String(size),
+        sourcePng,
+        "--out",
+        path.join(iconsetDir, `icon_${size}x${size}.png`),
+      ],
       { stdio: "ignore" },
     );
     const retinaSize = size * 2;

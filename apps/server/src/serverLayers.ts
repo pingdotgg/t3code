@@ -28,6 +28,7 @@ import { ProviderService } from "./provider/Services/ProviderService";
 
 import { makeTerminalManagerLive, TerminalManager } from "./terminalManager";
 import { PtyAdapter } from "./ptyAdapter";
+import { Keybindings, KeybindingsLive } from "./keybindings";
 
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService,
@@ -55,7 +56,8 @@ export function makeServerRuntimeServicesLayer(): Layer.Layer<
   | ProjectionSnapshotQuery
   | CheckpointStore
   | OrchestrationReactor
-  | TerminalManager,
+  | TerminalManager
+  | Keybindings,
   unknown,
   SqlClient.SqlClient | ProviderService | ServerConfig
 > {
@@ -93,5 +95,7 @@ export function makeServerRuntimeServicesLayer(): Layer.Layer<
     }).pipe(Layer.provide(PtyAdapter.layer()));
   }).pipe(Layer.unwrap);
 
-  return Layer.merge(orchestrationReactorLayer, terminalLayer);
+  const keybindingsLayer = KeybindingsLive.pipe(Layer.provide(NodeServices.layer));
+
+  return Layer.mergeAll(orchestrationReactorLayer, terminalLayer, keybindingsLayer);
 }

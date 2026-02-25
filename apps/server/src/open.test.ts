@@ -11,18 +11,16 @@ describe("resolveEditorLaunch", () => {
   });
 
   it("maps file-manager editor to OS open commands", () => {
-    expect(resolveEditorLaunch({ cwd: "/tmp/workspace", editor: "file-manager" }, "darwin")).toEqual(
-      {
-        command: "open",
-        args: ["/tmp/workspace"],
-      },
-    );
-    expect(resolveEditorLaunch({ cwd: "C:\\workspace", editor: "file-manager" }, "win32")).toEqual(
-      {
-        command: "explorer",
-        args: ["C:\\workspace"],
-      },
-    );
+    expect(
+      resolveEditorLaunch({ cwd: "/tmp/workspace", editor: "file-manager" }, "darwin"),
+    ).toEqual({
+      command: "open",
+      args: ["/tmp/workspace"],
+    });
+    expect(resolveEditorLaunch({ cwd: "C:\\workspace", editor: "file-manager" }, "win32")).toEqual({
+      command: "explorer",
+      args: ["C:\\workspace"],
+    });
     expect(resolveEditorLaunch({ cwd: "/tmp/workspace", editor: "file-manager" }, "linux")).toEqual(
       {
         command: "xdg-open",
@@ -40,8 +38,8 @@ describe("launchDetached", () => {
   });
 
   it("rejects when command does not exist", async () => {
-    await expect(
-      launchDetached(`t3code-no-such-command-${Date.now()}`, []),
-    ).rejects.toBeInstanceOf(Error);
+    await expect(launchDetached(`t3code-no-such-command-${Date.now()}`, [])).rejects.toBeInstanceOf(
+      Error,
+    );
   });
 });

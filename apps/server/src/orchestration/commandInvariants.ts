@@ -38,13 +38,11 @@ export function listThreadsByProjectId(
   return readModel.threads.filter((thread) => thread.projectId === projectId);
 }
 
-export function requireProject(
-  input: {
-    readonly readModel: OrchestrationReadModel;
-    readonly command: OrchestrationCommand;
-    readonly projectId: ProjectId;
-  },
-): Effect.Effect<OrchestrationProject, OrchestrationCommandInvariantError> {
+export function requireProject(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly projectId: ProjectId;
+}): Effect.Effect<OrchestrationProject, OrchestrationCommandInvariantError> {
   const project = findProjectById(input.readModel, input.projectId);
   if (project) {
     return Effect.succeed(project);
@@ -57,13 +55,11 @@ export function requireProject(
   );
 }
 
-export function requireProjectAbsent(
-  input: {
-    readonly readModel: OrchestrationReadModel;
-    readonly command: OrchestrationCommand;
-    readonly projectId: ProjectId;
-  },
-): Effect.Effect<void, OrchestrationCommandInvariantError> {
+export function requireProjectAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly projectId: ProjectId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
   if (!findProjectById(input.readModel, input.projectId)) {
     return Effect.void;
   }
@@ -75,13 +71,11 @@ export function requireProjectAbsent(
   );
 }
 
-export function requireThread(
-  input: {
-    readonly readModel: OrchestrationReadModel;
-    readonly command: OrchestrationCommand;
-    readonly threadId: ThreadId;
-  },
-): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
+export function requireThread(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly threadId: ThreadId;
+}): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
   const thread = findThreadById(input.readModel, input.threadId);
   if (thread) {
     return Effect.succeed(thread);
@@ -94,13 +88,11 @@ export function requireThread(
   );
 }
 
-export function requireThreadAbsent(
-  input: {
-    readonly readModel: OrchestrationReadModel;
-    readonly command: OrchestrationCommand;
-    readonly threadId: ThreadId;
-  },
-): Effect.Effect<void, OrchestrationCommandInvariantError> {
+export function requireThreadAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly threadId: ThreadId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
   if (!findThreadById(input.readModel, input.threadId)) {
     return Effect.void;
   }
@@ -112,13 +104,11 @@ export function requireThreadAbsent(
   );
 }
 
-export function requireNonNegativeInteger(
-  input: {
-    readonly commandType: OrchestrationCommand["type"];
-    readonly field: string;
-    readonly value: number;
-  },
-): Effect.Effect<void, OrchestrationCommandInvariantError> {
+export function requireNonNegativeInteger(input: {
+  readonly commandType: OrchestrationCommand["type"];
+  readonly field: string;
+  readonly value: number;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
   if (Number.isInteger(input.value) && input.value >= 0) {
     return Effect.void;
   }

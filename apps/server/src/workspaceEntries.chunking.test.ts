@@ -2,13 +2,14 @@ import { assert, beforeEach, describe, it, vi } from "vitest";
 import type { ProcessRunOptions, ProcessRunResult } from "./processRunner";
 
 const { runProcessMock } = vi.hoisted(() => ({
-  runProcessMock: vi.fn<
-    (
-      command: string,
-      args: readonly string[],
-      options?: ProcessRunOptions,
-    ) => Promise<ProcessRunResult>
-  >(),
+  runProcessMock:
+    vi.fn<
+      (
+        command: string,
+        args: readonly string[],
+        options?: ProcessRunOptions,
+      ) => Promise<ProcessRunResult>
+    >(),
 }));
 
 vi.mock("./processRunner", () => ({

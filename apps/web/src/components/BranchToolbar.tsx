@@ -108,7 +108,15 @@ export default function BranchToolbar({
       branch: syncedBranch,
       worktreePath: null,
     });
-  }, [activeThreadId, activeWorktreePath, activeThreadBranch, queryBranches, envMode, dispatch, api]);
+  }, [
+    activeThreadId,
+    activeWorktreePath,
+    activeThreadBranch,
+    queryBranches,
+    envMode,
+    dispatch,
+    api,
+  ]);
 
   useEffect(() => {
     if (isBranchMenuOpen) return;

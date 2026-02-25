@@ -6,7 +6,9 @@ export interface TurnDiffFileSummary {
   readonly deletions: number;
 }
 
-export function parseTurnDiffFilesFromUnifiedDiff(diff: string): ReadonlyArray<TurnDiffFileSummary> {
+export function parseTurnDiffFilesFromUnifiedDiff(
+  diff: string,
+): ReadonlyArray<TurnDiffFileSummary> {
   const normalized = diff.replace(/\r\n/g, "\n").trim();
   if (normalized.length === 0) {
     return [];

@@ -1,7 +1,4 @@
-import type {
-  OrchestrationThreadActivity,
-  ProviderKind,
-} from "@t3tools/contracts";
+import type { OrchestrationThreadActivity, ProviderKind } from "@t3tools/contracts";
 
 import type {
   ChatMessage,
@@ -223,7 +220,9 @@ export function inferCheckpointTurnCountByTurnId(
   return result;
 }
 
-export function deriveTurnDiffSummaries(_events: ReadonlyArray<OrchestrationThreadActivity>): TurnDiffSummary[] {
+export function deriveTurnDiffSummaries(
+  _events: ReadonlyArray<OrchestrationThreadActivity>,
+): TurnDiffSummary[] {
   return [];
 }
 

@@ -1,4 +1,10 @@
-import { CommandId, EventId, ProjectId, ThreadId, type OrchestrationEvent } from "@t3tools/contracts";
+import {
+  CommandId,
+  EventId,
+  ProjectId,
+  ThreadId,
+  type OrchestrationEvent,
+} from "@t3tools/contracts";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -484,13 +490,15 @@ describe("orchestration projector", () => {
     );
 
     const thread = afterRevert.threads[0];
-    expect(thread?.messages.map((message) => ({ role: message.role, text: message.text }))).toEqual([
-      { role: "user", text: "First edit" },
-      { role: "assistant", text: "Updated README to v2.\n" },
-    ]);
-    expect(thread?.activities.map((activity) => ({ id: activity.id, turnId: activity.turnId }))).toEqual([
-      { id: "activity-1", turnId: "turn-1" },
-    ]);
+    expect(thread?.messages.map((message) => ({ role: message.role, text: message.text }))).toEqual(
+      [
+        { role: "user", text: "First edit" },
+        { role: "assistant", text: "Updated README to v2.\n" },
+      ],
+    );
+    expect(
+      thread?.activities.map((activity) => ({ id: activity.id, turnId: activity.turnId })),
+    ).toEqual([{ id: "activity-1", turnId: "turn-1" }]);
     expect(thread?.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount)).toEqual([1]);
     expect(thread?.latestTurnId).toBe("turn-1");
   });

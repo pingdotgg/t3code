@@ -41,8 +41,7 @@ const asCommandId = (value: string): CommandId => CommandId.makeUnsafe(value);
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
-const asProviderThreadId = (value: string): ProviderThreadId =>
-  ProviderThreadId.makeUnsafe(value);
+const asProviderThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
 function checkpointRefForTurn(threadId: ThreadId, turnCount: number): CheckpointRef {
@@ -474,11 +473,12 @@ describe("CheckpointReactor", () => {
       status: "completed",
     });
 
-    const thread = await waitForThread(
-      harness.engine,
-      (entry) => entry.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 3),
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 3),
     );
-    expect(thread.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 3)).toBe(true);
+    expect(thread.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 3)).toBe(
+      true,
+    );
   });
 
   it("executes provider revert and emits thread.reverted for checkpoint revert requests", async () => {
@@ -581,5 +581,4 @@ describe("CheckpointReactor", () => {
     );
     expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
   });
-
 });

@@ -3,17 +3,16 @@ import os from "node:os";
 import path from "node:path";
 
 import { NodeServices } from "@effect/platform-node";
-import {
-  ProviderSessionId,
-  ProviderThreadId,
-  ThreadId,
-} from "@t3tools/contracts";
+import { ProviderSessionId, ProviderThreadId, ThreadId } from "@t3tools/contracts";
 import { it, assert } from "@effect/vitest";
 import { assertFailure, assertSome } from "@effect/vitest/utils";
 import { Effect, Layer, Option } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { makeSqlitePersistenceLive, SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import {
+  makeSqlitePersistenceLive,
+  SqlitePersistenceMemory,
+} from "../../persistence/Layers/Sqlite.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../../persistence/Layers/ProviderSessionRuntime.ts";
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { ProviderSessionNotFoundError, ProviderValidationError } from "../Errors.ts";

@@ -24,4 +24,7 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
   } satisfies OrchestrationReactorShape;
 });
 
-export const OrchestrationReactorLive = Layer.effect(OrchestrationReactor, makeOrchestrationReactor);
+export const OrchestrationReactorLive = Layer.effect(
+  OrchestrationReactor,
+  makeOrchestrationReactor,
+);

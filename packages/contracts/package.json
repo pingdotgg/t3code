@@ -28,6 +28,7 @@
   },
   "devDependencies": {
     "@effect/language-service": "0.75.1",
+    "@effect/vitest": "4.0.0-beta.10",
     "tsdown": "^0.20.3",
     "typescript": "^5.7.3"
   }

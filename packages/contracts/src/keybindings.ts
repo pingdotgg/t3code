@@ -1,5 +1,13 @@
 import { Schema } from "effect";
 
+export const MAX_KEYBINDING_COMMAND_LENGTH = 96;
+export const MAX_KEYBINDING_VALUE_LENGTH = 64;
+export const MAX_KEYBINDING_WHEN_LENGTH = 256;
+export const MAX_WHEN_EXPRESSION_DEPTH = 64;
+export const MAX_SCRIPT_ID_LENGTH = 24;
+export const MAX_SCRIPT_RUN_COMMAND_LENGTH = 96;
+export const MAX_KEYBINDINGS_COUNT = 256;
+
 export const STATIC_KEYBINDING_COMMANDS = [
   "terminal.toggle",
   "terminal.split",
@@ -10,19 +18,31 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "editor.openFavorite",
 ] as const;
 
+export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
+  Schema.Literal("script."),
+  Schema.NonEmptyString.check(
+    Schema.isMaxLength(MAX_SCRIPT_ID_LENGTH),
+    Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/),
+  ),
+  Schema.Literal(".run"),
+]);
+
 export const KeybindingCommand = Schema.Union([
   Schema.Literals(STATIC_KEYBINDING_COMMANDS),
-  Schema.NonEmptyString.check(
-    Schema.isMaxLength(96),
-    Schema.isPattern(/^script\.[a-z0-9][a-z0-9-]*\.run$/),
-  ),
+  SCRIPT_RUN_COMMAND_PATTERN,
 ]);
 export type KeybindingCommand = typeof KeybindingCommand.Type;
 
-export const KeybindingValue = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(64));
+export const KeybindingValue = Schema.Trim.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_KEYBINDING_VALUE_LENGTH),
+);
 export type KeybindingValue = typeof KeybindingValue.Type;
 
-export const KeybindingWhen = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(256));
+export const KeybindingWhen = Schema.Trim.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_KEYBINDING_WHEN_LENGTH),
+);
 export type KeybindingWhen = typeof KeybindingWhen.Type;
 export class KeybindingRule extends Schema.Class<KeybindingRule>("KeybindingRule")({
   key: KeybindingValue,
@@ -30,7 +50,9 @@ export class KeybindingRule extends Schema.Class<KeybindingRule>("KeybindingRule
   when: Schema.optional(KeybindingWhen),
 }) {}
 
-export const KeybindingsConfig = Schema.Array(KeybindingRule).check(Schema.isMaxLength(256));
+export const KeybindingsConfig = Schema.Array(KeybindingRule).check(
+  Schema.isMaxLength(MAX_KEYBINDINGS_COUNT),
+);
 export type KeybindingsConfig = typeof KeybindingsConfig.Type;
 
 export class KeybindingShortcut extends Schema.Class<KeybindingShortcut>("KeybindingShortcut")({
@@ -76,10 +98,10 @@ export class ResolvedKeybindingRule extends Schema.Class<ResolvedKeybindingRule>
     shortcut: KeybindingShortcut,
     whenAst: Schema.optional(KeybindingWhenNode),
   },
-  { parseOptions: { onExcessProperty: "error" } },
+  { parseOptions: { onExcessProperty: "ignore" } },
 ) {}
 
 export const ResolvedKeybindingsConfig = Schema.Array(ResolvedKeybindingRule).check(
-  Schema.isMaxLength(256),
+  Schema.isMaxLength(MAX_KEYBINDINGS_COUNT),
 );
 export type ResolvedKeybindingsConfig = typeof ResolvedKeybindingsConfig.Type;

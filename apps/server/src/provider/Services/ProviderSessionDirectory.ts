@@ -78,7 +78,6 @@ export interface ProviderSessionDirectoryShape {
     ReadonlyArray<ProviderSessionId>,
     ProviderSessionDirectoryPersistenceError
   >;
-
 }
 
 /**

@@ -344,7 +344,9 @@ const make = Effect.gen(function* () {
     const queue = yield* Queue.unbounded<ProviderIntentEvent>();
     yield* Effect.addFinalizer(() => Queue.shutdown(queue).pipe(Effect.asVoid));
 
-    yield* Effect.forkScoped(Effect.forever(Queue.take(queue).pipe(Effect.flatMap(processDomainEvent))));
+    yield* Effect.forkScoped(
+      Effect.forever(Queue.take(queue).pipe(Effect.flatMap(processDomainEvent))),
+    );
 
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {

@@ -19,10 +19,7 @@ import {
 const RuntimeThreadIdSchema = Schema.Union([ThreadId, ProviderThreadId]);
 const RuntimeTurnIdSchema = Schema.Union([TurnId, ProviderTurnId]);
 
-export const ProviderRuntimeToolKind = Schema.Union([
-  ProviderRequestKind,
-  Schema.Literal("other"),
-]);
+export const ProviderRuntimeToolKind = Schema.Union([ProviderRequestKind, Schema.Literal("other")]);
 export type ProviderRuntimeToolKind = typeof ProviderRuntimeToolKind.Type;
 
 export const ProviderRuntimeTurnStatus = Schema.Literals([
@@ -157,7 +154,8 @@ export const ProviderRuntimeApprovalRequestedEvent = Schema.Struct({
   requestKind: ProviderRequestKind,
   detail: Schema.optional(Schema.String),
 });
-export type ProviderRuntimeApprovalRequestedEvent = typeof ProviderRuntimeApprovalRequestedEvent.Type;
+export type ProviderRuntimeApprovalRequestedEvent =
+  typeof ProviderRuntimeApprovalRequestedEvent.Type;
 
 export const ProviderRuntimeApprovalResolvedEvent = Schema.Struct({
   type: Schema.Literal("approval.resolved"),
@@ -185,7 +183,8 @@ export const ProviderRuntimeCheckpointCapturedEvent = Schema.Struct({
   turnCount: NonNegativeInt,
   status: Schema.optional(ProviderRuntimeTurnStatus),
 });
-export type ProviderRuntimeCheckpointCapturedEvent = typeof ProviderRuntimeCheckpointCapturedEvent.Type;
+export type ProviderRuntimeCheckpointCapturedEvent =
+  typeof ProviderRuntimeCheckpointCapturedEvent.Type;
 
 export const ProviderRuntimeErrorEvent = Schema.Struct({
   type: Schema.Literal("runtime.error"),
@@ -216,4 +215,3 @@ export const ProviderRuntimeEvent = Schema.Union([
   ProviderRuntimeErrorEvent,
 ]);
 export type ProviderRuntimeEvent = typeof ProviderRuntimeEvent.Type;
-

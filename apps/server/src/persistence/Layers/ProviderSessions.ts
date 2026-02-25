@@ -72,9 +72,7 @@ function toPersistenceError(
   });
 }
 
-function toEntry(
-  row: Schema.Schema.Type<typeof ProviderSessionRowSchema>,
-): ProviderSessionEntry {
+function toEntry(row: Schema.Schema.Type<typeof ProviderSessionRowSchema>): ProviderSessionEntry {
   return {
     sessionId: row.sessionId,
     provider: row.provider,

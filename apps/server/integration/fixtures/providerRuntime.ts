@@ -13,10 +13,10 @@ const THREAD_ID = ProviderThreadId.makeUnsafe("fixture-thread");
 const TURN_ID = ProviderTurnId.makeUnsafe("fixture-turn");
 const REQUEST_ID = ApprovalRequestId.makeUnsafe("req-1");
 
-function baseEvent(eventId: string, createdAt: string): Pick<
-  ProviderRuntimeEvent,
-  "eventId" | "provider" | "sessionId" | "createdAt"
-> {
+function baseEvent(
+  eventId: string,
+  createdAt: string,
+): Pick<ProviderRuntimeEvent, "eventId" | "provider" | "sessionId" | "createdAt"> {
   return {
     eventId: EventId.makeUnsafe(eventId),
     provider: PROVIDER,
