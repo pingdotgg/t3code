@@ -1,25 +1,24 @@
 import {
-  CheckpointRef,
   CommandId,
   EventId,
   MessageId,
   ProviderSessionId,
   ThreadId,
   TurnId,
+  type ProjectId,
   type OrchestrationEvent,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import { Effect, Layer, Option, Queue, Stream } from "effect";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
+import { checkpointRefForThreadTurn } from "../../checkpointing/Refs.ts";
 import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import { OrchestrationDispatchError } from "../Errors.ts";
-
-const CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
 
 type ReactorInput =
   | {
@@ -30,11 +29,6 @@ type ReactorInput =
       readonly source: "domain";
       readonly event: OrchestrationEvent;
     };
-
-function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number): CheckpointRef {
-  const encodedThreadId = Buffer.from(threadId, "utf8").toString("base64url");
-  return CheckpointRef.makeUnsafe(`${CHECKPOINT_REFS_PREFIX}/${encodedThreadId}/turn/${turnCount}`);
-}
 
 function toTurnId(value: string | undefined): TurnId | null {
   const normalized = value?.trim();
@@ -48,11 +42,11 @@ function trimToNonEmpty(value: string | null | undefined): string | undefined {
 
 function resolveThreadWorkspaceCwd(input: {
   readonly thread: {
-    readonly projectId: string;
+    readonly projectId: ProjectId;
     readonly worktreePath: string | null;
   };
   readonly projects: ReadonlyArray<{
-    readonly id: string;
+    readonly id: ProjectId;
     readonly workspaceRoot: string;
   }>;
 }): string | undefined {

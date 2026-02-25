@@ -8,7 +8,8 @@ export const EDITORS = [
 export const EditorId = Schema.Literals(EDITORS.map((e) => e.id));
 export type EditorId = typeof EditorId.Type;
 
-export class OpenInEditorInput extends Schema.Class<OpenInEditorInput>("OpenInEditorInput")({
+export const OpenInEditorInput = Schema.Struct({
   cwd: Schema.String,
   editor: EditorId,
-}) {}
+});
+export type OpenInEditorInput = typeof OpenInEditorInput.Type;

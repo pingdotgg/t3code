@@ -8,15 +8,20 @@ import {
   useReducer,
 } from "react";
 
-import { type OrchestrationReadModel, type OrchestrationSessionStatus } from "@t3tools/contracts";
-import { DEFAULT_MODEL, resolveModelSlug } from "./model-logic";
+import {
+  DEFAULT_MODEL,
+  ProviderSessionId,
+  ThreadId,
+  type OrchestrationReadModel,
+  type OrchestrationSessionStatus,
+  resolveModelSlug,
+} from "@t3tools/contracts";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
   DEFAULT_RUNTIME_MODE,
   MAX_THREAD_TERMINAL_COUNT,
   type ChatMessage,
-  type ProjectScript,
   type Project,
   type RuntimeMode,
   type Thread,
@@ -27,19 +32,19 @@ import {
 
 type Action =
   | { type: "SYNC_SERVER_READ_MODEL"; readModel: OrchestrationReadModel }
-  | { type: "MARK_THREAD_VISITED"; threadId: string; visitedAt?: string }
-  | { type: "TOGGLE_PROJECT"; projectId: string }
-  | { type: "TOGGLE_THREAD_TERMINAL"; threadId: string }
-  | { type: "SET_THREAD_TERMINAL_OPEN"; threadId: string; open: boolean }
-  | { type: "SET_THREAD_TERMINAL_HEIGHT"; threadId: string; height: number }
-  | { type: "SPLIT_THREAD_TERMINAL"; threadId: string; terminalId: string }
-  | { type: "NEW_THREAD_TERMINAL"; threadId: string; terminalId: string }
-  | { type: "SET_THREAD_ACTIVE_TERMINAL"; threadId: string; terminalId: string }
-  | { type: "CLOSE_THREAD_TERMINAL"; threadId: string; terminalId: string }
-  | { type: "SET_ERROR"; threadId: string; error: string | null }
+  | { type: "MARK_THREAD_VISITED"; threadId: ThreadId; visitedAt?: string }
+  | { type: "TOGGLE_PROJECT"; projectId: Project["id"] }
+  | { type: "TOGGLE_THREAD_TERMINAL"; threadId: ThreadId }
+  | { type: "SET_THREAD_TERMINAL_OPEN"; threadId: ThreadId; open: boolean }
+  | { type: "SET_THREAD_TERMINAL_HEIGHT"; threadId: ThreadId; height: number }
+  | { type: "SPLIT_THREAD_TERMINAL"; threadId: ThreadId; terminalId: string }
+  | { type: "NEW_THREAD_TERMINAL"; threadId: ThreadId; terminalId: string }
+  | { type: "SET_THREAD_ACTIVE_TERMINAL"; threadId: ThreadId; terminalId: string }
+  | { type: "CLOSE_THREAD_TERMINAL"; threadId: ThreadId; terminalId: string }
+  | { type: "SET_ERROR"; threadId: ThreadId; error: string | null }
   | {
       type: "SET_THREAD_BRANCH";
-      threadId: string;
+      threadId: ThreadId;
       branch: string | null;
       worktreePath: string | null;
     }
@@ -127,7 +132,7 @@ function persistState(state: AppState): void {
 
 function updateThread(
   threads: Thread[],
-  threadId: string,
+  threadId: ThreadId,
   updater: (t: Thread) => Thread,
 ): Thread[] {
   return threads.map((t) => (t.id === threadId ? updater(t) : t));
@@ -415,7 +420,9 @@ export function reducer(state: AppState, action: Action): AppState {
               existing?.activeTerminalGroupId ?? `group-${DEFAULT_THREAD_TERMINAL_ID}`,
             session: thread.session
               ? {
-                  sessionId: thread.session.providerSessionId ?? `thread:${thread.id}`,
+                  sessionId:
+                    thread.session.providerSessionId ??
+                    ProviderSessionId.makeUnsafe(`thread:${thread.id}`),
                   provider: toLegacyProvider(thread.session.providerName),
                   status: toLegacySessionStatus(thread.session.status),
                   orchestrationStatus: thread.session.status,

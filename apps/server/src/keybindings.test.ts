@@ -40,7 +40,7 @@ const writeKeybindingsConfig = (configPath: string, rules: readonly KeybindingRu
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const encoded = yield* Schema.encodeEffect(KeybindingsConfigJson)(
-      rules.map((rule) => KeybindingRule.makeUnsafe(rule)),
+      rules,
     );
     yield* fileSystem.writeFileString(configPath, encoded);
   });

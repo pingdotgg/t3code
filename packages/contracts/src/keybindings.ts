@@ -44,25 +44,27 @@ export const KeybindingWhen = Schema.Trim.check(
   Schema.isMaxLength(MAX_KEYBINDING_WHEN_LENGTH),
 );
 export type KeybindingWhen = typeof KeybindingWhen.Type;
-export class KeybindingRule extends Schema.Class<KeybindingRule>("KeybindingRule")({
+export const KeybindingRule = Schema.Struct({
   key: KeybindingValue,
   command: KeybindingCommand,
   when: Schema.optional(KeybindingWhen),
-}) {}
+});
+export type KeybindingRule = typeof KeybindingRule.Type;
 
 export const KeybindingsConfig = Schema.Array(KeybindingRule).check(
   Schema.isMaxLength(MAX_KEYBINDINGS_COUNT),
 );
 export type KeybindingsConfig = typeof KeybindingsConfig.Type;
 
-export class KeybindingShortcut extends Schema.Class<KeybindingShortcut>("KeybindingShortcut")({
+export const KeybindingShortcut = Schema.Struct({
   key: KeybindingValue,
   metaKey: Schema.Boolean,
   ctrlKey: Schema.Boolean,
   shiftKey: Schema.Boolean,
   altKey: Schema.Boolean,
   modKey: Schema.Boolean,
-}) {}
+});
+export type KeybindingShortcut = typeof KeybindingShortcut.Type;
 
 export const KeybindingWhenNode: Schema.Schema<KeybindingWhenNode> = Schema.Union([
   Schema.Struct({
@@ -90,16 +92,12 @@ export type KeybindingWhenNode =
   | { type: "and"; left: KeybindingWhenNode; right: KeybindingWhenNode }
   | { type: "or"; left: KeybindingWhenNode; right: KeybindingWhenNode };
 
-export class ResolvedKeybindingRule extends Schema.Class<ResolvedKeybindingRule>(
-  "ResolvedKeybindingRule",
-)(
-  {
-    command: KeybindingCommand,
-    shortcut: KeybindingShortcut,
-    whenAst: Schema.optional(KeybindingWhenNode),
-  },
-  { parseOptions: { onExcessProperty: "ignore" } },
-) {}
+export const ResolvedKeybindingRule = Schema.Struct({
+  command: KeybindingCommand,
+  shortcut: KeybindingShortcut,
+  whenAst: Schema.optional(KeybindingWhenNode),
+}).annotate({ parseOptions: { onExcessProperty: "ignore" } });
+export type ResolvedKeybindingRule = typeof ResolvedKeybindingRule.Type;
 
 export const ResolvedKeybindingsConfig = Schema.Array(ResolvedKeybindingRule).check(
   Schema.isMaxLength(MAX_KEYBINDINGS_COUNT),

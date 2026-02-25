@@ -13,12 +13,7 @@ const REQUEST_TIMEOUT_MS = 60_000;
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
 const decodeWsResponseFromJson = Schema.decodeUnknownExit(Schema.fromJsonString(WsResponse));
 const isWsPushEnvelope = Schema.is(WsPush);
-
-function isWebSocketResponseEnvelope(
-  message: typeof WsResponse.Type,
-): message is WebSocketResponse {
-  return message instanceof WebSocketResponse;
-}
+const isWebSocketResponseEnvelope = Schema.is(WebSocketResponse);
 
 interface WsRequestEnvelope {
   id: string;

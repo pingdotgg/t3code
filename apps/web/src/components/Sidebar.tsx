@@ -1,25 +1,23 @@
 import { ChevronRightIcon, TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import {
+  DEFAULT_MODEL,
+  ProjectId,
+  ThreadId,
+  type ResolvedKeybindingsConfig,
+} from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL } from "../branding";
-import { DEFAULT_MODEL } from "../model-logic";
-import {
-  asProjectId,
-  asThreadId,
-  newCommandId,
-  newProjectId,
-  newThreadId,
-} from "../lib/orchestrationIds";
+import { newCommandId, newProjectId, newThreadId } from "../lib/orchestrationIds";
 import { useStore } from "../store";
 import { isChatNewLocalShortcut, isChatNewShortcut } from "../keybindings";
 import { type Thread } from "../types";
-import { useNativeApi } from "../hooks/useNativeApi";
 import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import { readNativeApi } from "../nativeApi";
 import { toastManager } from "./ui/toast";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import {
@@ -37,6 +35,7 @@ import {
   SidebarTrigger,
 } from "./ui/sidebar";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
+import { isNonEmpty as isNonEmptyString } from "effect/String";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 
@@ -143,33 +142,33 @@ function T3Wordmark() {
 
 export default function Sidebar() {
   const { state, dispatch } = useStore();
-  const api = useNativeApi();
   const navigate = useNavigate();
   const { settings: appSettings } = useAppSettings();
-  const params = useParams({ strict: false });
-  const routeThreadId = typeof params.threadId === "string" ? params.threadId : null;
+  const routeThreadId = useParams({
+    strict: false,
+    select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
+  });
   const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery({
-    ...serverConfigQueryOptions(api),
+    ...serverConfigQueryOptions(),
     select: (config) => config.keybindings,
   });
   const queryClient = useQueryClient();
-  const removeWorktreeMutation = useMutation(
-    gitRemoveWorktreeMutationOptions({ api, queryClient }),
-  );
+  const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
   const [addingProject, setAddingProject] = useState(false);
   const [newCwd, setNewCwd] = useState("");
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
-  const pendingApprovalByThreadId = useMemo(() => new Map<string, boolean>(), []);
+  const pendingApprovalByThreadId = useMemo(() => new Map<ThreadId, boolean>(), []);
 
   const handleNewThread = useCallback(
     (
-      projectId: string,
+      projectId: ProjectId,
       options?: {
         branch?: string | null;
         worktreePath?: string | null;
       },
     ): Promise<void> => {
+      const api = readNativeApi();
       if (!api) return Promise.resolve();
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
@@ -180,7 +179,7 @@ export default function Sidebar() {
           type: "thread.create",
           commandId: newCommandId(),
           threadId,
-          projectId: asProjectId(projectId),
+          projectId,
           title: "New thread",
           model,
           branch: options?.branch ?? null,
@@ -202,11 +201,11 @@ export default function Sidebar() {
         });
       })();
     },
-    [api, dispatch, navigate, state.projects],
+    [dispatch, navigate, state.projects],
   );
 
   const focusMostRecentThreadForProject = useCallback(
-    (projectId: string) => {
+    (projectId: ProjectId) => {
       const latestThread = state.threads
         .filter((thread) => thread.projectId === projectId)
         .toSorted((a, b) => {
@@ -228,6 +227,7 @@ export default function Sidebar() {
     async (rawCwd: string) => {
       const cwd = rawCwd.trim();
       if (!cwd || isAddingProject) return;
+      const api = readNativeApi();
 
       setIsAddingProject(true);
       try {
@@ -240,7 +240,7 @@ export default function Sidebar() {
 
         const projectId = newProjectId();
         const createdAt = new Date().toISOString();
-        const title = cwd.split(/[/\\]/).filter(Boolean).at(-1) ?? cwd;
+        const title = cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd;
         await api.orchestration.dispatchCommand({
           type: "project.create",
           commandId: newCommandId(),
@@ -257,14 +257,7 @@ export default function Sidebar() {
         setAddingProject(false);
       }
     },
-    [
-      api,
-      focusMostRecentThreadForProject,
-      handleNewThread,
-      isAddingProject,
-      state.projects,
-      state.threads,
-    ],
+    [focusMostRecentThreadForProject, handleNewThread, isAddingProject, state.projects],
   );
 
   const handleAddProject = () => {
@@ -272,6 +265,7 @@ export default function Sidebar() {
   };
 
   const handlePickFolder = async () => {
+    const api = readNativeApi();
     if (!api || isPickingFolder) return;
     setIsPickingFolder(true);
     try {
@@ -284,7 +278,8 @@ export default function Sidebar() {
   };
 
   const handleThreadContextMenu = useCallback(
-    async (threadId: string, position: { x: number; y: number }) => {
+    async (threadId: ThreadId, position: { x: number; y: number }) => {
+      const api = readNativeApi();
       if (!api) return;
       const clicked = await api.contextMenu.show([{ id: "delete", label: "Delete" }], position);
       if (clicked !== "delete") return;
@@ -324,7 +319,7 @@ export default function Sidebar() {
           .dispatchCommand({
             type: "thread.session.stop",
             commandId: newCommandId(),
-            threadId: asThreadId(threadId),
+            threadId,
             createdAt: new Date().toISOString(),
           })
           .catch(() => undefined);
@@ -344,7 +339,7 @@ export default function Sidebar() {
       await api.orchestration.dispatchCommand({
         type: "thread.delete",
         commandId: newCommandId(),
-        threadId: asThreadId(threadId),
+        threadId,
       });
       if (shouldNavigateToFallback) {
         if (fallbackThreadId) {
@@ -384,9 +379,7 @@ export default function Sidebar() {
       }
     },
     [
-      api,
       appSettings.confirmThreadDelete,
-      dispatch,
       navigate,
       removeWorktreeMutation,
       routeThreadId,
@@ -396,7 +389,8 @@ export default function Sidebar() {
   );
 
   const handleProjectContextMenu = useCallback(
-    async (projectId: string, position: { x: number; y: number }) => {
+    async (projectId: ProjectId, position: { x: number; y: number }) => {
+      const api = readNativeApi();
       if (!api) return;
       const clicked = await api.contextMenu.show([{ id: "delete", label: "Delete" }], position);
       if (clicked !== "delete") return;
@@ -423,7 +417,7 @@ export default function Sidebar() {
         await api.orchestration.dispatchCommand({
           type: "project.delete",
           commandId: newCommandId(),
-          projectId: asProjectId(projectId),
+          projectId,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error deleting project.";
@@ -435,7 +429,7 @@ export default function Sidebar() {
         });
       }
     },
-    [api, state.projects, state.threads],
+    [state.projects, state.threads],
   );
 
   useEffect(() => {
@@ -687,7 +681,7 @@ export default function Sidebar() {
                 if (event.key === "Escape") setAddingProject(false);
               }}
             />
-            {isElectron && api && (
+            {isElectron && (
               <button
                 type="button"
                 className="mb-2 flex w-full items-center justify-center rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"

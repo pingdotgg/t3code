@@ -18,7 +18,7 @@ import type {
 import { ServiceMap } from "effect";
 import type { Effect, Stream } from "effect";
 
-import type { OrchestrationDispatchError, OrchestrationEngineError } from "../Errors.ts";
+import type { OrchestrationDispatchError } from "../Errors.ts";
 import type { OrchestrationEventStoreError } from "../../persistence/Errors.ts";
 
 export interface OrchestrationEngineShape {
@@ -38,18 +38,6 @@ export interface OrchestrationEngineShape {
   readonly readEvents: (
     fromSequenceExclusive: number,
   ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError, never>;
-
-  /**
-   * Validate and dispatch an unknown command payload.
-   *
-   * Accepts either parsed values or raw JSON strings.
-   *
-   * @param command - Unknown command payload.
-   * @returns Effect containing the sequence of the persisted event.
-   */
-  readonly dispatchUnknownCommand: (
-    command: unknown,
-  ) => Effect.Effect<{ sequence: number }, OrchestrationEngineError, never>;
 
   /**
    * Dispatch a validated orchestration command.

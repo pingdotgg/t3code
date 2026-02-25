@@ -18,78 +18,79 @@ export const GitPrStepStatus = Schema.Literals([
   "skipped_not_requested",
 ]);
 
-export class GitBranch extends Schema.Class<GitBranch>("GitBranch")({
+export const GitBranch = Schema.Struct({
   name: TrimmedNonEmptyString,
   current: Schema.Boolean,
   isDefault: Schema.Boolean,
   worktreePath: TrimmedNonEmptyString.pipe(Schema.NullOr),
-}) {}
+});
+export type GitBranch = typeof GitBranch.Type;
 
-export class GitWorktree extends Schema.Class<GitWorktree>("GitWorktree")({
+export const GitWorktree = Schema.Struct({
   path: TrimmedNonEmptyString,
   branch: TrimmedNonEmptyString,
-}) {}
+});
+export type GitWorktree = typeof GitWorktree.Type;
 
 // RPC Inputs
 
-export class GitStatusInput extends Schema.Class<GitStatusInput>("GitStatusInput")({
+export const GitStatusInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-}) {}
+});
+export type GitStatusInput = typeof GitStatusInput.Type;
 
-export class GitPullInput extends Schema.Class<GitPullInput>("GitPullInput")({
+export const GitPullInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-}) {}
+});
+export type GitPullInput = typeof GitPullInput.Type;
 
-export class GitRunStackedActionInput extends Schema.Class<GitRunStackedActionInput>(
-  "GitRunStackedActionInput",
-)({
+export const GitRunStackedActionInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   action: GitStackedAction,
   commitMessage: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(10_000))),
-}) {}
+});
+export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 
-export class GitListBranchesInput extends Schema.Class<GitListBranchesInput>(
-  "GitListBranchesInput",
-)({
+export const GitListBranchesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-}) {}
+});
+export type GitListBranchesInput = typeof GitListBranchesInput.Type;
 
-export class GitCreateWorktreeInput extends Schema.Class<GitCreateWorktreeInput>(
-  "GitCreateWorktreeInput",
-)({
+export const GitCreateWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   branch: TrimmedNonEmptyString,
   newBranch: TrimmedNonEmptyString,
   path: TrimmedNonEmptyString.pipe(Schema.NullOr),
-}) {}
+});
+export type GitCreateWorktreeInput = typeof GitCreateWorktreeInput.Type;
 
-export class GitRemoveWorktreeInput extends Schema.Class<GitRemoveWorktreeInput>(
-  "GitRemoveWorktreeInput",
-)({
+export const GitRemoveWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   path: TrimmedNonEmptyString,
   force: Schema.optional(Schema.Boolean),
-}) {}
+});
+export type GitRemoveWorktreeInput = typeof GitRemoveWorktreeInput.Type;
 
-export class GitCreateBranchInput extends Schema.Class<GitCreateBranchInput>(
-  "GitCreateBranchInput",
-)({
+export const GitCreateBranchInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   branch: TrimmedNonEmptyString,
-}) {}
+});
+export type GitCreateBranchInput = typeof GitCreateBranchInput.Type;
 
-export class GitCheckoutInput extends Schema.Class<GitCheckoutInput>("GitCheckoutInput")({
+export const GitCheckoutInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   branch: TrimmedNonEmptyString,
-}) {}
+});
+export type GitCheckoutInput = typeof GitCheckoutInput.Type;
 
-export class GitInitInput extends Schema.Class<GitInitInput>("GitInitInput")({
+export const GitInitInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-}) {}
+});
+export type GitInitInput = typeof GitInitInput.Type;
 
 // RPC Results
 
-export class GitStatusResult extends Schema.Class<GitStatusResult>("GitStatusResult")({
+export const GitStatusResult = Schema.Struct({
   branch: TrimmedNonEmptyString.pipe(Schema.NullOr),
   hasWorkingTreeChanges: Schema.Boolean,
   workingTree: Schema.Struct({
@@ -113,24 +114,21 @@ export class GitStatusResult extends Schema.Class<GitStatusResult>("GitStatusRes
     baseBranch: TrimmedNonEmptyString,
     headBranch: TrimmedNonEmptyString,
   }).pipe(Schema.NullOr),
-}) {}
+});
+export type GitStatusResult = typeof GitStatusResult.Type;
 
-export class GitListBranchesResult extends Schema.Class<GitListBranchesResult>(
-  "GitListBranchesResult",
-)({
+export const GitListBranchesResult = Schema.Struct({
   branches: Schema.Array(GitBranch),
   isRepo: Schema.Boolean,
-}) {}
+});
+export type GitListBranchesResult = typeof GitListBranchesResult.Type;
 
-export class GitCreateWorktreeResult extends Schema.Class<GitCreateWorktreeResult>(
-  "GitCreateWorktreeResult",
-)({
+export const GitCreateWorktreeResult = Schema.Struct({
   worktree: GitWorktree,
-}) {}
+});
+export type GitCreateWorktreeResult = typeof GitCreateWorktreeResult.Type;
 
-export class GitRunStackedActionResult extends Schema.Class<GitRunStackedActionResult>(
-  "GitRunStackedActionResult",
-)({
+export const GitRunStackedActionResult = Schema.Struct({
   action: GitStackedAction,
   commit: Schema.Struct({
     status: GitCommitStepStatus,
@@ -151,10 +149,12 @@ export class GitRunStackedActionResult extends Schema.Class<GitRunStackedActionR
     headBranch: Schema.optional(TrimmedNonEmptyString),
     title: Schema.optional(TrimmedNonEmptyString),
   }),
-}) {}
+});
+export type GitRunStackedActionResult = typeof GitRunStackedActionResult.Type;
 
-export class GitPullResult extends Schema.Class<GitPullResult>("GitPullResult")({
+export const GitPullResult = Schema.Struct({
   status: Schema.Literals(["pulled", "skipped_up_to_date"]),
   branch: TrimmedNonEmptyString,
   upstreamBranch: TrimmedNonEmptyString.pipe(Schema.NullOr),
-}) {}
+});
+export type GitPullResult = typeof GitPullResult.Type;

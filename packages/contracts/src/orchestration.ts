@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Option, Schema, SchemaIssue, Struct } from "effect";
 
 export const ORCHESTRATION_WS_METHODS = {
   getSnapshot: "orchestration.getSnapshot",
@@ -777,13 +777,24 @@ export type OrchestrationCommandReceiptStatus = typeof OrchestrationCommandRecei
 export const TurnCountRange = Schema.Struct({
   fromTurnCount: NonNegativeInt,
   toTurnCount: NonNegativeInt,
-});
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      input.fromTurnCount <= input.toTurnCount ||
+      new SchemaIssue.InvalidValue(Option.some(input.fromTurnCount), {
+        message: "fromTurnCount must be less than or equal to toTurnCount",
+      }),
+    { identifier: "OrchestrationTurnDiffRange" },
+  ),
+);
 
-export const ThreadTurnDiff = Schema.Struct({
-  threadId: ThreadId,
-  ...TurnCountRange.fields,
-  diff: Schema.String,
-});
+export const ThreadTurnDiff = TurnCountRange.mapFields(
+  Struct.assign({
+    threadId: ThreadId,
+    diff: Schema.String,
+  }),
+  { unsafePreserveChecks: true },
+);
 
 export const ProviderSessionRuntimeStatus = Schema.Literals([
   "starting",
@@ -829,10 +840,10 @@ export type OrchestrationGetSnapshotInput = typeof OrchestrationGetSnapshotInput
 export const OrchestrationGetSnapshotResult = OrchestrationReadModel;
 export type OrchestrationGetSnapshotResult = typeof OrchestrationGetSnapshotResult.Type;
 
-export const OrchestrationGetTurnDiffInput = Schema.Struct({
-  threadId: ThreadId,
-  ...TurnCountRange.fields,
-});
+export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
+  Struct.assign({ threadId: ThreadId }),
+  { unsafePreserveChecks: true },
+);
 export type OrchestrationGetTurnDiffInput = typeof OrchestrationGetTurnDiffInput.Type;
 
 export const OrchestrationGetTurnDiffResult = ThreadTurnDiff;

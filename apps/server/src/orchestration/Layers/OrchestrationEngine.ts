@@ -5,13 +5,11 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
-import { Deferred, Effect, Layer, Option, PubSub, Queue, Schema, Stream } from "effect";
+import { Deferred, Effect, Layer, Option, PubSub, Queue, Stream } from "effect";
 
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import {
-  toOrchestrationCommandDecodeError,
-  toOrchestrationJsonParseError,
   OrchestrationCommandInvariantError,
   OrchestrationCommandPreviouslyRejectedError,
   type OrchestrationDispatchError,
@@ -28,8 +26,6 @@ interface CommandEnvelope {
   command: OrchestrationCommand;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
 }
-
-const decodeUnknownCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 
 function commandToAggregateRef(command: OrchestrationCommand): {
   readonly aggregateKind: "project" | "thread";
@@ -175,30 +171,12 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       return yield* Deferred.await(result);
     });
 
-  const dispatchUnknownCommand: OrchestrationEngineShape["dispatchUnknownCommand"] = (command) =>
-    Effect.gen(function* () {
-      const payload =
-        typeof command === "string"
-          ? yield* Effect.try({
-              try: () => JSON.parse(command) as unknown,
-              catch: toOrchestrationJsonParseError,
-            })
-          : command;
-
-      const decoded = yield* decodeUnknownCommand(payload).pipe(
-        Effect.mapError(toOrchestrationCommandDecodeError),
-      );
-
-      return yield* dispatch(decoded);
-    });
-
   const streamDomainEvents: OrchestrationEngineShape["streamDomainEvents"] =
     Stream.fromPubSub(eventPubSub);
 
   return {
     getReadModel,
     readEvents,
-    dispatchUnknownCommand,
     dispatch,
     streamDomainEvents,
   } satisfies OrchestrationEngineShape;

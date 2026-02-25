@@ -1,15 +1,25 @@
 import {
+  type ApprovalRequestId,
+  DEFAULT_MODEL,
+  DEFAULT_REASONING,
   EDITORS,
   type EditorId,
   type KeybindingCommand,
-  type NativeApi,
+  type MessageId,
+  MODEL_OPTIONS,
+  type ProjectId,
   type ProjectEntry,
   type ProjectScript,
   ModelSlug,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  REASONING_OPTIONS,
+  type ReasoningEffort,
   type ResolvedKeybindingsConfig,
   type ProviderApprovalDecision,
+  type ThreadId,
+  type TurnId,
+  resolveModelSlug,
 } from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -27,14 +37,6 @@ import {
   detectComposerTrigger,
   replaceTextRange,
 } from "../composer-logic";
-import {
-  DEFAULT_MODEL,
-  DEFAULT_REASONING,
-  MODEL_OPTIONS,
-  REASONING_OPTIONS,
-  ReasoningEffort,
-  resolveModelSlug,
-} from "../model-logic";
 import {
   derivePendingApprovals,
   derivePhase,
@@ -66,7 +68,6 @@ import {
 } from "../keybindings";
 import ChatMarkdown from "./ChatMarkdown";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { useNativeApi } from "../hooks/useNativeApi";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import {
   BotIcon,
@@ -101,13 +102,8 @@ import {
 } from "~/projectScripts";
 import { Toggle } from "./ui/toggle";
 import { SidebarTrigger } from "./ui/sidebar";
-import {
-  asApprovalRequestId,
-  asProjectId,
-  asThreadId,
-  newCommandId,
-  newMessageId,
-} from "~/lib/orchestrationIds";
+import { newCommandId, newMessageId } from "~/lib/orchestrationIds";
+import { readNativeApi } from "~/nativeApi";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
   if (!duration) return formatTimestamp(createdAt);
@@ -326,7 +322,7 @@ const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
 });
 
 interface ChatViewProps {
-  threadId: string;
+  threadId: ThreadId;
 }
 
 export default function ChatView({ threadId }: ChatViewProps) {
@@ -336,12 +332,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     strict: false,
     select: (params) => parseDiffRouteSearch(params),
   });
-  const api = useNativeApi();
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
-  const createWorktreeMutation = useMutation(
-    gitCreateWorktreeMutationOptions({ api, queryClient }),
-  );
+  const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
   const [prompt, setPrompt] = useState("");
   const promptRef = useRef(prompt);
   const [composerImages, setComposerImages] = useState<ComposerImageAttachment[]>([]);
@@ -353,7 +346,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [selectedEffort, setSelectedEffort] = useState(DEFAULT_REASONING);
   const [envMode, setEnvMode] = useState<"local" | "worktree">("local");
   const [isSwitchingRuntimeMode, setIsSwitchingRuntimeMode] = useState(false);
-  const [respondingRequestIds, setRespondingRequestIds] = useState<string[]>([]);
+  const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
@@ -429,7 +422,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
-    const byMessageId = new Map<string, TurnDiffSummary>();
+    const byMessageId = new Map<MessageId, TurnDiffSummary>();
     for (const summary of turnDiffSummaries) {
       if (!summary.assistantMessageId) continue;
       byMessageId.set(summary.assistantMessageId, summary);
@@ -437,7 +430,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return byMessageId;
   }, [turnDiffSummaries]);
   const revertTurnCountByUserMessageId = useMemo(() => {
-    const byUserMessageId = new Map<string, number>();
+    const byUserMessageId = new Map<MessageId, number>();
     for (let index = 0; index < timelineEntries.length; index += 1) {
       const entry = timelineEntries[index];
       if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
@@ -536,14 +529,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (debouncerState) => ({ isPending: debouncerState.isPending }),
   );
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
-  const branchesQuery = useQuery(gitBranchesQueryOptions(api, gitCwd));
+  const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
   const keybindingsQuery = useQuery({
-    ...serverConfigQueryOptions(api),
+    ...serverConfigQueryOptions(),
     select: (config) => config.keybindings,
   });
   const workspaceEntriesQuery = useQuery(
     projectSearchEntriesQueryOptions({
-      api,
       cwd: gitCwd,
       query: effectivePathQuery,
       enabled: isPathTrigger,
@@ -689,6 +681,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const closeTerminal = useCallback(
     (terminalId: string) => {
+      const api = readNativeApi();
       if (!activeThreadId || !api) return;
       const isFinalTerminal = (activeThread?.terminalIds.length ?? 0) <= 1;
       const fallbackExitWrite = () =>
@@ -714,7 +707,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       setTerminalFocusRequestId((value) => value + 1);
     },
-    [activeThread?.terminalIds.length, activeThreadId, api, dispatch],
+    [activeThread?.terminalIds.length, activeThreadId, dispatch],
   );
   const runProjectScript = useCallback(
     async (
@@ -727,6 +720,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         rememberAsLastInvoked?: boolean;
       },
     ) => {
+      const api = readNativeApi();
       if (!api || !activeThreadId || !activeProject || !activeThread) return;
       if (options?.rememberAsLastInvoked !== false) {
         setLastInvokedScriptByProjectId((current) => {
@@ -799,23 +793,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
       }
     },
-    [activeProject, activeThread, activeThreadId, api, dispatch, gitCwd],
+    [activeProject, activeThread, activeThreadId, dispatch, gitCwd],
   );
   const persistProjectScripts = useCallback(
     async (input: {
-      projectId: string;
+      projectId: ProjectId;
       projectCwd: string;
       previousScripts: ProjectScript[];
       nextScripts: ProjectScript[];
       keybinding?: string | null;
       keybindingCommand: KeybindingCommand;
     }) => {
+      const api = readNativeApi();
       if (!api) return;
 
       await api.orchestration.dispatchCommand({
         type: "project.meta.update",
         commandId: newCommandId(),
-        projectId: asProjectId(input.projectId),
+        projectId: input.projectId,
         scripts: input.nextScripts,
       });
 
@@ -836,7 +831,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         );
       }
     },
-    [api, queryClient],
+    [queryClient],
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput) => {
@@ -911,6 +906,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (mode === state.runtimeMode) return;
     dispatch({ type: "SET_RUNTIME_MODE", mode });
     scheduleComposerFocus();
+    const api = readNativeApi();
     if (!api) return;
 
     const runningThreadIds = state.threads
@@ -927,7 +923,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             .dispatchCommand({
               type: "thread.session.stop",
               commandId: newCommandId(),
-              threadId: asThreadId(threadId),
+              threadId,
               createdAt: new Date().toISOString(),
             })
             .catch(() => undefined),
@@ -1182,7 +1178,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
 
   const setThreadError = useCallback(
-    (threadId: string | null, error: string | null) => {
+    (threadId: ThreadId | null, error: string | null) => {
       if (!threadId) return;
       dispatch({
         type: "SET_ERROR",
@@ -1298,9 +1294,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const onRevertToTurnCount = useCallback(
     async (turnCount: number) => {
-      if (!api || !activeThread || isRevertingCheckpoint) {
-        return;
-      }
+      const api = readNativeApi();
+      if (!api || !activeThread || isRevertingCheckpoint) return;
+
       if (phase === "running" || isSending || isConnecting) {
         setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
         return;
@@ -1322,7 +1318,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         await api.orchestration.dispatchCommand({
           type: "thread.checkpoint.revert",
           commandId: newCommandId(),
-          threadId: asThreadId(activeThread.id),
+          threadId: activeThread.id,
           turnCount,
           createdAt: new Date().toISOString(),
         });
@@ -1335,11 +1331,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setIsRevertingCheckpoint(false);
       }
     },
-    [activeThread, api, isConnecting, isRevertingCheckpoint, isSending, phase, setThreadError],
+    [activeThread, isConnecting, isRevertingCheckpoint, isSending, phase, setThreadError],
   );
 
   const onSend = async (e: React.SubmitEvent | React.KeyboardEvent) => {
     e.preventDefault();
+    const api = readNativeApi();
     if (!api || !activeThread || isSending || isConnecting) return;
     const trimmed = prompt.trim();
     if (!trimmed && composerImages.length === 0) return;
@@ -1363,7 +1360,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         await api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
-          threadId: asThreadId(activeThread.id),
+          threadId: activeThread.id,
           branch: result.worktree.branch,
           worktreePath: result.worktree.path,
         });
@@ -1397,7 +1394,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         await api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
-          threadId: asThreadId(activeThread.id),
+          threadId: activeThread.id,
           title,
         });
       }
@@ -1434,7 +1431,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       await api.orchestration.dispatchCommand({
         type: "thread.turn.start",
         commandId: newCommandId(),
-        threadId: asThreadId(activeThread.id),
+        threadId: activeThread.id,
         message: {
           messageId: newMessageId(),
           role: "user",
@@ -1456,17 +1453,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
   };
 
   const onInterrupt = async () => {
+    const api = readNativeApi();
     if (!api || !activeThread) return;
     await api.orchestration.dispatchCommand({
       type: "thread.turn.interrupt",
       commandId: newCommandId(),
-      threadId: asThreadId(activeThread.id),
+      threadId: activeThread.id,
       createdAt: new Date().toISOString(),
     });
   };
 
   const onRespondToApproval = useCallback(
-    async (requestId: string, decision: ProviderApprovalDecision) => {
+    async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
+      const api = readNativeApi();
       if (!api || !activeThreadId) return;
 
       setRespondingRequestIds((existing) =>
@@ -1476,8 +1475,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         await api.orchestration.dispatchCommand({
           type: "thread.approval.respond",
           commandId: newCommandId(),
-          threadId: asThreadId(activeThreadId),
-          requestId: asApprovalRequestId(requestId),
+          threadId: activeThreadId,
+          requestId,
           decision,
           createdAt: new Date().toISOString(),
         });
@@ -1491,23 +1490,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
       }
     },
-    [activeThreadId, api, dispatch],
+    [activeThreadId, dispatch],
   );
 
   const onModelSelect = useCallback(
     (model: ModelSlug) => {
+      const api = readNativeApi();
       if (!activeThread) return;
       if (api) {
         void api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
-          threadId: asThreadId(activeThread.id),
+          threadId: activeThread.id,
           model: resolveModelSlug(model),
         });
       }
       scheduleComposerFocus();
     },
-    [activeThread, api, scheduleComposerFocus],
+    [activeThread, scheduleComposerFocus],
   );
   const onEffortSelect = useCallback(
     (effort: ReasoningEffort) => {
@@ -1629,7 +1629,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     });
   }, [diffOpen, navigate, threadId]);
   const onOpenTurnDiff = useCallback(
-    (turnId: string, filePath?: string) => {
+    (turnId: TurnId, filePath?: string) => {
       void navigate({
         to: "/$threadId",
         params: { threadId },
@@ -1644,7 +1644,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [navigate, threadId],
   );
   const onRevertUserMessage = useCallback(
-    (messageId: string) => {
+    (messageId: MessageId) => {
       const targetTurnCount = revertTurnCountByUserMessageId.get(messageId);
       if (typeof targetTurnCount !== "number") {
         return;
@@ -1698,7 +1698,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
             activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
           }
           keybindings={keybindings}
-          api={api}
           gitCwd={gitCwd}
           diffOpen={diffOpen}
           onRunProjectScript={(script) => {
@@ -1971,35 +1970,39 @@ export default function ChatView({ threadId }: ChatViewProps) {
         />
       )}
 
-      {activeThread.terminalOpen && api && activeProject && (
-        <ThreadTerminalDrawer
-          key={activeThread.id}
-          api={api}
-          threadId={activeThread.id}
-          cwd={gitCwd ?? activeProject.cwd}
-          runtimeEnv={threadTerminalRuntimeEnv}
-          height={activeThread.terminalHeight}
-          terminalIds={activeThread.terminalIds}
-          activeTerminalId={activeThread.activeTerminalId}
-          terminalGroups={activeThread.terminalGroups}
-          activeTerminalGroupId={activeThread.activeTerminalGroupId}
-          focusRequestId={terminalFocusRequestId}
-          onSplitTerminal={splitTerminal}
-          onNewTerminal={createNewTerminal}
-          splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-          newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-          closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-          onActiveTerminalChange={activateTerminal}
-          onCloseTerminal={closeTerminal}
-          onHeightChange={(height) =>
-            dispatch({
-              type: "SET_THREAD_TERMINAL_HEIGHT",
-              threadId: activeThread.id,
-              height,
-            })
-          }
-        />
-      )}
+      {(() => {
+        if (!activeThread.terminalOpen || !activeProject) {
+          return null;
+        }
+        return (
+          <ThreadTerminalDrawer
+            key={activeThread.id}
+            threadId={activeThread.id}
+            cwd={gitCwd ?? activeProject.cwd}
+            runtimeEnv={threadTerminalRuntimeEnv}
+            height={activeThread.terminalHeight}
+            terminalIds={activeThread.terminalIds}
+            activeTerminalId={activeThread.activeTerminalId}
+            terminalGroups={activeThread.terminalGroups}
+            activeTerminalGroupId={activeThread.activeTerminalGroupId}
+            focusRequestId={terminalFocusRequestId}
+            onSplitTerminal={splitTerminal}
+            onNewTerminal={createNewTerminal}
+            splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+            newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+            closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+            onActiveTerminalChange={activateTerminal}
+            onCloseTerminal={closeTerminal}
+            onHeightChange={(height) =>
+              dispatch({
+                type: "SET_THREAD_TERMINAL_HEIGHT",
+                threadId: activeThread.id,
+                height,
+              })
+            }
+          />
+        );
+      })()}
 
       {expandedImage && (
         <div
@@ -2040,13 +2043,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
 }
 
 interface ChatHeaderProps {
-  activeThreadId: string;
+  activeThreadId: ThreadId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
   activeProjectScripts: ProjectScript[] | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
-  api: NativeApi | undefined;
   gitCwd: string | null;
   diffOpen: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
@@ -2062,7 +2064,6 @@ const ChatHeader = memo(function ChatHeader({
   activeProjectScripts,
   preferredScriptId,
   keybindings,
-  api,
   gitCwd,
   diffOpen,
   onRunProjectScript,
@@ -2100,9 +2101,7 @@ const ChatHeader = memo(function ChatHeader({
         {activeProjectName && (
           <OpenInPicker keybindings={keybindings} activeThreadId={activeThreadId} />
         )}
-        {activeProjectName && (
-          <GitActionsControl api={api} gitCwd={gitCwd} activeThreadId={activeThreadId} />
-        )}
+        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
         <Toggle
           className="shrink-0"
           pressed={diffOpen}
@@ -2134,8 +2133,11 @@ const ThreadErrorBanner = memo(function ThreadErrorBanner({ error }: { error: st
 
 interface PendingApprovalsPanelProps {
   pendingApprovals: PendingApproval[];
-  respondingRequestIds: string[];
-  onRespondToApproval: (requestId: string, decision: ProviderApprovalDecision) => Promise<void>;
+  respondingRequestIds: ApprovalRequestId[];
+  onRespondToApproval: (
+    requestId: ApprovalRequestId,
+    decision: ProviderApprovalDecision,
+  ) => Promise<void>;
 }
 
 const PendingApprovalsPanel = memo(function PendingApprovalsPanel({
@@ -2211,13 +2213,13 @@ interface MessagesTimelineProps {
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   completionDividerBeforeEntryId: string | null;
   completionSummary: string | null;
-  turnDiffSummaryByAssistantMessageId: Map<string, TurnDiffSummary>;
+  turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   nowIso: string;
   expandedWorkGroups: Record<string, boolean>;
   onToggleWorkGroup: (groupId: string) => void;
-  onOpenTurnDiff: (turnId: string, filePath?: string) => void;
-  revertTurnCountByUserMessageId: Map<string, number>;
-  onRevertUserMessage: (messageId: string) => void;
+  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  revertTurnCountByUserMessageId: Map<MessageId, number>;
+  onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (image: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
@@ -2667,7 +2669,7 @@ const OpenInPicker = memo(function OpenInPicker({
   activeThreadId,
 }: {
   keybindings: ResolvedKeybindingsConfig;
-  activeThreadId: string | null;
+  activeThreadId: ThreadId | null;
 }) {
   const [lastEditor, setLastEditor] = useState<EditorId>(() => {
     const stored = localStorage.getItem(LAST_EDITOR_KEY);
@@ -2692,13 +2694,13 @@ const OpenInPicker = memo(function OpenInPicker({
   ] satisfies { label: string; Icon: Icon; value: EditorId }[];
   const primaryOption = options.find(({ value }) => value === lastEditor);
 
-  const api = useNativeApi();
   const { state } = useStore();
   const activeThread = state.threads.find((t) => t.id === activeThreadId);
   const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
 
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
+      const api = readNativeApi();
       if (!api || !activeProject) return;
       const editor = editorId ?? lastEditor;
       const cwd = activeThread?.worktreePath ?? activeProject.cwd;
@@ -2706,7 +2708,7 @@ const OpenInPicker = memo(function OpenInPicker({
       localStorage.setItem(LAST_EDITOR_KEY, editor);
       setLastEditor(editor);
     },
-    [api, activeProject, activeThread, lastEditor, setLastEditor],
+    [activeProject, activeThread, lastEditor, setLastEditor],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -2716,6 +2718,7 @@ const OpenInPicker = memo(function OpenInPicker({
 
   useEffect(() => {
     const handler = (e: globalThis.KeyboardEvent) => {
+      const api = readNativeApi();
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
       if (!api || !activeProject) return;
 
@@ -2725,7 +2728,7 @@ const OpenInPicker = memo(function OpenInPicker({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [api, activeProject, activeThread, keybindings, lastEditor]);
+  }, [activeProject, activeThread, keybindings, lastEditor]);
 
   return (
     <Group aria-label="Subscription actions">

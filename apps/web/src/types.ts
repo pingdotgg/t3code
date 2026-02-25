@@ -2,6 +2,14 @@ import type {
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
   ProjectScript as ContractProjectScript,
+  ThreadId,
+  ProjectId,
+  TurnId,
+  MessageId,
+  CheckpointRef,
+  ProviderThreadId,
+  ProviderSessionId,
+  ProviderKind,
 } from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -29,7 +37,7 @@ export interface ChatImageAttachment {
 export type ChatAttachment = ChatImageAttachment;
 
 export interface ChatMessage {
-  id: string;
+  id: MessageId;
   role: "user" | "assistant" | "system";
   text: string;
   attachments?: ChatAttachment[];
@@ -46,17 +54,17 @@ export interface TurnDiffFileChange {
 }
 
 export interface TurnDiffSummary {
-  turnId: string;
+  turnId: TurnId;
   completedAt: string;
   status?: string | undefined;
   files: TurnDiffFileChange[];
-  checkpointRef?: string | undefined;
-  assistantMessageId?: string | undefined;
+  checkpointRef?: CheckpointRef | undefined;
+  assistantMessageId?: MessageId | undefined;
   checkpointTurnCount?: number | undefined;
 }
 
 export interface Project {
-  id: string;
+  id: ProjectId;
   name: string;
   cwd: string;
   model: string;
@@ -65,9 +73,9 @@ export interface Project {
 }
 
 export interface Thread {
-  id: string;
-  codexThreadId: string | null;
-  projectId: string;
+  id: ThreadId;
+  codexThreadId: ProviderThreadId | null;
+  projectId: ProjectId;
   title: string;
   model: string;
   terminalOpen: boolean;
@@ -81,7 +89,7 @@ export interface Thread {
   messages: ChatMessage[];
   error: string | null;
   createdAt: string;
-  latestTurnId?: string | undefined;
+  latestTurnId?: TurnId | undefined;
   latestTurnStartedAt?: string | undefined;
   latestTurnCompletedAt?: string | undefined;
   latestTurnDurationMs?: number | undefined;
@@ -93,11 +101,11 @@ export interface Thread {
 }
 
 export interface ThreadSession {
-  sessionId: string;
-  provider: "codex" | "claudeCode";
+  sessionId: ProviderSessionId;
+  provider: ProviderKind;
   status: SessionPhase | "error" | "closed";
-  threadId: string | null;
-  activeTurnId?: string | undefined;
+  threadId: ProviderThreadId | null;
+  activeTurnId?: TurnId | undefined;
   createdAt: string;
   updatedAt: string;
   lastError?: string;

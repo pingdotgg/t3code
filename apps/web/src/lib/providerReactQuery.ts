@@ -1,9 +1,14 @@
-import type { NativeApi } from "@t3tools/contracts";
+import {
+  OrchestrationGetFullThreadDiffInput,
+  OrchestrationGetTurnDiffInput,
+  ThreadId,
+} from "@t3tools/contracts";
 import { queryOptions } from "@tanstack/react-query";
-import { asThreadId } from "./orchestrationIds";
+import { Option, Schema } from "effect";
+import { ensureNativeApi } from "../nativeApi";
 
-export interface CheckpointDiffQueryInput {
-  threadId: string | null;
+interface CheckpointDiffQueryInput {
+  threadId: ThreadId | null;
   fromTurnCount: number | null;
   toTurnCount: number | null;
   cacheScope?: string | null;
@@ -21,6 +26,21 @@ export const providerQueryKeys = {
       input.cacheScope ?? null,
     ] as const,
 };
+
+function decodeCheckpointDiffRequest(input: CheckpointDiffQueryInput) {
+  if (input.fromTurnCount === 0) {
+    return Schema.decodeUnknownOption(OrchestrationGetFullThreadDiffInput)({
+      threadId: input.threadId,
+      toTurnCount: input.toTurnCount,
+    }).pipe(Option.map((fields) => ({ kind: "fullThreadDiff" as const, input: fields })));
+  }
+
+  return Schema.decodeUnknownOption(OrchestrationGetTurnDiffInput)({
+    threadId: input.threadId,
+    fromTurnCount: input.fromTurnCount,
+    toTurnCount: input.toTurnCount,
+  }).pipe(Option.map((fields) => ({ kind: "turnDiff" as const, input: fields })));
+}
 
 function asCheckpointErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -41,42 +61,22 @@ function isCheckpointTemporarilyUnavailable(error: unknown): boolean {
   );
 }
 
-export function checkpointDiffQueryOptions(
-  api: NativeApi | undefined,
-  input: CheckpointDiffQueryInput,
-) {
-  const hasValidRange =
-    typeof input.fromTurnCount === "number" &&
-    typeof input.toTurnCount === "number" &&
-    Number.isInteger(input.fromTurnCount) &&
-    Number.isInteger(input.toTurnCount) &&
-    input.fromTurnCount >= 0 &&
-    input.toTurnCount >= 0 &&
-    input.fromTurnCount <= input.toTurnCount;
+export function checkpointDiffQueryOptions(input: CheckpointDiffQueryInput) {
+  const decodedRequest = decodeCheckpointDiffRequest(input);
 
   return queryOptions({
     queryKey: providerQueryKeys.checkpointDiff(input),
     queryFn: async () => {
-      if (!api || !input.threadId || !hasValidRange) {
+      const api = ensureNativeApi();
+      if (!input.threadId || decodedRequest._tag === "None") {
         throw new Error("Checkpoint diff is unavailable.");
       }
-      const { fromTurnCount, toTurnCount } = input;
-      if (typeof fromTurnCount !== "number" || typeof toTurnCount !== "number") {
-        throw new Error("Checkpoint diff range is invalid.");
+      if (decodedRequest.value.kind === "fullThreadDiff") {
+        return api.orchestration.getFullThreadDiff(decodedRequest.value.input);
       }
-      if (fromTurnCount === 0) {
-        return api.orchestration.getFullThreadDiff({
-          threadId: asThreadId(input.threadId),
-          toTurnCount,
-        });
-      }
-      return api.orchestration.getTurnDiff({
-        threadId: asThreadId(input.threadId),
-        fromTurnCount,
-        toTurnCount,
-      });
+      return api.orchestration.getTurnDiff(decodedRequest.value.input);
     },
-    enabled: !!api && !!input.threadId && hasValidRange,
+    enabled: !!input.threadId && decodedRequest._tag === "Some",
     staleTime: Infinity,
     retry: (failureCount, error) => {
       if (isCheckpointTemporarilyUnavailable(error)) {

@@ -3,7 +3,7 @@ import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
-import { useNativeApi } from "../hooks/useNativeApi";
+import { readNativeApi } from "../nativeApi";
 import { resolveMarkdownFileLinkTarget } from "../markdown-links";
 import { preferredTerminalEditor } from "../terminal-links";
 
@@ -13,12 +13,11 @@ interface ChatMarkdownProps {
 }
 
 function ChatMarkdown({ text, cwd }: ChatMarkdownProps) {
-  const api = useNativeApi();
   const markdownComponents = useMemo<Components>(
     () => ({
       a({ node: _node, href, ...props }) {
         const targetPath = resolveMarkdownFileLinkTarget(href, cwd);
-        if (!targetPath || !api) {
+        if (!targetPath) {
           return <a {...props} href={href} target="_blank" rel="noreferrer" />;
         }
 
@@ -29,13 +28,18 @@ function ChatMarkdown({ text, cwd }: ChatMarkdownProps) {
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              void api.shell.openInEditor(targetPath, preferredTerminalEditor());
+              const api = readNativeApi();
+              if (api) {
+                void api.shell.openInEditor(targetPath, preferredTerminalEditor());
+              } else {
+                console.warn("Native API not found. Unable to open file in editor.");
+              }
             }}
           />
         );
       },
     }),
-    [api, cwd],
+    [cwd],
   );
 
   return (

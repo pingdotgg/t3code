@@ -3,6 +3,7 @@
 import { Toast } from "@base-ui/react/toast";
 import { useEffect } from "react";
 import { useParams } from "@tanstack/react-router";
+import { ThreadId } from "@t3tools/contracts";
 import {
   CircleAlertIcon,
   CircleCheckIcon,
@@ -16,7 +17,7 @@ import { buttonVariants } from "~/components/ui/button";
 import { shouldHideCollapsedToastContent } from "./toast.logic";
 
 type ThreadToastData = {
-  threadId?: string | null;
+  threadId?: ThreadId | null;
   tooltipStyle?: boolean;
   dismissAfterVisibleMs?: number;
 };
@@ -48,17 +49,18 @@ interface ToastProviderProps extends Toast.Provider.Props {
 
 function shouldRenderForActiveThread(
   data: ThreadToastData | undefined,
-  activeThreadId: string | null,
+  activeThreadId: ThreadId | null,
 ): boolean {
   const toastThreadId = data?.threadId;
   if (!toastThreadId) return true;
   return toastThreadId === activeThreadId;
 }
 
-function useActiveThreadIdFromRoute(): string | null {
+function useActiveThreadIdFromRoute(): ThreadId | null {
   return useParams({
     strict: false,
-    select: (params) => params.threadId ?? null,
+    select: (params) =>
+      typeof params.threadId === "string" ? ThreadId.makeUnsafe(params.threadId) : null,
   });
 }
 

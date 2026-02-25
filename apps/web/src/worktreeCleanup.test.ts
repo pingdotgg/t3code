@@ -1,3 +1,4 @@
+import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_THREAD_TERMINAL_HEIGHT, DEFAULT_THREAD_TERMINAL_ID, type Thread } from "./types";
@@ -5,9 +6,9 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
-    id: "thread-1",
+    id: ThreadId.makeUnsafe("thread-1"),
     codexThreadId: null,
-    projectId: "project-1",
+    projectId: ProjectId.makeUnsafe("project-1"),
     title: "Thread",
     model: "gpt-5.3-codex",
     terminalOpen: false,
@@ -36,37 +37,49 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 
 describe("getOrphanedWorktreePathForThread", () => {
   it("returns null when the target thread does not exist", () => {
-    const result = getOrphanedWorktreePathForThread([], "missing-thread");
+    const result = getOrphanedWorktreePathForThread([], ThreadId.makeUnsafe("missing-thread"));
     expect(result).toBeNull();
   });
 
   it("returns null when the target thread has no worktree", () => {
     const threads = [makeThread()];
-    const result = getOrphanedWorktreePathForThread(threads, "thread-1");
+    const result = getOrphanedWorktreePathForThread(threads, ThreadId.makeUnsafe("thread-1"));
     expect(result).toBeNull();
   });
 
   it("returns the path when no other thread links to that worktree", () => {
     const threads = [makeThread({ worktreePath: "/tmp/repo/worktrees/feature-a" })];
-    const result = getOrphanedWorktreePathForThread(threads, "thread-1");
+    const result = getOrphanedWorktreePathForThread(threads, ThreadId.makeUnsafe("thread-1"));
     expect(result).toBe("/tmp/repo/worktrees/feature-a");
   });
 
   it("returns null when another thread links to the same worktree", () => {
     const threads = [
-      makeThread({ id: "thread-1", worktreePath: "/tmp/repo/worktrees/feature-a" }),
-      makeThread({ id: "thread-2", worktreePath: "/tmp/repo/worktrees/feature-a" }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        worktreePath: "/tmp/repo/worktrees/feature-a",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-2"),
+        worktreePath: "/tmp/repo/worktrees/feature-a",
+      }),
     ];
-    const result = getOrphanedWorktreePathForThread(threads, "thread-1");
+    const result = getOrphanedWorktreePathForThread(threads, ThreadId.makeUnsafe("thread-1"));
     expect(result).toBeNull();
   });
 
   it("ignores threads linked to different worktrees", () => {
     const threads = [
-      makeThread({ id: "thread-1", worktreePath: "/tmp/repo/worktrees/feature-a" }),
-      makeThread({ id: "thread-2", worktreePath: "/tmp/repo/worktrees/feature-b" }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        worktreePath: "/tmp/repo/worktrees/feature-a",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-2"),
+        worktreePath: "/tmp/repo/worktrees/feature-b",
+      }),
     ];
-    const result = getOrphanedWorktreePathForThread(threads, "thread-1");
+    const result = getOrphanedWorktreePathForThread(threads, ThreadId.makeUnsafe("thread-1"));
     expect(result).toBe("/tmp/repo/worktrees/feature-a");
   });
 });

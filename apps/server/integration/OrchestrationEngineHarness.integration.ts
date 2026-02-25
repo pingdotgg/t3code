@@ -6,7 +6,6 @@ import { execFileSync } from "node:child_process";
 import { NodeServices } from "@effect/platform-node";
 import {
   ApprovalRequestId,
-  CheckpointRef,
   type OrchestrationEvent,
   type OrchestrationThread,
 } from "@t3tools/contracts";
@@ -61,11 +60,6 @@ function initializeGitWorkspace(cwd: string) {
   fs.writeFileSync(path.join(cwd, "README.md"), "v1\n", "utf8");
   runGit(cwd, ["add", "."]);
   runGit(cwd, ["commit", "-m", "Initial"]);
-}
-
-export function checkpointRefForTurn(threadId: string, turnCount: number): CheckpointRef {
-  const encodedThreadId = Buffer.from(threadId, "utf8").toString("base64url");
-  return CheckpointRef.makeUnsafe(`refs/t3/checkpoints/${encodedThreadId}/turn/${turnCount}`);
 }
 
 export function gitRefExists(cwd: string, ref: string): boolean {

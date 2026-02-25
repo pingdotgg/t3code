@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { PtyAdapterShape, PtyExitEvent, PtyProcess, PtySpawnInput } from "./ptyAdapter";
 import { TerminalManagerRuntime } from "./terminalManager";
+import { Encoding } from "effect";
 
 class FakePtyProcess implements PtyProcess {
   readonly writes: string[] = [];
@@ -107,15 +108,15 @@ function openInput(overrides: Partial<TerminalOpenInput> = {}): TerminalOpenInpu
 }
 
 function historyLogName(threadId: string): string {
-  return `terminal_${Buffer.from(threadId, "utf8").toString("base64url")}.log`;
+  return `terminal_${Encoding.encodeBase64Url(threadId)}.log`;
 }
 
 function multiTerminalHistoryLogName(threadId: string, terminalId: string): string {
-  const threadPart = `terminal_${Buffer.from(threadId, "utf8").toString("base64url")}`;
+  const threadPart = `terminal_${Encoding.encodeBase64Url(threadId)}`;
   if (terminalId === DEFAULT_TERMINAL_ID) {
     return `${threadPart}.log`;
   }
-  return `${threadPart}_${Buffer.from(terminalId, "utf8").toString("base64url")}.log`;
+  return `${threadPart}_${Encoding.encodeBase64Url(terminalId)}.log`;
 }
 
 function historyLogPath(logsDir: string, threadId = "thread-1"): string {

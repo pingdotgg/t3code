@@ -4,19 +4,19 @@ import path from "node:path";
 import type { Duplex } from "node:stream";
 
 import {
-  CheckpointRef,
+  CommandId,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
+  ProjectId,
   TerminalEvent,
   WS_CHANNELS,
   WS_METHODS,
   WebSocketRequest,
-  WebSocketResponse,
   WsPush,
   WsResponse,
 } from "@t3tools/contracts";
 import { NodeHttpServer } from "@effect/platform-node";
-import { Cause, Effect, Exit, Layer, Schema, Scope, ServiceMap, Stream } from "effect";
+import { Cause, Effect, Exit, Layer, Schema, Scope, ServiceMap, Stream, Struct } from "effect";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { createLogger } from "./logger";
@@ -37,7 +37,7 @@ import { OrchestrationEngineService } from "./orchestration/Services/Orchestrati
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
 import { ProviderService } from "./provider/Services/ProviderService";
-import { CheckpointStore } from "./checkpointing/Services/CheckpointStore";
+import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { clamp } from "effect/Number";
 import { Open } from "./open";
 import { ServerConfig } from "./config";
@@ -133,22 +133,14 @@ function websocketRawToString(raw: unknown): string | null {
   return null;
 }
 
-function stripRequestTag<T extends { _tag: string }>(body: T): Omit<T, "_tag"> {
-  const { _tag: _ignoredTag, ...rest } = body;
-  return rest;
-}
-
-const CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
-
-function checkpointRefForThreadTurn(threadId: string, turnCount: number): CheckpointRef {
-  const encodedThreadId = Buffer.from(threadId, "utf8").toString("base64url");
-  return CheckpointRef.makeUnsafe(`${CHECKPOINT_REFS_PREFIX}/${encodedThreadId}/turn/${turnCount}`);
+function stripRequestTag<T extends { _tag: string }>(body: T) {
+  return Struct.omit(body, ["_tag"]);
 }
 
 export type ServerCoreRuntimeServices =
   | OrchestrationEngineService
   | ProjectionSnapshotQuery
-  | CheckpointStore
+  | CheckpointDiffQuery
   | OrchestrationReactor
   | ProviderService;
 
@@ -301,7 +293,7 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
 
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
-  const liveCheckpointStore = yield* CheckpointStore;
+  const checkpointDiffQuery = yield* CheckpointDiffQuery;
   const liveProviderService = yield* ProviderService;
   const orchestrationReactor = yield* OrchestrationReactor;
   const { openInEditor } = yield* Open;
@@ -338,10 +330,10 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
     if (!existing) {
       const createdAt = new Date().toISOString();
       const projectName = path.basename(cwd) || "project";
-      yield* orchestrationEngine.dispatchUnknownCommand({
+      yield* orchestrationEngine.dispatch({
         type: "project.create",
-        commandId: crypto.randomUUID(),
-        projectId: crypto.randomUUID(),
+        commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+        projectId: ProjectId.makeUnsafe(crypto.randomUUID()),
         title: projectName,
         workspaceRoot: cwd,
         defaultModel: "gpt-5-codex",
@@ -351,110 +343,6 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
   }
 
   const routeRequest = Effect.fn(function* (request: WebSocketRequest) {
-    const computeTurnDiff = Effect.fn(function* (input: {
-      readonly threadId: string;
-      readonly fromTurnCount: number;
-      readonly toTurnCount: number;
-    }) {
-      if (input.fromTurnCount > input.toTurnCount) {
-        throw new Error(
-          `Invalid turn diff range for thread '${input.threadId}': from ${input.fromTurnCount} exceeds to ${input.toTurnCount}.`,
-        );
-      }
-
-      if (input.fromTurnCount === input.toTurnCount) {
-        return {
-          threadId: input.threadId,
-          fromTurnCount: input.fromTurnCount,
-          toTurnCount: input.toTurnCount,
-          diff: "",
-        };
-      }
-
-      const snapshot = yield* projectionReadModelQuery.getSnapshot();
-      const thread = snapshot.threads.find((entry) => entry.id === input.threadId);
-      if (!thread) {
-        throw new Error(`Thread '${input.threadId}' not found.`);
-      }
-
-      const maxTurnCount = thread.checkpoints.reduce(
-        (max, checkpoint) => Math.max(max, checkpoint.checkpointTurnCount),
-        0,
-      );
-      if (input.toTurnCount > maxTurnCount) {
-        throw new Error(
-          `Turn diff range exceeds current turn count for thread '${input.threadId}': requested ${input.toTurnCount}, current ${maxTurnCount}.`,
-        );
-      }
-
-      const workspaceCwd =
-        thread.worktreePath?.trim() ||
-        snapshot.projects.find((project) => project.id === thread.projectId)?.workspaceRoot?.trim();
-      if (!workspaceCwd) {
-        throw new Error(
-          `Invariant violation: workspace path missing for thread '${input.threadId}' when computing turn diff.`,
-        );
-      }
-
-      const fromCheckpointRef =
-        input.fromTurnCount === 0
-          ? checkpointRefForThreadTurn(input.threadId, 0)
-          : thread.checkpoints.find(
-              (checkpoint) => checkpoint.checkpointTurnCount === input.fromTurnCount,
-            )?.checkpointRef;
-      if (!fromCheckpointRef) {
-        throw new Error(
-          `Checkpoint is unavailable for turn ${input.fromTurnCount} in thread ${input.threadId}.`,
-        );
-      }
-
-      const toCheckpointRef = thread.checkpoints.find(
-        (checkpoint) => checkpoint.checkpointTurnCount === input.toTurnCount,
-      )?.checkpointRef;
-      if (!toCheckpointRef) {
-        throw new Error(
-          `Checkpoint is unavailable for turn ${input.toTurnCount} in thread ${input.threadId}.`,
-        );
-      }
-
-      const [fromExists, toExists] = yield* Effect.all(
-        [
-          liveCheckpointStore.hasCheckpointRef({
-            cwd: workspaceCwd,
-            checkpointRef: fromCheckpointRef,
-          }),
-          liveCheckpointStore.hasCheckpointRef({
-            cwd: workspaceCwd,
-            checkpointRef: toCheckpointRef,
-          }),
-        ],
-        { concurrency: "unbounded" },
-      );
-      if (!fromExists) {
-        throw new Error(
-          `Filesystem checkpoint is unavailable for turn ${input.fromTurnCount} in thread ${input.threadId}.`,
-        );
-      }
-      if (!toExists) {
-        throw new Error(
-          `Filesystem checkpoint is unavailable for turn ${input.toTurnCount} in thread ${input.threadId}.`,
-        );
-      }
-
-      const diff = yield* liveCheckpointStore.diffCheckpoints({
-        cwd: workspaceCwd,
-        fromCheckpointRef,
-        toCheckpointRef,
-        fallbackFromToHead: false,
-      });
-      return {
-        threadId: input.threadId,
-        fromTurnCount: input.fromTurnCount,
-        toTurnCount: input.toTurnCount,
-        diff,
-      };
-    });
-
     switch (request.body._tag) {
       case ORCHESTRATION_WS_METHODS.getSnapshot:
         return yield* projectionReadModelQuery.getSnapshot();
@@ -466,16 +354,12 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
 
       case ORCHESTRATION_WS_METHODS.getTurnDiff: {
         const body = stripRequestTag(request.body);
-        return yield* computeTurnDiff(body);
+        return yield* checkpointDiffQuery.getTurnDiff(body);
       }
 
       case ORCHESTRATION_WS_METHODS.getFullThreadDiff: {
         const body = stripRequestTag(request.body);
-        return yield* computeTurnDiff({
-          threadId: body.threadId,
-          fromTurnCount: 0,
-          toTurnCount: body.toTurnCount,
-        });
+        return yield* checkpointDiffQuery.getFullThreadDiff(body);
       }
 
       case ORCHESTRATION_WS_METHODS.replayEvents: {
@@ -599,46 +483,38 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
 
     const messageText = websocketRawToString(raw);
     if (messageText === null) {
-      const errorResponse = yield* encodeResponse(
-        new WebSocketResponse({
-          id: "unknown",
-          error: { message: "Invalid request format: Failed to read message" },
-        }),
-      );
+      const errorResponse = yield* encodeResponse({
+        id: "unknown",
+        error: { message: "Invalid request format: Failed to read message" },
+      });
       ws.send(errorResponse);
       return;
     }
 
     const request = Schema.decodeExit(Schema.fromJsonString(WebSocketRequest))(messageText);
     if (request._tag === "Failure") {
-      const errorResponse = yield* encodeResponse(
-        new WebSocketResponse({
-          id: "unknown",
-          error: { message: `Invalid request format: ${Cause.pretty(request.cause)}` },
-        }),
-      );
+      const errorResponse = yield* encodeResponse({
+        id: "unknown",
+        error: { message: `Invalid request format: ${Cause.pretty(request.cause)}` },
+      });
       ws.send(errorResponse);
       return;
     }
 
     const result = yield* Effect.exit(routeRequest(request.value));
     if (result._tag === "Failure") {
-      const errorResponse = yield* encodeResponse(
-        new WebSocketResponse({
-          id: request.value.id,
-          error: { message: Cause.pretty(result.cause) },
-        }),
-      );
+      const errorResponse = yield* encodeResponse({
+        id: request.value.id,
+        error: { message: Cause.pretty(result.cause) },
+      });
       ws.send(errorResponse);
       return;
     }
 
-    const response = yield* encodeResponse(
-      new WebSocketResponse({
-        id: request.value.id,
-        result: result.value,
-      }),
-    );
+    const response = yield* encodeResponse({
+      id: request.value.id,
+      result: result.value,
+    });
     ws.send(response);
   });
 

@@ -1,4 +1,4 @@
-import { type GitStatusResult, type GitStackedAction, type NativeApi } from "@t3tools/contracts";
+import { type GitStatusResult, type GitStackedAction, type ThreadId } from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
@@ -39,11 +39,11 @@ import {
   invalidateGitQueries,
 } from "~/lib/gitReactQuery";
 import { preferredTerminalEditor, resolvePathLinkTarget } from "~/terminal-links";
+import { readNativeApi } from "~/nativeApi";
 
 interface GitActionsControlProps {
-  api: NativeApi | undefined;
   gitCwd: string | null;
-  activeThreadId: string | null;
+  activeThreadId: ThreadId | null;
 }
 
 function getMenuActionDisabledReason(
@@ -136,7 +136,7 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   return <InfoIcon className={iconClassName} />;
 }
 
-export default function GitActionsControl({ api, gitCwd, activeThreadId }: GitActionsControlProps) {
+export default function GitActionsControl({ gitCwd, activeThreadId }: GitActionsControlProps) {
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
@@ -145,11 +145,9 @@ export default function GitActionsControl({ api, gitCwd, activeThreadId }: GitAc
   const [activeDialogAction, setActiveDialogAction] = useState<GitDialogAction | null>(null);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
 
-  const { data: gitStatus = null, error: gitStatusError } = useQuery(
-    gitStatusQueryOptions(api, gitCwd),
-  );
+  const { data: gitStatus = null, error: gitStatusError } = useQuery(gitStatusQueryOptions(gitCwd));
 
-  const { data: branchList = null } = useQuery(gitBranchesQueryOptions(api, gitCwd));
+  const { data: branchList = null } = useQuery(gitBranchesQueryOptions(gitCwd));
   // Default to true while loading so we don't flash init controls.
   const isRepo = branchList?.isRepo ?? true;
   const currentBranch = branchList?.branches.find((branch) => branch.current)?.name ?? null;
@@ -163,12 +161,12 @@ export default function GitActionsControl({ api, gitCwd, activeThreadId }: GitAc
 
   const gitStatusForActions = isGitStatusOutOfSync ? null : gitStatus;
 
-  const initMutation = useMutation(gitInitMutationOptions({ api, cwd: gitCwd, queryClient }));
+  const initMutation = useMutation(gitInitMutationOptions({ cwd: gitCwd, queryClient }));
 
   const runImmediateGitActionMutation = useMutation(
-    gitRunStackedActionMutationOptions({ api, cwd: gitCwd, queryClient }),
+    gitRunStackedActionMutationOptions({ cwd: gitCwd, queryClient }),
   );
-  const pullMutation = useMutation(gitPullMutationOptions({ api, cwd: gitCwd, queryClient }));
+  const pullMutation = useMutation(gitPullMutationOptions({ cwd: gitCwd, queryClient }));
 
   const isGitActionRunning = runImmediateGitActionMutation.isPending || pullMutation.isPending;
   const isDefaultBranch = useMemo(() => {
@@ -192,6 +190,7 @@ export default function GitActionsControl({ api, gitCwd, activeThreadId }: GitAc
 
   const maybeConfirmPushToDefaultBranch = useCallback(
     async (action: GitStackedAction): Promise<boolean> => {
+      const api = readNativeApi();
       if (!api) return false;
       if (
         !requiresDefaultBranchConfirmation(action, isDefaultBranch) ||
@@ -203,10 +202,11 @@ export default function GitActionsControl({ api, gitCwd, activeThreadId }: GitAc
         `You're about to push to the default branch "${gitStatusForActions.branch}". Continue?`,
       );
     },
-    [api, gitStatusForActions?.branch, isDefaultBranch],
+    [gitStatusForActions?.branch, isDefaultBranch],
   );
 
   const openExistingPr = useCallback(async () => {
+    const api = readNativeApi();
     if (!api) {
       toastManager.add({
         type: "error",
@@ -232,8 +232,7 @@ export default function GitActionsControl({ api, gitCwd, activeThreadId }: GitAc
         data: threadToastData,
       });
     });
-  }, [api, gitStatusForActions?.openPr?.url, threadToastData]);
-
+  }, [gitStatusForActions?.openPr?.url, threadToastData]);
   const runGitActionWithToast = useCallback(
     async ({
       action,
@@ -329,8 +328,10 @@ export default function GitActionsControl({ api, gitCwd, activeThreadId }: GitAc
                   actionProps: {
                     children: "Open PR",
                     onClick: () => {
+                      const api = readNativeApi();
+                      if (!api) return;
                       closeResultToast();
-                      void api?.shell.openExternal(prUrl);
+                      void api.shell.openExternal(prUrl);
                     },
                   },
                 }
@@ -356,8 +357,8 @@ export default function GitActionsControl({ api, gitCwd, activeThreadId }: GitAc
         });
       }
     },
+
     [
-      api,
       gitStatusForActions?.branch,
       gitStatusForActions?.hasWorkingTreeChanges,
       gitStatusForActions?.openPr?.url,
@@ -447,6 +448,7 @@ export default function GitActionsControl({ api, gitCwd, activeThreadId }: GitAc
 
   const openChangedFileInEditor = useCallback(
     (filePath: string) => {
+      const api = readNativeApi();
       if (!api || !gitCwd) {
         toastManager.add({
           type: "error",
@@ -465,7 +467,7 @@ export default function GitActionsControl({ api, gitCwd, activeThreadId }: GitAc
         });
       });
     },
-    [api, gitCwd, threadToastData],
+    [gitCwd, threadToastData],
   );
 
   if (!gitCwd) return null;

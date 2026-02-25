@@ -1,12 +1,11 @@
-import type { OrchestrationThreadActivity, ProviderKind } from "@t3tools/contracts";
+import {
+  ApprovalRequestId,
+  type OrchestrationThreadActivity,
+  type ProviderKind,
+  type TurnId,
+} from "@t3tools/contracts";
 
-import type {
-  ChatMessage,
-  SessionPhase,
-  ThreadSession,
-  TurnDiffFileChange,
-  TurnDiffSummary,
-} from "./types";
+import type { ChatMessage, SessionPhase, ThreadSession, TurnDiffSummary } from "./types";
 
 export const PROVIDER_OPTIONS: Array<{
   value: ProviderKind;
@@ -26,7 +25,7 @@ export interface WorkLogEntry {
 }
 
 export interface PendingApproval {
-  requestId: string;
+  requestId: ApprovalRequestId;
   requestKind: "command" | "file-change";
   createdAt: string;
   detail?: string;
@@ -79,7 +78,7 @@ export function formatElapsed(startIso: string, endIso: string | undefined): str
 export function derivePendingApprovals(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): PendingApproval[] {
-  const openByRequestId = new Map<string, PendingApproval>();
+  const openByRequestId = new Map<ApprovalRequestId, PendingApproval>();
   const ordered = [...activities].toSorted((left, right) =>
     left.createdAt.localeCompare(right.createdAt),
   );
@@ -89,7 +88,10 @@ export function derivePendingApprovals(
       activity.payload && typeof activity.payload === "object"
         ? (activity.payload as Record<string, unknown>)
         : null;
-    const requestId = payload && typeof payload.requestId === "string" ? payload.requestId : null;
+    const requestId =
+      payload && typeof payload.requestId === "string"
+        ? ApprovalRequestId.makeUnsafe(payload.requestId)
+        : null;
     const requestKind =
       payload && (payload.requestKind === "command" || payload.requestKind === "file-change")
         ? payload.requestKind
@@ -118,7 +120,7 @@ export function derivePendingApprovals(
 
 export function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
-  latestTurnId: string | undefined,
+  latestTurnId: TurnId | undefined,
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted((left, right) =>
     left.createdAt.localeCompare(right.createdAt),
@@ -163,67 +165,17 @@ export function deriveTimelineEntries(
   return [...messageRows, ...workRows].toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-export function deriveTurnDiffFilesFromUnifiedDiff(diff: string): TurnDiffFileChange[] {
-  const normalized = diff.replace(/\r\n/g, "\n");
-  const headerMatches = [...normalized.matchAll(/^diff --git .+$/gm)];
-  if (headerMatches.length === 0) {
-    return [];
-  }
-
-  const files: TurnDiffFileChange[] = [];
-  for (let index = 0; index < headerMatches.length; index += 1) {
-    const header = headerMatches[index];
-    if (!header) continue;
-    const start = header.index ?? 0;
-    const nextStart = headerMatches[index + 1]?.index ?? normalized.length;
-    const segment = normalized.slice(start, nextStart);
-    const headerLine = header[0];
-    if (!headerLine) continue;
-
-    const match = headerLine.match(/^diff --git a\/(.+?) b\/(.+)$/);
-    const filePath = match?.[2] ?? match?.[1];
-    if (!filePath) continue;
-
-    let additions = 0;
-    let deletions = 0;
-    for (const line of segment.split("\n")) {
-      if (line.startsWith("+++ ") || line.startsWith("--- ")) continue;
-      if (line.startsWith("+")) {
-        additions += 1;
-        continue;
-      }
-      if (line.startsWith("-")) {
-        deletions += 1;
-      }
-    }
-
-    files.push({
-      path: filePath,
-      additions,
-      deletions,
-    });
-  }
-
-  return files.toSorted((left, right) => left.path.localeCompare(right.path));
-}
-
 export function inferCheckpointTurnCountByTurnId(
   summaries: TurnDiffSummary[],
-): Record<string, number> {
+): Record<TurnId, number> {
   const sorted = [...summaries].toSorted((a, b) => a.completedAt.localeCompare(b.completedAt));
-  const result: Record<string, number> = {};
+  const result: Record<TurnId, number> = {};
   for (let index = 0; index < sorted.length; index += 1) {
     const summary = sorted[index];
     if (!summary) continue;
     result[summary.turnId] = index + 1;
   }
   return result;
-}
-
-export function deriveTurnDiffSummaries(
-  _events: ReadonlyArray<OrchestrationThreadActivity>,
-): TurnDiffSummary[] {
-  return [];
 }
 
 export function derivePhase(session: ThreadSession | null): SessionPhase {

@@ -1,20 +1,23 @@
+import { MessageId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import { buildBootstrapInput } from "./historyBootstrap";
+
+const messageId = (value: string) => MessageId.makeUnsafe(value);
 
 describe("buildBootstrapInput", () => {
   it("includes full transcript when under budget", () => {
     const result = buildBootstrapInput(
       [
         {
-          id: "u-1",
+          id: messageId("u-1"),
           role: "user",
           text: "hello",
           createdAt: "2026-02-09T00:00:00.000Z",
           streaming: false,
         },
         {
-          id: "a-1",
+          id: messageId("a-1"),
           role: "assistant",
           text: "world",
           createdAt: "2026-02-09T00:00:01.000Z",
@@ -38,21 +41,21 @@ describe("buildBootstrapInput", () => {
     const result = buildBootstrapInput(
       [
         {
-          id: "u-1",
+          id: messageId("u-1"),
           role: "user",
           text: "first question with details",
           createdAt: "2026-02-09T00:00:00.000Z",
           streaming: false,
         },
         {
-          id: "a-1",
+          id: messageId("a-1"),
           role: "assistant",
           text: "first answer with details",
           createdAt: "2026-02-09T00:00:01.000Z",
           streaming: false,
         },
         {
-          id: "u-2",
+          id: messageId("u-2"),
           role: "user",
           text: "second question with details",
           createdAt: "2026-02-09T00:00:02.000Z",
@@ -75,7 +78,7 @@ describe("buildBootstrapInput", () => {
     const result = buildBootstrapInput(
       [
         {
-          id: "u-1",
+          id: messageId("u-1"),
           role: "user",
           text: "old context",
           createdAt: "2026-02-09T00:00:00.000Z",
@@ -96,7 +99,7 @@ describe("buildBootstrapInput", () => {
     const result = buildBootstrapInput(
       [
         {
-          id: "u-image",
+          id: messageId("u-image"),
           role: "user",
           text: "",
           attachments: [

@@ -1,7 +1,7 @@
-import type { GitBranch } from "@t3tools/contracts";
+import type { GitBranch, ThreadId } from "@t3tools/contracts";
 
 interface DeriveSyncedLocalBranchInput {
-  activeThreadId: string | undefined;
+  activeThreadId: ThreadId | undefined;
   activeWorktreePath: string | null;
   envMode: "local" | "worktree";
   activeThreadBranch: string | null;

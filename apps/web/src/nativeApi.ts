@@ -16,3 +16,11 @@ export function readNativeApi(): NativeApi | undefined {
   cachedApi = createWsNativeApi();
   return cachedApi;
 }
+
+export function ensureNativeApi(): NativeApi {
+  const api = readNativeApi();
+  if (!api) {
+    throw new Error("Native API not found");
+  }
+  return api;
+}

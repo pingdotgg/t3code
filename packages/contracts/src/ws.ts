@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Schema, Struct } from "effect";
 
 import {
   ClientOrchestrationCommand,
@@ -76,43 +76,56 @@ export const WS_CHANNELS = {
 
 // -- Tagged Union of all request body schemas ─────────────────────────
 
-export const WebSocketRequestBody = Schema.TaggedUnion({
+const tagRequestBody = <const Tag extends string, const Fields extends Schema.Struct.Fields>(
+  tag: Tag,
+  schema: Schema.Struct<Fields>,
+) =>
+  schema.mapFields(
+    Struct.assign({ _tag: Schema.tag(tag) }),
+    // PreserveChecks is safe here. No existing schema should have checks depending on the tag
+    { unsafePreserveChecks: true },
+  );
+
+export const WebSocketRequestBody = Schema.Union([
   // Orchestration methods
-  [ORCHESTRATION_WS_METHODS.dispatchCommand]: { command: ClientOrchestrationCommand },
-  [ORCHESTRATION_WS_METHODS.getSnapshot]: OrchestrationGetSnapshotInput.fields,
-  [ORCHESTRATION_WS_METHODS.getTurnDiff]: OrchestrationGetTurnDiffInput.fields,
-  [ORCHESTRATION_WS_METHODS.getFullThreadDiff]: OrchestrationGetFullThreadDiffInput.fields,
-  [ORCHESTRATION_WS_METHODS.replayEvents]: OrchestrationReplayEventsInput.fields,
+  tagRequestBody(
+    ORCHESTRATION_WS_METHODS.dispatchCommand,
+    Schema.Struct({ command: ClientOrchestrationCommand }),
+  ),
+  tagRequestBody(ORCHESTRATION_WS_METHODS.getSnapshot, OrchestrationGetSnapshotInput),
+  tagRequestBody(ORCHESTRATION_WS_METHODS.getTurnDiff, OrchestrationGetTurnDiffInput),
+  tagRequestBody(ORCHESTRATION_WS_METHODS.getFullThreadDiff, OrchestrationGetFullThreadDiffInput),
+  tagRequestBody(ORCHESTRATION_WS_METHODS.replayEvents, OrchestrationReplayEventsInput),
 
   // Project Search
-  [WS_METHODS.projectsSearchEntries]: ProjectSearchEntriesInput.fields,
+  tagRequestBody(WS_METHODS.projectsSearchEntries, ProjectSearchEntriesInput),
 
   // Shell methods
-  [WS_METHODS.shellOpenInEditor]: OpenInEditorInput.fields,
+  tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),
 
   // Git methods
-  [WS_METHODS.gitPull]: GitPullInput.fields,
-  [WS_METHODS.gitStatus]: GitStatusInput.fields,
-  [WS_METHODS.gitRunStackedAction]: GitRunStackedActionInput.fields,
-  [WS_METHODS.gitListBranches]: GitListBranchesInput.fields,
-  [WS_METHODS.gitCreateWorktree]: GitCreateWorktreeInput.fields,
-  [WS_METHODS.gitRemoveWorktree]: GitRemoveWorktreeInput.fields,
-  [WS_METHODS.gitCreateBranch]: GitCreateBranchInput.fields,
-  [WS_METHODS.gitCheckout]: GitCheckoutInput.fields,
-  [WS_METHODS.gitInit]: GitInitInput.fields,
+  tagRequestBody(WS_METHODS.gitPull, GitPullInput),
+  tagRequestBody(WS_METHODS.gitStatus, GitStatusInput),
+  tagRequestBody(WS_METHODS.gitRunStackedAction, GitRunStackedActionInput),
+  tagRequestBody(WS_METHODS.gitListBranches, GitListBranchesInput),
+  tagRequestBody(WS_METHODS.gitCreateWorktree, GitCreateWorktreeInput),
+  tagRequestBody(WS_METHODS.gitRemoveWorktree, GitRemoveWorktreeInput),
+  tagRequestBody(WS_METHODS.gitCreateBranch, GitCreateBranchInput),
+  tagRequestBody(WS_METHODS.gitCheckout, GitCheckoutInput),
+  tagRequestBody(WS_METHODS.gitInit, GitInitInput),
 
   // Terminal methods
-  [WS_METHODS.terminalOpen]: TerminalOpenInput.fields,
-  [WS_METHODS.terminalWrite]: TerminalWriteInput.fields,
-  [WS_METHODS.terminalResize]: TerminalResizeInput.fields,
-  [WS_METHODS.terminalClear]: TerminalClearInput.fields,
-  [WS_METHODS.terminalRestart]: TerminalRestartInput.fields,
-  [WS_METHODS.terminalClose]: TerminalCloseInput.fields,
+  tagRequestBody(WS_METHODS.terminalOpen, TerminalOpenInput),
+  tagRequestBody(WS_METHODS.terminalWrite, TerminalWriteInput),
+  tagRequestBody(WS_METHODS.terminalResize, TerminalResizeInput),
+  tagRequestBody(WS_METHODS.terminalClear, TerminalClearInput),
+  tagRequestBody(WS_METHODS.terminalRestart, TerminalRestartInput),
+  tagRequestBody(WS_METHODS.terminalClose, TerminalCloseInput),
 
   // Server meta
-  [WS_METHODS.serverGetConfig]: {},
-  [WS_METHODS.serverUpsertKeybinding]: KeybindingRule.fields,
-});
+  tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
+]);
 
 export const WebSocketRequest = Schema.Struct({
   id: Schema.String,
@@ -120,7 +133,7 @@ export const WebSocketRequest = Schema.Struct({
 });
 export type WebSocketRequest = typeof WebSocketRequest.Type;
 
-export class WebSocketResponse extends Schema.Class<WebSocketResponse>("WebSocketResponse")({
+export const WebSocketResponse = Schema.Struct({
   id: Schema.String,
   result: Schema.optional(Schema.Unknown),
   error: Schema.optional(
@@ -128,13 +141,15 @@ export class WebSocketResponse extends Schema.Class<WebSocketResponse>("WebSocke
       message: Schema.String,
     }),
   ),
-}) {}
+});
+export type WebSocketResponse = typeof WebSocketResponse.Type;
 
-export class WsPush extends Schema.Class<WsPush>("WsPushEvent")({
+export const WsPush = Schema.Struct({
   type: Schema.Literal("push"),
   channel: Schema.String,
   data: Schema.Unknown,
-}) {}
+});
+export type WsPush = typeof WsPush.Type;
 
 // ── Union of all server → client messages ─────────────────────────────
 
@@ -143,7 +158,8 @@ export type WsResponse = typeof WsResponse.Type;
 
 // ── Server welcome payload ───────────────────────────────────────────
 
-export class WsWelcomePayload extends Schema.Class<WsWelcomePayload>("WsWelcomePayload")({
+export const WsWelcomePayload = Schema.Struct({
   cwd: Schema.String,
   projectName: Schema.String,
-}) {}
+});
+export type WsWelcomePayload = typeof WsWelcomePayload.Type;

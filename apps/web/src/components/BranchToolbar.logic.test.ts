@@ -1,4 +1,4 @@
-import type { GitBranch } from "@t3tools/contracts";
+import { ThreadId, type GitBranch } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import { deriveSyncedLocalBranch } from "./BranchToolbar.logic";
 
@@ -19,8 +19,9 @@ const branches: GitBranch[] = [
 
 describe("deriveSyncedLocalBranch", () => {
   it("syncs to git current branch in local mode", () => {
+    const threadId = ThreadId.makeUnsafe("thread-1");
     const result = deriveSyncedLocalBranch({
-      activeThreadId: "thread-1",
+      activeThreadId: threadId,
       activeWorktreePath: null,
       envMode: "local",
       activeThreadBranch: "feature/demo",
@@ -31,8 +32,9 @@ describe("deriveSyncedLocalBranch", () => {
   });
 
   it("does not sync when creating a new worktree", () => {
+    const threadId = ThreadId.makeUnsafe("thread-1");
     const result = deriveSyncedLocalBranch({
-      activeThreadId: "thread-1",
+      activeThreadId: threadId,
       activeWorktreePath: null,
       envMode: "worktree",
       activeThreadBranch: "feature/demo",
@@ -43,8 +45,9 @@ describe("deriveSyncedLocalBranch", () => {
   });
 
   it("does not sync when thread already targets a worktree path", () => {
+    const threadId = ThreadId.makeUnsafe("thread-1");
     const result = deriveSyncedLocalBranch({
-      activeThreadId: "thread-1",
+      activeThreadId: threadId,
       activeWorktreePath: "/tmp/repo/worktrees/feature-demo",
       envMode: "local",
       activeThreadBranch: "feature/demo",

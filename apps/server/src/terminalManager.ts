@@ -13,7 +13,7 @@ import {
   type TerminalSessionSnapshot,
   type TerminalSessionStatus,
 } from "@t3tools/contracts";
-import { Effect, Layer, Schema, ServiceMap } from "effect";
+import { Effect, Encoding, Layer, Schema, ServiceMap } from "effect";
 
 import { createLogger } from "./logger";
 import { PtyAdapter, PtyAdapterShape, type PtyExitEvent, type PtyProcess } from "./ptyAdapter";
@@ -269,11 +269,11 @@ function legacySafeThreadId(threadId: string): string {
 }
 
 function toSafeThreadId(threadId: string): string {
-  return `terminal_${Buffer.from(threadId, "utf8").toString("base64url")}`;
+  return `terminal_${Encoding.encodeBase64Url(threadId)}`;
 }
 
 function toSafeTerminalId(terminalId: string): string {
-  return Buffer.from(terminalId, "utf8").toString("base64url");
+  return Encoding.encodeBase64Url(terminalId);
 }
 
 function toSessionKey(threadId: string, terminalId: string): string {

@@ -2,13 +2,13 @@ import { parsePatchFiles } from "@pierre/diffs";
 import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { ThreadId, type TurnId } from "@t3tools/contracts";
 import { ChevronLeftIcon, ChevronRightIcon, Columns2Icon, Rows3Icon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { isElectron } from "../env";
-import { useNativeApi } from "../hooks/useNativeApi";
 import { useTheme } from "../hooks/useTheme";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
@@ -81,7 +81,6 @@ interface DiffPanelProps {
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
-  const api = useNativeApi();
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
   const { state } = useStore();
@@ -90,13 +89,11 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const turnStripRef = useRef<HTMLDivElement>(null);
   const [canScrollTurnStripLeft, setCanScrollTurnStripLeft] = useState(false);
   const [canScrollTurnStripRight, setCanScrollTurnStripRight] = useState(false);
-  const params = useParams({ strict: false });
-  const rawSearch = useSearch({ strict: false });
-  const routeThreadId = typeof params.threadId === "string" ? params.threadId : null;
-  const diffSearch = useMemo(
-    () => parseDiffRouteSearch(rawSearch as Record<string, unknown>),
-    [rawSearch],
-  );
+  const routeThreadId = useParams({
+    strict: false,
+    select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
+  });
+  const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
   const activeThreadId = routeThreadId;
   const activeThread = state.threads.find((thread) => thread.id === activeThreadId);
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
@@ -169,7 +166,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     return `conversation:${orderedTurnDiffSummaries.map((summary) => summary.turnId).join(",")}`;
   }, [orderedTurnDiffSummaries, selectedTurn]);
   const activeCheckpointDiffQuery = useQuery(
-    checkpointDiffQueryOptions(api, {
+    checkpointDiffQueryOptions({
       threadId: activeThreadId,
       fromTurnCount: activeCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: activeCheckpointRange?.toTurnCount ?? null,
@@ -216,7 +213,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     target?.scrollIntoView({ block: "nearest" });
   }, [selectedFilePath, renderableFiles]);
 
-  const selectTurn = (turnId: string) => {
+  const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;
     void navigate({
       to: "/$threadId",

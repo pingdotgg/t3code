@@ -26,9 +26,7 @@ import { ProviderCommandReactorLive } from "./ProviderCommandReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 
-const asCommandId = (value: string): CommandId => CommandId.makeUnsafe(value);
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
-const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
 const asProviderTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId =>
@@ -126,7 +124,7 @@ describe("ProviderCommandReactor", () => {
     await Effect.runPromise(
       engine.dispatch({
         type: "project.create",
-        commandId: asCommandId("cmd-project-create"),
+        commandId: CommandId.makeUnsafe("cmd-project-create"),
         projectId: asProjectId("project-1"),
         title: "Provider Project",
         workspaceRoot: "/tmp/provider-project",
@@ -137,8 +135,8 @@ describe("ProviderCommandReactor", () => {
     await Effect.runPromise(
       engine.dispatch({
         type: "thread.create",
-        commandId: asCommandId("cmd-thread-create"),
-        threadId: asThreadId("thread-1"),
+        commandId: CommandId.makeUnsafe("cmd-thread-create"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
         projectId: asProjectId("project-1"),
         title: "Thread",
         model: "gpt-5-codex",
@@ -165,8 +163,8 @@ describe("ProviderCommandReactor", () => {
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.turn.start",
-        commandId: asCommandId("cmd-turn-start-1"),
-        threadId: asThreadId("thread-1"),
+        commandId: CommandId.makeUnsafe("cmd-turn-start-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
         message: {
           messageId: asMessageId("user-message-1"),
           role: "user",
@@ -185,7 +183,7 @@ describe("ProviderCommandReactor", () => {
     });
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
-    const thread = readModel.threads.find((entry) => entry.id === asThreadId("thread-1"));
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.providerSessionId).toBe("sess-1");
   });
 
@@ -196,10 +194,10 @@ describe("ProviderCommandReactor", () => {
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",
-        commandId: asCommandId("cmd-session-set"),
-        threadId: asThreadId("thread-1"),
+        commandId: CommandId.makeUnsafe("cmd-session-set"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
         session: {
-          threadId: asThreadId("thread-1"),
+          threadId: ThreadId.makeUnsafe("thread-1"),
           status: "running",
           providerName: "codex",
           providerSessionId: asSessionId("sess-1"),
@@ -215,8 +213,8 @@ describe("ProviderCommandReactor", () => {
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.turn.interrupt",
-        commandId: asCommandId("cmd-turn-interrupt"),
-        threadId: asThreadId("thread-1"),
+        commandId: CommandId.makeUnsafe("cmd-turn-interrupt"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
         turnId: asTurnId("turn-1"),
         createdAt: now,
       }),
@@ -235,10 +233,10 @@ describe("ProviderCommandReactor", () => {
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",
-        commandId: asCommandId("cmd-session-set-for-approval"),
-        threadId: asThreadId("thread-1"),
+        commandId: CommandId.makeUnsafe("cmd-session-set-for-approval"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
         session: {
-          threadId: asThreadId("thread-1"),
+          threadId: ThreadId.makeUnsafe("thread-1"),
           status: "running",
           providerName: "codex",
           providerSessionId: asSessionId("sess-1"),
@@ -254,8 +252,8 @@ describe("ProviderCommandReactor", () => {
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.approval.respond",
-        commandId: asCommandId("cmd-approval-respond"),
-        threadId: asThreadId("thread-1"),
+        commandId: CommandId.makeUnsafe("cmd-approval-respond"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
         requestId: asApprovalRequestId("approval-request-1"),
         decision: "accept",
         createdAt: now,
@@ -277,10 +275,10 @@ describe("ProviderCommandReactor", () => {
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",
-        commandId: asCommandId("cmd-session-set-for-stop"),
-        threadId: asThreadId("thread-1"),
+        commandId: CommandId.makeUnsafe("cmd-session-set-for-stop"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
         session: {
-          threadId: asThreadId("thread-1"),
+          threadId: ThreadId.makeUnsafe("thread-1"),
           status: "ready",
           providerName: "codex",
           providerSessionId: asSessionId("sess-1"),
@@ -296,15 +294,15 @@ describe("ProviderCommandReactor", () => {
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.session.stop",
-        commandId: asCommandId("cmd-session-stop"),
-        threadId: asThreadId("thread-1"),
+        commandId: CommandId.makeUnsafe("cmd-session-stop"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
         createdAt: now,
       }),
     );
 
     await waitFor(() => harness.stopSession.mock.calls.length === 1);
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
-    const thread = readModel.threads.find((entry) => entry.id === asThreadId("thread-1"));
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session).not.toBeNull();
     expect(thread?.session?.status).toBe("stopped");
     expect(thread?.session?.providerSessionId).toBeNull();

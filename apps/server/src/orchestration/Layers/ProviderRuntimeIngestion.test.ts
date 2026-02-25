@@ -28,9 +28,7 @@ import {
 } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 
-const asCommandId = (value: string): CommandId => CommandId.makeUnsafe(value);
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
-const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
 const asProviderTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
 const asItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
@@ -78,7 +76,7 @@ async function waitForThread(
     activities: ReadonlyArray<{ kind: string }>;
   }> => {
     const readModel = await Effect.runPromise(engine.getReadModel());
-    const thread = readModel.threads.find((entry) => entry.id === asThreadId("thread-1"));
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     if (thread && predicate(thread)) {
       return thread;
     }
@@ -132,7 +130,7 @@ describe("ProviderRuntimeIngestion", () => {
     await Effect.runPromise(
       engine.dispatch({
         type: "project.create",
-        commandId: asCommandId("cmd-provider-project-create"),
+        commandId: CommandId.makeUnsafe("cmd-provider-project-create"),
         projectId: asProjectId("project-1"),
         title: "Provider Project",
         workspaceRoot: "/tmp/provider-project",
@@ -143,8 +141,8 @@ describe("ProviderRuntimeIngestion", () => {
     await Effect.runPromise(
       engine.dispatch({
         type: "thread.create",
-        commandId: asCommandId("cmd-thread-create"),
-        threadId: asThreadId("thread-1"),
+        commandId: CommandId.makeUnsafe("cmd-thread-create"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
         projectId: asProjectId("project-1"),
         title: "Thread",
         model: "gpt-5-codex",
@@ -156,10 +154,10 @@ describe("ProviderRuntimeIngestion", () => {
     await Effect.runPromise(
       engine.dispatch({
         type: "thread.session.set",
-        commandId: asCommandId("cmd-session-seed"),
-        threadId: asThreadId("thread-1"),
+        commandId: CommandId.makeUnsafe("cmd-session-seed"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
         session: {
-          threadId: asThreadId("thread-1"),
+          threadId: ThreadId.makeUnsafe("thread-1"),
           status: "ready",
           providerName: "codex",
           providerSessionId: asSessionId("sess-1"),

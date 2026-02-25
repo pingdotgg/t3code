@@ -23,7 +23,6 @@ import { CodexAdapter } from "../Services/CodexAdapter.ts";
 import { makeCodexAdapterLive } from "./CodexAdapter.ts";
 
 const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
-const asThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
 const asTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
@@ -36,7 +35,7 @@ class FakeCodexManager extends CodexAppServerManager {
         sessionId: asSessionId("sess-1"),
         provider: "codex",
         status: "ready",
-        threadId: asThreadId("thread-1"),
+        threadId: ProviderThreadId.makeUnsafe("thread-1"),
         cwd: input.cwd,
         createdAt: now,
         updatedAt: now,
@@ -46,7 +45,7 @@ class FakeCodexManager extends CodexAppServerManager {
 
   public sendTurnImpl = vi.fn(
     async (_input: ProviderSendTurnInput): Promise<ProviderTurnStartResult> => ({
-      threadId: asThreadId("thread-1"),
+      threadId: ProviderThreadId.makeUnsafe("thread-1"),
       turnId: asTurnId("turn-1"),
     }),
   );
@@ -56,12 +55,12 @@ class FakeCodexManager extends CodexAppServerManager {
   );
 
   public readThreadImpl = vi.fn(async (_sessionId: ProviderSessionId) => ({
-    threadId: asThreadId("thread-1"),
+    threadId: ProviderThreadId.makeUnsafe("thread-1"),
     turns: [],
   }));
 
   public rollbackThreadImpl = vi.fn(async (_sessionId: ProviderSessionId, _numTurns: number) => ({
-    threadId: asThreadId("thread-1"),
+    threadId: ProviderThreadId.makeUnsafe("thread-1"),
     turns: [],
   }));
 
@@ -194,7 +193,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         sessionId: asSessionId("sess-1"),
         createdAt: new Date().toISOString(),
         method: "item/completed",
-        threadId: asThreadId("thread-1"),
+        threadId: ProviderThreadId.makeUnsafe("thread-1"),
         turnId: asTurnId("turn-1"),
         itemId: asItemId("msg_1"),
         payload: {

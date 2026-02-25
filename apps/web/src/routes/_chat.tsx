@@ -3,7 +3,7 @@ import { useEffect } from "react";
 
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import ThreadSidebar from "../components/Sidebar";
-import { SidebarInset, Sidebar, SidebarProvider } from "~/components/ui/sidebar";
+import { Sidebar, SidebarProvider } from "~/components/ui/sidebar";
 
 function ChatRouteLayout() {
   const navigate = useNavigate();

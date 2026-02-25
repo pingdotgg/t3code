@@ -313,7 +313,7 @@ export const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
                 title: "Invalid keybinding rule",
               }),
           ),
-          Effect.map((resolved) => ResolvedKeybindingRule.makeUnsafe(resolved)),
+          Effect.map((resolved) => resolved),
         ),
 
       encode: (resolved) =>
@@ -456,7 +456,7 @@ const makeKeybindings = Effect.gen(function* () {
     const tempPath = `${keybindingsConfigPath}.${process.pid}.${Date.now()}.tmp`;
 
     return Schema.encodeEffect(KeybindingsConfigJson)(
-      rules.map((rule) => KeybindingRule.makeUnsafe(rule)),
+      rules,
     ).pipe(
       Effect.tap(() => fs.makeDirectory(path.dirname(keybindingsConfigPath), { recursive: true })),
       Effect.tap((encoded) => fs.writeFileString(tempPath, encoded)),

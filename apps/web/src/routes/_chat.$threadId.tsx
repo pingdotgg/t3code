@@ -1,3 +1,4 @@
+import { ThreadId } from "@t3tools/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Suspense, lazy, type ReactNode, useCallback, useEffect } from "react";
 
@@ -133,9 +134,11 @@ const DiffPanelInlineSidebar = (props: {
 function ChatThreadRouteView() {
   const { state } = useStore();
   const navigate = useNavigate();
-  const { threadId } = Route.useParams();
+  const threadId = Route.useParams({
+    select: (params) => ThreadId.makeUnsafe(params.threadId),
+  });
   const search = Route.useSearch();
-  const threadExists = threadId ? state.threads.some((thread) => thread.id === threadId) : false;
+  const threadExists = state.threads.some((thread) => thread.id === threadId);
   const diffOpen = search.diff === "1";
   const shouldUseDiffSheet = useMediaQuery(DIFF_INLINE_LAYOUT_MEDIA_QUERY);
   const closeDiff = useCallback(() => {
@@ -159,11 +162,6 @@ function ChatThreadRouteView() {
   }, [navigate, threadId]);
 
   useEffect(() => {
-    if (!threadId) {
-      void navigate({ to: "/", replace: true });
-      return;
-    }
-
     if (!state.threadsHydrated) {
       return;
     }
@@ -174,7 +172,7 @@ function ChatThreadRouteView() {
     }
   }, [navigate, state.threadsHydrated, threadExists, threadId]);
 
-  if (!threadId || !state.threadsHydrated || !threadExists) {
+  if (!state.threadsHydrated || !threadExists) {
     return null;
   }
 

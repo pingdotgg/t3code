@@ -4,8 +4,10 @@ import { NodeServices } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { CheckpointDiffQueryLive } from "./checkpointing/Layers/CheckpointDiffQuery";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
 import { ServerConfig } from "./config";
+import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { CheckpointStore } from "./checkpointing/Services/CheckpointStore";
 import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/OrchestrationCommandReceipts";
 import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore";
@@ -55,6 +57,7 @@ export function makeServerRuntimeServicesLayer(): Layer.Layer<
   | OrchestrationEngineService
   | ProjectionSnapshotQuery
   | CheckpointStore
+  | CheckpointDiffQuery
   | OrchestrationReactor
   | TerminalManager
   | Keybindings,
@@ -67,11 +70,16 @@ export function makeServerRuntimeServicesLayer(): Layer.Layer<
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
   );
   const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(NodeServices.layer));
+  const checkpointDiffQueryLayer = CheckpointDiffQueryLive.pipe(
+    Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
+    Layer.provideMerge(checkpointStoreLayer),
+  );
 
   const runtimeServicesLayer = Layer.mergeAll(
     orchestrationLayer,
     OrchestrationProjectionSnapshotQueryLive,
     checkpointStoreLayer,
+    checkpointDiffQueryLayer,
   );
   const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
     Layer.provideMerge(runtimeServicesLayer),

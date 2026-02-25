@@ -175,7 +175,7 @@ class MockTerminalManager implements TerminalManagerShape {
         this.sessions.delete(this.key(input.threadId, input.terminalId));
         return;
       }
-      for (const key of [...this.sessions.keys()]) {
+      for (const key of this.sessions.keys()) {
         if (key.startsWith(`${input.threadId}\u0000`)) {
           this.sessions.delete(key);
         }
@@ -835,6 +835,26 @@ describe("WebSocket Server", () => {
     });
     expect(response.result).toBeUndefined();
     expect(response.error?.message).toContain("Thread 'thread-missing' not found.");
+  });
+
+  it("returns error when requesting turn diff with an inverted range", async () => {
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, ORCHESTRATION_WS_METHODS.getTurnDiff, {
+      threadId: "thread-any",
+      fromTurnCount: 2,
+      toTurnCount: 1,
+    });
+    expect(response.result).toBeUndefined();
+    expect(response.error?.message).toContain(
+      "fromTurnCount must be less than or equal to toTurnCount",
+    );
   });
 
   it("returns error when requesting full thread diff for unknown thread", async () => {

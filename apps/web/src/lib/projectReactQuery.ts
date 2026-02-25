@@ -1,5 +1,6 @@
-import type { NativeApi, ProjectSearchEntriesResult } from "@t3tools/contracts";
+import type { ProjectSearchEntriesResult } from "@t3tools/contracts";
 import { queryOptions } from "@tanstack/react-query";
+import { ensureNativeApi } from "~/nativeApi";
 
 export const projectQueryKeys = {
   all: ["projects"] as const,
@@ -15,7 +16,6 @@ const EMPTY_SEARCH_ENTRIES_RESULT: ProjectSearchEntriesResult = {
 };
 
 export function projectSearchEntriesQueryOptions(input: {
-  api: NativeApi | undefined;
   cwd: string | null;
   query: string;
   enabled?: boolean;
@@ -26,16 +26,17 @@ export function projectSearchEntriesQueryOptions(input: {
   return queryOptions({
     queryKey: projectQueryKeys.searchEntries(input.cwd, input.query, limit),
     queryFn: async () => {
-      if (!input.api || !input.cwd) {
+      const api = ensureNativeApi();
+      if (!input.cwd) {
         throw new Error("Workspace entry search is unavailable.");
       }
-      return input.api.projects.searchEntries({
+      return api.projects.searchEntries({
         cwd: input.cwd,
         query: input.query,
         limit,
       });
     },
-    enabled: (input.enabled ?? true) && Boolean(input.api && input.cwd),
+    enabled: (input.enabled ?? true) && input.cwd !== null,
     staleTime: input.staleTime ?? DEFAULT_SEARCH_ENTRIES_STALE_TIME,
     placeholderData: (previous) => previous ?? EMPTY_SEARCH_ENTRIES_RESULT,
   });

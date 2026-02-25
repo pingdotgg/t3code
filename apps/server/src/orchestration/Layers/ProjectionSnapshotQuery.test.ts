@@ -18,7 +18,6 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQu
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
-const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
@@ -225,7 +224,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       ]);
       assert.deepEqual(snapshot.threads, [
         {
-          id: asThreadId("thread-1"),
+          id: ThreadId.makeUnsafe("thread-1"),
           projectId: asProjectId("project-1"),
           title: "Thread 1",
           model: "gpt-5-codex",
@@ -269,7 +268,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             },
           ],
           session: {
-            threadId: asThreadId("thread-1"),
+            threadId: ThreadId.makeUnsafe("thread-1"),
             status: "running",
             providerName: "codex",
             providerSessionId: asProviderSessionId("provider-session-1"),

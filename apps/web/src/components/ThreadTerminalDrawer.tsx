@@ -1,6 +1,6 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
-import { type NativeApi } from "@t3tools/contracts";
+import { type ThreadId } from "@t3tools/contracts";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -25,6 +25,7 @@ import {
   MAX_THREAD_TERMINAL_COUNT,
   type ThreadTerminalGroup,
 } from "../types";
+import { readNativeApi } from "~/nativeApi";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -107,8 +108,7 @@ function terminalThemeFromApp(): ITheme {
 }
 
 interface TerminalViewportProps {
-  api: NativeApi;
-  threadId: string;
+  threadId: ThreadId;
   terminalId: string;
   cwd: string;
   runtimeEnv?: Record<string, string>;
@@ -119,7 +119,6 @@ interface TerminalViewportProps {
 }
 
 function TerminalViewport({
-  api,
   threadId,
   terminalId,
   cwd,
@@ -154,6 +153,9 @@ function TerminalViewport({
 
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
+
+    const api = readNativeApi();
+    if (!api) return;
 
     const sendTerminalInput = async (data: string, fallbackError: string) => {
       const activeTerminal = terminalRef.current;
@@ -210,14 +212,10 @@ function TerminalViewport({
               end: { x: match.end, y: bufferLineNumber },
             },
             activate: (event: MouseEvent) => {
-              if (!isTerminalLinkActivation(event)) {
-                return;
-              }
+              if (!isTerminalLinkActivation(event)) return;
 
               const latestTerminal = terminalRef.current;
-              if (!latestTerminal) {
-                return;
-              }
+              if (!latestTerminal) return;
 
               if (match.kind === "url") {
                 void api.shell.openExternal(match.text).catch((error) => {
@@ -297,7 +295,7 @@ function TerminalViewport({
       }
     };
 
-    const unsubscribe = api.terminal.onEvent((event) => {
+    const unsubscribe = api?.terminal.onEvent((event) => {
       if (event.threadId !== threadId || event.terminalId !== terminalId) return;
       const activeTerminal = terminalRef.current;
       if (!activeTerminal) return;
@@ -372,7 +370,7 @@ function TerminalViewport({
       fitAddonRef.current = null;
       terminal.dispose();
     };
-  }, [api, cwd, runtimeEnv, terminalId, threadId]);
+  }, [cwd, runtimeEnv, terminalId, threadId]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -387,9 +385,10 @@ function TerminalViewport({
   }, [autoFocus, focusRequestId]);
 
   useEffect(() => {
+    const api = readNativeApi();
     const terminal = terminalRef.current;
     const fitAddon = fitAddonRef.current;
-    if (!terminal || !fitAddon) return;
+    if (!api || !terminal || !fitAddon) return;
     const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
     const frame = window.requestAnimationFrame(() => {
       fitAddon.fit();
@@ -408,14 +407,12 @@ function TerminalViewport({
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [api, drawerHeight, resizeEpoch, terminalId, threadId]);
-
+  }, [drawerHeight, resizeEpoch, terminalId, threadId]);
   return <div ref={containerRef} className="h-full w-full overflow-hidden rounded-[4px]" />;
 }
 
 interface ThreadTerminalDrawerProps {
-  api: NativeApi;
-  threadId: string;
+  threadId: ThreadId;
   cwd: string;
   runtimeEnv?: Record<string, string>;
   height: number;
@@ -464,7 +461,6 @@ function TerminalActionButton({ label, className, onClick, children }: TerminalA
 }
 
 export default function ThreadTerminalDrawer({
-  api,
   threadId,
   cwd,
   runtimeEnv,
@@ -783,7 +779,6 @@ export default function ThreadTerminalDrawer({
                   >
                     <div className="h-full p-1">
                       <TerminalViewport
-                        api={api}
                         threadId={threadId}
                         terminalId={terminalId}
                         cwd={cwd}
@@ -801,7 +796,6 @@ export default function ThreadTerminalDrawer({
               <div className="h-full p-1">
                 <TerminalViewport
                   key={resolvedActiveTerminalId}
-                  api={api}
                   threadId={threadId}
                   terminalId={resolvedActiveTerminalId}
                   cwd={cwd}

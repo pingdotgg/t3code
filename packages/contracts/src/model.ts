@@ -37,3 +37,7 @@ export function resolveModelSlug(model: string | null | undefined): ModelSlug {
 
   return MODEL_OPTIONS.some((option) => option.slug === normalized) ? normalized : DEFAULT_MODEL;
 }
+
+export const REASONING_OPTIONS = ["xhigh", "high", "medium", "low"] as const;
+export type ReasoningEffort = (typeof REASONING_OPTIONS)[number];
+export const DEFAULT_REASONING: ReasoningEffort = "high";

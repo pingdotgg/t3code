@@ -9,7 +9,7 @@ import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { APP_DISPLAY_NAME } from "../branding";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider } from "../components/ui/toast";
-import { useNativeApi } from "../hooks/useNativeApi";
+import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";
 import { onServerWelcome } from "../wsNativeApi";
 import { providerQueryKeys } from "../lib/providerReactQuery";
@@ -22,9 +22,7 @@ export const Route = createRootRouteWithContext<{
 });
 
 function RootRouteView() {
-  const api = useNativeApi();
-
-  if (!api) {
+  if (!readNativeApi()) {
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">
         <div className="flex flex-1 items-center justify-center">
@@ -119,11 +117,11 @@ function errorDetails(error: unknown): string {
 }
 
 function EventRouter() {
-  const api = useNativeApi();
   const { dispatch } = useStore();
   const queryClient = useQueryClient();
 
   useEffect(() => {
+    const api = readNativeApi();
     if (!api) return;
     let disposed = false;
     let latestSequence = 0;
@@ -177,7 +175,7 @@ function EventRouter() {
       unsubDomainEvent();
       unsubWelcome();
     };
-  }, [api, dispatch, queryClient]);
+  }, [dispatch, queryClient]);
 
   return null;
 }

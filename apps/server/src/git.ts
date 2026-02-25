@@ -216,7 +216,7 @@ export class GitCoreService {
 
   async status(input: GitStatusInput): Promise<GitStatusResult> {
     const details = await this.statusDetails(input.cwd);
-    return GitStatusResult.makeUnsafe({
+    return {
       branch: details.branch,
       hasWorkingTreeChanges: details.hasWorkingTreeChanges,
       workingTree: details.workingTree,
@@ -224,7 +224,7 @@ export class GitCoreService {
       aheadCount: details.aheadCount,
       behindCount: details.behindCount,
       openPr: null,
-    });
+    };
   }
 
   async statusDetails(cwd: string): Promise<GitStatusDetails> {
@@ -385,11 +385,11 @@ export class GitCoreService {
     });
     const afterSha = trimStdout(await this.gitStdout(cwd, ["rev-parse", "HEAD"], true));
     const refreshed = await this.statusDetails(cwd);
-    return GitPullResult.makeUnsafe({
+    return {
       status: beforeSha.length > 0 && beforeSha === afterSha ? "skipped_up_to_date" : "pulled",
       branch,
       upstreamBranch: refreshed.upstreamRef,
-    });
+    };
   }
 
   async readRangeContext(cwd: string, baseBranch: string): Promise<GitRangeContext> {

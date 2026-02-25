@@ -21,7 +21,7 @@ import {
 import { it, assert, vi } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
 
-import { Effect, Fiber, Layer, Option, PubSub, Ref, Schema, Stream } from "effect";
+import { Effect, Fiber, Layer, Option, PubSub, Ref, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
@@ -46,7 +46,6 @@ import {
 } from "../../persistence/Layers/Sqlite.ts";
 
 const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
-const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
 const asRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
@@ -568,7 +567,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         provider: "codex",
         sessionId: session.sessionId,
         createdAt: new Date().toISOString(),
-        threadId: asThreadId("thread-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
         turnId: asTurnId("turn-1"),
         status: "completed",
       };
@@ -616,7 +615,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           provider: "codex",
           sessionId: session.sessionId,
           createdAt: new Date().toISOString(),
-          threadId: asThreadId("thread-1"),
+          threadId: ThreadId.makeUnsafe("thread-1"),
           turnId: asTurnId("turn-1"),
           toolKind: "command",
           title: "Command run",
@@ -628,7 +627,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           provider: "codex",
           sessionId: session.sessionId,
           createdAt: new Date().toISOString(),
-          threadId: asThreadId("thread-1"),
+          threadId: ThreadId.makeUnsafe("thread-1"),
           turnId: asTurnId("turn-1"),
           delta: "hello",
         },
@@ -638,7 +637,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           provider: "codex",
           sessionId: session.sessionId,
           createdAt: new Date().toISOString(),
-          threadId: asThreadId("thread-1"),
+          threadId: ThreadId.makeUnsafe("thread-1"),
           turnId: asTurnId("turn-1"),
           status: "completed",
         },
