@@ -112,6 +112,7 @@ import {
   setupProjectScript,
 } from "~/projectScripts";
 import { Toggle } from "./ui/toggle";
+import { SidebarTrigger } from "./ui/sidebar";
 import {
   asApprovalRequestId,
   asProjectId,
@@ -1666,6 +1667,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
   if (!activeThread) {
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-muted-foreground/40">
+        {!isElectron && (
+          <header className="border-b border-border px-3 py-2 md:hidden">
+            <div className="flex items-center gap-2">
+              <SidebarTrigger className="size-7 shrink-0" />
+              <span className="text-sm font-medium text-foreground">Threads</span>
+            </div>
+          </header>
+        )}
         {isElectron && (
           <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
             <span className="text-xs text-muted-foreground/50">No active thread</span>
@@ -1681,10 +1690,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
       {/* Top bar */}
       <header
-        className={`flex items-center justify-between border-b border-border px-5 ${isElectron ? "drag-region h-[52px]" : "py-3"}`}
+        className={cn(
+          "border-b border-border px-3 sm:px-5",
+          isElectron ? "drag-region h-[52px]" : "py-2 sm:py-3",
+        )}
       >
         <ChatHeader
           activeThreadId={activeThread.id}
@@ -1718,7 +1730,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {/* Messages */}
       <div
         ref={messagesScrollRef}
-        className="min-h-0 flex-1 overflow-y-auto px-5 py-4"
+        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
         onScroll={onMessagesScroll}
       >
         <MessagesTimeline
@@ -1741,8 +1753,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       </div>
 
       {/* Input bar */}
-      <div className={cn("px-5 pt-2", isGitRepo ? "pb-1" : "pb-4")}>
-        <form onSubmit={onSend} className="mx-auto max-w-3xl">
+      <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
+        <form onSubmit={onSend} className="mx-auto w-full max-w-3xl">
           <div
             className={`group rounded-[20px] border bg-card transition-colors duration-200 focus-within:border-ring ${
               isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border"
@@ -1753,7 +1765,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             onDrop={onComposerDrop}
           >
             {/* Textarea area */}
-            <div className="relative px-4 pt-4 pb-2">
+            <div className="relative px-3 pt-3.5 pb-2 sm:px-4 sm:pt-4">
               {composerMenuOpen && (
                 <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
                   <ComposerCommandMenu
@@ -1840,24 +1852,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
             </div>
 
             {/* Bottom toolbar */}
-            <div className="flex items-center justify-between px-3 pb-3">
-              <div className="flex items-center gap-1">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 pb-2.5 sm:flex-nowrap sm:gap-0 sm:px-3 sm:pb-3">
+              <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:overflow-visible">
                 {/* Model picker */}
                 <ModelPicker model={selectedModel} onModelChange={onModelSelect} />
 
                 {/* Divider */}
-                <Separator orientation="vertical" className="mx-0.5 h-4" />
+                <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
 
                 {/* Reasoning effort */}
                 <ReasoningEffortPicker effort={selectedEffort} onEffortChange={onEffortSelect} />
 
                 {/* Divider */}
-                <Separator orientation="vertical" className="mx-0.5 h-4" />
+                <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
 
                 {/* Runtime mode toggle */}
                 <Button
                   variant="ghost"
-                  className="text-muted-foreground/70 hover:text-foreground/80"
+                  className="shrink-0 px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
                   size="sm"
                   type="button"
                   disabled={isSwitchingRuntimeMode}
@@ -1873,16 +1885,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   }
                 >
                   {state.runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
-                  {state.runtimeMode === "full-access" ? "Full access" : "Supervised"}
+                  <span className="sr-only sm:not-sr-only">
+                    {state.runtimeMode === "full-access" ? "Full access" : "Supervised"}
+                  </span>
                 </Button>
               </div>
 
               {/* Right side: send / stop button */}
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center gap-2">
                 {phase === "running" ? (
                   <button
                     type="button"
-                    className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105"
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
                     onClick={() => void onInterrupt()}
                     aria-label="Stop generation"
                   >
@@ -1899,7 +1913,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 ) : (
                   <button
                     type="submit"
-                    className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:opacity-30 disabled:hover:scale-100"
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
                     disabled={
                       isSending || isConnecting || (!prompt.trim() && composerImages.length === 0)
                     }
@@ -2061,14 +2075,19 @@ const ChatHeader = memo(function ChatHeader({
   onToggleDiff,
 }: ChatHeaderProps) {
   return (
-    <>
-      <div className="flex min-w-0 flex-1 items-center gap-3">
+    <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+        <SidebarTrigger className="size-7 shrink-0 md:hidden" />
         <h2 className="truncate text-sm font-medium text-foreground" title={activeThreadTitle}>
           {activeThreadTitle}
         </h2>
-        {activeProjectName && <Badge variant="outline">{activeProjectName}</Badge>}
+        {activeProjectName && (
+          <Badge variant="outline" className="max-w-28 truncate sm:max-w-none">
+            {activeProjectName}
+          </Badge>
+        )}
       </div>
-      <div className="shrink-0 flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-2 sm:gap-3">
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
@@ -2086,6 +2105,7 @@ const ChatHeader = memo(function ChatHeader({
           <GitActionsControl api={api} gitCwd={gitCwd} activeThreadId={activeThreadId} />
         )}
         <Toggle
+          className="shrink-0"
           pressed={diffOpen}
           onPressedChange={onToggleDiff}
           aria-label="Toggle diff panel"
@@ -2095,7 +2115,7 @@ const ChatHeader = memo(function ChatHeader({
           <DiffIcon className="size-3" />
         </Toggle>
       </div>
-    </>
+    </div>
   );
 });
 
@@ -2309,7 +2329,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
 
   return (
     <div
-      className="relative mx-auto max-w-3xl"
+      className="relative mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden"
       style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
     >
       {virtualRows.map((virtualRow: VirtualItem) => {
@@ -2428,7 +2448,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                           </div>
                         )}
                         {row.message.text && (
-                          <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+                          <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-foreground">
                             {row.message.text}
                           </pre>
                         )}
@@ -2469,7 +2489,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                           <span className="h-px flex-1 bg-border" />
                         </div>
                       )}
-                      <div className="px-1 py-0.5">
+                      <div className="min-w-0 px-1 py-0.5">
                         <ChatMarkdown text={messageText} />
                         {(() => {
                           const turnSummary = turnDiffSummaryByAssistantMessageId.get(
@@ -2708,9 +2728,9 @@ const OpenInPicker = memo(function OpenInPicker({
     <Group aria-label="Subscription actions">
       <Button size="xs" variant="outline" onClick={() => openInEditor(lastEditor)}>
         {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
-        <span className="ml-0.5">Open</span>
+        <span className="sr-only sm:not-sr-only sm:ml-0.5">Open</span>
       </Button>
-      <GroupSeparator />
+      <GroupSeparator className="hidden sm:block" />
       <Menu>
         <MenuTrigger render={<Button aria-label="Copy options" size="icon-xs" variant="outline" />}>
           <ChevronDownIcon aria-hidden="true" className="size-4" />

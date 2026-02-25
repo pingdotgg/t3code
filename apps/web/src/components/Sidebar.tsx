@@ -1,4 +1,4 @@
-import { TerminalIcon } from "lucide-react";
+import { ChevronRightIcon, TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -15,6 +15,22 @@ import { useNativeApi } from "../hooks/useNativeApi";
 import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { toastManager } from "./ui/toast";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
+import {
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
+  SidebarRail,
+  SidebarSeparator,
+  SidebarTrigger,
+} from "./ui/sidebar";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
@@ -431,23 +447,22 @@ export default function Sidebar() {
   }, [handleNewThread, keybindings, routeThreadId, state.projects, state.threads]);
 
   return (
-    <aside className="sidebar flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-card">
-      {/* Branding */}
-      <div
-        className={`flex items-center gap-2.5 px-4 ${isElectron ? "drag-region h-[52px] pl-[76px]" : "py-4"}`}
+    <>
+      <SidebarHeader
+        className={`gap-3 ${isElectron ? "drag-region h-[52px] px-4 pl-[76px]" : "px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3"}`}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="truncate text-sm font-semibold tracking-tight text-foreground">
-            T3 <span className="font-normal text-muted-foreground">Code</span>
-          </span>
-          <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-widest text-muted-foreground/60">
-            {APP_STAGE_LABEL}
-          </span>
+        <div className="flex items-center gap-2">
+          <SidebarTrigger className="shrink-0 md:hidden" />
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="truncate text-sm font-semibold tracking-tight text-foreground">
+              T3 <span className="font-normal text-muted-foreground">Code</span>
+            </span>
+            <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-widest text-muted-foreground/60">
+              {APP_STAGE_LABEL}
+            </span>
+          </div>
         </div>
-      </div>
 
-      {/* New thread (global) */}
-      <div className="px-3 pb-3">
         <button
           type="button"
           className="flex w-full items-center gap-2 rounded-lg border border-border bg-secondary px-3 py-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-accent"
@@ -463,182 +478,206 @@ export default function Sidebar() {
           <span className="text-foreground">+</span>
           New thread
         </button>
-      </div>
+      </SidebarHeader>
 
-      {/* Project list */}
-      <nav className="flex-1 overflow-y-auto px-2">
-        {state.projects.map((project) => {
-          const threads = state.threads
-            .filter((t) => t.projectId === project.id)
-            .toSorted((a, b) => {
-              const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-              if (byDate !== 0) return byDate;
-              return b.id.localeCompare(a.id);
-            });
-          return (
-            <div key={project.id} className="mb-1">
-              {/* Project header */}
+      <SidebarContent className="gap-0">
+        <SidebarGroup className="px-2 py-2">
+          <SidebarMenu>
+            {state.projects.map((project) => {
+              const threads = state.threads
+                .filter((thread) => thread.projectId === project.id)
+                .toSorted((a, b) => {
+                  const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+                  if (byDate !== 0) return byDate;
+                  return b.id.localeCompare(a.id);
+                });
+
+              return (
+                <Collapsible
+                  key={project.id}
+                  className="group/collapsible"
+                  open={project.expanded}
+                  onOpenChange={(open) => {
+                    if (open === project.expanded) return;
+                    dispatch({ type: "TOGGLE_PROJECT", projectId: project.id });
+                  }}
+                >
+                  <SidebarMenuItem>
+                    <CollapsibleTrigger
+                      render={
+                        <SidebarMenuButton
+                          size="sm"
+                          className="gap-2 px-2 py-1.5 text-left hover:bg-accent"
+                        />
+                      }
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        void handleProjectContextMenu(project.id, {
+                          x: event.clientX,
+                          y: event.clientY,
+                        });
+                      }}
+                    >
+                      <ChevronRightIcon
+                        className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
+                          project.expanded ? "rotate-90" : ""
+                        }`}
+                      />
+                      <span className="flex-1 truncate text-xs font-medium text-foreground/90">
+                        {project.name}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground/60">{threads.length}</span>
+                    </CollapsibleTrigger>
+
+                    <CollapsibleContent>
+                      <SidebarMenuSub className="mx-1 my-0 w-full translate-x-0 gap-0 px-1.5 py-0">
+                        {threads.map((thread) => {
+                          const isActive = routeThreadId === thread.id;
+                          const threadStatus = threadStatusPill(
+                            thread,
+                            pendingApprovalByThreadId.get(thread.id) === true,
+                          );
+                          const terminalStatus = terminalStatusIndicator(thread);
+
+                          return (
+                            <SidebarMenuSubItem key={thread.id} className="w-full">
+                              <SidebarMenuSubButton
+                                render={<button type="button" />}
+                                size="sm"
+                                isActive={isActive}
+                                className={`h-7 w-full translate-x-0 justify-start px-2 text-left hover:bg-accent hover:text-foreground ${
+                                  isActive ? "text-foreground" : "text-muted-foreground"
+                                }`}
+                                onClick={() => {
+                                  void navigate({
+                                    to: "/$threadId",
+                                    params: { threadId: thread.id },
+                                  });
+                                }}
+                                onContextMenu={(event) => {
+                                  event.preventDefault();
+                                  void handleThreadContextMenu(thread.id, {
+                                    x: event.clientX,
+                                    y: event.clientY,
+                                  });
+                                }}
+                              >
+                                <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+                                  {threadStatus && (
+                                    <span
+                                      className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}
+                                    >
+                                      <span
+                                        className={`h-1.5 w-1.5 rounded-full ${threadStatus.dotClass} ${
+                                          threadStatus.pulse ? "animate-pulse" : ""
+                                        }`}
+                                      />
+                                      <span className="hidden md:inline">{threadStatus.label}</span>
+                                    </span>
+                                  )}
+                                  <span className="min-w-0 flex-1 truncate text-xs">
+                                    {thread.title}
+                                  </span>
+                                </div>
+                                <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                                  {terminalStatus && (
+                                    <span
+                                      role="img"
+                                      aria-label={terminalStatus.label}
+                                      title={terminalStatus.label}
+                                      className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
+                                    >
+                                      <TerminalIcon
+                                        className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`}
+                                      />
+                                    </span>
+                                  )}
+                                  <span className="text-[10px] text-muted-foreground/40">
+                                    {formatRelativeTime(thread.createdAt)}
+                                  </span>
+                                </div>
+                              </SidebarMenuSubButton>
+                            </SidebarMenuSubItem>
+                          );
+                        })}
+
+                        <SidebarMenuSubItem className="w-full">
+                          <SidebarMenuSubButton
+                            render={<button type="button" />}
+                            size="sm"
+                            className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                            onClick={() => {
+                              void handleNewThread(project.id);
+                            }}
+                          >
+                            <span>+</span>
+                            <span>New thread</span>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                      </SidebarMenuSub>
+                    </CollapsibleContent>
+                  </SidebarMenuItem>
+                </Collapsible>
+              );
+            })}
+          </SidebarMenu>
+
+          {state.projects.length === 0 && !addingProject && (
+            <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
+              No projects yet.
+              <br />
+              Add one to get started.
+            </div>
+          )}
+        </SidebarGroup>
+      </SidebarContent>
+
+      <SidebarSeparator />
+      <SidebarFooter className="gap-0 p-3">
+        {addingProject ? (
+          <>
+            <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+              Add project
+            </p>
+            <input
+              className="mb-2 w-full rounded-md border border-border bg-secondary px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+              placeholder="/path/to/project"
+              value={newCwd}
+              onChange={(event) => setNewCwd(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") handleAddProject();
+                if (event.key === "Escape") setAddingProject(false);
+              }}
+            />
+            {isElectron && api && (
               <button
                 type="button"
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors duration-150 hover:bg-accent"
-                onClick={() => dispatch({ type: "TOGGLE_PROJECT", projectId: project.id })}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  void handleProjectContextMenu(project.id, {
-                    x: e.clientX,
-                    y: e.clientY,
-                  });
-                }}
+                className="mb-2 flex w-full items-center justify-center rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => void handlePickFolder()}
+                disabled={isPickingFolder || isAddingProject}
               >
-                <span className="text-[10px] text-muted-foreground/70">
-                  {project.expanded ? "▼" : "▶"}
-                </span>
-                <span className="flex-1 truncate text-xs font-medium text-foreground/90">
-                  {project.name}
-                </span>
-                <span className="text-[10px] text-muted-foreground/60">{threads.length}</span>
+                {isPickingFolder ? "Picking folder..." : "Browse for folder"}
               </button>
-
-              {/* Threads */}
-              {project.expanded && (
-                <div className="ml-2 border-l border-border/80 pl-2">
-                  {threads.map((thread) => {
-                    const isActive = routeThreadId === thread.id;
-                    const threadStatus = threadStatusPill(
-                      thread,
-                      pendingApprovalByThreadId.get(thread.id) === true,
-                    );
-                    const terminalStatus = terminalStatusIndicator(thread);
-                    return (
-                      <button
-                        key={thread.id}
-                        type="button"
-                        className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors duration-150 ${
-                          isActive
-                            ? "bg-accent text-foreground"
-                            : "text-muted-foreground hover:bg-secondary"
-                        }`}
-                        onClick={() => {
-                          void navigate({
-                            to: "/$threadId",
-                            params: { threadId: thread.id },
-                          });
-                        }}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          void handleThreadContextMenu(thread.id, {
-                            x: e.clientX,
-                            y: e.clientY,
-                          });
-                        }}
-                      >
-                        <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                          {threadStatus && (
-                            <span
-                              className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}
-                            >
-                              <span
-                                className={`h-1.5 w-1.5 rounded-full ${threadStatus.dotClass} ${
-                                  threadStatus.pulse ? "animate-pulse" : ""
-                                }`}
-                              />
-                              <span className="hidden md:inline">{threadStatus.label}</span>
-                            </span>
-                          )}
-                          <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
-                        </div>
-                        <div className="ml-2 flex shrink-0 items-center gap-1.5">
-                          {terminalStatus && (
-                            <span
-                              role="img"
-                              aria-label={terminalStatus.label}
-                              title={terminalStatus.label}
-                              className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
-                            >
-                              <TerminalIcon
-                                className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`}
-                              />
-                            </span>
-                          )}
-                          <span className="text-[10px] text-muted-foreground/40">
-                            {formatRelativeTime(thread.createdAt)}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-
-                  {/* New thread within project */}
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-1 px-2 py-1 text-[10px] text-muted-foreground/60 transition-colors duration-150 hover:text-muted-foreground/80"
-                    onClick={() => {
-                      void handleNewThread(project.id);
-                    }}
-                  >
-                    <span>+</span> New thread
-                  </button>
-                </div>
-              )}
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="flex-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90"
+                onClick={handleAddProject}
+                disabled={isAddingProject}
+              >
+                {isAddingProject ? "Adding..." : "Add"}
+              </button>
+              <button
+                type="button"
+                className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary"
+                onClick={() => setAddingProject(false)}
+              >
+                Cancel
+              </button>
             </div>
-          );
-        })}
-
-        {state.projects.length === 0 && !addingProject && (
-          <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
-            No projects yet.
-            <br />
-            Add one to get started.
-          </div>
-        )}
-      </nav>
-
-      {/* Add project form */}
-      {addingProject ? (
-        <div className="border-t border-border p-3">
-          <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-            Add project
-          </p>
-          <input
-            className="mb-2 w-full rounded-md border border-border bg-secondary px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
-            placeholder="/path/to/project"
-            value={newCwd}
-            onChange={(e) => setNewCwd(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleAddProject();
-              if (e.key === "Escape") setAddingProject(false);
-            }}
-          />
-          {isElectron && api && (
-            <button
-              type="button"
-              className="mb-2 flex w-full items-center justify-center rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={() => void handlePickFolder()}
-              disabled={isPickingFolder || isAddingProject}
-            >
-              {isPickingFolder ? "Picking folder..." : "Browse for folder"}
-            </button>
-          )}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className="flex-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90"
-              onClick={handleAddProject}
-              disabled={isAddingProject}
-            >
-              {isAddingProject ? "Adding..." : "Add"}
-            </button>
-            <button
-              type="button"
-              className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary"
-              onClick={() => setAddingProject(false)}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="border-t border-border p-3">
+          </>
+        ) : (
           <button
             type="button"
             className="flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-border py-2 text-xs text-muted-foreground/70 transition-colors duration-150 hover:border-ring hover:text-muted-foreground"
@@ -646,8 +685,10 @@ export default function Sidebar() {
           >
             + Add project
           </button>
-        </div>
-      )}
-    </aside>
+        )}
+      </SidebarFooter>
+
+      <SidebarRail />
+    </>
   );
 }

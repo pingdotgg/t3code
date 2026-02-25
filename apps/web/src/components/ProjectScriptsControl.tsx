@@ -266,9 +266,9 @@ export default function ProjectScriptsControl({
             title={`Run ${primaryScript.name}`}
           >
             <ScriptIcon icon={primaryScript.icon} />
-            <span className="ml-0.5">{primaryScript.name}</span>
+            <span className="sr-only sm:not-sr-only sm:ml-0.5">{primaryScript.name}</span>
           </Button>
-          <GroupSeparator />
+          <GroupSeparator className="hidden sm:block" />
           <Menu highlightItemOnHover={false}>
             <MenuTrigger
               render={<Button size="icon-xs" variant="outline" aria-label="Script actions" />}
@@ -327,9 +327,9 @@ export default function ProjectScriptsControl({
           </Menu>
         </Group>
       ) : (
-        <Button size="xs" variant="outline" onClick={openAddDialog}>
+        <Button size="xs" variant="outline" onClick={openAddDialog} title="Add action">
           <PlusIcon className="size-3.5" />
-          Add action
+          <span className="sr-only sm:not-sr-only sm:ml-0.5">Add action</span>
         </Button>
       )}
 

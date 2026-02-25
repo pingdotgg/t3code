@@ -501,7 +501,7 @@ export default function GitActionsControl({
                 }
               >
                 <GitQuickActionIcon quickAction={quickAction} />
-                <span className="ml-0.5">{quickAction.label}</span>
+                <span className="sr-only sm:not-sr-only sm:ml-0.5">{quickAction.label}</span>
               </PopoverTrigger>
               <PopoverPopup tooltipStyle side="bottom" align="start">
                 {quickActionDisabledReason}
@@ -515,10 +515,10 @@ export default function GitActionsControl({
               onClick={runQuickAction}
             >
               <GitQuickActionIcon quickAction={quickAction} />
-              <span className="ml-0.5">{quickAction.label}</span>
+              <span className="sr-only sm:not-sr-only sm:ml-0.5">{quickAction.label}</span>
             </Button>
           )}
-          <GroupSeparator />
+          <GroupSeparator className="hidden sm:block" />
           <Menu
             onOpenChange={(open) => {
               if (open) void invalidateGitQueries(queryClient);

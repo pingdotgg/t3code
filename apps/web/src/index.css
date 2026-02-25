@@ -133,6 +133,18 @@ body {
   min-height: 100vh;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  max-width: 100%;
+  overflow-y: hidden;
+  overflow-x: hidden;
+  overflow-x: clip;
+  overscroll-behavior-y: none;
+}
+
 body::after {
   content: "";
   position: fixed;
@@ -229,7 +241,9 @@ label:has(> select#reasoning-effort) select {
 
 /* Chat markdown rendering */
 .chat-markdown {
+  min-width: 0;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .chat-markdown > :first-child {
@@ -283,6 +297,7 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown pre {
+  max-width: 100%;
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 0.75rem;
