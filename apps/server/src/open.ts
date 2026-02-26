@@ -30,6 +30,12 @@ interface EditorLaunch {
   readonly args: ReadonlyArray<string>;
 }
 
+const LINE_COLUMN_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+
+function shouldUseGotoFlag(editorId: EditorId, target: string): boolean {
+  return editorId === "cursor" && LINE_COLUMN_SUFFIX_PATTERN.test(target);
+}
+
 /**
  * OpenShape - Service API for browser and editor launch actions.
  */
@@ -66,7 +72,9 @@ export const resolveEditorLaunch = Effect.fnUntraced(function* (
   }
 
   if (editorDef.command) {
-    return { command: editorDef.command, args: [input.cwd] };
+    return shouldUseGotoFlag(editorDef.id, input.cwd)
+      ? { command: editorDef.command, args: ["--goto", input.cwd] }
+      : { command: editorDef.command, args: [input.cwd] };
   }
 
   if (editorDef.id !== "file-manager") {

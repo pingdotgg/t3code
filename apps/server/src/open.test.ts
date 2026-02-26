@@ -18,6 +18,28 @@ describe("resolveEditorLaunch", () => {
     }),
   );
 
+  it.effect("uses --goto when cursor target includes line/column suffixes", () =>
+    Effect.gen(function* () {
+      const lineOnly = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/AGENTS.md:48", editor: "cursor" },
+        "darwin",
+      );
+      assert.deepEqual(lineOnly, {
+        command: "cursor",
+        args: ["--goto", "/tmp/workspace/AGENTS.md:48"],
+      });
+
+      const lineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "cursor" },
+        "darwin",
+      );
+      assert.deepEqual(lineAndColumn, {
+        command: "cursor",
+        args: ["--goto", "/tmp/workspace/src/open.ts:71:5"],
+      });
+    }),
+  );
+
   it.effect("maps file-manager editor to OS open commands", () =>
     Effect.gen(function* () {
       const launch1 = yield* resolveEditorLaunch(
