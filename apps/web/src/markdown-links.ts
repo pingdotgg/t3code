@@ -2,11 +2,12 @@ import { resolvePathLinkTarget } from "./terminal-links";
 
 const WINDOWS_DRIVE_PATH_PATTERN = /^[A-Za-z]:[\\/]/;
 const WINDOWS_UNC_PATH_PATTERN = /^\\\\/;
-const EXTERNAL_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 const RELATIVE_FILE_PATH_PATTERN = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}$/;
 const RELATIVE_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
 const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
 const POSIX_FILE_ROOT_PREFIXES = [
   "/Users/",
   "/home/",
@@ -89,6 +90,14 @@ function isRelativePath(path: string): boolean {
   );
 }
 
+function hasExternalScheme(path: string): boolean {
+  const match = path.match(EXTERNAL_SCHEME_PATTERN);
+  if (!match) return false;
+  const rest = match[2] ?? "";
+  if (rest.startsWith("//")) return true;
+  return !POSITION_ONLY_PATTERN.test(rest);
+}
+
 export function resolveMarkdownFileLinkTarget(
   href: string | undefined,
   cwd?: string,
@@ -101,14 +110,14 @@ export function resolveMarkdownFileLinkTarget(
     ? parseFileUrlHref(rawHref)
     : null;
   const source = fileUrlTarget ?? stripSearchAndHash(rawHref);
-  const decodedPath = safeDecode(source.path.trim());
+  const decodedPath = fileUrlTarget ? source.path.trim() : safeDecode(source.path.trim());
   const decodedHash = safeDecode(source.hash.trim());
 
   if (decodedPath.length === 0) return null;
   if (
     !WINDOWS_DRIVE_PATH_PATTERN.test(decodedPath) &&
     !WINDOWS_UNC_PATH_PATTERN.test(decodedPath) &&
-    EXTERNAL_SCHEME_PATTERN.test(decodedPath)
+    hasExternalScheme(decodedPath)
   ) {
     return null;
   }

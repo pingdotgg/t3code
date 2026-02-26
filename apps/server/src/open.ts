@@ -85,10 +85,17 @@ export const resolveEditorLaunch = Effect.fnUntraced(function* (
 
 export const launchDetached = (launch: EditorLaunch) =>
   Effect.callback<void, OpenError>((resume) => {
-    const child = spawn(launch.command, [...launch.args], {
-      detached: true,
-      stdio: "ignore",
-    });
+    let child;
+    try {
+      child = spawn(launch.command, [...launch.args], {
+        detached: true,
+        stdio: "ignore",
+      });
+    } catch (error) {
+      return resume(
+        Effect.fail(new OpenError({ message: "failed to spawn detached process", cause: error })),
+      );
+    }
 
     const handleSpawn = () => {
       child.unref();

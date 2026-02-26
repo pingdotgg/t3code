@@ -15,6 +15,12 @@ describe("resolveMarkdownFileLinkTarget", () => {
     );
   });
 
+  it("does not treat filename line references as external schemes", () => {
+    expect(resolveMarkdownFileLinkTarget("script.ts:10", "/Users/julius/project")).toBe(
+      "/Users/julius/project/script.ts:10",
+    );
+  });
+
   it("resolves bare file names against cwd", () => {
     expect(resolveMarkdownFileLinkTarget("AGENTS.md", "/Users/julius/project")).toBe(
       "/Users/julius/project/AGENTS.md",
@@ -29,6 +35,12 @@ describe("resolveMarkdownFileLinkTarget", () => {
 
   it("ignores external urls", () => {
     expect(resolveMarkdownFileLinkTarget("https://example.com/docs")).toBeNull();
+  });
+
+  it("does not double-decode file URLs", () => {
+    expect(resolveMarkdownFileLinkTarget("file:///Users/julius/project/file%2520name.md")).toBe(
+      "/Users/julius/project/file%20name.md",
+    );
   });
 
   it("does not treat app routes as file links", () => {

@@ -14,10 +14,6 @@ import { CheckpointDiffQueryLive } from "./CheckpointDiffQuery.ts";
 import { CheckpointStore, type CheckpointStoreShape } from "../Services/CheckpointStore.ts";
 import { CheckpointDiffQuery } from "../Services/CheckpointDiffQuery.ts";
 
-const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
-const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
-const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.makeUnsafe(value);
-
 function makeSnapshot(input: {
   readonly projectId: ProjectId;
   readonly threadId: ThreadId;
@@ -49,7 +45,7 @@ function makeSnapshot(input: {
         model: "gpt-5-codex",
         branch: null,
         worktreePath: input.worktreePath,
-        latestTurnId: asTurnId("turn-1"),
+        latestTurnId: TurnId.makeUnsafe("turn-1"),
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
         deletedAt: null,
@@ -57,7 +53,7 @@ function makeSnapshot(input: {
         activities: [],
         checkpoints: [
           {
-            turnId: asTurnId("turn-1"),
+            turnId: TurnId.makeUnsafe("turn-1"),
             checkpointTurnCount: input.checkpointTurnCount,
             checkpointRef: input.checkpointRef,
             status: "ready",
@@ -74,9 +70,9 @@ function makeSnapshot(input: {
 
 describe("CheckpointDiffQueryLive", () => {
   it("computes diffs using canonical turn-0 checkpoint refs", async () => {
-    const projectId = asProjectId("project-1");
+    const projectId = ProjectId.makeUnsafe("project-1");
     const threadId = ThreadId.makeUnsafe("thread-1");
-    const toCheckpointRef = asCheckpointRef("refs/t3/checkpoints/thread-1/turn/1");
+    const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
     const hasCheckpointRefCalls: Array<CheckpointRef> = [];
     const diffCheckpointsCalls: Array<{
       readonly fromCheckpointRef: CheckpointRef;

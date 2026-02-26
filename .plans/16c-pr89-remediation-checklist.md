@@ -286,8 +286,8 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Threads: PRRT_kwDORLtfbc5wj4cM
   - Audit note: -ilc shell invocation can pollute captured PATH output.
 
-- [ ] `C029` `parseFileUrlHref` already decodes the path (line 46), but `safeDecode` is called again here, corrupting filenames containing `%` sequences. Consider skipping the decode when `fileUrlTarget` is non-null.
-  - Status: `TODO`
+- [x] `C029` `parseFileUrlHref` already decodes the path (line 46), but `safeDecode` is called again here, corrupting filenames containing `%` sequences. Consider skipping the decode when `fileUrlTarget` is non-null.
+  - Status: `DONE`
   - Verdict: `valid`
   - Severity: `Medium`
   - Area: `Edge-case parsing/platform behavior`
@@ -295,8 +295,8 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Threads: PRRT_kwDORLtfbc5wnVsU
   - Audit note: file URL decoding still double-decodes in one path.
 
-- [ ] `C030` `EXTERNAL_SCHEME_PATTERN` matches `script.ts:10` as a scheme because `.ts:` looks like `scheme:`. Consider requiring `://` after the colon, or checking that what follows the colon is not just digits. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
-  - Status: `TODO`
+- [x] `C030` `EXTERNAL_SCHEME_PATTERN` matches `script.ts:10` as a scheme because `.ts:` looks like `scheme:`. Consider requiring `://` after the colon, or checking that what follows the colon is not just digits. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
+  - Status: `DONE`
   - Verdict: `valid`
   - Severity: `Medium`
   - Area: `Edge-case parsing/platform behavior`
