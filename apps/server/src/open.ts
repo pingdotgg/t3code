@@ -3,6 +3,10 @@ import { spawn } from "node:child_process";
 import { EDITORS, type EditorId } from "@t3tools/contracts";
 import { ServiceMap, Schema, Effect, Layer } from "effect";
 
+// ==============================
+// Definitions
+// ==============================
+
 export class OpenError extends Schema.TaggedErrorClass<OpenError>()("OpenError", {
   message: Schema.String,
   cause: Schema.optional(Schema.Defect),
@@ -25,13 +29,17 @@ export interface OpenShape {
 
 export class Open extends ServiceMap.Service<Open, OpenShape>()("server/Open") {}
 
-export function resolveEditorLaunch(
+// ==============================
+// Implementations
+// ==============================
+
+export const resolveEditorLaunch = Effect.fnUntraced(function* (
   input: OpenInEditorInput,
   platform: NodeJS.Platform = process.platform,
-): EditorLaunch {
+): Effect.fn.Return<EditorLaunch, OpenError> {
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
-    throw new OpenError({ message: `Unknown editor: ${input.editor}` });
+    return yield* new OpenError({ message: `Unknown editor: ${input.editor}` });
   }
 
   if (editorDef.command) {
@@ -39,7 +47,7 @@ export function resolveEditorLaunch(
   }
 
   if (editorDef.id !== "file-manager") {
-    throw new OpenError({ message: `Unsupported editor: ${input.editor}` });
+    return yield* new OpenError({ message: `Unsupported editor: ${input.editor}` });
   }
 
   switch (platform) {
@@ -50,24 +58,25 @@ export function resolveEditorLaunch(
     default:
       return { command: "xdg-open", args: [input.cwd] };
   }
-}
+});
 
-export function launchDetached(command: string, args: ReadonlyArray<string>): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, [...args], {
+export const launchDetached = (launch: EditorLaunch) =>
+  Effect.callback<void, OpenError>((resume) => {
+    const child = spawn(launch.command, [...launch.args], {
       detached: true,
       stdio: "ignore",
     });
 
     const handleSpawn = () => {
       child.unref();
-      resolve();
+      resume(Effect.void);
     };
 
     child.once("spawn", handleSpawn);
-    child.once("error", (error) => reject(error));
+    child.once("error", (cause) =>
+      resume(Effect.fail(new OpenError({ message: "failed to spawn detached process", cause }))),
+    );
   });
-}
 
 const make = Effect.gen(function* () {
   const open = yield* Effect.promise(() => import("open"));
@@ -78,17 +87,7 @@ const make = Effect.gen(function* () {
         try: () => open.default(target),
         catch: (cause) => new OpenError({ message: "Browser auto-open failed", cause }),
       }),
-    openInEditor: (input) =>
-      Effect.tryPromise({
-        try: () => {
-          const launch = resolveEditorLaunch(input);
-          return launchDetached(launch.command, launch.args);
-        },
-        catch: (cause) =>
-          cause instanceof OpenError
-            ? cause
-            : new OpenError({ message: "Failed to open editor", cause }),
-      }),
+    openInEditor: (input) => Effect.flatMap(resolveEditorLaunch(input), launchDetached),
   } satisfies OpenShape;
 });
 
