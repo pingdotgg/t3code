@@ -6,7 +6,9 @@ import type {
 } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
 import { Deferred, Effect, Layer, Option, PubSub, Queue, Stream } from "effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import {
@@ -55,6 +57,7 @@ function formatDispatchError(error: OrchestrationDispatchError): string {
 }
 
 const makeOrchestrationEngine = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
   const eventStore = yield* OrchestrationEventStore;
   const commandReceiptRepository = yield* OrchestrationCommandReceiptRepository;
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
@@ -91,36 +94,57 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         readModel,
       });
       const eventBases = Array.isArray(eventBase) ? eventBase : [eventBase];
-      let lastSavedEvent = null as OrchestrationEvent | null;
+      const committedCommand = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const committedEvents: OrchestrationEvent[] = [];
+            let nextReadModel = readModel;
 
-      for (const nextEvent of eventBases) {
-        const savedEvent = yield* eventStore.append(nextEvent);
-        yield* projectionPipeline.projectEvent(savedEvent);
-        readModel = yield* projectEvent(readModel, savedEvent);
-        yield* PubSub.publish(eventPubSub, savedEvent);
-        lastSavedEvent = savedEvent;
-      }
+            for (const nextEvent of eventBases) {
+              const savedEvent = yield* eventStore.append(nextEvent);
+              yield* projectionPipeline.projectEvent(savedEvent);
+              nextReadModel = yield* projectEvent(nextReadModel, savedEvent);
+              committedEvents.push(savedEvent);
+            }
 
-      if (lastSavedEvent === null) {
-        return yield* Deferred.fail(
-          envelope.result,
-          new OrchestrationCommandInvariantError({
-            commandType: envelope.command.type,
-            detail: "Command produced no events.",
+            const lastSavedEvent = committedEvents.at(-1) ?? null;
+            if (lastSavedEvent === null) {
+              return yield* new OrchestrationCommandInvariantError({
+                commandType: envelope.command.type,
+                detail: "Command produced no events.",
+              });
+            }
+
+            yield* commandReceiptRepository.upsert({
+              commandId: envelope.command.commandId,
+              aggregateKind: lastSavedEvent.aggregateKind,
+              aggregateId: lastSavedEvent.aggregateId,
+              acceptedAt: lastSavedEvent.occurredAt,
+              resultSequence: lastSavedEvent.sequence,
+              status: "accepted",
+              error: null,
+            });
+
+            return {
+              committedEvents,
+              lastSequence: lastSavedEvent.sequence,
+              nextReadModel,
+            } as const;
           }),
+        )
+        .pipe(
+          Effect.catchTag("SqlError", (sqlError) =>
+            Effect.fail(
+              toPersistenceSqlError("OrchestrationEngine.processEnvelope:transaction")(sqlError),
+            ),
+          ),
         );
-      }
 
-      yield* commandReceiptRepository.upsert({
-        commandId: envelope.command.commandId,
-        aggregateKind: lastSavedEvent.aggregateKind,
-        aggregateId: lastSavedEvent.aggregateId,
-        acceptedAt: lastSavedEvent.occurredAt,
-        resultSequence: lastSavedEvent.sequence,
-        status: "accepted",
-        error: null,
-      });
-      yield* Deferred.succeed(envelope.result, { sequence: lastSavedEvent.sequence });
+      readModel = committedCommand.nextReadModel;
+      for (const event of committedCommand.committedEvents) {
+        yield* PubSub.publish(eventPubSub, event);
+      }
+      yield* Deferred.succeed(envelope.result, { sequence: committedCommand.lastSequence });
     }).pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {

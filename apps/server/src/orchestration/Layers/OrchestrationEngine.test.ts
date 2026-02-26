@@ -10,17 +10,21 @@ import {
 import { Effect, Layer, ManagedRuntime, Queue, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { PersistenceSqlError } from "../persistence/Errors.ts";
-import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { PersistenceSqlError } from "../../persistence/Errors.ts";
+import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
+import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
+import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
-} from "../persistence/Services/OrchestrationEventStore.ts";
-import { OrchestrationEngineLive } from "./Layers/OrchestrationEngine.ts";
-import { OrchestrationProjectionPipelineLive } from "./Layers/ProjectionPipeline.ts";
-import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
+} from "../../persistence/Services/OrchestrationEventStore.ts";
+import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
+import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
+import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import {
+  OrchestrationProjectionPipeline,
+  type OrchestrationProjectionPipelineShape,
+} from "../Services/ProjectionPipeline.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
@@ -353,6 +357,113 @@ describe("OrchestrationEngine", () => {
 
     expect(result.sequence).toBe(2);
     expect((await runtime.runPromise(engine.getReadModel())).snapshotSequence).toBe(2);
+    await runtime.dispose();
+  });
+
+  it("rolls back all events for a multi-event command when projection fails mid-dispatch", async () => {
+    let shouldFailRequestedProjection = true;
+    const flakyProjectionPipeline: OrchestrationProjectionPipelineShape = {
+      bootstrap: Effect.void,
+      projectEvent: (event) => {
+        if (
+          shouldFailRequestedProjection &&
+          event.commandId === CommandId.makeUnsafe("cmd-turn-start-atomic") &&
+          event.type === "thread.turn-start-requested"
+        ) {
+          shouldFailRequestedProjection = false;
+          return Effect.fail(
+            new PersistenceSqlError({
+              operation: "test.projection",
+              detail: "projection failed",
+            }),
+          );
+        }
+        return Effect.void;
+      },
+    };
+
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, flakyProjectionPipeline)),
+        Layer.provide(OrchestrationEventStoreLive),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(SqlitePersistenceMemory),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const createdAt = now();
+
+    await runtime.runPromise(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-atomic-create"),
+        projectId: asProjectId("project-atomic"),
+        title: "Atomic Project",
+        workspaceRoot: "/tmp/project-atomic",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
+    await runtime.runPromise(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-thread-atomic-create"),
+        threadId: ThreadId.makeUnsafe("thread-atomic"),
+        projectId: asProjectId("project-atomic"),
+        title: "atomic",
+        model: "gpt-5-codex",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    const turnStartCommand = {
+      type: "thread.turn.start" as const,
+      commandId: CommandId.makeUnsafe("cmd-turn-start-atomic"),
+      threadId: ThreadId.makeUnsafe("thread-atomic"),
+      message: {
+        messageId: asMessageId("msg-atomic-1"),
+        role: "user" as const,
+        text: "hello",
+        attachments: [],
+      },
+      createdAt,
+    };
+
+    await expect(runtime.runPromise(engine.dispatch(turnStartCommand))).rejects.toThrow(
+      "projection failed",
+    );
+
+    const eventsAfterFailure = await runtime.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(eventsAfterFailure.map((event) => event.type)).toEqual([
+      "project.created",
+      "thread.created",
+    ]);
+    expect((await runtime.runPromise(engine.getReadModel())).snapshotSequence).toBe(2);
+
+    const retryResult = await runtime.runPromise(engine.dispatch(turnStartCommand));
+    expect(retryResult.sequence).toBe(4);
+
+    const eventsAfterRetry = await runtime.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(eventsAfterRetry.map((event) => event.type)).toEqual([
+      "project.created",
+      "thread.created",
+      "thread.message-sent",
+      "thread.turn-start-requested",
+    ]);
+    expect(
+      eventsAfterRetry.filter((event) => event.commandId === turnStartCommand.commandId),
+    ).toHaveLength(2);
+
     await runtime.dispose();
   });
 

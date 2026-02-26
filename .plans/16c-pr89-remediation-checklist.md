@@ -154,8 +154,8 @@ Counts: active `53` (`valid=34`, `partially-valid=19`), closed-invalid `5`
 
 ### Phase 2
 
-- [ ] `C001` Non-atomic event appending can corrupt state on retry. If an error occurs mid-loop (lines 96-102) after some events are persisted but before the receipt is written, the command appears to fail. A retry generates new UUIDs via `crypto.randomUUID()` in the decider, appending duplicate events. Consider wrapping the loop in a transaction or using deterministic event IDs derived from `commandId`. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
-  - Status: `TODO`
+- [x] `C001` Non-atomic event appending can corrupt state on retry. If an error occurs mid-loop (lines 96-102) after some events are persisted but before the receipt is written, the command appears to fail. A retry generates new UUIDs via `crypto.randomUUID()` in the decider, appending duplicate events. Consider wrapping the loop in a transaction or using deterministic event IDs derived from `commandId`. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
+  - Status: `DONE`
   - Verdict: `valid`
   - Severity: `High`
   - Area: `Event ordering and state consistency`
