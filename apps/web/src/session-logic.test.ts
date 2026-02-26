@@ -69,7 +69,7 @@ describe("derivePendingApprovals", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
-  it("returns entries in chronological order", () => {
+  it("omits tool started entries and keeps completed entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "tool-complete",
@@ -86,7 +86,7 @@ describe("deriveWorkLogEntries", () => {
     ];
 
     const entries = deriveWorkLogEntries(activities, undefined);
-    expect(entries.map((entry) => entry.id)).toEqual(["tool-start", "tool-complete"]);
+    expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
   });
 
   it("filters by turn id when provided", () => {

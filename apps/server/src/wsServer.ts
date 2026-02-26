@@ -183,23 +183,22 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
     });
   }
 
-  const onTerminalEvent = (event: TerminalEvent) =>
-    Effect.gen(function* () {
-      const push: WsPush = {
-        type: "push",
-        channel: WS_CHANNELS.terminalEvent,
-        data: event,
-      };
-      const message = yield* Schema.encodeEffect(Schema.fromJsonString(WsPush))(push);
-      let recipients = 0;
-      for (const client of yield* Ref.get(clients)) {
-        if (client.readyState === client.OPEN) {
-          client.send(message);
-          recipients += 1;
-        }
+  const onTerminalEvent = Effect.fnUntraced(function* (event: TerminalEvent) {
+    const push: WsPush = {
+      type: "push",
+      channel: WS_CHANNELS.terminalEvent,
+      data: event,
+    };
+    const message = yield* Schema.encodeEffect(Schema.fromJsonString(WsPush))(push);
+    let recipients = 0;
+    for (const client of yield* Ref.get(clients)) {
+      if (client.readyState === client.OPEN) {
+        client.send(message);
+        recipients += 1;
       }
-      logOutgoingPush(push, recipients);
-    }).pipe(Effect.runPromise);
+    }
+    logOutgoingPush(push, recipients);
+  });
 
   // HTTP server — serves static files or redirects to Vite dev server
   const httpServer = http.createServer((req, res) => {
@@ -289,9 +288,7 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
   const { openInEditor } = yield* Open;
 
   const subscriptionsScope = yield* Scope.make("sequential");
-  yield* Effect.addFinalizer(() =>
-    Scope.close(subscriptionsScope, Exit.void).pipe(Effect.orElseSucceed(() => undefined)),
-  );
+  yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
 
   yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
     Effect.gen(function* () {
@@ -312,7 +309,7 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
-  yield* orchestrationReactor.start.pipe(Scope.provide(subscriptionsScope));
+  yield* Scope.provide(orchestrationReactor.start, subscriptionsScope);
 
   if (autoBootstrapProjectFromCwd) {
     const snapshot = yield* projectionReadModelQuery.getSnapshot();
@@ -332,7 +329,7 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
     }
   }
 
-  const routeRequest = Effect.fn(function* (request: WebSocketRequest) {
+  const routeRequest = Effect.fnUntraced(function* (request: WebSocketRequest) {
     switch (request.body._tag) {
       case ORCHESTRATION_WS_METHODS.getSnapshot:
         return yield* projectionReadModelQuery.getSnapshot();
@@ -573,18 +570,24 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
     ),
   );
 
-  const unsubscribeTerminalEvents = yield* terminalManager.subscribe(onTerminalEvent);
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
-      unsubscribeTerminalEvents();
-    }),
+  const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
+    (event) => void Effect.runPromise(onTerminalEvent(event)),
   );
-  yield* Effect.addFinalizer(terminalManager.dispose);
+  yield* Effect.addFinalizer(() =>
+    Effect.all([Effect.sync(() => unsubscribeTerminalEvents()), terminalManager.dispose()]),
+  );
 
   yield* NodeHttpServer.make(() => httpServer, listenOptions);
 
   yield* Effect.addFinalizer(() =>
-    Effect.all([closeAllClients, closeWebSocketServer.pipe(Effect.orElseSucceed(() => undefined))]),
+    Effect.all([
+      closeAllClients,
+      closeWebSocketServer.pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to close web socket server", { cause: error }),
+        ),
+      ),
+    ]),
   );
 
   return httpServer;

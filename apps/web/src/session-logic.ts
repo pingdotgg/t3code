@@ -127,6 +127,7 @@ export function deriveWorkLogEntries(
   );
   return ordered
     .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
+    .filter((activity) => activity.kind !== "tool.started")
     .filter((activity) => activity.summary !== "Checkpoint captured")
     .map((activity) => {
       const payload =
