@@ -333,15 +333,6 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
 
 ### Phase 6
 
-- [ ] `C024` In `executeUnprepared`, preparing outside an effect and not closing the statement can cause uncaught errors and leaks. Suggest wrapping with `Effect.acquireUseRelease`: prepare in acquire (error-safe) and `finalize` in release.
-  - Status: `TODO`
-  - Verdict: `partially-valid`
-  - Severity: `Medium`
-  - Area: `Other`
-  - File: `apps/server/src/persistence/NodeSqliteClient.ts:145`
-  - Threads: PRRT_kwDORLtfbc5whxX9
-  - Audit note: prepare() still outside managed effect boundary; failure handling risk remains.
-
 - [ ] `C028` Branch sync dispatches both server and stale local update
   - Status: `TODO`
   - Verdict: `partially-valid`
@@ -351,8 +342,8 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Threads: PRRT_kwDORLtfbc5v-XCu
   - Audit note: Optimistic local+server dual update is intentional but can temporarily diverge.
 
-- [ ] `C037` `Effect.callback` should return a cleanup function to close the server(s) on fiber interruption. Without it, the `Net.Server` handles keep the process alive and leak the port if the effect is cancelled. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
-  - Status: `TODO`
+- [x] `C037` `Effect.callback` should return a cleanup function to close the server(s) on fiber interruption. Without it, the `Net.Server` handles keep the process alive and leak the port if the effect is cancelled. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
+  - Status: `DONE`
   - Verdict: `partially-valid`
   - Severity: `Low`
   - Area: `Other`

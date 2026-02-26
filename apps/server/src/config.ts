@@ -66,6 +66,7 @@ export class NetService extends ServiceMap.Service<NetService, NetServiceShape>(
   static readonly layer = Layer.succeed(NetService, {
     findAvailablePort: (preferred) =>
       Effect.callback<number, NetError>((resume) => {
+        let fallbackServer: Net.Server | null = null;
         const server = Net.createServer();
         server.listen(preferred, () => {
           server.close(() => resume(Effect.succeed(preferred)));
@@ -88,6 +89,12 @@ export class NetService extends ServiceMap.Service<NetService, NetServiceShape>(
               Effect.fail(new NetError({ message: "Failed to find an available port", cause })),
             );
           });
+          fallbackServer = fallback;
+        });
+
+        return Effect.sync(() => {
+          server.close();
+          fallbackServer?.close();
         });
       }),
   });
