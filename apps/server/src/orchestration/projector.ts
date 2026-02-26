@@ -65,7 +65,12 @@ function retainThreadMessagesAfterRevert(
   const missingUserCount = Math.max(0, turnCount - retainedUserCount);
   if (missingUserCount > 0) {
     const fallbackUserMessages = messages
-      .filter((message) => message.role === "user" && !retainedMessageIds.has(message.id))
+      .filter(
+        (message) =>
+          message.role === "user" &&
+          !retainedMessageIds.has(message.id) &&
+          (message.turnId === null || retainedTurnIds.has(message.turnId)),
+      )
       .toSorted(
         (left, right) =>
           left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
@@ -82,7 +87,12 @@ function retainThreadMessagesAfterRevert(
   const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
   if (missingAssistantCount > 0) {
     const fallbackAssistantMessages = messages
-      .filter((message) => message.role === "assistant" && !retainedMessageIds.has(message.id))
+      .filter(
+        (message) =>
+          message.role === "assistant" &&
+          !retainedMessageIds.has(message.id) &&
+          (message.turnId === null || retainedTurnIds.has(message.turnId)),
+      )
       .toSorted(
         (left, right) =>
           left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),

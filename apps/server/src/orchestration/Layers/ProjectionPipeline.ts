@@ -6,6 +6,7 @@ import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../per
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { ProjectionCheckpointRepository } from "../../persistence/Services/ProjectionCheckpoints.ts";
 import { ProjectionPendingApprovalRepository } from "../../persistence/Services/ProjectionPendingApprovals.ts";
+import { ProjectionPendingTurnStartRepository } from "../../persistence/Services/ProjectionPendingTurnStarts.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionStateRepository } from "../../persistence/Services/ProjectionState.ts";
 import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
@@ -20,6 +21,7 @@ import { ProjectionThreadTurnRepository } from "../../persistence/Services/Proje
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionCheckpointRepositoryLive } from "../../persistence/Layers/ProjectionCheckpoints.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
+import { ProjectionPendingTurnStartRepositoryLive } from "../../persistence/Layers/ProjectionPendingTurnStarts.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
 import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
@@ -97,7 +99,12 @@ function retainProjectionMessagesAfterRevert(
   const missingUserCount = Math.max(0, turnCount - retainedUserCount);
   if (missingUserCount > 0) {
     const fallbackUserMessages = messages
-      .filter((message) => message.role === "user" && !retainedMessageIds.has(message.messageId))
+      .filter(
+        (message) =>
+          message.role === "user" &&
+          !retainedMessageIds.has(message.messageId) &&
+          (message.turnId === null || retainedTurnIds.has(message.turnId)),
+      )
       .toSorted(
         (left, right) =>
           left.createdAt.localeCompare(right.createdAt) ||
@@ -116,7 +123,10 @@ function retainProjectionMessagesAfterRevert(
   if (missingAssistantCount > 0) {
     const fallbackAssistantMessages = messages
       .filter(
-        (message) => message.role === "assistant" && !retainedMessageIds.has(message.messageId),
+        (message) =>
+          message.role === "assistant" &&
+          !retainedMessageIds.has(message.messageId) &&
+          (message.turnId === null || retainedTurnIds.has(message.turnId)),
       )
       .toSorted(
         (left, right) =>
@@ -157,13 +167,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
   const projectionThreadTurnRepository = yield* ProjectionThreadTurnRepository;
   const projectionCheckpointRepository = yield* ProjectionCheckpointRepository;
   const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
-  const pendingTurnStartByThreadId = new Map<
-    string,
-    {
-      readonly messageId: NonNullable<ProjectionThreadTurn["userMessageId"]>;
-      readonly createdAt: string;
-    }
-  >();
+  const projectionPendingTurnStartRepository = yield* ProjectionPendingTurnStartRepository;
 
   const applyProjectsProjection: ProjectorDefinition["apply"] = (event) =>
     Effect.gen(function* () {
@@ -473,7 +477,8 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
     Effect.gen(function* () {
       switch (event.type) {
         case "thread.turn-start-requested": {
-          pendingTurnStartByThreadId.set(event.payload.threadId, {
+          yield* projectionPendingTurnStartRepository.upsert({
+            threadId: event.payload.threadId,
             messageId: event.payload.messageId,
             createdAt: event.payload.createdAt,
           });
@@ -487,13 +492,16 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           }
 
           const existingTurn = yield* projectionThreadTurnRepository.getByTurnId({ turnId });
-          const pendingTurnStart = pendingTurnStartByThreadId.get(event.payload.threadId);
+          const pendingTurnStart = yield* projectionPendingTurnStartRepository.getByThreadId({
+            threadId: event.payload.threadId,
+          });
           if (Option.isSome(existingTurn)) {
             yield* projectionThreadTurnRepository.upsert({
               ...existingTurn.value,
               status: existingTurn.value.status === "completed" ? "completed" : "running",
               userMessageId:
-                existingTurn.value.userMessageId ?? pendingTurnStart?.messageId ?? null,
+                existingTurn.value.userMessageId ??
+                (Option.isSome(pendingTurnStart) ? pendingTurnStart.value.messageId : null),
               startedAt: existingTurn.value.startedAt,
             });
           } else {
@@ -505,14 +513,18 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
               threadId: event.payload.threadId,
               turnCount: nextTurnCount(existingThreadTurns),
               status: "running",
-              userMessageId: pendingTurnStart?.messageId ?? null,
+              userMessageId: Option.isSome(pendingTurnStart) ? pendingTurnStart.value.messageId : null,
               assistantMessageId: null,
-              startedAt: pendingTurnStart?.createdAt ?? event.occurredAt,
+              startedAt: Option.isSome(pendingTurnStart)
+                ? pendingTurnStart.value.createdAt
+                : event.occurredAt,
               completedAt: null,
             });
           }
 
-          pendingTurnStartByThreadId.delete(event.payload.threadId);
+          yield* projectionPendingTurnStartRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
           return;
         }
 
@@ -837,9 +849,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
   const bootstrap: OrchestrationProjectionPipelineShape["bootstrap"] = Effect.forEach(
     projectors,
     bootstrapProjector,
-    {
-      concurrency: 1,
-    },
+    { concurrency: 1 },
   ).pipe(
     Effect.asVoid,
     Effect.tap(() =>
@@ -870,5 +880,6 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionThreadTurnRepositoryLive),
   Layer.provideMerge(ProjectionCheckpointRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),
+  Layer.provideMerge(ProjectionPendingTurnStartRepositoryLive),
   Layer.provideMerge(ProjectionStateRepositoryLive),
 );
