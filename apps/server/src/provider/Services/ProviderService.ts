@@ -20,6 +20,7 @@ import type {
   ProviderSessionId,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
+  ThreadId,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
 import { ServiceMap } from "effect";
@@ -32,6 +33,7 @@ export interface ProviderServiceShape {
    * Start a provider session.
    */
   readonly startSession: (
+    threadId: ThreadId,
     input: ProviderSessionStartInput,
   ) => Effect.Effect<ProviderSession, ProviderServiceError>;
 

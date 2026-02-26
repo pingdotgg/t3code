@@ -71,7 +71,7 @@ describe("ProviderCommandReactor", () => {
   async function createHarness() {
     const now = new Date().toISOString();
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
-    const startSession = vi.fn((_: unknown) =>
+    const startSession = vi.fn((_: unknown, __: unknown) =>
       Effect.succeed({
         sessionId: asSessionId("sess-1"),
         provider: "codex" as const,
@@ -177,7 +177,8 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    expect(harness.startSession.mock.calls[0]?.[0]).toMatchObject({
+    expect(harness.startSession.mock.calls[0]?.[0]).toEqual(ThreadId.makeUnsafe("thread-1"));
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
       cwd: "/tmp/provider-project",
       model: "gpt-5-codex",
     });

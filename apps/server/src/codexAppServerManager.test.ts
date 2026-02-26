@@ -204,6 +204,9 @@ describe("sendTurn", () => {
     expect(result).toEqual({
       threadId: "thread_1",
       turnId: "turn_1",
+      resumeCursor: {
+        threadId: "thread_1",
+      },
     });
     expect(requireSession).toHaveBeenCalledWith("sess_1");
     expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
@@ -225,6 +228,9 @@ describe("sendTurn", () => {
     expect(updateSession).toHaveBeenCalledWith(context, {
       status: "running",
       activeTurnId: "turn_1",
+      resumeCursor: {
+        threadId: "thread_1",
+      },
     });
   });
 

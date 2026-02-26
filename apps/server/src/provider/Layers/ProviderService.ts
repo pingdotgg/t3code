@@ -24,10 +24,13 @@ import {
 } from "@t3tools/contracts";
 import { Effect, Layer, Option, PubSub, Queue, Ref, Schema, Stream } from "effect";
 
-import { ProviderValidationError } from "../Errors.ts";
+import { ProviderSessionNotFoundError, ProviderValidationError } from "../Errors.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderService, type ProviderServiceShape } from "../Services/ProviderService.ts";
-import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
+import {
+  ProviderSessionDirectory,
+  type ProviderSessionBinding,
+} from "../Services/ProviderSessionDirectory.ts";
 import { makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 export interface ProviderServiceLiveOptions {
@@ -154,7 +157,11 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         Effect.asVoid,
       );
 
-    const upsertSessionBinding = (session: ProviderSession, operation: string) =>
+    const upsertSessionBinding = (
+      session: ProviderSession,
+      operation: string,
+      threadId: ThreadId,
+    ) =>
       Effect.gen(function* () {
         const providerThreadId = session.threadId;
         if (!providerThreadId) {
@@ -165,18 +172,17 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         }
 
         const providerSessionId = asProviderSessionId(session.sessionId);
-        const brandedThreadId = ThreadId.makeUnsafe(providerThreadId);
         yield* directory.upsert({
           sessionId: providerSessionId,
           provider: session.provider,
-          threadId: brandedThreadId,
+          threadId,
           providerThreadId,
           status: toRuntimeStatus(session),
-          resumeCursor: { resumeThreadId: providerThreadId },
+          ...(session.resumeCursor !== undefined ? { resumeCursor: session.resumeCursor } : {}),
           runtimePayload: toRuntimePayloadFromSession(session),
         });
 
-        return brandedThreadId;
+        return providerThreadId;
       });
 
     const clearAliasKey = (staleSessionId: ProviderSessionId) =>
@@ -235,26 +241,33 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
 
     const recoverSessionForThread = (input: {
       readonly staleSessionId: ProviderSessionId;
-      readonly provider: ProviderSession["provider"];
-      readonly threadId: ThreadId;
+      readonly binding: ProviderSessionBinding & { readonly threadId: ThreadId };
       readonly operation: string;
     }) =>
       Effect.gen(function* () {
-        const adapter = yield* registry.getByProvider(input.provider);
+        const adapter = yield* registry.getByProvider(input.binding.provider);
         const activeSessions = yield* adapter.listSessions();
-        const expectedProviderThreadId = asProviderThreadId(input.threadId);
-        const existing = activeSessions.find(
-          (session) => session.threadId === expectedProviderThreadId,
-        );
+        const resumeThreadId = input.binding.providerThreadId ?? undefined;
+        const hasResumeCursor =
+          input.binding.resumeCursor !== null && input.binding.resumeCursor !== undefined;
+        const existing =
+          resumeThreadId === undefined
+            ? undefined
+            : activeSessions.find((session) => session.threadId === resumeThreadId);
         if (existing) {
-          const existingThreadId = yield* upsertSessionBinding(
+          const existingProviderThreadId = yield* upsertSessionBinding(
             existing,
             `${input.operation}:upsertExistingSession`,
+            input.binding.threadId,
           );
           yield* directory.upsert({
             sessionId: input.staleSessionId,
             provider: existing.provider,
-            threadId: existingThreadId,
+            threadId: input.binding.threadId,
+            providerThreadId: existingProviderThreadId,
+            ...(existing.resumeCursor !== undefined
+              ? { resumeCursor: existing.resumeCursor }
+              : {}),
           });
           if (existing.sessionId !== input.staleSessionId) {
             yield* setAlias(input.staleSessionId, existing.sessionId);
@@ -267,9 +280,17 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           } as const;
         }
 
+        if (!resumeThreadId && !hasResumeCursor) {
+          return yield* toValidationError(
+            input.operation,
+            `Cannot recover stale session '${input.staleSessionId}' because no provider resume state is persisted.`,
+          );
+        }
+
         const resumed = yield* adapter.startSession({
-          provider: input.provider,
-          resumeThreadId: ProviderThreadId.makeUnsafe(input.threadId),
+          provider: input.binding.provider,
+          ...(resumeThreadId ? { resumeThreadId } : {}),
+          ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
         });
         if (resumed.provider !== adapter.provider) {
           return yield* toValidationError(
@@ -278,21 +299,20 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           );
         }
 
-        const resumedThreadId = yield* upsertSessionBinding(
+        const resumedProviderThreadId = yield* upsertSessionBinding(
           resumed,
           `${input.operation}:upsertRecoveredSession`,
+          input.binding.threadId,
         );
-        if (resumedThreadId !== input.threadId) {
-          return yield* toValidationError(
-            input.operation,
-            `Recovered session thread '${resumedThreadId}' does not match expected thread '${input.threadId}'.`,
-          );
-        }
 
         yield* directory.upsert({
           sessionId: input.staleSessionId,
           provider: resumed.provider,
-          threadId: resumedThreadId,
+          threadId: input.binding.threadId,
+          providerThreadId: resumedProviderThreadId,
+          ...(resumed.resumeCursor !== undefined
+            ? { resumeCursor: resumed.resumeCursor }
+            : {}),
         });
 
         if (resumed.sessionId !== input.staleSessionId) {
@@ -313,8 +333,26 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       readonly allowRecovery: boolean;
     }) =>
       Effect.gen(function* () {
-        const provider = yield* directory.getProvider(input.sessionId);
-        const adapter = yield* registry.getByProvider(provider);
+        const bindingOption = yield* directory.getBinding(input.sessionId);
+        const binding = Option.getOrUndefined(bindingOption);
+        if (!binding) {
+          return yield* new ProviderSessionNotFoundError({
+            sessionId: input.sessionId,
+          });
+        }
+        if (!binding.threadId) {
+          return yield* toValidationError(
+            input.operation,
+            `Cannot route session '${input.sessionId}' because no orchestration thread id is persisted.`,
+          );
+        }
+        const bindingWithThreadId: ProviderSessionBinding & {
+          readonly threadId: ThreadId;
+        } = {
+          ...binding,
+          threadId: binding.threadId,
+        };
+        const adapter = yield* registry.getByProvider(binding.provider);
 
         const hasRequestedSession = yield* adapter.hasSession(input.sessionId);
         if (hasRequestedSession) {
@@ -349,19 +387,9 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           } as const;
         }
 
-        const threadIdOption = yield* directory.getThreadId(input.sessionId);
-        const threadId = Option.getOrUndefined(threadIdOption);
-        if (!threadId) {
-          return yield* toValidationError(
-            input.operation,
-            `Cannot recover stale session '${input.sessionId}' because no thread id is persisted.`,
-          );
-        }
-
         const recovered = yield* recoverSessionForThread({
           staleSessionId: input.sessionId,
-          provider,
-          threadId,
+          binding: bindingWithThreadId,
           operation: input.operation,
         });
 
@@ -372,7 +400,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         } as const;
       });
 
-    const startSession: ProviderServiceShape["startSession"] = (rawInput) =>
+    const startSession: ProviderServiceShape["startSession"] = (threadId, rawInput) =>
       Effect.gen(function* () {
         const parsed = yield* decodeInputOrValidationError({
           operation: "ProviderService.startSession",
@@ -396,7 +424,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           );
         }
 
-        yield* upsertSessionBinding(session, "ProviderService.startSession");
+        yield* upsertSessionBinding(session, "ProviderService.startSession", threadId);
 
         return session;
       });
@@ -443,7 +471,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           threadId,
           providerThreadId: asProviderThreadId(turn.threadId),
           status: "running",
-          resumeCursor: { resumeThreadId: turn.threadId },
+          ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
           runtimePayload: {
             activeTurnId: turn.turnId,
             lastRuntimeEvent: "provider.sendTurn",
@@ -550,7 +578,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           ),
         ).pipe(Effect.asVoid);
         // Keep persisted session bindings so stale sessions can be resumed after
-        // process restart via resumeThreadId.
+        // process restart via providerThreadId.
         yield* Ref.set(routedSessionAliasesRef, new Map());
       });
 

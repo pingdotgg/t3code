@@ -192,14 +192,14 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
 
 ### Phase 3
 
-- [ ] `C008` Inconsistent input normalization across CheckpointStore methods
-  - Status: `TODO`
+- [x] `C008` Inconsistent input normalization across CheckpointStore methods
+  - Status: `DONE`
   - Verdict: `partially-valid`
   - Severity: `Medium`
   - Area: `Checkpointing correctness`
   - File: `apps/server/src/checkpointing/Layers/CheckpointStore.ts:94`
   - Threads: PRRT_kwDORLtfbc5widJw, PRRT_kwDORLtfbc5wnWv_, PRRT_kwDORLtfbc5w0_g7, PRRT_kwDORLtfbc5w1C36 (+3 duplicate thread(s))
-  - Audit note: Normalization inconsistency remains, but upstream callsites now mostly canonicalize inputs.
+  - Audit note: Edge schema strategy is in place across contracts/consumers (trim/normalize via schemas and decode at boundaries); CheckpointStore remains an internal repository boundary.
 
 - [ ] `C017` `REQUIRED_SNAPSHOT_PROJECTORS` includes `pending-approvals` and `thread-turns`, but `getSnapshot` doesn't query their data. If these projectors lag behind, the returned `snapshotSequence` will be lower than what the included data actually reflects, causing clients to replay already-applied events. Consider filtering `REQUIRED_SNAPSHOT_PROJECTORS` to only include projectors whose data is actually fetched in the snapshot. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
   - Status: `TODO`

@@ -49,6 +49,7 @@ const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.make
 const asTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
 const asRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
+const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 
 function makeFakeCodexAdapter() {
   const sessions = new Map<ProviderSessionId, ProviderSession>();
@@ -322,10 +323,13 @@ it.effect(
 
       const startedSession = yield* Effect.gen(function* () {
         const provider = yield* ProviderService;
-        return yield* provider.startSession({
-          provider: "codex",
-          cwd: "/tmp/project",
-        });
+        return yield* provider.startSession(
+          asThreadId("thread-1"),
+          {
+            provider: "codex",
+            cwd: "/tmp/project",
+          },
+        );
       }).pipe(Effect.provide(firstProviderLayer));
 
       yield* Effect.gen(function* () {
@@ -342,9 +346,7 @@ it.effect(
       assert.equal(Option.isSome(persistedAfterStopAll), true);
       if (Option.isSome(persistedAfterStopAll)) {
         assert.equal(persistedAfterStopAll.value.status, "stopped");
-        assert.deepEqual(persistedAfterStopAll.value.resumeCursor, {
-          resumeThreadId: startedSession.threadId,
-        });
+        assert.equal(persistedAfterStopAll.value.resumeCursor, null);
       }
 
       const secondCodex = makeFakeCodexAdapter();
@@ -396,10 +398,13 @@ routing.layer("ProviderServiceLive routing", (it) => {
     Effect.gen(function* () {
       const provider = yield* ProviderService;
 
-      const session = yield* provider.startSession({
-        provider: "codex",
-        cwd: "/tmp/project",
-      });
+      const session = yield* provider.startSession(
+        asThreadId("thread-1"),
+        {
+          provider: "codex",
+          cwd: "/tmp/project",
+        },
+      );
       assert.equal(session.provider, "codex");
 
       const sessions = yield* provider.listSessions();
@@ -448,10 +453,13 @@ routing.layer("ProviderServiceLive routing", (it) => {
     Effect.gen(function* () {
       const provider = yield* ProviderService;
 
-      const initial = yield* provider.startSession({
-        provider: "codex",
-        cwd: "/tmp/project",
-      });
+      const initial = yield* provider.startSession(
+        asThreadId("thread-1"),
+        {
+          provider: "codex",
+          cwd: "/tmp/project",
+        },
+      );
       yield* routing.codex.stopSession(initial.sessionId);
       routing.codex.startSession.mockClear();
       routing.codex.rollbackThread.mockClear();
@@ -479,12 +487,18 @@ routing.layer("ProviderServiceLive routing", (it) => {
     Effect.gen(function* () {
       const provider = yield* ProviderService;
 
-      yield* provider.startSession({
-        provider: "codex",
-      });
-      yield* provider.startSession({
-        provider: "codex",
-      });
+      yield* provider.startSession(
+        asThreadId("thread-1"),
+        {
+          provider: "codex",
+        },
+      );
+      yield* provider.startSession(
+        asThreadId("thread-2"),
+        {
+          provider: "codex",
+        },
+      );
 
       yield* provider.stopAll();
 
@@ -498,9 +512,12 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const provider = yield* ProviderService;
       const runtimeRepository = yield* ProviderSessionRuntimeRepository;
 
-      const session = yield* provider.startSession({
-        provider: "codex",
-      });
+      const session = yield* provider.startSession(
+        asThreadId("thread-1"),
+        {
+          provider: "codex",
+        },
+      );
       yield* provider.sendTurn({
         sessionId: session.sessionId,
         input: "hello",
@@ -513,9 +530,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(Option.isSome(runningRuntime), true);
       if (Option.isSome(runningRuntime)) {
         assert.equal(runningRuntime.value.status, "running");
-        assert.deepEqual(runningRuntime.value.resumeCursor, {
-          resumeThreadId: "thread-1",
-        });
+        assert.equal(runningRuntime.value.resumeCursor, null);
         const payload = runningRuntime.value.runtimePayload;
         assert.equal(payload !== null && typeof payload === "object", true);
         if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
@@ -551,9 +566,12 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
   it.effect("fans out adapter turn completion events", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
-      const session = yield* provider.startSession({
-        provider: "codex",
-      });
+      const session = yield* provider.startSession(
+        asThreadId("thread-1"),
+        {
+          provider: "codex",
+        },
+      );
 
       const eventsRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
       const consumer = yield* Stream.runForEach(provider.streamEvents, (event) =>
@@ -588,9 +606,12 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
   it.effect("keeps subscriber delivery ordered and isolates failing subscribers", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
-      const session = yield* provider.startSession({
-        provider: "codex",
-      });
+      const session = yield* provider.startSession(
+        asThreadId("thread-1"),
+        {
+          provider: "codex",
+        },
+      );
 
       const receivedByHealthy: string[] = [];
       const expectedEventIds = new Set<string>(["evt-ordered-1", "evt-ordered-2", "evt-ordered-3"]);
@@ -665,9 +686,12 @@ validation.layer("ProviderServiceLive validation", (it) => {
       const provider = yield* ProviderService;
 
       const failure = yield* Effect.result(
-        provider.startSession({
-          provider: "invalid-provider",
-        } as never),
+        provider.startSession(
+          asThreadId("thread-validation"),
+          {
+            provider: "invalid-provider",
+          } as never,
+        ),
       );
 
       assert.equal(failure._tag, "Failure");
@@ -702,10 +726,13 @@ validation.layer("ProviderServiceLive validation", (it) => {
       );
 
       const failure = yield* Effect.result(
-        provider.startSession({
-          provider: "codex",
-          cwd: "/tmp/project",
-        }),
+        provider.startSession(
+          asThreadId("thread-missing"),
+          {
+            provider: "codex",
+            cwd: "/tmp/project",
+          },
+        ),
       );
 
       assertFailure(

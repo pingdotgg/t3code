@@ -73,6 +73,11 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
                   sessionId: value.providerSessionId,
                   provider,
                   threadId: value.threadId,
+                  adapterKey: value.adapterKey,
+                  providerThreadId: value.providerThreadId,
+                  status: value.status,
+                  resumeCursor: value.resumeCursor,
+                  runtimePayload: value.runtimePayload,
                 }),
               ),
             ),
@@ -128,6 +133,9 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       ),
     );
 
+  const getBindingBySessionId: ProviderSessionDirectoryShape["getBinding"] = (sessionId) =>
+    getBinding(sessionId);
+
   const getThreadId: ProviderSessionDirectoryShape["getThreadId"] = (sessionId) =>
     getBinding(sessionId).pipe(
       Effect.flatMap((binding) =>
@@ -168,6 +176,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
   return {
     upsert,
     getProvider,
+    getBinding: getBindingBySessionId,
     getThreadId,
     remove,
     listSessionIds,

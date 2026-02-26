@@ -1,4 +1,5 @@
 import type { ProviderRuntimeEvent, ProviderSessionId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import { NodeServices } from "@effect/platform-node";
 import { it, assert } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Queue, Stream } from "effect";
@@ -116,10 +117,13 @@ it.effect("replays typed runtime fixture events", () =>
 
     yield* Effect.gen(function* () {
       const provider = yield* ProviderService;
-      const session = yield* provider.startSession({
-        provider: "codex",
-        cwd: fixture.cwd,
-      });
+      const session = yield* provider.startSession(
+        ThreadId.makeUnsafe("thread-integration-typed"),
+        {
+          provider: "codex",
+          cwd: fixture.cwd,
+        },
+      );
       assert.equal((session.threadId ?? "").length > 0, true);
 
       const observedEvents = yield* runTurn({
@@ -146,10 +150,13 @@ it.effect("replays file-changing fixture turn events", () =>
 
     yield* Effect.gen(function* () {
       const provider = yield* ProviderService;
-      const session = yield* provider.startSession({
-        provider: "codex",
-        cwd: fixture.cwd,
-      });
+      const session = yield* provider.startSession(
+        ThreadId.makeUnsafe("thread-integration-tools"),
+        {
+          provider: "codex",
+          cwd: fixture.cwd,
+        },
+      );
       assert.equal((session.threadId ?? "").length > 0, true);
 
       const observedEvents = yield* runTurn({
@@ -180,10 +187,13 @@ it.effect("runs multi-turn tool/approval flow", () =>
 
     yield* Effect.gen(function* () {
       const provider = yield* ProviderService;
-      const session = yield* provider.startSession({
-        provider: "codex",
-        cwd: fixture.cwd,
-      });
+      const session = yield* provider.startSession(
+        ThreadId.makeUnsafe("thread-integration-multi"),
+        {
+          provider: "codex",
+          cwd: fixture.cwd,
+        },
+      );
       assert.equal((session.threadId ?? "").length > 0, true);
 
       const firstTurnEvents = yield* runTurn({
@@ -229,10 +239,13 @@ it.effect("rolls back provider conversation state only", () =>
 
     yield* Effect.gen(function* () {
       const provider = yield* ProviderService;
-      const session = yield* provider.startSession({
-        provider: "codex",
-        cwd: fixture.cwd,
-      });
+      const session = yield* provider.startSession(
+        ThreadId.makeUnsafe("thread-integration-rollback"),
+        {
+          provider: "codex",
+          cwd: fixture.cwd,
+        },
+      );
       assert.equal((session.threadId ?? "").length > 0, true);
 
       yield* runTurn({

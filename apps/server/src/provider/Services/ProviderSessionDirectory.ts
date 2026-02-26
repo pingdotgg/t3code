@@ -58,6 +58,13 @@ export interface ProviderSessionDirectoryShape {
   ) => Effect.Effect<ProviderKind, ProviderSessionDirectoryReadError>;
 
   /**
+   * Resolve the full tracked binding for a session id.
+   */
+  readonly getBinding: (
+    sessionId: ProviderSessionId,
+  ) => Effect.Effect<Option.Option<ProviderSessionBinding>, ProviderSessionDirectoryReadError>;
+
+  /**
    * Resolve the tracked thread id for a session, if known.
    */
   readonly getThreadId: (

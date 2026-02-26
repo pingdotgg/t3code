@@ -221,15 +221,16 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         ...sessionOverrides,
         experimentalRawEvents: false,
       };
+      const resumeThreadId = readResumeThreadId(input);
 
       let threadOpenMethod: "thread/start" | "thread/resume" = "thread/start";
       let threadOpenResponse: unknown;
-      if (input.resumeThreadId) {
+      if (resumeThreadId) {
         try {
           threadOpenMethod = "thread/resume";
           threadOpenResponse = await this.sendRequest(context, "thread/resume", {
             ...sessionOverrides,
-            threadId: input.resumeThreadId,
+            threadId: resumeThreadId,
           });
         } catch (error) {
           if (!isRecoverableThreadResumeError(error)) {
@@ -240,7 +241,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           this.emitLifecycleEvent(
             context,
             "session/threadResumeFallback",
-            `Could not resume thread ${input.resumeThreadId}; started a new thread instead.`,
+            `Could not resume thread ${resumeThreadId}; started a new thread instead.`,
           );
           threadOpenResponse = await this.sendRequest(context, "thread/start", threadStartParams);
         }
@@ -261,6 +262,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       this.updateSession(context, {
         status: "ready",
         threadId,
+        resumeCursor: { threadId },
       });
       this.emitLifecycleEvent(context, "session/ready", `Connected to thread ${threadId}`);
       return { ...context.session };
@@ -347,11 +349,13 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     this.updateSession(context, {
       status: "running",
       activeTurnId: turnId,
+      resumeCursor: context.session.resumeCursor ?? { threadId: context.session.threadId },
     });
 
     return {
       threadId: context.session.threadId,
       turnId,
+      resumeCursor: context.session.resumeCursor ?? { threadId: context.session.threadId },
     };
   }
 
@@ -974,6 +978,18 @@ function brandIfNonEmpty<T extends string>(
 
 function toProviderThreadId(value: string | undefined): ProviderThreadId | undefined {
   return brandIfNonEmpty(value, ProviderThreadId.makeUnsafe);
+}
+
+function readResumeThreadId(input: ProviderSessionStartInput): ProviderThreadId | undefined {
+  if (
+    !input.resumeCursor ||
+    typeof input.resumeCursor !== "object" ||
+    Array.isArray(input.resumeCursor)
+  ) {
+    return undefined;
+  }
+  const rawThreadId = (input.resumeCursor as Record<string, unknown>).threadId;
+  return typeof rawThreadId === "string" ? toProviderThreadId(rawThreadId) : input.resumeThreadId;
 }
 
 function toProviderTurnId(value: string | undefined): ProviderTurnId | undefined {

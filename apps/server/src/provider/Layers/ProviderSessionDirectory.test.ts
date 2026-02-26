@@ -19,10 +19,6 @@ import { ProviderSessionNotFoundError, ProviderValidationError } from "../Errors
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 
-const sessionId = (value: string) => ProviderSessionId.makeUnsafe(value);
-const threadId = (value: string) => ThreadId.makeUnsafe(value);
-const providerThreadId = (value: string) => ProviderThreadId.makeUnsafe(value);
-
 function makeDirectoryLayer<E, R>(persistenceLayer: Layer.Layer<SqlClient.SqlClient, E, R>) {
   const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
     Layer.provide(persistenceLayer),
@@ -33,49 +29,58 @@ function makeDirectoryLayer<E, R>(persistenceLayer: Layer.Layer<SqlClient.SqlCli
   );
 }
 
-const layer = it.layer(makeDirectoryLayer(SqlitePersistenceMemory));
-
-layer("ProviderSessionDirectoryLive", (it) => {
+it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryLive", (it) => {
   it("upserts, reads, and removes session bindings", () =>
     Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;
       const runtimeRepository = yield* ProviderSessionRuntimeRepository;
 
+      const sessionId = ProviderSessionId.makeUnsafe("sess-1");
+      const initialThreadId = ThreadId.makeUnsafe("thread-1");
+
       yield* directory.upsert({
-        sessionId: sessionId("sess-1"),
+        sessionId,
         provider: "codex",
-        threadId: threadId("thread-1"),
+        threadId: initialThreadId,
       });
 
-      const provider = yield* directory.getProvider(sessionId("sess-1"));
+      const provider = yield* directory.getProvider(sessionId);
       assert.equal(provider, "codex");
-      const resolvedThreadId = yield* directory.getThreadId(sessionId("sess-1"));
-      assertSome(resolvedThreadId, threadId("thread-1"));
+      const resolvedThreadId = yield* directory.getThreadId(sessionId);
+      assertSome(resolvedThreadId, initialThreadId);
+
+      const nextThreadId = ThreadId.makeUnsafe("thread-2");
 
       yield* directory.upsert({
-        sessionId: sessionId("sess-1"),
+        sessionId: sessionId,
         provider: "codex",
-        threadId: threadId("thread-2"),
+        threadId: nextThreadId,
       });
-      const updatedThreadId = yield* directory.getThreadId(sessionId("sess-1"));
-      assertSome(updatedThreadId, threadId("thread-2"));
+      const updatedThreadId = yield* directory.getThreadId(sessionId);
+      assertSome(updatedThreadId, nextThreadId);
+      const updatedBinding = yield* directory.getBinding(sessionId);
+      assert.equal(Option.isSome(updatedBinding), true);
+      if (Option.isSome(updatedBinding)) {
+        assert.equal(updatedBinding.value.threadId, nextThreadId);
+        assert.equal(updatedBinding.value.providerThreadId, null);
+      }
 
       const runtime = yield* runtimeRepository.getBySessionId({
-        providerSessionId: sessionId("sess-1"),
+        providerSessionId: sessionId,
       });
       assert.equal(Option.isSome(runtime), true);
       if (Option.isSome(runtime)) {
-        assert.equal(runtime.value.threadId, "thread-2");
-        assert.equal(runtime.value.providerThreadId, "thread-2");
+        assert.equal(runtime.value.threadId, nextThreadId);
+        assert.equal(runtime.value.providerThreadId, null);
         assert.equal(runtime.value.status, "running");
         assert.equal(runtime.value.adapterKey, "codex");
       }
 
       const sessionIds = yield* directory.listSessionIds();
-      assert.deepEqual(sessionIds, [sessionId("sess-1")]);
+      assert.deepEqual(sessionIds, [sessionId]);
 
-      yield* directory.remove(sessionId("sess-1"));
-      const missingProvider = yield* directory.getProvider(sessionId("sess-1")).pipe(Effect.result);
+      yield* directory.remove(sessionId);
+      const missingProvider = yield* directory.getProvider(sessionId).pipe(Effect.result);
       assertFailure(missingProvider, new ProviderSessionNotFoundError({ sessionId: "sess-1" }));
     }));
 
@@ -84,7 +89,7 @@ layer("ProviderSessionDirectoryLive", (it) => {
       const directory = yield* ProviderSessionDirectory;
       const result = yield* Effect.result(
         directory.upsert({
-          sessionId: sessionId("sess-no-thread"),
+          sessionId: ProviderSessionId.makeUnsafe("sess-no-thread"),
           provider: "codex",
         }),
       );
@@ -102,11 +107,15 @@ layer("ProviderSessionDirectoryLive", (it) => {
       const directory = yield* ProviderSessionDirectory;
       const runtimeRepository = yield* ProviderSessionRuntimeRepository;
 
+      const sessionId = ProviderSessionId.makeUnsafe("sess-runtime");
+      const threadId = ThreadId.makeUnsafe("thread-runtime");
+      const providerThreadId = ProviderThreadId.makeUnsafe("provider-thread-runtime");
+
       yield* directory.upsert({
-        sessionId: sessionId("sess-runtime"),
+        sessionId,
         provider: "codex",
-        threadId: threadId("thread-runtime"),
-        providerThreadId: providerThreadId("provider-thread-runtime"),
+        threadId,
+        providerThreadId,
         status: "starting",
         resumeCursor: {
           resumeThreadId: "provider-thread-runtime",
@@ -118,7 +127,7 @@ layer("ProviderSessionDirectoryLive", (it) => {
       });
 
       yield* directory.upsert({
-        sessionId: sessionId("sess-runtime"),
+        sessionId,
         provider: "codex",
         status: "running",
         runtimePayload: {
@@ -127,15 +136,15 @@ layer("ProviderSessionDirectoryLive", (it) => {
       });
 
       const runtime = yield* runtimeRepository.getBySessionId({
-        providerSessionId: sessionId("sess-runtime"),
+        providerSessionId: sessionId,
       });
       assert.equal(Option.isSome(runtime), true);
       if (Option.isSome(runtime)) {
-        assert.equal(runtime.value.threadId, "thread-runtime");
-        assert.equal(runtime.value.providerThreadId, "provider-thread-runtime");
+        assert.equal(runtime.value.threadId, threadId);
+        assert.equal(runtime.value.providerThreadId, providerThreadId);
         assert.equal(runtime.value.status, "running");
         assert.deepEqual(runtime.value.resumeCursor, {
-          resumeThreadId: "provider-thread-runtime",
+          resumeThreadId: providerThreadId,
         });
         assert.deepEqual(runtime.value.runtimePayload, {
           cwd: "/tmp/project",
@@ -151,23 +160,26 @@ layer("ProviderSessionDirectoryLive", (it) => {
       const dbPath = path.join(tempDir, "orchestration.sqlite");
       const directoryLayer = makeDirectoryLayer(makeSqlitePersistenceLive(dbPath));
 
+      const sessionId = ProviderSessionId.makeUnsafe("sess-restart");
+      const threadId = ThreadId.makeUnsafe("thread-restart");
+
       yield* Effect.gen(function* () {
         const directory = yield* ProviderSessionDirectory;
         yield* directory.upsert({
-          sessionId: sessionId("sess-restart"),
+          sessionId,
           provider: "codex",
-          threadId: threadId("thread-restart"),
+          threadId,
         });
       }).pipe(Effect.provide(directoryLayer));
 
       yield* Effect.gen(function* () {
         const directory = yield* ProviderSessionDirectory;
         const sql = yield* SqlClient.SqlClient;
-        const provider = yield* directory.getProvider(sessionId("sess-restart"));
+        const provider = yield* directory.getProvider(sessionId);
         assert.equal(provider, "codex");
 
-        const resolvedThreadId = yield* directory.getThreadId(sessionId("sess-restart"));
-        assertSome(resolvedThreadId, threadId("thread-restart"));
+        const resolvedThreadId = yield* directory.getThreadId(sessionId);
+        assertSome(resolvedThreadId, threadId);
 
         const legacyTableRows = yield* sql<{ readonly name: string }>`
           SELECT name

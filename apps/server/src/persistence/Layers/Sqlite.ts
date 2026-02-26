@@ -52,6 +52,6 @@ export const SqlitePersistenceMemory = Layer.provideMerge(
 export const layerConfig = Effect.gen(function* () {
   const { stateDir } = yield* ServerConfig;
   const { join } = yield* Path.Path;
-  const dbPath = join(stateDir, "orchestration.sqlite");
+  const dbPath = join(stateDir, "state.sqlite");
   return makeSqlitePersistenceLive(dbPath);
 }).pipe(Layer.unwrap);
