@@ -10,11 +10,11 @@
   "phase0_generated_at": "2026-02-26T02:49:21.091145Z",
   "summary": {
     "total_threads": 185,
-    "actionable_canonical": 60,
+    "actionable_canonical": 58,
     "actionable_duplicates": 24,
     "filtered_outdated": 94,
     "filtered_resolved": 6,
-    "filtered_invalid": 1
+    "filtered_invalid": 3
   },
   "canonical_items": [
     {
@@ -80,42 +80,6 @@
       "duplicate_count": 0,
       "authors": [
         "macroscopeapp"
-      ]
-    },
-    {
-      "canonical_id": "C004",
-      "area": "Web provider event integration",
-      "title": "channel.** The web app currently does not consume provider event streams via the `providers.event` channel. While the orchestration API has `onReadModel()` and `onDomainEvent()` subscriptions, the providers event stream subscription is missing. Add a subscription to `ORCHESTRATION_WS_CHANNELS.event` (or the appropriate providers event channel from contracts) in `wsNativeApi.ts` and expose it via the `api.providers` object to comply with the guideline requirement. <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
-      "severity": "High",
-      "path": "apps/web/src/routes/__root.tsx",
-      "line": 140,
-      "thread_ids": [
-        "PRRT_kwDORLtfbc5v9An7"
-      ],
-      "thread_indexes": [
-        31
-      ],
-      "duplicate_count": 0,
-      "authors": [
-        "coderabbitai"
-      ]
-    },
-    {
-      "canonical_id": "C005",
-      "area": "Web provider event integration",
-      "title": "push stream, and the callbacks rely on unchecked casts. Please reintroduce a `providers.onEvent` (or equivalent) that subscribes to the `providers.event` channel and decode read-model/domain-event payloads using the shared contracts schemas before invoking callbacks. As per coding guidelines: \"Web app must consume provider event streams via WebSocket push on channel `providers.event`\" and \"Use Zod schemas from `packages/contracts` for shared type contracts covering provider events, WebSocket protocol, and model/session types\". <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
-      "severity": "High",
-      "path": "apps/web/src/wsNativeApi.ts",
-      "line": 165,
-      "thread_ids": [
-        "PRRT_kwDORLtfbc5v9An-"
-      ],
-      "thread_indexes": [
-        34
-      ],
-      "duplicate_count": 0,
-      "authors": [
-        "coderabbitai"
       ]
     },
     {
@@ -1580,9 +1544,8 @@
       "title": "channel.** The web app currently does not consume provider event streams via the `providers.event` channel. While the orchestration API has `onReadModel()` and `onDomainEvent()` subscriptions, the providers event stream subscription is missing. Add a subscription to `ORCHESTRATION_WS_CHANNELS.event` (or the appropriate providers event channel from contracts) in `wsNativeApi.ts` and expose it via the `api.providers` object to comply with the guideline requirement. <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
       "severity": "High",
       "has_false_positive_signal": false,
-      "canonical_id": "C004",
-      "phase0_status": "actionable_canonical",
-      "phase0_reason": "Canonical actionable item."
+      "phase0_status": "filtered_invalid",
+      "phase0_reason": "Invalid by design: provider runtime events are intentionally surfaced through orchestration domain events (`orchestration.domainEvent`), not a separate `providers.event` WebSocket channel in the current architecture."
     },
     {
       "index": 32,
@@ -1623,9 +1586,8 @@
       "title": "push stream, and the callbacks rely on unchecked casts. Please reintroduce a `providers.onEvent` (or equivalent) that subscribes to the `providers.event` channel and decode read-model/domain-event payloads using the shared contracts schemas before invoking callbacks. As per coding guidelines: \"Web app must consume provider event streams via WebSocket push on channel `providers.event`\" and \"Use Zod schemas from `packages/contracts` for shared type contracts covering provider events, WebSocket protocol, and model/session types\". <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
       "severity": "High",
       "has_false_positive_signal": false,
-      "canonical_id": "C005",
-      "phase0_status": "actionable_canonical",
-      "phase0_reason": "Canonical actionable item."
+      "phase0_status": "filtered_invalid",
+      "phase0_reason": "Invalid by design: provider runtime events are intentionally surfaced through orchestration domain events (`orchestration.domainEvent`), not a separate `providers.event` WebSocket channel in the current architecture."
     },
     {
       "index": 35,

@@ -7,9 +7,9 @@
   - Total threads: 185
   - Outdated: 94 (excluded)
   - Active unresolved: 85
-  - Invalid/false-positive: 1 active (excluded)
+  - Invalid/false-positive: 3 (excluded)
   - Duplicate reposts: collapsed
-  - Unique actionable findings after filtering: 74
+  - Unique actionable findings after filtering: 58
 
 ## Phase 0: Canonical Triage Lock
 
@@ -25,19 +25,17 @@ Exit criteria:
 Related bug groups solved together:
 - Worker loop/fiber fatal error handling in orchestration reactors.
 - WebSocket message error boundaries and unhandled rejection guards.
-- Missing `providers.event` stream consumption/validation on web client.
+- Close invalid `providers.event` review findings as documented architecture mismatch (no code change expected).
 
 Primary files:
 - `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts`
 - `apps/server/src/orchestration/Layers/CheckpointReactor.ts`
 - `apps/server/src/wsServer.ts`
-- `apps/web/src/routes/__root.tsx`
-- `apps/web/src/wsNativeApi.ts`
 
 Exit criteria:
 - A single event-processing failure cannot permanently stop ingestion/reactor loops.
 - WS message handling cannot produce unhandled promise rejections.
-- Provider event stream reaches UI through validated contract path.
+- Invalid provider-event-channel review findings are closed with architecture rationale.
 
 ## Phase 2: State Consistency and Ordering
 

@@ -7,11 +7,11 @@
 ## Summary
 
 - Total threads: 185
-- Actionable canonical: 60
+- Actionable canonical: 58
 - Actionable duplicates: 24
 - Filtered outdated: 94
 - Filtered resolved: 6
-- Filtered invalid: 1
+- Filtered invalid: 3
 
 ## Canonical Actionable Checklist
 
@@ -143,13 +143,6 @@
 - [ ] C059 [Low] Suggestion: don’t spread `params` into `body`; it can override `_tag` and mishandle non-object values. Keep `_tag` separate and nest `params` under a single key (e.g., `data`), or validate `params` is a plain object. (apps/web/src/wsTransport.ts:59)
   - Threads: PRRT_kwDORLtfbc5whtrN
 
-### Web provider event integration (2)
-
-- [ ] C004 [High] channel.** The web app currently does not consume provider event streams via the `providers.event` channel. While the orchestration API has `onReadModel()` and `onDomainEvent()` subscriptions, the providers event stream subscription is missing. Add a subscription to `ORCHESTRATION_WS_CHANNELS.event` (or the appropriate providers event channel from contracts) in `wsNativeApi.ts` and expose it via the `api.providers` object to comply with the guideline requirement. <details> <summary>🤖 Prompt for AI Agents</summary> (apps/web/src/routes/__root.tsx:140)
-  - Threads: PRRT_kwDORLtfbc5v9An7
-- [ ] C005 [High] push stream, and the callbacks rely on unchecked casts. Please reintroduce a `providers.onEvent` (or equivalent) that subscribes to the `providers.event` channel and decode read-model/domain-event payloads using the shared contracts schemas before invoking callbacks. As per coding guidelines: "Web app must consume provider event streams via WebSocket push on channel `providers.event`" and "Use Zod schemas from `packages/contracts` for shared type contracts covering provider events, WebSocket protocol, and model/session types". <details> <summary>🤖 Prompt for AI Agents</summary> (apps/web/src/wsNativeApi.ts:165)
-  - Threads: PRRT_kwDORLtfbc5v9An-
-
 ### Build/runtime portability (2)
 
 - [ ] C006 [Medium] Build script runs TypeScript file with bare node (apps/server/package.json:14)
@@ -164,8 +157,12 @@
 
 ## Invalid / False-Positive Threads
 
+- PRRT_kwDORLtfbc5v9An7 | apps/web/src/routes/__root.tsx:140 | channel.** The web app currently does not consume provider event streams via the `providers.event` channel. While the orchestration API has `onReadModel()` and `onDomainEvent()` subscriptions, the providers event stream subscription is missing. Add a subscription to `ORCHESTRATION_WS_CHANNELS.event` (or the appropriate providers event channel from contracts) in `wsNativeApi.ts` and expose it via the `api.providers` object to comply with the guideline requirement. <details> <summary>🤖 Prompt for AI Agents</summary>
+  - Rationale: Invalid by design: provider runtime events are intentionally surfaced through orchestration domain events (`orchestration.domainEvent`), not a separate `providers.event` WebSocket channel in the current architecture.
+- PRRT_kwDORLtfbc5v9An- | apps/web/src/wsNativeApi.ts:165 | push stream, and the callbacks rely on unchecked casts. Please reintroduce a `providers.onEvent` (or equivalent) that subscribes to the `providers.event` channel and decode read-model/domain-event payloads using the shared contracts schemas before invoking callbacks. As per coding guidelines: "Web app must consume provider event streams via WebSocket push on channel `providers.event`" and "Use Zod schemas from `packages/contracts` for shared type contracts covering provider events, WebSocket protocol, and model/session types". <details> <summary>🤖 Prompt for AI Agents</summary>
+  - Rationale: Invalid by design: provider runtime events are intentionally surfaced through orchestration domain events (`orchestration.domainEvent`), not a separate `providers.event` WebSocket channel in the current architecture.
 - PRRT_kwDORLtfbc5widJx | apps/server/package.json:14 | Build script requires implicit Node.js TypeScript support
-  - Rationale: Explicit false-positive determination in thread replies.
+  - Rationale: Thread contains explicit false-positive determination in replies.
 
 ## Duplicate Mapping
 
