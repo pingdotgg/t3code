@@ -93,23 +93,24 @@ export const BunPtyAdapterLive = Layer.effect(
       return yield* Effect.die("Bun PTY terminal support is unavailable on Windows.");
     }
     return {
-      spawn: (input) => {
-        let processHandle: BunPtyProcess | null = null;
-        const command = [input.shell, ...(input.args ?? [])];
-        const subprocess = Bun.spawn(command, {
-          cwd: input.cwd,
-          env: input.env,
-          terminal: {
-            cols: input.cols,
-            rows: input.rows,
-            data: (_terminal, data) => {
-              processHandle?.emitData(data);
+      spawn: (input) =>
+        Effect.sync(() => {
+          let processHandle: BunPtyProcess | null = null;
+          const command = [input.shell, ...(input.args ?? [])];
+          const subprocess = Bun.spawn(command, {
+            cwd: input.cwd,
+            env: input.env,
+            terminal: {
+              cols: input.cols,
+              rows: input.rows,
+              data: (_terminal, data) => {
+                processHandle?.emitData(data);
+              },
             },
-          },
-        });
-        processHandle = new BunPtyProcess(subprocess);
-        return Effect.succeed(processHandle);
-      },
+          });
+          processHandle = new BunPtyProcess(subprocess);
+          return processHandle;
+        }),
     } satisfies PtyAdapterShape;
   }),
 );
