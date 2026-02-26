@@ -16,7 +16,7 @@ import {
   WsResponse,
 } from "@t3tools/contracts";
 import { NodeHttpServer } from "@effect/platform-node";
-import { Cause, Effect, Exit, Layer, Schema, Scope, ServiceMap, Stream, Struct } from "effect";
+import { Cause, Effect, Exit, Layer, Ref, Schema, Scope, ServiceMap, Stream, Struct } from "effect";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { createLogger } from "./logger";
@@ -171,7 +171,7 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
   const keybindingsManager = yield* Keybindings;
   const git = yield* GitCore;
 
-  const clients = new Set<WebSocket>();
+  const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
 
   function logOutgoingPush(push: WsPush, recipients: number) {
@@ -183,22 +183,23 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
     });
   }
 
-  const onTerminalEvent = (event: TerminalEvent) => {
-    const push: WsPush = {
-      type: "push",
-      channel: WS_CHANNELS.terminalEvent,
-      data: event,
-    };
-    const message = JSON.stringify(push);
-    let recipients = 0;
-    for (const client of clients) {
-      if (client.readyState === client.OPEN) {
-        client.send(message);
-        recipients += 1;
+  const onTerminalEvent = (event: TerminalEvent) =>
+    Effect.gen(function* () {
+      const push: WsPush = {
+        type: "push",
+        channel: WS_CHANNELS.terminalEvent,
+        data: event,
+      };
+      const message = yield* Schema.encodeEffect(Schema.fromJsonString(WsPush))(push);
+      let recipients = 0;
+      for (const client of yield* Ref.get(clients)) {
+        if (client.readyState === client.OPEN) {
+          client.send(message);
+          recipients += 1;
+        }
       }
-    }
-    logOutgoingPush(push, recipients);
-  };
+      logOutgoingPush(push, recipients);
+    }).pipe(Effect.runPromise);
 
   // HTTP server — serves static files or redirects to Vite dev server
   const httpServer = http.createServer((req, res) => {
@@ -273,12 +274,10 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
     });
   });
 
-  const closeAllClients = () => {
-    for (const client of clients) {
-      client.close();
-    }
-    clients.clear();
-  };
+  const closeAllClients = Ref.get(clients).pipe(
+    Effect.flatMap(Effect.forEach((client) => Effect.sync(() => client.close()))),
+    Effect.flatMap(() => Ref.set(clients, new Set())),
+  );
 
   const listenOptions = host ? { host, port } : { port };
 
@@ -295,15 +294,15 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
   );
 
   yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const push: WsPush = {
         type: "push",
         channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
         data: event,
       };
-      const message = JSON.stringify(push);
+      const message = yield* Schema.encodeEffect(Schema.fromJsonString(WsPush))(push);
       let recipients = 0;
-      for (const client of clients) {
+      for (const client of yield* Ref.get(clients)) {
         if (client.readyState === client.OPEN) {
           client.send(message);
           recipients += 1;
@@ -532,7 +531,7 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
   });
 
   wss.on("connection", (ws) => {
-    clients.add(ws);
+    void Effect.runPromise(Ref.update(clients, (clients) => clients.add(ws)));
 
     const segments = cwd.split(/[/\\]/).filter(Boolean);
     const projectName = segments[segments.length - 1] ?? "project";
@@ -550,11 +549,21 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
     });
 
     ws.on("close", () => {
-      clients.delete(ws);
+      void Effect.runPromise(
+        Ref.update(clients, (clients) => {
+          clients.delete(ws);
+          return clients;
+        }),
+      );
     });
 
     ws.on("error", () => {
-      clients.delete(ws);
+      void Effect.runPromise(
+        Ref.update(clients, (clients) => {
+          clients.delete(ws);
+          return clients;
+        }),
+      );
     });
   });
 
@@ -575,10 +584,7 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
   yield* NodeHttpServer.make(() => httpServer, listenOptions);
 
   yield* Effect.addFinalizer(() =>
-    Effect.all([
-      Effect.sync(() => closeAllClients()),
-      closeWebSocketServer.pipe(Effect.orElseSucceed(() => undefined)),
-    ]),
+    Effect.all([closeAllClients, closeWebSocketServer.pipe(Effect.orElseSucceed(() => undefined))]),
   );
 
   return httpServer;
