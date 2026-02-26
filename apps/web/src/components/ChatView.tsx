@@ -103,7 +103,7 @@ import {
 } from "~/projectScripts";
 import { Toggle } from "./ui/toggle";
 import { SidebarTrigger } from "./ui/sidebar";
-import { newCommandId, newMessageId } from "~/lib/orchestrationIds";
+import { newCommandId, newMessageId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
