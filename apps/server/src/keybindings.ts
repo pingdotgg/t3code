@@ -32,6 +32,7 @@ import {
   SchemaTransformation,
   ServiceMap,
 } from "effect";
+import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "./config";
 
 export class KeybindingsConfigError extends Schema.TaggedErrorClass<KeybindingsConfigError>()(
@@ -354,7 +355,8 @@ function encodeShortcut(shortcut: KeybindingShortcut): string | null {
   if (shortcut.ctrlKey) modifiers.push("ctrl");
   if (shortcut.altKey) modifiers.push("alt");
   if (shortcut.shiftKey) modifiers.push("shift");
-  if (!shortcut.key || shortcut.key.includes("+")) return null;
+  if (!shortcut.key) return null;
+  if (shortcut.key !== "+" && shortcut.key.includes("+")) return null;
   const key = shortcut.key === " " ? "space" : shortcut.key;
   return [...modifiers, key].join("+");
 }
@@ -433,6 +435,7 @@ const makeKeybindings = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const cachedResolvedConfig = yield* Ref.make<ResolvedKeybindingsConfig | null>(null);
+  const upsertSemaphore = yield* Semaphore.make(1);
 
   const loadCustomKeybindingsConfig = Effect.fn(function* (): Effect.fn.Return<
     readonly KeybindingRule[],
@@ -509,29 +512,31 @@ const makeKeybindings = Effect.gen(function* () {
   return {
     loadResolvedKeybindingsConfig: loadResolvedFromCacheOrDisk,
     upsertKeybindingRule: (rule) =>
-      Effect.gen(function* () {
-        const customConfig = yield* loadCustomKeybindingsConfig();
-        const nextConfig = [
-          ...customConfig.filter((entry) => entry.command !== rule.command),
-          rule,
-        ];
-        const cappedConfig =
-          nextConfig.length > MAX_KEYBINDINGS_COUNT
-            ? nextConfig.slice(-MAX_KEYBINDINGS_COUNT)
-            : nextConfig;
-        if (nextConfig.length > MAX_KEYBINDINGS_COUNT) {
-          yield* Effect.logWarning("truncating keybindings config to max entries", {
-            path: keybindingsConfigPath,
-            maxEntries: MAX_KEYBINDINGS_COUNT,
-          });
-        }
-        yield* writeConfigAtomically(cappedConfig);
-        const nextResolved = mergeWithDefaultKeybindings(
-          compileResolvedKeybindingsConfig(cappedConfig),
-        );
-        yield* Ref.set(cachedResolvedConfig, nextResolved);
-        return nextResolved;
-      }),
+      upsertSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const customConfig = yield* loadCustomKeybindingsConfig();
+          const nextConfig = [
+            ...customConfig.filter((entry) => entry.command !== rule.command),
+            rule,
+          ];
+          const cappedConfig =
+            nextConfig.length > MAX_KEYBINDINGS_COUNT
+              ? nextConfig.slice(-MAX_KEYBINDINGS_COUNT)
+              : nextConfig;
+          if (nextConfig.length > MAX_KEYBINDINGS_COUNT) {
+            yield* Effect.logWarning("truncating keybindings config to max entries", {
+              path: keybindingsConfigPath,
+              maxEntries: MAX_KEYBINDINGS_COUNT,
+            });
+          }
+          yield* writeConfigAtomically(cappedConfig);
+          const nextResolved = mergeWithDefaultKeybindings(
+            compileResolvedKeybindingsConfig(cappedConfig),
+          );
+          yield* Ref.set(cachedResolvedConfig, nextResolved);
+          return nextResolved;
+        }),
+      ),
   } satisfies KeybindingsShape;
 });
 

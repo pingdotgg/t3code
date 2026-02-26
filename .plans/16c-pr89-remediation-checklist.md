@@ -313,8 +313,8 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Threads: PRRT_kwDORLtfbc5w1GPo
   - Audit note: Chunk-by-chunk UTF-8 decode can still corrupt split multibyte characters.
 
-- [ ] `C039` The `+` key can be parsed (via trailing `+` handling) but cannot be encoded because `shortcut.key.includes("+")` returns true for the literal `+` key. Consider checking `shortcut.key === "+"` separately and encoding it as `"space"` style (e.g., a special token), or adjusting the condition to allow the single `+` character. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
-  - Status: `TODO`
+- [x] `C039` The `+` key can be parsed (via trailing `+` handling) but cannot be encoded because `shortcut.key.includes("+")` returns true for the literal `+` key. Consider checking `shortcut.key === "+"` separately and encoding it as `"space"` style (e.g., a special token), or adjusting the condition to allow the single `+` character. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
+  - Status: `DONE`
   - Verdict: `partially-valid`
   - Severity: `Low`
   - Area: `Edge-case parsing/platform behavior`
@@ -322,8 +322,8 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Threads: PRRT_kwDORLtfbc5wxvIB
   - Audit note: Parser/encoder mismatch remains, but encoder path currently low-use.
 
-- [ ] `C040` `upsertKeybindingRule` has a race condition: concurrent calls read the same file state, then the last write overwrites earlier changes. Consider wrapping the read-modify-write sequence with `Effect.Semaphore` to serialize access. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
-  - Status: `TODO`
+- [x] `C040` `upsertKeybindingRule` has a race condition: concurrent calls read the same file state, then the last write overwrites earlier changes. Consider wrapping the read-modify-write sequence with `Effect.Semaphore` to serialize access. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
+  - Status: `DONE`
   - Verdict: `valid`
   - Severity: `Low`
   - Area: `Edge-case parsing/platform behavior`

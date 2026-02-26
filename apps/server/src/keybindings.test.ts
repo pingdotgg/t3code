@@ -1,4 +1,4 @@
-import { KeybindingRule, KeybindingsConfig } from "@t3tools/contracts";
+import { KeybindingCommand, KeybindingRule, KeybindingsConfig } from "@t3tools/contracts";
 import { NodeServices } from "@effect/platform-node";
 import { assert, it } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
@@ -9,6 +9,7 @@ import {
   Keybindings,
   KeybindingsConfigError,
   KeybindingsLive,
+  ResolvedKeybindingFromConfig,
   compileResolvedKeybindingRule,
   parseKeybindingShortcut,
 } from "./keybindings";
@@ -39,9 +40,7 @@ const toDetailResult = <A, R>(effect: Effect.Effect<A, KeybindingsConfigError, R
 const writeKeybindingsConfig = (configPath: string, rules: readonly KeybindingRule[]) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
-    const encoded = yield* Schema.encodeEffect(KeybindingsConfigJson)(
-      rules,
-    );
+    const encoded = yield* Schema.encodeEffect(KeybindingsConfigJson)(rules);
     yield* fileSystem.writeFileString(configPath, encoded);
   });
 
@@ -101,6 +100,25 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           },
         },
       });
+    }),
+  );
+
+  it.effect("encodes resolved plus-key shortcuts", () =>
+    Effect.gen(function* () {
+      const encoded = yield* Schema.encodeEffect(ResolvedKeybindingFromConfig)({
+        command: "terminal.toggle",
+        shortcut: {
+          key: "+",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          modKey: true,
+        },
+      });
+
+      assert.equal(encoded.key, "mod++");
+      assert.equal(encoded.command, "terminal.toggle");
     }),
   );
 
@@ -297,6 +315,36 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       assert.isTrue(loadedAfterUpsert.some((entry) => entry.command === "script.run-tests.run"));
       assert.isTrue(loadedAfterUpsert.some((entry) => entry.command === "terminal.toggle"));
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("serializes concurrent upserts to avoid lost updates", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, []);
+
+      const commands = Array.from(
+        { length: 20 },
+        (_, index): KeybindingCommand => `script.concurrent-${index}.run`,
+      );
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        yield* Effect.all(
+          commands.map((command, index) =>
+            keybindings.upsertKeybindingRule({
+              key: `mod+${String.fromCharCode(97 + index)}`,
+              command,
+            }),
+          ),
+          { concurrency: "unbounded", discard: true },
+        );
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const persistedCommands = new Set(persisted.map((entry) => entry.command));
+      for (const command of commands) {
+        assert.isTrue(persistedCommands.has(command), `expected persisted command ${command}`);
+      }
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 });
