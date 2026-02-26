@@ -1,20 +1,24 @@
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Cache, Data, Duration, Effect, Exit, FileSystem, Layer, Path } from "effect";
 
 import { GitCommandError } from "../Errors.ts";
 import { GitService } from "../Services/GitService.ts";
 import { GitCore, type GitCoreShape } from "../Services/GitCore.ts";
 
-const STATUS_UPSTREAM_REFRESH_INTERVAL_MS = 15_000;
-const STATUS_UPSTREAM_REFRESH_TIMEOUT_MS = 5_000;
+const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
+const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
+const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
+
+class StatusUpstreamRefreshCacheKey extends Data.Class<{
+  cwd: string;
+  upstreamRef: string;
+  remoteName: string;
+  upstreamBranch: string;
+}> {}
 
 interface ExecuteGitOptions {
   timeoutMs?: number | undefined;
   allowNonZeroExit?: boolean | undefined;
   fallbackErrorMessage?: string | undefined;
-}
-
-function trimStdout(value: string): string {
-  return value.trim();
 }
 
 function parseBranchAb(value: string): { ahead: number; behind: number } {
@@ -96,7 +100,6 @@ const makeGitCore = Effect.gen(function* () {
   const git = yield* GitService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const lastUpstreamRefreshAt = new Map<string, number>();
 
   const executeGit = (
     operation: string,
@@ -162,14 +165,13 @@ const makeGitCore = Effect.gen(function* () {
     GitCommandError
   > =>
     Effect.gen(function* () {
-      const upstreamRef = trimStdout(
-        yield* runGitStdout(
-          "GitCore.resolveCurrentUpstream",
-          cwd,
-          ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
-          true,
-        ),
-      );
+      const upstreamRef = yield* runGitStdout(
+        "GitCore.resolveCurrentUpstream",
+        cwd,
+        ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+        true,
+      ).pipe(Effect.map((stdout) => stdout.trim()));
+
       if (upstreamRef.length === 0 || upstreamRef === "@{upstream}") {
         return null;
       }
@@ -215,36 +217,45 @@ const makeGitCore = Effect.gen(function* () {
       ["fetch", "--quiet", "--no-tags", upstream.remoteName, refspec],
       {
         allowNonZeroExit: true,
-        timeoutMs: STATUS_UPSTREAM_REFRESH_TIMEOUT_MS,
+        timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
       },
     ).pipe(Effect.asVoid);
   };
 
+  const statusUpstreamRefreshCache = yield* Cache.makeWith({
+    capacity: STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY,
+    lookup: (cacheKey: StatusUpstreamRefreshCacheKey) =>
+      Effect.gen(function* () {
+        yield* fetchUpstreamRefForStatus(cacheKey.cwd, {
+          upstreamRef: cacheKey.upstreamRef,
+          remoteName: cacheKey.remoteName,
+          upstreamBranch: cacheKey.upstreamBranch,
+        });
+        return true as const;
+      }),
+    // Keep successful refreshes warm; drop failures immediately so next request can retry.
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_UPSTREAM_REFRESH_INTERVAL : Duration.zero),
+  });
+
   const refreshStatusUpstreamIfStale = (cwd: string): Effect.Effect<void, GitCommandError> =>
     Effect.gen(function* () {
       const upstream = yield* resolveCurrentUpstream(cwd);
-      if (!upstream) {
-        return;
-      }
-
-      const cacheKey = `${cwd}\u0000${upstream.upstreamRef}`;
-      const now = Date.now();
-      const lastRefreshAt = lastUpstreamRefreshAt.get(cacheKey) ?? 0;
-      if (now - lastRefreshAt < STATUS_UPSTREAM_REFRESH_INTERVAL_MS) {
-        return;
-      }
-
-      // Record attempt time first to avoid repeated fetch spikes when status is polled often.
-      lastUpstreamRefreshAt.set(cacheKey, now);
-      yield* fetchUpstreamRefForStatus(cwd, upstream);
+      if (!upstream) return;
+      yield* Cache.get(
+        statusUpstreamRefreshCache,
+        new StatusUpstreamRefreshCacheKey({
+          cwd,
+          upstreamRef: upstream.upstreamRef,
+          remoteName: upstream.remoteName,
+          upstreamBranch: upstream.upstreamBranch,
+        }),
+      );
     });
 
   const refreshCheckedOutBranchUpstream = (cwd: string): Effect.Effect<void, GitCommandError> =>
     Effect.gen(function* () {
       const upstream = yield* resolveCurrentUpstream(cwd);
-      if (!upstream) {
-        return;
-      }
+      if (!upstream) return;
       yield* fetchUpstreamRef(cwd, upstream);
     });
 
@@ -394,8 +405,8 @@ const makeGitCore = Effect.gen(function* () {
         "diff",
         "--cached",
         "--name-status",
-      ]);
-      if (trimStdout(stagedSummary).length === 0) {
+      ]).pipe(Effect.map((stdout) => stdout.trim()));
+      if (stagedSummary.length === 0) {
         return null;
       }
 
@@ -420,9 +431,11 @@ const makeGitCore = Effect.gen(function* () {
         args.push("-m", trimmedBody);
       }
       yield* runGit("GitCore.commit.commit", cwd, args);
-      const commitSha = trimStdout(
-        yield* runGitStdout("GitCore.commit.revParseHead", cwd, ["rev-parse", "HEAD"]),
-      );
+      const commitSha = yield* runGitStdout("GitCore.commit.revParseHead", cwd, [
+        "rev-parse",
+        "HEAD",
+      ]).pipe(Effect.map((stdout) => stdout.trim()));
+
       return { commitSha };
     });
 
@@ -491,21 +504,23 @@ const makeGitCore = Effect.gen(function* () {
           "Current branch has no upstream configured. Push with upstream first.",
         );
       }
-      const beforeSha = trimStdout(
-        yield* runGitStdout(
-          "GitCore.pullCurrentBranch.beforeSha",
-          cwd,
-          ["rev-parse", "HEAD"],
-          true,
-        ),
-      );
+      const beforeSha = yield* runGitStdout(
+        "GitCore.pullCurrentBranch.beforeSha",
+        cwd,
+        ["rev-parse", "HEAD"],
+        true,
+      ).pipe(Effect.map((stdout) => stdout.trim()));
       yield* executeGit("GitCore.pullCurrentBranch.pull", cwd, ["pull", "--ff-only"], {
         timeoutMs: 30_000,
         fallbackErrorMessage: "git pull failed",
       });
-      const afterSha = trimStdout(
-        yield* runGitStdout("GitCore.pullCurrentBranch.afterSha", cwd, ["rev-parse", "HEAD"], true),
-      );
+      const afterSha = yield* runGitStdout(
+        "GitCore.pullCurrentBranch.afterSha",
+        cwd,
+        ["rev-parse", "HEAD"],
+        true,
+      ).pipe(Effect.map((stdout) => stdout.trim()));
+
       const refreshed = yield* statusDetails(cwd);
       return {
         status: beforeSha.length > 0 && beforeSha === afterSha ? "skipped_up_to_date" : "pulled",
@@ -540,10 +555,8 @@ const makeGitCore = Effect.gen(function* () {
 
   const readConfigValue: GitCoreShape["readConfigValue"] = (cwd, key) =>
     runGitStdout("GitCore.readConfigValue", cwd, ["config", "--get", key], true).pipe(
-      Effect.map((stdout) => {
-        const value = trimStdout(stdout);
-        return value.length > 0 ? value : null;
-      }),
+      Effect.map((stdout) => stdout.trim()),
+      Effect.map((trimmed) => (trimmed.length > 0 ? trimmed : null)),
     );
 
   const listBranches: GitCoreShape["listBranches"] = (input) =>

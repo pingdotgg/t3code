@@ -12,7 +12,6 @@
 import {
   NonNegativeInt,
   ProviderSessionId,
-  ProviderThreadId,
   ThreadId,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
@@ -94,14 +93,6 @@ function toRuntimePayloadFromSession(session: ProviderSession): Record<string, u
   };
 }
 
-function asProviderSessionId(value: string | ProviderSessionId): ProviderSessionId {
-  return typeof value === "string" ? ProviderSessionId.makeUnsafe(value) : value;
-}
-
-function asProviderThreadId(value: string | ProviderThreadId): ProviderThreadId {
-  return typeof value === "string" ? ProviderThreadId.makeUnsafe(value) : value;
-}
-
 const makeProviderService = (options?: ProviderServiceLiveOptions) =>
   Effect.gen(function* () {
     const canonicalEventLogger =
@@ -126,7 +117,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
             if (liveSessionId === event.sessionId) {
               return {
                 ...event,
-                sessionId: ProviderSessionId.makeUnsafe(staleSessionId),
+                sessionId: staleSessionId,
               } satisfies ProviderRuntimeEvent;
             }
           }
@@ -162,9 +153,8 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           );
         }
 
-        const providerSessionId = asProviderSessionId(session.sessionId);
         yield* directory.upsert({
-          sessionId: providerSessionId,
+          sessionId: session.sessionId,
           provider: session.provider,
           threadId,
           providerThreadId,
@@ -444,7 +434,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           sessionId: routed.sessionId,
         });
         const threadId = yield* directory
-          .getThreadId(asProviderSessionId(input.sessionId))
+          .getThreadId(input.sessionId)
           .pipe(Effect.map(Option.getOrUndefined));
         if (!threadId) {
           return yield* toValidationError(
@@ -453,10 +443,10 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           );
         }
         yield* directory.upsert({
-          sessionId: asProviderSessionId(input.sessionId),
+          sessionId: input.sessionId,
           provider: routed.adapter.provider,
           threadId,
-          providerThreadId: asProviderThreadId(turn.threadId),
+          providerThreadId: turn.threadId,
           status: "running",
           ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
           runtimePayload: {
@@ -514,10 +504,10 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           yield* routed.adapter.stopSession(routed.sessionId);
         }
         if (routed.sessionId !== input.sessionId) {
-          yield* directory.remove(asProviderSessionId(routed.sessionId));
+          yield* directory.remove(routed.sessionId);
           yield* clearAliasesReferencing(routed.sessionId);
         }
-        yield* directory.remove(asProviderSessionId(input.sessionId));
+        yield* directory.remove(input.sessionId);
         yield* clearAliasesReferencing(input.sessionId);
       });
 

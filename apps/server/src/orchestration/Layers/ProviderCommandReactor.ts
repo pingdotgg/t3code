@@ -8,7 +8,7 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
-import { Effect, Layer, Queue, Stream } from "effect";
+import { Cache, Duration, Effect, Layer, Option, Queue, Stream } from "effect";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -76,46 +76,23 @@ const serverCommandId = (tag: string): CommandId =>
   CommandId.makeUnsafe(`server:${tag}:${crypto.randomUUID()}`);
 
 const HANDLED_TURN_START_KEY_MAX = 10_000;
-const HANDLED_TURN_START_KEY_TTL_MS = 30 * 60 * 1_000;
-
-function pruneHandledTurnStartKeys(handledKeys: Map<string, number>, nowMs: number): void {
-  const staleBefore = nowMs - HANDLED_TURN_START_KEY_TTL_MS;
-  for (const [key, seenAt] of handledKeys) {
-    if (seenAt >= staleBefore) {
-      break;
-    }
-    handledKeys.delete(key);
-  }
-
-  while (handledKeys.size > HANDLED_TURN_START_KEY_MAX) {
-    const oldestKey = handledKeys.keys().next().value;
-    if (!oldestKey) {
-      break;
-    }
-    handledKeys.delete(oldestKey);
-  }
-}
-
-function hasHandledTurnStartRecently(
-  handledKeys: Map<string, number>,
-  key: string,
-  nowMs = Date.now(),
-): boolean {
-  const seenAt = handledKeys.get(key);
-  if (seenAt !== undefined && nowMs - seenAt <= HANDLED_TURN_START_KEY_TTL_MS) {
-    handledKeys.set(key, nowMs);
-    return true;
-  }
-
-  handledKeys.set(key, nowMs);
-  pruneHandledTurnStartKeys(handledKeys, nowMs);
-  return false;
-}
+const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
-  const handledTurnStartKeys = new Map<string, number>();
+  const handledTurnStartKeys = yield* Cache.make<string, true>({
+    capacity: HANDLED_TURN_START_KEY_MAX,
+    timeToLive: HANDLED_TURN_START_KEY_TTL,
+    lookup: () => Effect.succeed(true),
+  });
+
+  const hasHandledTurnStartRecently = (key: string) =>
+    Cache.getOption(handledTurnStartKeys, key).pipe(
+      Effect.flatMap((cached) =>
+        Cache.set(handledTurnStartKeys, key, true).pipe(Effect.as(Option.isSome(cached))),
+      ),
+    );
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -246,7 +223,7 @@ const make = Effect.gen(function* () {
     event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
   ) {
     const key = turnStartKeyForEvent(event);
-    if (hasHandledTurnStartRecently(handledTurnStartKeys, key)) {
+    if (yield* hasHandledTurnStartRecently(key)) {
       return;
     }
 

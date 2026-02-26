@@ -7,7 +7,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSessionId,
 } from "@t3tools/contracts";
-import { Cause, Effect, Layer, Queue, Stream } from "effect";
+import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Stream } from "effect";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -19,6 +19,8 @@ import {
 const providerTurnKey = (sessionId: ProviderSessionId, turnId: TurnId) => `${sessionId}:${turnId}`;
 const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
   CommandId.makeUnsafe(`provider:${event.eventId}:${tag}:${crypto.randomUUID()}`);
+const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
+const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
 
 function toTurnId(value: string | undefined): TurnId | undefined {
   return value === undefined ? undefined : TurnId.makeUnsafe(value);
@@ -128,54 +130,76 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
 
-  const turnMessageIdsByTurnKey = new Map<string, Set<MessageId>>();
+  const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
+    capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
+    timeToLive: TURN_MESSAGE_IDS_BY_TURN_TTL,
+    lookup: () => Effect.succeed(new Set<MessageId>()),
+  });
 
   const rememberAssistantMessageId = (
     sessionId: ProviderSessionId,
     turnId: TurnId,
     messageId: MessageId,
-  ) => {
-    const key = providerTurnKey(sessionId, turnId);
-    const existingIds = turnMessageIdsByTurnKey.get(key);
-    if (existingIds) {
-      existingIds.add(messageId);
-    } else {
-      turnMessageIdsByTurnKey.set(key, new Set([messageId]));
-    }
-  };
+  ) =>
+    Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(sessionId, turnId)).pipe(
+      Effect.flatMap((existingIds) =>
+        Cache.set(
+          turnMessageIdsByTurnKey,
+          providerTurnKey(sessionId, turnId),
+          Option.match(existingIds, {
+            onNone: () => new Set([messageId]),
+            onSome: (ids) => {
+              const nextIds = new Set(ids);
+              nextIds.add(messageId);
+              return nextIds;
+            },
+          }),
+        ),
+      ),
+    );
 
   const forgetAssistantMessageId = (
     sessionId: ProviderSessionId,
     turnId: TurnId,
     messageId: MessageId,
-  ) => {
-    const key = providerTurnKey(sessionId, turnId);
-    const existingIds = turnMessageIdsByTurnKey.get(key);
-    if (!existingIds) {
-      return;
-    }
-    existingIds.delete(messageId);
-    if (existingIds.size === 0) {
-      turnMessageIdsByTurnKey.delete(key);
-    }
-  };
+  ) =>
+    Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(sessionId, turnId)).pipe(
+      Effect.flatMap((existingIds) =>
+        Option.match(existingIds, {
+          onNone: () => Effect.void,
+          onSome: (ids) => {
+            const nextIds = new Set(ids);
+            nextIds.delete(messageId);
+            if (nextIds.size === 0) {
+              return Cache.invalidate(turnMessageIdsByTurnKey, providerTurnKey(sessionId, turnId));
+            }
+            return Cache.set(turnMessageIdsByTurnKey, providerTurnKey(sessionId, turnId), nextIds);
+          },
+        }),
+      ),
+    );
 
-  const getAssistantMessageIdsForTurn = (sessionId: ProviderSessionId, turnId: TurnId) => {
-    return turnMessageIdsByTurnKey.get(providerTurnKey(sessionId, turnId)) ?? new Set<MessageId>();
-  };
+  const getAssistantMessageIdsForTurn = (sessionId: ProviderSessionId, turnId: TurnId) =>
+    Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(sessionId, turnId)).pipe(
+      Effect.map((existingIds) =>
+        Option.getOrElse(existingIds, (): Set<MessageId> => new Set<MessageId>()),
+      ),
+    );
 
-  const clearAssistantMessageIdsForTurn = (sessionId: ProviderSessionId, turnId: TurnId) => {
-    turnMessageIdsByTurnKey.delete(providerTurnKey(sessionId, turnId));
-  };
+  const clearAssistantMessageIdsForTurn = (sessionId: ProviderSessionId, turnId: TurnId) =>
+    Cache.invalidate(turnMessageIdsByTurnKey, providerTurnKey(sessionId, turnId));
 
-  const clearTurnStateForSession = (sessionId: ProviderSessionId) => {
-    const prefix = `${sessionId}:`;
-    for (const key of turnMessageIdsByTurnKey.keys()) {
-      if (key.startsWith(prefix)) {
-        turnMessageIdsByTurnKey.delete(key);
-      }
-    }
-  };
+  const clearTurnStateForSession = (sessionId: ProviderSessionId) =>
+    Effect.gen(function* () {
+      const prefix = `${sessionId}:`;
+      const turnKeys = Array.from(yield* Cache.keys(turnMessageIdsByTurnKey));
+      yield* Effect.forEach(
+        turnKeys,
+        (key) =>
+          key.startsWith(prefix) ? Cache.invalidate(turnMessageIdsByTurnKey, key) : Effect.void,
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+    });
 
   const processEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
@@ -243,7 +267,7 @@ const make = Effect.gen(function* () {
         );
         const turnId = toTurnId(event.turnId);
         if (turnId) {
-          rememberAssistantMessageId(event.sessionId, turnId, assistantMessageId);
+          yield* rememberAssistantMessageId(event.sessionId, turnId, assistantMessageId);
         }
 
         yield* orchestrationEngine.dispatch({
@@ -261,7 +285,7 @@ const make = Effect.gen(function* () {
         const assistantMessageId = MessageId.makeUnsafe(`assistant:${event.itemId}`);
         const turnId = toTurnId(event.turnId);
         if (turnId) {
-          rememberAssistantMessageId(event.sessionId, turnId, assistantMessageId);
+          yield* rememberAssistantMessageId(event.sessionId, turnId, assistantMessageId);
         }
 
         yield* orchestrationEngine.dispatch({
@@ -274,14 +298,14 @@ const make = Effect.gen(function* () {
         });
 
         if (turnId) {
-          forgetAssistantMessageId(event.sessionId, turnId, assistantMessageId);
+          yield* forgetAssistantMessageId(event.sessionId, turnId, assistantMessageId);
         }
       }
 
       if (event.type === "turn.completed") {
         const turnId = toTurnId(event.turnId);
         if (turnId) {
-          const assistantMessageIds = getAssistantMessageIdsForTurn(event.sessionId, turnId);
+          const assistantMessageIds = yield* getAssistantMessageIdsForTurn(event.sessionId, turnId);
           yield* Effect.forEach(assistantMessageIds, (assistantMessageId) =>
             orchestrationEngine.dispatch({
               type: "thread.message.assistant.complete",
@@ -292,12 +316,12 @@ const make = Effect.gen(function* () {
               createdAt: now,
             }),
           ).pipe(Effect.asVoid);
-          clearAssistantMessageIdsForTurn(event.sessionId, turnId);
+          yield* clearAssistantMessageIdsForTurn(event.sessionId, turnId);
         }
       }
 
       if (event.type === "session.exited") {
-        clearTurnStateForSession(event.sessionId);
+        yield* clearTurnStateForSession(event.sessionId);
       }
 
       if (event.type === "runtime.error") {
