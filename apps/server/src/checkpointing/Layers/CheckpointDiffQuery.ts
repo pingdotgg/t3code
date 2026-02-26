@@ -9,35 +9,12 @@ import { Effect, Layer, Schema } from "effect";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { CheckpointInvariantError, CheckpointUnavailableError } from "../Errors.ts";
-import { checkpointRefForThreadTurn } from "../Refs.ts";
+import { checkpointRefForThreadTurn, resolveThreadWorkspaceCwd } from "../Utils.ts";
 import { CheckpointStore } from "../Services/CheckpointStore.ts";
-import { CheckpointDiffQuery, type CheckpointDiffQueryShape } from "../Services/CheckpointDiffQuery.ts";
-
-function trimToNonEmpty(value: string | null | undefined): string | undefined {
-  const normalized = value?.trim();
-  return normalized && normalized.length > 0 ? normalized : undefined;
-}
-
-function resolveThreadWorkspaceCwd(input: {
-  readonly thread: {
-    readonly projectId: ProjectId;
-    readonly worktreePath: string | null;
-  };
-  readonly projects: ReadonlyArray<{
-    readonly id: ProjectId;
-    readonly workspaceRoot: string;
-  }>;
-}): string | undefined {
-  const worktreeCwd = trimToNonEmpty(input.thread.worktreePath);
-  if (worktreeCwd) {
-    return worktreeCwd;
-  }
-
-  const workspaceRoot = input.projects.find(
-    (project) => project.id === input.thread.projectId,
-  )?.workspaceRoot;
-  return trimToNonEmpty(workspaceRoot);
-}
+import {
+  CheckpointDiffQuery,
+  type CheckpointDiffQueryShape,
+} from "../Services/CheckpointDiffQuery.ts";
 
 const isTurnDiffResult = Schema.is(OrchestrationGetTurnDiffResult);
 

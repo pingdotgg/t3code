@@ -53,10 +53,7 @@ export class WsTransport {
       throw new Error("Request method is required");
     }
     const id = String(this.nextId++);
-    const body =
-      params !== undefined
-        ? { _tag: method, ...(params as Record<string, unknown>) }
-        : { _tag: method };
+    const body = params != null ? { ...params, _tag: method } : { _tag: method };
     const message: WsRequestEnvelope = { id, body };
 
     return new Promise<T>((resolve, reject) => {

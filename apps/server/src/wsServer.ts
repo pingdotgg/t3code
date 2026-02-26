@@ -72,7 +72,7 @@ const isServerNotRunningError = (error: unknown): boolean => {
 };
 
 function rejectUpgrade(socket: Duplex, statusCode: number, message: string): void {
-  socket.write(
+  socket.end(
     `HTTP/1.1 ${statusCode} ${statusCode === 401 ? "Unauthorized" : "Bad Request"}\r\n` +
       "Connection: close\r\n" +
       "Content-Type: text/plain\r\n" +
@@ -80,7 +80,6 @@ function rejectUpgrade(socket: Duplex, statusCode: number, message: string): voi
       "\r\n" +
       message,
   );
-  socket.destroy();
 }
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
@@ -506,6 +505,8 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
   });
 
   httpServer.on("upgrade", (request, socket, head) => {
+    socket.on("error", () => {}); // Prevent unhandled `EPIPE`/`ECONNRESET` from crashing the process if the client disconnects mid-handshake
+
     if (authToken) {
       let providedToken: string | null = null;
       try {

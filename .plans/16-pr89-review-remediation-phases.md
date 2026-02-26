@@ -1,5 +1,10 @@
 # PR #89 Review Remediation Plan (Phased)
 
+## How To Use These Files
+
+- Working checklist with updateable status per item (single source of truth): `.plans/16c-pr89-remediation-checklist.md`
+- This file (`16-pr89-review-remediation-phases.md`): phase strategy and grouping.
+
 ## Scope
 
 - Source: GitHub review comments on PR #89 (`Add server-side orchestration engine with event sourcing`).
@@ -14,7 +19,7 @@
 
 ## Phase 0: Canonical Triage Lock
 
-- Create a single tracking checklist for the 74 unique actionable findings.
+- Create a single tracking checklist for the 53 currently actionable findings.
 - Map every duplicate thread to its canonical item.
 - Mark invalid/false-positive items with explicit rationale.
 

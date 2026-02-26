@@ -5,14 +5,16 @@ import {
   ProviderSessionId,
   ThreadId,
   TurnId,
-  type ProjectId,
   type OrchestrationEvent,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import { Cause, Effect, Layer, Option, Queue, Stream } from "effect";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
-import { checkpointRefForThreadTurn } from "../../checkpointing/Refs.ts";
+import {
+  checkpointRefForThreadTurn,
+  resolveThreadWorkspaceCwd,
+} from "../../checkpointing/Utils.ts";
 import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
@@ -38,27 +40,6 @@ function toTurnId(value: string | undefined): TurnId | null {
 function trimToNonEmpty(value: string | null | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
-}
-
-function resolveThreadWorkspaceCwd(input: {
-  readonly thread: {
-    readonly projectId: ProjectId;
-    readonly worktreePath: string | null;
-  };
-  readonly projects: ReadonlyArray<{
-    readonly id: ProjectId;
-    readonly workspaceRoot: string;
-  }>;
-}): string | undefined {
-  const worktreeCwd = trimToNonEmpty(input.thread.worktreePath);
-  if (worktreeCwd) {
-    return worktreeCwd;
-  }
-
-  const workspaceRoot = input.projects.find(
-    (project) => project.id === input.thread.projectId,
-  )?.workspaceRoot;
-  return trimToNonEmpty(workspaceRoot);
 }
 
 function checkpointStatusFromRuntime(status: string | undefined): "ready" | "missing" | "error" {
