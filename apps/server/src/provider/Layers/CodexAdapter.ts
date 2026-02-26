@@ -333,7 +333,7 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
     ];
   }
 
-  if (event.method === "session/exited") {
+  if (event.method === "session/exited" || event.method === "session/closed") {
     return [
       {
         type: "session.exited",

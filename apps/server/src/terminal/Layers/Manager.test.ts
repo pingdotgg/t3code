@@ -16,6 +16,7 @@ import { Encoding } from "effect";
 class FakePtyProcess implements PtyProcess {
   readonly writes: string[] = [];
   readonly resizeCalls: Array<{ cols: number; rows: number }> = [];
+  readonly killSignals: Array<string | undefined> = [];
   private readonly dataListeners = new Set<(data: string) => void>();
   private readonly exitListeners = new Set<(event: PtyExitEvent) => void>();
   killed = false;
@@ -30,8 +31,9 @@ class FakePtyProcess implements PtyProcess {
     this.resizeCalls.push({ cols, rows });
   }
 
-  kill(): void {
+  kill(signal?: string): void {
     this.killed = true;
+    this.killSignals.push(signal);
   }
 
   onData(callback: (data: string) => void): () => void {
@@ -146,6 +148,8 @@ describe("TerminalManager", () => {
       shellResolver?: () => string;
       subprocessChecker?: (terminalPid: number) => Promise<boolean>;
       subprocessPollIntervalMs?: number;
+      processKillGraceMs?: number;
+      maxRetainedInactiveSessions?: number;
     } = {},
   ) {
     const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-terminal-"));
@@ -159,6 +163,10 @@ describe("TerminalManager", () => {
       ...(options.subprocessChecker ? { subprocessChecker: options.subprocessChecker } : {}),
       ...(options.subprocessPollIntervalMs
         ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
+        : {}),
+      ...(options.processKillGraceMs ? { processKillGraceMs: options.processKillGraceMs } : {}),
+      ...(options.maxRetainedInactiveSessions
+        ? { maxRetainedInactiveSessions: options.maxRetainedInactiveSessions }
         : {}),
     });
     return { logsDir, ptyAdapter, manager };
@@ -433,6 +441,50 @@ describe("TerminalManager", () => {
     expect(sidecarProcess.killed).toBe(true);
     expect(fs.existsSync(multiTerminalHistoryLogPath(logsDir, "thread-1", "default"))).toBe(false);
     expect(fs.existsSync(multiTerminalHistoryLogPath(logsDir, "thread-1", "sidecar"))).toBe(false);
+
+    manager.dispose();
+  });
+
+  it("escalates terminal shutdown to SIGKILL when process does not exit in time", async () => {
+    const { manager, ptyAdapter } = makeManager(5, { processKillGraceMs: 10 });
+    await manager.open(openInput());
+    const process = ptyAdapter.processes[0];
+    expect(process).toBeDefined();
+    if (!process) return;
+
+    await manager.close({ threadId: "thread-1" });
+    await waitFor(() => process.killSignals.includes("SIGKILL"));
+
+    expect(process.killSignals[0]).toBe("SIGTERM");
+    expect(process.killSignals).toContain("SIGKILL");
+
+    manager.dispose();
+  });
+
+  it("evicts oldest inactive terminal sessions when retention limit is exceeded", async () => {
+    const { manager, ptyAdapter } = makeManager(5, { maxRetainedInactiveSessions: 1 });
+
+    await manager.open(openInput({ threadId: "thread-1" }));
+    await manager.open(openInput({ threadId: "thread-2" }));
+
+    const first = ptyAdapter.processes[0];
+    const second = ptyAdapter.processes[1];
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    if (!first || !second) return;
+
+    first.emitExit({ exitCode: 0, signal: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    second.emitExit({ exitCode: 0, signal: 0 });
+
+    await waitFor(() => {
+      const sessions = (manager as unknown as { sessions: Map<string, unknown> }).sessions;
+      return sessions.size === 1;
+    });
+
+    const sessions = (manager as unknown as { sessions: Map<string, unknown> }).sessions;
+    const keys = [...sessions.keys()];
+    expect(keys).toEqual(["thread-2\u0000default"]);
 
     manager.dispose();
   });

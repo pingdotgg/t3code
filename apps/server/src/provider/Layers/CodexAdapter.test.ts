@@ -219,6 +219,37 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       assert.equal(firstEvent.value.turnId, "turn-1");
     }),
   );
+
+  it.effect("maps session/closed lifecycle events to canonical session.exited runtime events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      const event: ProviderEvent = {
+        id: asEventId("evt-session-closed"),
+        kind: "session",
+        provider: "codex",
+        sessionId: asSessionId("sess-1"),
+        createdAt: new Date().toISOString(),
+        method: "session/closed",
+        message: "Session stopped",
+      };
+
+      lifecycleManager.emit("event", event);
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(firstEvent.value.type, "session.exited");
+      if (firstEvent.value.type !== "session.exited") {
+        return;
+      }
+      assert.equal(firstEvent.value.sessionId, "sess-1");
+      assert.equal(firstEvent.value.message, "Session stopped");
+    }),
+  );
 });
 
 afterAll(() => {

@@ -25,6 +25,7 @@ const serverStart = Effect.acquireRelease(
 );
 const findAvailablePort = vi.fn((preferred: number) => Effect.succeed(preferred));
 
+// Shared service layer used by this CLI test suite.
 const testLayer = Layer.mergeAll(
   Layer.succeed(CliConfig, {
     cwd: "/tmp/t3-test-workspace",

@@ -29,6 +29,8 @@ import {
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
+const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
+const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
 const DEFAULT_OPEN_ROWS = 30;
 const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
@@ -279,6 +281,8 @@ interface TerminalManagerOptions {
   shellResolver?: () => string;
   subprocessChecker?: TerminalSubprocessChecker;
   subprocessPollIntervalMs?: number;
+  processKillGraceMs?: number;
+  maxRetainedInactiveSessions?: number;
 }
 
 export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> {
@@ -294,8 +298,11 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
   private readonly persistDebounceMs: number;
   private readonly subprocessChecker: TerminalSubprocessChecker;
   private readonly subprocessPollIntervalMs: number;
+  private readonly processKillGraceMs: number;
+  private readonly maxRetainedInactiveSessions: number;
   private subprocessPollTimer: ReturnType<typeof setInterval> | null = null;
   private subprocessPollInFlight = false;
+  private readonly killEscalationTimers = new Map<PtyProcess, ReturnType<typeof setTimeout>>();
   private readonly logger = createLogger("terminal");
 
   constructor(options: TerminalManagerOptions) {
@@ -308,6 +315,9 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     this.subprocessChecker = options.subprocessChecker ?? defaultSubprocessChecker;
     this.subprocessPollIntervalMs =
       options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
+    this.processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
+    this.maxRetainedInactiveSessions =
+      options.maxRetainedInactiveSessions ?? DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS;
     fs.mkdirSync(this.logsDir, { recursive: true });
   }
 
@@ -342,6 +352,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
           runtimeEnv: normalizedRuntimeEnv(input.env),
         };
         this.sessions.set(sessionKey, session);
+        this.evictInactiveSessionsIfNeeded();
         this.startSession(session, { ...input, cols, rows }, "started");
         return this.snapshot(session);
       }
@@ -453,6 +464,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
           runtimeEnv: normalizedRuntimeEnv(input.env),
         };
         this.sessions.set(sessionKey, session);
+        this.evictInactiveSessionsIfNeeded();
       } else {
         this.stopProcess(session);
         session.cwd = input.cwd;
@@ -506,6 +518,10 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       clearTimeout(timer);
     }
     this.persistTimers.clear();
+    for (const timer of this.killEscalationTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.killEscalationTimers.clear();
     this.pendingPersistHistory.clear();
     this.threadLocks.clear();
     this.persistQueues.clear();
@@ -584,17 +600,14 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       });
     } catch (error) {
       if (ptyProcess) {
-        try {
-          ptyProcess.kill();
-        } catch {
-          // Ignore kill errors during failed startup cleanup.
-        }
+        this.killProcessWithEscalation(ptyProcess, session.threadId, session.terminalId);
       }
       session.status = "error";
       session.pid = null;
       session.process = null;
       session.hasRunningSubprocess = false;
       session.updatedAt = new Date().toISOString();
+      this.evictInactiveSessionsIfNeeded();
       this.updateSubprocessPollingState();
       const message = error instanceof Error ? error.message : "Terminal start failed";
       this.emitEvent({
@@ -627,6 +640,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
   }
 
   private onProcessExit(session: TerminalSessionState, event: PtyExitEvent): void {
+    this.clearKillEscalationTimer(session.process);
     this.cleanupProcessHandles(session);
     session.process = null;
     session.pid = null;
@@ -643,6 +657,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       exitCode: session.exitCode,
       exitSignal: session.exitSignal,
     });
+    this.evictInactiveSessionsIfNeeded();
     this.updateSubprocessPollingState();
   }
 
@@ -655,16 +670,8 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     session.hasRunningSubprocess = false;
     session.status = "exited";
     session.updatedAt = new Date().toISOString();
-    try {
-      process.kill();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn("failed to kill terminal process", {
-        threadId: session.threadId,
-        terminalId: session.terminalId,
-        error: message,
-      });
-    }
+    this.killProcessWithEscalation(process, session.threadId, session.terminalId);
+    this.evictInactiveSessionsIfNeeded();
     this.updateSubprocessPollingState();
   }
 
@@ -673,6 +680,70 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     session.unsubscribeData = null;
     session.unsubscribeExit?.();
     session.unsubscribeExit = null;
+  }
+
+  private clearKillEscalationTimer(process: PtyProcess | null): void {
+    if (!process) return;
+    const timer = this.killEscalationTimers.get(process);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.killEscalationTimers.delete(process);
+  }
+
+  private killProcessWithEscalation(process: PtyProcess, threadId: string, terminalId: string): void {
+    this.clearKillEscalationTimer(process);
+    try {
+      process.kill("SIGTERM");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn("failed to kill terminal process", {
+        threadId,
+        terminalId,
+        signal: "SIGTERM",
+        error: message,
+      });
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.killEscalationTimers.delete(process);
+      try {
+        process.kill("SIGKILL");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn("failed to force-kill terminal process", {
+          threadId,
+          terminalId,
+          signal: "SIGKILL",
+          error: message,
+        });
+      }
+    }, this.processKillGraceMs);
+    timer.unref?.();
+    this.killEscalationTimers.set(process, timer);
+  }
+
+  private evictInactiveSessionsIfNeeded(): void {
+    const inactiveSessions = [...this.sessions.values()].filter((session) => session.status !== "running");
+    if (inactiveSessions.length <= this.maxRetainedInactiveSessions) {
+      return;
+    }
+
+    inactiveSessions.sort(
+      (left, right) =>
+        left.updatedAt.localeCompare(right.updatedAt) ||
+        left.threadId.localeCompare(right.threadId) ||
+        left.terminalId.localeCompare(right.terminalId),
+    );
+    const toEvict = inactiveSessions.length - this.maxRetainedInactiveSessions;
+    for (const session of inactiveSessions.slice(0, toEvict)) {
+      const key = toSessionKey(session.threadId, session.terminalId);
+      this.sessions.delete(key);
+      this.clearPersistTimer(session.threadId, session.terminalId);
+      this.pendingPersistHistory.delete(key);
+      this.persistQueues.delete(key);
+      this.clearKillEscalationTimer(session.process);
+    }
   }
 
   private queuePersist(threadId: string, terminalId: string, history: string): void {
