@@ -26,7 +26,7 @@ function toTurnId(value: string | undefined): TurnId | undefined {
 }
 
 function truncateDetail(value: string, limit = 180): string {
-  return value.length > limit ? `${value.slice(0, limit - 1)}...` : value;
+  return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
 
 function runtimeEventToActivities(
@@ -130,7 +130,6 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
 
   const turnMessageIdsByTurnKey = new Map<string, Set<MessageId>>();
-  const latestMessageIdByTurnKey = new Map<string, MessageId>();
 
   const rememberAssistantMessageId = (
     sessionId: ProviderSessionId,
@@ -144,7 +143,6 @@ const make = Effect.gen(function* () {
     } else {
       turnMessageIdsByTurnKey.set(key, new Set([messageId]));
     }
-    latestMessageIdByTurnKey.set(key, messageId);
   };
 
   const getAssistantMessageIdsForTurn = (sessionId: ProviderSessionId, turnId: TurnId) => {
@@ -160,11 +158,6 @@ const make = Effect.gen(function* () {
     for (const key of turnMessageIdsByTurnKey.keys()) {
       if (key.startsWith(prefix)) {
         turnMessageIdsByTurnKey.delete(key);
-      }
-    }
-    for (const key of latestMessageIdByTurnKey.keys()) {
-      if (key.startsWith(prefix)) {
-        latestMessageIdByTurnKey.delete(key);
       }
     }
   };
