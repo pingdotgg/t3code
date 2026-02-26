@@ -11,7 +11,7 @@ Status values:
 - `DONE`: Implemented and verified
 - `CLOSED_INVALID`: Stale/invalid review finding
 
-Counts: active `52` (`valid=33`, `partially-valid=19`), closed-invalid `5`
+Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
 
 ## Active Checklist
 
@@ -172,17 +172,8 @@ Counts: active `52` (`valid=33`, `partially-valid=19`), closed-invalid `5`
   - Threads: PRRT_kwDORLtfbc5whtrM
   - Audit note: Persisted event can outpace in-memory projection on mid-flight failure.
 
-- [ ] `C014` Engine error handler catches all errors including non-invariant ones
-  - Status: `TODO`
-  - Verdict: `partially-valid`
-  - Severity: `Medium`
-  - Area: `Event ordering and state consistency`
-  - File: `apps/server/src/orchestration/Layers/OrchestrationEngine.ts:144`
-  - Threads: PRRT_kwDORLtfbc5wkPaJ
-  - Audit note: Broad catch may be intentional for liveness; correctness concern is contextual.
-
-- [ ] `C015` The gap-filling fallback logic can retain messages from turns that are about to be deleted, causing foreign key violations. Consider removing the fallback logic entirely, or filtering `fallbackUserMessages` and `fallbackAssistantMessages` to only include messages whose `turnId` is in `retainedTurnIds`. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
-  - Status: `TODO`
+- [x] `C015` The gap-filling fallback logic can retain messages from turns that are about to be deleted, causing foreign key violations. Consider removing the fallback logic entirely, or filtering `fallbackUserMessages` and `fallbackAssistantMessages` to only include messages whose `turnId` is in `retainedTurnIds`. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
+  - Status: `DONE`
   - Verdict: `partially-valid`
   - Severity: `Medium`
   - Area: `Event ordering and state consistency`
@@ -190,8 +181,8 @@ Counts: active `52` (`valid=33`, `partially-valid=19`), closed-invalid `5`
   - Threads: PRRT_kwDORLtfbc5whxJO
   - Audit note: Message fallback retention issue is real, but prior FK-violation claim is overstated.
 
-- [ ] `C016` The in-memory `pendingTurnStartByThreadId` map isn't restored during bootstrap. If the service restarts after processing `thread.turn-start-requested` but before `thread.session-set`, the `userMessageId` and `startedAt` will be lost since bootstrap resumes *after* the committed sequence. Consider persisting this pending state or processing these two events atomically. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
-  - Status: `TODO`
+- [x] `C016` The in-memory `pendingTurnStartByThreadId` map isn't restored during bootstrap. If the service restarts after processing `thread.turn-start-requested` but before `thread.session-set`, the `userMessageId` and `startedAt` will be lost since bootstrap resumes *after* the committed sequence. Consider persisting this pending state or processing these two events atomically. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
+  - Status: `DONE`
   - Verdict: `valid`
   - Severity: `Medium`
   - Area: `Event ordering and state consistency`
@@ -505,6 +496,13 @@ Counts: active `52` (`valid=33`, `partially-valid=19`), closed-invalid `5`
   - Audit note: Schema still cannot express null clear for defaultModel patch.
 
 ## Closed Invalid Items
+
+- [x] `C014` Engine error handler catches all errors including non-invariant ones
+  - Status: `CLOSED_INVALID`
+  - Severity: `Medium`
+  - File: `apps/server/src/orchestration/Layers/OrchestrationEngine.ts:144`
+  - Threads: PRRT_kwDORLtfbc5wkPaJ
+  - Rationale: Broad catch is intentional for worker liveness; transactional dispatch path prevents the claimed non-invariant idempotency break in current design.
 
 - [x] `C021` Shared mutable default metadata object causes stale eventId
   - Status: `CLOSED_INVALID`

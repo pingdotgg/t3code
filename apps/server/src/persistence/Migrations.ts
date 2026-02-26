@@ -17,6 +17,7 @@ import Migration0002 from "./Migrations/002_OrchestrationCommandReceipts.ts";
 import Migration0003 from "./Migrations/003_CheckpointDiffBlobs.ts";
 import Migration0004 from "./Migrations/004_ProviderSessionRuntime.ts";
 import Migration0005 from "./Migrations/005_Projections.ts";
+import Migration0006 from "./Migrations/006_ProjectionPendingTurnStarts.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -34,6 +35,7 @@ const loader = Migrator.fromRecord({
   "3_CheckpointDiffBlobs": Migration0003,
   "4_ProviderSessionRuntime": Migration0004,
   "5_Projections": Migration0005,
+  "6_ProjectionPendingTurnStarts": Migration0006,
 });
 
 /**
