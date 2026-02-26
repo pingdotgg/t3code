@@ -9,7 +9,7 @@
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 
-import type { GitCommandError } from "./Errors.ts";
+import type { GitCommandError } from "../Errors.ts";
 
 export interface ExecuteGitInput {
   readonly operation: string;

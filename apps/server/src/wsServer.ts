@@ -20,17 +20,8 @@ import { Cause, Effect, Exit, Layer, Schema, Scope, ServiceMap, Stream, Struct }
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { createLogger } from "./logger";
-import { GitManager } from "./gitManager";
-import {
-  checkoutGitBranch,
-  createGitBranch,
-  createGitWorktree,
-  initGitRepo,
-  listGitBranches,
-  pullGitBranch,
-  removeGitWorktree,
-} from "./git";
-import { TerminalManager, type TerminalManagerShape } from "./terminalManager";
+import { GitManager } from "./git/Services/GitManager.ts";
+import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { Keybindings } from "./keybindings";
 import { searchWorkspaceEntries } from "./workspaceEntries";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
@@ -41,6 +32,7 @@ import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuer
 import { clamp } from "effect/Number";
 import { Open } from "./open";
 import { ServerConfig } from "./config";
+import { GitCore } from "./git/Services/GitCore.ts";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -60,8 +52,6 @@ const MIME_TYPES: Record<string, string> = {
 export interface ServerOptions {
   autoBootstrapProjectFromCwd?: boolean | undefined;
   logWebSocketEvents?: boolean | undefined;
-  gitManager?: GitManager | undefined;
-  terminalManager?: TerminalManagerShape | undefined;
 }
 
 export interface ServerShape {
@@ -146,6 +136,8 @@ export type ServerCoreRuntimeServices =
 
 export type ServerRuntimeServices =
   | ServerCoreRuntimeServices
+  | GitManager
+  | GitCore
   | TerminalManager
   | Keybindings
   | Open;
@@ -169,19 +161,18 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
 > {
   const serverConfig = yield* ServerConfig;
   const { port, cwd, staticDir, devUrl, authToken, mode, host } = serverConfig;
-  const defaultTerminalManager = yield* TerminalManager;
-  const keybindingsManager = yield* Keybindings;
   const {
-    logWebSocketEvents: explicitLogWsEvents,
-    gitManager = new GitManager(),
-    terminalManager = defaultTerminalManager,
+    logWebSocketEvents = parseBooleanEnv(process.env.T3CODE_LOG_WS_EVENTS) ?? Boolean(devUrl),
+    autoBootstrapProjectFromCwd = mode === "web",
   } = options;
-  const autoBootstrapProjectFromCwd = options.autoBootstrapProjectFromCwd ?? mode === "web";
+
+  const gitManager = yield* GitManager;
+  const terminalManager = yield* TerminalManager;
+  const keybindingsManager = yield* Keybindings;
+  const git = yield* GitCore;
 
   const clients = new Set<WebSocket>();
   const logger = createLogger("ws");
-  const logWebSocketEvents =
-    explicitLogWsEvents ?? parseBooleanEnv(process.env.T3CODE_LOG_WS_EVENTS) ?? Boolean(devUrl);
 
   function logOutgoingPush(push: WsPush, recipients: number) {
     if (!logWebSocketEvents) return;
@@ -386,47 +377,47 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
 
       case WS_METHODS.gitStatus: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.promise(() => gitManager.status(body));
+        return yield* gitManager.status(body);
       }
 
       case WS_METHODS.gitPull: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.promise(() => pullGitBranch(body));
+        return yield* git.pullCurrentBranch(body.cwd);
       }
 
       case WS_METHODS.gitRunStackedAction: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.promise(() => gitManager.runStackedAction(body));
+        return yield* gitManager.runStackedAction(body);
       }
 
       case WS_METHODS.gitListBranches: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.promise(() => listGitBranches(body));
+        return yield* git.listBranches(body);
       }
 
       case WS_METHODS.gitCreateWorktree: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.promise(() => createGitWorktree(body));
+        return yield* git.createWorktree(body);
       }
 
       case WS_METHODS.gitRemoveWorktree: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.promise(() => removeGitWorktree(body));
+        return yield* git.removeWorktree(body);
       }
 
       case WS_METHODS.gitCreateBranch: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.promise(() => createGitBranch(body));
+        return yield* git.createBranch(body);
       }
 
       case WS_METHODS.gitCheckout: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.promise(() => checkoutGitBranch(body));
+        return yield* git.checkoutBranch(body);
       }
 
       case WS_METHODS.gitInit: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.promise(() => initGitRepo(body));
+        return yield* git.initRepo(body);
       }
 
       case WS_METHODS.terminalOpen: {
@@ -579,9 +570,7 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
       unsubscribeTerminalEvents();
     }),
   );
-  yield* Effect.addFinalizer(() =>
-    terminalManager.dispose().pipe(Effect.orElseSucceed(() => undefined)),
-  );
+  yield* Effect.addFinalizer(terminalManager.dispose);
 
   yield* NodeHttpServer.make(() => httpServer, listenOptions);
 

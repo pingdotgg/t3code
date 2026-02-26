@@ -6,7 +6,7 @@ import { assert, it, vi } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { afterEach } from "vitest";
 
-import { ensureNodePtySpawnHelperExecutable } from "./ptyAdapter";
+import { ensureNodePtySpawnHelperExecutable } from "./NodePTY";
 
 function fileMode(filePath: string): number {
   return fs.statSync(filePath).mode & 0o777;

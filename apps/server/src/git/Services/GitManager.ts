@@ -1,0 +1,41 @@
+/**
+ * GitManager - Effect service contract for stacked Git workflows.
+ *
+ * Orchestrates status inspection and commit/push/PR flows by composing
+ * lower-level Git and external tool services.
+ *
+ * @module GitManager
+ */
+import {
+  GitRunStackedActionInput,
+  GitRunStackedActionResult,
+  GitStatusInput,
+  GitStatusResult,
+} from "@t3tools/contracts";
+import { ServiceMap } from "effect";
+import type { Effect } from "effect";
+import type { GitManagerServiceError } from "../Errors.ts";
+
+/**
+ * GitManagerShape - Service API for high-level Git workflow actions.
+ */
+export interface GitManagerShape {
+  /**
+   * Read current repository Git status plus open PR metadata when available.
+   */
+  readonly status: (input: GitStatusInput) => Effect.Effect<GitStatusResult, GitManagerServiceError>;
+
+  /**
+   * Run a stacked Git action (`commit`, `commit_push`, `commit_push_pr`).
+   */
+  readonly runStackedAction: (
+    input: GitRunStackedActionInput,
+  ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
+}
+
+/**
+ * GitManager - Service tag for stacked Git workflow orchestration.
+ */
+export class GitManager extends ServiceMap.Service<GitManager, GitManagerShape>()(
+  "git/GitManager",
+) {}

@@ -9,8 +9,8 @@ import {
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { PtyAdapterShape, PtyExitEvent, PtyProcess, PtySpawnInput } from "./ptyAdapter";
-import { TerminalManagerRuntime } from "./terminalManager";
+import type { PtyAdapterShape, PtyExitEvent, PtyProcess, PtySpawnInput } from "../Services/PTY";
+import { TerminalManagerRuntime } from "./Manager";
 import { Encoding } from "effect";
 
 class FakePtyProcess implements PtyProcess {

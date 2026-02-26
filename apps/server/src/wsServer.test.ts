@@ -37,11 +37,15 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "@t3tools/contracts";
-import type { TerminalManagerShape } from "./terminalManager";
+import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
 import { SqlClient } from "effect/unstable/sql";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
 import { Open, type OpenShape } from "./open";
+import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
+import type { GitCoreShape } from "./git/Services/GitCore.ts";
+import { GitCore } from "./git/Services/GitCore.ts";
+import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 
 interface PendingMessages {
   queue: unknown[];
@@ -339,10 +343,8 @@ describe("WebSocket Server", () => {
       stateDir?: string;
       providerLayer?: Layer.Layer<ProviderService, unknown>;
       open?: OpenShape;
-      gitManager?: {
-        status: (input: { cwd: string }) => Promise<unknown>;
-        runStackedAction: (input: { cwd: string; action: string }) => Promise<unknown>;
-      };
+      gitManager?: GitManagerShape;
+      gitCore?: Pick<GitCoreShape, "listBranches" | "initRepo" | "pullCurrentBranch">;
       terminalManager?: TerminalManagerShape;
     } = {},
   ): Promise<Http.Server> {
@@ -368,9 +370,21 @@ describe("WebSocket Server", () => {
       authToken: options.authToken,
     } satisfies ServerConfigShape);
     const infrastructureLayer = providerLayer.pipe(Layer.provideMerge(persistenceLayer));
+    const runtimeOverrides = Layer.mergeAll(
+      options.gitManager ? Layer.succeed(GitManager, options.gitManager) : Layer.empty,
+      options.gitCore
+        ? Layer.succeed(GitCore, options.gitCore as unknown as GitCoreShape)
+        : Layer.empty,
+      options.terminalManager
+        ? Layer.succeed(TerminalManager, options.terminalManager)
+        : Layer.empty,
+    );
     const runtimeLayer = Layer.merge(
-      makeServerRuntimeServicesLayer().pipe(Layer.provide(infrastructureLayer)),
-      infrastructureLayer,
+      Layer.merge(
+        makeServerRuntimeServicesLayer().pipe(Layer.provide(infrastructureLayer)),
+        infrastructureLayer,
+      ),
+      runtimeOverrides,
     );
     const dependenciesLayer = Layer.empty.pipe(
       Layer.provideMerge(runtimeLayer),
@@ -385,8 +399,6 @@ describe("WebSocket Server", () => {
       const runtime = await Effect.runPromise(
         createServer({
           autoBootstrapProjectFromCwd: options.autoBootstrapProjectFromCwd ?? false,
-          ...(options.gitManager ? { gitManager: options.gitManager as never } : {}),
-          ...(options.terminalManager ? { terminalManager: options.terminalManager } : {}),
         }).pipe(Effect.provide(runtimeServices), Scope.provide(scope)),
       );
       serverScope = scope;
@@ -1049,10 +1061,33 @@ describe("WebSocket Server", () => {
     });
   });
 
-  it("supports git methods over websocket", async () => {
-    const repoCwd = makeTempDir("t3code-ws-git-project-");
+  it("routes git core methods over websocket", async () => {
+    const listBranches = vi.fn(() =>
+      Effect.succeed({
+        branches: [],
+        isRepo: false,
+      }),
+    );
+    const initRepo = vi.fn(() => Effect.void);
+    const pullCurrentBranch = vi.fn(() =>
+      Effect.fail(
+        new GitCommandError({
+          operation: "GitCore.test.pullCurrentBranch",
+          detail: "No upstream configured",
+          command: "git pull",
+          cwd: "/repo/path",
+        }),
+      ),
+    );
 
-    server = await createTestServer({ cwd: "/test" });
+    server = await createTestServer({
+      cwd: "/test",
+      gitCore: {
+        listBranches,
+        initRepo,
+        pullCurrentBranch,
+      },
+    });
     const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
@@ -1060,23 +1095,19 @@ describe("WebSocket Server", () => {
     connections.push(ws);
     await waitForMessage(ws);
 
-    const beforeInit = await sendRequest(ws, WS_METHODS.gitListBranches, { cwd: repoCwd });
-    expect(beforeInit.error).toBeUndefined();
-    expect(beforeInit.result).toEqual({ branches: [], isRepo: false });
+    const listResponse = await sendRequest(ws, WS_METHODS.gitListBranches, { cwd: "/repo/path" });
+    expect(listResponse.error).toBeUndefined();
+    expect(listResponse.result).toEqual({ branches: [], isRepo: false });
+    expect(listBranches).toHaveBeenCalledWith({ cwd: "/repo/path" });
 
-    const initResponse = await sendRequest(ws, WS_METHODS.gitInit, { cwd: repoCwd });
+    const initResponse = await sendRequest(ws, WS_METHODS.gitInit, { cwd: "/repo/path" });
     expect(initResponse.error).toBeUndefined();
+    expect(initRepo).toHaveBeenCalledWith({ cwd: "/repo/path" });
 
-    const afterInit = await sendRequest(ws, WS_METHODS.gitListBranches, {
-      cwd: repoCwd,
-    });
-    expect(afterInit.error).toBeUndefined();
-    expect((afterInit.result as { isRepo: boolean }).isRepo).toBe(true);
-
-    const pullResponse = await sendRequest(ws, WS_METHODS.gitPull, { cwd: repoCwd });
+    const pullResponse = await sendRequest(ws, WS_METHODS.gitPull, { cwd: "/repo/path" });
     expect(pullResponse.result).toBeUndefined();
-    expect(pullResponse.error?.message).toBeDefined();
-    expect(pullResponse.error?.message).not.toContain("Unknown method");
+    expect(pullResponse.error?.message).toContain("No upstream configured");
+    expect(pullCurrentBranch).toHaveBeenCalledWith("/repo/path");
   });
 
   it("supports git.status over websocket", async () => {
@@ -1094,10 +1125,9 @@ describe("WebSocket Server", () => {
       openPr: null,
     };
 
-    const gitManager = {
-      status: vi.fn().mockResolvedValue(statusResult),
-      runStackedAction: vi.fn(),
-    };
+    const status = vi.fn(() => Effect.succeed(statusResult));
+    const runStackedAction = vi.fn(() => Effect.void as any);
+    const gitManager: GitManagerShape = { status, runStackedAction };
 
     server = await createTestServer({ cwd: "/test", gitManager });
     const addr = server.address();
@@ -1112,13 +1142,21 @@ describe("WebSocket Server", () => {
     });
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual(statusResult);
-    expect(gitManager.status).toHaveBeenCalledWith({ cwd: "/test" });
+    expect(status).toHaveBeenCalledWith({ cwd: "/test" });
   });
 
   it("returns errors from git.runStackedAction", async () => {
-    const gitManager = {
-      status: vi.fn(),
-      runStackedAction: vi.fn().mockRejectedValue(new Error("Cannot push from detached HEAD.")),
+    const runStackedAction = vi.fn(() =>
+      Effect.fail(
+        new GitManagerError({
+          operation: "GitManager.test.runStackedAction",
+          detail: "Cannot push from detached HEAD.",
+        }),
+      ),
+    );
+    const gitManager: GitManagerShape = {
+      status: vi.fn(() => Effect.void as any),
+      runStackedAction,
     };
 
     server = await createTestServer({ cwd: "/test", gitManager });
@@ -1135,7 +1173,7 @@ describe("WebSocket Server", () => {
     });
     expect(response.result).toBeUndefined();
     expect(response.error?.message).toContain("detached HEAD");
-    expect(gitManager.runStackedAction).toHaveBeenCalledWith({
+    expect(runStackedAction).toHaveBeenCalledWith({
       cwd: "/test",
       action: "commit_push",
     });

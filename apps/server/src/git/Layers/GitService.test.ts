@@ -2,9 +2,9 @@ import { NodeServices } from "@effect/platform-node";
 import { it, assert } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 
-import { GitCommandError } from "./Errors.ts";
-import { GitServiceLive } from "./Layer.ts";
-import { GitService } from "./Service.ts";
+import { GitCommandError } from "../Errors.ts";
+import { GitServiceLive } from "./GitService.ts";
+import { GitService } from "../Services/GitService.ts";
 
 const layer = it.layer(Layer.provideMerge(GitServiceLive, NodeServices.layer));
 

@@ -15,8 +15,8 @@ import { Effect, Layer, FileSystem, Path } from "effect";
 
 import { CheckpointInvariantError } from "../Errors.ts";
 import { GitCommandError } from "../../git/Errors.ts";
-import { GitServiceLive } from "../../git/Layer.ts";
-import { GitService } from "../../git/Service.ts";
+import { GitServiceLive } from "../../git/Layers/GitService.ts";
+import { GitService } from "../../git/Services/GitService.ts";
 import { CheckpointStore, type CheckpointStoreShape } from "../Services/CheckpointStore.ts";
 import { CheckpointRef } from "@t3tools/contracts";
 

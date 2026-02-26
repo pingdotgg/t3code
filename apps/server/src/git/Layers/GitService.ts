@@ -8,8 +8,13 @@
  */
 import { Effect, Layer, Option, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { GitCommandError } from "./Errors.ts";
-import { ExecuteGitInput, ExecuteGitResult, GitService, GitServiceShape } from "./Service.ts";
+import { GitCommandError } from "../Errors.ts";
+import {
+  ExecuteGitInput,
+  ExecuteGitResult,
+  GitService,
+  GitServiceShape,
+} from "../Services/GitService.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;

@@ -7,8 +7,6 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { CheckpointDiffQueryLive } from "./checkpointing/Layers/CheckpointDiffQuery";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
 import { ServerConfig } from "./config";
-import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
-import { CheckpointStore } from "./checkpointing/Services/CheckpointStore";
 import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/OrchestrationCommandReceipts";
 import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore";
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime";
@@ -19,18 +17,21 @@ import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderComma
 import { OrchestrationProjectionPipelineLive } from "./orchestration/Layers/ProjectionPipeline";
 import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers/ProjectionSnapshotQuery";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion";
-import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
-import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
-import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
 import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
 import { ProviderService } from "./provider/Services/ProviderService";
 
-import { makeTerminalManagerLive, TerminalManager } from "./terminalManager";
-import { PtyAdapter } from "./ptyAdapter";
-import { Keybindings, KeybindingsLive } from "./keybindings";
+import { TerminalManagerLive } from "./terminal/Layers/Manager";
+import { KeybindingsLive } from "./keybindings";
+import { GitManagerLive } from "./git/Layers/GitManager";
+import { GitCoreLive } from "./git/Layers/GitCore";
+import { GitHubCliLive } from "./git/Layers/GitHubCli";
+import { CodexTextGenerationLive } from "./git/Layers/CodexTextGeneration";
+import { GitServiceLive } from "./git/Layers/GitService";
+import { BunPtyAdapterLive } from "./terminal/Layers/BunPTY";
+import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
 
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService,
@@ -53,17 +54,7 @@ export function makeServerProviderLayer(): Layer.Layer<
   }).pipe(Layer.unwrap);
 }
 
-export function makeServerRuntimeServicesLayer(): Layer.Layer<
-  | OrchestrationEngineService
-  | ProjectionSnapshotQuery
-  | CheckpointStore
-  | CheckpointDiffQuery
-  | OrchestrationReactor
-  | TerminalManager
-  | Keybindings,
-  unknown,
-  SqlClient.SqlClient | ProviderService | ServerConfig
-> {
+export function makeServerRuntimeServicesLayer() {
   const orchestrationLayer = OrchestrationEngineLive.pipe(
     Layer.provide(OrchestrationProjectionPipelineLive),
     Layer.provide(OrchestrationEventStoreLive),
@@ -96,14 +87,23 @@ export function makeServerRuntimeServicesLayer(): Layer.Layer<
     Layer.provideMerge(checkpointReactorLayer),
   );
 
-  const terminalLayer = Effect.gen(function* () {
-    const { stateDir } = yield* ServerConfig;
-    return makeTerminalManagerLive({
-      logsDir: path.join(stateDir, "logs", "terminals"),
-    }).pipe(Layer.provide(PtyAdapter.layer()));
-  }).pipe(Layer.unwrap);
+  const terminalLayer = TerminalManagerLive.pipe(
+    Layer.provide(typeof Bun !== "undefined" ? BunPtyAdapterLive : NodePtyAdapterLive),
+  );
 
-  const keybindingsLayer = KeybindingsLive.pipe(Layer.provide(NodeServices.layer));
+  const gitCoreLayer = GitCoreLive.pipe(Layer.provideMerge(GitServiceLive));
 
-  return Layer.mergeAll(orchestrationReactorLayer, terminalLayer, keybindingsLayer);
+  const gitManagerLayer = GitManagerLive.pipe(
+    Layer.provideMerge(gitCoreLayer),
+    Layer.provideMerge(GitHubCliLive),
+    Layer.provideMerge(CodexTextGenerationLive),
+  );
+
+  return Layer.mergeAll(
+    orchestrationReactorLayer,
+    gitCoreLayer,
+    gitManagerLayer,
+    terminalLayer,
+    KeybindingsLive,
+  ).pipe(Layer.provideMerge(NodeServices.layer));
 }
