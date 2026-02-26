@@ -378,8 +378,8 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Threads: PRRT_kwDORLtfbc5wiLhY
   - Audit note: ProviderSessionDirectory upsert remains read-merge-write without concurrency control.
 
-- [ ] `C051` Using `??` for `providerThreadId` and `adapterKey` makes it impossible to clear these fields by passing `null`, since `null ?? existing` evaluates to `existing`. Consider using explicit `undefined` checks (like `resumeCursor` does) if clearing should be supported. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
-  - Status: `TODO`
+- [x] `C051` Using `??` for `providerThreadId` and `adapterKey` makes it impossible to clear these fields by passing `null`, since `null ?? existing` evaluates to `existing`. Consider using explicit `undefined` checks (like `resumeCursor` does) if clearing should be supported. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
+  - Status: `DONE`
   - Verdict: `partially-valid`
   - Severity: `Low`
   - Area: `Other`

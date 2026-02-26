@@ -154,6 +154,39 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       }
     }));
 
+  it("clears providerThreadId when explicitly set to null", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+
+      const sessionId = ProviderSessionId.makeUnsafe("sess-clear-provider-thread-id");
+      const threadId = ThreadId.makeUnsafe("thread-clear-provider-thread-id");
+      const providerThreadId = ProviderThreadId.makeUnsafe("provider-thread-to-clear");
+
+      yield* directory.upsert({
+        sessionId,
+        provider: "codex",
+        threadId,
+        adapterKey: "custom-adapter",
+        providerThreadId,
+      });
+
+      yield* directory.upsert({
+        sessionId,
+        provider: "codex",
+        providerThreadId: null,
+      });
+
+      const runtime = yield* runtimeRepository.getBySessionId({
+        providerSessionId: sessionId,
+      });
+      assert.equal(Option.isSome(runtime), true);
+      if (Option.isSome(runtime)) {
+        assert.equal(runtime.value.providerThreadId, null);
+        assert.equal(runtime.value.adapterKey, "custom-adapter");
+      }
+    }));
+
   it("rehydrates persisted mappings across layer restart", () =>
     Effect.gen(function* () {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-directory-"));
