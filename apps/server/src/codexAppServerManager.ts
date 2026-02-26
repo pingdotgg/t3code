@@ -986,7 +986,7 @@ function readResumeThreadId(input: ProviderSessionStartInput): ProviderThreadId 
     typeof input.resumeCursor !== "object" ||
     Array.isArray(input.resumeCursor)
   ) {
-    return undefined;
+    return input.resumeThreadId;
   }
   const rawThreadId = (input.resumeCursor as Record<string, unknown>).threadId;
   return typeof rawThreadId === "string" ? toProviderThreadId(rawThreadId) : input.resumeThreadId;

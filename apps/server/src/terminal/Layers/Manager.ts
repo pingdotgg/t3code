@@ -1033,7 +1033,10 @@ export const TerminalManagerLive = Layer.effect(
     const logsDir = join(stateDir, "logs", "terminals");
 
     const ptyAdapter = yield* PtyAdapter;
-    const runtime = new TerminalManagerRuntime({ logsDir, ptyAdapter });
+    const runtime = yield* Effect.acquireRelease(
+      Effect.sync(() => new TerminalManagerRuntime({ logsDir, ptyAdapter })),
+      (r) => Effect.sync(() => r.dispose()),
+    );
 
     return {
       open: (input) => Effect.promise(() => runtime.open(input)),
