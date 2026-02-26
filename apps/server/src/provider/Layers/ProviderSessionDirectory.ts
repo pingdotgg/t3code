@@ -108,7 +108,10 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         threadId: resolvedThreadId,
         providerName: binding.provider,
         adapterKey: binding.adapterKey ?? existingRuntime?.adapterKey ?? binding.provider,
-        providerThreadId: binding.providerThreadId ?? existingRuntime?.providerThreadId ?? null,
+        providerThreadId:
+          binding.providerThreadId !== undefined
+            ? binding.providerThreadId
+            : (existingRuntime?.providerThreadId ?? null),
         status: binding.status ?? existingRuntime?.status ?? "running",
         lastSeenAt: now,
         resumeCursor:
