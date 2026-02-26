@@ -1,27 +1,29 @@
 import { Schema } from "effect";
-
+import { TrimmedNonEmptyString } from "./baseSchemas";
 import {
   ApprovalRequestId,
-  ChatAttachment,
   EventId,
   IsoDateTime,
   NonNegativeInt,
+  ProviderItemId,
+  ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
+  ThreadId,
+} from "./baseSchemas";
+import {
+  ChatAttachment,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderApprovalDecision,
   ProviderApprovalPolicy,
   ProviderKind,
-  ProviderItemId,
   ProviderRequestKind,
   ProviderSandboxMode,
-  ProviderSessionId,
-  ProviderThreadId,
-  ProviderTurnId,
-  ThreadId,
   TurnCountRange,
 } from "./orchestration";
 
-const TrimmedNonEmptyStringSchema = Schema.Trimmed.check(Schema.isNonEmpty());
+const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 
 export const ProviderSessionStatus = Schema.Literals([
   "connecting",

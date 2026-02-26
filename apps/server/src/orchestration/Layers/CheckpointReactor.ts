@@ -33,13 +33,7 @@ type ReactorInput =
     };
 
 function toTurnId(value: string | undefined): TurnId | null {
-  const normalized = value?.trim();
-  return normalized && normalized.length > 0 ? TurnId.makeUnsafe(normalized) : null;
-}
-
-function trimToNonEmpty(value: string | null | undefined): string | undefined {
-  const normalized = value?.trim();
-  return normalized && normalized.length > 0 ? normalized : undefined;
+  return value === undefined ? null : TurnId.makeUnsafe(value);
 }
 
 function checkpointStatusFromRuntime(status: string | undefined): "ready" | "missing" | "error" {
@@ -129,18 +123,17 @@ const make = Effect.gen(function* () {
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === threadId);
     const projectedSessionId = thread?.session?.providerSessionId ?? null;
-    const projectedProviderThreadId = trimToNonEmpty(thread?.session?.providerThreadId);
+    const projectedProviderThreadId = thread?.session?.providerThreadId ?? undefined;
 
     const sessions = yield* providerService.listSessions();
 
     const findSessionWithCwd = (
       session: (typeof sessions)[number] | undefined,
     ): Option.Option<{ readonly sessionId: ProviderSessionId; readonly cwd: string }> => {
-      const cwd = session?.cwd?.trim();
-      if (!session || !cwd) {
+      if (!session?.cwd) {
         return Option.none();
       }
-      return Option.some({ sessionId: session.sessionId, cwd });
+      return Option.some({ sessionId: session.sessionId, cwd: session.cwd });
     };
 
     if (projectedSessionId !== null) {
@@ -153,7 +146,7 @@ const make = Effect.gen(function* () {
 
     if (projectedProviderThreadId) {
       const matchedSession = sessions.find(
-        (session) => session.threadId?.trim() === projectedProviderThreadId,
+        (session) => session.threadId === projectedProviderThreadId,
       );
       const fromProviderThread = findSessionWithCwd(matchedSession);
       if (Option.isSome(fromProviderThread)) {

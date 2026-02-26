@@ -79,12 +79,12 @@ layer("ProviderSessionDirectoryLive", (it) => {
       assertFailure(missingProvider, new ProviderSessionNotFoundError({ sessionId: "sess-1" }));
     }));
 
-  it("fails upsert for empty session id", () =>
+  it("fails upsert when thread id is unavailable", () =>
     Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;
       const result = yield* Effect.result(
         directory.upsert({
-          sessionId: sessionId("   "),
+          sessionId: sessionId("sess-no-thread"),
           provider: "codex",
         }),
       );
@@ -92,7 +92,7 @@ layer("ProviderSessionDirectoryLive", (it) => {
         result,
         new ProviderValidationError({
           operation: "ProviderSessionDirectory.upsert",
-          issue: "sessionId must be a non-empty string.",
+          issue: "threadId must be a non-empty string.",
         }),
       );
     }));

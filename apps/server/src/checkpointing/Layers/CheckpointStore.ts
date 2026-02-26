@@ -78,7 +78,7 @@ const makeCheckpointStore = Effect.gen(function* () {
     git
       .execute({
         operation: "CheckpointStore.isGitRepository",
-        cwd: cwd.trim(),
+        cwd,
         args: ["rev-parse", "--is-inside-work-tree"],
         allowNonZeroExit: true,
       })
@@ -90,8 +90,6 @@ const makeCheckpointStore = Effect.gen(function* () {
   const captureCheckpoint: CheckpointStoreShape["captureCheckpoint"] = (input) =>
     Effect.gen(function* () {
       const operation = "CheckpointStore.captureCheckpoint";
-      const normalizedCwd = input.cwd.trim();
-      const checkpointRef = input.checkpointRef.trim();
 
       yield* Effect.acquireUseRelease(
         fs.makeTempDirectory({ prefix: "t3-fs-checkpoint-" }),
@@ -107,11 +105,11 @@ const makeCheckpointStore = Effect.gen(function* () {
               GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
             };
 
-            const headExists = yield* hasHeadCommit(normalizedCwd);
+            const headExists = yield* hasHeadCommit(input.cwd);
             if (headExists) {
               yield* git.execute({
                 operation,
-                cwd: normalizedCwd,
+                cwd: input.cwd,
                 args: ["read-tree", "HEAD"],
                 env: commitEnv,
               });
@@ -119,14 +117,14 @@ const makeCheckpointStore = Effect.gen(function* () {
 
             yield* git.execute({
               operation,
-              cwd: normalizedCwd,
+              cwd: input.cwd,
               args: ["add", "-A", "--", "."],
               env: commitEnv,
             });
 
             const writeTreeResult = yield* git.execute({
               operation,
-              cwd: normalizedCwd,
+              cwd: input.cwd,
               args: ["write-tree"],
               env: commitEnv,
             });
@@ -135,15 +133,15 @@ const makeCheckpointStore = Effect.gen(function* () {
               return yield* new GitCommandError({
                 operation,
                 command: "git write-tree",
-                cwd: normalizedCwd,
+                cwd: input.cwd,
                 detail: "git write-tree returned an empty tree oid.",
               });
             }
 
-            const message = `t3 checkpoint ref=${checkpointRef}`;
+            const message = `t3 checkpoint ref=${input.checkpointRef}`;
             const commitTreeResult = yield* git.execute({
               operation,
-              cwd: normalizedCwd,
+              cwd: input.cwd,
               args: ["commit-tree", treeOid, "-m", message],
               env: commitEnv,
             });
@@ -152,15 +150,15 @@ const makeCheckpointStore = Effect.gen(function* () {
               return yield* new GitCommandError({
                 operation,
                 command: "git commit-tree",
-                cwd: normalizedCwd,
+                cwd: input.cwd,
                 detail: "git commit-tree returned an empty commit oid.",
               });
             }
 
             yield* git.execute({
               operation,
-              cwd: normalizedCwd,
-              args: ["update-ref", checkpointRef, commitOid],
+              cwd: input.cwd,
+              args: ["update-ref", input.checkpointRef, commitOid],
             });
           }),
         (tempDir) => fs.remove(tempDir, { recursive: true }),

@@ -71,10 +71,8 @@ const makeGitService = Effect.gen(function* () {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const execute: GitServiceShape["execute"] = Effect.fnUntraced(function* (input) {
-    const normalizedCwd = input.cwd.trim();
     const commandInput = {
       ...input,
-      cwd: normalizedCwd,
       args: [...input.args],
     } as const;
     const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;

@@ -1,6 +1,7 @@
 import { Schema } from "effect";
+import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas";
 
-const TrimmedNonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
+const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 
 // Domain Types
 
@@ -19,101 +20,103 @@ export const GitPrStepStatus = Schema.Literals([
 ]);
 
 export const GitBranch = Schema.Struct({
-  name: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyStringSchema,
   current: Schema.Boolean,
   isDefault: Schema.Boolean,
-  worktreePath: TrimmedNonEmptyString.pipe(Schema.NullOr),
+  worktreePath: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
 });
 export type GitBranch = typeof GitBranch.Type;
 
 export const GitWorktree = Schema.Struct({
-  path: TrimmedNonEmptyString,
-  branch: TrimmedNonEmptyString,
+  path: TrimmedNonEmptyStringSchema,
+  branch: TrimmedNonEmptyStringSchema,
 });
 export type GitWorktree = typeof GitWorktree.Type;
 
 // RPC Inputs
 
 export const GitStatusInput = Schema.Struct({
-  cwd: TrimmedNonEmptyString,
+  cwd: TrimmedNonEmptyStringSchema,
 });
 export type GitStatusInput = typeof GitStatusInput.Type;
 
 export const GitPullInput = Schema.Struct({
-  cwd: TrimmedNonEmptyString,
+  cwd: TrimmedNonEmptyStringSchema,
 });
 export type GitPullInput = typeof GitPullInput.Type;
 
 export const GitRunStackedActionInput = Schema.Struct({
-  cwd: TrimmedNonEmptyString,
+  cwd: TrimmedNonEmptyStringSchema,
   action: GitStackedAction,
-  commitMessage: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(10_000))),
+  commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
 });
 export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 
 export const GitListBranchesInput = Schema.Struct({
-  cwd: TrimmedNonEmptyString,
+  cwd: TrimmedNonEmptyStringSchema,
 });
 export type GitListBranchesInput = typeof GitListBranchesInput.Type;
 
 export const GitCreateWorktreeInput = Schema.Struct({
-  cwd: TrimmedNonEmptyString,
-  branch: TrimmedNonEmptyString,
-  newBranch: TrimmedNonEmptyString,
-  path: TrimmedNonEmptyString.pipe(Schema.NullOr),
+  cwd: TrimmedNonEmptyStringSchema,
+  branch: TrimmedNonEmptyStringSchema,
+  newBranch: TrimmedNonEmptyStringSchema,
+  path: Schema.NullOr(TrimmedNonEmptyStringSchema),
 });
 export type GitCreateWorktreeInput = typeof GitCreateWorktreeInput.Type;
 
 export const GitRemoveWorktreeInput = Schema.Struct({
-  cwd: TrimmedNonEmptyString,
-  path: TrimmedNonEmptyString,
+  cwd: TrimmedNonEmptyStringSchema,
+  path: TrimmedNonEmptyStringSchema,
   force: Schema.optional(Schema.Boolean),
 });
 export type GitRemoveWorktreeInput = typeof GitRemoveWorktreeInput.Type;
 
 export const GitCreateBranchInput = Schema.Struct({
-  cwd: TrimmedNonEmptyString,
-  branch: TrimmedNonEmptyString,
+  cwd: TrimmedNonEmptyStringSchema,
+  branch: TrimmedNonEmptyStringSchema,
 });
 export type GitCreateBranchInput = typeof GitCreateBranchInput.Type;
 
 export const GitCheckoutInput = Schema.Struct({
-  cwd: TrimmedNonEmptyString,
-  branch: TrimmedNonEmptyString,
+  cwd: TrimmedNonEmptyStringSchema,
+  branch: TrimmedNonEmptyStringSchema,
 });
 export type GitCheckoutInput = typeof GitCheckoutInput.Type;
 
 export const GitInitInput = Schema.Struct({
-  cwd: TrimmedNonEmptyString,
+  cwd: TrimmedNonEmptyStringSchema,
 });
 export type GitInitInput = typeof GitInitInput.Type;
 
 // RPC Results
 
 export const GitStatusResult = Schema.Struct({
-  branch: TrimmedNonEmptyString.pipe(Schema.NullOr),
+  branch: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
   hasWorkingTreeChanges: Schema.Boolean,
   workingTree: Schema.Struct({
     files: Schema.Array(
       Schema.Struct({
-        path: TrimmedNonEmptyString,
-        insertions: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-        deletions: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        path: TrimmedNonEmptyStringSchema,
+        insertions: NonNegativeInt,
+        deletions: NonNegativeInt,
       }),
     ),
-    insertions: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-    deletions: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    insertions: NonNegativeInt,
+    deletions: NonNegativeInt,
   }),
   hasUpstream: Schema.Boolean,
-  aheadCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  behindCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  openPr: Schema.Struct({
-    number: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
-    title: TrimmedNonEmptyString,
-    url: Schema.String,
-    baseBranch: TrimmedNonEmptyString,
-    headBranch: TrimmedNonEmptyString,
-  }).pipe(Schema.NullOr),
+  aheadCount: NonNegativeInt,
+  behindCount: NonNegativeInt,
+  openPr: Schema.NullOr(
+    Schema.Struct({
+      number: PositiveInt,
+      title: TrimmedNonEmptyStringSchema,
+      url: Schema.String,
+      baseBranch: TrimmedNonEmptyStringSchema,
+      headBranch: TrimmedNonEmptyStringSchema,
+    }),
+  ),
 });
 export type GitStatusResult = typeof GitStatusResult.Type;
 
@@ -132,29 +135,29 @@ export const GitRunStackedActionResult = Schema.Struct({
   action: GitStackedAction,
   commit: Schema.Struct({
     status: GitCommitStepStatus,
-    commitSha: Schema.optional(TrimmedNonEmptyString),
-    subject: Schema.optional(TrimmedNonEmptyString),
+    commitSha: Schema.optional(TrimmedNonEmptyStringSchema),
+    subject: Schema.optional(TrimmedNonEmptyStringSchema),
   }),
   push: Schema.Struct({
     status: GitPushStepStatus,
-    branch: Schema.optional(TrimmedNonEmptyString),
-    upstreamBranch: Schema.optional(TrimmedNonEmptyString),
+    branch: Schema.optional(TrimmedNonEmptyStringSchema),
+    upstreamBranch: Schema.optional(TrimmedNonEmptyStringSchema),
     setUpstream: Schema.optional(Schema.Boolean),
   }),
   pr: Schema.Struct({
     status: GitPrStepStatus,
     url: Schema.optional(Schema.String),
-    number: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
-    baseBranch: Schema.optional(TrimmedNonEmptyString),
-    headBranch: Schema.optional(TrimmedNonEmptyString),
-    title: Schema.optional(TrimmedNonEmptyString),
+    number: Schema.optional(PositiveInt),
+    baseBranch: Schema.optional(TrimmedNonEmptyStringSchema),
+    headBranch: Schema.optional(TrimmedNonEmptyStringSchema),
+    title: Schema.optional(TrimmedNonEmptyStringSchema),
   }),
 });
 export type GitRunStackedActionResult = typeof GitRunStackedActionResult.Type;
 
 export const GitPullResult = Schema.Struct({
   status: Schema.Literals(["pulled", "skipped_up_to_date"]),
-  branch: TrimmedNonEmptyString,
-  upstreamBranch: TrimmedNonEmptyString.pipe(Schema.NullOr),
+  branch: TrimmedNonEmptyStringSchema,
+  upstreamBranch: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
 });
 export type GitPullResult = typeof GitPullResult.Type;

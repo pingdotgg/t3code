@@ -1,4 +1,5 @@
 import { Schema, Struct } from "effect";
+import { TrimmedNonEmptyString } from "./baseSchemas";
 
 import {
   ClientOrchestrationCommand,
@@ -128,13 +129,13 @@ export const WebSocketRequestBody = Schema.Union([
 ]);
 
 export const WebSocketRequest = Schema.Struct({
-  id: Schema.String,
+  id: TrimmedNonEmptyString,
   body: WebSocketRequestBody,
 });
 export type WebSocketRequest = typeof WebSocketRequest.Type;
 
 export const WebSocketResponse = Schema.Struct({
-  id: Schema.String,
+  id: TrimmedNonEmptyString,
   result: Schema.optional(Schema.Unknown),
   error: Schema.optional(
     Schema.Struct({
@@ -146,7 +147,7 @@ export type WebSocketResponse = typeof WebSocketResponse.Type;
 
 export const WsPush = Schema.Struct({
   type: Schema.Literal("push"),
-  channel: Schema.String,
+  channel: TrimmedNonEmptyString,
   data: Schema.Unknown,
 });
 export type WsPush = typeof WsPush.Type;
@@ -159,7 +160,7 @@ export type WsResponse = typeof WsResponse.Type;
 // ── Server welcome payload ───────────────────────────────────────────
 
 export const WsWelcomePayload = Schema.Struct({
-  cwd: Schema.String,
-  projectName: Schema.String,
+  cwd: TrimmedNonEmptyString,
+  projectName: TrimmedNonEmptyString,
 });
 export type WsWelcomePayload = typeof WsWelcomePayload.Type;

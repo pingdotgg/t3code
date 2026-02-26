@@ -242,8 +242,9 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       Effect.gen(function* () {
         const adapter = yield* registry.getByProvider(input.provider);
         const activeSessions = yield* adapter.listSessions();
+        const expectedProviderThreadId = asProviderThreadId(input.threadId);
         const existing = activeSessions.find(
-          (session) => session.threadId?.trim() === input.threadId.trim(),
+          (session) => session.threadId === expectedProviderThreadId,
         );
         if (existing) {
           const existingThreadId = yield* upsertSessionBinding(
