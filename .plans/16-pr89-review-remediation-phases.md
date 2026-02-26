@@ -10,6 +10,7 @@
   - Invalid/false-positive: 3 (excluded)
   - Duplicate reposts: collapsed
   - Unique actionable findings after filtering: 58
+  - Post-rewrite validity audit: 5 additional stale items marked invalid, leaving 53 actionable (`34 valid` + `19 partially-valid`)
 
 ## Phase 0: Canonical Triage Lock
 

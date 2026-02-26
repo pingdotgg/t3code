@@ -327,4 +327,40 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.status).toBe("ready");
     expect(thread.activities.some((activity) => activity.kind === "tool.started")).toBe(true);
   });
+
+  it("continues processing runtime events after a single event handler failure", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "message.delta",
+      eventId: asEventId("evt-invalid-delta"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: now,
+      turnId: asProviderTurnId("turn-invalid"),
+      itemId: asItemId("item-invalid"),
+      delta: undefined,
+    } as unknown as ProviderRuntimeEvent);
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-runtime-error-after-failure"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: new Date().toISOString(),
+      turnId: asProviderTurnId("turn-after-failure"),
+      message: "runtime still processed",
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "error" &&
+        entry.session?.activeTurnId === "turn-after-failure" &&
+        entry.session?.lastError === "runtime still processed",
+    );
+    expect(thread.session?.status).toBe("error");
+    expect(thread.session?.lastError).toBe("runtime still processed");
+  });
 });

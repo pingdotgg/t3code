@@ -1000,6 +1000,65 @@ describe("WebSocket Server", () => {
     expect(response!.error!.message).toContain("Invalid request format");
   });
 
+  it("catches websocket message handler rejections and keeps the socket usable", async () => {
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => {
+      unhandledRejections.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    const brokenOpenService: OpenShape = {
+      openBrowser: () => Effect.void,
+      openInEditor: () =>
+        Effect.sync(() => BigInt(1)).pipe(Effect.map((result) => result as unknown as void)),
+    };
+
+    try {
+      server = await createTestServer({ cwd: "/test", open: brokenOpenService });
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+      const ws = await connectWs(port);
+      connections.push(ws);
+      await waitForMessage(ws);
+
+      ws.send(
+        JSON.stringify({
+          id: "req-broken-open",
+          body: {
+            _tag: WS_METHODS.shellOpenInEditor,
+            cwd: "/tmp",
+            editor: "cursor",
+          },
+        }),
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(unhandledRejections).toHaveLength(0);
+
+      const workspace = makeTempDir("t3code-ws-handler-still-usable-");
+      fs.writeFileSync(path.join(workspace, "file.txt"), "ok\n", "utf8");
+      const response = await sendRequest(ws, WS_METHODS.projectsSearchEntries, {
+        cwd: workspace,
+        query: "file",
+        limit: 5,
+      });
+      expect(response.error).toBeUndefined();
+      expect(response.result).toEqual(
+        expect.objectContaining({
+          entries: expect.arrayContaining([
+            expect.objectContaining({
+              path: "file.txt",
+              kind: "file",
+            }),
+          ]),
+        }),
+      );
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+  });
+
   it("returns errors for removed projects CRUD methods", async () => {
     server = await createTestServer({ cwd: "/test" });
     const addr = server.address();

@@ -542,7 +542,11 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
     ws.send(JSON.stringify(welcome));
 
     ws.on("message", (raw) => {
-      void Effect.runPromise(handleMessage(ws, raw));
+      void Effect.runPromise(
+        handleMessage(ws, raw).pipe(
+          Effect.catch((error) => Effect.logError("Error handling message", error)),
+        ),
+      );
     });
 
     ws.on("close", () => {

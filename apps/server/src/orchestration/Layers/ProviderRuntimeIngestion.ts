@@ -7,7 +7,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSessionId,
 } from "@t3tools/contracts";
-import { Effect, Layer, Queue, Stream } from "effect";
+import { Cause, Effect, Layer, Queue, Stream } from "effect";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -324,13 +324,27 @@ const make = Effect.gen(function* () {
       ).pipe(Effect.asVoid);
     });
 
+  const processEventSafely = (event: ProviderRuntimeEvent) =>
+    processEvent(event).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.failCause(cause);
+        }
+        return Effect.logWarning("provider runtime ingestion failed to process event", {
+          eventId: event.eventId,
+          eventType: event.type,
+          cause: Cause.pretty(cause),
+        });
+      }),
+    );
+
   const start: ProviderRuntimeIngestionShape["start"] = Effect.gen(function* () {
     const providerEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
 
     yield* Effect.addFinalizer(() => Queue.shutdown(providerEventQueue).pipe(Effect.asVoid));
 
     yield* Effect.forkScoped(
-      Effect.forever(Queue.take(providerEventQueue).pipe(Effect.flatMap(processEvent))),
+      Effect.forever(Queue.take(providerEventQueue).pipe(Effect.flatMap(processEventSafely))),
     );
     yield* Effect.forkScoped(
       Stream.runForEach(providerService.streamEvents, (event) =>

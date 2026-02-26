@@ -9,7 +9,7 @@ import {
   type OrchestrationEvent,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
-import { Effect, Layer, Option, Queue, Stream } from "effect";
+import { Cause, Effect, Layer, Option, Queue, Stream } from "effect";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import { checkpointRefForThreadTurn } from "../../checkpointing/Refs.ts";
@@ -537,7 +537,6 @@ const make = Effect.gen(function* () {
             createdAt: now,
           }),
         ),
-        Effect.forkScoped,
         Effect.asVoid,
       );
   });
@@ -672,11 +671,27 @@ const make = Effect.gen(function* () {
   ): Effect.Effect<void, CheckpointStoreError | OrchestrationDispatchError, never> =>
     input.source === "domain" ? processDomainEvent(input.event) : processRuntimeEvent(input.event);
 
+  const processInputSafely = (input: ReactorInput) =>
+    processInput(input).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.failCause(cause);
+        }
+        return Effect.logWarning("checkpoint reactor failed to process input", {
+          source: input.source,
+          eventType: input.event.type,
+          cause: Cause.pretty(cause),
+        });
+      }),
+    );
+
   const start: CheckpointReactorShape["start"] = Effect.gen(function* () {
     const queue = yield* Queue.unbounded<ReactorInput>();
     yield* Effect.addFinalizer(() => Queue.shutdown(queue).pipe(Effect.asVoid));
 
-    yield* Effect.forkScoped(Effect.forever(Queue.take(queue).pipe(Effect.flatMap(processInput))));
+    yield* Effect.forkScoped(
+      Effect.forever(Queue.take(queue).pipe(Effect.flatMap(processInputSafely))),
+    );
 
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {

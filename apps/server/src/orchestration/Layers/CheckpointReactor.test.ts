@@ -42,10 +42,12 @@ const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.make
 const asProviderThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
-function createProviderServiceHarness(cwd: string, hasSession = true) {
+function createProviderServiceHarness(cwd: string, hasSession = true, sessionCwd = cwd) {
   const now = new Date().toISOString();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
-  const rollbackConversation = vi.fn(() => Effect.void);
+  const rollbackConversation = vi.fn(
+    (_input: { readonly sessionId: ProviderSessionId; readonly numTurns: number }) => Effect.void,
+  );
 
   const unsupported = <A>() =>
     Effect.die(new Error("Unsupported provider call in test")) as Effect.Effect<A, never>;
@@ -57,7 +59,7 @@ function createProviderServiceHarness(cwd: string, hasSession = true) {
             provider: "codex",
             status: "ready",
             threadId: asProviderThreadId("provider-thread-1"),
-            cwd,
+            cwd: sessionCwd,
             createdAt: now,
             updatedAt: now,
           },
@@ -214,10 +216,15 @@ describe("CheckpointReactor", () => {
     readonly seedFilesystemCheckpoints?: boolean;
     readonly projectWorkspaceRoot?: string;
     readonly threadWorktreePath?: string | null;
+    readonly providerSessionCwd?: string;
   }) {
     const cwd = createGitRepository();
     tempDirs.push(cwd);
-    const provider = createProviderServiceHarness(cwd, options?.hasSession ?? true);
+    const provider = createProviderServiceHarness(
+      cwd,
+      options?.hasSession ?? true,
+      options?.providerSessionCwd ?? cwd,
+    );
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionPipelineLive),
       Layer.provide(OrchestrationEventStoreLive),
@@ -496,6 +503,65 @@ describe("CheckpointReactor", () => {
     );
   });
 
+  it("continues processing runtime events after a single checkpoint runtime failure", async () => {
+    const nonRepositorySessionCwd = fs.mkdtempSync(
+      path.join(os.tmpdir(), "t3-checkpoint-runtime-non-repo-"),
+    );
+    tempDirs.push(nonRepositorySessionCwd);
+
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      providerSessionCwd: nonRepositorySessionCwd,
+    });
+    const createdAt = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-set-non-repo-runtime"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          providerSessionId: asSessionId("sess-1"),
+          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    harness.provider.emit({
+      type: "checkpoint.captured",
+      eventId: EventId.makeUnsafe("evt-runtime-capture-failure"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: new Date().toISOString(),
+      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
+      turnId: asTurnId("turn-runtime-failure"),
+      turnCount: 1,
+      status: "completed",
+    });
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.makeUnsafe("evt-turn-started-after-runtime-failure"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: new Date().toISOString(),
+      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
+      turnId: asTurnId("turn-after-runtime-failure"),
+    });
+
+    await waitForGitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 0));
+    expect(
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 0)),
+    ).toBe(true);
+  });
+
   it("executes provider revert and emits thread.reverted for checkpoint revert requests", async () => {
     const harness = await createHarness();
     const createdAt = new Date().toISOString();
@@ -573,6 +639,101 @@ describe("CheckpointReactor", () => {
     expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 2))).toBe(
       false,
     );
+  });
+
+  it("processes consecutive revert requests with deterministic rollback sequencing", async () => {
+    const harness = await createHarness();
+    const createdAt = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-set-inline-revert"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          providerSessionId: asSessionId("sess-1"),
+          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.makeUnsafe("cmd-inline-revert-diff-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        turnId: asTurnId("turn-1"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 1),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.makeUnsafe("cmd-inline-revert-diff-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        turnId: asTurnId("turn-2"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 2),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 2,
+        createdAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.makeUnsafe("cmd-sequenced-revert-request-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        turnCount: 1,
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.makeUnsafe("cmd-sequenced-revert-request-0"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        turnCount: 0,
+        createdAt,
+      }),
+    );
+
+    const deadline = Date.now() + 2000;
+    const waitForRollbackCalls = async (): Promise<void> => {
+      if (harness.provider.rollbackConversation.mock.calls.length >= 2) {
+        return;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error("Timed out waiting for rollbackConversation calls.");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return waitForRollbackCalls();
+    };
+    await waitForRollbackCalls();
+
+    expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(2);
+    expect(harness.provider.rollbackConversation.mock.calls[0]?.[0]).toEqual({
+      sessionId: asSessionId("sess-1"),
+      numTurns: 1,
+    });
+    expect(harness.provider.rollbackConversation.mock.calls[1]?.[0]).toEqual({
+      sessionId: asSessionId("sess-1"),
+      numTurns: 1,
+    });
   });
 
   it("appends an error activity when revert is requested without an active session", async () => {

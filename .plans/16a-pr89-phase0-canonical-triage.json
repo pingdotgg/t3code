@@ -10,11 +10,11 @@
   "phase0_generated_at": "2026-02-26T02:49:21.091145Z",
   "summary": {
     "total_threads": 185,
-    "actionable_canonical": 58,
+    "actionable_canonical": 53,
     "actionable_duplicates": 24,
     "filtered_outdated": 94,
     "filtered_resolved": 6,
-    "filtered_invalid": 3
+    "filtered_invalid": 8
   },
   "canonical_items": [
     {
@@ -380,24 +380,6 @@
       ]
     },
     {
-      "canonical_id": "C021",
-      "area": "Other",
-      "title": "Shared mutable default metadata object causes stale eventId",
-      "severity": "Medium",
-      "path": "apps/server/src/orchestration/decider.ts",
-      "line": 27,
-      "thread_ids": [
-        "PRRT_kwDORLtfbc5wkPaA"
-      ],
-      "thread_indexes": [
-        128
-      ],
-      "duplicate_count": 0,
-      "authors": [
-        "cursor"
-      ]
-    },
-    {
       "canonical_id": "C022",
       "area": "Edge-case parsing/platform behavior",
       "title": "Fish shell outputs `$PATH` as space-separated, not colon-separated. Consider checking if the shell is fish and using `string join : $PATH` instead, or validating the result contains colons before assigning.",
@@ -449,24 +431,6 @@
       "duplicate_count": 0,
       "authors": [
         "macroscopeapp"
-      ]
-    },
-    {
-      "canonical_id": "C025",
-      "area": "Checkpointing correctness",
-      "title": "Duplicated checkpoint ref computation across two files",
-      "severity": "Medium",
-      "path": "apps/server/src/wsServer.ts",
-      "line": 128,
-      "thread_ids": [
-        "PRRT_kwDORLtfbc5wvwag"
-      ],
-      "thread_indexes": [
-        148
-      ],
-      "duplicate_count": 0,
-      "authors": [
-        "cursor"
       ]
     },
     {
@@ -562,24 +526,6 @@
       ]
     },
     {
-      "canonical_id": "C031",
-      "area": "Event ordering and state consistency",
-      "title": "Revert uses wrong turn count from positional inference",
-      "severity": "Medium",
-      "path": "apps/web/src/session-logic.ts",
-      "line": 127,
-      "thread_ids": [
-        "PRRT_kwDORLtfbc5v9SCp"
-      ],
-      "thread_indexes": [
-        41
-      ],
-      "duplicate_count": 0,
-      "authors": [
-        "cursor"
-      ]
-    },
-    {
       "canonical_id": "C032",
       "area": "Other",
       "title": "Dummy workflow marker accidentally committed to docs",
@@ -653,24 +599,6 @@
         178
       ],
       "duplicate_count": 2,
-      "authors": [
-        "cursor"
-      ]
-    },
-    {
-      "canonical_id": "C036",
-      "area": "Checkpointing correctness",
-      "title": "Duplicate `checkpointRefForThreadTurn` function in two production files",
-      "severity": "Low",
-      "path": "apps/server/src/checkpointing/Layers/CheckpointStore.ts",
-      "line": 284,
-      "thread_ids": [
-        "PRRT_kwDORLtfbc5wiqFX"
-      ],
-      "thread_indexes": [
-        115
-      ],
-      "duplicate_count": 0,
       "authors": [
         "cursor"
       ]
@@ -1001,24 +929,6 @@
       "duplicate_count": 0,
       "authors": [
         "macroscopeapp"
-      ]
-    },
-    {
-      "canonical_id": "C055",
-      "area": "Checkpointing correctness",
-      "title": "Duplicate `checkpointRefForThreadTurn` function across files",
-      "severity": "Low",
-      "path": "apps/server/src/wsServer.ts",
-      "line": 128,
-      "thread_ids": [
-        "PRRT_kwDORLtfbc5wkPaG"
-      ],
-      "thread_indexes": [
-        129
-      ],
-      "duplicate_count": 0,
-      "authors": [
-        "cursor"
       ]
     },
     {
@@ -1684,9 +1594,8 @@
       "title": "Revert uses wrong turn count from positional inference",
       "severity": "Medium",
       "has_false_positive_signal": false,
-      "canonical_id": "C031",
-      "phase0_status": "actionable_canonical",
-      "phase0_reason": "Canonical actionable item."
+      "phase0_status": "filtered_invalid",
+      "phase0_reason": "Invalid after post-rewrite audit: Revert now uses explicit checkpointTurnCount first; positional fallback is non-primary."
     },
     {
       "index": 42,
@@ -2740,9 +2649,8 @@
       "title": "Duplicate `checkpointRefForThreadTurn` function in two production files",
       "severity": "Low",
       "has_false_positive_signal": false,
-      "canonical_id": "C036",
-      "phase0_status": "actionable_canonical",
-      "phase0_reason": "Canonical actionable item."
+      "phase0_status": "filtered_invalid",
+      "phase0_reason": "Invalid after post-rewrite audit: No longer duplicated; single production source via Refs.ts."
     },
     {
       "index": 116,
@@ -2929,9 +2837,8 @@
       "title": "Shared mutable default metadata object causes stale eventId",
       "severity": "Medium",
       "has_false_positive_signal": false,
-      "canonical_id": "C021",
-      "phase0_status": "actionable_canonical",
-      "phase0_reason": "Canonical actionable item."
+      "phase0_status": "filtered_invalid",
+      "phase0_reason": "Invalid after post-rewrite audit: Stale-eventId claim no longer applies; eventId is regenerated per event."
     },
     {
       "index": 129,
@@ -2944,9 +2851,8 @@
       "title": "Duplicate `checkpointRefForThreadTurn` function across files",
       "severity": "Low",
       "has_false_positive_signal": false,
-      "canonical_id": "C055",
-      "phase0_status": "actionable_canonical",
-      "phase0_reason": "Canonical actionable item."
+      "phase0_status": "filtered_invalid",
+      "phase0_reason": "Invalid after post-rewrite audit: No longer duplicated; helper is centralized."
     },
     {
       "index": 130,
@@ -3226,9 +3132,8 @@
       "title": "Duplicated checkpoint ref computation across two files",
       "severity": "Medium",
       "has_false_positive_signal": false,
-      "canonical_id": "C025",
-      "phase0_status": "actionable_canonical",
-      "phase0_reason": "Canonical actionable item."
+      "phase0_status": "filtered_invalid",
+      "phase0_reason": "Invalid after post-rewrite audit: No longer duplicated; checkpoint ref helper now centralized."
     },
     {
       "index": 149,
