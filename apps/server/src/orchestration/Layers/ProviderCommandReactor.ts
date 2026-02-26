@@ -75,10 +75,47 @@ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
 const serverCommandId = (tag: string): CommandId =>
   CommandId.makeUnsafe(`server:${tag}:${crypto.randomUUID()}`);
 
+const HANDLED_TURN_START_KEY_MAX = 10_000;
+const HANDLED_TURN_START_KEY_TTL_MS = 30 * 60 * 1_000;
+
+function pruneHandledTurnStartKeys(handledKeys: Map<string, number>, nowMs: number): void {
+  const staleBefore = nowMs - HANDLED_TURN_START_KEY_TTL_MS;
+  for (const [key, seenAt] of handledKeys) {
+    if (seenAt >= staleBefore) {
+      break;
+    }
+    handledKeys.delete(key);
+  }
+
+  while (handledKeys.size > HANDLED_TURN_START_KEY_MAX) {
+    const oldestKey = handledKeys.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    handledKeys.delete(oldestKey);
+  }
+}
+
+function hasHandledTurnStartRecently(
+  handledKeys: Map<string, number>,
+  key: string,
+  nowMs = Date.now(),
+): boolean {
+  const seenAt = handledKeys.get(key);
+  if (seenAt !== undefined && nowMs - seenAt <= HANDLED_TURN_START_KEY_TTL_MS) {
+    handledKeys.set(key, nowMs);
+    return true;
+  }
+
+  handledKeys.set(key, nowMs);
+  pruneHandledTurnStartKeys(handledKeys, nowMs);
+  return false;
+}
+
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
-  const handledTurnStartKeys = new Set<string>();
+  const handledTurnStartKeys = new Map<string, number>();
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -209,10 +246,9 @@ const make = Effect.gen(function* () {
     event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
   ) {
     const key = turnStartKeyForEvent(event);
-    if (handledTurnStartKeys.has(key)) {
+    if (hasHandledTurnStartRecently(handledTurnStartKeys, key)) {
       return;
     }
-    handledTurnStartKeys.add(key);
 
     const thread = yield* resolveThread(event.payload.threadId);
     if (!thread) {

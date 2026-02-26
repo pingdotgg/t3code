@@ -194,7 +194,7 @@ class MockTerminalManager implements TerminalManagerShape {
       };
     });
 
-  readonly dispose: TerminalManagerShape["dispose"] = () => Effect.void;
+  readonly dispose: TerminalManagerShape["dispose"] = Effect.void;
 }
 
 function connectWs(port: number, token?: string): Promise<WebSocket> {

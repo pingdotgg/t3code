@@ -38,6 +38,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       yield* sql`DELETE FROM projection_projects`;
       yield* sql`DELETE FROM projection_state`;
+      yield* sql`DELETE FROM projection_turns`;
 
       yield* sql`
         INSERT INTO projection_projects (
@@ -159,25 +160,33 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       `;
 
       yield* sql`
-        INSERT INTO projection_checkpoints (
+        INSERT INTO projection_turns (
           thread_id,
           turn_id,
+          pending_message_id,
+          assistant_message_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
           checkpoint_turn_count,
           checkpoint_ref,
-          status,
-          files_json,
-          assistant_message_id,
-          completed_at
+          checkpoint_status,
+          checkpoint_files_json
         )
         VALUES (
           'thread-1',
           'turn-1',
+          NULL,
+          'message-1',
+          'completed',
+          '2026-02-24T00:00:08.000Z',
+          '2026-02-24T00:00:08.000Z',
+          '2026-02-24T00:00:08.000Z',
           1,
           'checkpoint-1',
           'ready',
-          '[{"path":"README.md","kind":"modified","additions":2,"deletions":1}]',
-          'message-1',
-          '2026-02-24T00:00:08.000Z'
+          '[{"path":"README.md","kind":"modified","additions":2,"deletions":1}]'
         )
       `;
 
