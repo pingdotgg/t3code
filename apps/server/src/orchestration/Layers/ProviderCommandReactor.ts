@@ -8,8 +8,9 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
-import { Cache, Duration, Effect, Layer, Option, Queue, Stream } from "effect";
+import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Stream } from "effect";
 
+import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
@@ -31,24 +32,6 @@ type ProviderIntentEvent = Extract<
 function toNonEmptyProviderInput(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
-}
-
-function resolveEffectiveThreadCwd(input: {
-  readonly thread: {
-    readonly projectId: string;
-    readonly worktreePath: string | null;
-  };
-  readonly projects: ReadonlyArray<{
-    readonly id: string;
-    readonly workspaceRoot: string;
-  }>;
-}): string | undefined {
-  const worktreeCwd = input.thread.worktreePath ?? undefined;
-  if (worktreeCwd) {
-    return worktreeCwd;
-  }
-
-  return input.projects.find((project) => project.id === input.thread.projectId)?.workspaceRoot;
 }
 
 function mapProviderSessionStatusToOrchestrationStatus(
@@ -161,7 +144,7 @@ const make = Effect.gen(function* () {
       thread.session?.providerName === "codex" || thread.session?.providerName === "claudeCode"
         ? thread.session.providerName
         : undefined;
-    const effectiveCwd = resolveEffectiveThreadCwd({
+    const effectiveCwd = resolveThreadWorkspaceCwd({
       thread,
       projects: readModel.projects,
     });
@@ -353,12 +336,25 @@ const make = Effect.gen(function* () {
       }
     });
 
+  const processDomainEventSafely = (event: ProviderIntentEvent) =>
+    processDomainEvent(event).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.failCause(cause);
+        }
+        return Effect.logWarning("provider command reactor failed to process event", {
+          eventType: event.type,
+          cause: Cause.pretty(cause),
+        });
+      }),
+    );
+
   const start: ProviderCommandReactorShape["start"] = Effect.gen(function* () {
     const queue = yield* Queue.unbounded<ProviderIntentEvent>();
     yield* Effect.addFinalizer(() => Queue.shutdown(queue).pipe(Effect.asVoid));
 
     yield* Effect.forkScoped(
-      Effect.forever(Queue.take(queue).pipe(Effect.flatMap(processDomainEvent))),
+      Effect.forever(Queue.take(queue).pipe(Effect.flatMap(processDomainEventSafely))),
     );
 
     yield* Effect.forkScoped(
