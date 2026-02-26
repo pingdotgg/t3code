@@ -21,8 +21,6 @@ import { ServerConfig } from "../../config";
 import {
   ShellCandidate,
   TerminalManager,
-  TerminalManagerEvents,
-  TerminalManagerOptions,
   TerminalManagerShape,
   TerminalSessionState,
   TerminalStartInput,
@@ -268,6 +266,19 @@ function normalizedRuntimeEnv(
   const entries = Object.entries(env);
   if (entries.length === 0) return null;
   return Object.fromEntries(entries.toSorted(([left], [right]) => left.localeCompare(right)));
+}
+
+interface TerminalManagerEvents {
+  event: [event: TerminalEvent];
+}
+
+interface TerminalManagerOptions {
+  logsDir?: string;
+  historyLineLimit?: number;
+  ptyAdapter: PtyAdapterShape;
+  shellResolver?: () => string;
+  subprocessChecker?: TerminalSubprocessChecker;
+  subprocessPollIntervalMs?: number;
 }
 
 export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> {
