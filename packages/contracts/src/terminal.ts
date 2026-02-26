@@ -1,26 +1,22 @@
 import { Schema } from "effect";
+import { TrimmedNonEmptyString } from "./baseSchemas";
 
 export const DEFAULT_TERMINAL_ID = "default";
 
-const TrimmedNonEmptyStringSchema = Schema.Trim.check(Schema.isNonEmpty());
+const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const TerminalColsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(20)).check(
   Schema.isLessThanOrEqualTo(400),
 );
 const TerminalRowsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(5)).check(
   Schema.isLessThanOrEqualTo(200),
 );
-const TerminalIdSchema = Schema.Trim.check(Schema.isNonEmpty()).check(Schema.isMaxLength(128));
+const TerminalIdSchema = TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(128));
 const TerminalEnvKeySchema = Schema.String.check(
   Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/),
 ).check(Schema.isMaxLength(128));
 const TerminalEnvValueSchema = Schema.String.check(Schema.isMaxLength(8_192));
 const TerminalEnvSchema = Schema.Record(TerminalEnvKeySchema, TerminalEnvValueSchema).check(
-  Schema.makeFilter<Record<string, string>>((env) => {
-    if (Object.keys(env).length > 128) {
-      return { path: [], message: "Too many terminal env vars" };
-    }
-    return true;
-  }),
+  Schema.isMaxProperties(128),
 );
 
 const TerminalIdWithDefaultSchema = TerminalIdSchema.pipe(

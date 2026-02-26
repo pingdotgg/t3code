@@ -1,21 +1,21 @@
 import { Schema } from "effect";
+import { TrimmedNonEmptyString } from "./baseSchemas";
 
 import {
   ApprovalRequestId,
   EventId,
-  IsoDateTime,
   NonNegativeInt,
-  ProviderApprovalDecision,
   ProviderItemId,
-  ProviderKind,
-  ProviderRequestKind,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
   ThreadId,
   TurnId,
-} from "./orchestration";
+  IsoDateTime,
+} from "./baseSchemas";
+import { ProviderApprovalDecision, ProviderKind, ProviderRequestKind } from "./orchestration";
 
+const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const RuntimeThreadIdSchema = Schema.Union([ThreadId, ProviderThreadId]);
 const RuntimeTurnIdSchema = Schema.Union([TurnId, ProviderTurnId]);
 
@@ -37,7 +37,7 @@ export const ProviderRuntimeSessionStartedEvent = Schema.Struct({
   sessionId: ProviderSessionId,
   createdAt: IsoDateTime,
   threadId: Schema.optional(RuntimeThreadIdSchema),
-  message: Schema.optional(Schema.String),
+  message: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ProviderRuntimeSessionStartedEvent = typeof ProviderRuntimeSessionStartedEvent.Type;
 
@@ -48,7 +48,7 @@ export const ProviderRuntimeSessionExitedEvent = Schema.Struct({
   sessionId: ProviderSessionId,
   createdAt: IsoDateTime,
   threadId: Schema.optional(RuntimeThreadIdSchema),
-  message: Schema.optional(Schema.String),
+  message: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ProviderRuntimeSessionExitedEvent = typeof ProviderRuntimeSessionExitedEvent.Type;
 
@@ -82,7 +82,7 @@ export const ProviderRuntimeTurnCompletedEvent = Schema.Struct({
   threadId: Schema.optional(RuntimeThreadIdSchema),
   turnId: Schema.optional(RuntimeTurnIdSchema),
   status: Schema.optional(ProviderRuntimeTurnStatus),
-  errorMessage: Schema.optional(Schema.String),
+  errorMessage: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ProviderRuntimeTurnCompletedEvent = typeof ProviderRuntimeTurnCompletedEvent.Type;
 
@@ -121,8 +121,8 @@ export const ProviderRuntimeToolStartedEvent = Schema.Struct({
   turnId: Schema.optional(RuntimeTurnIdSchema),
   itemId: Schema.optional(ProviderItemId),
   toolKind: ProviderRuntimeToolKind,
-  title: Schema.String,
-  detail: Schema.optional(Schema.String),
+  title: TrimmedNonEmptyStringSchema,
+  detail: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ProviderRuntimeToolStartedEvent = typeof ProviderRuntimeToolStartedEvent.Type;
 
@@ -136,8 +136,8 @@ export const ProviderRuntimeToolCompletedEvent = Schema.Struct({
   turnId: Schema.optional(RuntimeTurnIdSchema),
   itemId: Schema.optional(ProviderItemId),
   toolKind: ProviderRuntimeToolKind,
-  title: Schema.String,
-  detail: Schema.optional(Schema.String),
+  title: TrimmedNonEmptyStringSchema,
+  detail: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ProviderRuntimeToolCompletedEvent = typeof ProviderRuntimeToolCompletedEvent.Type;
 
@@ -152,7 +152,7 @@ export const ProviderRuntimeApprovalRequestedEvent = Schema.Struct({
   itemId: Schema.optional(ProviderItemId),
   requestId: ApprovalRequestId,
   requestKind: ProviderRequestKind,
-  detail: Schema.optional(Schema.String),
+  detail: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ProviderRuntimeApprovalRequestedEvent =
   typeof ProviderRuntimeApprovalRequestedEvent.Type;
@@ -195,7 +195,7 @@ export const ProviderRuntimeErrorEvent = Schema.Struct({
   threadId: Schema.optional(RuntimeThreadIdSchema),
   turnId: Schema.optional(RuntimeTurnIdSchema),
   itemId: Schema.optional(ProviderItemId),
-  message: Schema.String,
+  message: TrimmedNonEmptyStringSchema,
 });
 export type ProviderRuntimeErrorEvent = typeof ProviderRuntimeErrorEvent.Type;
 

@@ -9,11 +9,6 @@ export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number
   );
 }
 
-function trimToNonEmpty(value: string | null | undefined): string | undefined {
-  const normalized = value?.trim();
-  return normalized && normalized.length > 0 ? normalized : undefined;
-}
-
 export function resolveThreadWorkspaceCwd(input: {
   readonly thread: {
     readonly projectId: ProjectId;
@@ -24,13 +19,10 @@ export function resolveThreadWorkspaceCwd(input: {
     readonly workspaceRoot: string;
   }>;
 }): string | undefined {
-  const worktreeCwd = trimToNonEmpty(input.thread.worktreePath);
+  const worktreeCwd = input.thread.worktreePath ?? undefined;
   if (worktreeCwd) {
     return worktreeCwd;
   }
 
-  const workspaceRoot = input.projects.find(
-    (project) => project.id === input.thread.projectId,
-  )?.workspaceRoot;
-  return trimToNonEmpty(workspaceRoot);
+  return input.projects.find((project) => project.id === input.thread.projectId)?.workspaceRoot;
 }

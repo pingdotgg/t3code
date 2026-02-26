@@ -1,15 +1,12 @@
 import { Schema } from "effect";
+import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas";
 
 export const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
-const TrimmedNonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
 
 export const ProjectSearchEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-  query: Schema.NonEmptyString.check(Schema.isMaxLength(256)),
-  limit: Schema.Int.check(
-    Schema.isGreaterThanOrEqualTo(1),
-    Schema.isLessThanOrEqualTo(PROJECT_SEARCH_ENTRIES_MAX_LIMIT),
-  ),
+  query: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  limit: PositiveInt.check(Schema.isLessThanOrEqualTo(PROJECT_SEARCH_ENTRIES_MAX_LIMIT)),
 });
 export type ProjectSearchEntriesInput = typeof ProjectSearchEntriesInput.Type;
 

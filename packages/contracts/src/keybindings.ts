@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { TrimmedString } from "./baseSchemas";
 
 export const MAX_KEYBINDING_COMMAND_LENGTH = 96;
 export const MAX_KEYBINDING_VALUE_LENGTH = 64;
@@ -33,13 +34,13 @@ export const KeybindingCommand = Schema.Union([
 ]);
 export type KeybindingCommand = typeof KeybindingCommand.Type;
 
-export const KeybindingValue = Schema.Trim.check(
+export const KeybindingValue = TrimmedString.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(MAX_KEYBINDING_VALUE_LENGTH),
 );
 export type KeybindingValue = typeof KeybindingValue.Type;
 
-export const KeybindingWhen = Schema.Trim.check(
+export const KeybindingWhen = TrimmedString.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(MAX_KEYBINDING_WHEN_LENGTH),
 );

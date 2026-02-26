@@ -169,8 +169,8 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         updatedAt: now,
       };
 
-      const codexBinaryPath = input.codexBinaryPath?.trim() || "codex";
-      const codexHomePath = input.codexHomePath?.trim();
+      const codexBinaryPath = input.codexBinaryPath ?? "codex";
+      const codexHomePath = input.codexHomePath;
       const child = spawn(codexBinaryPath, ["app-server"], {
         cwd: resolvedCwd,
         env: {

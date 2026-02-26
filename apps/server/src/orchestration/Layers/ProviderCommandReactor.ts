@@ -28,7 +28,7 @@ type ProviderIntentEvent = Extract<
   }
 >;
 
-function trimToNonEmptyOrUndefined(value: string | undefined): string | undefined {
+function toNonEmptyProviderInput(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
@@ -43,15 +43,12 @@ function resolveEffectiveThreadCwd(input: {
     readonly workspaceRoot: string;
   }>;
 }): string | undefined {
-  const worktreeCwd = trimToNonEmptyOrUndefined(input.thread.worktreePath ?? undefined);
+  const worktreeCwd = input.thread.worktreePath ?? undefined;
   if (worktreeCwd) {
     return worktreeCwd;
   }
 
-  const workspaceRoot = input.projects.find(
-    (project) => project.id === input.thread.projectId,
-  )?.workspaceRoot;
-  return trimToNonEmptyOrUndefined(workspaceRoot);
+  return input.projects.find((project) => project.id === input.thread.projectId)?.workspaceRoot;
 }
 
 function mapProviderSessionStatusToOrchestrationStatus(
@@ -158,7 +155,7 @@ const make = Effect.gen(function* () {
     const startedSession = yield* providerService.startSession({
       ...(preferredProvider ? { provider: preferredProvider } : {}),
       ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
-      ...(trimToNonEmptyOrUndefined(thread.model) ? { model: thread.model } : {}),
+      ...(thread.model ? { model: thread.model } : {}),
     });
 
     yield* setThreadSession({
@@ -193,15 +190,15 @@ const make = Effect.gen(function* () {
       return;
     }
     const sessionId = yield* ensureSessionForThread(input.threadId, input.createdAt);
-    const normalizedInput = trimToNonEmptyOrUndefined(input.messageText);
+    const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
 
     yield* providerService.sendTurn({
       sessionId,
       ...(normalizedInput ? { input: normalizedInput } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
-      ...(trimToNonEmptyOrUndefined(input.model) ? { model: input.model } : {}),
-      ...(trimToNonEmptyOrUndefined(input.effort) ? { effort: input.effort } : {}),
+      ...(input.model !== undefined ? { model: input.model } : {}),
+      ...(input.effort !== undefined ? { effort: input.effort } : {}),
     });
   });
 

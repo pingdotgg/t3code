@@ -265,14 +265,11 @@ function parseKeybindingWhenExpression(expression: string): KeybindingWhenNode |
 
 /** @internal - Exported for testing */
 export function compileResolvedKeybindingRule(rule: KeybindingRule): ResolvedKeybindingRule | null {
-  const key = rule.key.trim();
-  if (key.length === 0) return null;
-  const shortcut = parseKeybindingShortcut(key);
+  const shortcut = parseKeybindingShortcut(rule.key);
   if (!shortcut) return null;
 
-  const when = rule.when?.trim();
-  if (when && when.length > 0) {
-    const whenAst = parseKeybindingWhenExpression(when);
+  if (rule.when !== undefined) {
+    const whenAst = parseKeybindingWhenExpression(rule.when);
     if (!whenAst) return null;
     return {
       command: rule.command,

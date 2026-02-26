@@ -1,4 +1,21 @@
 import { Option, Schema, SchemaIssue, Struct } from "effect";
+import {
+  ApprovalRequestId,
+  CheckpointRef,
+  CommandId,
+  EventId,
+  IsoDateTime,
+  MessageId,
+  NonNegativeInt,
+  ProjectId,
+  ProviderItemId,
+  ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
+  ThreadId,
+  TrimmedNonEmptyString,
+  TurnId,
+} from "./baseSchemas";
 
 export const ORCHESTRATION_WS_METHODS = {
   getSnapshot: "orchestration.getSnapshot",
@@ -11,35 +28,6 @@ export const ORCHESTRATION_WS_METHODS = {
 export const ORCHESTRATION_WS_CHANNELS = {
   domainEvent: "orchestration.domainEvent",
 } as const;
-
-export const IsoDateTime = Schema.String;
-export type IsoDateTime = typeof IsoDateTime.Type;
-
-export const ThreadId = Schema.String.pipe(Schema.brand("ThreadId"));
-export type ThreadId = typeof ThreadId.Type;
-export const ProjectId = Schema.String.pipe(Schema.brand("ProjectId"));
-export type ProjectId = typeof ProjectId.Type;
-export const CommandId = Schema.String.pipe(Schema.brand("CommandId"));
-export type CommandId = typeof CommandId.Type;
-export const EventId = Schema.String.pipe(Schema.brand("EventId"));
-export type EventId = typeof EventId.Type;
-export const MessageId = Schema.String.pipe(Schema.brand("MessageId"));
-export type MessageId = typeof MessageId.Type;
-export const TurnId = Schema.String.pipe(Schema.brand("TurnId"));
-export type TurnId = typeof TurnId.Type;
-
-export const ProviderSessionId = Schema.String.pipe(Schema.brand("ProviderSessionId"));
-export type ProviderSessionId = typeof ProviderSessionId.Type;
-export const ProviderThreadId = Schema.String.pipe(Schema.brand("ProviderThreadId"));
-export type ProviderThreadId = typeof ProviderThreadId.Type;
-export const ProviderTurnId = Schema.String.pipe(Schema.brand("ProviderTurnId"));
-export type ProviderTurnId = typeof ProviderTurnId.Type;
-export const ProviderItemId = Schema.String.pipe(Schema.brand("ProviderItemId"));
-export type ProviderItemId = typeof ProviderItemId.Type;
-export const ApprovalRequestId = Schema.String.pipe(Schema.brand("ApprovalRequestId"));
-export type ApprovalRequestId = typeof ApprovalRequestId.Type;
-export const CheckpointRef = Schema.String.pipe(Schema.brand("CheckpointRef"));
-export type CheckpointRef = typeof CheckpointRef.Type;
 
 export const ProviderKind = Schema.Literals(["codex", "claudeCode"]);
 export type ProviderKind = typeof ProviderKind.Type;
@@ -75,21 +63,12 @@ export const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
 export const CorrelationId = CommandId;
 export type CorrelationId = typeof CorrelationId.Type;
 
-export const NonNegativeInt = Schema.Number.check(Schema.isInt()).check(
-  Schema.isGreaterThanOrEqualTo(0),
-);
-
-const TrimmedNonEmptyStringSchema = Schema.Trimmed.check(Schema.isNonEmpty());
-
 export const ChatImageAttachment = Schema.Struct({
   type: Schema.Literal("image"),
-  name: TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(255)),
-  mimeType: TrimmedNonEmptyStringSchema.check(
-    Schema.isMaxLength(100),
-    Schema.isPattern(/^image\//i),
-  ),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^image\//i)),
   sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)),
-  dataUrl: TrimmedNonEmptyStringSchema.check(
+  dataUrl: TrimmedNonEmptyString.check(
     Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS),
   ),
 });
@@ -109,9 +88,9 @@ export const ProjectScriptIcon = Schema.Literals([
 export type ProjectScriptIcon = typeof ProjectScriptIcon.Type;
 
 export const ProjectScript = Schema.Struct({
-  id: Schema.String,
-  name: Schema.String,
-  command: Schema.String,
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  command: TrimmedNonEmptyString,
   icon: ProjectScriptIcon,
   runOnWorktreeCreate: Schema.Boolean,
 });
@@ -119,9 +98,9 @@ export type ProjectScript = typeof ProjectScript.Type;
 
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
-  title: Schema.String,
-  workspaceRoot: Schema.String,
-  defaultModel: Schema.NullOr(Schema.String),
+  title: TrimmedNonEmptyString,
+  workspaceRoot: TrimmedNonEmptyString,
+  defaultModel: Schema.NullOr(TrimmedNonEmptyString),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -158,18 +137,18 @@ export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
 export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
-  providerName: Schema.NullOr(Schema.String),
+  providerName: Schema.NullOr(TrimmedNonEmptyString),
   providerSessionId: Schema.NullOr(ProviderSessionId),
   providerThreadId: Schema.NullOr(ProviderThreadId),
   activeTurnId: Schema.NullOr(TurnId),
-  lastError: Schema.NullOr(Schema.String),
+  lastError: Schema.NullOr(TrimmedNonEmptyString),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;
 
 export const OrchestrationCheckpointFile = Schema.Struct({
-  path: Schema.String,
-  kind: Schema.String,
+  path: TrimmedNonEmptyString,
+  kind: TrimmedNonEmptyString,
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
 });
@@ -200,8 +179,8 @@ export type OrchestrationThreadActivityTone = typeof OrchestrationThreadActivity
 export const OrchestrationThreadActivity = Schema.Struct({
   id: EventId,
   tone: OrchestrationThreadActivityTone,
-  kind: Schema.String,
-  summary: Schema.String,
+  kind: TrimmedNonEmptyString,
+  summary: TrimmedNonEmptyString,
   payload: Schema.Unknown,
   turnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
@@ -211,10 +190,10 @@ export type OrchestrationThreadActivity = typeof OrchestrationThreadActivity.Typ
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
-  title: Schema.String,
-  model: Schema.String,
-  branch: Schema.NullOr(Schema.String),
-  worktreePath: Schema.NullOr(Schema.String),
+  title: TrimmedNonEmptyString,
+  model: TrimmedNonEmptyString,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -238,9 +217,9 @@ export const ProjectCreateCommand = Schema.Struct({
   type: Schema.Literal("project.create"),
   commandId: CommandId,
   projectId: ProjectId,
-  title: Schema.String,
-  workspaceRoot: Schema.String,
-  defaultModel: Schema.optional(Schema.String),
+  title: TrimmedNonEmptyString,
+  workspaceRoot: TrimmedNonEmptyString,
+  defaultModel: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 
@@ -248,9 +227,9 @@ export const ProjectMetaUpdateCommand = Schema.Struct({
   type: Schema.Literal("project.meta.update"),
   commandId: CommandId,
   projectId: ProjectId,
-  title: Schema.optional(Schema.String),
-  workspaceRoot: Schema.optional(Schema.String),
-  defaultModel: Schema.optional(Schema.String),
+  title: Schema.optional(TrimmedNonEmptyString),
+  workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  defaultModel: Schema.optional(TrimmedNonEmptyString),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 
@@ -265,10 +244,10 @@ export const ThreadCreateCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   projectId: ProjectId,
-  title: Schema.String,
-  model: Schema.String,
-  branch: Schema.NullOr(Schema.String),
-  worktreePath: Schema.NullOr(Schema.String),
+  title: TrimmedNonEmptyString,
+  model: TrimmedNonEmptyString,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 
@@ -282,10 +261,10 @@ export const ThreadMetaUpdateCommand = Schema.Struct({
   type: Schema.Literal("thread.meta.update"),
   commandId: CommandId,
   threadId: ThreadId,
-  title: Schema.optional(Schema.String),
-  model: Schema.optional(Schema.String),
-  branch: Schema.optional(Schema.NullOr(Schema.String)),
-  worktreePath: Schema.optional(Schema.NullOr(Schema.String)),
+  title: Schema.optional(TrimmedNonEmptyString),
+  model: Schema.optional(TrimmedNonEmptyString),
+  branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 
 export const ThreadTurnStartCommand = Schema.Struct({
@@ -298,8 +277,8 @@ export const ThreadTurnStartCommand = Schema.Struct({
     text: Schema.String,
     attachments: Schema.Array(ChatAttachment),
   }),
-  model: Schema.optional(Schema.String),
-  effort: Schema.optional(Schema.String),
+  model: Schema.optional(TrimmedNonEmptyString),
+  effort: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 
@@ -449,9 +428,9 @@ export const OrchestrationActorKind = Schema.Literals(["client", "server", "prov
 
 export const ProjectCreatedPayload = Schema.Struct({
   projectId: ProjectId,
-  title: Schema.String,
-  workspaceRoot: Schema.String,
-  defaultModel: Schema.NullOr(Schema.String),
+  title: TrimmedNonEmptyString,
+  workspaceRoot: TrimmedNonEmptyString,
+  defaultModel: Schema.NullOr(TrimmedNonEmptyString),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -459,9 +438,9 @@ export const ProjectCreatedPayload = Schema.Struct({
 
 export const ProjectMetaUpdatedPayload = Schema.Struct({
   projectId: ProjectId,
-  title: Schema.optional(Schema.String),
-  workspaceRoot: Schema.optional(Schema.String),
-  defaultModel: Schema.optional(Schema.NullOr(Schema.String)),
+  title: Schema.optional(TrimmedNonEmptyString),
+  workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  defaultModel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   updatedAt: IsoDateTime,
 });
@@ -474,10 +453,10 @@ export const ProjectDeletedPayload = Schema.Struct({
 export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
-  title: Schema.String,
-  model: Schema.String,
-  branch: Schema.NullOr(Schema.String),
-  worktreePath: Schema.NullOr(Schema.String),
+  title: TrimmedNonEmptyString,
+  model: TrimmedNonEmptyString,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -489,10 +468,10 @@ export const ThreadDeletedPayload = Schema.Struct({
 
 export const ThreadMetaUpdatedPayload = Schema.Struct({
   threadId: ThreadId,
-  title: Schema.optional(Schema.String),
-  model: Schema.optional(Schema.String),
-  branch: Schema.optional(Schema.NullOr(Schema.String)),
-  worktreePath: Schema.optional(Schema.NullOr(Schema.String)),
+  title: Schema.optional(TrimmedNonEmptyString),
+  model: Schema.optional(TrimmedNonEmptyString),
+  branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   updatedAt: IsoDateTime,
 });
 
@@ -511,8 +490,8 @@ export const ThreadMessageSentPayload = Schema.Struct({
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
-  model: Schema.optional(Schema.String),
-  effort: Schema.optional(Schema.String),
+  model: Schema.optional(TrimmedNonEmptyString),
+  effort: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 
@@ -571,7 +550,7 @@ export const OrchestrationEventMetadata = Schema.Struct({
   providerThreadId: Schema.optional(ProviderThreadId),
   providerTurnId: Schema.optional(ProviderTurnId),
   providerItemId: Schema.optional(ProviderItemId),
-  adapterKey: Schema.optional(Schema.String),
+  adapterKey: Schema.optional(TrimmedNonEmptyString),
   requestId: Schema.optional(ApprovalRequestId),
   ingestedAt: Schema.optional(IsoDateTime),
 });

@@ -1,8 +1,9 @@
 import { Schema } from "effect";
+import { TrimmedNonEmptyString } from "./baseSchemas";
 import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 
 export const ServerConfig = Schema.Struct({
-  cwd: Schema.NonEmptyString,
+  cwd: TrimmedNonEmptyString,
   keybindings: ResolvedKeybindingsConfig,
 });
 export type ServerConfig = typeof ServerConfig.Type;

@@ -21,8 +21,7 @@ const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId 
   CommandId.makeUnsafe(`provider:${event.eventId}:${tag}:${crypto.randomUUID()}`);
 
 function toTurnId(value: string | undefined): TurnId | undefined {
-  const normalized = value?.trim();
-  return normalized?.length ? TurnId.makeUnsafe(normalized) : undefined;
+  return value === undefined ? undefined : TurnId.makeUnsafe(value);
 }
 
 function truncateDetail(value: string, limit = 180): string {
