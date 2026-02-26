@@ -14,9 +14,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import {
-  PersistenceDecodeError,
-  PersistenceSerializationError,
-  PersistenceSqlError,
+  isPersistenceError,
   toPersistenceDecodeError,
   toPersistenceSqlError,
   type ProjectionRepositoryError,
@@ -104,19 +102,6 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
     Schema.isSchemaError(cause)
       ? toPersistenceDecodeError(decodeOperation)(cause)
       : toPersistenceSqlError(sqlOperation)(cause);
-}
-
-function toProjectionRepositoryError(operation: string) {
-  return (cause: unknown): ProjectionRepositoryError => {
-    if (
-      cause instanceof PersistenceSqlError ||
-      cause instanceof PersistenceDecodeError ||
-      cause instanceof PersistenceSerializationError
-    ) {
-      return cause;
-    }
-    return toPersistenceSqlError(operation)(cause);
-  };
 }
 
 const makeProjectionSnapshotQuery = Effect.gen(function* () {
@@ -441,7 +426,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         }),
       )
       .pipe(
-        Effect.mapError(toProjectionRepositoryError("ProjectionSnapshotQuery.getSnapshot:query")),
+        Effect.mapError((error) => {
+          if (isPersistenceError(error)) {
+            return error;
+          }
+          return toPersistenceSqlError("ProjectionSnapshotQuery.getSnapshot:query")(error);
+        }),
       );
 
   return {

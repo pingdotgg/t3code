@@ -1,3 +1,11 @@
+/**
+ * CliConfig - CLI/runtime bootstrap service definitions.
+ *
+ * Defines startup-only service contracts used while resolving process config
+ * and constructing server runtime layers.
+ *
+ * @module CliConfig
+ */
 import { Config, Data, Effect, FileSystem, Layer, Option, Path, Schema, ServiceMap } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 
@@ -32,12 +40,29 @@ interface CliInput {
   readonly logWebSocketEvents: Option.Option<boolean>;
 }
 
+/**
+ * CliConfigShape - Startup helpers required while building server layers.
+ */
 export interface CliConfigShape {
+  /**
+   * Current process working directory.
+   */
   readonly cwd: string;
+
+  /**
+   * Apply OS-specific PATH normalization.
+   */
   readonly fixPath: Effect.Effect<void>;
+
+  /**
+   * Resolve static web asset directory for server mode.
+   */
   readonly resolveStaticDir: Effect.Effect<string | undefined>;
 }
 
+/**
+ * CliConfig - Service tag for startup CLI/runtime helpers.
+ */
 export class CliConfig extends ServiceMap.Service<CliConfig, CliConfigShape>()("server/CliConfig") {
   static readonly layer = Layer.effect(
     CliConfig,

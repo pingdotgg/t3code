@@ -14,6 +14,9 @@ import type { Effect } from "effect";
 import type { ProviderAdapterError, ProviderUnsupportedError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "./ProviderAdapter.ts";
 
+/**
+ * ProviderAdapterRegistryShape - Service API for adapter lookup by provider kind.
+ */
 export interface ProviderAdapterRegistryShape {
   /**
    * Resolve the adapter for a provider kind.

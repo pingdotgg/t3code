@@ -210,8 +210,8 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Threads: PRRT_kwDORLtfbc5wiLhQ
   - Audit note: Snapshot sequence can under-report due to extra projectors, but replay impact is lower now.
 
-- [ ] `C033` Three error classes defined but never instantiated anywhere
-  - Status: `TODO`
+- [x] `C033` Three error classes defined but never instantiated anywhere
+  - Status: `DONE`
   - Verdict: `partially-valid`
   - Severity: `Low`
   - Area: `Checkpointing correctness`
@@ -219,8 +219,8 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Threads: PRRT_kwDORLtfbc5wlYgo
   - Audit note: Original claim overstated; some errors used, others appear unused.
 
-- [ ] `C034` Redundant `CheckpointInvariantError` in `CheckpointServiceError` union type
-  - Status: `TODO`
+- [x] `C034` Redundant `CheckpointInvariantError` in `CheckpointServiceError` union type
+  - Status: `DONE`
   - Verdict: `valid`
   - Severity: `Low`
   - Area: `Checkpointing correctness`
@@ -228,8 +228,8 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Threads: PRRT_kwDORLtfbc5wj5fn
   - Audit note: CheckpointInvariantError remains redundantly included in service union.
 
-- [ ] `C035` Redundant error type in CheckpointServiceError union definition
-  - Status: `TODO`
+- [x] `C035` Redundant error type in CheckpointServiceError union definition
+  - Status: `DONE`
   - Verdict: `valid`
   - Severity: `Low`
   - Area: `Checkpointing correctness`

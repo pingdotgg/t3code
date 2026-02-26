@@ -1,3 +1,11 @@
+/**
+ * ProjectionThreadRepository - Projection repository interface for threads.
+ *
+ * Owns persistence operations for projected thread records in the
+ * orchestration read model.
+ *
+ * @module ProjectionThreadRepository
+ */
 import { IsoDateTime, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
 import { Option, Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
@@ -33,22 +41,44 @@ export const ListProjectionThreadsByProjectInput = Schema.Struct({
 });
 export type ListProjectionThreadsByProjectInput = typeof ListProjectionThreadsByProjectInput.Type;
 
+/**
+ * ProjectionThreadRepositoryShape - Service API for projected thread records.
+ */
 export interface ProjectionThreadRepositoryShape {
+  /**
+   * Insert or replace a projected thread row.
+   *
+   * Upserts by `threadId`.
+   */
   readonly upsert: (thread: ProjectionThread) => Effect.Effect<void, ProjectionRepositoryError>;
 
+  /**
+   * Read a projected thread row by id.
+   */
   readonly getById: (
     input: GetProjectionThreadInput,
   ) => Effect.Effect<Option.Option<ProjectionThread>, ProjectionRepositoryError>;
 
+  /**
+   * List projected threads for a project.
+   *
+   * Returned in deterministic creation order.
+   */
   readonly listByProjectId: (
     input: ListProjectionThreadsByProjectInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThread>, ProjectionRepositoryError>;
 
+  /**
+   * Soft-delete a projected thread row by id.
+   */
   readonly deleteById: (
     input: DeleteProjectionThreadInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 
+/**
+ * ProjectionThreadRepository - Service tag for thread projection persistence.
+ */
 export class ProjectionThreadRepository extends ServiceMap.Service<
   ProjectionThreadRepository,
   ProjectionThreadRepositoryShape

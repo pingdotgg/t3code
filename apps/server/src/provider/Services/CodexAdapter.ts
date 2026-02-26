@@ -15,6 +15,9 @@ import { ServiceMap } from "effect";
 import type { ProviderAdapterError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "./ProviderAdapter.ts";
 
+/**
+ * CodexAdapterShape - Service API for the Codex provider adapter.
+ */
 export interface CodexAdapterShape extends ProviderAdapterShape<ProviderAdapterError> {
   readonly provider: "codex";
 }

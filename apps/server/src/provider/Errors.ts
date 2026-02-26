@@ -52,23 +52,6 @@ export class ProviderAdapterSessionClosedError extends Schema.TaggedErrorClass<P
 }
 
 /**
- * ProviderAdapterProtocolError - Invalid/unexpected provider protocol payload.
- */
-export class ProviderAdapterProtocolError extends Schema.TaggedErrorClass<ProviderAdapterProtocolError>()(
-  "ProviderAdapterProtocolError",
-  {
-    provider: Schema.String,
-    operation: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Provider adapter protocol error (${this.provider}) in ${this.operation}: ${this.detail}`;
-  }
-}
-
-/**
  * ProviderAdapterRequestError - Provider protocol request failed or timed out.
  */
 export class ProviderAdapterRequestError extends Schema.TaggedErrorClass<ProviderAdapterRequestError>()(
@@ -164,61 +147,10 @@ export class ProviderSessionDirectoryPersistenceError extends Schema.TaggedError
   }
 }
 
-/**
- * ProviderCheckpointUnavailableError - Checkpointing unavailable for this session.
- */
-export class ProviderCheckpointUnavailableError extends Schema.TaggedErrorClass<ProviderCheckpointUnavailableError>()(
-  "ProviderCheckpointUnavailableError",
-  {
-    sessionId: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Provider checkpoint unavailable for session ${this.sessionId}: ${this.detail}`;
-  }
-}
-
-/**
- * ProviderCheckpointRangeError - Requested checkpoint range is invalid.
- */
-export class ProviderCheckpointRangeError extends Schema.TaggedErrorClass<ProviderCheckpointRangeError>()(
-  "ProviderCheckpointRangeError",
-  {
-    sessionId: Schema.String,
-    fromTurnCount: Schema.Number,
-    toTurnCount: Schema.Number,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Provider checkpoint range error for session ${this.sessionId}: ${this.fromTurnCount}..${this.toTurnCount} (${this.detail})`;
-  }
-}
-
-/**
- * ProviderFilesystemError - Filesystem checkpoint capture/restore failure.
- */
-export class ProviderFilesystemError extends Schema.TaggedErrorClass<ProviderFilesystemError>()(
-  "ProviderFilesystemError",
-  {
-    sessionId: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Provider filesystem checkpoint error for session ${this.sessionId}: ${this.detail}`;
-  }
-}
-
 export type ProviderAdapterError =
   | ProviderAdapterValidationError
   | ProviderAdapterSessionNotFoundError
   | ProviderAdapterSessionClosedError
-  | ProviderAdapterProtocolError
   | ProviderAdapterRequestError
   | ProviderAdapterProcessError;
 
@@ -227,8 +159,5 @@ export type ProviderServiceError =
   | ProviderUnsupportedError
   | ProviderSessionNotFoundError
   | ProviderSessionDirectoryPersistenceError
-  | ProviderCheckpointUnavailableError
-  | ProviderCheckpointRangeError
-  | ProviderFilesystemError
   | ProviderAdapterError
   | CheckpointServiceError;

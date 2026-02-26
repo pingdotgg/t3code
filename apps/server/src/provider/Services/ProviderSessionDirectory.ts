@@ -42,9 +42,15 @@ export type ProviderSessionDirectoryWriteError =
   | ProviderValidationError
   | ProviderSessionDirectoryPersistenceError;
 
+/**
+ * ProviderSessionDirectoryShape - Service API for provider session ownership metadata.
+ */
 export interface ProviderSessionDirectoryShape {
   /**
    * Record or update ownership for one provider session.
+   *
+   * Preserves existing persisted fields when omitted and shallow-merges
+   * runtime payload objects.
    */
   readonly upsert: (
     binding: ProviderSessionBinding,

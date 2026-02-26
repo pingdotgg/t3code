@@ -15,12 +15,17 @@ import type { Effect, Stream } from "effect";
 
 import type { OrchestrationEventStoreError } from "../Errors.ts";
 
+/**
+ * OrchestrationEventStoreShape - Service API for orchestration event persistence.
+ */
 export interface OrchestrationEventStoreShape {
   /**
    * Persist a new orchestration event.
    *
    * @param event - Event payload without sequence (assigned by storage).
    * @returns Effect containing the stored event with assigned sequence.
+   *
+   * Actor kind is inferred from command/metadata before persistence.
    */
   readonly append: (
     event: Omit<OrchestrationEvent, "sequence">,
@@ -32,6 +37,8 @@ export interface OrchestrationEventStoreShape {
    * @param sequenceExclusive - Sequence cursor (exclusive).
    * @param limit - Maximum number of events to emit.
    * @returns Stream containing ordered events.
+   *
+   * Reads in fixed-size pages and normalizes non-integer/negative limits.
    */
   readonly readFromSequence: (
     sequenceExclusive: number,

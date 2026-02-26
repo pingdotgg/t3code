@@ -39,6 +39,9 @@ export interface DeleteCheckpointRefsInput {
   readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
 }
 
+/**
+ * CheckpointStoreShape - Service API for checkpoint capture/restore and diff access.
+ */
 export interface CheckpointStoreShape {
   /**
    * Check whether cwd is inside a Git worktree.
@@ -47,6 +50,8 @@ export interface CheckpointStoreShape {
 
   /**
    * Capture a checkpoint commit and store it at the provided checkpoint ref.
+   *
+   * Uses an isolated temporary Git index and writes a hidden ref.
    */
   readonly captureCheckpoint: (
     input: CaptureCheckpointInput,
@@ -61,6 +66,8 @@ export interface CheckpointStoreShape {
 
   /**
    * Restore workspace/staging state to a checkpoint.
+   *
+   * Optionally falls back to current `HEAD` when the checkpoint ref is missing.
    */
   readonly restoreCheckpoint: (
     input: RestoreCheckpointInput,
@@ -68,6 +75,8 @@ export interface CheckpointStoreShape {
 
   /**
    * Compute patch diff between two checkpoint refs.
+   *
+   * Can optionally treat missing "from" ref as `HEAD`.
    */
   readonly diffCheckpoints: (
     input: DiffCheckpointsInput,
@@ -75,6 +84,8 @@ export interface CheckpointStoreShape {
 
   /**
    * Delete the provided checkpoint refs.
+   *
+   * Best-effort delete: missing refs are tolerated.
    */
   readonly deleteCheckpointRefs: (
     input: DeleteCheckpointRefsInput,

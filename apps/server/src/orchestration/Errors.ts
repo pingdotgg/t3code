@@ -1,8 +1,6 @@
 import { SchemaIssue, Schema } from "effect";
 
 import type {
-  OrchestrationCommandReceiptRepositoryError,
-  OrchestrationEventStoreError,
   ProjectionRepositoryError,
 } from "../persistence/Errors.ts";
 
@@ -83,8 +81,6 @@ export class OrchestrationListenerCallbackError extends Schema.TaggedErrorClass<
 }
 
 export type OrchestrationDispatchError =
-  | OrchestrationEventStoreError
-  | OrchestrationCommandReceiptRepositoryError
   | ProjectionRepositoryError
   | OrchestrationCommandInvariantError
   | OrchestrationCommandPreviouslyRejectedError

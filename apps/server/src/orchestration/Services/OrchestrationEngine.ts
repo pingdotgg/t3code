@@ -21,6 +21,9 @@ import type { Effect, Stream } from "effect";
 import type { OrchestrationDispatchError } from "../Errors.ts";
 import type { OrchestrationEventStoreError } from "../../persistence/Errors.ts";
 
+/**
+ * OrchestrationEngineShape - Service API for orchestration command and event flow.
+ */
 export interface OrchestrationEngineShape {
   /**
    * Read the current in-memory orchestration read model.
@@ -44,6 +47,9 @@ export interface OrchestrationEngineShape {
    *
    * @param command - Valid orchestration command.
    * @returns Effect containing the sequence of the persisted event.
+   *
+   * Dispatch is serialized through an internal queue and deduplicated via
+   * command receipts.
    */
   readonly dispatch: (
     command: OrchestrationCommand,
@@ -51,6 +57,8 @@ export interface OrchestrationEngineShape {
 
   /**
    * Stream persisted domain events in dispatch order.
+   *
+   * This is a hot runtime stream (new events only), not a historical replay.
    */
   readonly streamDomainEvents: Stream.Stream<OrchestrationEvent>;
 }

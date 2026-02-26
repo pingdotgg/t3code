@@ -1,3 +1,11 @@
+/**
+ * Server - HTTP/WebSocket server service interface.
+ *
+ * Owns startup and shutdown lifecycle of the HTTP server, static asset serving,
+ * and WebSocket request routing.
+ *
+ * @module Server
+ */
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -49,15 +57,28 @@ const MIME_TYPES: Record<string, string> = {
   ".map": "application/json",
 };
 
+/**
+ * ServerShape - Service API for server lifecycle control.
+ */
 export interface ServerShape {
+  /**
+   * Start HTTP and WebSocket listeners.
+   */
   readonly start: Effect.Effect<
     http.Server,
     unknown,
     Scope.Scope | ServerRuntimeServices | ServerConfig
   >;
+
+  /**
+   * Wait for process shutdown signals.
+   */
   readonly stopSignal: Effect.Effect<unknown, never>;
 }
 
+/**
+ * Server - Service tag for HTTP/WebSocket lifecycle management.
+ */
 export class Server extends ServiceMap.Service<Server, ServerShape>()("server/Server") {}
 
 const isServerNotRunningError = (error: unknown): boolean => {

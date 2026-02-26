@@ -58,25 +58,10 @@ export class GitManagerError extends Schema.TaggedErrorClass<GitManagerError>()(
 }
 
 /**
- * GitCoreError - Errors emitted by low-level Git repository operations.
- */
-export type GitCoreError = GitCommandError;
-
-/**
- * GitHubCliServiceError - Errors emitted by GitHub CLI service helpers.
- */
-export type GitHubCliServiceError = GitHubCliError;
-
-/**
- * TextGenerationServiceError - Errors emitted by commit/PR text generation.
- */
-export type TextGenerationServiceError = TextGenerationError;
-
-/**
  * GitManagerServiceError - Errors emitted by stacked Git workflow orchestration.
  */
 export type GitManagerServiceError =
   | GitManagerError
-  | GitCoreError
-  | GitHubCliServiceError
-  | TextGenerationServiceError;
+  | GitCommandError
+  | GitHubCliError
+  | TextGenerationError;

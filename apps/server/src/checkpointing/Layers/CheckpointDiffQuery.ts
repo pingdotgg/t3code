@@ -1,6 +1,5 @@
 import {
   OrchestrationGetTurnDiffResult,
-  type ProjectId,
   type OrchestrationGetFullThreadDiffInput,
   type OrchestrationGetFullThreadDiffResult,
   type OrchestrationGetTurnDiffResult as OrchestrationGetTurnDiffResultType,

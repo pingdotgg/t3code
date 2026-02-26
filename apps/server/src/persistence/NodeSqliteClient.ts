@@ -1,6 +1,8 @@
 /**
  * Port of `@effect/sql-sqlite-node` that uses the native `node:sqlite`
  * bindings instead of `better-sqlite3`.
+ *
+ * @module SqliteClient
  */
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 
@@ -27,6 +29,9 @@ export const TypeId: TypeId = "~local/sqlite-node/SqliteClient";
 
 export type TypeId = "~local/sqlite-node/SqliteClient";
 
+/**
+ * SqliteClient - Effect service tag for the sqlite SQL client.
+ */
 export const SqliteClient = ServiceMap.Service<Client.SqlClient>("@local/sqlite-node/SqliteClient");
 
 export interface SqliteClientConfig {

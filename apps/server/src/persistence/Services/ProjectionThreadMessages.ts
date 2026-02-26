@@ -1,3 +1,11 @@
+/**
+ * ProjectionThreadMessageRepository - Projection repository interface for messages.
+ *
+ * Owns persistence operations for projected thread messages rendered in the
+ * orchestration read model.
+ *
+ * @module ProjectionThreadMessageRepository
+ */
 import {
   OrchestrationMessageRole,
   MessageId,
@@ -32,20 +40,39 @@ export const DeleteProjectionThreadMessagesInput = Schema.Struct({
 });
 export type DeleteProjectionThreadMessagesInput = typeof DeleteProjectionThreadMessagesInput.Type;
 
+/**
+ * ProjectionThreadMessageRepositoryShape - Service API for projected thread messages.
+ */
 export interface ProjectionThreadMessageRepositoryShape {
+  /**
+   * Insert or replace a projected thread message row.
+   *
+   * Upserts by `messageId`.
+   */
   readonly upsert: (
     message: ProjectionThreadMessage,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
+  /**
+   * List projected thread messages for a thread.
+   *
+   * Returned in ascending creation order.
+   */
   readonly listByThreadId: (
     input: ListProjectionThreadMessagesInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadMessage>, ProjectionRepositoryError>;
 
+  /**
+   * Delete projected thread messages by thread.
+   */
   readonly deleteByThreadId: (
     input: DeleteProjectionThreadMessagesInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 
+/**
+ * ProjectionThreadMessageRepository - Service tag for message projection persistence.
+ */
 export class ProjectionThreadMessageRepository extends ServiceMap.Service<
   ProjectionThreadMessageRepository,
   ProjectionThreadMessageRepositoryShape

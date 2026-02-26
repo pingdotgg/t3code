@@ -1,3 +1,11 @@
+/**
+ * Keybindings - Keybinding configuration service definitions.
+ *
+ * Owns parsing, validation, merge, and persistence of user keybinding
+ * configuration consumed by the server runtime.
+ *
+ * @module Keybindings
+ */
 import {
   KeybindingRule,
   KeybindingsConfig,
@@ -388,16 +396,34 @@ function mergeWithDefaultKeybindings(custom: ResolvedKeybindingsConfig): Resolve
   return merged.slice(-MAX_KEYBINDINGS_COUNT);
 }
 
+/**
+ * KeybindingsShape - Service API for keybinding configuration operations.
+ */
 export interface KeybindingsShape {
+  /**
+   * Load and resolve keybindings from disk merged with defaults.
+   *
+   * Returns an in-memory cached result after the first successful load.
+   */
   readonly loadResolvedKeybindingsConfig: Effect.Effect<
     readonly ResolvedKeybindingRule[],
     KeybindingsConfigError
   >;
+
+  /**
+   * Upsert a keybinding rule and persist the resulting configuration.
+   *
+   * Writes config atomically and enforces the max rule count by truncating
+   * oldest entries when needed.
+   */
   readonly upsertKeybindingRule: (
     rule: KeybindingRule,
   ) => Effect.Effect<ResolvedKeybindingsConfig, KeybindingsConfigError>;
 }
 
+/**
+ * Keybindings - Service tag for keybinding configuration operations.
+ */
 export class Keybindings extends ServiceMap.Service<Keybindings, KeybindingsShape>()(
   "server/Keybindings",
 ) {}

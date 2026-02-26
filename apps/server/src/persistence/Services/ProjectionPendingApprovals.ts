@@ -1,3 +1,11 @@
+/**
+ * ProjectionPendingApprovalRepository - Repository interface for pending approvals.
+ *
+ * Owns persistence operations for projected approval requests awaiting user
+ * decisions.
+ *
+ * @module ProjectionPendingApprovalRepository
+ */
 import {
   ApprovalRequestId,
   IsoDateTime,
@@ -37,24 +45,46 @@ export const DeleteProjectionPendingApprovalInput = Schema.Struct({
 });
 export type DeleteProjectionPendingApprovalInput = typeof DeleteProjectionPendingApprovalInput.Type;
 
+/**
+ * ProjectionPendingApprovalRepositoryShape - Service API for pending approvals.
+ */
 export interface ProjectionPendingApprovalRepositoryShape {
+  /**
+   * Insert or replace a projected pending approval row.
+   *
+   * Upserts by `requestId`.
+   */
   readonly upsert: (
     row: ProjectionPendingApproval,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
+  /**
+   * List pending approvals for a thread.
+   *
+   * Returned in ascending creation order.
+   */
   readonly listByThreadId: (
     input: ListProjectionPendingApprovalsInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionPendingApproval>, ProjectionRepositoryError>;
 
+  /**
+   * Read a pending approval row by request id.
+   */
   readonly getByRequestId: (
     input: GetProjectionPendingApprovalInput,
   ) => Effect.Effect<Option.Option<ProjectionPendingApproval>, ProjectionRepositoryError>;
 
+  /**
+   * Delete a pending approval row by request id.
+   */
   readonly deleteByRequestId: (
     input: DeleteProjectionPendingApprovalInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 
+/**
+ * ProjectionPendingApprovalRepository - Service tag for pending approval persistence.
+ */
 export class ProjectionPendingApprovalRepository extends ServiceMap.Service<
   ProjectionPendingApprovalRepository,
   ProjectionPendingApprovalRepositoryShape

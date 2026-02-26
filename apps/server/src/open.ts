@@ -1,3 +1,11 @@
+/**
+ * Open - Browser/editor launch service interface.
+ *
+ * Owns process launch helpers for opening URLs in a browser and workspace
+ * paths in a configured editor.
+ *
+ * @module Open
+ */
 import { spawn } from "node:child_process";
 
 import { EDITORS, type EditorId } from "@t3tools/contracts";
@@ -22,11 +30,26 @@ interface EditorLaunch {
   readonly args: ReadonlyArray<string>;
 }
 
+/**
+ * OpenShape - Service API for browser and editor launch actions.
+ */
 export interface OpenShape {
+  /**
+   * Open a URL target in the default browser.
+   */
   readonly openBrowser: (target: string) => Effect.Effect<void, OpenError>;
+
+  /**
+   * Open a workspace path in a selected editor integration.
+   *
+   * Launches the editor as a detached process so server startup is not blocked.
+   */
   readonly openInEditor: (input: OpenInEditorInput) => Effect.Effect<void, OpenError>;
 }
 
+/**
+ * Open - Service tag for browser/editor launch operations.
+ */
 export class Open extends ServiceMap.Service<Open, OpenShape>()("server/Open") {}
 
 // ==============================

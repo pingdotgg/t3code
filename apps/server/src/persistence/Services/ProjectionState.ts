@@ -1,3 +1,11 @@
+/**
+ * ProjectionStateRepository - Projection repository interface for projector cursors.
+ *
+ * Owns persistence operations for projection cursor state used to resume
+ * incremental event projection.
+ *
+ * @module ProjectionStateRepository
+ */
 import { IsoDateTime, NonNegativeInt } from "@t3tools/contracts";
 import { Option, Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
@@ -16,18 +24,40 @@ export const GetProjectionStateInput = Schema.Struct({
 });
 export type GetProjectionStateInput = typeof GetProjectionStateInput.Type;
 
+/**
+ * ProjectionStateRepositoryShape - Service API for projector state records.
+ */
 export interface ProjectionStateRepositoryShape {
+  /**
+   * Insert or replace a projection cursor row.
+   *
+   * Upserts by projector name.
+   */
   readonly upsert: (row: ProjectionState) => Effect.Effect<void, ProjectionRepositoryError>;
 
+  /**
+   * Read projection cursor state for a projector key.
+   */
   readonly getByProjector: (
     input: GetProjectionStateInput,
   ) => Effect.Effect<Option.Option<ProjectionState>, ProjectionRepositoryError>;
 
+  /**
+   * List all projector cursor rows.
+   */
   readonly listAll: () => Effect.Effect<ReadonlyArray<ProjectionState>, ProjectionRepositoryError>;
 
+  /**
+   * Read the minimum applied sequence across all projectors.
+   *
+   * Returns `null` when no projector state rows exist.
+   */
   readonly minLastAppliedSequence: () => Effect.Effect<number | null, ProjectionRepositoryError>;
 }
 
+/**
+ * ProjectionStateRepository - Service tag for projection cursor persistence.
+ */
 export class ProjectionStateRepository extends ServiceMap.Service<
   ProjectionStateRepository,
   ProjectionStateRepositoryShape

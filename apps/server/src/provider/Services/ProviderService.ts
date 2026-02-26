@@ -28,6 +28,9 @@ import type { Effect, Stream } from "effect";
 
 import type { ProviderServiceError } from "../Errors.ts";
 
+/**
+ * ProviderServiceShape - Service API for provider session and turn orchestration.
+ */
 export interface ProviderServiceShape {
   /**
    * Start a provider session.
@@ -67,6 +70,8 @@ export interface ProviderServiceShape {
 
   /**
    * List active provider sessions.
+   *
+   * Aggregates runtime session lists from all registered adapters.
    */
   readonly listSessions: () => Effect.Effect<ReadonlyArray<ProviderSession>>;
 
@@ -83,6 +88,8 @@ export interface ProviderServiceShape {
    *
    * Persisted session bindings remain so stale sessions can be resumed after
    * process restart.
+   *
+   * Runtime alias mappings are cleared as part of shutdown.
    */
   readonly stopAll: () => Effect.Effect<void, ProviderServiceError>;
 

@@ -30,19 +30,6 @@ export class PersistenceDecodeError extends Schema.TaggedErrorClass<PersistenceD
   }
 }
 
-export class PersistenceSerializationError extends Schema.TaggedErrorClass<PersistenceSerializationError>()(
-  "PersistenceSerializationError",
-  {
-    operation: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Serialization error in ${this.operation}: ${this.detail}`;
-  }
-}
-
 export function toPersistenceSqlError(operation: string) {
   return (cause: unknown): PersistenceSqlError =>
     new PersistenceSqlError({
@@ -70,85 +57,8 @@ export function toPersistenceDecodeCauseError(operation: string) {
     });
 }
 
-export function toPersistenceSerializationError(operation: string) {
-  return (cause: unknown): PersistenceSerializationError =>
-    new PersistenceSerializationError({
-      operation,
-      detail: `Failed to execute ${operation}`,
-      cause,
-    });
-}
-
-// ===============================
-// Project Repository Errors
-// ===============================
-
-export class ProjectValidationError extends Schema.TaggedErrorClass<ProjectValidationError>()(
-  "ProjectValidationError",
-  {
-    operation: Schema.String,
-    issue: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Project validation failed in ${this.operation}: ${this.issue}`;
-  }
-}
-
-export class ProjectPathMissingError extends Schema.TaggedErrorClass<ProjectPathMissingError>()(
-  "ProjectPathMissingError",
-  {
-    cwd: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Project path does not exist: ${this.cwd}`;
-  }
-}
-
-export class ProjectNotFoundError extends Schema.TaggedErrorClass<ProjectNotFoundError>()(
-  "ProjectNotFoundError",
-  {
-    projectId: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Project not found: ${this.projectId}`;
-  }
-}
-
-// ===============================
-// Checkpoint Repository Errors
-// ===============================
-
-export class CheckpointRepositoryValidationError extends Schema.TaggedErrorClass<CheckpointRepositoryValidationError>()(
-  "CheckpointRepositoryValidationError",
-  {
-    operation: Schema.String,
-    issue: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Checkpoint repository validation failed in ${this.operation}: ${this.issue}`;
-  }
-}
-
-export class CheckpointRepositoryPersistenceError extends Schema.TaggedErrorClass<CheckpointRepositoryPersistenceError>()(
-  "CheckpointRepositoryPersistenceError",
-  {
-    operation: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {
-  override get message(): string {
-    return `Checkpoint repository persistence error in ${this.operation}: ${this.detail}`;
-  }
-}
+export const isPersistenceError = (u: unknown) =>
+  Schema.is(PersistenceSqlError)(u) || Schema.is(PersistenceDecodeError)(u);
 
 // ===============================
 // Provider Session Repository Errors
@@ -180,22 +90,7 @@ export class ProviderSessionRepositoryPersistenceError extends Schema.TaggedErro
   }
 }
 
-export type ProjectRepositoryError =
-  | PersistenceSqlError
-  | PersistenceDecodeError
-  | PersistenceSerializationError
-  | ProjectValidationError
-  | ProjectPathMissingError
-  | ProjectNotFoundError;
-
-export type OrchestrationEventStoreError =
-  | PersistenceSqlError
-  | PersistenceDecodeError
-  | PersistenceSerializationError;
-
-export type CheckpointRepositoryError =
-  | CheckpointRepositoryValidationError
-  | CheckpointRepositoryPersistenceError;
+export type OrchestrationEventStoreError = PersistenceSqlError | PersistenceDecodeError;
 
 export type ProviderSessionRepositoryError =
   | ProviderSessionRepositoryValidationError
@@ -205,12 +100,6 @@ export type OrchestrationCommandReceiptRepositoryError =
   | PersistenceSqlError
   | PersistenceDecodeError;
 
-export type ProviderSessionRuntimeRepositoryError =
-  | PersistenceSqlError
-  | PersistenceDecodeError
-  | PersistenceSerializationError;
+export type ProviderSessionRuntimeRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 
-export type ProjectionRepositoryError =
-  | PersistenceSqlError
-  | PersistenceDecodeError
-  | PersistenceSerializationError;
+export type ProjectionRepositoryError = PersistenceSqlError | PersistenceDecodeError;

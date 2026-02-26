@@ -1,3 +1,11 @@
+/**
+ * ServerConfig and NetService - Runtime configuration services.
+ *
+ * Defines process-level server configuration and networking helpers used by
+ * startup and runtime layers.
+ *
+ * @module ServerConfig
+ */
 import * as Net from "node:net";
 import { Data, Effect, FileSystem, Layer, Path, ServiceMap } from "effect";
 
@@ -5,6 +13,9 @@ export const DEFAULT_PORT = 3773;
 
 export type RuntimeMode = "web" | "desktop";
 
+/**
+ * ServerConfigShape - Process/runtime configuration required by the server.
+ */
 export interface ServerConfigShape {
   readonly mode: RuntimeMode;
   readonly port: number;
@@ -20,6 +31,9 @@ export interface ServerConfigShape {
   readonly logWebSocketEvents: boolean;
 }
 
+/**
+ * ServerConfig - Service tag for server runtime configuration.
+ */
 export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigShape>()(
   "server/ServerConfig",
 ) {}
@@ -31,10 +45,21 @@ export class NetError extends Data.TaggedError("NetError")<{
   readonly cause?: unknown;
 }> {}
 
+/**
+ * NetServiceShape - Networking helper operations used during startup.
+ */
 export interface NetServiceShape {
+  /**
+   * Resolve an available listening port, preferring the provided port first.
+   *
+   * Falls back to an ephemeral OS-assigned port when the preferred port is in use.
+   */
   readonly findAvailablePort: (preferred: number) => Effect.Effect<number, NetError>;
 }
 
+/**
+ * NetService - Service tag for startup networking helpers.
+ */
 export class NetService extends ServiceMap.Service<NetService, NetServiceShape>()(
   "server/NetService",
 ) {

@@ -27,6 +27,9 @@ export interface ExecuteGitResult {
   readonly stderr: string;
 }
 
+/**
+ * GitServiceShape - Service API for Git command execution.
+ */
 export interface GitServiceShape {
   /**
    * Execute a Git command.
