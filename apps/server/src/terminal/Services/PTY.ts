@@ -6,7 +6,7 @@
  *
  * @module PtyAdapter
  */
-import { ServiceMap } from "effect";
+import { Effect, ServiceMap } from "effect";
 
 export interface PtyExitEvent {
   exitCode: number;
@@ -38,7 +38,7 @@ export interface PtyAdapterShape {
   /**
    * Spawn a PTY process for a terminal session.
    */
-  spawn(input: PtySpawnInput): PtyProcess;
+  spawn(input: PtySpawnInput): Effect.Effect<PtyProcess>;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect";
-import { PtyAdapter, PtyExitEvent, PtyProcess, PtySpawnInput } from "../Services/PTY";
+import { PtyAdapter, PtyAdapterShape, PtyExitEvent, PtyProcess } from "../Services/PTY";
 
 class BunPtyProcess implements PtyProcess {
   private readonly dataListeners = new Set<(data: string) => void>();
@@ -93,7 +93,7 @@ export const BunPtyAdapterLive = Layer.effect(
       return yield* Effect.die("Bun PTY terminal support is unavailable on Windows.");
     }
     return {
-      spawn(input: PtySpawnInput): PtyProcess {
+      spawn: (input) => {
         let processHandle: BunPtyProcess | null = null;
         const command = [input.shell, ...(input.args ?? [])];
         const subprocess = Bun.spawn(command, {
@@ -108,8 +108,8 @@ export const BunPtyAdapterLive = Layer.effect(
           },
         });
         processHandle = new BunPtyProcess(subprocess);
-        return processHandle;
+        return Effect.succeed(processHandle);
       },
-    };
+    } satisfies PtyAdapterShape;
   }),
 );

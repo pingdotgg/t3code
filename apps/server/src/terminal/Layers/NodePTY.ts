@@ -1,55 +1,48 @@
-import fs from "node:fs";
 import { createRequire } from "node:module";
-import path from "node:path";
 
-import { Effect, Layer } from "effect";
-import { PtyAdapter, PtyExitEvent, PtyProcess, PtySpawnInput } from "../Services/PTY";
+import { Effect, FileSystem, Layer, Path } from "effect";
+import { PtyAdapter, PtyAdapterShape, PtyExitEvent, PtyProcess } from "../Services/PTY";
 
-const requireForNodePty = createRequire(import.meta.url);
 let didEnsureSpawnHelperExecutable = false;
 
-function resolveNodePtySpawnHelperPath(): string | null {
-  try {
-    const packageJsonPath = requireForNodePty.resolve("node-pty/package.json");
-    const packageDir = path.dirname(packageJsonPath);
-    const candidates = [
-      path.join(packageDir, "build", "Release", "spawn-helper"),
-      path.join(packageDir, "build", "Debug", "spawn-helper"),
-      path.join(packageDir, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper"),
-    ];
+const resolveNodePtySpawnHelperPath = Effect.gen(function* () {
+  const requireForNodePty = createRequire(import.meta.url);
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
 
-    for (const candidate of candidates) {
-      if (fs.existsSync(candidate)) {
-        return candidate;
-      }
+  const packageJsonPath = requireForNodePty.resolve("node-pty/package.json");
+  const packageDir = path.dirname(packageJsonPath);
+  const candidates = [
+    path.join(packageDir, "build", "Release", "spawn-helper"),
+    path.join(packageDir, "build", "Debug", "spawn-helper"),
+    path.join(packageDir, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper"),
+  ];
+
+  for (const candidate of candidates) {
+    if (yield* fs.exists(candidate)) {
+      return candidate;
     }
-
-    return null;
-  } catch {
-    return null;
   }
-}
+  return null;
+}).pipe(Effect.orElseSucceed(() => null));
 
-export function ensureNodePtySpawnHelperExecutable(explicitPath?: string): void {
+export const ensureNodePtySpawnHelperExecutable = Effect.fn(function* (explicitPath?: string) {
+  const fs = yield* FileSystem.FileSystem;
   if (process.platform === "win32") return;
   if (!explicitPath && didEnsureSpawnHelperExecutable) return;
 
-  const helperPath = explicitPath ?? resolveNodePtySpawnHelperPath();
+  const helperPath = explicitPath ?? (yield* resolveNodePtySpawnHelperPath);
   if (!helperPath) return;
   if (!explicitPath) {
     didEnsureSpawnHelperExecutable = true;
   }
 
-  try {
-    const stat = fs.statSync(helperPath);
-    const mode = stat.mode & 0o777;
-    if ((mode & 0o111) === 0) {
-      fs.chmodSync(helperPath, mode | 0o111);
-    }
-  } catch {
-    // Best effort only. If chmod fails, node-pty spawn will surface the real error.
+  const stat = yield* fs.stat(helperPath);
+  const mode = stat.mode & 0o777;
+  if ((mode & 0o111) === 0) {
+    yield* fs.chmod(helperPath, mode | 0o111);
   }
-}
+});
 
 class NodePtyProcess implements PtyProcess {
   constructor(private readonly process: import("node-pty").IPty) {}
@@ -93,10 +86,22 @@ class NodePtyProcess implements PtyProcess {
 export const NodePtyAdapterLive = Layer.effect(
   PtyAdapter,
   Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+
     const nodePty = yield* Effect.promise(() => import("node-pty"));
+
+    const ensureNodePtySpawnHelperExecutableCached = yield* Effect.cached(
+      ensureNodePtySpawnHelperExecutable().pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.orElseSucceed(() => undefined),
+      ),
+    );
+
     return {
-      spawn(input: PtySpawnInput): PtyProcess {
-        ensureNodePtySpawnHelperExecutable();
+      spawn: Effect.fn(function* (input) {
+        yield* ensureNodePtySpawnHelperExecutableCached;
         const ptyProcess = nodePty.spawn(input.shell, input.args ?? [], {
           cwd: input.cwd,
           cols: input.cols,
@@ -105,7 +110,7 @@ export const NodePtyAdapterLive = Layer.effect(
           name: globalThis.process.platform === "win32" ? "xterm-color" : "xterm-256color",
         });
         return new NodePtyProcess(ptyProcess);
-      },
-    };
+      }),
+    } satisfies PtyAdapterShape;
   }),
 );

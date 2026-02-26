@@ -20,6 +20,7 @@ import { runProcess } from "../../processRunner";
 import { ServerConfig } from "../../config";
 import {
   ShellCandidate,
+  TerminalError,
   TerminalManager,
   TerminalManagerShape,
   TerminalSessionState,
@@ -552,14 +553,16 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
 
       for (const candidate of shellCandidates) {
         try {
-          ptyProcess = this.ptyAdapter.spawn({
-            shell: candidate.shell,
-            ...(candidate.args ? { args: candidate.args } : {}),
-            cwd: session.cwd,
-            cols: session.cols,
-            rows: session.rows,
-            env: terminalEnv,
-          });
+          ptyProcess = Effect.runSync(
+            this.ptyAdapter.spawn({
+              shell: candidate.shell,
+              ...(candidate.args ? { args: candidate.args } : {}),
+              cwd: session.cwd,
+              cols: session.cols,
+              rows: session.rows,
+              env: terminalEnv,
+            }),
+          );
           startedShell = formatShellCandidate(candidate);
           break;
         } catch (error) {
@@ -690,7 +693,11 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     this.killEscalationTimers.delete(process);
   }
 
-  private killProcessWithEscalation(process: PtyProcess, threadId: string, terminalId: string): void {
+  private killProcessWithEscalation(
+    process: PtyProcess,
+    threadId: string,
+    terminalId: string,
+  ): void {
     this.clearKillEscalationTimer(process);
     try {
       process.kill("SIGTERM");
@@ -724,7 +731,9 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
   }
 
   private evictInactiveSessionsIfNeeded(): void {
-    const inactiveSessions = [...this.sessions.values()].filter((session) => session.status !== "running");
+    const inactiveSessions = [...this.sessions.values()].filter(
+      (session) => session.status !== "running",
+    );
     if (inactiveSessions.length <= this.maxRetainedInactiveSessions) {
       return;
     }
@@ -1110,12 +1119,36 @@ export const TerminalManagerLive = Layer.effect(
     );
 
     return {
-      open: (input) => Effect.promise(() => runtime.open(input)),
-      write: (input) => Effect.promise(() => runtime.write(input)),
-      resize: (input) => Effect.promise(() => runtime.resize(input)),
-      clear: (input) => Effect.promise(() => runtime.clear(input)),
-      restart: (input) => Effect.promise(() => runtime.restart(input)),
-      close: (input) => Effect.promise(() => runtime.close(input)),
+      open: (input) =>
+        Effect.tryPromise({
+          try: () => runtime.open(input),
+          catch: (cause) => new TerminalError({ message: "Failed to open terminal", cause }),
+        }),
+      write: (input) =>
+        Effect.tryPromise({
+          try: () => runtime.write(input),
+          catch: (cause) => new TerminalError({ message: "Failed to write to terminal", cause }),
+        }),
+      resize: (input) =>
+        Effect.tryPromise({
+          try: () => runtime.resize(input),
+          catch: (cause) => new TerminalError({ message: "Failed to resize terminal", cause }),
+        }),
+      clear: (input) =>
+        Effect.tryPromise({
+          try: () => runtime.clear(input),
+          catch: (cause) => new TerminalError({ message: "Failed to clear terminal", cause }),
+        }),
+      restart: (input) =>
+        Effect.tryPromise({
+          try: () => runtime.restart(input),
+          catch: (cause) => new TerminalError({ message: "Failed to restart terminal", cause }),
+        }),
+      close: (input) =>
+        Effect.tryPromise({
+          try: () => runtime.close(input),
+          catch: (cause) => new TerminalError({ message: "Failed to close terminal", cause }),
+        }),
       subscribe: (listener) =>
         Effect.sync(() => {
           runtime.on("event", listener);
@@ -1123,10 +1156,7 @@ export const TerminalManagerLive = Layer.effect(
             runtime.off("event", listener);
           };
         }),
-      dispose: () =>
-        Effect.sync(() => {
-          runtime.dispose();
-        }),
+      dispose: Effect.sync(() => runtime.dispose()),
     } satisfies TerminalManagerShape;
   }),
 );

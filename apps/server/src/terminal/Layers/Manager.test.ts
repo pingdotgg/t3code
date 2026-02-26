@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { PtyAdapterShape, PtyExitEvent, PtyProcess, PtySpawnInput } from "../Services/PTY";
 import { TerminalManagerRuntime } from "./Manager";
-import { Encoding } from "effect";
+import { Effect, Encoding } from "effect";
 
 class FakePtyProcess implements PtyProcess {
   readonly writes: string[] = [];
@@ -69,7 +69,7 @@ class FakePtyAdapter implements PtyAdapterShape {
   readonly spawnFailures: Error[] = [];
   private nextPid = 9000;
 
-  spawn(input: PtySpawnInput): PtyProcess {
+  spawn(input: PtySpawnInput): Effect.Effect<PtyProcess> {
     this.spawnInputs.push(input);
     const failure = this.spawnFailures.shift();
     if (failure) {
@@ -77,7 +77,7 @@ class FakePtyAdapter implements PtyAdapterShape {
     }
     const process = new FakePtyProcess(this.nextPid++);
     this.processes.push(process);
-    return process;
+    return Effect.succeed(process);
   }
 }
 
