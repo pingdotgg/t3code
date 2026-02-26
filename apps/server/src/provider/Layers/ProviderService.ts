@@ -22,7 +22,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
 } from "@t3tools/contracts";
-import { Effect, Layer, Option, PubSub, Queue, Ref, Schema, Stream } from "effect";
+import { Effect, Layer, Option, PubSub, Queue, Ref, Schema, SchemaIssue, Stream } from "effect";
 
 import { ProviderSessionNotFoundError, ProviderValidationError } from "../Errors.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
@@ -54,30 +54,21 @@ function toValidationError(
   });
 }
 
-function decodeIssueMessage(cause: unknown): string {
-  if (cause instanceof Error && cause.message.length > 0) {
-    return cause.message;
-  }
-  try {
-    return JSON.stringify(cause);
-  } catch {
-    return "Invalid provider input.";
-  }
-}
-
-function decodeInputOrValidationError<S extends Schema.Top>(input: {
+const decodeInputOrValidationError = <S extends Schema.Top>(input: {
   readonly operation: string;
   readonly schema: S;
   readonly payload: unknown;
-}): Effect.Effect<Schema.Schema.Type<S>, ProviderValidationError> {
-  try {
-    return Effect.succeed(
-      Schema.decodeUnknownSync(input.schema as never)(input.payload) as Schema.Schema.Type<S>,
-    );
-  } catch (cause) {
-    return Effect.fail(toValidationError(input.operation, decodeIssueMessage(cause), cause));
-  }
-}
+}) =>
+  Schema.decodeUnknownEffect(input.schema)(input.payload).pipe(
+    Effect.mapError(
+      (schemaError) =>
+        new ProviderValidationError({
+          operation: input.operation,
+          issue: SchemaIssue.makeFormatterDefault()(schemaError.issue),
+          cause: schemaError,
+        }),
+    ),
+  );
 
 function toRuntimeStatus(session: ProviderSession): "starting" | "running" | "stopped" | "error" {
   switch (session.status) {
@@ -265,9 +256,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
             provider: existing.provider,
             threadId: input.binding.threadId,
             providerThreadId: existingProviderThreadId,
-            ...(existing.resumeCursor !== undefined
-              ? { resumeCursor: existing.resumeCursor }
-              : {}),
+            ...(existing.resumeCursor !== undefined ? { resumeCursor: existing.resumeCursor } : {}),
           });
           if (existing.sessionId !== input.staleSessionId) {
             yield* setAlias(input.staleSessionId, existing.sessionId);
@@ -310,9 +299,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           provider: resumed.provider,
           threadId: input.binding.threadId,
           providerThreadId: resumedProviderThreadId,
-          ...(resumed.resumeCursor !== undefined
-            ? { resumeCursor: resumed.resumeCursor }
-            : {}),
+          ...(resumed.resumeCursor !== undefined ? { resumeCursor: resumed.resumeCursor } : {}),
         });
 
         if (resumed.sessionId !== input.staleSessionId) {

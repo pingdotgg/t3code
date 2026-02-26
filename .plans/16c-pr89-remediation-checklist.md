@@ -360,8 +360,8 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Threads: PRRT_kwDORLtfbc5wiaR-
   - Audit note: Decode and SQL errors still collapsed into one persistence error kind.
 
-- [ ] `C049` `JSON.stringify(cause)` returns `undefined` for `undefined`, functions, or symbols, violating the `string` return type. Consider coercing the result to a string (e.g., `String(JSON.stringify(cause))`) or adding a fallback.
-  - Status: `TODO`
+- [x] `C049` `JSON.stringify(cause)` returns `undefined` for `undefined`, functions, or symbols, violating the `string` return type. Consider coercing the result to a string (e.g., `String(JSON.stringify(cause))`) or adding a fallback.
+  - Status: `DONE`
   - Verdict: `valid`
   - Severity: `Low`
   - Area: `Other`
