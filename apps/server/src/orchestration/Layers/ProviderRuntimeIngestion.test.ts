@@ -258,6 +258,78 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("does not duplicate assistant completion when message.completed is followed by turn.completed", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-for-complete-dedup"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: now,
+      turnId: asProviderTurnId("turn-complete-dedup"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" && thread.session?.activeTurnId === "turn-complete-dedup",
+    );
+
+    harness.emit({
+      type: "message.delta",
+      eventId: asEventId("evt-message-delta-for-complete-dedup"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: now,
+      turnId: asProviderTurnId("turn-complete-dedup"),
+      itemId: asItemId("item-complete-dedup"),
+      delta: "done",
+    });
+    harness.emit({
+      type: "message.completed",
+      eventId: asEventId("evt-message-completed-for-complete-dedup"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: now,
+      turnId: asProviderTurnId("turn-complete-dedup"),
+      itemId: asItemId("item-complete-dedup"),
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-for-complete-dedup"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: now,
+      turnId: asProviderTurnId("turn-complete-dedup"),
+      status: "completed",
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "ready" &&
+        thread.session?.activeTurnId === null &&
+        thread.messages.some(
+          (message) => message.id === "assistant:item-complete-dedup" && !message.streaming,
+        ),
+    );
+
+    const events = await Effect.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(Effect.map((chunk) => Array.from(chunk))),
+    );
+    const completionEvents = events.filter((event) => {
+      if (event.type !== "thread.message-sent") {
+        return false;
+      }
+      return (
+        event.payload.messageId === "assistant:item-complete-dedup" && event.payload.streaming === false
+      );
+    });
+    expect(completionEvents).toHaveLength(1);
+  });
+
   it("maps runtime.error into errored session state", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

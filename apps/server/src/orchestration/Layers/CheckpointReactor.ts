@@ -244,6 +244,14 @@ const make = Effect.gen(function* () {
             deletions: file.deletions,
           })),
         ),
+        Effect.tapError((error) =>
+          appendCaptureFailureActivity({
+            sessionId: event.sessionId,
+            turnId,
+            detail: `Checkpoint captured, but turn diff summary is unavailable: ${error.message}`,
+            createdAt: event.createdAt,
+          }),
+        ),
         Effect.catch((error) =>
           Effect.logWarning("failed to derive checkpoint file summary", {
             threadId: thread.id,

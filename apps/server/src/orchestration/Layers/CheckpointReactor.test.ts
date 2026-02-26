@@ -379,6 +379,54 @@ describe("CheckpointReactor", () => {
     ).toBe("v2\n");
   });
 
+  it("appends capture failure activity when turn diff summary cannot be derived", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const createdAt = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-set-missing-baseline-diff"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          providerSessionId: asSessionId("sess-1"),
+          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.makeUnsafe("evt-turn-completed-missing-baseline"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: new Date().toISOString(),
+      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
+      turnId: asTurnId("turn-missing-baseline"),
+      status: "completed",
+    });
+
+    await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.checkpoints.length === 1 &&
+        entry.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
+    );
+
+    expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
+    expect(
+      thread.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
+    ).toBe(true);
+  });
+
   it("captures pre-turn baseline from project workspace root when thread worktree is unset", async () => {
     const harness = await createHarness({
       hasSession: false,

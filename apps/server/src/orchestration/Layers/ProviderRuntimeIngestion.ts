@@ -145,6 +145,22 @@ const make = Effect.gen(function* () {
     }
   };
 
+  const forgetAssistantMessageId = (
+    sessionId: ProviderSessionId,
+    turnId: TurnId,
+    messageId: MessageId,
+  ) => {
+    const key = providerTurnKey(sessionId, turnId);
+    const existingIds = turnMessageIdsByTurnKey.get(key);
+    if (!existingIds) {
+      return;
+    }
+    existingIds.delete(messageId);
+    if (existingIds.size === 0) {
+      turnMessageIdsByTurnKey.delete(key);
+    }
+  };
+
   const getAssistantMessageIdsForTurn = (sessionId: ProviderSessionId, turnId: TurnId) => {
     return turnMessageIdsByTurnKey.get(providerTurnKey(sessionId, turnId)) ?? new Set<MessageId>();
   };
@@ -257,6 +273,10 @@ const make = Effect.gen(function* () {
           ...(turnId ? { turnId } : {}),
           createdAt: now,
         });
+
+        if (turnId) {
+          forgetAssistantMessageId(event.sessionId, turnId, assistantMessageId);
+        }
       }
 
       if (event.type === "turn.completed") {

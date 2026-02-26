@@ -53,8 +53,8 @@ Counts: active `53` (`valid=34`, `partially-valid=19`), closed-invalid `5`
   - Threads: PRRT_kwDORLtfbc5wkPaL
   - Audit note: SessionId-only routing can misassociate events under races/rebinds.
 
-- [ ] `C020` On `message.completed`, the message ID is added to the set and `thread.message.assistant.complete` is dispatched. On `turn.completed`, the same set is iterated and `thread.message.assistant.complete` is dispatched again for each ID—including already-completed ones. Consider removing message IDs from the set after dispatching on `message.completed`, or filtering out already-completed IDs before the `turn.completed` loop.
-  - Status: `TODO`
+- [x] `C020` On `message.completed`, the message ID is added to the set and `thread.message.assistant.complete` is dispatched. On `turn.completed`, the same set is iterated and `thread.message.assistant.complete` is dispatched again for each ID—including already-completed ones. Consider removing message IDs from the set after dispatching on `message.completed`, or filtering out already-completed IDs before the `turn.completed` loop.
+  - Status: `DONE`
   - Verdict: `partially-valid`
   - Severity: `Medium`
   - Area: `Runtime resilience and failure handling`
@@ -80,8 +80,8 @@ Counts: active `53` (`valid=34`, `partially-valid=19`), closed-invalid `5`
   - Threads: PRRT_kwDORLtfbc5wyTaW, PRRT_kwDORLtfbc5wzli3 (+1 duplicate thread(s))
   - Audit note: Same unhandled rejection path remains in WS message handler.
 
-- [ ] `C042` Duplicated `resolveThreadWorkspaceCwd` across three files
-  - Status: `TODO`
+- [x] `C042` Duplicated `resolveThreadWorkspaceCwd` across three files
+  - Status: `DONE`
   - Verdict: `partially-valid`
   - Severity: `Low`
   - Area: `Runtime resilience and failure handling`
@@ -98,8 +98,8 @@ Counts: active `53` (`valid=34`, `partially-valid=19`), closed-invalid `5`
   - Threads: PRRT_kwDORLtfbc5wnWwM, PRRT_kwDORLtfbc5w1C3-, PRRT_kwDORLtfbc5w1HGZ (+2 duplicate thread(s))
   - Audit note: Workspace CWD resolution duplication still present across modules.
 
-- [ ] `C044` Checkpoint reactor swallows diff errors silently for `turn.completed`
-  - Status: `TODO`
+- [x] `C044` Checkpoint reactor swallows diff errors silently for `turn.completed`
+  - Status: `DONE`
   - Verdict: `partially-valid`
   - Severity: `Low`
   - Area: `Runtime resilience and failure handling`
