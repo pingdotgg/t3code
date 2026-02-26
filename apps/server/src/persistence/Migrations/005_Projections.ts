@@ -72,29 +72,21 @@ export default Effect.gen(function* () {
   `;
 
   yield* sql`
-    CREATE TABLE IF NOT EXISTS projection_thread_turns (
-      turn_id TEXT PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS projection_turns (
+      row_id INTEGER PRIMARY KEY AUTOINCREMENT,
       thread_id TEXT NOT NULL,
-      turn_count INTEGER NOT NULL,
-      status TEXT NOT NULL,
-      user_message_id TEXT,
+      turn_id TEXT,
+      pending_message_id TEXT,
       assistant_message_id TEXT,
-      started_at TEXT NOT NULL,
+      state TEXT NOT NULL,
+      requested_at TEXT NOT NULL,
+      started_at TEXT,
       completed_at TEXT,
-      UNIQUE (thread_id, turn_count)
-    )
-  `;
-
-  yield* sql`
-    CREATE TABLE IF NOT EXISTS projection_checkpoints (
-      thread_id TEXT NOT NULL,
-      turn_id TEXT NOT NULL,
-      checkpoint_turn_count INTEGER NOT NULL,
-      checkpoint_ref TEXT NOT NULL,
-      status TEXT NOT NULL,
-      files_json TEXT NOT NULL,
-      assistant_message_id TEXT,
-      completed_at TEXT NOT NULL,
+      checkpoint_turn_count INTEGER,
+      checkpoint_ref TEXT,
+      checkpoint_status TEXT,
+      checkpoint_files_json TEXT NOT NULL,
+      UNIQUE (thread_id, turn_id),
       UNIQUE (thread_id, checkpoint_turn_count)
     )
   `;
@@ -145,13 +137,13 @@ export default Effect.gen(function* () {
   `;
 
   yield* sql`
-    CREATE INDEX IF NOT EXISTS idx_projection_thread_turns_thread_turn_count
-    ON projection_thread_turns(thread_id, turn_count)
+    CREATE INDEX IF NOT EXISTS idx_projection_turns_thread_requested
+    ON projection_turns(thread_id, requested_at)
   `;
 
   yield* sql`
-    CREATE INDEX IF NOT EXISTS idx_projection_checkpoints_thread_completed
-    ON projection_checkpoints(thread_id, completed_at)
+    CREATE INDEX IF NOT EXISTS idx_projection_turns_thread_checkpoint_completed
+    ON projection_turns(thread_id, checkpoint_turn_count, completed_at)
   `;
 
   yield* sql`

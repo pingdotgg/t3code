@@ -23,6 +23,8 @@ import {
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
+const MAX_THREAD_MESSAGES = 2_000;
+const MAX_THREAD_CHECKPOINTS = 500;
 
 function updateThread(
   threads: ReadonlyArray<OrchestrationThread>,
@@ -313,11 +315,12 @@ export function projectEvent(
                 : entry,
             )
           : [...thread.messages, message];
+        const cappedMessages = messages.slice(-MAX_THREAD_MESSAGES);
 
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
-            messages,
+            messages: cappedMessages,
             updatedAt: event.occurredAt,
           }),
         };
@@ -384,7 +387,9 @@ export function projectEvent(
         const checkpoints = [
           ...thread.checkpoints.filter((entry) => entry.turnId !== checkpoint.turnId),
           checkpoint,
-        ].toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount);
+        ]
+          .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
+          .slice(-MAX_THREAD_CHECKPOINTS);
 
         return {
           ...nextBase,
@@ -406,13 +411,14 @@ export function projectEvent(
 
           const checkpoints = thread.checkpoints
             .filter((entry) => entry.checkpointTurnCount <= payload.turnCount)
-            .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount);
+            .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
+            .slice(-MAX_THREAD_CHECKPOINTS);
           const retainedTurnIds = new Set(checkpoints.map((checkpoint) => checkpoint.turnId));
           const messages = retainThreadMessagesAfterRevert(
             thread.messages,
             retainedTurnIds,
             payload.turnCount,
-          );
+          ).slice(-MAX_THREAD_MESSAGES);
           const activities = retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds);
 
           const latestTurnId =
