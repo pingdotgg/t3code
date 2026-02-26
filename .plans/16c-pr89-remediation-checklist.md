@@ -333,33 +333,6 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
 
 ### Phase 6
 
-- [ ] `C006` Build script runs TypeScript file with bare node
-  - Status: `TODO`
-  - Verdict: `partially-valid`
-  - Severity: `Medium`
-  - Area: `Build/runtime portability`
-  - File: `apps/server/package.json:14`
-  - Threads: PRRT_kwDORLtfbc5wxsO-
-  - Audit note: Node 24 makes this work, but script still relies on runtime-specific TS execution.
-
-- [ ] `C007` Build script uses `node` to run `.ts` file directly
-  - Status: `TODO`
-  - Verdict: `partially-valid`
-  - Severity: `Medium`
-  - Area: `Build/runtime portability`
-  - File: `apps/server/package.json:14`
-  - Threads: PRRT_kwDORLtfbc5wiLNS, PRRT_kwDORLtfbc5wj5fl (+1 duplicate thread(s))
-  - Audit note: Same as C006 (duplicate concern).
-
-- [ ] `C011` Template literal `${cause}` throws if `cause` is a `Symbol`. Consider using `String(cause)` instead.
-  - Status: `TODO`
-  - Verdict: `valid`
-  - Severity: `Medium`
-  - Area: `Other`
-  - File: `apps/server/src/orchestration/Errors.ts:117`
-  - Threads: PRRT_kwDORLtfbc5wBFv4
-  - Audit note: Template-literal interpolation of Symbol still throws.
-
 - [ ] `C024` In `executeUnprepared`, preparing outside an effect and not closing the statement can cause uncaught errors and leaks. Suggest wrapping with `Effect.acquireUseRelease`: prepare in acquire (error-safe) and `finalize` in release.
   - Status: `TODO`
   - Verdict: `partially-valid`
@@ -378,15 +351,6 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Threads: PRRT_kwDORLtfbc5v-XCu
   - Audit note: Optimistic local+server dual update is intentional but can temporarily diverge.
 
-- [ ] `C032` Dummy workflow marker accidentally committed to docs
-  - Status: `TODO`
-  - Verdict: `valid`
-  - Severity: `Low`
-  - Area: `Other`
-  - File: `AGENTS.md:45`
-  - Threads: PRRT_kwDORLtfbc5wlYgj, PRRT_kwDORLtfbc5w1C4H (+1 duplicate thread(s))
-  - Audit note: Dummy workflow marker comment is still present in docs.
-
 - [ ] `C037` `Effect.callback` should return a cleanup function to close the server(s) on fiber interruption. Without it, the `Net.Server` handles keep the process alive and leak the port if the effect is cancelled. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
   - Status: `TODO`
   - Verdict: `partially-valid`
@@ -396,15 +360,6 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - Threads: PRRT_kwDORLtfbc5wj4cO
   - Audit note: Callback cleanup missing, but practical exposure is low in one-shot startup path.
 
-- [ ] `C041` Template literal interpolation throws `TypeError` if `cause` is a `Symbol`. Consider using `String(cause)` for safe coercion.
-  - Status: `TODO`
-  - Verdict: `valid`
-  - Severity: `Low`
-  - Area: `Other`
-  - File: `apps/server/src/orchestration/Errors.ts:126`
-  - Threads: PRRT_kwDORLtfbc5wBFWs
-  - Audit note: Same Symbol interpolation hazard as C011 remains.
-
 - [ ] `C047` `SqlSchema.findOneOption` can produce both SQL errors and decode errors, but `mapError` wraps all as `PersistenceSqlError`. Consider distinguishing `ParseError` from SQL errors and mapping decode failures to `PersistenceDecodeError` instead. <details> <summary>🚀 Reply "<strong>fix it for me</strong>" or copy this <strong>AI Prompt</strong> for your agent:</summary>
   - Status: `TODO`
   - Verdict: `valid`
@@ -413,15 +368,6 @@ Counts: active `51` (`valid=33`, `partially-valid=18`), closed-invalid `6`
   - File: `apps/server/src/persistence/Layers/OrchestrationCommandReceipts.ts:75`
   - Threads: PRRT_kwDORLtfbc5wiaR-
   - Audit note: Decode and SQL errors still collapsed into one persistence error kind.
-
-- [ ] `C048` `statement.run()` returns a `RunResult` object, not an array. Casting it to `ReadonlyArray<any>` will cause runtime errors when consumers call array methods. Consider wrapping the result (e.g., `[result]`) or returning a properly typed object.
-  - Status: `TODO`
-  - Verdict: `partially-valid`
-  - Severity: `Low`
-  - Area: `Other`
-  - File: `apps/server/src/persistence/NodeSqliteClient.ts:99`
-  - Threads: PRRT_kwDORLtfbc5wio-r
-  - Audit note: Unsafe run() result cast remains; runtime risk depends on raw-result consumers.
 
 - [ ] `C049` `JSON.stringify(cause)` returns `undefined` for `undefined`, functions, or symbols, violating the `string` return type. Consider coercing the result to a string (e.g., `String(JSON.stringify(cause))`) or adding a fallback.
   - Status: `TODO`
