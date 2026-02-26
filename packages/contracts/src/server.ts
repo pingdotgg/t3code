@@ -4,6 +4,7 @@ import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 
 export const ServerConfig = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  keybindingsConfigPath: TrimmedNonEmptyString,
   keybindings: ResolvedKeybindingsConfig,
 });
 export type ServerConfig = typeof ServerConfig.Type;

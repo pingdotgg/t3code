@@ -19,6 +19,7 @@ import {
 import { Mutable } from "effect/Types";
 import {
   Array,
+  Cache,
   Cause,
   Effect,
   FileSystem,
@@ -26,8 +27,8 @@ import {
   Layer,
   Option,
   Predicate,
-  Ref,
   Schema,
+  SchemaGetter,
   SchemaIssue,
   SchemaTransformation,
   ServiceMap,
@@ -348,6 +349,29 @@ export const ResolvedKeybindingsFromConfig = Schema.Array(ResolvedKeybindingFrom
   Schema.isMaxLength(MAX_KEYBINDINGS_COUNT),
 );
 
+function isSameKeybindingRule(left: KeybindingRule, right: KeybindingRule): boolean {
+  return (
+    left.command === right.command &&
+    left.key === right.key &&
+    (left.when ?? undefined) === (right.when ?? undefined)
+  );
+}
+
+function keybindingShortcutContext(rule: KeybindingRule): string | null {
+  const parsed = parseKeybindingShortcut(rule.key);
+  if (!parsed) return null;
+  const encoded = encodeShortcut(parsed);
+  if (!encoded) return null;
+  return `${encoded}\u0000${rule.when ?? ""}`;
+}
+
+function hasSameShortcutContext(left: KeybindingRule, right: KeybindingRule): boolean {
+  const leftContext = keybindingShortcutContext(left);
+  const rightContext = keybindingShortcutContext(right);
+  if (!leftContext || !rightContext) return false;
+  return leftContext === rightContext;
+}
+
 function encodeShortcut(shortcut: KeybindingShortcut): string | null {
   const modifiers: string[] = [];
   if (shortcut.modKey) modifiers.push("mod");
@@ -378,6 +402,15 @@ const DEFAULT_RESOLVED_KEYBINDINGS = compileResolvedKeybindingsConfig(DEFAULT_KE
 
 const RawKeybindingsEntries = Schema.fromJsonString(Schema.Array(Schema.Unknown));
 const KeybindingsConfigJson = Schema.fromJsonString(KeybindingsConfig);
+const PrettyJsonString = SchemaGetter.parseJson<string>().compose(
+  SchemaGetter.stringifyJson({ space: 2 }),
+);
+const KeybindingsConfigPrettyJson = KeybindingsConfigJson.pipe(
+  Schema.encode({
+    decode: PrettyJsonString,
+    encode: PrettyJsonString,
+  }),
+);
 
 function mergeWithDefaultKeybindings(custom: ResolvedKeybindingsConfig): ResolvedKeybindingsConfig {
   if (custom.length === 0) {
@@ -402,6 +435,12 @@ function mergeWithDefaultKeybindings(custom: ResolvedKeybindingsConfig): Resolve
  * KeybindingsShape - Service API for keybinding configuration operations.
  */
 export interface KeybindingsShape {
+  /**
+   * Ensure the on-disk keybindings file exists and includes all default
+   * commands so newly-added defaults are backfilled on startup.
+   */
+  readonly syncDefaultKeybindingsOnStartup: Effect.Effect<void, KeybindingsConfigError>;
+
   /**
    * Load and resolve keybindings from disk merged with defaults.
    *
@@ -434,13 +473,28 @@ const makeKeybindings = Effect.gen(function* () {
   const { keybindingsConfigPath } = yield* ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const cachedResolvedConfig = yield* Ref.make<ResolvedKeybindingsConfig | null>(null);
   const upsertSemaphore = yield* Semaphore.make(1);
+  const resolvedConfigCacheKey = "resolved" as const;
+
+  const readConfigExists = fs.exists(keybindingsConfigPath).pipe(
+    Effect.mapError(
+      (cause) =>
+        new KeybindingsConfigError({
+          configPath: keybindingsConfigPath,
+          detail: "failed to access keybindings config",
+          cause,
+        }),
+    ),
+  );
 
   const loadCustomKeybindingsConfig = Effect.fn(function* (): Effect.fn.Return<
     readonly KeybindingRule[],
     KeybindingsConfigError
   > {
+    if (!(yield* readConfigExists)) {
+      return [];
+    }
+
     const rawConfig = yield* fs.readFileString(keybindingsConfigPath).pipe(
       Effect.flatMap(Schema.decodeEffect(RawKeybindingsEntries)),
       Effect.mapError(
@@ -481,9 +535,8 @@ const makeKeybindings = Effect.gen(function* () {
   const writeConfigAtomically = (rules: readonly KeybindingRule[]) => {
     const tempPath = `${keybindingsConfigPath}.${process.pid}.${Date.now()}.tmp`;
 
-    return Schema.encodeEffect(KeybindingsConfigJson)(
-      rules,
-    ).pipe(
+    return Schema.encodeEffect(KeybindingsConfigPrettyJson)(rules).pipe(
+      Effect.map((encoded) => `${encoded}\n`),
       Effect.tap(() => fs.makeDirectory(path.dirname(keybindingsConfigPath), { recursive: true })),
       Effect.tap((encoded) => fs.writeFileString(tempPath, encoded)),
       Effect.flatMap(() => fs.rename(tempPath, keybindingsConfigPath)),
@@ -498,18 +551,102 @@ const makeKeybindings = Effect.gen(function* () {
     );
   };
 
-  const loadResolvedFromCacheOrDisk = Effect.gen(function* () {
-    const cached = yield* Ref.get(cachedResolvedConfig);
-    if (cached) return cached;
-    const resolved = yield* loadCustomKeybindingsConfig().pipe(
-      Effect.map(compileResolvedKeybindingsConfig),
-      Effect.map(mergeWithDefaultKeybindings),
-    );
-    yield* Ref.set(cachedResolvedConfig, resolved);
-    return resolved;
+  const loadResolvedFromDisk = loadCustomKeybindingsConfig().pipe(
+    Effect.map(compileResolvedKeybindingsConfig),
+    Effect.map(mergeWithDefaultKeybindings),
+  );
+
+  const resolvedConfigCache = yield* Cache.make<
+    typeof resolvedConfigCacheKey,
+    ResolvedKeybindingsConfig,
+    KeybindingsConfigError
+  >({
+    capacity: 1,
+    lookup: () => loadResolvedFromDisk,
   });
 
+  const syncDefaultKeybindingsOnStartup = upsertSemaphore.withPermits(1)(
+    Effect.gen(function* () {
+      const configExists = yield* readConfigExists;
+      if (!configExists) {
+        yield* writeConfigAtomically(DEFAULT_KEYBINDINGS);
+        yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
+        return;
+      }
+
+      const customConfig = yield* loadCustomKeybindingsConfig();
+      const existingCommands = new Set(customConfig.map((entry) => entry.command));
+      const missingDefaults: KeybindingRule[] = [];
+      const shortcutConflictWarnings: Array<{
+        defaultCommand: KeybindingRule["command"];
+        conflictingCommand: KeybindingRule["command"];
+        key: string;
+        when: string | null;
+      }> = [];
+      for (const defaultRule of DEFAULT_KEYBINDINGS) {
+        if (existingCommands.has(defaultRule.command)) {
+          continue;
+        }
+        const conflictingEntry = customConfig.find((entry) =>
+          hasSameShortcutContext(entry, defaultRule),
+        );
+        if (conflictingEntry) {
+          shortcutConflictWarnings.push({
+            defaultCommand: defaultRule.command,
+            conflictingCommand: conflictingEntry.command,
+            key: defaultRule.key,
+            when: defaultRule.when ?? null,
+          });
+          continue;
+        }
+        missingDefaults.push(defaultRule);
+      }
+      for (const conflict of shortcutConflictWarnings) {
+        yield* Effect.logWarning("skipping default keybinding due to shortcut conflict", {
+          path: keybindingsConfigPath,
+          defaultCommand: conflict.defaultCommand,
+          conflictingCommand: conflict.conflictingCommand,
+          key: conflict.key,
+          when: conflict.when,
+          reason: "shortcut context already used by existing rule",
+        });
+      }
+      if (missingDefaults.length === 0) {
+        yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
+        return;
+      }
+
+      const matchingDefaults = DEFAULT_KEYBINDINGS.filter((defaultRule) =>
+        customConfig.some((entry) => isSameKeybindingRule(entry, defaultRule)),
+      ).map((rule) => rule.command);
+      if (matchingDefaults.length > 0) {
+        yield* Effect.logWarning("default keybinding rule already defined in user config", {
+          path: keybindingsConfigPath,
+          commands: matchingDefaults,
+        });
+      }
+
+      const nextConfig = [...customConfig, ...missingDefaults];
+      const cappedConfig =
+        nextConfig.length > MAX_KEYBINDINGS_COUNT
+          ? nextConfig.slice(-MAX_KEYBINDINGS_COUNT)
+          : nextConfig;
+      if (nextConfig.length > MAX_KEYBINDINGS_COUNT) {
+        yield* Effect.logWarning("truncating keybindings config to max entries", {
+          path: keybindingsConfigPath,
+          maxEntries: MAX_KEYBINDINGS_COUNT,
+        });
+      }
+
+      yield* writeConfigAtomically(cappedConfig);
+      yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
+    }),
+  );
+
+  const loadResolvedFromCacheOrDisk = Cache.get(resolvedConfigCache, resolvedConfigCacheKey);
+
   return {
+    syncDefaultKeybindingsOnStartup,
     loadResolvedKeybindingsConfig: loadResolvedFromCacheOrDisk,
     upsertKeybindingRule: (rule) =>
       upsertSemaphore.withPermits(1)(
@@ -533,7 +670,7 @@ const makeKeybindings = Effect.gen(function* () {
           const nextResolved = mergeWithDefaultKeybindings(
             compileResolvedKeybindingsConfig(cappedConfig),
           );
-          yield* Ref.set(cachedResolvedConfig, nextResolved);
+          yield* Cache.set(resolvedConfigCache, resolvedConfigCacheKey, nextResolved);
           return nextResolved;
         }),
       ),

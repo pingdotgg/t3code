@@ -309,18 +309,6 @@ function compileKeybindings(bindings: KeybindingsConfig): ResolvedKeybindingsCon
 
 const DEFAULT_RESOLVED_KEYBINDINGS = compileKeybindings([...DEFAULT_KEYBINDINGS]);
 
-function mergeWithDefaultsForTest(custom: KeybindingsConfig): ResolvedKeybindingsConfig {
-  if (custom.length === 0) {
-    return DEFAULT_RESOLVED_KEYBINDINGS;
-  }
-
-  const overriddenCommands = new Set(custom.map((binding) => binding.command));
-  const retainedDefaults = DEFAULT_KEYBINDINGS.filter(
-    (binding) => !overriddenCommands.has(binding.command),
-  );
-  return compileKeybindings([...retainedDefaults, ...custom].slice(-256));
-}
-
 describe("WebSocket Server", () => {
   let server: Http.Server | null = null;
   let serverScope: Scope.Closeable | null = null;
@@ -510,7 +498,8 @@ describe("WebSocket Server", () => {
 
   it("responds to server.getConfig", async () => {
     const stateDir = makeTempDir("t3code-state-get-config-");
-    fs.writeFileSync(path.join(stateDir, "keybindings.json"), "[]", "utf8");
+    const keybindingsPath = path.join(stateDir, "keybindings.json");
+    fs.writeFileSync(keybindingsPath, "[]", "utf8");
 
     server = await createTestServer({ cwd: "/my/workspace", stateDir });
     const addr = server.address();
@@ -526,8 +515,34 @@ describe("WebSocket Server", () => {
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual({
       cwd: "/my/workspace",
+      keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
     });
+  });
+
+  it("bootstraps default keybindings file when missing", async () => {
+    const stateDir = makeTempDir("t3code-state-bootstrap-keybindings-");
+    const keybindingsPath = path.join(stateDir, "keybindings.json");
+    expect(fs.existsSync(keybindingsPath)).toBe(false);
+
+    server = await createTestServer({ cwd: "/my/workspace", stateDir });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.serverGetConfig);
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({
+      cwd: "/my/workspace",
+      keybindingsConfigPath: keybindingsPath,
+      keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
+    });
+
+    const persistedConfig = JSON.parse(fs.readFileSync(keybindingsPath, "utf8")) as KeybindingsConfig;
+    expect(persistedConfig).toEqual(DEFAULT_KEYBINDINGS);
   });
 
   it("routes shell.openInEditor through the injected open service", async () => {
@@ -558,8 +573,9 @@ describe("WebSocket Server", () => {
 
   it("reads keybindings from the configured state directory", async () => {
     const stateDir = makeTempDir("t3code-state-keybindings-");
+    const keybindingsPath = path.join(stateDir, "keybindings.json");
     fs.writeFileSync(
-      path.join(stateDir, "keybindings.json"),
+      keybindingsPath,
       JSON.stringify([
         { key: "cmd+j", command: "terminal.toggle" },
         { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
@@ -578,13 +594,11 @@ describe("WebSocket Server", () => {
 
     const response = await sendRequest(ws, WS_METHODS.serverGetConfig);
     expect(response.error).toBeUndefined();
+    const persistedConfig = JSON.parse(fs.readFileSync(keybindingsPath, "utf8")) as KeybindingsConfig;
     expect(response.result).toEqual({
       cwd: "/my/workspace",
-      keybindings: mergeWithDefaultsForTest([
-        { key: "cmd+j", command: "terminal.toggle" },
-        { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
-        { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
-      ]),
+      keybindingsConfigPath: keybindingsPath,
+      keybindings: compileKeybindings(persistedConfig),
     });
   });
 
@@ -610,30 +624,22 @@ describe("WebSocket Server", () => {
       command: "script.run-tests.run",
     });
     expect(upsertResponse.error).toBeUndefined();
+    const persistedConfig = JSON.parse(fs.readFileSync(keybindingsPath, "utf8")) as KeybindingsConfig;
+    const persistedCommands = new Set(persistedConfig.map((entry) => entry.command));
+    for (const defaultRule of DEFAULT_KEYBINDINGS) {
+      expect(persistedCommands.has(defaultRule.command)).toBe(true);
+    }
+    expect(persistedCommands.has("script.run-tests.run")).toBe(true);
     expect(upsertResponse.result).toEqual({
-      keybindings: mergeWithDefaultsForTest([
-        { key: "mod+j", command: "terminal.toggle" },
-        { key: "mod+shift+r", command: "script.run-tests.run" },
-      ]),
+      keybindings: compileKeybindings(persistedConfig),
     });
-
-    const persistedConfig = JSON.parse(fs.readFileSync(keybindingsPath, "utf8")) as Array<{
-      key: string;
-      command: string;
-    }>;
-    expect(persistedConfig).toEqual([
-      { key: "mod+j", command: "terminal.toggle" },
-      { key: "mod+shift+r", command: "script.run-tests.run" },
-    ]);
 
     const configResponse = await sendRequest(ws, WS_METHODS.serverGetConfig);
     expect(configResponse.error).toBeUndefined();
     expect(configResponse.result).toEqual({
       cwd: "/my/workspace",
-      keybindings: mergeWithDefaultsForTest([
-        { key: "mod+j", command: "terminal.toggle" },
-        { key: "mod+shift+r", command: "script.run-tests.run" },
-      ]),
+      keybindingsConfigPath: keybindingsPath,
+      keybindings: compileKeybindings(persistedConfig),
     });
   });
 

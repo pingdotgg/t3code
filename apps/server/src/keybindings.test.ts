@@ -2,10 +2,11 @@ import { KeybindingCommand, KeybindingRule, KeybindingsConfig } from "@t3tools/c
 import { NodeServices } from "@effect/platform-node";
 import { assert, it } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
-import { Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { Effect, FileSystem, Layer, Logger, Path, Schema } from "effect";
 import { ServerConfig, type ServerConfigShape } from "./config";
 
 import {
+  DEFAULT_KEYBINDINGS,
   Keybindings,
   KeybindingsConfigError,
   KeybindingsLive,
@@ -148,6 +149,90 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       );
     }),
   );
+
+  it.effect("bootstraps default keybindings when config file is missing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      assert.isFalse(yield* fs.exists(keybindingsConfigPath));
+
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        yield* keybindings.syncDefaultKeybindingsOnStartup;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.deepEqual(persisted, DEFAULT_KEYBINDINGS);
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect(
+    "upserts missing default keybindings on startup without overriding existing command rules",
+    () =>
+      Effect.gen(function* () {
+        const { keybindingsConfigPath } = yield* ServerConfig;
+        yield* writeKeybindingsConfig(keybindingsConfigPath, [
+          { key: "mod+shift+t", command: "terminal.toggle" },
+          { key: "mod+shift+r", command: "script.run-tests.run" },
+        ]);
+
+        yield* Effect.gen(function* () {
+          const keybindings = yield* Keybindings;
+          yield* keybindings.syncDefaultKeybindingsOnStartup;
+        });
+
+        const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+        const byCommand = new Map(persisted.map((entry) => [entry.command, entry]));
+
+        const persistedToggle = byCommand.get("terminal.toggle");
+        assert.isNotNull(persistedToggle);
+        assert.equal(persistedToggle?.key, "mod+shift+t");
+        assert.isFalse(
+          persisted.some((entry) => entry.command === "terminal.toggle" && entry.key === "mod+j"),
+        );
+
+        for (const defaultRule of DEFAULT_KEYBINDINGS) {
+          assert.isTrue(byCommand.has(defaultRule.command), `expected ${defaultRule.command}`);
+        }
+        assert.isTrue(byCommand.has("script.run-tests.run"));
+      }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("skips conflicting default keybindings on startup and logs a detailed warning", () => {
+    const messages: string[] = [];
+    const logger = Logger.make(({ message }) => {
+      messages.push(String(message));
+    });
+
+    return Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+j", command: "script.custom-action.run" },
+      ]);
+
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        yield* keybindings.syncDefaultKeybindingsOnStartup;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.isFalse(persisted.some((entry) => entry.command === "terminal.toggle"));
+      assert.isTrue(persisted.some((entry) => entry.command === "script.custom-action.run"));
+
+      assert.isTrue(
+        messages.some((message) =>
+          message.includes("skipping default keybinding due to shortcut conflict"),
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          makeKeybindingsLayer(),
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
+      ),
+    );
+  });
 
   it.effect("upserts custom keybindings to configured path", () =>
     Effect.gen(function* () {

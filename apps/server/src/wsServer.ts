@@ -172,6 +172,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const {
     port,
     cwd,
+    keybindingsConfigPath,
     staticDir,
     devUrl,
     authToken,
@@ -184,6 +185,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
   const git = yield* GitCore;
+
+  yield* keybindingsManager.syncDefaultKeybindingsOnStartup.pipe(
+    Effect.catch((error) =>
+      Effect.logWarning("failed to sync keybindings defaults on startup", {
+        path: error.configPath,
+        detail: error.detail,
+        cause: error.cause,
+      }),
+    ),
+  );
 
   const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
@@ -462,7 +473,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.serverGetConfig:
         const keybindingsConfig = yield* keybindingsManager.loadResolvedKeybindingsConfig;
-        return { cwd, keybindings: keybindingsConfig };
+        return { cwd, keybindingsConfigPath, keybindings: keybindingsConfig };
 
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);

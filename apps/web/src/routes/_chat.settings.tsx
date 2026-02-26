@@ -1,9 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { useCallback, useState } from "react";
 
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
+import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import { ensureNativeApi } from "../nativeApi";
 import { useStore } from "../store";
+import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
@@ -44,9 +49,30 @@ function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { state, dispatch } = useStore();
   const { settings, defaults, updateSettings } = useAppSettings();
+  const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
+  const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
+
+  const openKeybindingsFile = useCallback(() => {
+    if (!keybindingsConfigPath) return;
+    setOpenKeybindingsError(null);
+    setIsOpeningKeybindings(true);
+    const api = ensureNativeApi();
+    void api.shell
+      .openInEditor(keybindingsConfigPath, preferredTerminalEditor())
+      .catch((error) => {
+        setOpenKeybindingsError(
+          error instanceof Error ? error.message : "Unable to open keybindings file.",
+        );
+      })
+      .finally(() => {
+        setIsOpeningKeybindings(false);
+      });
+  }, [keybindingsConfigPath]);
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
@@ -208,6 +234,42 @@ function SettingsRouteView() {
                     </button>
                   );
                 })}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Keybindings</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Open the persisted <code>keybindings.json</code> file to edit advanced
+                  bindings directly.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium text-foreground">Config file path</p>
+                    <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+                      {keybindingsConfigPath ?? "Resolving keybindings path..."}
+                    </p>
+                  </div>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={!keybindingsConfigPath || isOpeningKeybindings}
+                    onClick={openKeybindingsFile}
+                  >
+                    {isOpeningKeybindings ? "Opening..." : "Open keybindings.json"}
+                  </Button>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Opens in your preferred editor selection.
+                </p>
+                {openKeybindingsError ? (
+                  <p className="text-xs text-destructive">{openKeybindingsError}</p>
+                ) : null}
               </div>
             </section>
 
