@@ -1,0 +1,3827 @@
+{
+  "pull_request": {
+    "number": 89,
+    "url": "https://github.com/pingdotgg/t3-code/pull/89",
+    "title": "Add server-side orchestration engine with event sourcing",
+    "state": "OPEN",
+    "owner": "pingdotgg",
+    "repo": "t3-code"
+  },
+  "phase0_generated_at": "2026-02-26T02:49:21.091145Z",
+  "summary": {
+    "total_threads": 185,
+    "actionable_canonical": 60,
+    "actionable_duplicates": 24,
+    "filtered_outdated": 94,
+    "filtered_resolved": 6,
+    "filtered_invalid": 1
+  },
+  "canonical_items": [
+    {
+      "canonical_id": "C001",
+      "area": "Event ordering and state consistency",
+      "title": "Non-atomic event appending can corrupt state on retry. If an error occurs mid-loop (lines 96-102) after some events are persisted but before the receipt is written, the command appears to fail. A retry generates new UUIDs via `crypto.randomUUID()` in the decider, appending duplicate events. Consider wrapping the loop in a transaction or using deterministic event IDs derived from `commandId`. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "High",
+      "path": "apps/server/src/orchestration/Layers/OrchestrationEngine.ts",
+      "line": 96,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wzp4T"
+      ],
+      "thread_indexes": [
+        169
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C002",
+      "area": "Runtime resilience and failure handling",
+      "title": "A dispatch error in `processEvent` will terminate the `Effect.forever` loop, permanently halting event ingestion. Consider adding error recovery (e.g., `Effect.catchAll` with logging) around `processEvent` so failures don't kill the fiber.",
+      "severity": "High",
+      "path": "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts",
+      "line": 333,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wj4cH",
+        "PRRT_kwDORLtfbc5wnWwF",
+        "PRRT_kwDORLtfbc5wyTaP",
+        "PRRT_kwDORLtfbc5wzliw",
+        "PRRT_kwDORLtfbc5w0_g3",
+        "PRRT_kwDORLtfbc5w1HGT"
+      ],
+      "thread_indexes": [
+        119,
+        146,
+        158,
+        163,
+        170,
+        182
+      ],
+      "duplicate_count": 5,
+      "authors": [
+        "cursor",
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C003",
+      "area": "WebSocket robustness",
+      "title": "Consider attaching a no-op error listener before `socket.write` (e.g., `socket.on('error', () => {})`) to prevent an unhandled `EPIPE`/`ECONNRESET` from crashing the process if the client disconnects mid-handshake.",
+      "severity": "High",
+      "path": "apps/server/src/wsServer.ts",
+      "line": 75,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5v-cf4"
+      ],
+      "thread_indexes": [
+        72
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C004",
+      "area": "Web provider event integration",
+      "title": "channel.** The web app currently does not consume provider event streams via the `providers.event` channel. While the orchestration API has `onReadModel()` and `onDomainEvent()` subscriptions, the providers event stream subscription is missing. Add a subscription to `ORCHESTRATION_WS_CHANNELS.event` (or the appropriate providers event channel from contracts) in `wsNativeApi.ts` and expose it via the `api.providers` object to comply with the guideline requirement. <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
+      "severity": "High",
+      "path": "apps/web/src/routes/__root.tsx",
+      "line": 140,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5v9An7"
+      ],
+      "thread_indexes": [
+        31
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "coderabbitai"
+      ]
+    },
+    {
+      "canonical_id": "C005",
+      "area": "Web provider event integration",
+      "title": "push stream, and the callbacks rely on unchecked casts. Please reintroduce a `providers.onEvent` (or equivalent) that subscribes to the `providers.event` channel and decode read-model/domain-event payloads using the shared contracts schemas before invoking callbacks. As per coding guidelines: \"Web app must consume provider event streams via WebSocket push on channel `providers.event`\" and \"Use Zod schemas from `packages/contracts` for shared type contracts covering provider events, WebSocket protocol, and model/session types\". <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
+      "severity": "High",
+      "path": "apps/web/src/wsNativeApi.ts",
+      "line": 165,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5v9An-"
+      ],
+      "thread_indexes": [
+        34
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "coderabbitai"
+      ]
+    },
+    {
+      "canonical_id": "C006",
+      "area": "Build/runtime portability",
+      "title": "Build script runs TypeScript file with bare node",
+      "severity": "Medium",
+      "path": "apps/server/package.json",
+      "line": 14,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wxsO-"
+      ],
+      "thread_indexes": [
+        150
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C007",
+      "area": "Build/runtime portability",
+      "title": "Build script uses `node` to run `.ts` file directly",
+      "severity": "Medium",
+      "path": "apps/server/package.json",
+      "line": 14,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wiLNS",
+        "PRRT_kwDORLtfbc5wj5fl"
+      ],
+      "thread_indexes": [
+        106,
+        123
+      ],
+      "duplicate_count": 1,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C008",
+      "area": "Checkpointing correctness",
+      "title": "Inconsistent input normalization across CheckpointStore methods",
+      "severity": "Medium",
+      "path": "apps/server/src/checkpointing/Layers/CheckpointStore.ts",
+      "line": 94,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5widJw",
+        "PRRT_kwDORLtfbc5wnWv_",
+        "PRRT_kwDORLtfbc5w0_g7",
+        "PRRT_kwDORLtfbc5w1C36"
+      ],
+      "thread_indexes": [
+        112,
+        145,
+        172,
+        176
+      ],
+      "duplicate_count": 3,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C009",
+      "area": "Edge-case parsing/platform behavior",
+      "title": "Git's braced rename syntax (e.g., `src/{old => new}/file.ts`) isn't handled correctly. The current slice after ` => ` produces invalid paths like `new}/file.ts`. Consider expanding the braces to construct the full destination path. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Medium",
+      "path": "apps/server/src/git/Layers/GitCore.ts",
+      "line": 41,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5w1CxT"
+      ],
+      "thread_indexes": [
+        175
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C010",
+      "area": "Edge-case parsing/platform behavior",
+      "title": "`loadCustomKeybindingsConfig` fails when the config file doesn't exist, which is expected for new users. Consider catching `ENOENT` and returning an empty array instead. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Medium",
+      "path": "apps/server/src/keybindings.ts",
+      "line": 418,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wxvIJ"
+      ],
+      "thread_indexes": [
+        155
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C011",
+      "area": "Other",
+      "title": "Template literal `${cause}` throws if `cause` is a `Symbol`. Consider using `String(cause)` instead.",
+      "severity": "Medium",
+      "path": "apps/server/src/orchestration/Errors.ts",
+      "line": 117,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wBFv4"
+      ],
+      "thread_indexes": [
+        86
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C012",
+      "area": "Runtime resilience and failure handling",
+      "title": "Forked revert dispatch risks read model inconsistency",
+      "severity": "Medium",
+      "path": "apps/server/src/orchestration/Layers/CheckpointReactor.ts",
+      "line": 542,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5whszW",
+        "PRRT_kwDORLtfbc5wyTaS",
+        "PRRT_kwDORLtfbc5wzli0",
+        "PRRT_kwDORLtfbc5w0_g4",
+        "PRRT_kwDORLtfbc5w1HGX"
+      ],
+      "thread_indexes": [
+        92,
+        159,
+        165,
+        171,
+        184
+      ],
+      "duplicate_count": 4,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C013",
+      "area": "Event ordering and state consistency",
+      "title": "If `projectionPipeline.projectEvent` fails after `eventStore.append` succeeds, the event is persisted but `readModel` isn't updated, causing desync. Consider updating the in-memory `readModel` immediately after append (before the external projection), so local state stays consistent regardless of downstream failures.",
+      "severity": "Medium",
+      "path": "apps/server/src/orchestration/Layers/OrchestrationEngine.ts",
+      "line": 99,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5whtrM"
+      ],
+      "thread_indexes": [
+        93
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C014",
+      "area": "Event ordering and state consistency",
+      "title": "Engine error handler catches all errors including non-invariant ones",
+      "severity": "Medium",
+      "path": "apps/server/src/orchestration/Layers/OrchestrationEngine.ts",
+      "line": 144,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wkPaJ"
+      ],
+      "thread_indexes": [
+        130
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C015",
+      "area": "Event ordering and state consistency",
+      "title": "The gap-filling fallback logic can retain messages from turns that are about to be deleted, causing foreign key violations. Consider removing the fallback logic entirely, or filtering `fallbackUserMessages` and `fallbackAssistantMessages` to only include messages whose `turnId` is in `retainedTurnIds`. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Medium",
+      "path": "apps/server/src/orchestration/Layers/ProjectionPipeline.ts",
+      "line": 99,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5whxJO"
+      ],
+      "thread_indexes": [
+        101
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C016",
+      "area": "Event ordering and state consistency",
+      "title": "The in-memory `pendingTurnStartByThreadId` map isn't restored during bootstrap. If the service restarts after processing `thread.turn-start-requested` but before `thread.session-set`, the `userMessageId` and `startedAt` will be lost since bootstrap resumes *after* the committed sequence. Consider persisting this pending state or processing these two events atomically. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Medium",
+      "path": "apps/server/src/orchestration/Layers/ProjectionPipeline.ts",
+      "line": 490,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wxvH8"
+      ],
+      "thread_indexes": [
+        151
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C017",
+      "area": "Checkpointing correctness",
+      "title": "`REQUIRED_SNAPSHOT_PROJECTORS` includes `pending-approvals` and `thread-turns`, but `getSnapshot` doesn't query their data. If these projectors lag behind, the returned `snapshotSequence` will be lower than what the included data actually reflects, causing clients to replay already-applied events. Consider filtering `REQUIRED_SNAPSHOT_PROJECTORS` to only include projectors whose data is actually fetched in the snapshot. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Medium",
+      "path": "apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts",
+      "line": 71,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wiLhQ"
+      ],
+      "thread_indexes": [
+        107
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C018",
+      "area": "Memory/resource growth",
+      "title": "Unbounded memory growth in turn start deduplication set",
+      "severity": "Medium",
+      "path": "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts",
+      "line": 84,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5whszQ",
+        "PRRT_kwDORLtfbc5wl2A8",
+        "PRRT_kwDORLtfbc5wyTaT",
+        "PRRT_kwDORLtfbc5wzliz",
+        "PRRT_kwDORLtfbc5w0_g-",
+        "PRRT_kwDORLtfbc5w1HGW"
+      ],
+      "thread_indexes": [
+        90,
+        140,
+        160,
+        164,
+        173,
+        183
+      ],
+      "duplicate_count": 5,
+      "authors": [
+        "cursor",
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C019",
+      "area": "Runtime resilience and failure handling",
+      "title": "ProviderRuntimeIngestion processes events for wrong thread on race",
+      "severity": "Medium",
+      "path": "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts",
+      "line": 178,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wkPaL"
+      ],
+      "thread_indexes": [
+        131
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C020",
+      "area": "Runtime resilience and failure handling",
+      "title": "On `message.completed`, the message ID is added to the set and `thread.message.assistant.complete` is dispatched. On `turn.completed`, the same set is iterated and `thread.message.assistant.complete` is dispatched again for each ID\u2014including already-completed ones. Consider removing message IDs from the set after dispatching on `message.completed`, or filtering out already-completed IDs before the `turn.completed` loop.",
+      "severity": "Medium",
+      "path": "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts",
+      "line": 266,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5w1GPr"
+      ],
+      "thread_indexes": [
+        181
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C021",
+      "area": "Other",
+      "title": "Shared mutable default metadata object causes stale eventId",
+      "severity": "Medium",
+      "path": "apps/server/src/orchestration/decider.ts",
+      "line": 27,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wkPaA"
+      ],
+      "thread_indexes": [
+        128
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C022",
+      "area": "Edge-case parsing/platform behavior",
+      "title": "Fish shell outputs `$PATH` as space-separated, not colon-separated. Consider checking if the shell is fish and using `string join : $PATH` instead, or validating the result contains colons before assigning.",
+      "severity": "Medium",
+      "path": "apps/server/src/os-jank.ts",
+      "line": 10,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wkRZM"
+      ],
+      "thread_indexes": [
+        133
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C023",
+      "area": "Edge-case parsing/platform behavior",
+      "title": "Using `-il` flags causes the shell to source profile scripts that may print banners or other text, polluting the captured `PATH`. Consider using `-lc` (login only, non-interactive) to reduce unwanted output.",
+      "severity": "Medium",
+      "path": "apps/server/src/os-jank.ts",
+      "line": 10,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wj4cM"
+      ],
+      "thread_indexes": [
+        121
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C024",
+      "area": "Other",
+      "title": "In `executeUnprepared`, preparing outside an effect and not closing the statement can cause uncaught errors and leaks. Suggest wrapping with `Effect.acquireUseRelease`: prepare in acquire (error-safe) and `finalize` in release.",
+      "severity": "Medium",
+      "path": "apps/server/src/persistence/NodeSqliteClient.ts",
+      "line": 145,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5whxX9"
+      ],
+      "thread_indexes": [
+        103
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C025",
+      "area": "Checkpointing correctness",
+      "title": "Duplicated checkpoint ref computation across two files",
+      "severity": "Medium",
+      "path": "apps/server/src/wsServer.ts",
+      "line": 128,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wvwag"
+      ],
+      "thread_indexes": [
+        148
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C026",
+      "area": "WebSocket robustness",
+      "title": "Consider adding `.catch(() => {})` after `Effect.runPromise(handleMessage(ws, raw))` to prevent unhandled rejections from crashing the server if `encodeResponse` or setup logic fails.",
+      "severity": "Medium",
+      "path": "apps/server/src/wsServer.ts",
+      "line": 545,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wj4cE"
+      ],
+      "thread_indexes": [
+        118
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C027",
+      "area": "Runtime resilience and failure handling",
+      "title": "WS message handler can cause unhandled promise rejection",
+      "severity": "Medium",
+      "path": "apps/server/src/wsServer.ts",
+      "line": 545,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wyTaW",
+        "PRRT_kwDORLtfbc5wzli3"
+      ],
+      "thread_indexes": [
+        161,
+        167
+      ],
+      "duplicate_count": 1,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C028",
+      "area": "Other",
+      "title": "Branch sync dispatches both server and stale local update",
+      "severity": "Medium",
+      "path": "apps/web/src/components/BranchToolbar.tsx",
+      "line": 102,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5v-XCu"
+      ],
+      "thread_indexes": [
+        60
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C029",
+      "area": "Edge-case parsing/platform behavior",
+      "title": "`parseFileUrlHref` already decodes the path (line 46), but `safeDecode` is called again here, corrupting filenames containing `%` sequences. Consider skipping the decode when `fileUrlTarget` is non-null.",
+      "severity": "Medium",
+      "path": "apps/web/src/markdown-links.ts",
+      "line": 105,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wnVsU"
+      ],
+      "thread_indexes": [
+        143
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C030",
+      "area": "Edge-case parsing/platform behavior",
+      "title": "`EXTERNAL_SCHEME_PATTERN` matches `script.ts:10` as a scheme because `.ts:` looks like `scheme:`. Consider requiring `://` after the colon, or checking that what follows the colon is not just digits. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Medium",
+      "path": "apps/web/src/markdown-links.ts",
+      "line": 111,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wnVsK"
+      ],
+      "thread_indexes": [
+        142
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C031",
+      "area": "Event ordering and state consistency",
+      "title": "Revert uses wrong turn count from positional inference",
+      "severity": "Medium",
+      "path": "apps/web/src/session-logic.ts",
+      "line": 127,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5v9SCp"
+      ],
+      "thread_indexes": [
+        41
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C032",
+      "area": "Other",
+      "title": "Dummy workflow marker accidentally committed to docs",
+      "severity": "Low",
+      "path": "AGENTS.md",
+      "line": 45,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wlYgj",
+        "PRRT_kwDORLtfbc5w1C4H"
+      ],
+      "thread_indexes": [
+        137,
+        179
+      ],
+      "duplicate_count": 1,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C033",
+      "area": "Checkpointing correctness",
+      "title": "Three error classes defined but never instantiated anywhere",
+      "severity": "Low",
+      "path": "apps/server/src/checkpointing/Errors.ts",
+      "line": 51,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wlYgo"
+      ],
+      "thread_indexes": [
+        138
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C034",
+      "area": "Checkpointing correctness",
+      "title": "Redundant `CheckpointInvariantError` in `CheckpointServiceError` union type",
+      "severity": "Low",
+      "path": "apps/server/src/checkpointing/Errors.ts",
+      "line": 79,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wj5fn"
+      ],
+      "thread_indexes": [
+        124
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C035",
+      "area": "Checkpointing correctness",
+      "title": "Redundant error type in CheckpointServiceError union definition",
+      "severity": "Low",
+      "path": "apps/server/src/checkpointing/Errors.ts",
+      "line": 79,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wlYgs",
+        "PRRT_kwDORLtfbc5wxsO6",
+        "PRRT_kwDORLtfbc5w1C4B"
+      ],
+      "thread_indexes": [
+        139,
+        149,
+        178
+      ],
+      "duplicate_count": 2,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C036",
+      "area": "Checkpointing correctness",
+      "title": "Duplicate `checkpointRefForThreadTurn` function in two production files",
+      "severity": "Low",
+      "path": "apps/server/src/checkpointing/Layers/CheckpointStore.ts",
+      "line": 284,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wiqFX"
+      ],
+      "thread_indexes": [
+        115
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C037",
+      "area": "Other",
+      "title": "`Effect.callback` should return a cleanup function to close the server(s) on fiber interruption. Without it, the `Net.Server` handles keep the process alive and leak the port if the effect is cancelled. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "path": "apps/server/src/config.ts",
+      "line": 41,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wj4cO"
+      ],
+      "thread_indexes": [
+        122
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C038",
+      "area": "Edge-case parsing/platform behavior",
+      "title": "Multi-byte UTF-8 characters split across chunks will be corrupted when decoding each chunk separately. Consider accumulating all chunks first, then decoding once, or use `TextDecoder` with `stream: true`. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "path": "apps/server/src/git/Layers/CodexTextGeneration.ts",
+      "line": 136,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5w1GPo"
+      ],
+      "thread_indexes": [
+        180
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C039",
+      "area": "Edge-case parsing/platform behavior",
+      "title": "The `+` key can be parsed (via trailing `+` handling) but cannot be encoded because `shortcut.key.includes(\"+\")` returns true for the literal `+` key. Consider checking `shortcut.key === \"+\"` separately and encoding it as `\"space\"` style (e.g., a special token), or adjusting the condition to allow the single `+` character. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "path": "apps/server/src/keybindings.ts",
+      "line": 352,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wxvIB"
+      ],
+      "thread_indexes": [
+        154
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C040",
+      "area": "Edge-case parsing/platform behavior",
+      "title": "`upsertKeybindingRule` has a race condition: concurrent calls read the same file state, then the last write overwrites earlier changes. Consider wrapping the read-modify-write sequence with `Effect.Semaphore` to serialize access. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "path": "apps/server/src/keybindings.ts",
+      "line": 488,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wxvIA"
+      ],
+      "thread_indexes": [
+        153
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C041",
+      "area": "Other",
+      "title": "Template literal interpolation throws `TypeError` if `cause` is a `Symbol`. Consider using `String(cause)` for safe coercion.",
+      "severity": "Low",
+      "path": "apps/server/src/orchestration/Errors.ts",
+      "line": 126,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wBFWs"
+      ],
+      "thread_indexes": [
+        85
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C042",
+      "area": "Runtime resilience and failure handling",
+      "title": "Duplicated `resolveThreadWorkspaceCwd` across three files",
+      "severity": "Low",
+      "path": "apps/server/src/orchestration/Layers/CheckpointReactor.ts",
+      "line": 62,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wzli2"
+      ],
+      "thread_indexes": [
+        166
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C043",
+      "area": "Runtime resilience and failure handling",
+      "title": "Duplicated workspace CWD resolution logic across reactor modules",
+      "severity": "Low",
+      "path": "apps/server/src/orchestration/Layers/CheckpointReactor.ts",
+      "line": 62,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wnWwM",
+        "PRRT_kwDORLtfbc5w1C3-",
+        "PRRT_kwDORLtfbc5w1HGZ"
+      ],
+      "thread_indexes": [
+        147,
+        177,
+        185
+      ],
+      "duplicate_count": 2,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C044",
+      "area": "Runtime resilience and failure handling",
+      "title": "Checkpoint reactor swallows diff errors silently for `turn.completed`",
+      "severity": "Low",
+      "path": "apps/server/src/orchestration/Layers/CheckpointReactor.ts",
+      "line": 274,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wkPaO"
+      ],
+      "thread_indexes": [
+        132
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C045",
+      "area": "Runtime resilience and failure handling",
+      "title": "`truncateDetail` slices to `limit - 1` then appends `\"...\"` (3 chars), producing strings of length `limit + 2`. Consider slicing to `limit - 3` instead. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "path": "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts",
+      "line": 29,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wzp4R"
+      ],
+      "thread_indexes": [
+        168
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C046",
+      "area": "Runtime resilience and failure handling",
+      "title": "`latestMessageIdByTurnKey` is written to but never read, and `clearAssistantMessageIdsForTurn` doesn't clear its entries\u2014only `clearTurnStateForSession` does. Consider removing this map entirely if unused, or clearing it alongside `turnMessageIdsByTurnKey` in `clearAssistantMessageIdsForTurn`. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "path": "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts",
+      "line": 133,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wxvIQ"
+      ],
+      "thread_indexes": [
+        156
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C047",
+      "area": "Other",
+      "title": "`SqlSchema.findOneOption` can produce both SQL errors and decode errors, but `mapError` wraps all as `PersistenceSqlError`. Consider distinguishing `ParseError` from SQL errors and mapping decode failures to `PersistenceDecodeError` instead. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "path": "apps/server/src/persistence/Layers/OrchestrationCommandReceipts.ts",
+      "line": 75,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wiaR-"
+      ],
+      "thread_indexes": [
+        110
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C048",
+      "area": "Other",
+      "title": "`statement.run()` returns a `RunResult` object, not an array. Casting it to `ReadonlyArray<any>` will cause runtime errors when consumers call array methods. Consider wrapping the result (e.g., `[result]`) or returning a properly typed object.",
+      "severity": "Low",
+      "path": "apps/server/src/persistence/NodeSqliteClient.ts",
+      "line": 99,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wio-r"
+      ],
+      "thread_indexes": [
+        114
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C049",
+      "area": "Other",
+      "title": "`JSON.stringify(cause)` returns `undefined` for `undefined`, functions, or symbols, violating the `string` return type. Consider coercing the result to a string (e.g., `String(JSON.stringify(cause))`) or adding a fallback.",
+      "severity": "Low",
+      "path": "apps/server/src/provider/Layers/ProviderService.ts",
+      "line": 59,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wnVsI"
+      ],
+      "thread_indexes": [
+        141
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C050",
+      "area": "Other",
+      "title": "The read-modify-write pattern (`getBySessionId` \u2192 merge \u2192 `upsert`) is susceptible to lost updates under concurrent writes. Consider wrapping in a transaction or adding optimistic concurrency control (e.g., version field) if concurrent session updates are expected. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "path": "apps/server/src/provider/Layers/ProviderSessionDirectory.ts",
+      "line": 94,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wiLhY"
+      ],
+      "thread_indexes": [
+        108
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C051",
+      "area": "Other",
+      "title": "Using `??` for `providerThreadId` and `adapterKey` makes it impossible to clear these fields by passing `null`, since `null ?? existing` evaluates to `existing`. Consider using explicit `undefined` checks (like `resumeCursor` does) if clearing should be supported. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "path": "apps/server/src/provider/Layers/ProviderSessionDirectory.ts",
+      "line": 119,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wxvH9"
+      ],
+      "thread_indexes": [
+        152
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C052",
+      "area": "Other",
+      "title": "Race condition: `processHandle` may be `null` when `data` callback fires, since it's assigned after `Bun.spawn` returns. Consider initializing `BunPtyProcess` first, then passing it to the callback to avoid losing initial output. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "path": "apps/server/src/terminal/Layers/BunPTY.ts",
+      "line": 97,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5w1CxE"
+      ],
+      "thread_indexes": [
+        174
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C053",
+      "area": "WebSocket robustness",
+      "title": "Consider using `socket.end(response)` instead of `socket.write(response)` + `socket.destroy()` to ensure the HTTP error response is fully flushed before closing the connection.",
+      "severity": "Low",
+      "path": "apps/server/src/wsServer.ts",
+      "line": 83,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5v-WPD"
+      ],
+      "thread_indexes": [
+        57
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C054",
+      "area": "WebSocket robustness",
+      "title": "When array chunks contain a multi-byte UTF-8 character split across boundaries, decoding each chunk separately produces replacement characters. Consider using `Buffer.concat()` on all chunks before calling `.toString(\"utf8\")`. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "path": "apps/server/src/wsServer.ts",
+      "line": 104,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5whtrR"
+      ],
+      "thread_indexes": [
+        96
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C055",
+      "area": "Checkpointing correctness",
+      "title": "Duplicate `checkpointRefForThreadTurn` function across files",
+      "severity": "Low",
+      "path": "apps/server/src/wsServer.ts",
+      "line": 128,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wkPaG"
+      ],
+      "thread_indexes": [
+        129
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "cursor"
+      ]
+    },
+    {
+      "canonical_id": "C056",
+      "area": "Other",
+      "title": "When `onOpenChange` is provided without `open`, the internal `_open` state never updates because `setOpenProp` takes precedence. Consider calling `_setOpen` when `openProp === undefined`, regardless of whether `setOpenProp` exists.",
+      "severity": "Low",
+      "path": "apps/web/src/components/ui/sidebar.tsx",
+      "line": 114,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wxvIq"
+      ],
+      "thread_indexes": [
+        157
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C057",
+      "area": "Other",
+      "title": "The `resizable` object is recreated on every render, causing `SidebarRail`'s `useEffect` to repeatedly read localStorage and update the DOM. Consider memoizing the object with `useMemo`. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "path": "apps/web/src/routes/_chat.$threadId.tsx",
+      "line": 105,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wyWz4"
+      ],
+      "thread_indexes": [
+        162
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C058",
+      "area": "Other",
+      "title": "When `localStorage.getItem()` returns `null`, `Number(null)` evaluates to `0`, which passes `Number.isFinite(0)`. This causes the sidebar to clamp to `minWidth` on first load, overriding the `DIFF_INLINE_DEFAULT_WIDTH` CSS clamp. Consider checking for `null` or empty string before parsing, e.g. guard with `storedWidth === null || storedWidth === ''`. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "path": "apps/web/src/routes/_chat.$threadId.tsx",
+      "line": 122,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5wnVsX"
+      ],
+      "thread_indexes": [
+        144
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C059",
+      "area": "WebSocket robustness",
+      "title": "Suggestion: don\u2019t spread `params` into `body`; it can override `_tag` and mishandle non-object values. Keep `_tag` separate and nest `params` under a single key (e.g., `data`), or validate `params` is a plain object.",
+      "severity": "Low",
+      "path": "apps/web/src/wsTransport.ts",
+      "line": 59,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5whtrN"
+      ],
+      "thread_indexes": [
+        94
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    },
+    {
+      "canonical_id": "C060",
+      "area": "Other",
+      "title": "`defaultModel` should be `Schema.optional(Schema.NullOr(Schema.String))` to allow clearing the value. Currently there's no way to reset it to `null` since omitting means \"no change\" in patch semantics. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "path": "packages/contracts/src/orchestration.ts",
+      "line": 253,
+      "thread_ids": [
+        "PRRT_kwDORLtfbc5whxJC"
+      ],
+      "thread_indexes": [
+        100
+      ],
+      "duplicate_count": 0,
+      "authors": [
+        "macroscopeapp"
+      ]
+    }
+  ],
+  "threads": [
+    {
+      "index": 1,
+      "thread_id": "PRRT_kwDORLtfbc5v8_mw",
+      "path": "apps/server/src/wsServer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "greptile-apps",
+      "title": "calls can execute concurrently for the same thread, causing out-of-order event processing. If two provider events arrive rapidly (e.g., textDelta then turn/completed), the commands may reach the queue in unpredictable order. While the Effect queue serializes command processing, the async IIFE allows the event handler to return immediately and process the next provider event before previous dispatches complete. This can cause logical inconsistencies in message streaming or session state updates. Consider wrapping the entire event handler in a per-thread mutex or processing provider events sequentially.",
+      "severity": "Unknown",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 2,
+      "thread_id": "PRRT_kwDORLtfbc5v8_m4",
+      "path": "apps/server/src/wsServer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "greptile-apps",
+      "title": "returns the current in-memory read model, but it may not reflect recently dispatched commands that are still queued. If a provider event arrives before the previous command's read model update propagates, `thread` lookup may fail or use stale data. This is especially problematic during rapid event streams where session creation and message events arrive in quick succession.",
+      "severity": "Unknown",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 3,
+      "thread_id": "PRRT_kwDORLtfbc5v8_m_",
+      "path": "apps/server/src/orchestration/engine.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "greptile-apps",
+      "title": "catches an error during event processing (line 201-205), it creates a new Error and calls `envelope.reject()`, but the original error is not logged. This makes debugging event processing failures very difficult. Since the `catch` callback returns `undefined`, the stream continues processing subsequent commands even after failures, which may lead to inconsistent state if error recovery is needed.",
+      "severity": "Unknown",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 4,
+      "thread_id": "PRRT_kwDORLtfbc5v8_nN",
+      "path": "apps/server/src/orchestration/engine.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "greptile-apps",
+      "title": "runs PubSub publishes in parallel with synchronous listener callbacks (lines 193-198), but the listeners fire before waiting for PubSub to complete. If PubSub publish fails, listeners already received the update, creating inconsistency between Effect subscribers and direct listeners. The envelope is also resolved (line 199) before verifying both PubSub publishes succeeded.",
+      "severity": "Unknown",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 5,
+      "thread_id": "PRRT_kwDORLtfbc5v8_nb",
+      "path": "apps/server/src/orchestration/reducer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "greptile-apps",
+      "title": "is false and `message.text.length > 0`, the entire text is replaced (line 150). However, if `message.text` is empty string and `streaming` is false (like the turn/completed event at wsServer.ts:198), it preserves `entry.text` (line 152). This creates an edge case: if a streaming message never sent any text deltas, then receives a finalizing empty-text event, the message keeps empty text from initialization instead of the intended final state.",
+      "severity": "Unknown",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 6,
+      "thread_id": "PRRT_kwDORLtfbc5v8_zA",
+      "path": "apps/web/src/routes/__root.tsx",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "Race condition: if `getSnapshot()` resolves after `onReadModel` fires, stale data overwrites newer state. Also, pending promises from previous effect runs can overwrite current state. Consider adding a `canceled` flag that's set in the cleanup, and check it before dispatching. \u2705 Resolved in b2f29834553747157b9eba6a5fa9de1b84693dce",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 7,
+      "thread_id": "PRRT_kwDORLtfbc5v8_zC",
+      "path": "apps/server/src/orchestration/engine.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "`replayEvents` uses the default `limit` of 1,000 from `readFromSequence`, which may silently truncate results. Consider passing `Number.MAX_SAFE_INTEGER` (like `readAll` does) to return all events. Code refactored as of 9ef01eb97e9a4e7e174e383350febd08951a0dc3",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 8,
+      "thread_id": "PRRT_kwDORLtfbc5v8_zD",
+      "path": "apps/server/src/orchestration/engine.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "Consider draining the `commandQueue` and rejecting pending envelopes in `stop()` after interrupting the fiber. Otherwise, callers awaiting `dispatch()` will hang indefinitely. Code refactored as of 9ef01eb97e9a4e7e174e383350febd08951a0dc3",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 9,
+      "thread_id": "PRRT_kwDORLtfbc5v8_zE",
+      "path": "apps/server/src/orchestration/engine.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "Listener exceptions after line 187 cause `envelope.reject()` to fire despite the event already being persisted and `readModel` updated. Consider moving listener notifications outside the `try` block (or catching their errors separately) so that persistence success always resolves the promise, preventing duplicate events from retry attempts. Code refactored as of 9ef01eb97e9a4e7e174e383350febd08951a0dc3",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 10,
+      "thread_id": "PRRT_kwDORLtfbc5v8_zH",
+      "path": "apps/server/src/orchestration/eventStore.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "`readAll()` loads the entire event table into memory synchronously, which will eventually cause OOM as the store grows. Consider using pagination or streaming, or document why unbounded loading is acceptable for the expected dataset size. Code refactored as of 10bd27da3d7c869d7ea9c4bd824f9ee730bd1792",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 11,
+      "thread_id": "PRRT_kwDORLtfbc5v8_zJ",
+      "path": "apps/server/src/orchestration/engine.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "`readAll()` loads the entire event history into memory at startup. As the event store grows, this will eventually exceed heap limits and crash the process. Consider paginating the replay (e.g., fetch events in batches of 1000 and reduce incrementally). Code refactored as of 9ef01eb97e9a4e7e174e383350febd08951a0dc3",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 12,
+      "thread_id": "PRRT_kwDORLtfbc5v8_zK",
+      "path": "apps/web/src/session-logic.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "The regex `(.+?)` stops at the first ` b/`, so paths containing ` b/` (e.g., `folder b/file`) are parsed incorrectly. Consider using the fact that source and destination paths are identical for most cases, or parsing from the `---`/`+++` lines instead. No longer relevant as of ef341394699edcf9ab21af4a7bbf0186a87ebce5",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 13,
+      "thread_id": "PRRT_kwDORLtfbc5v9AdO",
+      "path": "apps/server/src/wsServer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "cursor",
+      "title": "Failed turn sets session status to \"ready\" instead of \"error\"",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 14,
+      "thread_id": "PRRT_kwDORLtfbc5v9AdQ",
+      "path": "apps/web/src/components/Sidebar.tsx",
+      "line": 252,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "cursor",
+      "title": "Duplicate project created in Electron add-project flow",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 15,
+      "thread_id": "PRRT_kwDORLtfbc5v9AdS",
+      "path": "apps/web/src/components/Sidebar.tsx",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "cursor",
+      "title": "Navigation races ahead of thread creation in store",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 16,
+      "thread_id": "PRRT_kwDORLtfbc5v9AdT",
+      "path": "apps/server/src/wsServer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "cursor",
+      "title": "Session close/exit events not reflected in orchestration state",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 17,
+      "thread_id": "PRRT_kwDORLtfbc5v9AdU",
+      "path": "apps/server/src/wsServer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "cursor",
+      "title": "Double `getSnapshot()` call may produce inconsistent data",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 18,
+      "thread_id": "PRRT_kwDORLtfbc5v9AdW",
+      "path": "apps/web/src/session-logic.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "cursor",
+      "title": "Timeline entry IDs lose uniqueness-guaranteeing prefix",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 19,
+      "thread_id": "PRRT_kwDORLtfbc5v9AdX",
+      "path": "apps/web/src/components/ChatView.tsx",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "cursor",
+      "title": "Supervised mode approval prompts never shown to users",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 20,
+      "thread_id": "PRRT_kwDORLtfbc5v9AdY",
+      "path": "apps/web/src/components/ChatView.tsx",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "cursor",
+      "title": "Checkpoint revert doesn't update orchestration read model state",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 21,
+      "thread_id": "PRRT_kwDORLtfbc5v9AdZ",
+      "path": "apps/server/src/wsServer.test.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "cursor",
+      "title": "Test helper omits `stateDir`, writing SQLite to home directory",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 22,
+      "thread_id": "PRRT_kwDORLtfbc5v9Ada",
+      "path": "apps/server/src/orchestration/engine.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "cursor",
+      "title": "SQLite database connection never closed on engine stop",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 23,
+      "thread_id": "PRRT_kwDORLtfbc5v9Anx",
+      "path": "apps/server/package.json",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "What typically goes wrong",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 24,
+      "thread_id": "PRRT_kwDORLtfbc5v9Any",
+      "path": "apps/server/src/orchestration/reducer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "coderabbitai",
+      "title": "is missing, prefer a deterministic fallback (e.g., `event.eventId`) or drop the event. <details> <summary>\ud83d\udd27 Suggested fix (deterministic IDs)</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 25,
+      "thread_id": "PRRT_kwDORLtfbc5v9Anz",
+      "path": "apps/server/src/wsServer.test.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "for runtime setup. Clean up external resources in `finally` blocks.\" <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 26,
+      "thread_id": "PRRT_kwDORLtfbc5v9An0",
+      "path": "apps/server/src/wsServer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "stream expected by the web app and hides orchestration dispatch failures, which makes state drift hard to debug. Please broadcast the provider event and log failures. <details> <summary>\ud83d\udd27 Suggested fix (broadcast + logging)</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 27,
+      "thread_id": "PRRT_kwDORLtfbc5v9An1",
+      "path": "apps/server/src/wsServer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "rejects but the server is already listening; this leaves a partially running server with no orchestration worker. <details> <summary>\ud83d\udd27 Suggested fix</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 28,
+      "thread_id": "PRRT_kwDORLtfbc5v9An3",
+      "path": "apps/web/src/components/ChatView.tsx",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "and `derivePendingApprovals` means work log entries and pending approvals will never render, and it effectively drops provider event stream consumption. Please wire these to the provider event feed (or the orchestration read-model) instead of hard-coded empties. As per coding guidelines: \"Web app must consume provider event streams via WebSocket push on channel `providers.event`\". <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 29,
+      "thread_id": "PRRT_kwDORLtfbc5v9An4",
+      "path": "apps/web/src/components/ChatView.tsx",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "command (SendMessageCommandSchema) omits attachments\u2014only text is sent to orchestration. While attachments are correctly forwarded to the provider API separately (line 1752), the composer images are cleared immediately (line 1723) before attachment metadata can be persisted to the message itself. Since OrchestrationMessageSchema has no attachments field and the read-model's messages derive from orchestration events, user images will vanish on page refresh or if the read-model becomes the authoritative source. To preserve attachments: either add attachment metadata to SendMessageCommandSchema and the message reducer, or maintain a local optimistic state mapping userMessageId \u2192 attachments until the read-model is updated to include attachment data. <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 30,
+      "thread_id": "PRRT_kwDORLtfbc5v9An5",
+      "path": "apps/web/src/components/Sidebar.tsx",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "is never populated.** This map is created once and never updated, so the \u201cAwaiting response\u201d pill will never show. Reintroduce `derivePendingApprovals` or feed this from the read-model/provider events. <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 31,
+      "thread_id": "PRRT_kwDORLtfbc5v9An7",
+      "path": "apps/web/src/routes/__root.tsx",
+      "line": 140,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "channel.** The web app currently does not consume provider event streams via the `providers.event` channel. While the orchestration API has `onReadModel()` and `onDomainEvent()` subscriptions, the providers event stream subscription is missing. Add a subscription to `ORCHESTRATION_WS_CHANNELS.event` (or the appropriate providers event channel from contracts) in `wsNativeApi.ts` and expose it via the `api.providers` object to comply with the guideline requirement. <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "canonical_id": "C004",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 32,
+      "thread_id": "PRRT_kwDORLtfbc5v9An8",
+      "path": "apps/web/src/session-logic.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "and `deriveWorkLogEntries` are actively consumed in ChatView.tsx but always return empty arrays. They're called with empty event arrays and never process actual data, so pending approvals and work log entries will never appear in the UI. `deriveTurnDiffSummaries` is not consumed anywhere\u2014it's been superseded by the `useTurnDiffSummaries` hook, which reads directly from the orchestration read model (`activeThread.turnDiffSummaries`). Consider removing `derivePendingApprovals` and `deriveWorkLogEntries` entirely or implement them to consume from the orchestration read model, matching the pattern established by `useTurnDiffSummaries`. <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 33,
+      "thread_id": "PRRT_kwDORLtfbc5v9An9",
+      "path": "apps/web/src/session-logic.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "(e.g., orchestration turn-diff types) instead of app-local interfaces to keep contracts aligned. As per coding guidelines: `apps/**/*.{ts,tsx}: Use Zod schemas from packages/contracts for shared type contracts covering provider events, WebSocket protocol, and model/session types`. <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 34,
+      "thread_id": "PRRT_kwDORLtfbc5v9An-",
+      "path": "apps/web/src/wsNativeApi.ts",
+      "line": 165,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "push stream, and the callbacks rely on unchecked casts. Please reintroduce a `providers.onEvent` (or equivalent) that subscribes to the `providers.event` channel and decode read-model/domain-event payloads using the shared contracts schemas before invoking callbacks. As per coding guidelines: \"Web app must consume provider event streams via WebSocket push on channel `providers.event`\" and \"Use Zod schemas from `packages/contracts` for shared type contracts covering provider events, WebSocket protocol, and model/session types\". <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "canonical_id": "C005",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 35,
+      "thread_id": "PRRT_kwDORLtfbc5v9RP6",
+      "path": "apps/server/src/orchestration/reducer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "After sorting `turnDiffSummaries`, `latestTurnId` should come from the last element of the sorted array, not unconditionally from the incoming event. Out-of-order events would desync `latestTurnId` from the actual latest summary. No longer relevant as of b2f29834553747157b9eba6a5fa9de1b84693dce",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 36,
+      "thread_id": "PRRT_kwDORLtfbc5v9RP8",
+      "path": "apps/server/src/orchestration/engine.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "A single command processing error terminates the worker stream, causing all subsequent commands to hang. Consider wrapping the `Effect.tryPromise` in `Effect.catchAll(() => Effect.succeed(undefined))` so the stream continues processing after failures. \u2705 Addressed in c3b7cc713c7f67d5130096bb0f03e14485e26e72",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 37,
+      "thread_id": "PRRT_kwDORLtfbc5v9RtX",
+      "path": "apps/server/src/orchestration/engine.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "around lines 235 - 240, The loops invoking this.domainEventListeners and this.readModelListeners should wrap each listener call in a try/catch so a thrown error from one listener does not stop subsequent listeners or cause envelope rejection; update the blocks around listener(savedEvent) and listener(this.readModel) to call each listener inside a try { await/ call } catch (err) { processLogger.error(...) or this.logger.error(...) with context including the listener identity and the savedEvent/readModel } and continue to the next listener, ensuring errors are isolated and logged.",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 38,
+      "thread_id": "PRRT_kwDORLtfbc5v9Rtc",
+      "path": "apps/server/src/orchestration/eventStore.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "with a Bun-compatible SQLite driver.** The `node:sqlite` module is a Node.js 22.6+ built-in that Bun does not support. CI runs exclusively on Bun 1.3.9, and `OrchestrationEngine` (which uses `SqliteEventStore`) is imported in `wsServer.ts` and tested in `engine.test.ts`. When `bun run test` executes in CI, it will fail to load this code with \"No such built-in module: node:sqlite\". Switch to `bun:sqlite` (which is built-in to Bun) or add a packaged SQLite driver (e.g., `better-sqlite3`, `sql.js`) to apps/server dependencies and abstract the driver behind an interface for portability. <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 39,
+      "thread_id": "PRRT_kwDORLtfbc5v9SCj",
+      "path": "apps/server/src/wsServer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "HTTP server accepts connections before engine is ready",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 40,
+      "thread_id": "PRRT_kwDORLtfbc5v9SCk",
+      "path": "apps/server/src/orchestration/engine.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Unused PubSub instances published to without subscribers",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 41,
+      "thread_id": "PRRT_kwDORLtfbc5v9SCp",
+      "path": "apps/web/src/session-logic.ts",
+      "line": 127,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Revert uses wrong turn count from positional inference",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C031",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 42,
+      "thread_id": "PRRT_kwDORLtfbc5v9SCt",
+      "path": "apps/web/src/components/ChatView.tsx",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "`syncCheckpointTurnCounts` discards result, becoming a no-op",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 43,
+      "thread_id": "PRRT_kwDORLtfbc5v9gBJ",
+      "path": "apps/server/src/orchestration/engine.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "Consider adding a guard in `dispatch` to throw if the engine hasn't been started, since the worker fiber won't be running to process commands, causing `Deferred.await` to hang indefinitely. \u2705 Addressed in 9ef01eb97e9a4e7e174e383350febd08951a0dc3",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 44,
+      "thread_id": "PRRT_kwDORLtfbc5v9gX0",
+      "path": "apps/web/src/components/Sidebar.tsx",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Double project deletion dispatch in Electron mode",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 45,
+      "thread_id": "PRRT_kwDORLtfbc5v9gX1",
+      "path": "apps/server/src/wsServer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Every streaming token persisted as separate database event",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 46,
+      "thread_id": "PRRT_kwDORLtfbc5v9gX2",
+      "path": "apps/server/src/orchestration/reducer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Reducer overwrites Codex runtime thread ID with orchestration ID",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 47,
+      "thread_id": "PRRT_kwDORLtfbc5v9gX4",
+      "path": "apps/web/src/routes/__root.tsx",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Bootstrap creates duplicate project on server restart",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 48,
+      "thread_id": "PRRT_kwDORLtfbc5v9gcy",
+      "path": "apps/server/src/orchestration/Layer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "with `catchAll` to avoid catching defects.** Using `catchAllCause` will catch both expected errors and defects (bugs). Per project conventions, use `catchAll` or `mapError` instead so that genuine bugs propagate as failures rather than being silently caught and turned into user-facing errors. <details> <summary>\ud83d\udee1\ufe0f Proposed fix</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 49,
+      "thread_id": "PRRT_kwDORLtfbc5v9gc0",
+      "path": "apps/server/src/persistence/Layers/OrchestrationEvents.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "from DB operations\u2014it masks expected failures as defects.** `JSON.parse` and `Schema.decodeUnknownSync` can throw expected errors (invalid payloads, malformed JSON). Converting these to defects via `orDie` crashes orchestration flows instead of handling them predictably. Update `OrchestrationEventRepositoryShape` to return typed errors (e.g., `Effect.Effect<OrchestrationEvent, ParseError | ValidationError>`) and remove `orDie` from both `append` and `readFromSequence`. <details> <summary>Suggested starting point</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 50,
+      "thread_id": "PRRT_kwDORLtfbc5v9gc2",
+      "path": "apps/server/src/persistence/Layers/OrchestrationEvents.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "coderabbitai",
+      "title": "\ud83d\udca1 Result: In **Effect (TypeScript)**, `Effect.try` has two overloads\u2014one that takes just a thunk, and one that takes an object with `try` and a `catch` handler. The **`catch` handler signature** is: - `catch: (error: unknown) => E` (i.e., it receives the thrown value as `unknown` and must map it to your typed error `E`). [1] Type definition (from the docs):",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 51,
+      "thread_id": "PRRT_kwDORLtfbc5v9gc3",
+      "path": "apps/server/src/wsServer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "coderabbitai",
+      "title": "is called twice; the sequence can change between calls. Grab it once and reuse it to keep the push consistent. <details> <summary>\ud83d\udd27 Suggested fix</summary>",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 52,
+      "thread_id": "PRRT_kwDORLtfbc5v-WO9",
+      "path": "apps/web/src/routes/__root.tsx",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "The `state.threads` check inside the async `.then()` uses a stale closure from when the effect ran, not the current state. Consider moving the thread check inside the `.then()` by re-reading from the store, or fetching threads from the API directly. No longer relevant as of b2f29834553747157b9eba6a5fa9de1b84693dce",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 53,
+      "thread_id": "PRRT_kwDORLtfbc5v-WO-",
+      "path": "apps/server/src/orchestration/Layer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "`bootstrapReadModel` should reset `this.readModel` before replaying events. If it fails mid-replay and `start()` is retried, events get applied twice to the partially-updated model. Code refactored as of 9ef01eb97e9a4e7e174e383350febd08951a0dc3",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 54,
+      "thread_id": "PRRT_kwDORLtfbc5v-WPA",
+      "path": "apps/server/src/persistence/Layers/OrchestrationEvents.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "Avoid sync throws outside the Effect pipeline: both `Schema.decodeUnknownSync` and `JSON.stringify` can crash execution. Suggest using effectful decoding and wrapping serialization in `Effect.try`/`Effect.sync`, handling failures per-row so one bad record doesn\u2019t take down the whole operation. \u2705 Addressed in 2c8e35ceb8aebd0a0db03970193dbbdd66247df4",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 55,
+      "thread_id": "PRRT_kwDORLtfbc5v-WPB",
+      "path": "apps/server/src/wsServer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "After `providerManager.startSession` returns, the `sessionId` is never dispatched to `OrchestrationEngine`, so `thread.session?.sessionId` remains unset. The `providerManager.on(\"event\")` listener then fails to find the thread and silently drops all streaming events. Consider dispatching a `thread.session` command after `startSession` to link the session with the thread. \u2705 Resolved in af53ae8b4845852a320f108dda30b32afc3c4029",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 56,
+      "thread_id": "PRRT_kwDORLtfbc5v-WPC",
+      "path": "apps/server/src/orchestration/engine.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "Race condition: `stop()` called during `start()`'s `bootstrapReadModel()` sees `workerFiber` as `null` and returns immediately, then `start()` resumes and spawns a worker anyway. Consider adding a stopping flag or mutex to coordinate the lifecycle. \u2705 Addressed in 9ef01eb97e9a4e7e174e383350febd08951a0dc3",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 57,
+      "thread_id": "PRRT_kwDORLtfbc5v-WPD",
+      "path": "apps/server/src/wsServer.ts",
+      "line": 83,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "Consider using `socket.end(response)` instead of `socket.write(response)` + `socket.destroy()` to ensure the HTTP error response is fully flushed before closing the connection.",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C053",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 58,
+      "thread_id": "PRRT_kwDORLtfbc5v-XCq",
+      "path": "apps/server/src/wsServer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Provider events lost before session association completes",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 59,
+      "thread_id": "PRRT_kwDORLtfbc5v-XCs",
+      "path": "apps/server/src/wsServer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Streaming deltas persisted as individual events cause unbounded growth",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 60,
+      "thread_id": "PRRT_kwDORLtfbc5v-XCu",
+      "path": "apps/web/src/components/BranchToolbar.tsx",
+      "line": 102,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Branch sync dispatches both server and stale local update",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C028",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 61,
+      "thread_id": "PRRT_kwDORLtfbc5v-XVl",
+      "path": "apps/server/src/orchestration/engine.test.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "usage in `try/finally` or use a helper that guarantees cleanup. Based on learnings: \"For integration tests: Prefer deterministic inputs and explicit state checks; avoid relying on logs or timing assumptions. Keep fixtures cohesive and reuse identities across sequential tests. Synchronize on durable workflow status or snapshot state. Assert on final state and side effects. Use stable helper scripts like `SHELL_SETUP_SCRIPT` for runtime setup. Clean up external resources in `finally` blocks.\" <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 62,
+      "thread_id": "PRRT_kwDORLtfbc5v-XVo",
+      "path": "apps/server/src/orchestration/engine.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "runs while `workerFiber` is null, the command is queued but never processed, and the returned promise hangs indefinitely. Reject with a clear error (or enforce start) when the engine isn\u2019t running. As per coding guidelines: \"Maintain predictable behavior under load and during failures (session restarts, reconnects, partial streams)\". <details> <summary>\ud83d\udee1\ufe0f Suggested guard</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 63,
+      "thread_id": "PRRT_kwDORLtfbc5v-XVt",
+      "path": "apps/server/src/orchestration/reducer.test.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "\ud83d\udca1 Result: For testing **Effect** code with **Vitest** in TypeScript, the standard helper library is **`@effect/vitest`**. It lets you write tests that *return an `Effect`* (instead of manually running it) and gives you a test environment (e.g. `TestClock`) by default. [1][2] ## Install",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 64,
+      "thread_id": "PRRT_kwDORLtfbc5v-XVx",
+      "path": "apps/server/src/persistence/Layers/OrchestrationEvents.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "and `decodeUnknownSync` both throw uncaught exceptions; when wrapped with `Effect.orDie`, any parse/validation failure crashes the process. For event sourcing replay, this is critical\u2014you must catch and properly handle corrupted rows instead of terminating. Use `Schema.decodeUnknown` (async variant, per project guidelines) wrapped in `Effect.try`, and avoid type assertions in Effect code. <details> <summary>Suggested approach</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 65,
+      "thread_id": "PRRT_kwDORLtfbc5v-XVz",
+      "path": "apps/server/src/persistence/Layers/Projects.test.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "in a finally block to prevent resource leaks on assertion failure.** If an assertion fails before `dispose()` is called, the SQLite connection and Effect runtime will leak. Use `try/finally` to ensure cleanup always runs, consistent with other tests in the codebase (e.g., `terminalManager.test.ts`, `filesystemCheckpointStore.test.ts`). <details> <summary>\ud83e\uddf9 Example cleanup pattern</summary>",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 66,
+      "thread_id": "PRRT_kwDORLtfbc5v-XV6",
+      "path": "apps/server/src/persistence/Layers/Projects.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "exists, but the race condition persists: between the `findProjectByCwd` check and `insertProject` call, a concurrent request can insert the same `cwd`, causing the insert to fail. The `.pipe(Effect.orDie)` converts this constraint violation into an unhandled error instead of gracefully returning the existing project. Under concurrent load, this violates the coding guideline to \"maintain predictable behavior under load and during failures.\" Wrap the insert in error handling to catch the constraint violation and re-fetch the existing row, or use a database upsert/on-conflict pattern to ensure atomic, race-free behavior. <details> <summary>\ud83e\udd16 Prompt for AI Agents</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 67,
+      "thread_id": "PRRT_kwDORLtfbc5v-XV8",
+      "path": "apps/server/src/persistence/Services/Projects.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "and `pruneMissing()` for consistent error handling.** Both methods perform database operations (`listProjectRows()` and `deleteProject()`) that can fail, but lack error type parameters. Currently they use `Effect.orDie` to convert failures to defects (crashes) instead of returning typed errors. This is inconsistent with `add/remove/updateScripts` which have `Error` channels, and violates the guideline to maintain predictable behavior under failures. Update signatures to:",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 68,
+      "thread_id": "PRRT_kwDORLtfbc5v-X3U",
+      "path": "apps/server/src/orchestration/engine.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "Consider resetting `this.readModel` in `stop()` to prevent state corruption if `start()` is called again\u2014`bootstrapReadModel()` would otherwise re-apply all events on top of existing state. \u2705 Addressed in 9ef01eb97e9a4e7e174e383350febd08951a0dc3",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 69,
+      "thread_id": "PRRT_kwDORLtfbc5v-X3W",
+      "path": "apps/server/src/wsServer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "If `orchestrationEngine.dispatch` fails after `providerManager.revertToCheckpoint` succeeds, the filesystem is reverted but the read model isn't updated, causing inconsistency. Consider either dispatching the state update first (since revert can be retried), or wrapping both in a transaction-like pattern that restores the checkpoint on dispatch failure. \u2705 Resolved in af53ae8b4845852a320f108dda30b32afc3c4029",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 70,
+      "thread_id": "PRRT_kwDORLtfbc5v-X3Y",
+      "path": "packages/contracts/src/orchestration.ts",
+      "line": 141,
+      "is_outdated": false,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "`streaming` is required here but optional in `SendMessageCommandSchema`. Messages created without this field will fail validation. Consider using `Schema.optional(Schema.Boolean)` for consistency. No longer relevant as of b2f29834553747157b9eba6a5fa9de1b84693dce",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_resolved",
+      "phase0_reason": "Thread is already resolved on GitHub."
+    },
+    {
+      "index": 71,
+      "thread_id": "PRRT_kwDORLtfbc5v-Y_d",
+      "path": "apps/server/src/orchestration/engine.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "coderabbitai",
+      "title": "is called.** Interrupting the worker fiber leaves any queued command envelopes unprocessed, and their `Deferred` results will never resolve. Callers awaiting `dispatch()` will hang indefinitely after stop. Consider draining or failing pending commands before interrupting. <details> <summary>\ud83d\udee1\ufe0f Suggested approach: fail pending commands on stop</summary>",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 72,
+      "thread_id": "PRRT_kwDORLtfbc5v-cf4",
+      "path": "apps/server/src/wsServer.ts",
+      "line": 75,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "Consider attaching a no-op error listener before `socket.write` (e.g., `socket.on('error', () => {})`) to prevent an unhandled `EPIPE`/`ECONNRESET` from crashing the process if the client disconnects mid-handshake.",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "canonical_id": "C003",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 73,
+      "thread_id": "PRRT_kwDORLtfbc5v-gEm",
+      "path": "apps/server/src/orchestration/reducer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Reducer overwrites Codex thread ID with orchestration ID",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 74,
+      "thread_id": "PRRT_kwDORLtfbc5v-gEo",
+      "path": "apps/server/src/orchestration/reducer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Reducer never sets latestTurnStartedAt breaking completion summary",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 75,
+      "thread_id": "PRRT_kwDORLtfbc5v-gEp",
+      "path": "apps/web/src/routes/__root.tsx",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Stale closure creates duplicate threads on page refresh",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 76,
+      "thread_id": "PRRT_kwDORLtfbc5v-iPH",
+      "path": "apps/server/src/persistence/Layers/Projects.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "Consider distinguishing `ENOENT`/`ENOTDIR` (directory truly absent) from transient errors like `EACCES` or `EIO` in `isDirectory`. Currently, any error returns `false`, so `pruneMissing` may delete projects that are present but temporarily inaccessible. No longer relevant as of b2f29834553747157b9eba6a5fa9de1b84693dce",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 77,
+      "thread_id": "PRRT_kwDORLtfbc5v-iPJ",
+      "path": "apps/server/src/orchestration/Layer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "Consider validating events through `reduceEvent` before persisting to avoid \"poison pill\" events. Currently, if `reduceEvent` fails after `eventStore.append`, the error is swallowed but the event remains in the database. On restart, `bootstrapReadModel` will fail on that same event, bricking the service. No longer relevant as of b2f29834553747157b9eba6a5fa9de1b84693dce",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 78,
+      "thread_id": "PRRT_kwDORLtfbc5v-kr_",
+      "path": "apps/server/src/orchestration/Layer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Listener failure falsely fails dispatch after event persistence",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 79,
+      "thread_id": "PRRT_kwDORLtfbc5v-ksB",
+      "path": "apps/server/src/orchestration/Layer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Unused PubSub instances created and published to",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 80,
+      "thread_id": "PRRT_kwDORLtfbc5wBEEV",
+      "path": "apps/server/src/wsServer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "Consider normalizing `params.cwd` before comparing with `entry.cwd`, since `ProjectRepository.add` normalizes paths (e.g., lowercasing on Windows). Otherwise, valid requests with different casing or formatting won't match and the git read model won't be updated. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 81,
+      "thread_id": "PRRT_kwDORLtfbc5wBEEX",
+      "path": "apps/server/src/persistence/Layers/OrchestrationEvents.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "`readAll` uses `Number.MAX_SAFE_INTEGER` as the limit, which could exhaust memory as events grow. If this is intentional (e.g., for testing or small datasets), consider adding a comment documenting this constraint. Otherwise, consider implementing pagination or streaming. No longer relevant as of b2f29834553747157b9eba6a5fa9de1b84693dce",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 82,
+      "thread_id": "PRRT_kwDORLtfbc5wBEEY",
+      "path": "apps/server/src/orchestration/reducer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "When a duplicate `thread.created` event is processed, the existing thread is fully replaced with a fresh object containing empty `messages`, `session`, and `turnDiffSummaries`. Consider returning the existing thread unchanged (or merging only metadata) to avoid data loss on event replay. No longer relevant as of b2f29834553747157b9eba6a5fa9de1b84693dce",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 83,
+      "thread_id": "PRRT_kwDORLtfbc5wBEEZ",
+      "path": "apps/server/src/orchestration/Layer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "Listener failures abort the notification chain and fail the command's `Deferred`, even though the event was successfully persisted. Consider using `{ concurrency: \"unbounded\" }` with `Effect.forEach` and catching errors per-listener, or using `Effect.catchAll` after each notification call to log and continue. No longer relevant as of b2f29834553747157b9eba6a5fa9de1b84693dce",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 84,
+      "thread_id": "PRRT_kwDORLtfbc5wBFWr",
+      "path": "apps/server/src/orchestration/Layer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "Consider guarding against duplicate `thread.create` commands\u2014currently, sending a create command with an existing thread ID will replace that thread's state (messages, session, etc.) with a fresh empty object. No longer relevant as of b2f29834553747157b9eba6a5fa9de1b84693dce",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 85,
+      "thread_id": "PRRT_kwDORLtfbc5wBFWs",
+      "path": "apps/server/src/orchestration/Errors.ts",
+      "line": 126,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "Template literal interpolation throws `TypeError` if `cause` is a `Symbol`. Consider using `String(cause)` for safe coercion.",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C041",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 86,
+      "thread_id": "PRRT_kwDORLtfbc5wBFv4",
+      "path": "apps/server/src/orchestration/Errors.ts",
+      "line": 117,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "Template literal `${cause}` throws if `cause` is a `Symbol`. Consider using `String(cause)` instead.",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C011",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 87,
+      "thread_id": "PRRT_kwDORLtfbc5wBGN5",
+      "path": "apps/server/src/orchestration/Layer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Listener failure fails deferred after event already persisted",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 88,
+      "thread_id": "PRRT_kwDORLtfbc5wBGN8",
+      "path": "apps/server/src/orchestration/Layer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Unused PubSub instances created but never subscribed to",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 89,
+      "thread_id": "PRRT_kwDORLtfbc5wBGN-",
+      "path": "apps/server/src/wsServer.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Streaming text deltas create excessive persistent events",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 90,
+      "thread_id": "PRRT_kwDORLtfbc5whszQ",
+      "path": "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts",
+      "line": 84,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Unbounded memory growth in turn start deduplication set",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C018",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 91,
+      "thread_id": "PRRT_kwDORLtfbc5whszT",
+      "path": "apps/server/src/orchestration/Layers/CheckpointReactor.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Fallback session matching compares incompatible identity types",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 92,
+      "thread_id": "PRRT_kwDORLtfbc5whszW",
+      "path": "apps/server/src/orchestration/Layers/CheckpointReactor.ts",
+      "line": 542,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Forked revert dispatch risks read model inconsistency",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C012",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 93,
+      "thread_id": "PRRT_kwDORLtfbc5whtrM",
+      "path": "apps/server/src/orchestration/Layers/OrchestrationEngine.ts",
+      "line": 99,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "If `projectionPipeline.projectEvent` fails after `eventStore.append` succeeds, the event is persisted but `readModel` isn't updated, causing desync. Consider updating the in-memory `readModel` immediately after append (before the external projection), so local state stays consistent regardless of downstream failures.",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C013",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 94,
+      "thread_id": "PRRT_kwDORLtfbc5whtrN",
+      "path": "apps/web/src/wsTransport.ts",
+      "line": 59,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "Suggestion: don\u2019t spread `params` into `body`; it can override `_tag` and mishandle non-object values. Keep `_tag` separate and nest `params` under a single key (e.g., `data`), or validate `params` is a plain object.",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C059",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 95,
+      "thread_id": "PRRT_kwDORLtfbc5whtrP",
+      "path": "apps/server/src/persistence/NodeSqliteClient.ts",
+      "line": 108,
+      "is_outdated": false,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "`runValues` doesn't call `setReadBigInts` before execution, so cached statements may retain stale bigint settings from prior `runStatement` calls. Consider adding `statement.setReadBigInts(...)` similar to line 98. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_resolved",
+      "phase0_reason": "Thread is already resolved on GitHub."
+    },
+    {
+      "index": 96,
+      "thread_id": "PRRT_kwDORLtfbc5whtrR",
+      "path": "apps/server/src/wsServer.ts",
+      "line": 104,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "When array chunks contain a multi-byte UTF-8 character split across boundaries, decoding each chunk separately produces replacement characters. Consider using `Buffer.concat()` on all chunks before calling `.toString(\"utf8\")`. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C054",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 97,
+      "thread_id": "PRRT_kwDORLtfbc5whtrS",
+      "path": "apps/server/src/main.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "On Windows, `~\\data` bypasses home expansion because only `~/` is checked. Consider also checking for `~\\` to avoid writing to `${CWD}/~` instead of the home directory. \u2705 Resolved in d102702d9556fac36379e13e7a89d21f230ebcb6",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 98,
+      "thread_id": "PRRT_kwDORLtfbc5whtrX",
+      "path": "apps/server/src/persistence/NodeSqliteClient.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "Consider also checking `options.readonly` before enabling WAL mode\u2014changing journal mode on a read-only connection will throw. \u2705 Resolved in 3379feed8d37d82ba2415e39e8d50958ee680719",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 99,
+      "thread_id": "PRRT_kwDORLtfbc5whtrb",
+      "path": "apps/server/src/main.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "The server shuts down immediately after starting because the scope closes when `makeServerProgram` returns. Consider adding `yield* Effect.never` after logging to keep the process alive. \u2705 Resolved in 68c8eaa6198d766a675eddfb5600482df885ea77",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 100,
+      "thread_id": "PRRT_kwDORLtfbc5whxJC",
+      "path": "packages/contracts/src/orchestration.ts",
+      "line": 253,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "`defaultModel` should be `Schema.optional(Schema.NullOr(Schema.String))` to allow clearing the value. Currently there's no way to reset it to `null` since omitting means \"no change\" in patch semantics. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C060",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 101,
+      "thread_id": "PRRT_kwDORLtfbc5whxJO",
+      "path": "apps/server/src/orchestration/Layers/ProjectionPipeline.ts",
+      "line": 99,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "The gap-filling fallback logic can retain messages from turns that are about to be deleted, causing foreign key violations. Consider removing the fallback logic entirely, or filtering `fallbackUserMessages` and `fallbackAssistantMessages` to only include messages whose `turnId` is in `retainedTurnIds`. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C015",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 102,
+      "thread_id": "PRRT_kwDORLtfbc5whxXx",
+      "path": "apps/server/src/persistence/Layers/Sqlite.ts",
+      "line": 29,
+      "is_outdated": false,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "The `setup` layer always sets `journal_mode = WAL`, ignoring the `disableWAL` config. Consider passing the config to `setup` and conditionally executing the pragma. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_resolved",
+      "phase0_reason": "Thread is already resolved on GitHub."
+    },
+    {
+      "index": 103,
+      "thread_id": "PRRT_kwDORLtfbc5whxX9",
+      "path": "apps/server/src/persistence/NodeSqliteClient.ts",
+      "line": 145,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "In `executeUnprepared`, preparing outside an effect and not closing the statement can cause uncaught errors and leaks. Suggest wrapping with `Effect.acquireUseRelease`: prepare in acquire (error-safe) and `finalize` in release.",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C024",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 104,
+      "thread_id": "PRRT_kwDORLtfbc5wiAo6",
+      "path": "apps/server/src/main.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "There's a TOCTOU race between closing the test server and the actual `server.start()` call in `makeServerProgram`. Consider either passing the bound server directly to the caller, or documenting this as an accepted limitation with a retry strategy at the call site. No longer relevant as of 69d5caa0f94522b5c90285aa752d9410f756a86e",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 105,
+      "thread_id": "PRRT_kwDORLtfbc5wiLNN",
+      "path": "apps/server/integration/OrchestrationEngineHarness.integration.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Duplicate checkpoint ref generation logic across four files",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 106,
+      "thread_id": "PRRT_kwDORLtfbc5wiLNS",
+      "path": "apps/server/package.json",
+      "line": 14,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Build script uses `node` to run `.ts` file directly",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C007",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 107,
+      "thread_id": "PRRT_kwDORLtfbc5wiLhQ",
+      "path": "apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts",
+      "line": 71,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "`REQUIRED_SNAPSHOT_PROJECTORS` includes `pending-approvals` and `thread-turns`, but `getSnapshot` doesn't query their data. If these projectors lag behind, the returned `snapshotSequence` will be lower than what the included data actually reflects, causing clients to replay already-applied events. Consider filtering `REQUIRED_SNAPSHOT_PROJECTORS` to only include projectors whose data is actually fetched in the snapshot. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C017",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 108,
+      "thread_id": "PRRT_kwDORLtfbc5wiLhY",
+      "path": "apps/server/src/provider/Layers/ProviderSessionDirectory.ts",
+      "line": 94,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "The read-modify-write pattern (`getBySessionId` \u2192 merge \u2192 `upsert`) is susceptible to lost updates under concurrent writes. Consider wrapping in a transaction or adding optimistic concurrency control (e.g., version field) if concurrent session updates are expected. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C050",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 109,
+      "thread_id": "PRRT_kwDORLtfbc5wiQi9",
+      "path": "apps/server/src/checkpointing/Layers/CheckpointStore.ts",
+      "line": 87,
+      "is_outdated": false,
+      "is_resolved": true,
+      "author": "cursor",
+      "title": "Incorrect `Effect.catch` API usage in `isGitRepository`",
+      "severity": "High",
+      "has_false_positive_signal": true,
+      "phase0_status": "filtered_resolved",
+      "phase0_reason": "Thread is already resolved on GitHub."
+    },
+    {
+      "index": 110,
+      "thread_id": "PRRT_kwDORLtfbc5wiaR-",
+      "path": "apps/server/src/persistence/Layers/OrchestrationCommandReceipts.ts",
+      "line": 75,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "`SqlSchema.findOneOption` can produce both SQL errors and decode errors, but `mapError` wraps all as `PersistenceSqlError`. Consider distinguishing `ParseError` from SQL errors and mapping decode failures to `PersistenceDecodeError` instead. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C047",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 111,
+      "thread_id": "PRRT_kwDORLtfbc5wiaSC",
+      "path": "apps/web/src/wsTransport.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "If `message.error` exists but lacks a `message` string, the promise resolves with `undefined` instead of rejecting. Consider rejecting with a fallback error message when `message.error` is truthy but doesn't have a valid `message` property. \u2705 Resolved in ef341394699edcf9ab21af4a7bbf0186a87ebce5",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 112,
+      "thread_id": "PRRT_kwDORLtfbc5widJw",
+      "path": "apps/server/src/checkpointing/Layers/CheckpointStore.ts",
+      "line": 94,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Inconsistent input trimming across CheckpointStore methods",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C008",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 113,
+      "thread_id": "PRRT_kwDORLtfbc5widJx",
+      "path": "apps/server/package.json",
+      "line": 14,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Build script requires implicit Node.js TypeScript support",
+      "severity": "Medium",
+      "has_false_positive_signal": true,
+      "phase0_status": "filtered_invalid",
+      "phase0_reason": "Thread contains explicit false-positive determination in replies."
+    },
+    {
+      "index": 114,
+      "thread_id": "PRRT_kwDORLtfbc5wio-r",
+      "path": "apps/server/src/persistence/NodeSqliteClient.ts",
+      "line": 99,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "`statement.run()` returns a `RunResult` object, not an array. Casting it to `ReadonlyArray<any>` will cause runtime errors when consumers call array methods. Consider wrapping the result (e.g., `[result]`) or returning a properly typed object.",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C048",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 115,
+      "thread_id": "PRRT_kwDORLtfbc5wiqFX",
+      "path": "apps/server/src/checkpointing/Layers/CheckpointStore.ts",
+      "line": 284,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Duplicate `checkpointRefForThreadTurn` function in two production files",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C036",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 116,
+      "thread_id": "PRRT_kwDORLtfbc5wjahy",
+      "path": "apps/server/src/main.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "`Effect.callback` lacks a cleanup function. If the fiber is interrupted while `server` or `fallback` is listening, the socket leaks and the port stays bound. Consider returning a cleanup function that closes the active server. No longer relevant as of 69d5caa0f94522b5c90285aa752d9410f756a86e",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 117,
+      "thread_id": "PRRT_kwDORLtfbc5wj4b_",
+      "path": "apps/server/src/open.ts",
+      "line": 21,
+      "is_outdated": false,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "Suggestion: avoid synchronous `throw` in `resolveEditorLaunch` when used from `Effect.gen`\u2014it becomes a `Defect` and bypasses `OpenError` handling. Return `Effect<EditorLaunch, OpenError>` or wrap with `Effect.try(...)` so failures are typed and caught. \u2705 Resolved in cbc92519e040e963b3257a3192be47bffad5b8ce",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_resolved",
+      "phase0_reason": "Thread is already resolved on GitHub."
+    },
+    {
+      "index": 118,
+      "thread_id": "PRRT_kwDORLtfbc5wj4cE",
+      "path": "apps/server/src/wsServer.ts",
+      "line": 545,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "Consider adding `.catch(() => {})` after `Effect.runPromise(handleMessage(ws, raw))` to prevent unhandled rejections from crashing the server if `encodeResponse` or setup logic fails.",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C026",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 119,
+      "thread_id": "PRRT_kwDORLtfbc5wj4cH",
+      "path": "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts",
+      "line": 333,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "A dispatch error in `processEvent` will terminate the `Effect.forever` loop, permanently halting event ingestion. Consider adding error recovery (e.g., `Effect.catchAll` with logging) around `processEvent` so failures don't kill the fiber.",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "canonical_id": "C002",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 120,
+      "thread_id": "PRRT_kwDORLtfbc5wj4cI",
+      "path": "apps/server/src/open.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "`Effect.scoped` closes immediately after the generator completes, triggering the `ChildProcess` finalizer and terminating the editor. Consider removing `Effect.scoped` or using a different approach to keep the process alive. \u2705 Resolved in cbc92519e040e963b3257a3192be47bffad5b8ce",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 121,
+      "thread_id": "PRRT_kwDORLtfbc5wj4cM",
+      "path": "apps/server/src/os-jank.ts",
+      "line": 10,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "Using `-il` flags causes the shell to source profile scripts that may print banners or other text, polluting the captured `PATH`. Consider using `-lc` (login only, non-interactive) to reduce unwanted output.",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C023",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 122,
+      "thread_id": "PRRT_kwDORLtfbc5wj4cO",
+      "path": "apps/server/src/config.ts",
+      "line": 41,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "`Effect.callback` should return a cleanup function to close the server(s) on fiber interruption. Without it, the `Net.Server` handles keep the process alive and leak the port if the effect is cancelled. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C037",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 123,
+      "thread_id": "PRRT_kwDORLtfbc5wj5fl",
+      "path": "apps/server/package.json",
+      "line": 14,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Build script uses `node` to run `.ts` file directly",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C007",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C007."
+    },
+    {
+      "index": 124,
+      "thread_id": "PRRT_kwDORLtfbc5wj5fn",
+      "path": "apps/server/src/checkpointing/Errors.ts",
+      "line": 79,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Redundant `CheckpointInvariantError` in `CheckpointServiceError` union type",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C034",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 125,
+      "thread_id": "PRRT_kwDORLtfbc5wkGlg",
+      "path": "apps/server/src/ptyAdapter.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "On Windows with Bun, `layer()` returns `BunPtyAdapterLive` which crashes via `Effect.die`. Consider checking `process.platform !== \"win32\"` before choosing `BunPtyAdapterLive`, falling back to `NodePtyAdapterLive` on Windows. No longer relevant as of 3ff826d7cb50031120321f116c1d40f14b030fb8",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 126,
+      "thread_id": "PRRT_kwDORLtfbc5wkGll",
+      "path": "apps/server/src/ptyAdapter.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "Race condition: `emitData` returns early if `didExit` is true, but the terminal data callback may fire after `emitExit` sets `didExit = true`, dropping buffered output. Consider removing the `didExit` guard in `emitData`, or deferring `didExit = true` until after processing any pending data callbacks. No longer relevant as of 3ff826d7cb50031120321f116c1d40f14b030fb8",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 127,
+      "thread_id": "PRRT_kwDORLtfbc5wkGlt",
+      "path": "apps/server/src/ptyAdapter.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "The `didEnsureSpawnHelperExecutable` flag is set before `chmodSync` succeeds. If chmod fails transiently, subsequent calls skip the fix permanently. Consider moving the flag assignment after the chmod operation. No longer relevant as of 3ff826d7cb50031120321f116c1d40f14b030fb8",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 128,
+      "thread_id": "PRRT_kwDORLtfbc5wkPaA",
+      "path": "apps/server/src/orchestration/decider.ts",
+      "line": 27,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Shared mutable default metadata object causes stale eventId",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C021",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 129,
+      "thread_id": "PRRT_kwDORLtfbc5wkPaG",
+      "path": "apps/server/src/wsServer.ts",
+      "line": 128,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Duplicate `checkpointRefForThreadTurn` function across files",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C055",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 130,
+      "thread_id": "PRRT_kwDORLtfbc5wkPaJ",
+      "path": "apps/server/src/orchestration/Layers/OrchestrationEngine.ts",
+      "line": 144,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Engine error handler catches all errors including non-invariant ones",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C014",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 131,
+      "thread_id": "PRRT_kwDORLtfbc5wkPaL",
+      "path": "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts",
+      "line": 178,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "ProviderRuntimeIngestion processes events for wrong thread on race",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C019",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 132,
+      "thread_id": "PRRT_kwDORLtfbc5wkPaO",
+      "path": "apps/server/src/orchestration/Layers/CheckpointReactor.ts",
+      "line": 274,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Checkpoint reactor swallows diff errors silently for `turn.completed`",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C044",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 133,
+      "thread_id": "PRRT_kwDORLtfbc5wkRZM",
+      "path": "apps/server/src/os-jank.ts",
+      "line": 10,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "Fish shell outputs `$PATH` as space-separated, not colon-separated. Consider checking if the shell is fish and using `string join : $PATH` instead, or validating the result contains colons before assigning.",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C022",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 134,
+      "thread_id": "PRRT_kwDORLtfbc5wlXJp",
+      "path": "apps/web/src/components/ui/sidebar.tsx",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "Consider spreading `...props` onto the outer wrapper `div` (line 207) instead of the inner container (line 240). Currently, props like `className=\"hidden\"` only affect the inner fixed div, leaving the outer layout placeholder visible and causing \"ghost\" space. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 135,
+      "thread_id": "PRRT_kwDORLtfbc5wlXJr",
+      "path": "apps/web/src/components/ui/sidebar.tsx",
+      "line": 122,
+      "is_outdated": false,
+      "is_resolved": true,
+      "author": "macroscopeapp",
+      "title": "`cookieStore` is only available in Chromium browsers. Consider adding a guard like `if ('cookieStore' in window)` before accessing it to prevent `ReferenceError` in Firefox/Safari.",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_resolved",
+      "phase0_reason": "Thread is already resolved on GitHub."
+    },
+    {
+      "index": 136,
+      "thread_id": "PRRT_kwDORLtfbc5wlXJz",
+      "path": "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts",
+      "line": null,
+      "is_outdated": true,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "The `processDomainEvent` consumer loop lacks error handling. A single `providerService` failure will crash the fiber and stop all subsequent event processing. Consider wrapping with `Effect.catchAll` or `Effect.ignoreLogged` to let the loop continue after errors. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "phase0_status": "filtered_outdated",
+      "phase0_reason": "Thread is flagged outdated by GitHub diff context."
+    },
+    {
+      "index": 137,
+      "thread_id": "PRRT_kwDORLtfbc5wlYgj",
+      "path": "AGENTS.md",
+      "line": 45,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Dummy workflow marker accidentally committed to docs",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C032",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 138,
+      "thread_id": "PRRT_kwDORLtfbc5wlYgo",
+      "path": "apps/server/src/checkpointing/Errors.ts",
+      "line": 51,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Three error classes defined but never instantiated anywhere",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C033",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 139,
+      "thread_id": "PRRT_kwDORLtfbc5wlYgs",
+      "path": "apps/server/src/checkpointing/Errors.ts",
+      "line": 79,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Redundant error type in CheckpointServiceError union definition",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C035",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 140,
+      "thread_id": "PRRT_kwDORLtfbc5wl2A8",
+      "path": "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts",
+      "line": 84,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "`handledTurnStartKeys` grows indefinitely since keys are never removed. Consider adding TTL-based cleanup or clearing entries after processing completes. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C018",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C018."
+    },
+    {
+      "index": 141,
+      "thread_id": "PRRT_kwDORLtfbc5wnVsI",
+      "path": "apps/server/src/provider/Layers/ProviderService.ts",
+      "line": 59,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "`JSON.stringify(cause)` returns `undefined` for `undefined`, functions, or symbols, violating the `string` return type. Consider coercing the result to a string (e.g., `String(JSON.stringify(cause))`) or adding a fallback.",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C049",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 142,
+      "thread_id": "PRRT_kwDORLtfbc5wnVsK",
+      "path": "apps/web/src/markdown-links.ts",
+      "line": 111,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "`EXTERNAL_SCHEME_PATTERN` matches `script.ts:10` as a scheme because `.ts:` looks like `scheme:`. Consider requiring `://` after the colon, or checking that what follows the colon is not just digits. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C030",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 143,
+      "thread_id": "PRRT_kwDORLtfbc5wnVsU",
+      "path": "apps/web/src/markdown-links.ts",
+      "line": 105,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "`parseFileUrlHref` already decodes the path (line 46), but `safeDecode` is called again here, corrupting filenames containing `%` sequences. Consider skipping the decode when `fileUrlTarget` is non-null.",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C029",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 144,
+      "thread_id": "PRRT_kwDORLtfbc5wnVsX",
+      "path": "apps/web/src/routes/_chat.$threadId.tsx",
+      "line": 122,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "When `localStorage.getItem()` returns `null`, `Number(null)` evaluates to `0`, which passes `Number.isFinite(0)`. This causes the sidebar to clamp to `minWidth` on first load, overriding the `DIFF_INLINE_DEFAULT_WIDTH` CSS clamp. Consider checking for `null` or empty string before parsing, e.g. guard with `storedWidth === null || storedWidth === ''`. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C058",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 145,
+      "thread_id": "PRRT_kwDORLtfbc5wnWv_",
+      "path": "apps/server/src/checkpointing/Layers/CheckpointStore.ts",
+      "line": 94,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Inconsistent input normalization across CheckpointStore methods",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C008",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C008."
+    },
+    {
+      "index": 146,
+      "thread_id": "PRRT_kwDORLtfbc5wnWwF",
+      "path": "apps/server/src/orchestration/Layers/CheckpointReactor.ts",
+      "line": 584,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Unhandled errors in checkpoint reactor worker crash processing permanently",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "canonical_id": "C002",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C002."
+    },
+    {
+      "index": 147,
+      "thread_id": "PRRT_kwDORLtfbc5wnWwM",
+      "path": "apps/server/src/orchestration/Layers/CheckpointReactor.ts",
+      "line": 62,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Duplicated workspace CWD resolution logic across reactor modules",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C043",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 148,
+      "thread_id": "PRRT_kwDORLtfbc5wvwag",
+      "path": "apps/server/src/wsServer.ts",
+      "line": 128,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Duplicated checkpoint ref computation across two files",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C025",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 149,
+      "thread_id": "PRRT_kwDORLtfbc5wxsO6",
+      "path": "apps/server/src/checkpointing/Errors.ts",
+      "line": 79,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Redundant error type in CheckpointServiceError union",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C035",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C035."
+    },
+    {
+      "index": 150,
+      "thread_id": "PRRT_kwDORLtfbc5wxsO-",
+      "path": "apps/server/package.json",
+      "line": 14,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Build script runs TypeScript file with bare node",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C006",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 151,
+      "thread_id": "PRRT_kwDORLtfbc5wxvH8",
+      "path": "apps/server/src/orchestration/Layers/ProjectionPipeline.ts",
+      "line": 490,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "The in-memory `pendingTurnStartByThreadId` map isn't restored during bootstrap. If the service restarts after processing `thread.turn-start-requested` but before `thread.session-set`, the `userMessageId` and `startedAt` will be lost since bootstrap resumes *after* the committed sequence. Consider persisting this pending state or processing these two events atomically. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C016",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 152,
+      "thread_id": "PRRT_kwDORLtfbc5wxvH9",
+      "path": "apps/server/src/provider/Layers/ProviderSessionDirectory.ts",
+      "line": 119,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "Using `??` for `providerThreadId` and `adapterKey` makes it impossible to clear these fields by passing `null`, since `null ?? existing` evaluates to `existing`. Consider using explicit `undefined` checks (like `resumeCursor` does) if clearing should be supported. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C051",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 153,
+      "thread_id": "PRRT_kwDORLtfbc5wxvIA",
+      "path": "apps/server/src/keybindings.ts",
+      "line": 488,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "`upsertKeybindingRule` has a race condition: concurrent calls read the same file state, then the last write overwrites earlier changes. Consider wrapping the read-modify-write sequence with `Effect.Semaphore` to serialize access. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C040",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 154,
+      "thread_id": "PRRT_kwDORLtfbc5wxvIB",
+      "path": "apps/server/src/keybindings.ts",
+      "line": 352,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "The `+` key can be parsed (via trailing `+` handling) but cannot be encoded because `shortcut.key.includes(\"+\")` returns true for the literal `+` key. Consider checking `shortcut.key === \"+\"` separately and encoding it as `\"space\"` style (e.g., a special token), or adjusting the condition to allow the single `+` character. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C039",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 155,
+      "thread_id": "PRRT_kwDORLtfbc5wxvIJ",
+      "path": "apps/server/src/keybindings.ts",
+      "line": 418,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "`loadCustomKeybindingsConfig` fails when the config file doesn't exist, which is expected for new users. Consider catching `ENOENT` and returning an empty array instead. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C010",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 156,
+      "thread_id": "PRRT_kwDORLtfbc5wxvIQ",
+      "path": "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts",
+      "line": 133,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "`latestMessageIdByTurnKey` is written to but never read, and `clearAssistantMessageIdsForTurn` doesn't clear its entries\u2014only `clearTurnStateForSession` does. Consider removing this map entirely if unused, or clearing it alongside `turnMessageIdsByTurnKey` in `clearAssistantMessageIdsForTurn`. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C046",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 157,
+      "thread_id": "PRRT_kwDORLtfbc5wxvIq",
+      "path": "apps/web/src/components/ui/sidebar.tsx",
+      "line": 114,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "When `onOpenChange` is provided without `open`, the internal `_open` state never updates because `setOpenProp` takes precedence. Consider calling `_setOpen` when `openProp === undefined`, regardless of whether `setOpenProp` exists.",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C056",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 158,
+      "thread_id": "PRRT_kwDORLtfbc5wyTaP",
+      "path": "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts",
+      "line": 334,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Worker fibers die permanently on single processing error",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "canonical_id": "C002",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C002."
+    },
+    {
+      "index": 159,
+      "thread_id": "PRRT_kwDORLtfbc5wyTaS",
+      "path": "apps/server/src/orchestration/Layers/CheckpointReactor.ts",
+      "line": 542,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Revert completion dispatched as fire-and-forget fork",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C012",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C012."
+    },
+    {
+      "index": 160,
+      "thread_id": "PRRT_kwDORLtfbc5wyTaT",
+      "path": "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts",
+      "line": 84,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Unbounded memory growth in turn start deduplication set",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C018",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C018."
+    },
+    {
+      "index": 161,
+      "thread_id": "PRRT_kwDORLtfbc5wyTaW",
+      "path": "apps/server/src/wsServer.ts",
+      "line": 545,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "WS message handler can cause unhandled promise rejection",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C027",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 162,
+      "thread_id": "PRRT_kwDORLtfbc5wyWz4",
+      "path": "apps/web/src/routes/_chat.$threadId.tsx",
+      "line": 105,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "The `resizable` object is recreated on every render, causing `SidebarRail`'s `useEffect` to repeatedly read localStorage and update the DOM. Consider memoizing the object with `useMemo`. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C057",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 163,
+      "thread_id": "PRRT_kwDORLtfbc5wzliw",
+      "path": "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts",
+      "line": 334,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Reactor worker loops die permanently on single error",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "canonical_id": "C002",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C002."
+    },
+    {
+      "index": 164,
+      "thread_id": "PRRT_kwDORLtfbc5wzliz",
+      "path": "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts",
+      "line": 84,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Unbounded `handledTurnStartKeys` set causes memory leak",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C018",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C018."
+    },
+    {
+      "index": 165,
+      "thread_id": "PRRT_kwDORLtfbc5wzli0",
+      "path": "apps/server/src/orchestration/Layers/CheckpointReactor.ts",
+      "line": 542,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Revert completion dispatch is fire-and-forget via fork",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C012",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C012."
+    },
+    {
+      "index": 166,
+      "thread_id": "PRRT_kwDORLtfbc5wzli2",
+      "path": "apps/server/src/orchestration/Layers/CheckpointReactor.ts",
+      "line": 62,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Duplicated `resolveThreadWorkspaceCwd` across three files",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C042",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 167,
+      "thread_id": "PRRT_kwDORLtfbc5wzli3",
+      "path": "apps/server/src/wsServer.ts",
+      "line": 545,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "WS message handler can cause unhandled promise rejection",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C027",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C027."
+    },
+    {
+      "index": 168,
+      "thread_id": "PRRT_kwDORLtfbc5wzp4R",
+      "path": "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts",
+      "line": 29,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "`truncateDetail` slices to `limit - 1` then appends `\"...\"` (3 chars), producing strings of length `limit + 2`. Consider slicing to `limit - 3` instead. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C045",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 169,
+      "thread_id": "PRRT_kwDORLtfbc5wzp4T",
+      "path": "apps/server/src/orchestration/Layers/OrchestrationEngine.ts",
+      "line": 96,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "Non-atomic event appending can corrupt state on retry. If an error occurs mid-loop (lines 96-102) after some events are persisted but before the receipt is written, the command appears to fail. A retry generates new UUIDs via `crypto.randomUUID()` in the decider, appending duplicate events. Consider wrapping the loop in a transaction or using deterministic event IDs derived from `commandId`. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "canonical_id": "C001",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 170,
+      "thread_id": "PRRT_kwDORLtfbc5w0_g3",
+      "path": "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts",
+      "line": 334,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Reactor worker fibers die permanently on single error",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "canonical_id": "C002",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C002."
+    },
+    {
+      "index": 171,
+      "thread_id": "PRRT_kwDORLtfbc5w0_g4",
+      "path": "apps/server/src/orchestration/Layers/CheckpointReactor.ts",
+      "line": 542,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Forked revert completion creates state inconsistency window",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C012",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C012."
+    },
+    {
+      "index": 172,
+      "thread_id": "PRRT_kwDORLtfbc5w0_g7",
+      "path": "apps/server/src/checkpointing/Layers/CheckpointStore.ts",
+      "line": 95,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Inconsistent input trimming across CheckpointStore methods",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C008",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C008."
+    },
+    {
+      "index": 173,
+      "thread_id": "PRRT_kwDORLtfbc5w0_g-",
+      "path": "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts",
+      "line": 84,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Unbounded `handledTurnStartKeys` Set causes memory leak",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C018",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C018."
+    },
+    {
+      "index": 174,
+      "thread_id": "PRRT_kwDORLtfbc5w1CxE",
+      "path": "apps/server/src/terminal/Layers/BunPTY.ts",
+      "line": 97,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "Race condition: `processHandle` may be `null` when `data` callback fires, since it's assigned after `Bun.spawn` returns. Consider initializing `BunPtyProcess` first, then passing it to the callback to avoid losing initial output. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C052",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 175,
+      "thread_id": "PRRT_kwDORLtfbc5w1CxT",
+      "path": "apps/server/src/git/Layers/GitCore.ts",
+      "line": 41,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "Git's braced rename syntax (e.g., `src/{old => new}/file.ts`) isn't handled correctly. The current slice after ` => ` produces invalid paths like `new}/file.ts`. Consider expanding the braces to construct the full destination path. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C009",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 176,
+      "thread_id": "PRRT_kwDORLtfbc5w1C36",
+      "path": "apps/server/src/checkpointing/Layers/CheckpointStore.ts",
+      "line": 94,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Inconsistent input trimming across CheckpointStore methods",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C008",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C008."
+    },
+    {
+      "index": 177,
+      "thread_id": "PRRT_kwDORLtfbc5w1C3-",
+      "path": "apps/server/src/checkpointing/Layers/CheckpointDiffQuery.ts",
+      "line": 40,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Duplicated resolveThreadWorkspaceCwd utility across files",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C043",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C043."
+    },
+    {
+      "index": 178,
+      "thread_id": "PRRT_kwDORLtfbc5w1C4B",
+      "path": "apps/server/src/checkpointing/Errors.ts",
+      "line": 79,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Redundant CheckpointInvariantError in service error union type",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C035",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C035."
+    },
+    {
+      "index": 179,
+      "thread_id": "PRRT_kwDORLtfbc5w1C4H",
+      "path": "AGENTS.md",
+      "line": 45,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Dummy workflow testing marker committed to AGENTS.md",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C032",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C032."
+    },
+    {
+      "index": 180,
+      "thread_id": "PRRT_kwDORLtfbc5w1GPo",
+      "path": "apps/server/src/git/Layers/CodexTextGeneration.ts",
+      "line": 136,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "Multi-byte UTF-8 characters split across chunks will be corrupted when decoding each chunk separately. Consider accumulating all chunks first, then decoding once, or use `TextDecoder` with `stream: true`. <details> <summary>\ud83d\ude80 Reply \"<strong>fix it for me</strong>\" or copy this <strong>AI Prompt</strong> for your agent:</summary>",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C038",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 181,
+      "thread_id": "PRRT_kwDORLtfbc5w1GPr",
+      "path": "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts",
+      "line": 266,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "macroscopeapp",
+      "title": "On `message.completed`, the message ID is added to the set and `thread.message.assistant.complete` is dispatched. On `turn.completed`, the same set is iterated and `thread.message.assistant.complete` is dispatched again for each ID\u2014including already-completed ones. Consider removing message IDs from the set after dispatching on `message.completed`, or filtering out already-completed IDs before the `turn.completed` loop.",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C020",
+      "phase0_status": "actionable_canonical",
+      "phase0_reason": "Canonical actionable item."
+    },
+    {
+      "index": 182,
+      "thread_id": "PRRT_kwDORLtfbc5w1HGT",
+      "path": "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts",
+      "line": 334,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Reactor worker fibers die permanently on single error",
+      "severity": "High",
+      "has_false_positive_signal": false,
+      "canonical_id": "C002",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C002."
+    },
+    {
+      "index": 183,
+      "thread_id": "PRRT_kwDORLtfbc5w1HGW",
+      "path": "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts",
+      "line": 84,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Unbounded memory growth in turn start deduplication set",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C018",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C018."
+    },
+    {
+      "index": 184,
+      "thread_id": "PRRT_kwDORLtfbc5w1HGX",
+      "path": "apps/server/src/orchestration/Layers/CheckpointReactor.ts",
+      "line": 542,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Revert completion dispatch is fire-and-forget, causing stale state",
+      "severity": "Medium",
+      "has_false_positive_signal": false,
+      "canonical_id": "C012",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C012."
+    },
+    {
+      "index": 185,
+      "thread_id": "PRRT_kwDORLtfbc5w1HGZ",
+      "path": "apps/server/src/checkpointing/Layers/CheckpointDiffQuery.ts",
+      "line": 40,
+      "is_outdated": false,
+      "is_resolved": false,
+      "author": "cursor",
+      "title": "Duplicated utility functions across checkpoint modules",
+      "severity": "Low",
+      "has_false_positive_signal": false,
+      "canonical_id": "C043",
+      "phase0_status": "actionable_duplicate",
+      "phase0_reason": "Duplicate of C043."
+    }
+  ]
+}
