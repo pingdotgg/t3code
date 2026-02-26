@@ -28,6 +28,8 @@ interface CliInput {
   readonly devUrl: Option.Option<URL>;
   readonly noBrowser: Option.Option<boolean>;
   readonly authToken: Option.Option<string>;
+  readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
+  readonly logWebSocketEvents: Option.Option<boolean>;
 }
 
 export interface CliConfigShape {
@@ -79,6 +81,14 @@ const CliEnvConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  autoBootstrapProjectFromCwd: Config.boolean("T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  logWebSocketEvents: Config.boolean("T3CODE_LOG_WS_EVENTS").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const ServerConfigLive = (input: CliInput) =>
@@ -119,6 +129,18 @@ const ServerConfigLive = (input: CliInput) =>
         onNone: () => env.noBrowser ?? mode === "desktop",
       });
       const authToken = Option.getOrUndefined(input.authToken) ?? env.authToken;
+      const autoBootstrapProjectFromCwd = Option.match(input.autoBootstrapProjectFromCwd, {
+        // effect/cli boolean flags parse to `false` when absent; in that case
+        // we still want env/mode fallbacks to apply.
+        onSome: (value) => (value ? true : (env.autoBootstrapProjectFromCwd ?? mode === "web")),
+        onNone: () => env.autoBootstrapProjectFromCwd ?? mode === "web",
+      });
+      const logWebSocketEvents = Option.match(input.logWebSocketEvents, {
+        // effect/cli boolean flags parse to `false` when absent; in that case
+        // we still want env/dev fallbacks to apply.
+        onSome: (value) => (value ? true : (env.logWebSocketEvents ?? Boolean(devUrl))),
+        onNone: () => env.logWebSocketEvents ?? Boolean(devUrl),
+      });
       const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
       const { join } = yield* Path.Path;
       const keybindingsConfigPath = join(stateDir, "keybindings.json");
@@ -138,6 +160,8 @@ const ServerConfigLive = (input: CliInput) =>
         devUrl,
         noBrowser,
         authToken,
+        autoBootstrapProjectFromCwd,
+        logWebSocketEvents,
       } satisfies ServerConfigShape;
     }),
   );
@@ -159,7 +183,7 @@ const formatHostForUrl = (host: string): string =>
 const makeServerProgram = (input: CliInput) =>
   Effect.gen(function* () {
     const cliConfig = yield* CliConfig;
-    const { createServer, stopSignal } = yield* Server;
+    const { start, stopSignal } = yield* Server;
     const openDeps = yield* Open;
     yield* cliConfig.fixPath;
 
@@ -174,7 +198,7 @@ const makeServerProgram = (input: CliInput) =>
       );
     }
 
-    yield* createServer();
+    yield* start;
 
     const localUrl = `http://localhost:${config.port}`;
     const bindUrl =
@@ -240,6 +264,19 @@ const authTokenFlag = Flag.string("auth-token").pipe(
   Flag.withAlias("token"),
   Flag.optional,
 );
+const autoBootstrapProjectFromCwdFlag = Flag.boolean("auto-bootstrap-project-from-cwd").pipe(
+  Flag.withDescription(
+    "Create a project for the current working directory on startup when missing.",
+  ),
+  Flag.optional,
+);
+const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
+  Flag.withDescription(
+    "Emit server-side logs for outbound WebSocket push traffic (equivalent to T3CODE_LOG_WS_EVENTS).",
+  ),
+  Flag.withAlias("log-ws-events"),
+  Flag.optional,
+);
 
 export const t3Cli = Command.make("t3", {
   mode: modeFlag,
@@ -249,6 +286,8 @@ export const t3Cli = Command.make("t3", {
   devUrl: devUrlFlag,
   noBrowser: noBrowserFlag,
   authToken: authTokenFlag,
+  autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
+  logWebSocketEvents: logWebSocketEventsFlag,
 }).pipe(
   Command.withDescription("Run the T3 Code server."),
   Command.withHandler((input) => Effect.scoped(makeServerProgram(input))),

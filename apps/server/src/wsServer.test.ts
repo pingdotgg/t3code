@@ -338,6 +338,7 @@ describe("WebSocket Server", () => {
       persistenceLayer?: Layer.Layer<SqlClient.SqlClient, any>;
       cwd?: string;
       autoBootstrapProjectFromCwd?: boolean;
+      logWebSocketEvents?: boolean;
       devUrl?: string;
       authToken?: string;
       stateDir?: string;
@@ -368,6 +369,8 @@ describe("WebSocket Server", () => {
       devUrl: options.devUrl ? new URL(options.devUrl) : undefined,
       noBrowser: true,
       authToken: options.authToken,
+      autoBootstrapProjectFromCwd: options.autoBootstrapProjectFromCwd ?? false,
+      logWebSocketEvents: options.logWebSocketEvents ?? Boolean(options.devUrl),
     } satisfies ServerConfigShape);
     const infrastructureLayer = providerLayer.pipe(Layer.provideMerge(persistenceLayer));
     const runtimeOverrides = Layer.mergeAll(
@@ -397,9 +400,7 @@ describe("WebSocket Server", () => {
 
     try {
       const runtime = await Effect.runPromise(
-        createServer({
-          autoBootstrapProjectFromCwd: options.autoBootstrapProjectFromCwd ?? false,
-        }).pipe(Effect.provide(runtimeServices), Scope.provide(scope)),
+        createServer().pipe(Effect.provide(runtimeServices), Scope.provide(scope)),
       );
       serverScope = scope;
       return runtime;

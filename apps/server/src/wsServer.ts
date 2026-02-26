@@ -49,15 +49,12 @@ const MIME_TYPES: Record<string, string> = {
   ".map": "application/json",
 };
 
-export interface ServerOptions {
-  autoBootstrapProjectFromCwd?: boolean | undefined;
-  logWebSocketEvents?: boolean | undefined;
-}
-
 export interface ServerShape {
-  readonly createServer: (
-    options?: ServerOptions,
-  ) => Effect.Effect<http.Server, unknown, Scope.Scope | ServerRuntimeServices | ServerConfig>;
+  readonly start: Effect.Effect<
+    http.Server,
+    unknown,
+    Scope.Scope | ServerRuntimeServices | ServerConfig
+  >;
   readonly stopSignal: Effect.Effect<unknown, never>;
 }
 
@@ -80,14 +77,6 @@ function rejectUpgrade(socket: Duplex, statusCode: number, message: string): voi
       "\r\n" +
       message,
   );
-}
-
-function parseBooleanEnv(value: string | undefined): boolean | undefined {
-  if (value === undefined) return undefined;
-  const normalized = value.trim().toLowerCase();
-  if (["1", "true", "yes", "on"].includes(normalized)) return true;
-  if (["0", "false", "no", "off"].includes(normalized)) return false;
-  return undefined;
 }
 
 function websocketRawToString(raw: unknown): string | null {
@@ -153,17 +142,22 @@ class RouteRequestError extends Schema.TaggedErrorClass<RouteRequestError>()("Ro
   message: Schema.String,
 }) {}
 
-export const createServer = Effect.fn(function* (options: ServerOptions = {}): Effect.fn.Return<
+export const createServer = Effect.fn(function* (): Effect.fn.Return<
   http.Server,
   unknown, // TODO: This should not be unknown
   Scope.Scope | ServerRuntimeServices | ServerConfig
 > {
   const serverConfig = yield* ServerConfig;
-  const { port, cwd, staticDir, devUrl, authToken, mode, host } = serverConfig;
   const {
-    logWebSocketEvents = parseBooleanEnv(process.env.T3CODE_LOG_WS_EVENTS) ?? Boolean(devUrl),
-    autoBootstrapProjectFromCwd = mode === "web",
-  } = options;
+    port,
+    cwd,
+    staticDir,
+    devUrl,
+    authToken,
+    host,
+    logWebSocketEvents,
+    autoBootstrapProjectFromCwd,
+  } = serverConfig;
 
   const gitManager = yield* GitManager;
   const terminalManager = yield* TerminalManager;
@@ -599,6 +593,6 @@ export const createServer = Effect.fn(function* (options: ServerOptions = {}): E
 });
 
 export const ServerLive = Layer.succeed(Server, {
-  createServer,
+  start: createServer(),
   stopSignal: Effect.never,
 } satisfies ServerShape);

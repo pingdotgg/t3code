@@ -10,20 +10,18 @@ import { beforeEach } from "vitest";
 import { CliConfig, t3Cli, type CliConfigShape } from "./main";
 import { NetService, ServerConfig, type ServerConfigShape } from "./config";
 import { Open, type OpenShape } from "./open";
-import { Server, type ServerShape, type ServerOptions } from "./wsServer";
+import { Server, type ServerShape } from "./wsServer";
 
 const start = vi.fn(() => undefined);
 const stop = vi.fn(() => undefined);
 let resolvedConfig: ServerConfigShape | null = null;
-const createServer = vi.fn((_: ServerOptions | undefined) =>
-  Effect.acquireRelease(
-    Effect.gen(function* () {
-      resolvedConfig = yield* ServerConfig;
-      start();
-      return {} as unknown as Http.Server;
-    }),
-    () => Effect.sync(() => stop()),
-  ),
+const serverStart = Effect.acquireRelease(
+  Effect.gen(function* () {
+    resolvedConfig = yield* ServerConfig;
+    start();
+    return {} as unknown as Http.Server;
+  }),
+  () => Effect.sync(() => stop()),
 );
 const findAvailablePort = vi.fn((preferred: number) => Effect.succeed(preferred));
 
@@ -37,7 +35,7 @@ const testLayer = Layer.mergeAll(
     findAvailablePort,
   }),
   Layer.succeed(Server, {
-    createServer,
+    start: serverStart,
     stopSignal: Effect.void,
   } satisfies ServerShape),
   Layer.succeed(Open, {
@@ -60,16 +58,6 @@ beforeEach(() => {
   resolvedConfig = null;
   start.mockImplementation(() => undefined);
   stop.mockImplementation(() => undefined);
-  createServer.mockImplementation((_: ServerOptions | undefined) =>
-    Effect.acquireRelease(
-      Effect.gen(function* () {
-        resolvedConfig = yield* ServerConfig;
-        start();
-        return {} as unknown as Http.Server;
-      }),
-      () => Effect.sync(() => stop()),
-    ),
-  );
   findAvailablePort.mockImplementation((preferred: number) => Effect.succeed(preferred));
 });
 
@@ -92,7 +80,7 @@ it.layer(testLayer)("server cli", (it) => {
         "auth-secret",
       ]);
 
-      assert.equal(createServer.mock.calls.length, 1);
+      assert.equal(start.mock.calls.length, 1);
       assert.equal(resolvedConfig?.mode, "desktop");
       assert.equal(resolvedConfig?.port, 4010);
       assert.equal(resolvedConfig?.host, "0.0.0.0");
@@ -100,7 +88,8 @@ it.layer(testLayer)("server cli", (it) => {
       assert.equal(resolvedConfig?.devUrl?.toString(), "http://127.0.0.1:5173/");
       assert.equal(resolvedConfig?.noBrowser, true);
       assert.equal(resolvedConfig?.authToken, "auth-secret");
-      assert.equal(start.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.autoBootstrapProjectFromCwd, false);
+      assert.equal(resolvedConfig?.logWebSocketEvents, true);
       assert.equal(stop.mock.calls.length, 1);
     }),
   );
@@ -109,7 +98,7 @@ it.layer(testLayer)("server cli", (it) => {
     Effect.gen(function* () {
       yield* runCli(["--token", "token-secret"]);
 
-      assert.equal(createServer.mock.calls.length, 1);
+      assert.equal(start.mock.calls.length, 1);
       assert.equal(resolvedConfig?.authToken, "token-secret");
     }),
   );
@@ -126,7 +115,7 @@ it.layer(testLayer)("server cli", (it) => {
         T3CODE_AUTH_TOKEN: "env-token",
       });
 
-      assert.equal(createServer.mock.calls.length, 1);
+      assert.equal(start.mock.calls.length, 1);
       assert.equal(resolvedConfig?.mode, "desktop");
       assert.equal(resolvedConfig?.port, 4999);
       assert.equal(resolvedConfig?.host, "100.88.10.4");
@@ -134,6 +123,8 @@ it.layer(testLayer)("server cli", (it) => {
       assert.equal(resolvedConfig?.devUrl?.toString(), "http://localhost:5173/");
       assert.equal(resolvedConfig?.noBrowser, true);
       assert.equal(resolvedConfig?.authToken, "env-token");
+      assert.equal(resolvedConfig?.autoBootstrapProjectFromCwd, false);
+      assert.equal(resolvedConfig?.logWebSocketEvents, true);
       assert.equal(findAvailablePort.mock.calls.length, 0);
     }),
   );
@@ -147,7 +138,7 @@ it.layer(testLayer)("server cli", (it) => {
       });
 
       assert.deepStrictEqual(findAvailablePort.mock.calls, [[3773]]);
-      assert.equal(createServer.mock.calls.length, 1);
+      assert.equal(start.mock.calls.length, 1);
       assert.equal(resolvedConfig?.mode, "web");
       assert.equal(resolvedConfig?.port, 4666);
       assert.equal(resolvedConfig?.host, undefined);
@@ -160,7 +151,7 @@ it.layer(testLayer)("server cli", (it) => {
         T3CODE_NO_BROWSER: "false",
       });
 
-      assert.equal(createServer.mock.calls.length, 1);
+      assert.equal(start.mock.calls.length, 1);
       assert.equal(resolvedConfig?.noBrowser, true);
     }),
   );
@@ -171,7 +162,7 @@ it.layer(testLayer)("server cli", (it) => {
       yield* runCli([]);
 
       assert.deepStrictEqual(findAvailablePort.mock.calls, [[3773]]);
-      assert.equal(createServer.mock.calls.length, 1);
+      assert.equal(start.mock.calls.length, 1);
       assert.equal(resolvedConfig?.port, 5444);
       assert.equal(resolvedConfig?.mode, "web");
     }),
@@ -185,7 +176,7 @@ it.layer(testLayer)("server cli", (it) => {
       });
 
       assert.equal(findAvailablePort.mock.calls.length, 0);
-      assert.equal(createServer.mock.calls.length, 1);
+      assert.equal(start.mock.calls.length, 1);
       assert.equal(resolvedConfig?.port, 3773);
       assert.equal(resolvedConfig?.host, "127.0.0.1");
       assert.equal(resolvedConfig?.mode, "desktop");
@@ -199,9 +190,24 @@ it.layer(testLayer)("server cli", (it) => {
         T3CODE_NO_BROWSER: "true",
       });
 
-      assert.equal(createServer.mock.calls.length, 1);
+      assert.equal(start.mock.calls.length, 1);
       assert.equal(resolvedConfig?.mode, "desktop");
       assert.equal(resolvedConfig?.host, "0.0.0.0");
+    }),
+  );
+
+  it.effect("supports CLI and env for bootstrap/log websocket toggles", () =>
+    Effect.gen(function* () {
+      yield* runCli(["--auto-bootstrap-project-from-cwd"], {
+        T3CODE_MODE: "desktop",
+        T3CODE_LOG_WS_EVENTS: "false",
+        T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
+        T3CODE_NO_BROWSER: "true",
+      });
+
+      assert.equal(start.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.autoBootstrapProjectFromCwd, true);
+      assert.equal(resolvedConfig?.logWebSocketEvents, false);
     }),
   );
 
@@ -209,7 +215,6 @@ it.layer(testLayer)("server cli", (it) => {
     Effect.gen(function* () {
       yield* runCli(["--mode", "invalid"]);
 
-      assert.equal(createServer.mock.calls.length, 0);
       assert.equal(start.mock.calls.length, 0);
       assert.equal(stop.mock.calls.length, 0);
     }),
@@ -219,7 +224,6 @@ it.layer(testLayer)("server cli", (it) => {
     Effect.gen(function* () {
       yield* runCli(["--dev-url", "not-a-url"]).pipe(Effect.catch(() => Effect.void));
 
-      assert.equal(createServer.mock.calls.length, 0);
       assert.equal(start.mock.calls.length, 0);
       assert.equal(stop.mock.calls.length, 0);
     }),
@@ -230,7 +234,6 @@ it.layer(testLayer)("server cli", (it) => {
       yield* runCli(["--port", "70000"]);
 
       // effect/unstable/cli renders help/errors for parse failures and returns success.
-      assert.equal(createServer.mock.calls.length, 0);
       assert.equal(start.mock.calls.length, 0);
       assert.equal(stop.mock.calls.length, 0);
     }),
