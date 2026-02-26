@@ -2,7 +2,7 @@ import type { GitBranch, ThreadId } from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import { newCommandId } from "../lib/orchestrationIds";
+import { newCommandId } from "../lib/utils";
 import {
   gitBranchesQueryOptions,
   gitCheckoutMutationOptions,
@@ -70,9 +70,7 @@ export default function BranchToolbar({
       : branchNames;
   // ── Mutations ─────────────────────────────────────────────────────────
 
-  const checkoutMutation = useMutation(
-    gitCheckoutMutationOptions({ cwd: branchCwd, queryClient }),
-  );
+  const checkoutMutation = useMutation(gitCheckoutMutationOptions({ cwd: branchCwd, queryClient }));
 
   const createBranchMutation = useMutation(
     gitCreateBranchAndCheckoutMutationOptions({ cwd: branchCwd, queryClient }),
@@ -108,14 +106,7 @@ export default function BranchToolbar({
       branch: syncedBranch,
       worktreePath: null,
     });
-  }, [
-    activeThreadId,
-    activeWorktreePath,
-    activeThreadBranch,
-    queryBranches,
-    envMode,
-    dispatch,
-  ]);
+  }, [activeThreadId, activeWorktreePath, activeThreadBranch, queryBranches, envMode, dispatch]);
 
   useEffect(() => {
     if (isBranchMenuOpen) return;
