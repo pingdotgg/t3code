@@ -467,6 +467,107 @@ describe("OrchestrationEngine", () => {
     await runtime.dispose();
   });
 
+  it("reconciles in-memory state when append persists but projection fails", async () => {
+    type StoredEvent =
+      ReturnType<OrchestrationEventStoreShape["append"]> extends Effect.Effect<infer A, any, any>
+        ? A
+        : never;
+    const events: StoredEvent[] = [];
+    let nextSequence = 1;
+
+    const nonTransactionalStore: OrchestrationEventStoreShape = {
+      append(event) {
+        const savedEvent = {
+          ...event,
+          sequence: nextSequence,
+        } as StoredEvent;
+        nextSequence += 1;
+        events.push(savedEvent);
+        return Effect.succeed(savedEvent);
+      },
+      readFromSequence(sequenceExclusive) {
+        return Stream.fromIterable(events.filter((event) => event.sequence > sequenceExclusive));
+      },
+      readAll() {
+        return Stream.fromIterable(events);
+      },
+    };
+
+    let shouldFailProjection = true;
+    const flakyProjectionPipeline: OrchestrationProjectionPipelineShape = {
+      bootstrap: Effect.void,
+      projectEvent: (event) => {
+        if (
+          shouldFailProjection &&
+          event.commandId === CommandId.makeUnsafe("cmd-thread-meta-sync-fail")
+        ) {
+          shouldFailProjection = false;
+          return Effect.fail(
+            new PersistenceSqlError({
+              operation: "test.projection",
+              detail: "projection failed",
+            }),
+          );
+        }
+        return Effect.void;
+      },
+    };
+
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, flakyProjectionPipeline)),
+        Layer.provide(Layer.succeed(OrchestrationEventStore, nonTransactionalStore)),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(SqlitePersistenceMemory),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const createdAt = now();
+
+    await runtime.runPromise(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-sync-create"),
+        projectId: asProjectId("project-sync"),
+        title: "Sync Project",
+        workspaceRoot: "/tmp/project-sync",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
+    await runtime.runPromise(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-thread-sync-create"),
+        threadId: ThreadId.makeUnsafe("thread-sync"),
+        projectId: asProjectId("project-sync"),
+        title: "sync-before",
+        model: "gpt-5-codex",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    await expect(
+      runtime.runPromise(
+        engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.makeUnsafe("cmd-thread-meta-sync-fail"),
+          threadId: ThreadId.makeUnsafe("thread-sync"),
+          title: "sync-after-failed-projection",
+        }),
+      ),
+    ).rejects.toThrow("projection failed");
+
+    const readModelAfterFailure = await runtime.runPromise(engine.getReadModel());
+    const updatedThread = readModelAfterFailure.threads.find((thread) => thread.id === "thread-sync");
+    expect(readModelAfterFailure.snapshotSequence).toBe(3);
+    expect(updatedThread?.title).toBe("sync-after-failed-projection");
+
+    await runtime.dispose();
+  });
+
   it("fails command dispatch when command invariants are violated", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;

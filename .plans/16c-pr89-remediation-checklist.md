@@ -11,7 +11,7 @@ Status values:
 - `DONE`: Implemented and verified
 - `CLOSED_INVALID`: Stale/invalid review finding
 
-Counts: active `53` (`valid=34`, `partially-valid=19`), closed-invalid `5`
+Counts: active `52` (`valid=33`, `partially-valid=19`), closed-invalid `5`
 
 ## Active Checklist
 
@@ -163,8 +163,8 @@ Counts: active `53` (`valid=34`, `partially-valid=19`), closed-invalid `5`
   - Threads: PRRT_kwDORLtfbc5wzp4T
   - Audit note: Append/project/receipt are non-atomic; retry can duplicate events.
 
-- [ ] `C013` If `projectionPipeline.projectEvent` fails after `eventStore.append` succeeds, the event is persisted but `readModel` isn't updated, causing desync. Consider updating the in-memory `readModel` immediately after append (before the external projection), so local state stays consistent regardless of downstream failures.
-  - Status: `TODO`
+- [x] `C013` If `projectionPipeline.projectEvent` fails after `eventStore.append` succeeds, the event is persisted but `readModel` isn't updated, causing desync. Consider updating the in-memory `readModel` immediately after append (before the external projection), so local state stays consistent regardless of downstream failures.
+  - Status: `DONE`
   - Verdict: `valid`
   - Severity: `Medium`
   - Area: `Event ordering and state consistency`
