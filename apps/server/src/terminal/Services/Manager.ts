@@ -8,14 +8,8 @@ import {
   TerminalSessionStatus,
   TerminalWriteInput,
 } from "@t3tools/contracts";
-import { PtyAdapterShape, PtyProcess } from "./PTY";
+import { PtyProcess } from "./PTY";
 import { Effect, ServiceMap } from "effect";
-
-type TerminalSubprocessChecker = (terminalPid: number) => Promise<boolean>;
-
-export interface TerminalManagerEvents {
-  event: [event: TerminalEvent];
-}
 
 export interface TerminalSessionState {
   threadId: string;
@@ -44,15 +38,6 @@ export interface ShellCandidate {
 export interface TerminalStartInput extends TerminalOpenInput {
   cols: number;
   rows: number;
-}
-
-export interface TerminalManagerOptions {
-  logsDir?: string;
-  historyLineLimit?: number;
-  ptyAdapter: PtyAdapterShape;
-  shellResolver?: () => string;
-  subprocessChecker?: TerminalSubprocessChecker;
-  subprocessPollIntervalMs?: number;
 }
 
 export interface TerminalManagerShape {
