@@ -77,7 +77,7 @@ beforeEach(() => {
   findAvailablePort.mockImplementation((preferred: number) => Effect.succeed(preferred));
 });
 
-it.layer(testLayer)("server cli", (it) => {
+it.layer(testLayer)("server CLI command", (it) => {
   it.effect("parses all CLI flags and wires scoped start/stop", () =>
     Effect.gen(function* () {
       yield* runCli([
