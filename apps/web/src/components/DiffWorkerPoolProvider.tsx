@@ -1,8 +1,39 @@
-import { WorkerPoolContextProvider } from "@pierre/diffs/react";
+import { WorkerPoolContextProvider, useWorkerPool } from "@pierre/diffs/react";
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
+import { useTheme } from "../hooks/useTheme";
+
+function resolveDiffThemeName(theme: "light" | "dark") {
+  return theme === "dark" ? "pierre-dark" : "pierre-light";
+}
+
+function DiffWorkerThemeSync({ themeName }: { themeName: "pierre-light" | "pierre-dark" }) {
+  const workerPool = useWorkerPool();
+
+  useEffect(() => {
+    if (!workerPool) {
+      return;
+    }
+
+    const current = workerPool.getDiffRenderOptions();
+    if (current.theme === themeName) {
+      return;
+    }
+
+    void workerPool
+      .setRenderOptions({
+        ...current,
+        theme: themeName,
+      })
+      .catch(() => undefined);
+  }, [themeName, workerPool]);
+
+  return null;
+}
 
 export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
+  const { resolvedTheme } = useTheme();
+  const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const workerPoolSize = useMemo(() => {
     const cores =
       typeof navigator === "undefined" ? 4 : Math.max(1, navigator.hardwareConcurrency || 4);
@@ -17,9 +48,11 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
         totalASTLRUCacheSize: 240,
       }}
       highlighterOptions={{
+        theme: diffThemeName,
         tokenizeMaxLineLength: 1_000,
       }}
     >
+      <DiffWorkerThemeSync themeName={diffThemeName} />
       {children}
     </WorkerPoolContextProvider>
   );

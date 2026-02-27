@@ -16,7 +16,11 @@ import { useStore } from "../store";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
 type DiffRenderMode = "stacked" | "split";
-type DiffThemeType = "light" | "dark" | "system";
+type DiffThemeType = "light" | "dark";
+
+function resolveDiffThemeName(theme: "light" | "dark") {
+  return theme === "dark" ? "pierre-dark" : "pierre-light";
+}
 
 type RenderablePatch =
   | {
@@ -472,13 +476,15 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                 {renderableFiles.map((fileDiff) => {
                   const filePath = resolveFileDiffPath(fileDiff);
                   const fileKey = buildFileDiffRenderKey(fileDiff);
+                  const themedFileKey = `${fileKey}:${resolvedTheme}`;
                   return (
-                    <div key={fileKey} data-diff-file-path={filePath} className="rounded-md">
+                    <div key={themedFileKey} data-diff-file-path={filePath} className="rounded-md">
                       <FileDiff
                         fileDiff={fileDiff}
                         options={{
                           diffStyle: diffRenderMode === "split" ? "split" : "unified",
                           lineDiffType: "none",
+                          theme: resolveDiffThemeName(resolvedTheme),
                           themeType: resolvedTheme as DiffThemeType,
                         }}
                       />
