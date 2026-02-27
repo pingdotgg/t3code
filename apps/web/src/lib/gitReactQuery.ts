@@ -1,6 +1,6 @@
 import type { GitStackedAction } from "@t3tools/contracts";
 import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
-import { ensureNativeApi } from "~/nativeApi";
+import { ensureNativeApi } from "../nativeApi";
 
 const GIT_STATUS_STALE_TIME_MS = 5_000;
 const GIT_STATUS_REFETCH_INTERVAL_MS = 15_000;
@@ -18,8 +18,7 @@ export const gitMutationKeys = {
   checkout: (cwd: string | null) => ["git", "mutation", "checkout", cwd] as const,
   createBranchAndCheckout: (cwd: string | null) =>
     ["git", "mutation", "create-branch-and-checkout", cwd] as const,
-  runStackedAction: (cwd: string | null) =>
-    ["git", "mutation", "run-stacked-action", cwd] as const,
+  runStackedAction: (cwd: string | null) => ["git", "mutation", "run-stacked-action", cwd] as const,
   pull: (cwd: string | null) => ["git", "mutation", "pull", cwd] as const,
 };
 
