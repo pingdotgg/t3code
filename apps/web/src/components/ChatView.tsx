@@ -1401,6 +1401,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
       isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
         ? activeThread.branch
         : null;
+
+    // In worktree mode, require an explicit base branch so we don't silently
+    // fall back to local execution when branch selection is missing.
+    const shouldCreateWorktree =
+      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath;
+    if (shouldCreateWorktree && !activeThread.branch) {
+      dispatch({
+        type: "SET_ERROR",
+        threadId: threadIdForSend,
+        error: "Select a base branch before sending in New worktree mode.",
+      });
+      return;
+    }
+
     const composerImagesSnapshot = [...composerImages];
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
@@ -1423,19 +1437,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
         streaming: false,
       },
     ]);
-
-    // In worktree mode, require an explicit base branch so we don't silently
-    // fall back to local execution when branch selection is missing.
-    const shouldCreateWorktree =
-      activeThread.messages.length === 0 && envMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThread.branch) {
-      dispatch({
-        type: "SET_ERROR",
-        threadId: activeThread.id,
-        error: "Select a base branch before sending in New worktree mode.",
-      });
-      return;
-    }
 
     setThreadError(threadIdForSend, null);
     promptRef.current = "";
@@ -1462,17 +1463,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           branch: result.worktree.branch,
           worktreePath: result.worktree.path,
         });
-        // Keep local thread state in sync immediately so terminal drawer opens
-        // with the worktree cwd/env instead of briefly using the project root.
-        dispatch({
-          type: "SET_THREAD_BRANCH",
-          threadId: threadIdForSend,
-          branch: result.worktree.branch,
-          worktreePath: result.worktree.path,
-        });
         const setupScript = setupProjectScript(activeProject.scripts);
         if (setupScript) {
-          await runProjectScript(setupScript, {
+          void runProjectScript(setupScript, {
             cwd: result.worktree.path,
             worktreePath: result.worktree.path,
             rememberAsLastInvoked: false,
