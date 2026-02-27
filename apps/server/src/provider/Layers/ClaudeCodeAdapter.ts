@@ -36,23 +36,32 @@ import {
 const PROVIDER = "claudeCode" as const;
 
 export interface ClaudeCodeRuntime {
-  readonly startSession: (input: ProviderSessionStartInput) => Promise<ProviderSession>;
-  readonly sendTurn: (input: ProviderSendTurnInput) => Promise<ProviderTurnStartResult>;
-  readonly interruptTurn: (sessionId: ProviderSessionId, turnId?: ProviderTurnId) => Promise<void>;
-  readonly readThread: (sessionId: ProviderSessionId) => Promise<ProviderThreadSnapshot>;
+  readonly startSession: (
+    input: ProviderSessionStartInput,
+  ) => Effect.Effect<ProviderSession, unknown>;
+  readonly sendTurn: (
+    input: ProviderSendTurnInput,
+  ) => Effect.Effect<ProviderTurnStartResult, unknown>;
+  readonly interruptTurn: (
+    sessionId: ProviderSessionId,
+    turnId?: ProviderTurnId,
+  ) => Effect.Effect<void, unknown>;
+  readonly readThread: (
+    sessionId: ProviderSessionId,
+  ) => Effect.Effect<ProviderThreadSnapshot, unknown>;
   readonly rollbackThread: (
     sessionId: ProviderSessionId,
     numTurns: number,
-  ) => Promise<ProviderThreadSnapshot>;
+  ) => Effect.Effect<ProviderThreadSnapshot, unknown>;
   readonly respondToRequest: (
     sessionId: ProviderSessionId,
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
-  ) => Promise<void>;
-  readonly stopSession: (sessionId: ProviderSessionId) => void;
-  readonly listSessions: () => ReadonlyArray<ProviderSession>;
-  readonly hasSession: (sessionId: ProviderSessionId) => boolean;
-  readonly stopAll: () => void;
+  ) => Effect.Effect<void, unknown>;
+  readonly stopSession: (sessionId: ProviderSessionId) => Effect.Effect<void>;
+  readonly listSessions: () => Effect.Effect<ReadonlyArray<ProviderSession>>;
+  readonly hasSession: (sessionId: ProviderSessionId) => Effect.Effect<boolean>;
+  readonly stopAll: () => Effect.Effect<void>;
   readonly streamEvents: Stream.Stream<ProviderRuntimeEvent>;
 }
 
@@ -107,22 +116,20 @@ function toRequestError(
   });
 }
 
-function makeUnavailableRuntime(): ClaudeCodeRuntime {
-  const unavailable = async (): Promise<never> => {
-    throw new Error("Claude Code runtime is not configured.");
-  };
+const unavailableRuntimeError = () => new Error("Claude Code runtime is not configured.");
 
+function makeUnavailableRuntime(): ClaudeCodeRuntime {
   return {
-    startSession: unavailable,
-    sendTurn: unavailable,
-    interruptTurn: unavailable,
-    readThread: unavailable,
-    rollbackThread: unavailable,
-    respondToRequest: unavailable,
-    stopSession: () => {},
-    listSessions: () => [],
-    hasSession: () => false,
-    stopAll: () => {},
+    startSession: () => Effect.fail(unavailableRuntimeError()),
+    sendTurn: () => Effect.fail(unavailableRuntimeError()),
+    interruptTurn: () => Effect.fail(unavailableRuntimeError()),
+    readThread: () => Effect.fail(unavailableRuntimeError()),
+    rollbackThread: () => Effect.fail(unavailableRuntimeError()),
+    respondToRequest: () => Effect.fail(unavailableRuntimeError()),
+    stopSession: () => Effect.void,
+    listSessions: () => Effect.succeed([]),
+    hasSession: () => Effect.succeed(false),
+    stopAll: () => Effect.void,
     streamEvents: Stream.empty,
   };
 }
@@ -140,13 +147,9 @@ const makeClaudeCodeAdapter = (options?: ClaudeCodeAdapterLiveOptions) =>
         return makeUnavailableRuntime();
       }),
       (runtime) =>
-        Effect.sync(() => {
-          try {
-            runtime.stopAll();
-          } catch {
-            // Finalizers should never fail and block shutdown.
-          }
-        }),
+        runtime.stopAll().pipe(
+          Effect.orElseSucceed(() => undefined),
+        ),
     );
 
     const startSession: ClaudeCodeAdapterShape["startSession"] = (input) => {
@@ -160,35 +163,33 @@ const makeClaudeCodeAdapter = (options?: ClaudeCodeAdapterLiveOptions) =>
         );
       }
 
-      return Effect.tryPromise({
-        try: () => runtime.startSession(input),
-        catch: (cause) =>
-          new ProviderAdapterProcessError({
-            provider: PROVIDER,
-            sessionId: "pending",
-            detail: toMessage(cause, "Failed to start Claude Code adapter session."),
-            cause,
-          }),
-      });
+      return runtime.startSession(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              sessionId: "pending",
+              detail: toMessage(cause, "Failed to start Claude Code adapter session."),
+              cause,
+            }),
+        ),
+      );
     };
 
     const sendTurn: ClaudeCodeAdapterShape["sendTurn"] = (input) =>
-      Effect.tryPromise({
-        try: () => runtime.sendTurn(input),
-        catch: (cause) => toRequestError(input.sessionId, "turn/start", cause),
-      });
+      runtime.sendTurn(input).pipe(
+        Effect.mapError((cause) => toRequestError(input.sessionId, "turn/start", cause)),
+      );
 
     const interruptTurn: ClaudeCodeAdapterShape["interruptTurn"] = (sessionId, turnId) =>
-      Effect.tryPromise({
-        try: () => runtime.interruptTurn(sessionId, turnId),
-        catch: (cause) => toRequestError(sessionId, "turn/interrupt", cause),
-      });
+      runtime.interruptTurn(sessionId, turnId).pipe(
+        Effect.mapError((cause) => toRequestError(sessionId, "turn/interrupt", cause)),
+      );
 
     const readThread: ClaudeCodeAdapterShape["readThread"] = (sessionId) =>
-      Effect.tryPromise({
-        try: () => runtime.readThread(sessionId),
-        catch: (cause) => toRequestError(sessionId, "thread/read", cause),
-      });
+      runtime.readThread(sessionId).pipe(
+        Effect.mapError((cause) => toRequestError(sessionId, "thread/read", cause)),
+      );
 
     const rollbackThread: ClaudeCodeAdapterShape["rollbackThread"] = (sessionId, numTurns) => {
       if (!Number.isInteger(numTurns) || numTurns < 1) {
@@ -201,10 +202,9 @@ const makeClaudeCodeAdapter = (options?: ClaudeCodeAdapterLiveOptions) =>
         );
       }
 
-      return Effect.tryPromise({
-        try: () => runtime.rollbackThread(sessionId, numTurns),
-        catch: (cause) => toRequestError(sessionId, "thread/rollback", cause),
-      });
+      return runtime.rollbackThread(sessionId, numTurns).pipe(
+        Effect.mapError((cause) => toRequestError(sessionId, "thread/rollback", cause)),
+      );
     };
 
     const respondToRequest: ClaudeCodeAdapterShape["respondToRequest"] = (
@@ -212,26 +212,17 @@ const makeClaudeCodeAdapter = (options?: ClaudeCodeAdapterLiveOptions) =>
       requestId,
       decision,
     ) =>
-      Effect.tryPromise({
-        try: () => runtime.respondToRequest(sessionId, requestId, decision),
-        catch: (cause) => toRequestError(sessionId, "item/requestApproval/decision", cause),
-      });
+      runtime.respondToRequest(sessionId, requestId, decision).pipe(
+        Effect.mapError((cause) => toRequestError(sessionId, "item/requestApproval/decision", cause)),
+      );
 
-    const stopSession: ClaudeCodeAdapterShape["stopSession"] = (sessionId) =>
-      Effect.sync(() => {
-        runtime.stopSession(sessionId);
-      });
+    const stopSession: ClaudeCodeAdapterShape["stopSession"] = (sessionId) => runtime.stopSession(sessionId);
 
-    const listSessions: ClaudeCodeAdapterShape["listSessions"] = () =>
-      Effect.sync(() => runtime.listSessions());
+    const listSessions: ClaudeCodeAdapterShape["listSessions"] = () => runtime.listSessions();
 
-    const hasSession: ClaudeCodeAdapterShape["hasSession"] = (sessionId) =>
-      Effect.sync(() => runtime.hasSession(sessionId));
+    const hasSession: ClaudeCodeAdapterShape["hasSession"] = (sessionId) => runtime.hasSession(sessionId);
 
-    const stopAll: ClaudeCodeAdapterShape["stopAll"] = () =>
-      Effect.sync(() => {
-        runtime.stopAll();
-      });
+    const stopAll: ClaudeCodeAdapterShape["stopAll"] = () => runtime.stopAll();
 
     return {
       provider: PROVIDER,
@@ -254,4 +245,3 @@ export const ClaudeCodeAdapterLive = Layer.effect(ClaudeCodeAdapter, makeClaudeC
 export function makeClaudeCodeAdapterLive(options?: ClaudeCodeAdapterLiveOptions) {
   return Layer.effect(ClaudeCodeAdapter, makeClaudeCodeAdapter(options));
 }
-

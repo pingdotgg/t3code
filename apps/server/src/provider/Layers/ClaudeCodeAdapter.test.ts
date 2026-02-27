@@ -32,9 +32,9 @@ class FakeClaudeRuntime implements ClaudeCodeRuntime {
   readonly streamEvents = Stream.fromQueue(this.runtimeEventQueue);
 
   public startSessionImpl = vi.fn(
-    async (input: ProviderSessionStartInput): Promise<ProviderSession> => {
+    (input: ProviderSessionStartInput): Effect.Effect<ProviderSession> => {
       const now = new Date().toISOString();
-      return {
+      return Effect.succeed({
         sessionId: asSessionId("claude-sess-1"),
         provider: "claudeCode",
         status: "ready",
@@ -44,88 +44,97 @@ class FakeClaudeRuntime implements ClaudeCodeRuntime {
         model: input.model,
         createdAt: now,
         updatedAt: now,
-      };
+      });
     },
   );
 
   public sendTurnImpl = vi.fn(
-    async (_input: ProviderSendTurnInput): Promise<ProviderTurnStartResult> => ({
-      threadId: ProviderThreadId.makeUnsafe("claude-thread-1"),
-      turnId: asTurnId("claude-turn-1"),
-    }),
+    (_input: ProviderSendTurnInput): Effect.Effect<ProviderTurnStartResult> =>
+      Effect.succeed({
+        threadId: ProviderThreadId.makeUnsafe("claude-thread-1"),
+        turnId: asTurnId("claude-turn-1"),
+      }),
   );
 
   public interruptTurnImpl = vi.fn(
-    async (_sessionId: ProviderSessionId, _turnId?: ProviderTurnId): Promise<void> => undefined,
+    (_sessionId: ProviderSessionId, _turnId?: ProviderTurnId): Effect.Effect<void> => Effect.void,
   );
 
-  public readThreadImpl = vi.fn(async (_sessionId: ProviderSessionId) => ({
-    threadId: ProviderThreadId.makeUnsafe("claude-thread-1"),
-    turns: [],
-  }));
-
-  public rollbackThreadImpl = vi.fn(
-    async (_sessionId: ProviderSessionId, _numTurns: number) => ({
+  public readThreadImpl = vi.fn((_sessionId: ProviderSessionId): Effect.Effect<{
+    threadId: ProviderThreadId;
+    turns: never[];
+  }> =>
+    Effect.succeed({
       threadId: ProviderThreadId.makeUnsafe("claude-thread-1"),
       turns: [],
-    }),
+    }));
+
+  public rollbackThreadImpl = vi.fn(
+    (_sessionId: ProviderSessionId, _numTurns: number): Effect.Effect<{
+      threadId: ProviderThreadId;
+      turns: never[];
+    }> =>
+      Effect.succeed({
+        threadId: ProviderThreadId.makeUnsafe("claude-thread-1"),
+        turns: [],
+      }),
   );
 
   public respondToRequestImpl = vi.fn(
-    async (
+    (
       _sessionId: ProviderSessionId,
       _requestId: ApprovalRequestId,
       _decision: ProviderApprovalDecision,
-    ): Promise<void> => undefined,
+    ): Effect.Effect<void> => Effect.void,
   );
 
-  public stopSessionImpl = vi.fn((_sessionId: ProviderSessionId) => undefined);
-  public listSessionsImpl = vi.fn((): ReadonlyArray<ProviderSession> => []);
-  public hasSessionImpl = vi.fn((_sessionId: ProviderSessionId): boolean => false);
-  public stopAllImpl = vi.fn(() => undefined);
+  public stopSessionImpl = vi.fn((_sessionId: ProviderSessionId): Effect.Effect<void> => Effect.void);
+  public listSessionsImpl = vi.fn((): Effect.Effect<ReadonlyArray<ProviderSession>> => Effect.succeed([]));
+  public hasSessionImpl = vi.fn((_sessionId: ProviderSessionId): Effect.Effect<boolean> => Effect.succeed(false));
+  public stopAllImpl = vi.fn((): Effect.Effect<void> => Effect.void);
 
-  async startSession(input: ProviderSessionStartInput): Promise<ProviderSession> {
+  startSession(input: ProviderSessionStartInput): Effect.Effect<ProviderSession> {
     return this.startSessionImpl(input);
   }
 
-  async sendTurn(input: ProviderSendTurnInput): Promise<ProviderTurnStartResult> {
+  sendTurn(input: ProviderSendTurnInput): Effect.Effect<ProviderTurnStartResult> {
     return this.sendTurnImpl(input);
   }
 
-  async interruptTurn(sessionId: ProviderSessionId, turnId?: ProviderTurnId): Promise<void> {
+  interruptTurn(sessionId: ProviderSessionId, turnId?: ProviderTurnId): Effect.Effect<void> {
     return this.interruptTurnImpl(sessionId, turnId);
   }
 
-  async readThread(sessionId: ProviderSessionId) {
+  readThread(sessionId: ProviderSessionId) {
     return this.readThreadImpl(sessionId);
   }
 
-  async rollbackThread(sessionId: ProviderSessionId, numTurns: number) {
+  rollbackThread(sessionId: ProviderSessionId, numTurns: number) {
     return this.rollbackThreadImpl(sessionId, numTurns);
   }
 
-  async respondToRequest(
+  respondToRequest(
     sessionId: ProviderSessionId,
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
-  ): Promise<void> {
+  ): Effect.Effect<void> {
     return this.respondToRequestImpl(sessionId, requestId, decision);
   }
 
-  stopSession(sessionId: ProviderSessionId): void {
-    this.stopSessionImpl(sessionId);
+  stopSession(sessionId: ProviderSessionId): Effect.Effect<void> {
+    return this.stopSessionImpl(sessionId);
   }
 
-  listSessions(): ReadonlyArray<ProviderSession> {
+  listSessions(): Effect.Effect<ReadonlyArray<ProviderSession>> {
     return this.listSessionsImpl();
   }
 
-  hasSession(sessionId: ProviderSessionId): boolean {
+  hasSession(sessionId: ProviderSessionId): Effect.Effect<boolean> {
     return this.hasSessionImpl(sessionId);
   }
 
-  stopAll(): void {
-    this.stopAllImpl();
+  stopAll(): Effect.Effect<void> {
+    return this.stopAllImpl();
   }
 
   emitRuntimeEvent(event: ProviderRuntimeEvent): void {
@@ -160,8 +169,8 @@ validationLayer("ClaudeCodeAdapterLive validation", (it) => {
 });
 
 const sessionErrorRuntime = new FakeClaudeRuntime();
-sessionErrorRuntime.sendTurnImpl.mockImplementation(async () => {
-  throw new Error("Unknown session: claude-sess-missing");
+sessionErrorRuntime.sendTurnImpl.mockImplementation(() => {
+  return Effect.fail(new Error("Unknown session: claude-sess-missing"));
 });
 const sessionErrorLayer = it.layer(makeClaudeCodeAdapterLive({ runtime: sessionErrorRuntime }));
 
