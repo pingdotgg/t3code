@@ -1,11 +1,14 @@
 import { Fragment, type ReactNode, createElement, useEffect } from "react";
 import {
   DEFAULT_MODEL,
+  getModelOptions,
+  normalizeModelSlug,
   ProviderSessionId,
   ThreadId,
   type OrchestrationReadModel,
   type OrchestrationSessionStatus,
   resolveModelSlug,
+  resolveModelSlugForProvider,
 } from "@t3tools/contracts";
 import { create } from "zustand";
 import {
@@ -157,6 +160,27 @@ function toLegacyProvider(providerName: string | null): "codex" | "claudeCode" {
   return providerName === "claudeCode" ? "claudeCode" : "codex";
 }
 
+const CODEX_MODEL_SLUGS = new Set(getModelOptions("codex").map((option) => option.slug));
+const CLAUDE_MODEL_SLUGS = new Set(getModelOptions("claudeCode").map((option) => option.slug));
+
+function inferProviderForThreadModel(input: {
+  readonly model: string;
+  readonly sessionProviderName: string | null;
+}): "codex" | "claudeCode" {
+  if (input.sessionProviderName === "codex" || input.sessionProviderName === "claudeCode") {
+    return input.sessionProviderName;
+  }
+  const normalizedClaude = normalizeModelSlug(input.model, "claudeCode");
+  if (normalizedClaude && CLAUDE_MODEL_SLUGS.has(normalizedClaude)) {
+    return "claudeCode";
+  }
+  const normalizedCodex = normalizeModelSlug(input.model, "codex");
+  if (normalizedCodex && CODEX_MODEL_SLUGS.has(normalizedCodex)) {
+    return "codex";
+  }
+  return input.model.trim().startsWith("claude-") ? "claudeCode" : "codex";
+}
+
 function resolveWsHttpOrigin(): string {
   if (typeof window === "undefined") return "";
   const bridgeWsUrl = window.desktopBridge?.getWsUrl?.();
@@ -215,7 +239,13 @@ export function syncServerReadModel(
         codexThreadId: thread.session?.providerThreadId ?? null,
         projectId: thread.projectId,
         title: thread.title,
-        model: resolveModelSlug(thread.model),
+        model: resolveModelSlugForProvider(
+        inferProviderForThreadModel({
+          model: thread.model,
+          sessionProviderName: thread.session?.providerName ?? null,
+        }),
+        thread.model,
+      ),
         session: thread.session
           ? {
               sessionId:
