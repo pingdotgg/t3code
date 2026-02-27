@@ -13,7 +13,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Schema } from "effect";
 
 import type { TestTurnResponse } from "./TestProviderAdapter.integration.ts";
 import {
@@ -45,8 +45,25 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+class IntegrationSleepError extends Schema.TaggedErrorClass<IntegrationSleepError>()(
+  "IntegrationSleepError",
+  {
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+class IntegrationWaitTimeoutError extends Schema.TaggedErrorClass<IntegrationWaitTimeoutError>()(
+  "IntegrationWaitTimeoutError",
+  {
+    description: Schema.String,
+  },
+) {}
+
 const sleep = (ms: number) =>
-  Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  Effect.tryPromise({
+    try: () => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+    catch: (cause) => new IntegrationSleepError({ cause }),
+  }).pipe(Effect.orDie);
 
 function waitForSync<A>(
   read: () => A,
@@ -63,7 +80,7 @@ function waitForSync<A>(
         return value;
       }
       if (Date.now() >= deadline) {
-        return yield* Effect.die(new Error(`Timed out waiting for ${description}.`));
+        return yield* Effect.die(new IntegrationWaitTimeoutError({ description }));
       }
       yield* sleep(10);
     }

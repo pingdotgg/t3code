@@ -3,10 +3,10 @@ import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
+import { Effect, FileSystem, Layer, PlatformError, Schema, Scope } from "effect";
 import { expect } from "vitest";
 
-import { GitHubCliError, TextGenerationError } from "../Errors.ts";
+import { GitCommandError, GitHubCliError, TextGenerationError } from "../Errors.ts";
 import { type GitManagerShape } from "../Services/GitManager.ts";
 import {
   type GitHubCliShape,
@@ -19,11 +19,16 @@ import { GitService } from "../Services/GitService.ts";
 import { GitCoreLive } from "./GitCore.ts";
 import { makeGitManager } from "./GitManager.ts";
 
+class GitFixtureError extends Schema.TaggedErrorClass<GitFixtureError>()("GitFixtureError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect),
+}) {}
+
 interface FakeGhScenario {
   prListSequence?: string[];
   createdPrUrl?: string;
   defaultBranch?: string;
-  failWith?: Error;
+  failWith?: GitFixtureError;
 }
 
 interface FakeGitTextGeneration {
@@ -32,7 +37,7 @@ interface FakeGitTextGeneration {
     branch: string | null;
     stagedSummary: string;
     stagedPatch: string;
-  }) => Effect.Effect<{ subject: string; body: string }, unknown>;
+  }) => Effect.Effect<{ subject: string; body: string }, GitFixtureError>;
   generatePrContent: (input: {
     cwd: string;
     baseBranch: string;
@@ -40,7 +45,7 @@ interface FakeGitTextGeneration {
     commitSummary: string;
     diffSummary: string;
     diffPatch: string;
-  }) => Effect.Effect<{ title: string; body: string }, unknown>;
+  }) => Effect.Effect<{ title: string; body: string }, GitFixtureError>;
 }
 
 function makeTempDir(
@@ -58,7 +63,7 @@ function runGit(
   allowNonZeroExit = false,
 ): Effect.Effect<
   { readonly code: number; readonly stdout: string; readonly stderr: string },
-  unknown,
+  GitCommandError,
   GitService
 > {
   return Effect.gen(function* () {
@@ -74,7 +79,7 @@ function runGit(
 
 function initRepo(
   cwd: string,
-): Effect.Effect<void, unknown, FileSystem.FileSystem | Scope.Scope | GitService> {
+): Effect.Effect<void, PlatformError.PlatformError | GitCommandError, FileSystem.FileSystem | Scope.Scope | GitService> {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     yield* runGit(cwd, ["init", "--initial-branch=main"]);
@@ -88,7 +93,7 @@ function initRepo(
 
 function createBareRemote(): Effect.Effect<
   string,
-  unknown,
+  PlatformError.PlatformError | GitCommandError,
   FileSystem.FileSystem | Scope.Scope | GitService
 > {
   return Effect.gen(function* () {
@@ -139,7 +144,7 @@ function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): T
   };
 }
 
-const normalizeGhError = (error: Error): GitHubCliError => {
+const normalizeGhError = (error: GitFixtureError): GitHubCliError => {
   if (error.message.includes("Command not found: gh")) {
     return new GitHubCliError({
       operation: "execute",
@@ -373,7 +378,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new Error("Command not found: gh"),
+          failWith: new GitFixtureError({ message: "Command not found: gh" }),
         },
       });
 
@@ -600,7 +605,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         action: "commit_push",
       }).pipe(
         Effect.flip,
-        Effect.map((error) => (error instanceof Error ? error.message : String(error))),
+        Effect.map((error) => error.message),
       );
       expect(errorMessage).toContain("detached HEAD");
     }),
@@ -617,7 +622,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new Error("Command not found: gh"),
+          failWith: new GitFixtureError({ message: "Command not found: gh" }),
         },
       });
 
@@ -626,7 +631,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         action: "commit_push_pr",
       }).pipe(
         Effect.flip,
-        Effect.map((error) => (error instanceof Error ? error.message : String(error))),
+        Effect.map((error) => error.message),
       );
       expect(errorMessage).toContain("GitHub CLI (`gh`) is required");
     }),
@@ -643,7 +648,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new Error("authentication failed"),
+          failWith: new GitFixtureError({ message: "authentication failed" }),
         },
       });
 
@@ -652,7 +657,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         action: "commit_push_pr",
       }).pipe(
         Effect.flip,
-        Effect.map((error) => (error instanceof Error ? error.message : String(error))),
+        Effect.map((error) => error.message),
       );
       expect(errorMessage).toContain("gh auth login");
     }),

@@ -389,7 +389,13 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.projectsSearchEntries: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.promise(() => searchWorkspaceEntries(body));
+        return yield* Effect.tryPromise({
+          try: () => searchWorkspaceEntries(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to search workspace entries: ${String(cause)}`,
+            }),
+        });
       }
 
       case WS_METHODS.shellOpenInEditor: {

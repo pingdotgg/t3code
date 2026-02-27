@@ -9,7 +9,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationThread,
 } from "@t3tools/contracts";
-import { Effect, Exit, Layer, ManagedRuntime, Option, Schedule, Scope, Stream } from "effect";
+import { Effect, Exit, Layer, ManagedRuntime, Option, Schedule, Schema, Scope, Stream } from "effect";
 
 import { CheckpointStoreLive } from "../src/checkpointing/Layers/CheckpointStore.ts";
 import { CheckpointStore } from "../src/checkpointing/Services/CheckpointStore.ts";
@@ -75,20 +75,24 @@ export function gitShowFileAtRef(cwd: string, ref: string, filePath: string): st
   return runGit(cwd, ["show", `${ref}:${filePath}`]);
 }
 
-function waitFor<A>(
-  read: Effect.Effect<A, unknown>,
+class WaitForTimeoutError extends Schema.TaggedErrorClass<WaitForTimeoutError>()("WaitForTimeoutError", {
+  description: Schema.String,
+}) {}
+
+function waitFor<A, E>(
+  read: Effect.Effect<A, E>,
   predicate: (value: A) => boolean,
   description: string,
   timeoutMs?: number,
 ): Effect.Effect<A, never>;
-function waitFor<A, B extends A>(
-  read: Effect.Effect<A, unknown>,
+function waitFor<A, B extends A, E>(
+  read: Effect.Effect<A, E>,
   predicate: (value: A) => value is B,
   description: string,
   timeoutMs?: number,
 ): Effect.Effect<B, never>;
-function waitFor<A>(
-  read: Effect.Effect<A, unknown>,
+function waitFor<A, E>(
+  read: Effect.Effect<A, E>,
   predicate: (value: A) => boolean,
   description: string,
   timeoutMs = 3000,
@@ -106,11 +110,25 @@ function waitFor<A>(
       while: (error) => error === RETRY_SIGNAL,
     }),
     Effect.mapError((error) =>
-      error === RETRY_SIGNAL ? new Error(`Timed out waiting for ${description}.`) : error,
+      error === RETRY_SIGNAL ? new WaitForTimeoutError({ description }) : error,
     ),
     Effect.orDie,
   );
 }
+
+class OrchestrationHarnessRuntimeError extends Schema.TaggedErrorClass<OrchestrationHarnessRuntimeError>()(
+  "OrchestrationHarnessRuntimeError",
+  {
+    operation: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+const tryRuntimePromise = <A>(operation: string, run: () => Promise<A>) =>
+  Effect.tryPromise({
+    try: run,
+    catch: (cause) => new OrchestrationHarnessRuntimeError({ operation, cause }),
+  });
 
 export interface OrchestrationIntegrationHarness {
   readonly rootDir: string;
@@ -153,7 +171,10 @@ export interface OrchestrationIntegrationHarness {
 
 export const makeOrchestrationIntegrationHarness = Effect.gen(function* () {
   const sleep = (ms: number) =>
-    Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    Effect.tryPromise({
+      try: () => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+      catch: (cause) => new OrchestrationHarnessRuntimeError({ operation: "sleep", cause }),
+    }).pipe(Effect.orDie);
   const adapterHarness = yield* makeTestProviderAdapterHarness;
 
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-orchestration-integration-"));
@@ -215,30 +236,34 @@ export const makeOrchestrationIntegrationHarness = Effect.gen(function* () {
   );
 
   const runtime = ManagedRuntime.make(layer);
-  const engine = yield* Effect.promise(() =>
+  const engine = yield* tryRuntimePromise("load OrchestrationEngine service", () =>
     runtime.runPromise(Effect.service(OrchestrationEngineService)),
-  );
-  const reactor = yield* Effect.promise(() =>
+  ).pipe(Effect.orDie);
+  const reactor = yield* tryRuntimePromise("load OrchestrationReactor service", () =>
     runtime.runPromise(Effect.service(OrchestrationReactor)),
-  );
-  const snapshotQuery = yield* Effect.promise(() =>
+  ).pipe(Effect.orDie);
+  const snapshotQuery = yield* tryRuntimePromise("load ProjectionSnapshotQuery service", () =>
     runtime.runPromise(Effect.service(ProjectionSnapshotQuery)),
-  );
-  const providerService = yield* Effect.promise(() =>
+  ).pipe(Effect.orDie);
+  const providerService = yield* tryRuntimePromise("load ProviderService service", () =>
     runtime.runPromise(Effect.service(ProviderService)),
-  );
-  const checkpointStore = yield* Effect.promise(() =>
+  ).pipe(Effect.orDie);
+  const checkpointStore = yield* tryRuntimePromise("load CheckpointStore service", () =>
     runtime.runPromise(Effect.service(CheckpointStore)),
-  );
-  const checkpointRepository = yield* Effect.promise(() =>
-    runtime.runPromise(Effect.service(ProjectionCheckpointRepository)),
-  );
-  const pendingApprovalRepository = yield* Effect.promise(() =>
-    runtime.runPromise(Effect.service(ProjectionPendingApprovalRepository)),
-  );
+  ).pipe(Effect.orDie);
+  const checkpointRepository = yield* tryRuntimePromise(
+    "load ProjectionCheckpointRepository service",
+    () => runtime.runPromise(Effect.service(ProjectionCheckpointRepository)),
+  ).pipe(Effect.orDie);
+  const pendingApprovalRepository = yield* tryRuntimePromise(
+    "load ProjectionPendingApprovalRepository service",
+    () => runtime.runPromise(Effect.service(ProjectionPendingApprovalRepository)),
+  ).pipe(Effect.orDie);
 
-  const scope = yield* Effect.promise(() => Effect.runPromise(Scope.make("sequential")));
-  yield* Effect.promise(() => runtime.runPromise(reactor.start.pipe(Scope.provide(scope))));
+  const scope = yield* Scope.make("sequential");
+  yield* tryRuntimePromise("start OrchestrationReactor", () =>
+    runtime.runPromise(reactor.start.pipe(Scope.provide(scope))),
+  ).pipe(Effect.orDie);
   yield* sleep(10);
 
   const waitForThread: OrchestrationIntegrationHarness["waitForThread"] = (

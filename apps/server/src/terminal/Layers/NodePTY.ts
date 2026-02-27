@@ -1,9 +1,17 @@
 import { createRequire } from "node:module";
 
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { PtyAdapter, PtyAdapterShape, PtyExitEvent, PtyProcess } from "../Services/PTY";
 
 let didEnsureSpawnHelperExecutable = false;
+
+export class NodePtyAdapterError extends Schema.TaggedErrorClass<NodePtyAdapterError>()(
+  "NodePtyAdapterError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
 
 const resolveNodePtySpawnHelperPath = Effect.gen(function* () {
   const requireForNodePty = createRequire(import.meta.url);
@@ -90,7 +98,14 @@ export const NodePtyAdapterLive = Layer.effect(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
 
-    const nodePty = yield* Effect.promise(() => import("node-pty"));
+    const nodePty = yield* Effect.tryPromise({
+      try: () => import("node-pty"),
+      catch: (cause) =>
+        new NodePtyAdapterError({
+          message: "failed to load node-pty module",
+          cause,
+        }),
+    });
 
     const ensureNodePtySpawnHelperExecutableCached = yield* Effect.cached(
       ensureNodePtySpawnHelperExecutable().pipe(
