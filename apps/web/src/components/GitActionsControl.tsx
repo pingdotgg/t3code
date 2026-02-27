@@ -1,5 +1,5 @@
 import { type GitStatusResult, type GitStackedAction, type ThreadId } from "@t3tools/contracts";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
 import { GitHubIcon } from "./Icons";
@@ -33,6 +33,7 @@ import { toastManager } from "~/components/ui/toast";
 import {
   gitBranchesQueryOptions,
   gitInitMutationOptions,
+  gitMutationKeys,
   gitPullMutationOptions,
   gitRunStackedActionMutationOptions,
   gitStatusQueryOptions,
@@ -168,7 +169,10 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   );
   const pullMutation = useMutation(gitPullMutationOptions({ cwd: gitCwd, queryClient }));
 
-  const isGitActionRunning = runImmediateGitActionMutation.isPending || pullMutation.isPending;
+  const isRunStackedActionRunning =
+    useIsMutating({ mutationKey: gitMutationKeys.runStackedAction(gitCwd) }) > 0;
+  const isPullRunning = useIsMutating({ mutationKey: gitMutationKeys.pull(gitCwd) }) > 0;
+  const isGitActionRunning = isRunStackedActionRunning || isPullRunning;
   const isDefaultBranch = useMemo(() => {
     const branchName = gitStatusForActions?.branch;
     if (!branchName) return false;
