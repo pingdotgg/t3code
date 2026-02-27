@@ -142,8 +142,8 @@ export const OrchestrationSession = Schema.Struct({
   providerName: Schema.NullOr(TrimmedNonEmptyString),
   providerSessionId: Schema.NullOr(ProviderSessionId),
   providerThreadId: Schema.NullOr(ProviderThreadId),
-  approvalPolicy: ProviderApprovalPolicy,
-  sandboxMode: ProviderSandboxMode,
+  approvalPolicy: ProviderApprovalPolicy.pipe(Schema.withDecodingDefault(() => "on-failure")),
+  sandboxMode: ProviderSandboxMode.pipe(Schema.withDecodingDefault(() => "workspace-write")),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
   updatedAt: IsoDateTime,
@@ -500,8 +500,8 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   effort: Schema.optional(TrimmedNonEmptyString),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
-  approvalPolicy: ProviderApprovalPolicy,
-  sandboxMode: ProviderSandboxMode,
+  approvalPolicy: ProviderApprovalPolicy.pipe(Schema.withDecodingDefault(() => "on-failure")),
+  sandboxMode: ProviderSandboxMode.pipe(Schema.withDecodingDefault(() => "workspace-write")),
   createdAt: IsoDateTime,
 });
 
