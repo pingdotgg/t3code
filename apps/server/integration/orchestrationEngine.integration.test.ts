@@ -13,7 +13,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
-import { Effect, Option } from "effect";
+import { Effect, Exit, Option } from "effect";
 
 import type { TestTurnResponse } from "./TestProviderAdapter.integration.ts";
 import {
@@ -132,6 +132,24 @@ const startTurn = (input: {
     },
     createdAt: nowIso(),
   });
+
+it.live("always removes integration temp dirs when shutdown fails", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationIntegrationHarness;
+    const rootDir = harness.rootDir;
+    const originalStopAll = harness.providerService.stopAll.bind(harness.providerService);
+
+    (
+      harness.providerService as unknown as {
+        stopAll: typeof harness.providerService.stopAll;
+      }
+    ).stopAll = () => originalStopAll().pipe(Effect.andThen(Effect.fail(new Error("boom"))));
+
+    const disposeExit = yield* Effect.exit(harness.dispose);
+    assert.equal(Exit.isFailure(disposeExit), true);
+    assert.equal(fs.existsSync(rootDir), false);
+  }),
+);
 
 it.live("runs a single turn end-to-end and persists checkpoint state in sqlite + git", () =>
   withHarness((harness) =>

@@ -317,12 +317,36 @@ export const makeOrchestrationIntegrationHarness = Effect.gen(function* () {
     }
     disposed = true;
 
-    yield* Effect.promise(() => runtime.runPromise(providerService.stopAll()));
-    yield* Effect.promise(() => Effect.runPromise(Scope.close(scope, Exit.void)));
-    yield* Effect.promise(() => runtime.dispose());
-    yield* Effect.sync(() => {
-      fs.rmSync(rootDir, { recursive: true, force: true });
+    const shutdown = Effect.gen(function* () {
+      const stopAllExit = yield* Effect.exit(
+        Effect.promise(() => runtime.runPromise(providerService.stopAll())),
+      );
+      const closeScopeExit = yield* Effect.exit(
+        Effect.promise(() => Effect.runPromise(Scope.close(scope, Exit.void))),
+      );
+      const disposeRuntimeExit = yield* Effect.exit(Effect.promise(() => runtime.dispose()));
+
+      const failureCause =
+        Exit.isFailure(stopAllExit)
+          ? stopAllExit.cause
+          : Exit.isFailure(closeScopeExit)
+            ? closeScopeExit.cause
+            : Exit.isFailure(disposeRuntimeExit)
+              ? disposeRuntimeExit.cause
+              : null;
+
+      if (failureCause) {
+        yield* Effect.failCause(failureCause);
+      }
     });
+
+    yield* shutdown.pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          fs.rmSync(rootDir, { recursive: true, force: true });
+        }),
+      ),
+    );
   });
 
   return {
