@@ -15,12 +15,12 @@ Claude integration must plug into this path instead of reintroducing legacy prov
 
 ---
 
-## Current constraints to design around
+## Current constraints to design around (post-Stage 1)
 
 1. Provider runtime ingestion expects canonical `ProviderRuntimeEvent` shapes, not provider-native payloads.
-2. `ProviderService.startSession` currently defaults to `provider: "codex"` unless explicitly provided.
-3. `thread.turn.start` has no provider field today, so first-turn provider selection cannot be explicitly requested.
-4. `ProviderService` requires adapter `startSession()` to return a `ProviderSession` with `threadId`.
+2. Start input now uses typed `providerOptions` and generic `resumeCursor`; top-level provider-specific fields were removed.
+3. `resumeCursor` is intentionally opaque outside adapters and must never be synthesized from `providerThreadId`.
+4. `ProviderService` still requires adapter `startSession()` to return a `ProviderSession` with `threadId`.
 5. Checkpoint revert currently calls `providerService.rollbackConversation()`, so Claude adapter needs a rollback strategy compatible with current reactor behavior.
 6. Web currently marks Claude as unavailable (`"Claude Code (soon)"`) and model picker is Codex-only.
 
@@ -61,21 +61,24 @@ Update `packages/contracts/src/orchestration.ts`:
 
 This removes the implicit “Codex unless session already exists” behavior as the only path.
 
-### 1.3 Provider session start input for Claude runtime knobs
+### 1.3 Provider session start input for Claude runtime knobs (completed)
 
 Update `packages/contracts/src/provider.ts`:
 
-1. Extend `ProviderSessionStartInput` with optional Claude-specific fields (for example `claudeBinaryPath`, `permissionMode`, `maxThinkingTokens`).
-2. Keep fields optional so current call sites remain valid.
-3. Continue using generic `resumeThreadId` + `resumeCursor` as the cross-provider recovery mechanism.
+1. Move provider-specific start fields into typed `providerOptions`:
+   - `providerOptions.codex`
+   - `providerOptions.claudeCode`
+2. Keep `resumeCursor` as the single cross-provider resume input in `ProviderSessionStartInput`.
+3. Deprecate/remove `resumeThreadId` from the generic start contract.
+4. Treat `resumeCursor` as adapter-owned opaque state.
 
-### 1.4 Contract tests
+### 1.4 Contract tests (completed)
 
 Update/add tests in `packages/contracts/src/*.test.ts` for:
 
 1. New command payload shape.
 2. Provider-aware model resolution behavior.
-3. Backward compatibility of existing command/schema decoding.
+3. Breaking-change expectations for removed top-level provider fields.
 
 ---
 
@@ -100,9 +103,9 @@ Baseline adapter options to support from day one:
 
 1. `cwd`
 2. `model`
-3. `pathToClaudeCodeExecutable` (from `claudeBinaryPath`)
-4. `permissionMode`
-5. `maxThinkingTokens`
+3. `pathToClaudeCodeExecutable` (from `providerOptions.claudeCode.binaryPath`)
+4. `permissionMode` (from `providerOptions.claudeCode.permissionMode`)
+5. `maxThinkingTokens` (from `providerOptions.claudeCode.maxThinkingTokens`)
 6. `resume`
 7. `resumeSessionAt`
 8. `includePartialMessages`
@@ -120,7 +123,7 @@ Required capabilities:
 2. Multi-turn input queue.
 3. Interrupt support.
 4. Approval request/response bridge.
-5. Resume support via `resumeThreadId` / `resumeCursor`.
+5. Resume support via opaque `resumeCursor` (parsed inside Claude adapter only).
 
 #### 2.2.a Agent SDK details to preserve
 
@@ -129,7 +132,7 @@ The adapter should explicitly rely on these SDK capabilities:
 1. `query()` returns an async iterable message stream and control methods (`interrupt`, `setModel`, `setPermissionMode`, `setMaxThinkingTokens`, account/status helpers).
 2. Multi-turn input is supported via async-iterable prompt input.
 3. Tool approval decisions are provided via `canUseTool`.
-4. Resume support uses `resume` and optional `resumeSessionAt`.
+4. Resume support uses `resume` and optional `resumeSessionAt`, both derived by parsing adapter-owned `resumeCursor`.
 5. Hooks can be used for lifecycle signals (`Stop`, `PostToolUse`, etc.) when we need adapter-originated checkpoint/runtime events.
 
 #### 2.2.b Effect-native session lifecycle skeleton
@@ -142,21 +145,23 @@ const acquireSession = (input: ProviderSessionStartInput) =>
   Effect.acquireRelease(
     Effect.tryPromise({
       try: async () => {
+        const claudeOptions = input.providerOptions?.claudeCode;
+        const resumeState = readClaudeResumeState(input.resumeCursor);
         const abortController = new AbortController();
         const result = query({
-          prompt: makePromptAsyncIterable(input.sessionId),
+          prompt: makePromptAsyncIterable(),
           options: {
             cwd: input.cwd,
             model: input.model,
-            permissionMode: input.permissionMode,
-            maxThinkingTokens: input.maxThinkingTokens,
-            pathToClaudeCodeExecutable: input.claudeBinaryPath,
-            resume: input.resumeThreadId,
-            resumeSessionAt: readResumeCursor(input.resumeCursor),
+            permissionMode: claudeOptions?.permissionMode,
+            maxThinkingTokens: claudeOptions?.maxThinkingTokens,
+            pathToClaudeCodeExecutable: claudeOptions?.binaryPath,
+            resume: resumeState?.threadId,
+            resumeSessionAt: resumeState?.sessionAt,
             signal: abortController.signal,
             includePartialMessages: true,
-            canUseTool: makeCanUseTool(input.sessionId),
-            hooks: makeClaudeHooks(input.sessionId),
+            canUseTool: makeCanUseTool(),
+            hooks: makeClaudeHooks(),
           },
         });
         return { abortController, result };
@@ -345,7 +350,8 @@ Define explicit adapter semantics:
 
 1. `sessionId`: adapter-owned stable session id.
 2. `threadId`: Claude conversation/session identifier returned as `ProviderThreadId`.
-3. `resumeCursor`: provider-specific cursor (for example message id) needed for precise recovery/rollback.
+3. `resumeCursor`: provider-specific cursor (for example thread id + message cursor) needed for precise recovery/rollback.
+4. Orchestration/shared services persist and forward `resumeCursor` unchanged without provider-specific parsing.
 
 ### 2.5 Rollback/read strategy
 
@@ -402,11 +408,12 @@ Update integration tests to ensure:
 
 ## Phase 4: Orchestration command/reactor updates
 
-### 4.1 Decider propagation
+### 4.1 Decider propagation (completed)
 
 Update `apps/server/src/orchestration/decider.ts`:
 
 1. Carry optional `provider` from `thread.turn.start` command into `thread.turn-start-requested` event payload.
+2. Keep this behavior provider-agnostic (no provider-specific runtime fields in the event payload).
 
 ### 4.2 ProviderCommandReactor provider selection
 
@@ -415,6 +422,7 @@ Update `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts`:
 1. Prefer provider from turn-start event payload when starting a new session.
 2. Fallback to existing thread session provider when payload omitted.
 3. Fallback to default provider only when neither is present.
+4. On restart/rebind, forward the runtime session's persisted `resumeCursor` as-is (no reconstruction from `providerThreadId`).
 
 Switch behavior policy (explicit in implementation):
 
@@ -516,31 +524,26 @@ Confirm both native and canonical provider logs remain useful with multi-adapter
 
 ## File checklist
 
-Likely files to touch:
+Likely remaining files to touch:
 
-1. `packages/contracts/src/model.ts`
-2. `packages/contracts/src/orchestration.ts`
-3. `packages/contracts/src/provider.ts`
-4. `apps/server/src/provider/Services/ClaudeCodeAdapter.ts` (new)
-5. `apps/server/src/provider/Layers/ClaudeCodeAdapter.ts` (new)
-6. `apps/server/src/provider/Layers/ProviderAdapterRegistry.ts`
-7. `apps/server/src/serverLayers.ts`
-8. `apps/server/src/orchestration/decider.ts`
-9. `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts`
-10. `apps/web/src/session-logic.ts`
-11. `apps/web/src/components/ChatView.tsx`
-12. Related tests under `packages/contracts/src`, `apps/server/src/provider/Layers`, `apps/server/src/orchestration/Layers`, `apps/server/integration`, and `apps/web/src`.
+1. `apps/server/src/provider/Services/ClaudeCodeAdapter.ts` (new)
+2. `apps/server/src/provider/Layers/ClaudeCodeAdapter.ts` (new)
+3. `apps/server/src/provider/Layers/ProviderAdapterRegistry.ts`
+4. `apps/server/src/serverLayers.ts`
+5. `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts`
+6. `apps/web/src/session-logic.ts`
+7. `apps/web/src/components/ChatView.tsx`
+8. Related tests under `apps/server/src/provider/Layers`, `apps/server/src/orchestration/Layers`, `apps/server/integration`, and `apps/web/src`.
 
 ---
 
 ## Delivery order
 
-1. Contracts for provider selection + models.
-2. Claude adapter + unit tests.
-3. Registry/layer wiring.
-4. Reactor updates for provider-aware session start.
-5. Web provider picker + provider-aware models.
-6. Checkpoint/revert compatibility.
-7. End-to-end integration tests and stabilization.
+1. Claude adapter + unit tests on top of the new `providerOptions`/opaque-cursor contracts.
+2. Registry/layer wiring.
+3. Remaining reactor updates for provider-aware session selection/switching invariants.
+4. Web provider picker + provider-aware models.
+5. Checkpoint/revert compatibility.
+6. End-to-end integration tests and stabilization.
 
 This order keeps risk isolated and maintains a working orchestrated path at each stage.
