@@ -33,6 +33,7 @@ import {
 type Action =
   | { type: "SYNC_SERVER_READ_MODEL"; readModel: OrchestrationReadModel }
   | { type: "MARK_THREAD_VISITED"; threadId: ThreadId; visitedAt?: string }
+  | { type: "MARK_THREAD_UNREAD"; threadId: ThreadId }
   | { type: "TOGGLE_PROJECT"; projectId: Project["id"] }
   | { type: "TOGGLE_THREAD_TERMINAL"; threadId: ThreadId }
   | { type: "SET_THREAD_TERMINAL_OPEN"; threadId: ThreadId; open: boolean }
@@ -499,6 +500,29 @@ export function reducer(state: AppState, action: Action): AppState {
           return {
             ...thread,
             lastVisitedAt: visitedAt,
+          };
+        }),
+      };
+    }
+
+    case "MARK_THREAD_UNREAD": {
+      return {
+        ...state,
+        threads: updateThread(state.threads, action.threadId, (thread) => {
+          if (!thread.latestTurnCompletedAt) {
+            return thread;
+          }
+          const latestTurnCompletedAtMs = Date.parse(thread.latestTurnCompletedAt);
+          if (Number.isNaN(latestTurnCompletedAtMs)) {
+            return thread;
+          }
+          const unreadVisitedAt = new Date(latestTurnCompletedAtMs - 1).toISOString();
+          if (thread.lastVisitedAt === unreadVisitedAt) {
+            return thread;
+          }
+          return {
+            ...thread,
+            lastVisitedAt: unreadVisitedAt,
           };
         }),
       };

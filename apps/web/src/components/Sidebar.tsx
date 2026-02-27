@@ -281,7 +281,17 @@ export default function Sidebar() {
     async (threadId: ThreadId, position: { x: number; y: number }) => {
       const api = readNativeApi();
       if (!api) return;
-      const clicked = await api.contextMenu.show([{ id: "delete", label: "Delete" }], position);
+      const clicked = await api.contextMenu.show(
+        [
+          { id: "mark-unread", label: "Mark unread" },
+          { id: "delete", label: "Delete" },
+        ],
+        position,
+      );
+      if (clicked === "mark-unread") {
+        dispatch({ type: "MARK_THREAD_UNREAD", threadId });
+        return;
+      }
       if (clicked !== "delete") return;
 
       const thread = state.threads.find((t) => t.id === threadId);
@@ -380,6 +390,7 @@ export default function Sidebar() {
     },
     [
       appSettings.confirmThreadDelete,
+      dispatch,
       navigate,
       removeWorktreeMutation,
       routeThreadId,
