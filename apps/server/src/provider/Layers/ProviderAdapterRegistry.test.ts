@@ -4,6 +4,7 @@ import { assertFailure } from "@effect/vitest/utils";
 
 import { Effect, Layer, Stream } from "effect";
 
+import { ClaudeCodeAdapter, ClaudeCodeAdapterShape } from "../Services/ClaudeCodeAdapter.ts";
 import { CodexAdapter, CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderAdapterRegistryLive } from "./ProviderAdapterRegistry.ts";
@@ -25,9 +26,30 @@ const fakeCodexAdapter: CodexAdapterShape = {
   streamEvents: Stream.empty,
 };
 
+const fakeClaudeAdapter: ClaudeCodeAdapterShape = {
+  provider: "claudeCode",
+  startSession: vi.fn(),
+  sendTurn: vi.fn(),
+  interruptTurn: vi.fn(),
+  respondToRequest: vi.fn(),
+  stopSession: vi.fn(),
+  listSessions: vi.fn(),
+  hasSession: vi.fn(),
+  readThread: vi.fn(),
+  rollbackThread: vi.fn(),
+  stopAll: vi.fn(),
+  streamEvents: Stream.empty,
+};
+
 const layer = it.layer(
   Layer.mergeAll(
-    Layer.provide(ProviderAdapterRegistryLive, Layer.succeed(CodexAdapter, fakeCodexAdapter)),
+    Layer.provide(
+      ProviderAdapterRegistryLive,
+      Layer.mergeAll(
+        Layer.succeed(CodexAdapter, fakeCodexAdapter),
+        Layer.succeed(ClaudeCodeAdapter, fakeClaudeAdapter),
+      ),
+    ),
     NodeServices.layer,
   ),
 );
@@ -36,11 +58,13 @@ layer("ProviderAdapterRegistryLive", (it) => {
   it.effect("resolves a registered provider adapter", () =>
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry;
-      const adapter = yield* registry.getByProvider("codex");
-      assert.equal(adapter, fakeCodexAdapter);
+      const codex = yield* registry.getByProvider("codex");
+      const claude = yield* registry.getByProvider("claudeCode");
+      assert.equal(codex, fakeCodexAdapter);
+      assert.equal(claude, fakeClaudeAdapter);
 
       const providers = yield* registry.listProviders();
-      assert.deepEqual(providers, ["codex"]);
+      assert.deepEqual(providers, ["codex", "claudeCode"]);
     }),
   );
 
