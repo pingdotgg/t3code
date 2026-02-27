@@ -115,4 +115,41 @@ describe("tryHandleProjectFaviconRequest", () => {
       expect(response.body).toBe("<svg>brand</svg>");
     });
   });
+
+  it("resolves icon link when href appears before rel in HTML", async () => {
+    const projectDir = makeTempDir("t3code-favicon-route-html-order-");
+    const iconPath = path.join(projectDir, "public", "brand", "logo.svg");
+    fs.mkdirSync(path.dirname(iconPath), { recursive: true });
+    fs.writeFileSync(path.join(projectDir, "index.html"), '<link href="/brand/logo.svg" rel="icon">');
+    fs.writeFileSync(iconPath, "<svg>brand-html-order</svg>", "utf8");
+
+    await withRouteServer(async (baseUrl) => {
+      const pathname = `/api/project-favicon?cwd=${encodeURIComponent(projectDir)}`;
+      const response = await request(baseUrl, pathname);
+      expect(response.statusCode).toBe(200);
+      expect(response.contentType).toContain("image/svg+xml");
+      expect(response.body).toBe("<svg>brand-html-order</svg>");
+    });
+  });
+
+  it("resolves object-style icon metadata when href appears before rel", async () => {
+    const projectDir = makeTempDir("t3code-favicon-route-obj-order-");
+    const iconPath = path.join(projectDir, "public", "brand", "obj.svg");
+    fs.mkdirSync(path.dirname(iconPath), { recursive: true });
+    fs.mkdirSync(path.join(projectDir, "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(projectDir, "src", "root.tsx"),
+      'const links = [{ href: "/brand/obj.svg", rel: "icon" }];',
+      "utf8",
+    );
+    fs.writeFileSync(iconPath, "<svg>brand-obj-order</svg>", "utf8");
+
+    await withRouteServer(async (baseUrl) => {
+      const pathname = `/api/project-favicon?cwd=${encodeURIComponent(projectDir)}`;
+      const response = await request(baseUrl, pathname);
+      expect(response.statusCode).toBe(200);
+      expect(response.contentType).toContain("image/svg+xml");
+      expect(response.body).toBe("<svg>brand-obj-order</svg>");
+    });
+  });
 });
