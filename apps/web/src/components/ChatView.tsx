@@ -368,6 +368,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerCommandInputRef = useRef<HTMLInputElement>(null);
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
+  const sendInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
 
@@ -1391,7 +1392,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const onSend = async (e: React.SubmitEvent | React.KeyboardEvent) => {
     e.preventDefault();
     const api = readNativeApi();
-    if (!api || !activeThread || isSendBusy || isConnecting) return;
+    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
     const trimmed = prompt.trim();
     if (!trimmed && composerImages.length === 0) return;
     if (!activeProject) return;
@@ -1414,6 +1415,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       return;
     }
+
+    sendInFlightRef.current = true;
+    setSendPhase(baseBranchForWorktree ? "preparing-worktree" : "sending-turn");
 
     const composerImagesSnapshot = [...composerImages];
     const messageIdForSend = newMessageId();
@@ -1463,9 +1467,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
           branch: result.worktree.branch,
           worktreePath: result.worktree.path,
         });
+        // Keep local thread state in sync immediately so terminal drawer opens
+        // with the worktree cwd/env instead of briefly using the project root.
+        dispatch({
+          type: "SET_THREAD_BRANCH",
+          threadId: threadIdForSend,
+          branch: result.worktree.branch,
+          worktreePath: result.worktree.path,
+        });
         const setupScript = setupProjectScript(activeProject.scripts);
         if (setupScript) {
-          void runProjectScript(setupScript, {
+          await runProjectScript(setupScript, {
             cwd: result.worktree.path,
             worktreePath: result.worktree.path,
             rememberAsLastInvoked: false,
@@ -1544,6 +1556,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         err instanceof Error ? err.message : "Failed to send message.",
       );
     } finally {
+      sendInFlightRef.current = false;
       setSendPhase("idle");
     }
   };
