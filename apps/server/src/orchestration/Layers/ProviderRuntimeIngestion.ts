@@ -28,8 +28,6 @@ const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
-const BUFFERED_ASSISTANT_MESSAGE_SPILLED_CACHE_CAPACITY = 20_000;
-const BUFFERED_ASSISTANT_MESSAGE_SPILLED_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 
 type TurnStartRequestedDomainEvent = Extract<
@@ -172,11 +170,6 @@ const make = Effect.gen(function* () {
     timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
     lookup: () => Effect.succeed(""),
   });
-  const bufferedAssistantMessageSpilledByMessageId = yield* Cache.make<MessageId, true>({
-    capacity: BUFFERED_ASSISTANT_MESSAGE_SPILLED_CACHE_CAPACITY,
-    timeToLive: BUFFERED_ASSISTANT_MESSAGE_SPILLED_TTL,
-    lookup: () => Effect.succeed(true),
-  });
 
   const rememberAssistantMessageId = (
     sessionId: ProviderSessionId,
@@ -263,26 +256,7 @@ const make = Effect.gen(function* () {
   const clearBufferedAssistantText = (messageId: MessageId) =>
     Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
 
-  const markBufferedAssistantMessageSpilled = (messageId: MessageId) =>
-    Cache.set(bufferedAssistantMessageSpilledByMessageId, messageId, true);
-
-  const takeBufferedAssistantMessageSpilled = (messageId: MessageId) =>
-    Cache.getOption(bufferedAssistantMessageSpilledByMessageId, messageId).pipe(
-      Effect.flatMap((spilled) =>
-        Cache.invalidate(bufferedAssistantMessageSpilledByMessageId, messageId).pipe(
-          Effect.as(Option.isSome(spilled)),
-        ),
-      ),
-    );
-
-  const clearBufferedAssistantMessageSpilled = (messageId: MessageId) =>
-    Cache.invalidate(bufferedAssistantMessageSpilledByMessageId, messageId);
-
-  const clearAssistantMessageState = (messageId: MessageId) =>
-    Effect.all(
-      [clearBufferedAssistantText(messageId), clearBufferedAssistantMessageSpilled(messageId)],
-      { concurrency: 1 },
-    ).pipe(Effect.asVoid);
+  const clearAssistantMessageState = (messageId: MessageId) => clearBufferedAssistantText(messageId);
 
   const finalizeAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
@@ -291,16 +265,15 @@ const make = Effect.gen(function* () {
     turnId?: TurnId;
     createdAt: string;
     commandTag: string;
-    spillRemainderCommandTag: string;
+    finalDeltaCommandTag: string;
   }) =>
     Effect.gen(function* () {
       const text = yield* takeBufferedAssistantText(input.messageId);
-      const spilled = yield* takeBufferedAssistantMessageSpilled(input.messageId);
 
-      if (spilled && text.length > 0) {
+      if (text.length > 0) {
         yield* orchestrationEngine.dispatch({
           type: "thread.message.assistant.delta",
-          commandId: providerCommandId(input.event, input.spillRemainderCommandTag),
+          commandId: providerCommandId(input.event, input.finalDeltaCommandTag),
           threadId: input.threadId,
           messageId: input.messageId,
           delta: text,
@@ -315,7 +288,7 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         messageId: input.messageId,
         ...(input.turnId ? { turnId: input.turnId } : {}),
-        text: spilled ? "" : text,
+        text: "",
         createdAt: input.createdAt,
       });
       yield* clearAssistantMessageState(input.messageId);
@@ -418,7 +391,6 @@ const make = Effect.gen(function* () {
         if (assistantDeliveryMode === "buffered") {
           const spillChunk = yield* appendBufferedAssistantText(assistantMessageId, event.delta);
           if (spillChunk.length > 0) {
-            yield* markBufferedAssistantMessageSpilled(assistantMessageId);
             yield* orchestrationEngine.dispatch({
               type: "thread.message.assistant.delta",
               commandId: providerCommandId(event, "assistant-delta-buffer-spill"),
@@ -456,7 +428,7 @@ const make = Effect.gen(function* () {
           ...(turnId ? { turnId } : {}),
           createdAt: now,
           commandTag: "assistant-complete",
-          spillRemainderCommandTag: "assistant-delta-buffer-remainder",
+          finalDeltaCommandTag: "assistant-delta-finalize",
         });
 
         if (turnId) {
@@ -479,7 +451,7 @@ const make = Effect.gen(function* () {
                   turnId,
                   createdAt: now,
                   commandTag: "assistant-complete-finalize",
-                  spillRemainderCommandTag: "assistant-delta-buffer-remainder-finalize",
+                  finalDeltaCommandTag: "assistant-delta-finalize-fallback",
                 });
               }),
             { concurrency: 1 },
