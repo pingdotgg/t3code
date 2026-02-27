@@ -44,9 +44,11 @@ const ICON_SOURCE_FILES = [
   "src/index.html",
 ];
 
-// Matches <link rel="icon" href="..."> or { rel: "icon", href: "..." } patterns.
-const LINK_ICON_HTML_RE = /<link[^>]*rel=["'](?:icon|shortcut icon)["'][^>]*href=["']([^"'?]+)/i;
-const LINK_ICON_OBJ_RE = /rel:\s*["'](?:icon|shortcut icon)["'][^}]*href:\s*["']([^"'?]+)/i;
+// Matches <link ...> tags or object-like icon metadata where rel/href can appear in any order.
+const LINK_ICON_HTML_RE =
+  /<link\b(?=[^>]*\brel=["'](?:icon|shortcut icon)["'])(?=[^>]*\bhref=["']([^"'?]+))[^>]*>/i;
+const LINK_ICON_OBJ_RE =
+  /(?=[^}]*\brel\s*:\s*["'](?:icon|shortcut icon)["'])(?=[^}]*\bhref\s*:\s*["']([^"'?]+))[^}]*/i;
 
 function extractIconHref(source: string): string | null {
   const htmlMatch = source.match(LINK_ICON_HTML_RE);
