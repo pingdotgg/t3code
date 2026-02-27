@@ -131,7 +131,7 @@ export function parseDevRunnerArgs(rawArgs) {
       let value = parsedFlag.value;
       if (value === undefined) {
         const next = args[index + 1];
-        if (next === undefined) {
+        if (next === undefined || next === "--" || next.startsWith("-")) {
           throw new Error(`Missing value for --${parsedFlag.name}`);
         }
         value = next;

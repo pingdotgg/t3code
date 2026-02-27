@@ -30,6 +30,12 @@ describe("parseDevRunnerArgs", () => {
   it("throws when a value flag is missing its value", () => {
     expect(() => parseDevRunnerArgs(["--state-dir"])).toThrow("Missing value for --state-dir");
   });
+
+  it("throws when a value flag is followed by another flag token", () => {
+    expect(() => parseDevRunnerArgs(["--state-dir", "--continue"])).toThrow(
+      "Missing value for --state-dir",
+    );
+  });
 });
 
 describe("createDevRunnerEnv", () => {
