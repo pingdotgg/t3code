@@ -402,6 +402,59 @@ describe("ProviderRuntimeIngestion", () => {
     expect(finalMessage?.streaming).toBe(false);
   });
 
+  it("spills oversized buffered deltas and still finalizes full assistant text", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    const oversizedText = "x".repeat(40_000);
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-buffer-spill"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: now,
+      turnId: asProviderTurnId("turn-buffer-spill"),
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-buffer-spill",
+    );
+
+    harness.emit({
+      type: "message.delta",
+      eventId: asEventId("evt-message-delta-buffer-spill"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: now,
+      turnId: asProviderTurnId("turn-buffer-spill"),
+      itemId: asItemId("item-buffer-spill"),
+      delta: oversizedText,
+    });
+    harness.emit({
+      type: "message.completed",
+      eventId: asEventId("evt-message-completed-buffer-spill"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: now,
+      turnId: asProviderTurnId("turn-buffer-spill"),
+      itemId: asItemId("item-buffer-spill"),
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.messages.some(
+          (message) => message.id === "assistant:item-buffer-spill" && !message.streaming,
+        ),
+    );
+    const message = thread.messages.find((entry) => entry.id === "assistant:item-buffer-spill");
+    expect(message?.text.length).toBe(oversizedText.length);
+    expect(message?.text).toBe(oversizedText);
+    expect(message?.streaming).toBe(false);
+  });
+
   it("does not duplicate assistant completion when message.completed is followed by turn.completed", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

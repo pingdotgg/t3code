@@ -162,10 +162,12 @@ describe("decider project scripts", () => {
     const events = Array.isArray(result) ? result : [result];
     expect(events).toHaveLength(2);
     expect(events[0]?.type).toBe("thread.message-sent");
-    expect(events[1]?.type).toBe("thread.turn-start-requested");
-    expect(events[1]?.causationEventId).toBe(events[0]?.eventId ?? null);
-    expect((events[1]?.payload as { assistantDeliveryMode?: string }).assistantDeliveryMode).toBe(
-      "buffered",
-    );
+    const turnStartEvent = events[1];
+    expect(turnStartEvent?.type).toBe("thread.turn-start-requested");
+    expect(turnStartEvent?.causationEventId).toBe(events[0]?.eventId ?? null);
+    if (turnStartEvent?.type !== "thread.turn-start-requested") {
+      return;
+    }
+    expect(turnStartEvent.payload.assistantDeliveryMode).toBe("buffered");
   });
 });
