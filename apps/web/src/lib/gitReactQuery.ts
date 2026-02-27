@@ -13,6 +13,16 @@ export const gitQueryKeys = {
   branches: (cwd: string | null) => ["git", "branches", cwd] as const,
 };
 
+export const gitMutationKeys = {
+  init: (cwd: string | null) => ["git", "mutation", "init", cwd] as const,
+  checkout: (cwd: string | null) => ["git", "mutation", "checkout", cwd] as const,
+  createBranchAndCheckout: (cwd: string | null) =>
+    ["git", "mutation", "create-branch-and-checkout", cwd] as const,
+  runStackedAction: (cwd: string | null) =>
+    ["git", "mutation", "run-stacked-action", cwd] as const,
+  pull: (cwd: string | null) => ["git", "mutation", "pull", cwd] as const,
+};
+
 export function invalidateGitQueries(queryClient: QueryClient) {
   return queryClient.invalidateQueries({ queryKey: gitQueryKeys.all });
 }
@@ -51,6 +61,7 @@ export function gitBranchesQueryOptions(cwd: string | null) {
 
 export function gitInitMutationOptions(input: { cwd: string | null; queryClient: QueryClient }) {
   return mutationOptions({
+    mutationKey: gitMutationKeys.init(input.cwd),
     mutationFn: async () => {
       const api = ensureNativeApi();
       if (!input.cwd) throw new Error("Git init is unavailable.");
@@ -67,6 +78,7 @@ export function gitCheckoutMutationOptions(input: {
   queryClient: QueryClient;
 }) {
   return mutationOptions({
+    mutationKey: gitMutationKeys.checkout(input.cwd),
     mutationFn: async (branch: string) => {
       const api = ensureNativeApi();
       if (!input.cwd) throw new Error("Git checkout is unavailable.");
@@ -83,6 +95,7 @@ export function gitCreateBranchAndCheckoutMutationOptions(input: {
   queryClient: QueryClient;
 }) {
   return mutationOptions({
+    mutationKey: gitMutationKeys.createBranchAndCheckout(input.cwd),
     mutationFn: async (branch: string) => {
       const api = ensureNativeApi();
       if (!input.cwd) throw new Error("Git branch creation is unavailable.");
@@ -100,6 +113,7 @@ export function gitRunStackedActionMutationOptions(input: {
   queryClient: QueryClient;
 }) {
   return mutationOptions({
+    mutationKey: gitMutationKeys.runStackedAction(input.cwd),
     mutationFn: async ({
       action,
       commitMessage,
@@ -123,6 +137,7 @@ export function gitRunStackedActionMutationOptions(input: {
 
 export function gitPullMutationOptions(input: { cwd: string | null; queryClient: QueryClient }) {
   return mutationOptions({
+    mutationKey: gitMutationKeys.pull(input.cwd),
     mutationFn: async () => {
       const api = ensureNativeApi();
       if (!input.cwd) throw new Error("Git pull is unavailable.");
@@ -151,6 +166,7 @@ export function gitCreateWorktreeMutationOptions(input: { queryClient: QueryClie
       if (!cwd) throw new Error("Git worktree creation is unavailable.");
       return api.git.createWorktree({ cwd, branch, newBranch, path: path ?? null });
     },
+    mutationKey: ["git", "mutation", "create-worktree"] as const,
     onSettled: async () => {
       await invalidateGitQueries(input.queryClient);
     },
@@ -164,6 +180,7 @@ export function gitRemoveWorktreeMutationOptions(input: { queryClient: QueryClie
       if (!cwd) throw new Error("Git worktree removal is unavailable.");
       return api.git.removeWorktree({ cwd, path, force });
     },
+    mutationKey: ["git", "mutation", "remove-worktree"] as const,
     onSettled: async () => {
       await invalidateGitQueries(input.queryClient);
     },
