@@ -27,6 +27,10 @@ const FAVICON_CANDIDATES = [
   "src/app/favicon.ico",
   "src/app/icon.svg",
   "src/app/icon.png",
+  "assets/icon.svg",
+  "assets/icon.png",
+  "assets/logo.svg",
+  "assets/logo.png",
 ];
 
 // Files that may contain a <link rel="icon"> or icon metadata declaration.
@@ -91,11 +95,7 @@ export function tryHandleProjectFaviconRequest(url: URL, res: http.ServerRespons
     return true;
   }
 
-  const tryResolvedPaths = (
-    paths: string[],
-    index: number,
-    onExhausted: () => void,
-  ): void => {
+  const tryResolvedPaths = (paths: string[], index: number, onExhausted: () => void): void => {
     if (index >= paths.length) {
       onExhausted();
       return;
