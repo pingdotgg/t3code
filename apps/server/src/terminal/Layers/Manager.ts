@@ -117,8 +117,43 @@ function resolveShellCandidates(shellResolver: () => string): ShellCandidate[] {
 }
 
 function isRetryableShellSpawnError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const message = error.message.toLowerCase();
+  const queue: unknown[] = [error];
+  const seen = new Set<unknown>();
+  const messages: string[] = [];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+
+    if (typeof current === "string") {
+      messages.push(current);
+      continue;
+    }
+
+    if (current instanceof Error) {
+      messages.push(current.message);
+      const cause = (current as { cause?: unknown }).cause;
+      if (cause) {
+        queue.push(cause);
+      }
+      continue;
+    }
+
+    if (typeof current === "object") {
+      const value = current as { message?: unknown; cause?: unknown };
+      if (typeof value.message === "string") {
+        messages.push(value.message);
+      }
+      if (value.cause) {
+        queue.push(value.cause);
+      }
+    }
+  }
+
+  const message = messages.join(" ").toLowerCase();
   return (
     message.includes("posix_spawnp failed") ||
     message.includes("enoent") ||
@@ -354,7 +389,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
         };
         this.sessions.set(sessionKey, session);
         this.evictInactiveSessionsIfNeeded();
-        this.startSession(session, { ...input, cols, rows }, "started");
+        await this.startSession(session, { ...input, cols, rows }, "started");
         return this.snapshot(session);
       }
 
@@ -380,7 +415,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       }
 
       if (!existing.process) {
-        this.startSession(existing, { ...input, cols: targetCols, rows: targetRows }, "started");
+        await this.startSession(existing, { ...input, cols: targetCols, rows: targetRows }, "started");
         return this.snapshot(existing);
       }
 
@@ -477,7 +512,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
 
       session.history = "";
       await this.persistHistory(input.threadId, input.terminalId, session.history);
-      this.startSession(session, { ...input, cols, rows }, "restarted");
+      await this.startSession(session, { ...input, cols, rows }, "restarted");
       return this.snapshot(session);
     });
   }
@@ -528,11 +563,11 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     this.persistQueues.clear();
   }
 
-  private startSession(
+  private async startSession(
     session: TerminalSessionState,
     input: TerminalStartInput,
     eventType: "started" | "restarted",
-  ): void {
+  ): Promise<void> {
     this.stopProcess(session);
 
     session.status = "starting";
@@ -551,26 +586,46 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       const terminalEnv = createTerminalSpawnEnv(process.env, session.runtimeEnv);
       let lastSpawnError: unknown = null;
 
-      for (const candidate of shellCandidates) {
+      const spawnWithCandidate = (candidate: ShellCandidate) =>
+        Effect.runPromise(
+          this.ptyAdapter.spawn({
+            shell: candidate.shell,
+            ...(candidate.args ? { args: candidate.args } : {}),
+            cwd: session.cwd,
+            cols: session.cols,
+            rows: session.rows,
+            env: terminalEnv,
+          }),
+        );
+
+      const trySpawn = async (
+        candidates: ShellCandidate[],
+        index = 0,
+      ): Promise<{ process: PtyProcess; shellLabel: string } | null> => {
+        if (index >= candidates.length) {
+          return null;
+        }
+        const candidate = candidates[index];
+        if (!candidate) {
+          return null;
+        }
+
         try {
-          ptyProcess = Effect.runSync(
-            this.ptyAdapter.spawn({
-              shell: candidate.shell,
-              ...(candidate.args ? { args: candidate.args } : {}),
-              cwd: session.cwd,
-              cols: session.cols,
-              rows: session.rows,
-              env: terminalEnv,
-            }),
-          );
-          startedShell = formatShellCandidate(candidate);
-          break;
+          const process = await spawnWithCandidate(candidate);
+          return { process, shellLabel: formatShellCandidate(candidate) };
         } catch (error) {
           lastSpawnError = error;
           if (!isRetryableShellSpawnError(error)) {
             throw error;
           }
+          return trySpawn(candidates, index + 1);
         }
+      };
+
+      const spawnResult = await trySpawn(shellCandidates);
+      if (spawnResult) {
+        ptyProcess = spawnResult.process;
+        startedShell = spawnResult.shellLabel;
       }
 
       if (!ptyProcess) {

@@ -5,7 +5,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
-import { Deferred, Effect, Layer, Option, PubSub, Queue, Stream } from "effect";
+import { Deferred, Effect, Layer, Option, PubSub, Queue, Schema, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { toPersistenceSqlError } from "../../persistence/Errors.ts";
@@ -181,7 +181,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             ),
           );
 
-          if (error instanceof OrchestrationCommandInvariantError) {
+          if (Schema.is(OrchestrationCommandInvariantError)(error)) {
             const aggregateRef = commandToAggregateRef(envelope.command);
             yield* commandReceiptRepository
               .upsert({

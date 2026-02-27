@@ -9,7 +9,13 @@ import {
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { PtyAdapterShape, PtyExitEvent, PtyProcess, PtySpawnInput } from "../Services/PTY";
+import {
+  PtySpawnError,
+  type PtyAdapterShape,
+  type PtyExitEvent,
+  type PtyProcess,
+  type PtySpawnInput,
+} from "../Services/PTY";
 import { TerminalManagerRuntime } from "./Manager";
 import { Effect, Encoding } from "effect";
 
@@ -69,14 +75,33 @@ class FakePtyAdapter implements PtyAdapterShape {
   readonly spawnFailures: Error[] = [];
   private nextPid = 9000;
 
-  spawn(input: PtySpawnInput): Effect.Effect<PtyProcess> {
+  constructor(private readonly mode: "sync" | "async" = "sync") {}
+
+  spawn(input: PtySpawnInput): Effect.Effect<PtyProcess, PtySpawnError> {
     this.spawnInputs.push(input);
     const failure = this.spawnFailures.shift();
     if (failure) {
-      throw failure;
+      return Effect.fail(
+        new PtySpawnError({
+          adapter: "fake",
+          message: "Failed to spawn PTY process",
+          cause: failure,
+        }),
+      );
     }
     const process = new FakePtyProcess(this.nextPid++);
     this.processes.push(process);
+    if (this.mode === "async") {
+      return Effect.tryPromise({
+        try: async () => process,
+        catch: (cause) =>
+          new PtySpawnError({
+            adapter: "fake",
+            message: "Failed to spawn PTY process",
+            cause,
+          }),
+      });
+    }
     return Effect.succeed(process);
   }
 }
@@ -150,11 +175,12 @@ describe("TerminalManager", () => {
       subprocessPollIntervalMs?: number;
       processKillGraceMs?: number;
       maxRetainedInactiveSessions?: number;
+      ptyAdapter?: FakePtyAdapter;
     } = {},
   ) {
     const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-terminal-"));
     tempDirs.push(logsDir);
-    const ptyAdapter = new FakePtyAdapter();
+    const ptyAdapter = options.ptyAdapter ?? new FakePtyAdapter();
     const manager = new TerminalManagerRuntime({
       logsDir,
       ptyAdapter,
@@ -185,6 +211,18 @@ describe("TerminalManager", () => {
     expect(second.threadId).toBe("thread-1");
     expect(third.threadId).toBe("thread-1");
     expect(ptyAdapter.spawnInputs).toHaveLength(1);
+
+    manager.dispose();
+  });
+
+  it("supports asynchronous PTY spawn effects", async () => {
+    const { manager, ptyAdapter } = makeManager(5, { ptyAdapter: new FakePtyAdapter("async") });
+
+    const snapshot = await manager.open(openInput());
+
+    expect(snapshot.status).toBe("running");
+    expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    expect(ptyAdapter.processes).toHaveLength(1);
 
     manager.dispose();
   });

@@ -99,4 +99,4 @@ export interface ProviderSessionDirectoryShape {
 export class ProviderSessionDirectory extends ServiceMap.Service<
   ProviderSessionDirectory,
   ProviderSessionDirectoryShape
->()("provider/ProviderSessionDirectory") {}
+>()("t3/provider/Services/ProviderSessionDirectory") {}

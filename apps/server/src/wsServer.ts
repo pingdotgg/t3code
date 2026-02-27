@@ -23,7 +23,7 @@ import {
   WsPush,
   WsResponse,
 } from "@t3tools/contracts";
-import { NodeHttpServer } from "@effect/platform-node";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { Cause, Effect, Exit, Layer, Ref, Schema, Scope, ServiceMap, Stream, Struct } from "effect";
 import { WebSocketServer, type WebSocket } from "ws";
 
@@ -79,7 +79,7 @@ export interface ServerShape {
 /**
  * Server - Service tag for HTTP/WebSocket lifecycle management.
  */
-export class Server extends ServiceMap.Service<Server, ServerShape>()("server/Server") {}
+export class Server extends ServiceMap.Service<Server, ServerShape>()("t3/wsServer/Server") {}
 
 const isServerNotRunningError = (error: unknown): boolean => {
   if (!(error instanceof Error)) return false;
@@ -320,22 +320,18 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
 
   yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
-    Effect.gen(function* () {
-      yield* broadcastPush({
-        type: "push",
-        channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
-        data: event,
-      });
+    broadcastPush({
+      type: "push",
+      channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
+      data: event,
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
   yield* Stream.runForEach(keybindingsManager.changes, (event) =>
-    Effect.gen(function* () {
-      yield* broadcastPush({
-        type: "push",
-        channel: WS_CHANNELS.serverConfigUpdated,
-        data: event,
-      });
+    broadcastPush({
+      type: "push",
+      channel: WS_CHANNELS.serverConfigUpdated,
+      data: event,
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 

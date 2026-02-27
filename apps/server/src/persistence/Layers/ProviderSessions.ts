@@ -51,14 +51,10 @@ function toValidationError(
   });
 }
 
-function decodeInput<A>(
-  schema: Schema.Schema<A>,
-  input: unknown,
-  operation: string,
-): Effect.Effect<A, ProviderSessionRepositoryValidationError> {
+function decodeInput<S extends Schema.Top>(schema: S, input: unknown, operation: string) {
   return Schema.decodeUnknownEffect(schema)(input).pipe(
     Effect.mapError((cause) => toValidationError(operation, cause)),
-  ) as Effect.Effect<A, ProviderSessionRepositoryValidationError>;
+  );
 }
 
 function toPersistenceError(

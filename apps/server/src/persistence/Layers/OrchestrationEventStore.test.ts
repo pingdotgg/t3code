@@ -1,6 +1,6 @@
 import { CommandId, EventId, ProjectId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Layer, Schema, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { PersistenceDecodeError } from "../Errors.ts";
@@ -107,7 +107,7 @@ layer("OrchestrationEventStore", (it) => {
       );
       assert.equal(replayResult._tag, "Failure");
       if (replayResult._tag === "Failure") {
-        assert.ok(replayResult.failure instanceof PersistenceDecodeError);
+        assert.ok(Schema.is(PersistenceDecodeError)(replayResult.failure));
         assert.ok(
           replayResult.failure.operation.includes(
             "OrchestrationEventStore.readFromSequence:decodeRows",

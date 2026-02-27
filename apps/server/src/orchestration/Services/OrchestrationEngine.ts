@@ -77,4 +77,4 @@ export interface OrchestrationEngineShape {
 export class OrchestrationEngineService extends ServiceMap.Service<
   OrchestrationEngineService,
   OrchestrationEngineShape
->()("orchestration/Engine") {}
+>()("t3/orchestration/Services/OrchestrationEngine/OrchestrationEngineService") {}

@@ -1,10 +1,19 @@
 {
   "name": "@t3tools/monorepo",
   "private": true,
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
+  "workspaces": {
+    "packages": [
+      "apps/*",
+      "packages/*"
+    ],
+    "catalog": {
+      "effect": "https://pkg.pr.new/Effect-TS/effect-smol/effect@f591738",
+      "@effect/platform-node": "https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node@f591738",
+      "@effect/sql-sqlite-bun": "https://pkg.pr.new/Effect-TS/effect-smol/@effect/sql-sqlite-bun@f591738",
+      "@effect/vitest": "https://pkg.pr.new/Effect-TS/effect-smol/@effect/vitest@f591738",
+      "@effect/language-service": "0.75.1"
+    }
+  },
   "scripts": {
     "dev": "bun run scripts/dev-runner.mjs dev",
     "dev:server": "bun run scripts/dev-runner.mjs dev:server",

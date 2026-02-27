@@ -2,7 +2,7 @@ import { FileSystem, Path, Effect } from "effect";
 import { assert, it } from "@effect/vitest";
 
 import { ensureNodePtySpawnHelperExecutable } from "./NodePTY";
-import { NodeServices } from "@effect/platform-node";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 
 it.layer(NodeServices.layer)("ensureNodePtySpawnHelperExecutable", (it) => {
   it.effect("adds executable bits when helper exists but is not executable", () =>

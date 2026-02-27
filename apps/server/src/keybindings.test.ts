@@ -1,5 +1,5 @@
 import { KeybindingCommand, KeybindingRule, KeybindingsConfig } from "@t3tools/contracts";
-import { NodeServices } from "@effect/platform-node";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
 import { Effect, FileSystem, Layer, Logger, Path, Schema } from "effect";
@@ -178,7 +178,10 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         return yield* keybindings.loadConfigState;
       });
 
-      assert.deepEqual(configState.keybindings, compileResolvedKeybindingsConfig(DEFAULT_KEYBINDINGS));
+      assert.deepEqual(
+        configState.keybindings,
+        compileResolvedKeybindingsConfig(DEFAULT_KEYBINDINGS),
+      );
       assert.deepEqual(configState.issues, [
         {
           kind: "keybindings.malformed-config",
@@ -208,10 +211,24 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       });
 
       assert.isTrue(configState.keybindings.some((entry) => entry.command === "terminal.toggle"));
-      assert.isFalse(configState.keybindings.some((entry) => entry.command === "invalid.command"));
+      assert.isFalse(
+        configState.keybindings.some(
+          (entry) =>
+            // @ts-expect-error - invalid command
+            entry.command === "invalid.command",
+        ),
+      );
       assert.deepEqual(configState.issues, [
-        { kind: "keybindings.invalid-entry", index: 1, message: configState.issues[0]?.message ?? "" },
-        { kind: "keybindings.invalid-entry", index: 2, message: configState.issues[1]?.message ?? "" },
+        {
+          kind: "keybindings.invalid-entry",
+          index: 1,
+          message: configState.issues[0]?.message ?? "",
+        },
+        {
+          kind: "keybindings.invalid-entry",
+          index: 2,
+          message: configState.issues[1]?.message ?? "",
+        },
       ]);
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );

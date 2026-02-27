@@ -67,4 +67,4 @@ export interface OrchestrationEventStoreShape {
 export class OrchestrationEventStore extends ServiceMap.Service<
   OrchestrationEventStore,
   OrchestrationEventStoreShape
->()("orchestration/EventStore") {}
+>()("t3/persistence/Services/OrchestrationEventStore") {}

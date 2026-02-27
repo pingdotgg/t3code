@@ -206,6 +206,42 @@ async function validateBundledClientAssets(clientDir) {
   }
 }
 
+function readWorkspaceCatalog(rootPackageJson) {
+  const workspaces = rootPackageJson?.workspaces;
+  if (!workspaces || typeof workspaces !== "object" || Array.isArray(workspaces)) {
+    return {};
+  }
+
+  const catalog = workspaces.catalog;
+  if (!catalog || typeof catalog !== "object" || Array.isArray(catalog)) {
+    return {};
+  }
+
+  return catalog;
+}
+
+function resolveCatalogDependencies(dependencies, catalog, dependencySourceLabel) {
+  return Object.fromEntries(
+    Object.entries(dependencies).map(([dependencyName, spec]) => {
+      if (typeof spec !== "string" || !spec.startsWith("catalog:")) {
+        return [dependencyName, spec];
+      }
+
+      const catalogKey = spec.slice("catalog:".length).trim();
+      const lookupKey = catalogKey.length > 0 ? catalogKey : dependencyName;
+      const resolvedSpec = catalog[lookupKey];
+      if (typeof resolvedSpec !== "string" || resolvedSpec.length === 0) {
+        fail(
+          `Unable to resolve '${spec}' for ${dependencySourceLabel} dependency '${dependencyName}'. ` +
+            `Expected key '${lookupKey}' in root workspace catalog.`,
+        );
+      }
+
+      return [dependencyName, resolvedSpec];
+    }),
+  );
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
@@ -217,6 +253,7 @@ async function main() {
     fail("This script only builds macOS .dmg artifacts and must run on macOS.");
   }
 
+  const rootPkg = await readJson(path.join(repoRoot, "package.json"));
   const desktopPkg = await readJson(path.join(repoRoot, "apps/desktop/package.json"));
   const serverPkg = await readJson(path.join(repoRoot, "apps/server/package.json"));
 
@@ -229,6 +266,11 @@ async function main() {
   if (!dependencies || Object.keys(dependencies).length === 0) {
     fail("Could not resolve production dependencies from apps/server/package.json.");
   }
+  const resolvedDependencies = resolveCatalogDependencies(
+    dependencies,
+    readWorkspaceCatalog(rootPkg),
+    "apps/server",
+  );
 
   const appVersion = options.version ?? serverPkg.version ?? "0.1.0";
   const stageRoot = path.join(os.tmpdir(), "t3code-desktop-dmg-stage");
@@ -291,7 +333,7 @@ async function main() {
         category: "public.app-category.developer-tools",
       },
     },
-    dependencies,
+    dependencies: resolvedDependencies,
     devDependencies: {
       electron: electronVersion,
     },

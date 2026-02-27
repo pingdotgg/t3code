@@ -37,6 +37,6 @@ export interface ProviderAdapterRegistryShape {
 export class ProviderAdapterRegistry extends ServiceMap.Service<
   ProviderAdapterRegistry,
   ProviderAdapterRegistryShape
->()("provider/ProviderAdapterRegistry") {}
+>()("t3/provider/Services/ProviderAdapterRegistry") {}
 
 // Dummy comment for workflow testing.

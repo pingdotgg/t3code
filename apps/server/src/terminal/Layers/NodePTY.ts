@@ -37,11 +37,12 @@ export const ensureNodePtySpawnHelperExecutable = Effect.fn(function* (explicitP
     didEnsureSpawnHelperExecutable = true;
   }
 
-  const stat = yield* fs.stat(helperPath);
-  const mode = stat.mode & 0o777;
-  if ((mode & 0o111) === 0) {
-    yield* fs.chmod(helperPath, mode | 0o111);
+  if (!(yield* fs.exists(helperPath))) {
+    return;
   }
+
+  // Best-effort: avoid FileSystem.stat in packaged mode where some fs metadata can be missing.
+  yield* fs.chmod(helperPath, 0o755).pipe(Effect.orElseSucceed(() => undefined));
 });
 
 class NodePtyProcess implements PtyProcess {

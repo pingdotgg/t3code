@@ -35,17 +35,17 @@
         "t3": "./dist/index.mjs",
       },
       "dependencies": {
-        "@effect/platform-node": "4.0.0-beta.10",
-        "@effect/sql-sqlite-bun": "4.0.0-beta.10",
+        "@effect/platform-node": "catalog:",
+        "@effect/sql-sqlite-bun": "catalog:",
         "@pierre/diffs": "^1.1.0-beta.16",
-        "effect": "4.0.0-beta.10",
+        "effect": "catalog:",
         "node-pty": "^1.1.0",
         "open": "^10.1.0",
         "ws": "^8.18.0",
       },
       "devDependencies": {
         "@effect/language-service": "0.75.1",
-        "@effect/vitest": "4.0.0-beta.10",
+        "@effect/vitest": "catalog:",
         "@t3tools/contracts": "workspace:*",
         "@t3tools/web": "workspace:*",
         "@types/bun": "^1.3.9",
@@ -70,7 +70,7 @@
         "@xterm/addon-fit": "^0.11.0",
         "@xterm/xterm": "^6.0.0",
         "class-variance-authority": "^0.7.1",
-        "effect": "4.0.0-beta.10",
+        "effect": "catalog:",
         "highlight.js": "^11.11.1",
         "lucide-react": "^0.564.0",
         "react": "^19.0.0",
@@ -81,6 +81,7 @@
         "tailwind-merge": "^3.4.0",
       },
       "devDependencies": {
+        "@effect/language-service": "catalog:",
         "@tailwindcss/vite": "^4.0.0",
         "@tanstack/router-plugin": "^1.161.0",
         "@types/react": "^19.0.0",
@@ -96,15 +97,22 @@
       "name": "@t3tools/contracts",
       "version": "0.0.0",
       "dependencies": {
-        "effect": "4.0.0-beta.10",
+        "effect": "catalog:",
       },
       "devDependencies": {
         "@effect/language-service": "0.75.1",
-        "@effect/vitest": "4.0.0-beta.10",
+        "@effect/vitest": "catalog:",
         "tsdown": "^0.20.3",
         "typescript": "^5.7.3",
       },
     },
+  },
+  "catalog": {
+    "@effect/language-service": "0.75.1",
+    "@effect/platform-node": "https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node@f591738",
+    "@effect/sql-sqlite-bun": "https://pkg.pr.new/Effect-TS/effect-smol/@effect/sql-sqlite-bun@f591738",
+    "@effect/vitest": "https://pkg.pr.new/Effect-TS/effect-smol/@effect/vitest@f591738",
+    "effect": "https://pkg.pr.new/Effect-TS/effect-smol/effect@f591738",
   },
   "packages": {
     "@babel/code-frame": ["@babel/code-frame@7.29.0", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.28.5", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw=="],
@@ -157,13 +165,13 @@
 
     "@effect/language-service": ["@effect/language-service@0.75.1", "", { "bin": { "effect-language-service": "cli.js" } }, "sha512-g9xD2tAQgRFpYC2YgpZq02VeSL5fBbFJ0B/g1o+14NuNmwtaYJc7SjiLWAA9eyhJHosNrn6h1Ye+Kx6j5mN0AA=="],
 
-    "@effect/platform-node": ["@effect/platform-node@4.0.0-beta.10", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-beta.10", "mime": "^4.1.0", "undici": "^7.20.0" }, "peerDependencies": { "effect": "^4.0.0-beta.10", "ioredis": "^5.7.0" } }, "sha512-ikZ/uyos5okYAHE+wWOwZkHgriFUTY3aY8Kdqbj/ro8xw0z9YXWN4fbyQAZUWkBcieDKS36N+QfHRMPG4fEWRA=="],
+    "@effect/platform-node": ["@effect/platform-node@https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node@f591738", { "dependencies": { "@effect/platform-node-shared": "https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node-shared@f59173885df0eb490dc2e6619ae89467feac0413", "mime": "^4.1.0", "undici": "^7.20.0" }, "peerDependencies": { "effect": "^4.0.0-beta.19", "ioredis": "^5.7.0" } }],
 
-    "@effect/platform-node-shared": ["@effect/platform-node-shared@4.0.0-beta.10", "", { "dependencies": { "@types/ws": "^8.18.1", "ws": "^8.19.0" }, "peerDependencies": { "effect": "^4.0.0-beta.10" } }, "sha512-gBSeOG2bfchXFdgdi5oipHKynOzSd7BlzTy5QcjFOoCUTtLP9igqohPB9hTkV3a6seWE2JJqsgsQ79VuLb7fAg=="],
+    "@effect/platform-node-shared": ["@effect/platform-node-shared@https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node-shared@f59173885df0eb490dc2e6619ae89467feac0413", { "dependencies": { "@types/ws": "^8.18.1", "ws": "^8.19.0" }, "peerDependencies": { "effect": "^4.0.0-beta.19" } }],
 
-    "@effect/sql-sqlite-bun": ["@effect/sql-sqlite-bun@4.0.0-beta.10", "", { "peerDependencies": { "effect": "^4.0.0-beta.10" } }, "sha512-LY1jNu2uqGYsJCVjVU73nzcZ+kAYBDsG7O8x5ddmkIXj10RmnIhjYMStWBa0NZOFg4Hsl+CadxtsDy3edaOVeA=="],
+    "@effect/sql-sqlite-bun": ["@effect/sql-sqlite-bun@https://pkg.pr.new/Effect-TS/effect-smol/@effect/sql-sqlite-bun@f591738", { "peerDependencies": { "effect": "^4.0.0-beta.19" } }],
 
-    "@effect/vitest": ["@effect/vitest@4.0.0-beta.10", "", { "peerDependencies": { "effect": "^4.0.0-beta.10", "vitest": "^3.0.0" } }, "sha512-WmE8vCNw+eDoAq9CwwymrAdIBw1f+8hDP3AUF7jyC7/Cj/kyAYOFwkbtKmDXIFaTlf7G/2fmulEXeCO5W8j0kQ=="],
+    "@effect/vitest": ["@effect/vitest@https://pkg.pr.new/Effect-TS/effect-smol/@effect/vitest@f591738", { "peerDependencies": { "effect": "^4.0.0-beta.19", "vitest": "^3.0.0" } }],
 
     "@electron/get": ["@electron/get@2.0.3", "", { "dependencies": { "debug": "^4.1.1", "env-paths": "^2.2.0", "fs-extra": "^8.1.0", "got": "^11.8.5", "progress": "^2.0.3", "semver": "^6.2.0", "sumchecker": "^3.0.1" }, "optionalDependencies": { "global-agent": "^3.0.0" } }, "sha512-Qkzpg2s9GnVV2I2BjRksUi43U5e6+zaQMcjoJy0C+C5oxaKl+fmckGDQFtRpZpZV0NQekuZZ+tGz7EA9TVnQtQ=="],
 
@@ -729,7 +737,7 @@
 
     "dunder-proto": ["dunder-proto@1.0.1", "", { "dependencies": { "call-bind-apply-helpers": "^1.0.1", "es-errors": "^1.3.0", "gopd": "^1.2.0" } }, "sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A=="],
 
-    "effect": ["effect@4.0.0-beta.10", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "fast-check": "^4.5.3", "find-my-way-ts": "^0.1.6", "ini": "^6.0.0", "kubernetes-types": "^1.30.0", "msgpackr": "^1.11.8", "multipasta": "^0.2.7", "toml": "^3.0.0", "uuid": "^13.0.0", "yaml": "^2.8.2" } }, "sha512-UvxWmT0uzWZqNmQODfW7y1zb0LMlH3xtSn/UESpck2Wvv6SogxibYPWKKNcUsRMm5wwprOoW2IwItYLQyZpe8Q=="],
+    "effect": ["effect@https://pkg.pr.new/Effect-TS/effect-smol/effect@f591738", { "dependencies": { "@standard-schema/spec": "^1.1.0", "fast-check": "^4.5.3", "find-my-way-ts": "^0.1.6", "ini": "^6.0.0", "kubernetes-types": "^1.30.0", "msgpackr": "^1.11.8", "multipasta": "^0.2.7", "toml": "^3.0.0", "uuid": "^13.0.0", "yaml": "^2.8.2" } }],
 
     "electron": ["electron@40.6.0", "", { "dependencies": { "@electron/get": "^2.0.0", "@types/node": "^24.9.0", "extract-zip": "^2.0.1" }, "bin": { "electron": "cli.js" } }, "sha512-ett8W+yOFGDuM0vhJMamYSkrbV3LoaffzJd9GfjI96zRAxyrNqUSKqBpf/WGbQCweDxX2pkUCUfrv4wwKpsFZA=="],
 

@@ -1,6 +1,6 @@
 import type { ProviderRuntimeEvent, ProviderSessionId } from "@t3tools/contracts";
 import { ThreadId } from "@t3tools/contracts";
-import { NodeServices } from "@effect/platform-node";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, assert } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Queue, Stream } from "effect";
 

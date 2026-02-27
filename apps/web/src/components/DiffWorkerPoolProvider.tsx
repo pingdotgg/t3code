@@ -1,4 +1,5 @@
 import { WorkerPoolContextProvider } from "@pierre/diffs/react";
+import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import { useMemo, type ReactNode } from "react";
 
 export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
@@ -11,8 +12,7 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
   return (
     <WorkerPoolContextProvider
       poolOptions={{
-        workerFactory: () =>
-          new Worker(new URL("../workers/diffs.worker.ts", import.meta.url), { type: "module" }),
+        workerFactory: () => new DiffsWorker(),
         poolSize: workerPoolSize,
         totalASTLRUCacheSize: 240,
       }}

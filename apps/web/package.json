@@ -21,7 +21,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "class-variance-authority": "^0.7.1",
-    "effect": "4.0.0-beta.10",
+    "effect": "catalog:",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.564.0",
     "react": "^19.0.0",
@@ -32,6 +32,7 @@
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
+    "@effect/language-service": "catalog:",
     "@tailwindcss/vite": "^4.0.0",
     "@tanstack/router-plugin": "^1.161.0",
     "@types/react": "^19.0.0",

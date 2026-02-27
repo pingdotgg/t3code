@@ -35,7 +35,7 @@ export interface ServerConfigShape {
  * ServerConfig - Service tag for server runtime configuration.
  */
 export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigShape>()(
-  "server/ServerConfig",
+  "t3/config/ServerConfig",
 ) {}
 
 // Helpers
@@ -61,7 +61,7 @@ export interface NetServiceShape {
  * NetService - Service tag for startup networking helpers.
  */
 export class NetService extends ServiceMap.Service<NetService, NetServiceShape>()(
-  "server/NetService",
+  "t3/config/NetService",
 ) {
   static readonly layer = Layer.succeed(NetService, {
     findAvailablePort: (preferred) =>
@@ -102,18 +102,18 @@ export class NetService extends ServiceMap.Service<NetService, NetServiceShape>(
 
 export const resolveStaticDir = Effect.fn(function* () {
   const { join, resolve } = yield* Path.Path;
-  const { stat } = yield* FileSystem.FileSystem;
+  const { exists } = yield* FileSystem.FileSystem;
   const bundledClient = resolve(join(import.meta.dirname, "client"));
-  const bundledStat = yield* stat(join(bundledClient, "index.html")).pipe(
-    Effect.orElseSucceed(() => undefined),
+  const bundledStat = yield* exists(join(bundledClient, "index.html")).pipe(
+    Effect.orElseSucceed(() => false),
   );
   if (bundledStat) {
     return bundledClient;
   }
 
   const monorepoClient = resolve(join(import.meta.dirname, "../../web/dist"));
-  const monorepoStat = yield* stat(join(monorepoClient, "index.html")).pipe(
-    Effect.orElseSucceed(() => undefined),
+  const monorepoStat = yield* exists(join(monorepoClient, "index.html")).pipe(
+    Effect.orElseSucceed(() => false),
   );
   if (monorepoStat) {
     return monorepoClient;

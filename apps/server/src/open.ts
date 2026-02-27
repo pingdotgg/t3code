@@ -50,7 +50,7 @@ export interface OpenShape {
 /**
  * Open - Service tag for browser/editor launch operations.
  */
-export class Open extends ServiceMap.Service<Open, OpenShape>()("server/Open") {}
+export class Open extends ServiceMap.Service<Open, OpenShape>()("t3/open") {}
 
 // ==============================
 // Implementations

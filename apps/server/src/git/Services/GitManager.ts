@@ -23,7 +23,9 @@ export interface GitManagerShape {
   /**
    * Read current repository Git status plus open PR metadata when available.
    */
-  readonly status: (input: GitStatusInput) => Effect.Effect<GitStatusResult, GitManagerServiceError>;
+  readonly status: (
+    input: GitStatusInput,
+  ) => Effect.Effect<GitStatusResult, GitManagerServiceError>;
 
   /**
    * Run a stacked Git action (`commit`, `commit_push`, `commit_push_pr`).
@@ -37,5 +39,5 @@ export interface GitManagerShape {
  * GitManager - Service tag for stacked Git workflow orchestration.
  */
 export class GitManager extends ServiceMap.Service<GitManager, GitManagerShape>()(
-  "git/GitManager",
+  "t3/git/Services/GitManager",
 ) {}

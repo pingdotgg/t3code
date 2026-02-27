@@ -105,5 +105,5 @@ export interface ProviderServiceShape {
  * ProviderService - Service tag for provider orchestration.
  */
 export class ProviderService extends ServiceMap.Service<ProviderService, ProviderServiceShape>()(
-  "provider/ProviderService",
+  "t3/provider/Services/ProviderService",
 ) {}

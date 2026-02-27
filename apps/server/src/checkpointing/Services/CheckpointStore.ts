@@ -96,5 +96,5 @@ export interface CheckpointStoreShape {
  * CheckpointStore - Service tag for checkpoint persistence and restore operations.
  */
 export class CheckpointStore extends ServiceMap.Service<CheckpointStore, CheckpointStoreShape>()(
-  "checkpointing/CheckpointStore",
+  "t3/checkpointing/Services/CheckpointStore",
 ) {}
