@@ -623,6 +623,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     void navigate({
       to: "/$threadId",
       params: { threadId },
+      replace: true,
       search: (previous) => {
         const rest = stripDiffSearchParams(previous);
         return diffOpen ? rest : { ...rest, diff: "1" };
