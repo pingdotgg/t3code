@@ -150,6 +150,7 @@ describe("decider project scripts", () => {
             text: "hello",
             attachments: [],
           },
+          provider: "claudeCode",
           model: "gpt-5",
           effort: "high",
           approvalPolicy: "on-request",
@@ -174,6 +175,7 @@ describe("decider project scripts", () => {
     expect(turnStartEvent.payload).toMatchObject({
       threadId: ThreadId.makeUnsafe("thread-1"),
       messageId: asMessageId("message-user-1"),
+      provider: "claudeCode",
       model: "gpt-5",
       effort: "high",
       approvalPolicy: "on-request",

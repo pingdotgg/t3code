@@ -193,8 +193,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         updatedAt: now,
       };
 
-      const codexBinaryPath = input.codexBinaryPath ?? "codex";
-      const codexHomePath = input.codexHomePath;
+      const codexOptions = readCodexProviderOptions(input);
+      const codexBinaryPath = codexOptions.binaryPath ?? "codex";
+      const codexHomePath = codexOptions.homePath;
       const child = spawn(codexBinaryPath, ["app-server"], {
         cwd: resolvedCwd,
         env: {
@@ -374,13 +375,17 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     this.updateSession(context, {
       status: "running",
       activeTurnId: turnId,
-      resumeCursor: context.session.resumeCursor ?? { threadId: context.session.threadId },
+      ...(context.session.resumeCursor !== undefined
+        ? { resumeCursor: context.session.resumeCursor }
+        : {}),
     });
 
     return {
       threadId: context.session.threadId,
       turnId,
-      resumeCursor: context.session.resumeCursor ?? { threadId: context.session.threadId },
+      ...(context.session.resumeCursor !== undefined
+        ? { resumeCursor: context.session.resumeCursor }
+        : {}),
     };
   }
 
@@ -1005,16 +1010,30 @@ function toProviderThreadId(value: string | undefined): ProviderThreadId | undef
   return brandIfNonEmpty(value, ProviderThreadId.makeUnsafe);
 }
 
-function readResumeThreadId(input: ProviderSessionStartInput): ProviderThreadId | undefined {
-  if (
-    !input.resumeCursor ||
-    typeof input.resumeCursor !== "object" ||
-    Array.isArray(input.resumeCursor)
-  ) {
-    return input.resumeThreadId;
+function readCodexProviderOptions(input: ProviderSessionStartInput): {
+  readonly binaryPath?: string;
+  readonly homePath?: string;
+} {
+  const options = input.providerOptions?.codex;
+  if (!options) {
+    return {};
   }
-  const rawThreadId = (input.resumeCursor as Record<string, unknown>).threadId;
-  return typeof rawThreadId === "string" ? toProviderThreadId(rawThreadId) : input.resumeThreadId;
+  return {
+    ...(options.binaryPath ? { binaryPath: options.binaryPath } : {}),
+    ...(options.homePath ? { homePath: options.homePath } : {}),
+  };
+}
+
+function readResumeCursorThreadId(resumeCursor: unknown): ProviderThreadId | undefined {
+  if (!resumeCursor || typeof resumeCursor !== "object" || Array.isArray(resumeCursor)) {
+    return undefined;
+  }
+  const rawThreadId = (resumeCursor as Record<string, unknown>).threadId;
+  return typeof rawThreadId === "string" ? toProviderThreadId(rawThreadId) : undefined;
+}
+
+function readResumeThreadId(input: ProviderSessionStartInput): ProviderThreadId | undefined {
+  return readResumeCursorThreadId(input.resumeCursor);
 }
 
 function toProviderTurnId(value: string | undefined): ProviderTurnId | undefined {

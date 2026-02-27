@@ -119,7 +119,7 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
         providerThreadId,
         status: "starting",
         resumeCursor: {
-          resumeThreadId: "provider-thread-runtime",
+          threadId: "provider-thread-runtime",
         },
         runtimePayload: {
           cwd: "/tmp/project",
@@ -145,7 +145,7 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
         assert.equal(runtime.value.providerThreadId, providerThreadId);
         assert.equal(runtime.value.status, "running");
         assert.deepEqual(runtime.value.resumeCursor, {
-          resumeThreadId: providerThreadId,
+          threadId: providerThreadId,
         });
         assert.deepEqual(runtime.value.runtimePayload, {
           cwd: "/tmp/project",

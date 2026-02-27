@@ -61,11 +61,13 @@ function makeFakeCodexAdapter() {
     Effect.sync(() => {
       const now = new Date().toISOString();
       const next = nextSession;
+      const threadId = ProviderThreadId.makeUnsafe(`thread-${next}`);
       const session: ProviderSession = {
         sessionId: ProviderSessionId.makeUnsafe(`sess-${next}`),
         provider: "codex",
         status: "ready",
-        threadId: input.resumeThreadId ?? ProviderThreadId.makeUnsafe(`thread-${next}`),
+        threadId,
+        resumeCursor: input.resumeCursor ?? { opaque: `cursor-${next}` },
         cwd: input.cwd ?? process.cwd(),
         createdAt: now,
         updatedAt: now,
@@ -344,7 +346,7 @@ it.effect(
       assert.equal(Option.isSome(persistedAfterStopAll), true);
       if (Option.isSome(persistedAfterStopAll)) {
         assert.equal(persistedAfterStopAll.value.status, "stopped");
-        assert.equal(persistedAfterStopAll.value.resumeCursor, null);
+        assert.deepEqual(persistedAfterStopAll.value.resumeCursor, startedSession.resumeCursor);
       }
 
       const secondCodex = makeFakeCodexAdapter();
@@ -380,6 +382,7 @@ it.effect(
             provider: "codex",
             cwd: "/tmp/project",
             resumeThreadId: startedSession.threadId,
+            resumeCursor: startedSession.resumeCursor,
           },
         ],
       ]);
@@ -468,6 +471,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
             provider: "codex",
             cwd: "/tmp/project",
             resumeThreadId: initial.threadId,
+            resumeCursor: initial.resumeCursor,
           },
         ],
       ]);
@@ -547,7 +551,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(Option.isSome(runningRuntime), true);
       if (Option.isSome(runningRuntime)) {
         assert.equal(runningRuntime.value.status, "running");
-        assert.equal(runningRuntime.value.resumeCursor, null);
+        assert.deepEqual(runningRuntime.value.resumeCursor, session.resumeCursor);
         const payload = runningRuntime.value.runtimePayload;
         assert.equal(payload !== null && typeof payload === "object", true);
         if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
