@@ -851,7 +851,7 @@ it.live("recovers claudeCode sessions after provider stopAll using persisted res
         const firstThread = yield* harness.waitForThread(
           THREAD_ID,
           (entry) =>
-            entry.latestTurnId === "turn-1" && entry.session?.providerSessionId !== null,
+            entry.latestTurn?.turnId === "turn-1" && entry.session?.providerSessionId !== null,
         );
         const staleSessionId = firstThread.session?.providerSessionId;
         assert.equal(staleSessionId !== null, true);
@@ -1107,7 +1107,7 @@ it.live("reverts claudeCode turns and rolls back provider conversation state", (
 
         const firstThread = yield* harness.waitForThread(
           THREAD_ID,
-          (entry) => entry.latestTurnId === "turn-1" && entry.session?.providerSessionId !== null,
+          (entry) => entry.latestTurn?.turnId === "turn-1" && entry.session?.providerSessionId !== null,
         );
         const sessionId = firstThread.session?.providerSessionId;
         assert.equal(sessionId !== null, true);
@@ -1154,7 +1154,7 @@ it.live("reverts claudeCode turns and rolls back provider conversation state", (
         yield* harness.waitForThread(
           THREAD_ID,
           (entry) =>
-            entry.latestTurnId === "turn-2" &&
+            entry.latestTurn?.turnId === "turn-2" &&
             entry.checkpoints.length === 2 &&
             entry.session?.providerName === "claudeCode",
         );
@@ -1173,7 +1173,14 @@ it.live("reverts claudeCode turns and rolls back provider conversation state", (
             entry.checkpoints.length === 1 && entry.checkpoints[0]?.checkpointTurnCount === 1,
         );
         assert.equal(revertedThread.checkpoints[0]?.checkpointTurnCount, 1);
-        assert.equal(fs.readFileSync(path.join(harness.workspaceDir, "README.md"), "utf8"), "v2\n");
+        assert.equal(
+          gitRefExists(harness.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 1)),
+          true,
+        );
+        assert.equal(
+          gitRefExists(harness.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 2)),
+          false,
+        );
         assert.deepEqual(harness.adapterHarness.getRollbackCalls(sessionId), [1]);
       }),
     "claudeCode",
