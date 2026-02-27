@@ -168,6 +168,7 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     createdAt: string,
     options?: {
+      readonly provider?: ProviderKind;
       readonly approvalPolicy?: ProviderApprovalPolicy;
       readonly sandboxMode?: ProviderSandboxMode;
     },
@@ -182,10 +183,11 @@ const make = Effect.gen(function* () {
       options?.approvalPolicy ?? thread.session?.approvalPolicy ?? DEFAULT_APPROVAL_POLICY;
     const desiredSandboxMode =
       options?.sandboxMode ?? thread.session?.sandboxMode ?? DEFAULT_SANDBOX_MODE;
-    const preferredProvider: ProviderKind | undefined =
+    const currentProvider: ProviderKind | undefined =
       thread.session?.providerName === "codex" || thread.session?.providerName === "claudeCode"
         ? thread.session.providerName
         : undefined;
+    const preferredProvider: ProviderKind | undefined = options?.provider ?? currentProvider;
     const effectiveCwd = resolveThreadWorkspaceCwd({
       thread,
       projects: readModel.projects,
@@ -196,12 +198,17 @@ const make = Effect.gen(function* () {
         Effect.map((sessions) => sessions.find((session) => session.sessionId === sessionId)?.resumeCursor),
       );
 
-    const startProviderSession = (resumeCursor?: unknown) =>
+    const startProviderSession = (input?: {
+      readonly resumeCursor?: unknown;
+      readonly provider?: ProviderKind;
+    }) =>
       providerService.startSession(threadId, {
-        ...(preferredProvider ? { provider: preferredProvider } : {}),
+        ...(input?.provider ?? preferredProvider
+          ? { provider: input?.provider ?? preferredProvider }
+          : {}),
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
         ...(thread.model ? { model: thread.model } : {}),
-        ...(resumeCursor !== undefined ? { resumeCursor } : {}),
+        ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         approvalPolicy: desiredApprovalPolicy,
         sandboxMode: desiredSandboxMode,
       });
@@ -232,13 +239,17 @@ const make = Effect.gen(function* () {
         options.approvalPolicy !== thread.session?.approvalPolicy;
       const sandboxModeChanged =
         options?.sandboxMode !== undefined && options.sandboxMode !== thread.session?.sandboxMode;
+      const providerChanged = options?.provider !== undefined && options.provider !== currentProvider;
 
-      if (!approvalPolicyChanged && !sandboxModeChanged) {
+      if (!approvalPolicyChanged && !sandboxModeChanged && !providerChanged) {
         return existingSessionId;
       }
 
       const resumeCursor = yield* resolveResumeCursorForSession(existingSessionId);
-      const restartedSession = yield* startProviderSession(resumeCursor);
+      const restartedSession = yield* startProviderSession({
+        ...(resumeCursor !== undefined ? { resumeCursor } : {}),
+        ...(options?.provider !== undefined ? { provider: options.provider } : {}),
+      });
       yield* bindSessionToThread(restartedSession);
       yield* providerService.stopSession({ sessionId: existingSessionId }).pipe(
         Effect.catchCause((cause) =>
@@ -252,7 +263,9 @@ const make = Effect.gen(function* () {
       return restartedSession.sessionId;
     }
 
-    const startedSession = yield* startProviderSession();
+    const startedSession = yield* startProviderSession({
+      ...(options?.provider !== undefined ? { provider: options.provider } : {}),
+    });
     yield* bindSessionToThread(startedSession);
     return startedSession.sessionId;
   });
@@ -261,6 +274,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
+    readonly provider?: ProviderKind;
     readonly model?: string;
     readonly effort?: string;
     readonly approvalPolicy: ProviderApprovalPolicy;
@@ -272,6 +286,7 @@ const make = Effect.gen(function* () {
       return;
     }
     const sessionId = yield* ensureSessionForThread(input.threadId, input.createdAt, {
+      ...(input.provider !== undefined ? { provider: input.provider } : {}),
       approvalPolicy: input.approvalPolicy,
       sandboxMode: input.sandboxMode,
     });
@@ -394,6 +409,7 @@ const make = Effect.gen(function* () {
       threadId: event.payload.threadId,
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+      ...(event.payload.provider !== undefined ? { provider: event.payload.provider } : {}),
       ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
       ...(event.payload.effort !== undefined ? { effort: event.payload.effort } : {}),
       approvalPolicy: event.payload.approvalPolicy,
