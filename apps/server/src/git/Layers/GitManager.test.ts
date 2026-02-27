@@ -3,7 +3,7 @@ import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, PlatformError, Schema, Scope } from "effect";
+import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
 import { expect } from "vitest";
 
 import { GitCommandError, GitHubCliError, TextGenerationError } from "../Errors.ts";
@@ -19,16 +19,11 @@ import { GitService } from "../Services/GitService.ts";
 import { GitCoreLive } from "./GitCore.ts";
 import { makeGitManager } from "./GitManager.ts";
 
-class GitFixtureError extends Schema.TaggedErrorClass<GitFixtureError>()("GitFixtureError", {
-  message: Schema.String,
-  cause: Schema.optional(Schema.Defect),
-}) {}
-
 interface FakeGhScenario {
   prListSequence?: string[];
   createdPrUrl?: string;
   defaultBranch?: string;
-  failWith?: GitFixtureError;
+  failWith?: GitHubCliError;
 }
 
 interface FakeGitTextGeneration {
@@ -37,7 +32,7 @@ interface FakeGitTextGeneration {
     branch: string | null;
     stagedSummary: string;
     stagedPatch: string;
-  }) => Effect.Effect<{ subject: string; body: string }, GitFixtureError>;
+  }) => Effect.Effect<{ subject: string; body: string }, TextGenerationError>;
   generatePrContent: (input: {
     cwd: string;
     baseBranch: string;
@@ -45,7 +40,7 @@ interface FakeGitTextGeneration {
     commitSummary: string;
     diffSummary: string;
     diffPatch: string;
-  }) => Effect.Effect<{ title: string; body: string }, GitFixtureError>;
+  }) => Effect.Effect<{ title: string; body: string }, TextGenerationError>;
 }
 
 function makeTempDir(
@@ -144,34 +139,6 @@ function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): T
   };
 }
 
-const normalizeGhError = (error: GitFixtureError): GitHubCliError => {
-  if (error.message.includes("Command not found: gh")) {
-    return new GitHubCliError({
-      operation: "execute",
-      detail: "GitHub CLI (`gh`) is required but not available on PATH.",
-      cause: error,
-    });
-  }
-  const lower = error.message.toLowerCase();
-  if (
-    lower.includes("authentication failed") ||
-    lower.includes("not logged in") ||
-    lower.includes("gh auth login") ||
-    lower.includes("no oauth token")
-  ) {
-    return new GitHubCliError({
-      operation: "execute",
-      detail: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
-      cause: error,
-    });
-  }
-  return new GitHubCliError({
-    operation: "execute",
-    detail: error.message,
-    cause: error,
-  });
-};
-
 function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
   service: GitHubCliShape;
   ghCalls: string[];
@@ -184,7 +151,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
     ghCalls.push(args.join(" "));
 
     if (scenario.failWith) {
-      return Effect.fail(normalizeGhError(scenario.failWith));
+      return Effect.fail(scenario.failWith);
     }
 
     if (args[0] === "pr" && args[1] === "list") {
@@ -378,7 +345,10 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new GitFixtureError({ message: "Command not found: gh" }),
+          failWith: new GitHubCliError({
+            operation: "execute",
+            detail: "GitHub CLI (`gh`) is required but not available on PATH.",
+          }),
         },
       });
 
@@ -622,7 +592,10 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new GitFixtureError({ message: "Command not found: gh" }),
+          failWith: new GitHubCliError({
+            operation: "execute",
+            detail: "GitHub CLI (`gh`) is required but not available on PATH.",
+          }),
         },
       });
 
@@ -648,7 +621,10 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         ghScenario: {
-          failWith: new GitFixtureError({ message: "authentication failed" }),
+          failWith: new GitHubCliError({
+            operation: "execute",
+            detail: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
+          }),
         },
       });
 
