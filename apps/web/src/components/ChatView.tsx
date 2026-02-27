@@ -297,7 +297,8 @@ type ComposerCommandItem =
   | {
       id: string;
       type: "model";
-      model: string;
+      provider: ProviderKind;
+      model: ModelSlug;
       label: string;
       description: string;
     };
@@ -650,27 +651,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const selectedModel = resolveModelSlugForProvider(selectedProvider, composerDraft.model ?? baseThreadModel);
   const selectedEffort = composerDraft.effort ?? DEFAULT_REASONING;
-  const modelOptions = useMemo(
+  const searchableModelOptions = useMemo(
     () =>
-      selectedProvider === "codex"
-        ? getAppModelOptions(settings.customCodexModels, selectedModel)
-        : getModelOptions(selectedProvider),
-    [selectedModel, selectedProvider, settings.customCodexModels],
+      PROVIDER_OPTIONS.filter((option) => option.available).flatMap((option) =>
+        getModelOptions(option.value).map(({ slug, name }) => ({
+          provider: option.value,
+          providerLabel: option.label,
+          slug,
+          name,
+          searchSlug: slug.toLowerCase(),
+          searchName: name.toLowerCase(),
+          searchProvider: option.label.toLowerCase(),
+        })),
+      ),
+    [],
   );
-  const slashModelOptions = useMemo(() => {
-    if (selectedProvider === "codex") {
-      return getSlashModelOptions(settings.customCodexModels, composerTrigger?.query ?? "", selectedModel);
-    }
-    const query = (composerTrigger?.query ?? "").trim().toLowerCase();
-    if (!query) {
-      return modelOptions;
-    }
-    return modelOptions.filter(({ slug, name }) => {
-      const searchSlug = slug.toLowerCase();
-      const searchName = name.toLowerCase();
-      return searchSlug.includes(query) || searchName.includes(query);
-    });
-  }, [composerTrigger?.query, modelOptions, selectedModel, selectedProvider, settings.customCodexModels]);
   useEffect(() => {
     if (!activeThread?.id || !sessionProvider) return;
     setSelectedProviderByThread((existing) => {
@@ -953,14 +948,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
       ];
     }
 
-    return slashModelOptions.map(({ slug, name }) => ({
-      id: `model:${slug}`,
-      type: "model" as const,
+    return searchableModelOptions.filter(({ searchSlug, searchName, searchProvider }) => {
+      const query = composerTrigger.query.trim().toLowerCase();
+      if (!query) return true;
+      return searchSlug.includes(query) || searchName.includes(query) || searchProvider.includes(query);
+    }).map(({ provider, providerLabel, slug, name }) => ({
+      id: `model:${provider}:${slug}`,
+      type: "model",
+      provider,
       model: slug,
       label: name,
-      description: slug,
+      description: `${providerLabel} · ${slug}`,
     }));
-  }, [composerTrigger, slashModelOptions, workspaceEntries]);
+  }, [composerTrigger, searchableModelOptions, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -2247,24 +2247,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThreadId, setStoreThreadError],
   );
 
-  const onModelSelect = useCallback(
-    (model: string) => {
-      const normalizedModel = normalizeModelSlug(model);
-      const resolvedModel = normalizedModel ?? baseThreadModel;
-      setComposerDraftModel(threadId, resolvedModel === baseThreadModel ? null : resolvedModel);
-      const api = readNativeApi();
-      if (api && isServerThread && activeThread) {
-        void api.orchestration.dispatchCommand({
-          type: "thread.meta.update",
-          commandId: newCommandId(),
-          threadId: activeThread.id,
-          model: resolveModelSlugForProvider(selectedProvider, model),
-        });
-      }
-      scheduleComposerFocus();
-    },
-    [activeThread, scheduleComposerFocus, selectedProvider],
-  );
   const onProviderModelSelect = useCallback(
     (provider: ProviderKind, model: ModelSlug) => {
       const api = readNativeApi();
@@ -2382,7 +2364,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
         return;
       }
-      onModelSelect(item.model);
+      onProviderModelSelect(item.provider, item.model);
       const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
         expectedText: expectedToken,
       });
@@ -2390,7 +2372,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setComposerHighlightedItemId(null);
       }
     },
-    [applyPromptReplacement, onModelSelect, resolveActiveComposerTrigger],
+    [applyPromptReplacement, onProviderModelSelect, resolveActiveComposerTrigger],
   );
   const onComposerMenuItemHighlighted = useCallback((itemId: string | null) => {
     setComposerHighlightedItemId(itemId);
