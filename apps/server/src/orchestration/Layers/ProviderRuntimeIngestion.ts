@@ -256,7 +256,8 @@ const make = Effect.gen(function* () {
   const clearBufferedAssistantText = (messageId: MessageId) =>
     Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
 
-  const clearAssistantMessageState = (messageId: MessageId) => clearBufferedAssistantText(messageId);
+  const clearAssistantMessageState = (messageId: MessageId) =>
+    clearBufferedAssistantText(messageId);
 
   const finalizeAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
@@ -335,7 +336,8 @@ const make = Effect.gen(function* () {
         event.type === "turn.started" ||
         event.type === "turn.completed"
       ) {
-        const activeTurnId = event.type === "turn.started" ? (toTurnId(event.turnId) ?? null) : null;
+        const activeTurnId =
+          event.type === "turn.started" ? (toTurnId(event.turnId) ?? null) : null;
         const providerThreadIdFromEvent =
           event.type === "thread.started"
             ? ProviderThreadId.makeUnsafe(event.threadId)
@@ -442,16 +444,14 @@ const make = Effect.gen(function* () {
           yield* Effect.forEach(
             assistantMessageIds,
             (assistantMessageId) =>
-              Effect.gen(function* () {
-                yield* finalizeAssistantMessage({
-                  event,
-                  threadId: thread.id,
-                  messageId: assistantMessageId,
-                  turnId,
-                  createdAt: now,
-                  commandTag: "assistant-complete-finalize",
-                  finalDeltaCommandTag: "assistant-delta-finalize-fallback",
-                });
+              finalizeAssistantMessage({
+                event,
+                threadId: thread.id,
+                messageId: assistantMessageId,
+                turnId,
+                createdAt: now,
+                commandTag: "assistant-complete-finalize",
+                finalDeltaCommandTag: "assistant-delta-finalize-fallback",
               }),
             { concurrency: 1 },
           ).pipe(Effect.asVoid);
