@@ -87,13 +87,20 @@ describe("ProviderCommandReactor", () => {
     const runtimeSessions: Array<ProviderSession> = [];
     const startSession = vi.fn((_: unknown, input: unknown) => {
       const sessionIndex = nextSessionIndex++;
+      const provider =
+        typeof input === "object" &&
+        input !== null &&
+        "provider" in input &&
+        (input.provider === "codex" || input.provider === "claudeCode")
+          ? input.provider
+          : "codex";
       const resumeCursor =
         typeof input === "object" && input !== null && "resumeCursor" in input
           ? input.resumeCursor
           : undefined;
       const session: ProviderSession = {
         sessionId: asSessionId(`sess-${sessionIndex}`),
-        provider: "codex" as const,
+        provider,
         status: "ready" as const,
         threadId: ProviderThreadId.makeUnsafe(`provider-thread-${sessionIndex}`),
         resumeCursor: resumeCursor ?? { opaque: `cursor-${sessionIndex}` },
@@ -240,245 +247,42 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.sandboxMode).toBe("workspace-write");
   });
 
-  it("generates and renames temporary worktree branch on first turn", async () => {
+  it("starts first turn with requested provider when provider is specified", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
 
     await Effect.runPromise(
       harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.makeUnsafe("cmd-thread-meta-set-temp-branch"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        branch: "t3code/89abc123",
-        worktreePath: "/tmp/provider-project/.t3/worktrees/t3code-89abc123",
-      }),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
         type: "thread.turn.start",
-        commandId: CommandId.makeUnsafe("cmd-turn-start-worktree-rename"),
+        commandId: CommandId.makeUnsafe("cmd-turn-start-provider-first"),
         threadId: ThreadId.makeUnsafe("thread-1"),
         message: {
-          messageId: asMessageId("user-message-worktree-rename"),
+          messageId: asMessageId("user-message-provider-first"),
           role: "user",
-          text: "Fix visual bug from screenshot",
-          attachments: [
-            {
-              type: "image",
-              id: "thread-1-att-rename",
-              name: "bug.png",
-              mimeType: "image/png",
-              sizeBytes: 5,
-            },
-          ],
+          text: "hello claude",
+          attachments: [],
         },
+        provider: "claudeCode",
         approvalPolicy: "on-request",
         sandboxMode: "workspace-write",
         createdAt: now,
       }),
     );
 
-    await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
-    await waitFor(() => harness.renameBranch.mock.calls.length === 1);
-
-    expect(harness.generateBranchName.mock.calls[0]?.[0]).toEqual({
-      cwd: "/tmp/provider-project/.t3/worktrees/t3code-89abc123",
-      message: "Fix visual bug from screenshot",
-      attachments: [
-        {
-          type: "image",
-          id: "thread-1-att-rename",
-          name: "bug.png",
-          mimeType: "image/png",
-          sizeBytes: 5,
-        },
-      ],
-    });
-    expect(harness.renameBranch.mock.calls[0]?.[0]).toEqual({
-      cwd: "/tmp/provider-project/.t3/worktrees/t3code-89abc123",
-      oldBranch: "t3code/89abc123",
-      newBranch: "t3code/generated-name",
-    });
-
-    await waitFor(() => {
-      const readModel = Effect.runSync(harness.engine.getReadModel());
-      const thread = readModel.threads.find(
-        (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
-      );
-      return thread?.branch === "t3code/generated-name";
-    });
-  });
-
-  it("passes persisted attachment references to branch generation and turn start", async () => {
-    const harness = await createHarness();
-    const now = new Date().toISOString();
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.makeUnsafe("cmd-thread-meta-set-temp-branch-persisted"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        branch: "t3code/abcdef12",
-        worktreePath: "/tmp/provider-project/.t3/worktrees/t3code-abcdef12",
-      }),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.makeUnsafe("cmd-turn-start-persisted-attachments"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-persisted-attachments"),
-          role: "user",
-          text: "Fix visual bug from screenshot",
-          attachments: [
-            {
-              type: "image",
-              id: "thread-1-att-persisted",
-              name: "bug.png",
-              mimeType: "image/png",
-              sizeBytes: 5,
-            },
-          ],
-        },
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-
-    expect(harness.generateBranchName.mock.calls[0]?.[0]).toEqual({
-      cwd: "/tmp/provider-project/.t3/worktrees/t3code-abcdef12",
-      message: "Fix visual bug from screenshot",
-      attachments: [
-        {
-          type: "image",
-          id: "thread-1-att-persisted",
-          name: "bug.png",
-          mimeType: "image/png",
-          sizeBytes: 5,
-        },
-      ],
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      provider: "claudeCode",
+      cwd: "/tmp/provider-project",
+      model: "gpt-5-codex",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
     });
-    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
-      attachments: [
-        {
-          type: "image",
-          id: "thread-1-att-persisted",
-          name: "bug.png",
-          mimeType: "image/png",
-          sizeBytes: 5,
-        },
-      ],
-    });
-  });
-
-  it("skips worktree branch generation after the first user turn", async () => {
-    const harness = await createHarness();
-    const now = new Date().toISOString();
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.makeUnsafe("cmd-thread-meta-set-temp-branch-2"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        branch: "t3code/1234abcd",
-        worktreePath: "/tmp/provider-project/.t3/worktrees/t3code-1234abcd",
-      }),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.makeUnsafe("cmd-turn-start-first"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-first"),
-          role: "user",
-          text: "first",
-          attachments: [],
-        },
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.makeUnsafe("cmd-turn-start-second"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-second"),
-          role: "user",
-          text: "second",
-          attachments: [],
-        },
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
-    expect(harness.generateBranchName.mock.calls.length).toBe(1);
-    expect(harness.renameBranch.mock.calls.length).toBe(1);
-  });
-
-  it("skips worktree rename when branch-name generation fails", async () => {
-    const harness = await createHarness();
-    const now = new Date().toISOString();
-    harness.generateBranchName.mockImplementationOnce(() =>
-      Effect.fail(
-        new TextGenerationError({
-          operation: "generateBranchName",
-          detail: "model returned invalid payload",
-        }),
-      ),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.makeUnsafe("cmd-thread-meta-set-temp-branch-null"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        branch: "t3code/0000abcd",
-        worktreePath: "/tmp/provider-project/.t3/worktrees/t3code-0000abcd",
-      }),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.makeUnsafe("cmd-turn-start-null-branch"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-null-branch"),
-          role: "user",
-          text: "Fix visual regression",
-          attachments: [],
-        },
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
-    await Effect.runPromise(Effect.sleep("20 millis"));
-    expect(harness.renameBranch.mock.calls.length).toBe(0);
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
-    expect(thread?.branch).toBe("t3code/0000abcd");
+    expect(thread?.session?.providerName).toBe("claudeCode");
+    expect(thread?.session?.providerSessionId).toBe("sess-1");
   });
 
   it("reuses the same provider session when runtime mode is unchanged", async () => {
@@ -585,6 +389,68 @@ describe("ProviderCommandReactor", () => {
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.providerSessionId).toBe("sess-2");
+    expect(thread?.session?.approvalPolicy).toBe("on-request");
+    expect(thread?.session?.sandboxMode).toBe("workspace-write");
+  });
+
+  it("switches provider by restarting the session when turn request provider changes", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-provider-switch-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-provider-switch-1"),
+          role: "user",
+          text: "first",
+          attachments: [],
+        },
+        approvalPolicy: "on-request",
+        sandboxMode: "workspace-write",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-provider-switch-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-provider-switch-2"),
+          role: "user",
+          text: "second",
+          attachments: [],
+        },
+        provider: "claudeCode",
+        approvalPolicy: "on-request",
+        sandboxMode: "workspace-write",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.stopSession.mock.calls.length === 1);
+    await waitFor(() => harness.startSession.mock.calls.length === 2);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+
+    expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ sessionId: asSessionId("sess-1") });
+    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      provider: "claudeCode",
+      resumeCursor: { opaque: "cursor-1" },
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+    });
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(thread?.session?.providerSessionId).toBe("sess-2");
+    expect(thread?.session?.providerName).toBe("claudeCode");
     expect(thread?.session?.approvalPolicy).toBe("on-request");
     expect(thread?.session?.sandboxMode).toBe("workspace-write");
   });
