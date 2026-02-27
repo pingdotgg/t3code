@@ -28,7 +28,7 @@ describe("ProviderSessionStartInput", () => {
     const parsed = decodeProviderSessionStartInput({
       provider: "claudeCode",
       cwd: "/tmp/workspace",
-      model: "claude-sonnet-4-5",
+      model: "claude-sonnet-4-6",
       providerOptions: {
         claudeCode: {
           binaryPath: "/usr/local/bin/claude",
