@@ -88,6 +88,7 @@ interface ClaudeSessionContext {
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
   readonly query: ClaudeQueryRuntime;
   readonly startedAt: string;
+  resumeSessionId: string | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly turns: Array<{
     id: ReturnType<typeof ProviderTurnId.makeUnsafe>;
@@ -113,6 +114,12 @@ export interface ClaudeCodeAdapterLiveOptions {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
   }) => ClaudeQueryRuntime;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  );
 }
 
 function toMessage(cause: unknown, fallback: string): string {
@@ -148,12 +155,13 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
   };
 
   const threadId = typeof cursor.threadId === "string" ? cursor.threadId : undefined;
-  const resume =
+  const resumeCandidate =
     typeof cursor.resume === "string"
       ? cursor.resume
       : typeof cursor.sessionId === "string"
         ? cursor.sessionId
         : undefined;
+  const resume = resumeCandidate && isUuid(resumeCandidate) ? resumeCandidate : undefined;
   const resumeSessionAt =
     typeof cursor.resumeSessionAt === "string" ? cursor.resumeSessionAt : undefined;
   const turnCountValue = typeof cursor.turnCount === "number" ? cursor.turnCount : undefined;
@@ -351,7 +359,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
 
         const resumeCursor = {
           threadId,
-          resume: threadId,
+          ...(context.resumeSessionId ? { resume: context.resumeSessionId } : {}),
           ...(context.lastAssistantUuid ? { resumeSessionAt: context.lastAssistantUuid } : {}),
           turnCount: context.turns.length,
         };
@@ -369,6 +377,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
         const nextThreadId = ProviderThreadId.makeUnsafe(message.session_id);
+        context.resumeSessionId = message.session_id;
         const changed = context.session.threadId !== nextThreadId;
 
         if (changed) {
@@ -935,7 +944,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           threadId,
           resumeCursor: {
             threadId,
-            resume: resumeState?.resume ?? threadId,
+            ...(resumeState?.resume ? { resume: resumeState.resume } : {}),
             ...(resumeState?.resumeSessionAt
               ? { resumeSessionAt: resumeState.resumeSessionAt }
               : {}),
@@ -950,6 +959,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           promptQueue,
           query: queryRuntime,
           startedAt,
+          resumeSessionId: resumeState?.resume,
           pendingApprovals,
           turns: [],
           inFlightTools,

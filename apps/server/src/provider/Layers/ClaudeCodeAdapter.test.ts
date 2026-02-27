@@ -386,7 +386,7 @@ describe("ClaudeCodeAdapterLive", () => {
         provider: "claudeCode",
         resumeCursor: {
           threadId: "resume-thread-1",
-          resume: "resume-session-1",
+          resume: "550e8400-e29b-41d4-a716-446655440000",
           resumeSessionAt: "assistant-99",
           turnCount: 3,
         },
@@ -395,14 +395,36 @@ describe("ClaudeCodeAdapterLive", () => {
       assert.equal(session.threadId, "resume-thread-1");
       assert.deepEqual(session.resumeCursor, {
         threadId: "resume-thread-1",
-        resume: "resume-session-1",
+        resume: "550e8400-e29b-41d4-a716-446655440000",
         resumeSessionAt: "assistant-99",
         turnCount: 3,
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.resume, "resume-session-1");
+      assert.equal(createInput?.options.resume, "550e8400-e29b-41d4-a716-446655440000");
       assert.equal(createInput?.options.resumeSessionAt, "assistant-99");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not synthesize resume session id from generated thread ids", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeCodeAdapter;
+
+      const session = yield* adapter.startSession({
+        provider: "claudeCode",
+      });
+
+      assert.equal(
+        "resume" in (session.resumeCursor as Record<string, unknown>),
+        false,
+      );
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.resume, undefined);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
