@@ -101,7 +101,15 @@ import {
   CheckIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
+import {
+  Select,
+  SelectGroup,
+  SelectGroupLabel,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 import { Separator } from "./ui/separator";
 import { Group, GroupSeparator } from "./ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu";
@@ -2257,13 +2265,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [activeThread, scheduleComposerFocus, selectedProvider],
   );
-  const onProviderSelect = useCallback(
-    (provider: ProviderKind) => {
+  const onProviderModelSelect = useCallback(
+    (provider: ProviderKind, model: ModelSlug) => {
+      const api = readNativeApi();
       if (!activeThread) return;
       setSelectedProviderByThread((existing) => ({
         ...existing,
         [activeThread.id]: provider,
       }));
+      if (api) {
+        void api.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          model: resolveModelSlugForProvider(provider, model),
+        });
+      }
       scheduleComposerFocus();
     },
     [activeThread, scheduleComposerFocus],
@@ -2703,17 +2720,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
             {/* Bottom toolbar */}
             <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 pb-2.5 sm:flex-nowrap sm:gap-0 sm:px-3 sm:pb-3">
               <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible">
-                {/* Model picker */}
-                <ProviderPicker provider={selectedProvider} onProviderChange={onProviderSelect} />
-
-                {/* Divider */}
-                <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-
-                {/* Model picker */}
-                <ModelPicker
+                {/* Provider/model picker */}
+                <ProviderModelPicker
+                  provider={selectedProvider}
                   model={selectedModel}
-                  options={modelOptions}
-                  onModelChange={onModelSelect}
+                  onProviderModelChange={onProviderModelSelect}
                 />
 
                 {/* Divider */}
@@ -3696,54 +3707,65 @@ const MessagesTimeline = memo(function MessagesTimeline({
   );
 });
 
-const ModelPicker = memo(function ModelPicker(props: {
-  model: ModelSlug;
-  options: ReadonlyArray<{ readonly slug: ModelSlug; readonly name: string }>;
-  onModelChange: (model: ModelSlug) => void;
-}) {
-  return (
-    <Select
-      items={props.options.map((option) => ({ label: option.name, value: option.slug }))}
-      value={props.model}
-      onValueChange={(value) => (value ? props.onModelChange(value) : undefined)}
-    >
-      <SelectTrigger size="sm" variant="ghost">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectPopup alignItemWithTrigger={false}>
-        {props.options.map(({ slug, name }) => (
-          <SelectItem key={slug} value={slug}>
-            {name}
-          </SelectItem>
-        ))}
-      </SelectPopup>
-    </Select>
-  );
-});
+const PROVIDER_MODEL_GROUPS: ReadonlyArray<{
+  readonly provider: ProviderKind;
+  readonly label: string;
+  readonly options: ReadonlyArray<{ readonly slug: ModelSlug; readonly name: string }>;
+}> = PROVIDER_OPTIONS.filter((option) => option.available).map((option) => ({
+  provider: option.value,
+  label: option.label,
+  options: getModelOptions(option.value),
+}));
 
-const ProviderPicker = memo(function ProviderPicker(props: {
+const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   provider: ProviderKind;
-  onProviderChange: (provider: ProviderKind) => void;
+  model: ModelSlug;
+  onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
 }) {
+  const items = PROVIDER_MODEL_GROUPS.flatMap(({ provider, label, options }) =>
+    options.map(({ slug, name }) => ({
+      label: `${label} · ${name}`,
+      value: `${provider}:${slug}`,
+    })),
+  );
+
   return (
     <Select
-      items={PROVIDER_OPTIONS.filter((option) => option.available).map((option) => ({
-        label: option.label,
-        value: option.value,
-      }))}
-      value={props.provider}
+      items={items}
+      value={`${props.provider}:${props.model}`}
       onValueChange={(value) =>
-        value === "codex" || value === "claudeCode" ? props.onProviderChange(value) : undefined
+        value
+          ? (() => {
+              if (value.startsWith("codex:")) {
+                props.onProviderModelChange(
+                  "codex",
+                  resolveModelSlugForProvider("codex", value.slice("codex:".length)),
+                );
+                return;
+              }
+              if (value.startsWith("claudeCode:")) {
+                props.onProviderModelChange(
+                  "claudeCode",
+                  resolveModelSlugForProvider("claudeCode", value.slice("claudeCode:".length)),
+                );
+              }
+            })()
+          : undefined
       }
     >
       <SelectTrigger size="sm" variant="ghost">
         <SelectValue />
       </SelectTrigger>
       <SelectPopup alignItemWithTrigger={false}>
-        {PROVIDER_OPTIONS.filter((option) => option.available).map(({ value, label }) => (
-          <SelectItem key={value} value={value}>
-            {label}
-          </SelectItem>
+        {PROVIDER_MODEL_GROUPS.map(({ provider, label, options }) => (
+          <SelectGroup key={provider}>
+            <SelectGroupLabel>{label}</SelectGroupLabel>
+            {options.map(({ slug, name }) => (
+              <SelectItem key={`${provider}:${slug}`} value={`${provider}:${slug}`}>
+                {name}
+              </SelectItem>
+            ))}
+          </SelectGroup>
         ))}
       </SelectPopup>
     </Select>
