@@ -14,7 +14,10 @@ import {
   ProjectionThreadMessageRepository,
 } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import { ProjectionThreadSessionRepository } from "../../persistence/Services/ProjectionThreadSessions.ts";
-import { type ProjectionTurn, ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
+import {
+  type ProjectionTurn,
+  ProjectionTurnRepository,
+} from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
@@ -64,7 +67,10 @@ function retainProjectionMessagesAfterRevert(
   const retainedMessageIds = new Set<string>();
   const retainedTurnIds = new Set<string>();
   const keptTurns = turns.filter(
-    (turn) => turn.turnId !== null && turn.checkpointTurnCount !== null && turn.checkpointTurnCount <= turnCount,
+    (turn) =>
+      turn.turnId !== null &&
+      turn.checkpointTurnCount !== null &&
+      turn.checkpointTurnCount <= turnCount,
   );
   for (const turn of keptTurns) {
     if (turn.turnId !== null) {
@@ -511,16 +517,22 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
                 (Option.isSome(pendingTurnStart) ? pendingTurnStart.value.messageId : null),
               startedAt:
                 existingTurn.value.startedAt ??
-                (Option.isSome(pendingTurnStart) ? pendingTurnStart.value.requestedAt : event.occurredAt),
+                (Option.isSome(pendingTurnStart)
+                  ? pendingTurnStart.value.requestedAt
+                  : event.occurredAt),
               requestedAt:
                 existingTurn.value.requestedAt ??
-                (Option.isSome(pendingTurnStart) ? pendingTurnStart.value.requestedAt : event.occurredAt),
+                (Option.isSome(pendingTurnStart)
+                  ? pendingTurnStart.value.requestedAt
+                  : event.occurredAt),
             });
           } else {
             yield* projectionTurnRepository.upsertByTurnId({
               turnId,
               threadId: event.payload.threadId,
-              pendingMessageId: Option.isSome(pendingTurnStart) ? pendingTurnStart.value.messageId : null,
+              pendingMessageId: Option.isSome(pendingTurnStart)
+                ? pendingTurnStart.value.messageId
+                : null,
               assistantMessageId: null,
               state: "running",
               requestedAt: Option.isSome(pendingTurnStart)

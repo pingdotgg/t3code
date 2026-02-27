@@ -16,8 +16,15 @@ import {
 } from "lucide-react";
 import React, { type FormEvent, type KeyboardEvent, useMemo, useState } from "react";
 
-import { keybindingValueForCommand, decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
-import { commandForProjectScript, nextProjectScriptId, primaryProjectScript } from "~/projectScripts";
+import {
+  keybindingValueForCommand,
+  decodeProjectScriptKeybindingRule,
+} from "~/lib/projectScriptKeybindings";
+import {
+  commandForProjectScript,
+  nextProjectScriptId,
+  primaryProjectScript,
+} from "~/projectScripts";
 import { shortcutLabelForCommand } from "~/keybindings";
 import { isMacPlatform } from "~/lib/utils";
 import { Button } from "./ui/button";
@@ -188,7 +195,11 @@ export default function ProjectScriptsControl({
     setValidationError(null);
     try {
       const scriptIdForValidation =
-        editingScriptId ?? nextProjectScriptId(trimmedName, scripts.map((script) => script.id));
+        editingScriptId ??
+        nextProjectScriptId(
+          trimmedName,
+          scripts.map((script) => script.id),
+        );
       const keybindingRule = decodeProjectScriptKeybindingRule({
         keybinding,
         command: commandForProjectScript(scriptIdForValidation),

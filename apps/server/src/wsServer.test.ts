@@ -543,7 +543,9 @@ describe("WebSocket Server", () => {
       issues: [],
     });
 
-    const persistedConfig = JSON.parse(fs.readFileSync(keybindingsPath, "utf8")) as KeybindingsConfig;
+    const persistedConfig = JSON.parse(
+      fs.readFileSync(keybindingsPath, "utf8"),
+    ) as KeybindingsConfig;
     expect(persistedConfig).toEqual(DEFAULT_KEYBINDINGS);
   });
 
@@ -711,7 +713,9 @@ describe("WebSocket Server", () => {
 
     const response = await sendRequest(ws, WS_METHODS.serverGetConfig);
     expect(response.error).toBeUndefined();
-    const persistedConfig = JSON.parse(fs.readFileSync(keybindingsPath, "utf8")) as KeybindingsConfig;
+    const persistedConfig = JSON.parse(
+      fs.readFileSync(keybindingsPath, "utf8"),
+    ) as KeybindingsConfig;
     expect(response.result).toEqual({
       cwd: "/my/workspace",
       keybindingsConfigPath: keybindingsPath,
@@ -742,7 +746,9 @@ describe("WebSocket Server", () => {
       command: "script.run-tests.run",
     });
     expect(upsertResponse.error).toBeUndefined();
-    const persistedConfig = JSON.parse(fs.readFileSync(keybindingsPath, "utf8")) as KeybindingsConfig;
+    const persistedConfig = JSON.parse(
+      fs.readFileSync(keybindingsPath, "utf8"),
+    ) as KeybindingsConfig;
     const persistedCommands = new Set(persistedConfig.map((entry) => entry.command));
     for (const defaultRule of DEFAULT_KEYBINDINGS) {
       expect(persistedCommands.has(defaultRule.command)).toBe(true);

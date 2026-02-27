@@ -561,7 +561,9 @@ describe("OrchestrationEngine", () => {
     ).rejects.toThrow("projection failed");
 
     const readModelAfterFailure = await runtime.runPromise(engine.getReadModel());
-    const updatedThread = readModelAfterFailure.threads.find((thread) => thread.id === "thread-sync");
+    const updatedThread = readModelAfterFailure.threads.find(
+      (thread) => thread.id === "thread-sync",
+    );
     expect(readModelAfterFailure.snapshotSequence).toBe(3);
     expect(updatedThread?.title).toBe("sync-after-failed-projection");
 

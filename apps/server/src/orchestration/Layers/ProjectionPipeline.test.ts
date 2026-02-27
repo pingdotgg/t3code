@@ -412,125 +412,127 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
-  it.effect("resolves turn-count conflicts when checkpoint completion rewrites provisional turns", () =>
-    Effect.gen(function* () {
-      const projectionPipeline = yield* OrchestrationProjectionPipeline;
-      const eventStore = yield* OrchestrationEventStore;
-      const sql = yield* SqlClient.SqlClient;
-      const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
-        eventStore
-          .append(event)
-          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+  it.effect(
+    "resolves turn-count conflicts when checkpoint completion rewrites provisional turns",
+    () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+          eventStore
+            .append(event)
+            .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
 
-      yield* appendAndProject({
-        type: "project.created",
-        eventId: EventId.makeUnsafe("evt-conflict-1"),
-        aggregateKind: "project",
-        aggregateId: ProjectId.makeUnsafe("project-conflict"),
-        occurredAt: "2026-02-26T13:00:00.000Z",
-        commandId: CommandId.makeUnsafe("cmd-conflict-1"),
-        causationEventId: null,
-        correlationId: CorrelationId.makeUnsafe("cmd-conflict-1"),
-        metadata: {},
-        payload: {
-          projectId: ProjectId.makeUnsafe("project-conflict"),
-          title: "Project Conflict",
-          workspaceRoot: "/tmp/project-conflict",
-          defaultModel: null,
-          scripts: [],
-          createdAt: "2026-02-26T13:00:00.000Z",
-          updatedAt: "2026-02-26T13:00:00.000Z",
-        },
-      });
+        yield* appendAndProject({
+          type: "project.created",
+          eventId: EventId.makeUnsafe("evt-conflict-1"),
+          aggregateKind: "project",
+          aggregateId: ProjectId.makeUnsafe("project-conflict"),
+          occurredAt: "2026-02-26T13:00:00.000Z",
+          commandId: CommandId.makeUnsafe("cmd-conflict-1"),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe("cmd-conflict-1"),
+          metadata: {},
+          payload: {
+            projectId: ProjectId.makeUnsafe("project-conflict"),
+            title: "Project Conflict",
+            workspaceRoot: "/tmp/project-conflict",
+            defaultModel: null,
+            scripts: [],
+            createdAt: "2026-02-26T13:00:00.000Z",
+            updatedAt: "2026-02-26T13:00:00.000Z",
+          },
+        });
 
-      yield* appendAndProject({
-        type: "thread.created",
-        eventId: EventId.makeUnsafe("evt-conflict-2"),
-        aggregateKind: "thread",
-        aggregateId: ThreadId.makeUnsafe("thread-conflict"),
-        occurredAt: "2026-02-26T13:00:01.000Z",
-        commandId: CommandId.makeUnsafe("cmd-conflict-2"),
-        causationEventId: null,
-        correlationId: CorrelationId.makeUnsafe("cmd-conflict-2"),
-        metadata: {},
-        payload: {
-          threadId: ThreadId.makeUnsafe("thread-conflict"),
-          projectId: ProjectId.makeUnsafe("project-conflict"),
-          title: "Thread Conflict",
-          model: "gpt-5-codex",
-          branch: null,
-          worktreePath: null,
-          createdAt: "2026-02-26T13:00:01.000Z",
-          updatedAt: "2026-02-26T13:00:01.000Z",
-        },
-      });
+        yield* appendAndProject({
+          type: "thread.created",
+          eventId: EventId.makeUnsafe("evt-conflict-2"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.makeUnsafe("thread-conflict"),
+          occurredAt: "2026-02-26T13:00:01.000Z",
+          commandId: CommandId.makeUnsafe("cmd-conflict-2"),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe("cmd-conflict-2"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.makeUnsafe("thread-conflict"),
+            projectId: ProjectId.makeUnsafe("project-conflict"),
+            title: "Thread Conflict",
+            model: "gpt-5-codex",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-02-26T13:00:01.000Z",
+            updatedAt: "2026-02-26T13:00:01.000Z",
+          },
+        });
 
-      yield* appendAndProject({
-        type: "thread.turn-interrupt-requested",
-        eventId: EventId.makeUnsafe("evt-conflict-3"),
-        aggregateKind: "thread",
-        aggregateId: ThreadId.makeUnsafe("thread-conflict"),
-        occurredAt: "2026-02-26T13:00:02.000Z",
-        commandId: CommandId.makeUnsafe("cmd-conflict-3"),
-        causationEventId: null,
-        correlationId: CorrelationId.makeUnsafe("cmd-conflict-3"),
-        metadata: {},
-        payload: {
-          threadId: ThreadId.makeUnsafe("thread-conflict"),
-          turnId: TurnId.makeUnsafe("turn-interrupted"),
-          createdAt: "2026-02-26T13:00:02.000Z",
-        },
-      });
+        yield* appendAndProject({
+          type: "thread.turn-interrupt-requested",
+          eventId: EventId.makeUnsafe("evt-conflict-3"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.makeUnsafe("thread-conflict"),
+          occurredAt: "2026-02-26T13:00:02.000Z",
+          commandId: CommandId.makeUnsafe("cmd-conflict-3"),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe("cmd-conflict-3"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.makeUnsafe("thread-conflict"),
+            turnId: TurnId.makeUnsafe("turn-interrupted"),
+            createdAt: "2026-02-26T13:00:02.000Z",
+          },
+        });
 
-      yield* appendAndProject({
-        type: "thread.message-sent",
-        eventId: EventId.makeUnsafe("evt-conflict-4"),
-        aggregateKind: "thread",
-        aggregateId: ThreadId.makeUnsafe("thread-conflict"),
-        occurredAt: "2026-02-26T13:00:03.000Z",
-        commandId: CommandId.makeUnsafe("cmd-conflict-4"),
-        causationEventId: null,
-        correlationId: CorrelationId.makeUnsafe("cmd-conflict-4"),
-        metadata: {},
-        payload: {
-          threadId: ThreadId.makeUnsafe("thread-conflict"),
-          messageId: MessageId.makeUnsafe("assistant-conflict"),
-          role: "assistant",
-          text: "done",
-          turnId: TurnId.makeUnsafe("turn-completed"),
-          streaming: false,
-          createdAt: "2026-02-26T13:00:03.000Z",
-          updatedAt: "2026-02-26T13:00:03.000Z",
-        },
-      });
+        yield* appendAndProject({
+          type: "thread.message-sent",
+          eventId: EventId.makeUnsafe("evt-conflict-4"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.makeUnsafe("thread-conflict"),
+          occurredAt: "2026-02-26T13:00:03.000Z",
+          commandId: CommandId.makeUnsafe("cmd-conflict-4"),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe("cmd-conflict-4"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.makeUnsafe("thread-conflict"),
+            messageId: MessageId.makeUnsafe("assistant-conflict"),
+            role: "assistant",
+            text: "done",
+            turnId: TurnId.makeUnsafe("turn-completed"),
+            streaming: false,
+            createdAt: "2026-02-26T13:00:03.000Z",
+            updatedAt: "2026-02-26T13:00:03.000Z",
+          },
+        });
 
-      yield* appendAndProject({
-        type: "thread.turn-diff-completed",
-        eventId: EventId.makeUnsafe("evt-conflict-5"),
-        aggregateKind: "thread",
-        aggregateId: ThreadId.makeUnsafe("thread-conflict"),
-        occurredAt: "2026-02-26T13:00:04.000Z",
-        commandId: CommandId.makeUnsafe("cmd-conflict-5"),
-        causationEventId: null,
-        correlationId: CorrelationId.makeUnsafe("cmd-conflict-5"),
-        metadata: {},
-        payload: {
-          threadId: ThreadId.makeUnsafe("thread-conflict"),
-          turnId: TurnId.makeUnsafe("turn-completed"),
-          checkpointTurnCount: 1,
-          checkpointRef: CheckpointRef.makeUnsafe("refs/t3/checkpoints/thread-conflict/turn/1"),
-          status: "ready",
-          files: [],
-          assistantMessageId: MessageId.makeUnsafe("assistant-conflict"),
-          completedAt: "2026-02-26T13:00:04.000Z",
-        },
-      });
+        yield* appendAndProject({
+          type: "thread.turn-diff-completed",
+          eventId: EventId.makeUnsafe("evt-conflict-5"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.makeUnsafe("thread-conflict"),
+          occurredAt: "2026-02-26T13:00:04.000Z",
+          commandId: CommandId.makeUnsafe("cmd-conflict-5"),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe("cmd-conflict-5"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.makeUnsafe("thread-conflict"),
+            turnId: TurnId.makeUnsafe("turn-completed"),
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.makeUnsafe("refs/t3/checkpoints/thread-conflict/turn/1"),
+            status: "ready",
+            files: [],
+            assistantMessageId: MessageId.makeUnsafe("assistant-conflict"),
+            completedAt: "2026-02-26T13:00:04.000Z",
+          },
+        });
 
-      const turnRows = yield* sql<{
-        readonly turnId: string;
-        readonly checkpointTurnCount: number | null;
-        readonly status: string;
-      }>`
+        const turnRows = yield* sql<{
+          readonly turnId: string;
+          readonly checkpointTurnCount: number | null;
+          readonly status: string;
+        }>`
         SELECT
           turn_id AS "turnId",
           checkpoint_turn_count AS "checkpointTurnCount",
@@ -545,11 +547,11 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
           checkpoint_turn_count ASC,
           requested_at ASC
       `;
-      assert.deepEqual(turnRows, [
-        { turnId: "turn-completed", checkpointTurnCount: 1, status: "completed" },
-        { turnId: "turn-interrupted", checkpointTurnCount: null, status: "interrupted" },
-      ]);
-    }),
+        assert.deepEqual(turnRows, [
+          { turnId: "turn-completed", checkpointTurnCount: 1, status: "completed" },
+          { turnId: "turn-interrupted", checkpointTurnCount: null, status: "interrupted" },
+        ]);
+      }),
   );
 
   it.effect("does not fallback-retain messages whose turnId is removed by revert", () =>
@@ -753,7 +755,6 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
       ]);
     }),
   );
-
 });
 
 it.effect("restores pending turn-start metadata across projection pipeline restart", () =>

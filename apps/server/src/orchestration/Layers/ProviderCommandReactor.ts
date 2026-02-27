@@ -149,14 +149,11 @@ const make = Effect.gen(function* () {
       projects: readModel.projects,
     });
 
-    const startedSession = yield* providerService.startSession(
-      threadId,
-      {
-        ...(preferredProvider ? { provider: preferredProvider } : {}),
-        ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
-        ...(thread.model ? { model: thread.model } : {}),
-      },
-    );
+    const startedSession = yield* providerService.startSession(threadId, {
+      ...(preferredProvider ? { provider: preferredProvider } : {}),
+      ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+      ...(thread.model ? { model: thread.model } : {}),
+    });
 
     yield* setThreadSession({
       threadId,

@@ -415,7 +415,11 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       }
 
       if (!existing.process) {
-        await this.startSession(existing, { ...input, cols: targetCols, rows: targetRows }, "started");
+        await this.startSession(
+          existing,
+          { ...input, cols: targetCols, rows: targetRows },
+          "started",
+        );
         return this.snapshot(existing);
       }
 

@@ -241,8 +241,8 @@ function SettingsRouteView() {
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Keybindings</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Open the persisted <code>keybindings.json</code> file to edit advanced
-                  bindings directly.
+                  Open the persisted <code>keybindings.json</code> file to edit advanced bindings
+                  directly.
                 </p>
               </div>
 

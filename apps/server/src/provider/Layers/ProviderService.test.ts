@@ -323,13 +323,10 @@ it.effect(
 
       const startedSession = yield* Effect.gen(function* () {
         const provider = yield* ProviderService;
-        return yield* provider.startSession(
-          asThreadId("thread-1"),
-          {
-            provider: "codex",
-            cwd: "/tmp/project",
-          },
-        );
+        return yield* provider.startSession(asThreadId("thread-1"), {
+          provider: "codex",
+          cwd: "/tmp/project",
+        });
       }).pipe(Effect.provide(firstProviderLayer));
 
       yield* Effect.gen(function* () {
@@ -398,13 +395,10 @@ routing.layer("ProviderServiceLive routing", (it) => {
     Effect.gen(function* () {
       const provider = yield* ProviderService;
 
-      const session = yield* provider.startSession(
-        asThreadId("thread-1"),
-        {
-          provider: "codex",
-          cwd: "/tmp/project",
-        },
-      );
+      const session = yield* provider.startSession(asThreadId("thread-1"), {
+        provider: "codex",
+        cwd: "/tmp/project",
+      });
       assert.equal(session.provider, "codex");
 
       const sessions = yield* provider.listSessions();
@@ -453,13 +447,10 @@ routing.layer("ProviderServiceLive routing", (it) => {
     Effect.gen(function* () {
       const provider = yield* ProviderService;
 
-      const initial = yield* provider.startSession(
-        asThreadId("thread-1"),
-        {
-          provider: "codex",
-          cwd: "/tmp/project",
-        },
-      );
+      const initial = yield* provider.startSession(asThreadId("thread-1"), {
+        provider: "codex",
+        cwd: "/tmp/project",
+      });
       yield* routing.codex.stopSession(initial.sessionId);
       routing.codex.startSession.mockClear();
       routing.codex.rollbackThread.mockClear();
@@ -487,18 +478,12 @@ routing.layer("ProviderServiceLive routing", (it) => {
     Effect.gen(function* () {
       const provider = yield* ProviderService;
 
-      yield* provider.startSession(
-        asThreadId("thread-1"),
-        {
-          provider: "codex",
-        },
-      );
-      yield* provider.startSession(
-        asThreadId("thread-2"),
-        {
-          provider: "codex",
-        },
-      );
+      yield* provider.startSession(asThreadId("thread-1"), {
+        provider: "codex",
+      });
+      yield* provider.startSession(asThreadId("thread-2"), {
+        provider: "codex",
+      });
 
       yield* provider.stopAll();
 
@@ -512,12 +497,9 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const provider = yield* ProviderService;
       const runtimeRepository = yield* ProviderSessionRuntimeRepository;
 
-      const session = yield* provider.startSession(
-        asThreadId("thread-1"),
-        {
-          provider: "codex",
-        },
-      );
+      const session = yield* provider.startSession(asThreadId("thread-1"), {
+        provider: "codex",
+      });
       yield* provider.sendTurn({
         sessionId: session.sessionId,
         input: "hello",
@@ -566,12 +548,9 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
   it.effect("fans out adapter turn completion events", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
-      const session = yield* provider.startSession(
-        asThreadId("thread-1"),
-        {
-          provider: "codex",
-        },
-      );
+      const session = yield* provider.startSession(asThreadId("thread-1"), {
+        provider: "codex",
+      });
 
       const eventsRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
       const consumer = yield* Stream.runForEach(provider.streamEvents, (event) =>
@@ -606,12 +585,9 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
   it.effect("keeps subscriber delivery ordered and isolates failing subscribers", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
-      const session = yield* provider.startSession(
-        asThreadId("thread-1"),
-        {
-          provider: "codex",
-        },
-      );
+      const session = yield* provider.startSession(asThreadId("thread-1"), {
+        provider: "codex",
+      });
 
       const receivedByHealthy: string[] = [];
       const expectedEventIds = new Set<string>(["evt-ordered-1", "evt-ordered-2", "evt-ordered-3"]);
@@ -686,12 +662,9 @@ validation.layer("ProviderServiceLive validation", (it) => {
       const provider = yield* ProviderService;
 
       const failure = yield* Effect.result(
-        provider.startSession(
-          asThreadId("thread-validation"),
-          {
-            provider: "invalid-provider",
-          } as never,
-        ),
+        provider.startSession(asThreadId("thread-validation"), {
+          provider: "invalid-provider",
+        } as never),
       );
 
       assert.equal(failure._tag, "Failure");
@@ -726,13 +699,10 @@ validation.layer("ProviderServiceLive validation", (it) => {
       );
 
       const failure = yield* Effect.result(
-        provider.startSession(
-          asThreadId("thread-missing"),
-          {
-            provider: "codex",
-            cwd: "/tmp/project",
-          },
-        ),
+        provider.startSession(asThreadId("thread-missing"), {
+          provider: "codex",
+          cwd: "/tmp/project",
+        }),
       );
 
       assertFailure(

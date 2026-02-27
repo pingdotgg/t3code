@@ -702,7 +702,9 @@ describe("orchestration projector", () => {
           },
         }),
     );
-    const afterMessages = await messageEvents.reduce<Promise<ReturnType<typeof createEmptyReadModel>>>(
+    const afterMessages = await messageEvents.reduce<
+      Promise<ReturnType<typeof createEmptyReadModel>>
+    >(
       (statePromise, event) =>
         statePromise.then((state) => Effect.runPromise(projectEvent(state, event))),
       Promise.resolve(afterCreate),
@@ -730,7 +732,9 @@ describe("orchestration projector", () => {
           },
         }),
     );
-    const finalState = await checkpointEvents.reduce<Promise<ReturnType<typeof createEmptyReadModel>>>(
+    const finalState = await checkpointEvents.reduce<
+      Promise<ReturnType<typeof createEmptyReadModel>>
+    >(
       (statePromise, event) =>
         statePromise.then((state) => Effect.runPromise(projectEvent(state, event))),
       Promise.resolve(afterMessages),

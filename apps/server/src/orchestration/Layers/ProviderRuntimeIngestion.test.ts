@@ -274,7 +274,8 @@ describe("ProviderRuntimeIngestion", () => {
     await waitForThread(
       harness.engine,
       (thread) =>
-        thread.session?.status === "running" && thread.session?.activeTurnId === "turn-complete-dedup",
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-complete-dedup",
     );
 
     harness.emit({
@@ -317,14 +318,17 @@ describe("ProviderRuntimeIngestion", () => {
     );
 
     const events = await Effect.runPromise(
-      Stream.runCollect(harness.engine.readEvents(0)).pipe(Effect.map((chunk) => Array.from(chunk))),
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      ),
     );
     const completionEvents = events.filter((event) => {
       if (event.type !== "thread.message-sent") {
         return false;
       }
       return (
-        event.payload.messageId === "assistant:item-complete-dedup" && event.payload.streaming === false
+        event.payload.messageId === "assistant:item-complete-dedup" &&
+        event.payload.streaming === false
       );
     });
     expect(completionEvents).toHaveLength(1);

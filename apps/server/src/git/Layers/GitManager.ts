@@ -29,10 +29,7 @@ function limitContext(value: string, maxChars: number): string {
   return `${value.slice(0, maxChars)}\n\n[truncated]`;
 }
 
-function sanitizeCommitMessage(generated: {
-  subject: string;
-  body: string;
-}): {
+function sanitizeCommitMessage(generated: { subject: string; body: string }): {
   subject: string;
   body: string;
 } {
@@ -161,12 +158,14 @@ export const makeGitManager = Effect.gen(function* () {
 
       let generated = parseCustomCommitMessage(commitMessage ?? "");
       if (!generated) {
-        generated = yield* textGeneration.generateCommitMessage({
-          cwd,
-          branch,
-          stagedSummary: limitContext(context.stagedSummary, 8_000),
-          stagedPatch: limitContext(context.stagedPatch, 50_000),
-        }).pipe(Effect.map((result) => sanitizeCommitMessage(result)));
+        generated = yield* textGeneration
+          .generateCommitMessage({
+            cwd,
+            branch,
+            stagedSummary: limitContext(context.stagedSummary, 8_000),
+            stagedPatch: limitContext(context.stagedPatch, 50_000),
+          })
+          .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
       }
 
       const { commitSha } = yield* gitCore.commit(cwd, generated.subject, generated.body);
@@ -182,7 +181,10 @@ export const makeGitManager = Effect.gen(function* () {
       const details = yield* gitCore.statusDetails(cwd);
       const branch = details.branch ?? fallbackBranch;
       if (!branch) {
-        return yield* gitManagerError("runPrStep", "Cannot create a pull request from detached HEAD.");
+        return yield* gitManagerError(
+          "runPrStep",
+          "Cannot create a pull request from detached HEAD.",
+        );
       }
       if (!details.hasUpstream) {
         return yield* gitManagerError(
@@ -220,11 +222,7 @@ export const makeGitManager = Effect.gen(function* () {
         .writeFileString(bodyFile, generated.body)
         .pipe(
           Effect.mapError((cause) =>
-            gitManagerError(
-              "runPrStep",
-              "Failed to write pull request body temp file.",
-              cause,
-            ),
+            gitManagerError("runPrStep", "Failed to write pull request body temp file.", cause),
           ),
         );
       yield* gitHubCli
@@ -279,35 +277,40 @@ export const makeGitManager = Effect.gen(function* () {
     };
   });
 
-  const runStackedAction: GitManagerShape["runStackedAction"] = Effect.fnUntraced(function* (input) {
-    const wantsPush = input.action !== "commit";
-    const wantsPr = input.action === "commit_push_pr";
+  const runStackedAction: GitManagerShape["runStackedAction"] = Effect.fnUntraced(
+    function* (input) {
+      const wantsPush = input.action !== "commit";
+      const wantsPr = input.action === "commit_push_pr";
 
-    const initialStatus = yield* gitCore.statusDetails(input.cwd);
-    if (wantsPush && !initialStatus.branch) {
-      return yield* gitManagerError("runStackedAction", "Cannot push from detached HEAD.");
-    }
-    if (wantsPr && !initialStatus.branch) {
-      return yield* gitManagerError("runStackedAction", "Cannot create a pull request from detached HEAD.");
-    }
+      const initialStatus = yield* gitCore.statusDetails(input.cwd);
+      if (wantsPush && !initialStatus.branch) {
+        return yield* gitManagerError("runStackedAction", "Cannot push from detached HEAD.");
+      }
+      if (wantsPr && !initialStatus.branch) {
+        return yield* gitManagerError(
+          "runStackedAction",
+          "Cannot create a pull request from detached HEAD.",
+        );
+      }
 
-    const commit = yield* runCommitStep(input.cwd, initialStatus.branch, input.commitMessage);
+      const commit = yield* runCommitStep(input.cwd, initialStatus.branch, input.commitMessage);
 
-    const push = wantsPush
-      ? yield* gitCore.pushCurrentBranch(input.cwd, initialStatus.branch)
-      : { status: "skipped_not_requested" as const };
+      const push = wantsPush
+        ? yield* gitCore.pushCurrentBranch(input.cwd, initialStatus.branch)
+        : { status: "skipped_not_requested" as const };
 
-    const pr = wantsPr
-      ? yield* runPrStep(input.cwd, initialStatus.branch)
-      : { status: "skipped_not_requested" as const };
+      const pr = wantsPr
+        ? yield* runPrStep(input.cwd, initialStatus.branch)
+        : { status: "skipped_not_requested" as const };
 
-    return {
-      action: input.action,
-      commit,
-      push,
-      pr,
-    };
-  });
+      return {
+        action: input.action,
+        commit,
+        push,
+        pr,
+      };
+    },
+  );
 
   return {
     status,

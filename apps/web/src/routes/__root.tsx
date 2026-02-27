@@ -201,10 +201,7 @@ function EventRouter() {
             void queryClient
               .ensureQueryData(serverConfigQueryOptions())
               .then((config) =>
-                api.shell.openInEditor(
-                  config.keybindingsConfigPath,
-                  preferredTerminalEditor(),
-                ),
+                api.shell.openInEditor(config.keybindingsConfigPath, preferredTerminalEditor()),
               )
               .catch((error) => {
                 toastManager.add({

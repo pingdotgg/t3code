@@ -36,8 +36,8 @@
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
   },
   "devDependencies": {
-    "oxfmt": "^0.28.0",
-    "oxlint": "^1.43.0",
+    "oxfmt": "^0.35.0",
+    "oxlint": "^1.50.0",
     "turbo": "^2.3.3",
     "typescript": "^5.7.3",
     "vitest": "^4.0.0"

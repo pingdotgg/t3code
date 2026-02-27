@@ -260,23 +260,21 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
         ),
       );
 
-  const getPendingTurnStartByThreadId: ProjectionTurnRepositoryShape["getPendingTurnStartByThreadId"] = (
-    input,
-  ) =>
-    getPendingProjectionTurn(input).pipe(
-      Effect.mapError(
-        toPersistenceSqlError("ProjectionTurnRepository.getPendingTurnStartByThreadId:query"),
-      ),
-    );
+  const getPendingTurnStartByThreadId: ProjectionTurnRepositoryShape["getPendingTurnStartByThreadId"] =
+    (input) =>
+      getPendingProjectionTurn(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError("ProjectionTurnRepository.getPendingTurnStartByThreadId:query"),
+        ),
+      );
 
-  const deletePendingTurnStartByThreadId: ProjectionTurnRepositoryShape["deletePendingTurnStartByThreadId"] = (
-    input,
-  ) =>
-    clearPendingProjectionTurnsByThread(input).pipe(
-      Effect.mapError(
-        toPersistenceSqlError("ProjectionTurnRepository.deletePendingTurnStartByThreadId:query"),
-      ),
-    );
+  const deletePendingTurnStartByThreadId: ProjectionTurnRepositoryShape["deletePendingTurnStartByThreadId"] =
+    (input) =>
+      clearPendingProjectionTurnsByThread(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError("ProjectionTurnRepository.deletePendingTurnStartByThreadId:query"),
+        ),
+      );
 
   const listByThreadId: ProjectionTurnRepositoryShape["listByThreadId"] = (input) =>
     listProjectionTurnsByThread(input).pipe(
@@ -306,12 +304,13 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
       ),
     );
 
-  const clearCheckpointTurnConflict: ProjectionTurnRepositoryShape["clearCheckpointTurnConflict"] = (
-    input,
-  ) =>
-    clearCheckpointTurnConflictRow(input).pipe(
-      Effect.mapError(toPersistenceSqlError("ProjectionTurnRepository.clearCheckpointTurnConflict:query")),
-    );
+  const clearCheckpointTurnConflict: ProjectionTurnRepositoryShape["clearCheckpointTurnConflict"] =
+    (input) =>
+      clearCheckpointTurnConflictRow(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError("ProjectionTurnRepository.clearCheckpointTurnConflict:query"),
+        ),
+      );
 
   const deleteByThreadId: ProjectionTurnRepositoryShape["deleteByThreadId"] = (input) =>
     deleteProjectionTurnsByThread(input).pipe(
