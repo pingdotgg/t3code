@@ -6,10 +6,10 @@ import {
   type ProviderApprovalPolicy,
   type ProviderKind,
   type ProviderSandboxMode,
+  type ProviderSessionId,
   type OrchestrationSession,
   type ThreadId,
   type ProviderSession,
-  type ProviderThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Stream } from "effect";
@@ -191,12 +191,17 @@ const make = Effect.gen(function* () {
       projects: readModel.projects,
     });
 
-    const startProviderSession = (resumeThreadId?: ProviderThreadId | null) =>
+    const resolveResumeCursorForSession = (sessionId: ProviderSessionId) =>
+      providerService.listSessions().pipe(
+        Effect.map((sessions) => sessions.find((session) => session.sessionId === sessionId)?.resumeCursor),
+      );
+
+    const startProviderSession = (resumeCursor?: unknown) =>
       providerService.startSession(threadId, {
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
         ...(thread.model ? { model: thread.model } : {}),
-        ...(resumeThreadId ? { resumeThreadId } : {}),
+        ...(resumeCursor !== undefined ? { resumeCursor } : {}),
         approvalPolicy: desiredApprovalPolicy,
         sandboxMode: desiredSandboxMode,
       });
@@ -232,9 +237,8 @@ const make = Effect.gen(function* () {
         return existingSessionId;
       }
 
-      const restartedSession = yield* startProviderSession(
-        thread.session?.providerThreadId ?? null,
-      );
+      const resumeCursor = yield* resolveResumeCursorForSession(existingSessionId);
+      const restartedSession = yield* startProviderSession(resumeCursor);
       yield* bindSessionToThread(restartedSession);
       yield* providerService.stopSession({ sessionId: existingSessionId }).pipe(
         Effect.catchCause((cause) =>

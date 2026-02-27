@@ -1,8 +1,4 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
-import type { ProviderRuntimeEvent } from "@t3tools/contracts";
+import type { ProviderRuntimeEvent, ProviderSession } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
   CommandId,
@@ -88,16 +84,24 @@ describe("ProviderCommandReactor", () => {
     createdStateDirs.add(stateDir);
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     let nextSessionIndex = 1;
-    const startSession = vi.fn((_: unknown, __: unknown) => {
+    const runtimeSessions: Array<ProviderSession> = [];
+    const startSession = vi.fn((_: unknown, input: unknown) => {
       const sessionIndex = nextSessionIndex++;
-      return Effect.succeed({
+      const resumeCursor =
+        typeof input === "object" && input !== null && "resumeCursor" in input
+          ? input.resumeCursor
+          : undefined;
+      const session: ProviderSession = {
         sessionId: asSessionId(`sess-${sessionIndex}`),
         provider: "codex" as const,
         status: "ready" as const,
         threadId: ProviderThreadId.makeUnsafe(`provider-thread-${sessionIndex}`),
+        resumeCursor: resumeCursor ?? { opaque: `cursor-${sessionIndex}` },
         createdAt: now,
         updatedAt: now,
-      });
+      };
+      runtimeSessions.push(session);
+      return Effect.succeed(session);
     });
     const sendTurn = vi.fn((_: unknown) =>
       Effect.succeed({
@@ -107,15 +111,19 @@ describe("ProviderCommandReactor", () => {
     );
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
     const respondToRequest = vi.fn((_: unknown) => Effect.void);
-    const stopSession = vi.fn((_: unknown) => Effect.void);
-    const renameBranch = vi.fn((_: unknown) =>
-      Effect.succeed({
-        branch: "t3code/generated-name",
-      }),
-    );
-    const generateBranchName = vi.fn<TextGenerationShape["generateBranchName"]>(() =>
-      Effect.succeed({
-        branch: "generated-name",
+    const stopSession = vi.fn((input: unknown) =>
+      Effect.sync(() => {
+        const sessionId =
+          typeof input === "object" && input !== null && "sessionId" in input
+            ? (input as { sessionId?: ProviderSessionId }).sessionId
+            : undefined;
+        if (!sessionId) {
+          return;
+        }
+        const index = runtimeSessions.findIndex((session) => session.sessionId === sessionId);
+        if (index >= 0) {
+          runtimeSessions.splice(index, 1);
+        }
       }),
     );
 
@@ -126,7 +134,7 @@ describe("ProviderCommandReactor", () => {
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
-      listSessions: () => Effect.succeed([]),
+      listSessions: () => Effect.succeed(runtimeSessions),
       rollbackConversation: () => unsupported(),
       stopAll: () => Effect.void,
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
@@ -566,7 +574,7 @@ describe("ProviderCommandReactor", () => {
 
     expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ sessionId: asSessionId("sess-1") });
     expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
-      resumeThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
+      resumeCursor: { opaque: "cursor-1" },
       approvalPolicy: "on-request",
       sandboxMode: "workspace-write",
     });

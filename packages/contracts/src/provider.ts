@@ -49,14 +49,31 @@ export const ProviderSession = Schema.Struct({
 });
 export type ProviderSession = typeof ProviderSession.Type;
 
+export const CodexProviderStartOptions = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
+  homePath: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type CodexProviderStartOptions = typeof CodexProviderStartOptions.Type;
+
+export const ClaudeCodeProviderStartOptions = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
+  permissionMode: Schema.optional(TrimmedNonEmptyStringSchema),
+  maxThinkingTokens: Schema.optional(NonNegativeInt),
+});
+export type ClaudeCodeProviderStartOptions = typeof ClaudeCodeProviderStartOptions.Type;
+
+export const ProviderStartOptions = Schema.Struct({
+  codex: Schema.optional(CodexProviderStartOptions),
+  claudeCode: Schema.optional(ClaudeCodeProviderStartOptions),
+});
+export type ProviderStartOptions = typeof ProviderStartOptions.Type;
+
 export const ProviderSessionStartInput = Schema.Struct({
   provider: Schema.optional(ProviderKind),
   cwd: Schema.optional(TrimmedNonEmptyStringSchema),
   model: Schema.optional(TrimmedNonEmptyStringSchema),
-  resumeThreadId: Schema.optional(ProviderThreadId),
   resumeCursor: Schema.optional(Schema.Unknown),
-  codexBinaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
-  codexHomePath: Schema.optional(TrimmedNonEmptyStringSchema),
+  providerOptions: Schema.optional(ProviderStartOptions),
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
 });

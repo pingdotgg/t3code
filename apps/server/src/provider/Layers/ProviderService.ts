@@ -283,7 +283,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           } as const;
         }
 
-        if (!resumeThreadId && !hasResumeCursor) {
+        if (!hasResumeCursor) {
           return yield* toValidationError(
             input.operation,
             `Cannot recover stale session '${input.staleSessionId}' because no provider resume state is persisted.`,

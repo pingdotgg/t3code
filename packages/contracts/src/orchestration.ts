@@ -31,6 +31,7 @@ export const ORCHESTRATION_WS_CHANNELS = {
 
 export const ProviderKind = Schema.Literals(["codex", "claudeCode"]);
 export type ProviderKind = typeof ProviderKind.Type;
+export const DEFAULT_PROVIDER_KIND: ProviderKind = "codex";
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
   "on-failure",
@@ -38,12 +39,14 @@ export const ProviderApprovalPolicy = Schema.Literals([
   "never",
 ]);
 export type ProviderApprovalPolicy = typeof ProviderApprovalPolicy.Type;
+export const DEFAULT_PROVIDER_APPROVAL_POLICY: ProviderApprovalPolicy = "on-failure";
 export const ProviderSandboxMode = Schema.Literals([
   "read-only",
   "workspace-write",
   "danger-full-access",
 ]);
 export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
+export const DEFAULT_PROVIDER_SANDBOX_MODE: ProviderSandboxMode = "workspace-write";
 export const ProviderRequestKind = Schema.Literals(["command", "file-change"]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
@@ -160,8 +163,12 @@ export const OrchestrationSession = Schema.Struct({
   providerName: Schema.NullOr(TrimmedNonEmptyString),
   providerSessionId: Schema.NullOr(ProviderSessionId),
   providerThreadId: Schema.NullOr(ProviderThreadId),
-  approvalPolicy: ProviderApprovalPolicy.pipe(Schema.withDecodingDefault(() => "on-failure")),
-  sandboxMode: ProviderSandboxMode.pipe(Schema.withDecodingDefault(() => "workspace-write")),
+  approvalPolicy: ProviderApprovalPolicy.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PROVIDER_APPROVAL_POLICY),
+  ),
+  sandboxMode: ProviderSandboxMode.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PROVIDER_SANDBOX_MODE),
+  ),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
   updatedAt: IsoDateTime,
@@ -317,11 +324,16 @@ export const ThreadTurnStartCommand = Schema.Struct({
     text: Schema.String,
     attachments: Schema.Array(ChatAttachment),
   }),
+  provider: Schema.optional(ProviderKind),
   model: Schema.optional(TrimmedNonEmptyString),
   effort: Schema.optional(TrimmedNonEmptyString),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
-  approvalPolicy: ProviderApprovalPolicy,
-  sandboxMode: ProviderSandboxMode,
+  approvalPolicy: ProviderApprovalPolicy.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PROVIDER_APPROVAL_POLICY),
+  ),
+  sandboxMode: ProviderSandboxMode.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PROVIDER_SANDBOX_MODE),
+  ),
   createdAt: IsoDateTime,
 });
 
@@ -567,11 +579,16 @@ export const ThreadMessageSentPayload = Schema.Struct({
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
+  provider: Schema.optional(ProviderKind),
   model: Schema.optional(TrimmedNonEmptyString),
   effort: Schema.optional(TrimmedNonEmptyString),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
-  approvalPolicy: ProviderApprovalPolicy.pipe(Schema.withDecodingDefault(() => "on-failure")),
-  sandboxMode: ProviderSandboxMode.pipe(Schema.withDecodingDefault(() => "workspace-write")),
+  approvalPolicy: ProviderApprovalPolicy.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PROVIDER_APPROVAL_POLICY),
+  ),
+  sandboxMode: ProviderSandboxMode.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PROVIDER_SANDBOX_MODE),
+  ),
   createdAt: IsoDateTime,
 });
 
