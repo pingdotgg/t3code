@@ -3,6 +3,7 @@ import {
   EventId,
   MessageId,
   ProviderSessionId,
+  ProviderThreadId,
   ThreadId,
   TurnId,
   type OrchestrationEvent,
@@ -34,6 +35,17 @@ type ReactorInput =
 
 function toTurnId(value: string | undefined): TurnId | null {
   return value === undefined ? null : TurnId.makeUnsafe(value);
+}
+
+function toProviderThreadId(value: string | undefined): ProviderThreadId | null {
+  return value === undefined ? null : ProviderThreadId.makeUnsafe(value);
+}
+
+function sameId(left: string | null | undefined, right: string | null | undefined): boolean {
+  if (left === null || left === undefined || right === null || right === undefined) {
+    return false;
+  }
+  return left === right;
 }
 
 function checkpointStatusFromRuntime(status: string | undefined): "ready" | "missing" | "error" {
@@ -170,6 +182,21 @@ const make = Effect.gen(function* () {
       (entry) => entry.session?.providerSessionId === event.sessionId,
     );
     if (!thread) {
+      return;
+    }
+
+    const projectedProviderThreadId = thread.session?.providerThreadId ?? null;
+    const eventProviderThreadId = toProviderThreadId(event.threadId);
+    if (
+      projectedProviderThreadId !== null &&
+      eventProviderThreadId !== null &&
+      !sameId(projectedProviderThreadId, eventProviderThreadId)
+    ) {
+      return;
+    }
+
+    // When a primary turn is active, only that turn may produce completion checkpoints.
+    if (thread.session?.activeTurnId && !sameId(thread.session.activeTurnId, turnId)) {
       return;
     }
 

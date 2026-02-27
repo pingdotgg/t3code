@@ -31,6 +31,8 @@ import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeInge
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
+const asProviderThreadId = (value: string): ProviderThreadId =>
+  ProviderThreadId.makeUnsafe(value);
 const asProviderTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
 const asItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
@@ -218,6 +220,112 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it("ignores auxiliary turn completions from a different provider thread", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-primary"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: now,
+      threadId: asProviderThreadId("provider-thread-1"),
+      turnId: asProviderTurnId("turn-primary"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" && thread.session?.activeTurnId === "turn-primary",
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-aux"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: new Date().toISOString(),
+      threadId: asProviderThreadId("provider-thread-aux"),
+      turnId: asProviderTurnId("turn-aux"),
+      status: "completed",
+    });
+
+    await Effect.runPromise(Effect.sleep("40 millis"));
+    const midReadModel = await Effect.runPromise(harness.engine.getReadModel());
+    const midThread = midReadModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(midThread?.session?.status).toBe("running");
+    expect(midThread?.session?.activeTurnId).toBe("turn-primary");
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-primary"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: new Date().toISOString(),
+      threadId: asProviderThreadId("provider-thread-1"),
+      turnId: asProviderTurnId("turn-primary"),
+      status: "completed",
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+    );
+  });
+
+  it("ignores non-active turn completion when runtime omits thread id", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-guarded"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: now,
+      turnId: asProviderTurnId("turn-guarded-main"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-guarded-main",
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-guarded-other"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: new Date().toISOString(),
+      turnId: asProviderTurnId("turn-guarded-other"),
+      status: "completed",
+    });
+
+    await Effect.runPromise(Effect.sleep("40 millis"));
+    const midReadModel = await Effect.runPromise(harness.engine.getReadModel());
+    const midThread = midReadModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(midThread?.session?.status).toBe("running");
+    expect(midThread?.session?.activeTurnId).toBe("turn-guarded-main");
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-guarded-main"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: new Date().toISOString(),
+      turnId: asProviderTurnId("turn-guarded-main"),
+      status: "completed",
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+    );
   });
 
   it("maps message delta/completed into finalized assistant messages", async () => {

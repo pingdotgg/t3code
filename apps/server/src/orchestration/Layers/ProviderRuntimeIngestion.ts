@@ -33,6 +33,7 @@ const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
+const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
 type TurnStartRequestedDomainEvent = Extract<
   OrchestrationEvent,
@@ -51,6 +52,17 @@ type RuntimeIngestionInput =
 
 function toTurnId(value: string | undefined): TurnId | undefined {
   return value === undefined ? undefined : TurnId.makeUnsafe(value);
+}
+
+function toProviderThreadId(value: string | undefined): ProviderThreadId | null {
+  return value === undefined ? null : ProviderThreadId.makeUnsafe(value);
+}
+
+function sameId(left: string | null | undefined, right: string | null | undefined): boolean {
+  if (left === null || left === undefined || right === null || right === undefined) {
+    return false;
+  }
+  return left === right;
 }
 
 function truncateDetail(value: string, limit = 180): string {
@@ -332,6 +344,62 @@ const make = Effect.gen(function* () {
       if (!thread) return;
 
       const now = event.createdAt;
+      const sessionProviderThreadId = thread.session?.providerThreadId ?? null;
+      const eventProviderThreadId = toProviderThreadId(event.threadId);
+      const eventTurnId = toTurnId(event.turnId);
+      const activeTurnId = thread.session?.activeTurnId ?? null;
+
+      const matchesThreadScope =
+        eventProviderThreadId === null ||
+        sessionProviderThreadId === null ||
+        sameId(eventProviderThreadId, sessionProviderThreadId);
+      const conflictsWithActiveTurn =
+        activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
+      const missingTurnForActiveTurn = activeTurnId !== null && eventTurnId === undefined;
+
+      const shouldApplyThreadLifecycle = (() => {
+        if (!STRICT_PROVIDER_LIFECYCLE_GUARD) {
+          return true;
+        }
+        switch (event.type) {
+          case "session.exited":
+            return true;
+          case "session.started":
+          case "thread.started":
+            if (!matchesThreadScope) {
+              return false;
+            }
+            // Never let auxiliary/provider-side spawned threads replace the primary thread binding.
+            if (
+              eventProviderThreadId !== null &&
+              sessionProviderThreadId !== null &&
+              !sameId(eventProviderThreadId, sessionProviderThreadId)
+            ) {
+              return false;
+            }
+            return true;
+          case "turn.started":
+            if (!matchesThreadScope) {
+              return false;
+            }
+            return !conflictsWithActiveTurn;
+          case "turn.completed":
+            if (!matchesThreadScope) {
+              return false;
+            }
+            if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
+              return false;
+            }
+            // Only the active turn may close the lifecycle state.
+            if (activeTurnId !== null && eventTurnId !== undefined) {
+              return sameId(activeTurnId, eventTurnId);
+            }
+            // Without an active turn, only accept completion when no thread mismatch signal exists.
+            return eventProviderThreadId === null || sessionProviderThreadId === null;
+          default:
+            return true;
+        }
+      })();
 
       if (
         event.type === "session.started" ||
@@ -340,8 +408,7 @@ const make = Effect.gen(function* () {
         event.type === "turn.started" ||
         event.type === "turn.completed"
       ) {
-        const activeTurnId =
-          event.type === "turn.started" ? (toTurnId(event.turnId) ?? null) : null;
+        const nextActiveTurnId = event.type === "turn.started" ? (eventTurnId ?? null) : null;
         const providerThreadIdFromEvent =
           event.type === "thread.started"
             ? ProviderThreadId.makeUnsafe(event.threadId)
@@ -349,7 +416,7 @@ const make = Effect.gen(function* () {
               ? ProviderThreadId.makeUnsafe(event.threadId)
               : null;
         const providerThreadId =
-          providerThreadIdFromEvent ?? thread.session?.providerThreadId ?? null;
+          providerThreadIdFromEvent ?? sessionProviderThreadId ?? null;
         const status =
           event.type === "turn.started"
             ? "running"
@@ -365,24 +432,26 @@ const make = Effect.gen(function* () {
               ? null
               : (thread.session?.lastError ?? null);
 
-        yield* orchestrationEngine.dispatch({
-          type: "thread.session.set",
-          commandId: providerCommandId(event, "thread-session-set"),
-          threadId: thread.id,
-          session: {
+        if (shouldApplyThreadLifecycle) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.session.set",
+            commandId: providerCommandId(event, "thread-session-set"),
             threadId: thread.id,
-            status,
-            providerName: event.provider,
-            providerSessionId: event.sessionId,
-            providerThreadId,
-            approvalPolicy: thread.session?.approvalPolicy ?? DEFAULT_APPROVAL_POLICY,
-            sandboxMode: thread.session?.sandboxMode ?? DEFAULT_SANDBOX_MODE,
-            activeTurnId,
-            lastError,
-            updatedAt: now,
-          },
-          createdAt: now,
-        });
+            session: {
+              threadId: thread.id,
+              status,
+              providerName: event.provider,
+              providerSessionId: event.sessionId,
+              providerThreadId,
+              approvalPolicy: thread.session?.approvalPolicy ?? DEFAULT_APPROVAL_POLICY,
+              sandboxMode: thread.session?.sandboxMode ?? DEFAULT_SANDBOX_MODE,
+              activeTurnId: nextActiveTurnId,
+              lastError,
+              updatedAt: now,
+            },
+            createdAt: now,
+          });
+        }
       }
 
       if (event.type === "message.delta" && event.delta.length > 0) {
@@ -470,29 +539,38 @@ const make = Effect.gen(function* () {
       }
 
       if (event.type === "runtime.error") {
+        const shouldApplyRuntimeError = !STRICT_PROVIDER_LIFECYCLE_GUARD
+          ? true
+          : matchesThreadScope &&
+            (activeTurnId === null ||
+              eventTurnId === undefined ||
+              sameId(activeTurnId, eventTurnId));
+
         const providerThreadId =
           event.threadId !== undefined
             ? ProviderThreadId.makeUnsafe(event.threadId)
             : (thread.session?.providerThreadId ?? null);
 
-        yield* orchestrationEngine.dispatch({
-          type: "thread.session.set",
-          commandId: providerCommandId(event, "runtime-error-session-set"),
-          threadId: thread.id,
-          session: {
+        if (shouldApplyRuntimeError) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.session.set",
+            commandId: providerCommandId(event, "runtime-error-session-set"),
             threadId: thread.id,
-            status: "error",
-            providerName: event.provider,
-            providerSessionId: event.sessionId,
-            providerThreadId,
-            approvalPolicy: thread.session?.approvalPolicy ?? DEFAULT_APPROVAL_POLICY,
-            sandboxMode: thread.session?.sandboxMode ?? DEFAULT_SANDBOX_MODE,
-            activeTurnId: toTurnId(event.turnId) ?? null,
-            lastError: event.message,
-            updatedAt: now,
-          },
-          createdAt: now,
-        });
+            session: {
+              threadId: thread.id,
+              status: "error",
+              providerName: event.provider,
+              providerSessionId: event.sessionId,
+              providerThreadId,
+              approvalPolicy: thread.session?.approvalPolicy ?? DEFAULT_APPROVAL_POLICY,
+              sandboxMode: thread.session?.sandboxMode ?? DEFAULT_SANDBOX_MODE,
+              activeTurnId: eventTurnId ?? null,
+              lastError: event.message,
+              updatedAt: now,
+            },
+            createdAt: now,
+          });
+        }
       }
 
       const activities = runtimeEventToActivities(event);

@@ -9,15 +9,13 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
-  ThreadId,
-  TurnId,
   IsoDateTime,
 } from "./baseSchemas";
 import { ProviderApprovalDecision, ProviderKind, ProviderRequestKind } from "./orchestration";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
-const RuntimeThreadIdSchema = Schema.Union([ThreadId, ProviderThreadId]);
-const RuntimeTurnIdSchema = Schema.Union([TurnId, ProviderTurnId]);
+const RuntimeThreadIdSchema = ProviderThreadId;
+const RuntimeTurnIdSchema = ProviderTurnId;
 
 export const ProviderRuntimeToolKind = Schema.Union([ProviderRequestKind, Schema.Literal("other")]);
 export type ProviderRuntimeToolKind = typeof ProviderRuntimeToolKind.Type;

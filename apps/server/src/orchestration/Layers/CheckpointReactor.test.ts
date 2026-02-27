@@ -381,6 +381,81 @@ describe("CheckpointReactor", () => {
     ).toBe("v2\n");
   });
 
+  it("ignores auxiliary thread turn completion while primary turn is active", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const createdAt = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-set-primary-running"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "running",
+          providerName: "codex",
+          providerSessionId: asSessionId("sess-1"),
+          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
+          approvalPolicy: "on-request",
+          sandboxMode: "workspace-write",
+          activeTurnId: asTurnId("turn-main"),
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.makeUnsafe("evt-turn-started-main"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: new Date().toISOString(),
+      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
+      turnId: asTurnId("turn-main"),
+    });
+    await waitForGitRefExists(
+      harness.cwd,
+      checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 0),
+    );
+
+    fs.writeFileSync(path.join(harness.cwd, "README.md"), "v2\n", "utf8");
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.makeUnsafe("evt-turn-completed-aux"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: new Date().toISOString(),
+      threadId: ProviderThreadId.makeUnsafe("provider-thread-aux"),
+      turnId: asTurnId("turn-aux"),
+      status: "completed",
+    });
+
+    await Effect.runPromise(Effect.sleep("40 millis"));
+    const midReadModel = await Effect.runPromise(harness.engine.getReadModel());
+    const midThread = midReadModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(midThread?.checkpoints).toHaveLength(0);
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.makeUnsafe("evt-turn-completed-main"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: new Date().toISOString(),
+      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
+      turnId: asTurnId("turn-main"),
+      status: "completed",
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.latestTurnId === "turn-main" && entry.checkpoints.length === 1,
+    );
+    expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
+  });
+
   it("appends capture failure activity when turn diff summary cannot be derived", async () => {
     const harness = await createHarness({ seedFilesystemCheckpoints: false });
     const createdAt = new Date().toISOString();

@@ -47,6 +47,7 @@ import {
 
 const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
 const asTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
+const asProviderThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
 const asRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
@@ -564,7 +565,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         provider: "codex",
         sessionId: session.sessionId,
         createdAt: new Date().toISOString(),
-        threadId: ThreadId.makeUnsafe("thread-1"),
+        threadId: asProviderThreadId("thread-1"),
         turnId: asTurnId("turn-1"),
         status: "completed",
       };
@@ -612,7 +613,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           provider: "codex",
           sessionId: session.sessionId,
           createdAt: new Date().toISOString(),
-          threadId: ThreadId.makeUnsafe("thread-1"),
+          threadId: asProviderThreadId("thread-1"),
           turnId: asTurnId("turn-1"),
           toolKind: "command",
           title: "Command run",
@@ -624,7 +625,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           provider: "codex",
           sessionId: session.sessionId,
           createdAt: new Date().toISOString(),
-          threadId: ThreadId.makeUnsafe("thread-1"),
+          threadId: asProviderThreadId("thread-1"),
           turnId: asTurnId("turn-1"),
           delta: "hello",
         },
@@ -634,7 +635,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           provider: "codex",
           sessionId: session.sessionId,
           createdAt: new Date().toISOString(),
-          threadId: ThreadId.makeUnsafe("thread-1"),
+          threadId: asProviderThreadId("thread-1"),
           turnId: asTurnId("turn-1"),
           status: "completed",
         },
