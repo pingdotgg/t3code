@@ -198,9 +198,17 @@ const make = Effect.gen(function* () {
         return existingSessionId;
       }
 
-      yield* providerService.stopSession({ sessionId: existingSessionId });
       const restartedSession = yield* startProviderSession(thread.session?.providerThreadId ?? null);
       yield* bindSessionToThread(restartedSession);
+      yield* providerService.stopSession({ sessionId: existingSessionId }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("provider command reactor failed to stop superseded provider session", {
+            threadId,
+            sessionId: existingSessionId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
       return restartedSession.sessionId;
     }
 

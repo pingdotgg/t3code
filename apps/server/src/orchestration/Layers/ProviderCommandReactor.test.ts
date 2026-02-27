@@ -304,6 +304,64 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.sandboxMode).toBe("workspace-write");
   });
 
+  it("does not stop the active session when restart fails before rebind", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-restart-failure-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-restart-failure-1"),
+          role: "user",
+          text: "first",
+          attachments: [],
+        },
+        approvalPolicy: "never",
+        sandboxMode: "danger-full-access",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    harness.startSession.mockImplementationOnce((_: unknown, __: unknown) =>
+      Effect.fail(new Error("simulated restart failure")) as never,
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-restart-failure-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-restart-failure-2"),
+          role: "user",
+          text: "second",
+          attachments: [],
+        },
+        approvalPolicy: "on-request",
+        sandboxMode: "workspace-write",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 2);
+    await Effect.runPromise(Effect.sleep("30 millis"));
+
+    expect(harness.stopSession.mock.calls.length).toBe(0);
+    expect(harness.sendTurn.mock.calls.length).toBe(1);
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(thread?.session?.providerSessionId).toBe("sess-1");
+    expect(thread?.session?.approvalPolicy).toBe("never");
+    expect(thread?.session?.sandboxMode).toBe("danger-full-access");
+  });
+
   it("reacts to thread.turn.interrupt-requested by calling provider interrupt", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
