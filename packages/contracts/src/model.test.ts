@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_MODEL, MODEL_OPTIONS, normalizeModelSlug, resolveModelSlug } from "./model";
+import {
+  DEFAULT_MODEL,
+  DEFAULT_MODEL_BY_PROVIDER,
+  MODEL_OPTIONS,
+  MODEL_OPTIONS_BY_PROVIDER,
+  getDefaultModel,
+  getModelOptions,
+  normalizeModelSlug,
+  resolveModelSlug,
+  resolveModelSlugForProvider,
+} from "./model";
 
 describe("normalizeModelSlug", () => {
   it("maps known aliases to canonical slugs", () => {
@@ -19,6 +29,11 @@ describe("normalizeModelSlug", () => {
     expect(normalizeModelSlug("gpt-5.2")).toBe("gpt-5.2");
     expect(normalizeModelSlug("gpt-5.2-codex")).toBe("gpt-5.2-codex");
   });
+
+  it("uses provider-specific aliases", () => {
+    expect(normalizeModelSlug("sonnet", "claudeCode")).toBe("claude-sonnet-4-5");
+    expect(normalizeModelSlug("opus-4.1", "claudeCode")).toBe("claude-opus-4-1");
+  });
 });
 
 describe("resolveModelSlug", () => {
@@ -36,5 +51,21 @@ describe("resolveModelSlug", () => {
     for (const model of MODEL_OPTIONS) {
       expect(resolveModelSlug(model.slug)).toBe(model.slug);
     }
+  });
+
+  it("supports provider-aware resolution", () => {
+    expect(resolveModelSlugForProvider("claudeCode", undefined)).toBe(
+      DEFAULT_MODEL_BY_PROVIDER.claudeCode,
+    );
+    expect(resolveModelSlugForProvider("claudeCode", "sonnet")).toBe("claude-sonnet-4-5");
+    expect(resolveModelSlugForProvider("claudeCode", "gpt-5.3-codex")).toBe(
+      DEFAULT_MODEL_BY_PROVIDER.claudeCode,
+    );
+  });
+
+  it("keeps codex defaults for backward compatibility", () => {
+    expect(getDefaultModel()).toBe(DEFAULT_MODEL);
+    expect(getModelOptions()).toEqual(MODEL_OPTIONS);
+    expect(getModelOptions("claudeCode")).toEqual(MODEL_OPTIONS_BY_PROVIDER.claudeCode);
   });
 });
