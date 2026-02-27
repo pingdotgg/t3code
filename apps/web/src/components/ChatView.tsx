@@ -188,6 +188,8 @@ type ComposerCommandItem =
       description: string;
     };
 
+type SendPhase = "idle" | "preparing-worktree" | "sending-turn";
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -342,7 +344,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [composerImages, setComposerImages] = useState<ComposerImageAttachment[]>([]);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
-  const [isSending, setIsSending] = useState(false);
+  const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
   const [isConnecting, setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [selectedEffort, setSelectedEffort] = useState(DEFAULT_REASONING);
@@ -397,7 +399,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeThread?.model ?? activeProject?.model ?? DEFAULT_MODEL,
   );
   const phase = derivePhase(activeThread?.session ?? null);
-  const isWorking = phase === "running" || isSending || isConnecting || isRevertingCheckpoint;
+  const isSendBusy = sendPhase !== "idle";
+  const isPreparingWorktree = sendPhase === "preparing-worktree";
+  const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
   const nowIso = new Date(nowTick).toISOString();
   const threadActivities = activeThread?.activities ?? [];
   const workLogEntries = useMemo(
@@ -1026,7 +1030,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     });
     setPrompt("");
     promptRef.current = "";
-    setIsSending(false);
+    setSendPhase("idle");
     setComposerCursor(0);
     setComposerHighlightedItemId(null);
     dragDepthRef.current = 0;
@@ -1315,7 +1319,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const api = readNativeApi();
       if (!api || !activeThread || isRevertingCheckpoint) return;
 
-      if (phase === "running" || isSending || isConnecting) {
+      if (phase === "running" || isSendBusy || isConnecting) {
         setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
         return;
       }
@@ -1349,36 +1353,46 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setIsRevertingCheckpoint(false);
       }
     },
-    [activeThread, isConnecting, isRevertingCheckpoint, isSending, phase, setThreadError],
+    [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
 
   const onSend = async (e: React.SubmitEvent | React.KeyboardEvent) => {
     e.preventDefault();
     const api = readNativeApi();
-    if (!api || !activeThread || isSending || isConnecting) return;
+    if (!api || !activeThread || isSendBusy || isConnecting) return;
     const trimmed = prompt.trim();
     if (!trimmed && composerImages.length === 0) return;
     if (!activeProject) return;
+    const threadIdForSend = activeThread.id;
+    const isFirstMessage = activeThread.messages.length === 0;
+    const baseBranchForWorktree =
+      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
+        ? activeThread.branch
+        : null;
     const composerImagesSnapshot = [...composerImages];
 
-    // On first message: lock in branch + create worktree if needed.
-    if (
-      activeThread.messages.length === 0 &&
-      activeThread.branch &&
-      envMode === "worktree" &&
-      !activeThread.worktreePath
-    ) {
-      try {
+    setThreadError(threadIdForSend, null);
+    promptRef.current = "";
+    setPrompt("");
+    setComposerImages([]);
+    setComposerCursor(0);
+    setComposerHighlightedItemId(null);
+
+    let attemptedTurnStart = false;
+    try {
+      // On first message: lock in branch + create worktree if needed.
+      if (baseBranchForWorktree) {
+        setSendPhase("preparing-worktree");
         const newBranch = `codething/${crypto.randomUUID().slice(0, 8)}`;
         const result = await createWorktreeMutation.mutateAsync({
           cwd: activeProject.cwd,
-          branch: activeThread.branch,
+          branch: baseBranchForWorktree,
           newBranch,
         });
         await api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
-          threadId: activeThread.id,
+          threadId: threadIdForSend,
           branch: result.worktree.branch,
           worktreePath: result.worktree.path,
         });
@@ -1390,43 +1404,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
             rememberAsLastInvoked: false,
           });
         }
-      } catch (err) {
-        dispatch({
-          type: "SET_ERROR",
-          threadId: activeThread.id,
-          error: err instanceof Error ? err.message : "Failed to create worktree",
-        });
-        return;
       }
-    }
 
-    // Auto-title from first message
-    if (activeThread.messages.length === 0) {
-      const titleSeed =
-        trimmed ||
-        (composerImagesSnapshot.length > 0
-          ? `Image: ${composerImagesSnapshot[0]?.name ?? "attachment"}`
-          : "New thread");
-      const title = truncateTitle(titleSeed);
-      if (api) {
+      // Auto-title from first message
+      if (isFirstMessage) {
+        const titleSeed =
+          trimmed ||
+          (composerImagesSnapshot.length > 0
+            ? `Image: ${composerImagesSnapshot[0]?.name ?? "attachment"}`
+            : "New thread");
+        const title = truncateTitle(titleSeed);
         await api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
-          threadId: activeThread.id,
+          threadId: threadIdForSend,
           title,
         });
       }
-    }
 
-    setThreadError(activeThread.id, null);
-    promptRef.current = "";
-    setPrompt("");
-    setComposerImages([]);
-    setComposerCursor(0);
-    setComposerHighlightedItemId(null);
-
-    setIsSending(true);
-    try {
+      setSendPhase("sending-turn");
       const turnAttachments = await Promise.all(
         composerImagesSnapshot.map(
           async (
@@ -1446,10 +1442,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }),
         ),
       );
+      attemptedTurnStart = true;
       await api.orchestration.dispatchCommand({
         type: "thread.turn.start",
         commandId: newCommandId(),
-        threadId: activeThread.id,
+        threadId: threadIdForSend,
         message: {
           messageId: newMessageId(),
           role: "user",
@@ -1461,12 +1458,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
         createdAt: new Date().toISOString(),
       });
     } catch (err) {
+      if (
+        !attemptedTurnStart &&
+        promptRef.current.length === 0 &&
+        composerImagesRef.current.length === 0
+      ) {
+        promptRef.current = trimmed;
+        setPrompt(trimmed);
+        setComposerImages(composerImagesSnapshot);
+        setComposerCursor(trimmed.length);
+      }
       setThreadError(
-        activeThread.id,
+        threadIdForSend,
         err instanceof Error ? err.message : "Failed to send message.",
       );
     } finally {
-      setIsSending(false);
+      setSendPhase("idle");
     }
   };
 
@@ -1851,7 +1858,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     ? "Ask for follow-up changes or attach images"
                     : "Ask anything, @tag files/folders, or use /model"
                 }
-                disabled={isSending || isConnecting}
+                disabled={isConnecting}
               />
             </div>
 
@@ -1897,6 +1904,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
               {/* Right side: send / stop button */}
               <div className="flex shrink-0 items-center gap-2">
+                {isPreparingWorktree ? (
+                  <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
+                ) : null}
                 {phase === "running" ? (
                   <button
                     type="button"
@@ -1919,13 +1929,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     type="submit"
                     className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
                     disabled={
-                      isSending || isConnecting || (!prompt.trim() && composerImages.length === 0)
+                      isSendBusy || isConnecting || (!prompt.trim() && composerImages.length === 0)
                     }
                     aria-label={
-                      isConnecting ? "Connecting" : isSending ? "Sending" : "Send message"
+                      isConnecting
+                        ? "Connecting"
+                        : isPreparingWorktree
+                          ? "Preparing worktree"
+                          : isSendBusy
+                            ? "Sending"
+                            : "Send message"
                     }
                   >
-                    {isConnecting || isSending ? (
+                    {isConnecting || isSendBusy ? (
                       <svg
                         width="14"
                         height="14"
