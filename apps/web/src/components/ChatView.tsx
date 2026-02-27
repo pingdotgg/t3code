@@ -91,6 +91,7 @@ import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu"
 import { CursorIcon, Icon } from "./Icons";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { Badge } from "./ui/badge";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Command, CommandInput, CommandItem, CommandList } from "./ui/command";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
@@ -2112,19 +2113,27 @@ const ChatHeader = memo(function ChatHeader({
           <OpenInPicker keybindings={keybindings} activeThreadId={activeThreadId} />
         )}
         {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
-        <Toggle
-          className="shrink-0"
-          pressed={diffOpen}
-          onPressedChange={onToggleDiff}
-          aria-label="Toggle diff panel"
-          title={
-            diffToggleShortcutLabel ? `Toggle diff panel (${diffToggleShortcutLabel})` : undefined
-          }
-          variant="outline"
-          size="xs"
-        >
-          <DiffIcon className="size-3" />
-        </Toggle>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                className="shrink-0"
+                pressed={diffOpen}
+                onPressedChange={onToggleDiff}
+                aria-label="Toggle diff panel"
+                variant="outline"
+                size="xs"
+              >
+                <DiffIcon className="size-3" />
+              </Toggle>
+            }
+          />
+          <TooltipPopup side="bottom">
+            {diffToggleShortcutLabel
+              ? `Toggle diff panel (${diffToggleShortcutLabel})`
+              : "Toggle diff panel"}
+          </TooltipPopup>
+        </Tooltip>
       </div>
     </div>
   );
