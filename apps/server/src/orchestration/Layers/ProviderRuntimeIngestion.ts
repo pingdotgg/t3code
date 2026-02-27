@@ -10,7 +10,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSessionId,
 } from "@t3tools/contracts";
-import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Stream } from "effect";
+import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Ref, Stream } from "effect";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -22,15 +22,10 @@ import {
 const providerTurnKey = (sessionId: ProviderSessionId, turnId: TurnId) => `${sessionId}:${turnId}`;
 const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
   CommandId.makeUnsafe(`provider:${event.eventId}:${tag}:${crypto.randomUUID()}`);
+
 const DEFAULT_ASSISTANT_DELIVERY_MODE: AssistantDeliveryMode = "buffered";
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
-const TURN_DELIVERY_MODE_BY_TURN_CACHE_CAPACITY = 10_000;
-const TURN_DELIVERY_MODE_BY_TURN_TTL = Duration.minutes(120);
-const PENDING_DELIVERY_MODE_BY_THREAD_CACHE_CAPACITY = 10_000;
-const PENDING_DELIVERY_MODE_BY_THREAD_TTL = Duration.minutes(30);
-const MESSAGE_DELIVERY_MODE_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
-const MESSAGE_DELIVERY_MODE_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 
@@ -115,6 +110,7 @@ function runtimeEventToActivities(
         },
       ];
     }
+
     case "tool.completed": {
       return [
         {
@@ -131,6 +127,7 @@ function runtimeEventToActivities(
         },
       ];
     }
+
     case "tool.started": {
       return [
         {
@@ -157,26 +154,16 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
 
+  const assistantDeliveryModeRef = yield* Ref.make<AssistantDeliveryMode>(
+    DEFAULT_ASSISTANT_DELIVERY_MODE,
+  );
+
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
     timeToLive: TURN_MESSAGE_IDS_BY_TURN_TTL,
     lookup: () => Effect.succeed(new Set<MessageId>()),
   });
-  const assistantDeliveryModeByTurnKey = yield* Cache.make<string, AssistantDeliveryMode>({
-    capacity: TURN_DELIVERY_MODE_BY_TURN_CACHE_CAPACITY,
-    timeToLive: TURN_DELIVERY_MODE_BY_TURN_TTL,
-    lookup: () => Effect.succeed(DEFAULT_ASSISTANT_DELIVERY_MODE),
-  });
-  const pendingAssistantDeliveryModeByThreadId = yield* Cache.make<ThreadId, AssistantDeliveryMode>({
-    capacity: PENDING_DELIVERY_MODE_BY_THREAD_CACHE_CAPACITY,
-    timeToLive: PENDING_DELIVERY_MODE_BY_THREAD_TTL,
-    lookup: () => Effect.succeed(DEFAULT_ASSISTANT_DELIVERY_MODE),
-  });
-  const assistantDeliveryModeByMessageId = yield* Cache.make<MessageId, AssistantDeliveryMode>({
-    capacity: MESSAGE_DELIVERY_MODE_BY_MESSAGE_ID_CACHE_CAPACITY,
-    timeToLive: MESSAGE_DELIVERY_MODE_BY_MESSAGE_ID_TTL,
-    lookup: () => Effect.succeed(DEFAULT_ASSISTANT_DELIVERY_MODE),
-  });
+
   const bufferedAssistantTextByMessageId = yield* Cache.make<MessageId, string>({
     capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
@@ -236,45 +223,6 @@ const make = Effect.gen(function* () {
   const clearAssistantMessageIdsForTurn = (sessionId: ProviderSessionId, turnId: TurnId) =>
     Cache.invalidate(turnMessageIdsByTurnKey, providerTurnKey(sessionId, turnId));
 
-  const rememberAssistantDeliveryModeForTurn = (
-    sessionId: ProviderSessionId,
-    turnId: TurnId,
-    assistantDeliveryMode: AssistantDeliveryMode,
-  ) =>
-    Cache.set(
-      assistantDeliveryModeByTurnKey,
-      providerTurnKey(sessionId, turnId),
-      assistantDeliveryMode,
-    );
-
-  const clearAssistantDeliveryModeForTurn = (sessionId: ProviderSessionId, turnId: TurnId) =>
-    Cache.invalidate(assistantDeliveryModeByTurnKey, providerTurnKey(sessionId, turnId));
-
-  const rememberPendingAssistantDeliveryModeForThread = (
-    threadId: ThreadId,
-    assistantDeliveryMode: AssistantDeliveryMode,
-  ) => Cache.set(pendingAssistantDeliveryModeByThreadId, threadId, assistantDeliveryMode);
-
-  const takePendingAssistantDeliveryModeForThread = (threadId: ThreadId) =>
-    Cache.getOption(pendingAssistantDeliveryModeByThreadId, threadId).pipe(
-      Effect.flatMap((assistantDeliveryMode) =>
-        Cache.invalidate(pendingAssistantDeliveryModeByThreadId, threadId).pipe(
-          Effect.as(assistantDeliveryMode),
-        ),
-      ),
-    );
-
-  const clearPendingAssistantDeliveryModeForThread = (threadId: ThreadId) =>
-    Cache.invalidate(pendingAssistantDeliveryModeByThreadId, threadId);
-
-  const rememberAssistantDeliveryModeForMessage = (
-    messageId: MessageId,
-    assistantDeliveryMode: AssistantDeliveryMode,
-  ) => Cache.set(assistantDeliveryModeByMessageId, messageId, assistantDeliveryMode);
-
-  const clearAssistantDeliveryModeForMessage = (messageId: MessageId) =>
-    Cache.invalidate(assistantDeliveryModeByMessageId, messageId);
-
   const appendBufferedAssistantText = (messageId: MessageId, delta: string) =>
     Cache.getOption(bufferedAssistantTextByMessageId, messageId).pipe(
       Effect.flatMap((existingText) =>
@@ -301,66 +249,18 @@ const make = Effect.gen(function* () {
   const clearBufferedAssistantText = (messageId: MessageId) =>
     Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
 
-  const clearAssistantMessageState = (messageId: MessageId) =>
-    Effect.all(
-      [
-        clearAssistantDeliveryModeForMessage(messageId),
-        clearBufferedAssistantText(messageId),
-      ],
-      { concurrency: 1 },
-    ).pipe(Effect.asVoid);
-
-  const resolveAssistantDeliveryModeForMessage = (input: {
-    threadId: ThreadId;
-    sessionId: ProviderSessionId;
-    turnId?: TurnId;
-    messageId: MessageId;
-  }) =>
-    Effect.gen(function* () {
-      const messageMode = yield* Cache.getOption(assistantDeliveryModeByMessageId, input.messageId);
-      if (Option.isSome(messageMode)) {
-        return messageMode.value;
-      }
-
-      if (input.turnId) {
-        const turnMode = yield* Cache.getOption(
-          assistantDeliveryModeByTurnKey,
-          providerTurnKey(input.sessionId, input.turnId),
-        );
-        if (Option.isSome(turnMode)) {
-          return turnMode.value;
-        }
-      }
-
-      const pendingMode = yield* Cache.getOption(
-        pendingAssistantDeliveryModeByThreadId,
-        input.threadId,
-      );
-      if (Option.isSome(pendingMode)) {
-        if (input.turnId) {
-          yield* rememberAssistantDeliveryModeForTurn(input.sessionId, input.turnId, pendingMode.value);
-          yield* clearPendingAssistantDeliveryModeForThread(input.threadId);
-        }
-        return pendingMode.value;
-      }
-
-      return DEFAULT_ASSISTANT_DELIVERY_MODE;
-    });
+  const clearAssistantMessageState = (messageId: MessageId) => clearBufferedAssistantText(messageId);
 
   const dispatchAssistantCompletion = (input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
     messageId: MessageId;
     turnId?: TurnId;
-    assistantDeliveryMode: AssistantDeliveryMode;
     createdAt: string;
     commandTag: string;
   }) =>
     Effect.gen(function* () {
-      const text =
-        input.assistantDeliveryMode === "buffered"
-          ? yield* takeBufferedAssistantText(input.messageId)
-          : undefined;
+      const text = yield* takeBufferedAssistantText(input.messageId);
 
       yield* orchestrationEngine.dispatch({
         type: "thread.message.assistant.complete",
@@ -368,7 +268,7 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         messageId: input.messageId,
         ...(input.turnId ? { turnId: input.turnId } : {}),
-        ...(text !== undefined ? { text } : {}),
+        text,
         createdAt: input.createdAt,
       });
       yield* clearAssistantMessageState(input.messageId);
@@ -397,16 +297,6 @@ const make = Effect.gen(function* () {
           }),
         { concurrency: 1 },
       ).pipe(Effect.asVoid);
-
-      const deliveryModeKeys = Array.from(yield* Cache.keys(assistantDeliveryModeByTurnKey));
-      yield* Effect.forEach(
-        deliveryModeKeys,
-        (key) =>
-          key.startsWith(prefix)
-            ? Cache.invalidate(assistantDeliveryModeByTurnKey, key)
-            : Effect.void,
-        { concurrency: 1 },
-      ).pipe(Effect.asVoid);
     });
 
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
@@ -427,18 +317,6 @@ const make = Effect.gen(function* () {
         event.type === "turn.completed"
       ) {
         const activeTurnId = event.type === "turn.started" ? (toTurnId(event.turnId) ?? null) : null;
-        if (event.type === "turn.started" && activeTurnId) {
-          const pendingAssistantDeliveryMode = yield* takePendingAssistantDeliveryModeForThread(
-            thread.id,
-          );
-          if (Option.isSome(pendingAssistantDeliveryMode)) {
-            yield* rememberAssistantDeliveryModeForTurn(
-              event.sessionId,
-              activeTurnId,
-              pendingAssistantDeliveryMode.value,
-            );
-          }
-        }
         const providerThreadIdFromEvent =
           event.type === "thread.started"
             ? ProviderThreadId.makeUnsafe(event.threadId)
@@ -488,14 +366,8 @@ const make = Effect.gen(function* () {
         if (turnId) {
           yield* rememberAssistantMessageId(event.sessionId, turnId, assistantMessageId);
         }
-        const assistantDeliveryMode = yield* resolveAssistantDeliveryModeForMessage({
-          threadId: thread.id,
-          sessionId: event.sessionId,
-          ...(turnId ? { turnId } : {}),
-          messageId: assistantMessageId,
-        });
-        yield* rememberAssistantDeliveryModeForMessage(assistantMessageId, assistantDeliveryMode);
 
+        const assistantDeliveryMode = yield* Ref.get(assistantDeliveryModeRef);
         if (assistantDeliveryMode === "buffered") {
           yield* appendBufferedAssistantText(assistantMessageId, event.delta);
         } else {
@@ -517,20 +389,12 @@ const make = Effect.gen(function* () {
         if (turnId) {
           yield* rememberAssistantMessageId(event.sessionId, turnId, assistantMessageId);
         }
-        const assistantDeliveryMode = yield* resolveAssistantDeliveryModeForMessage({
-          threadId: thread.id,
-          sessionId: event.sessionId,
-          ...(turnId ? { turnId } : {}),
-          messageId: assistantMessageId,
-        });
-        yield* rememberAssistantDeliveryModeForMessage(assistantMessageId, assistantDeliveryMode);
 
         yield* dispatchAssistantCompletion({
           event,
           threadId: thread.id,
           messageId: assistantMessageId,
           ...(turnId ? { turnId } : {}),
-          assistantDeliveryMode,
           createdAt: now,
           commandTag: "assistant-complete",
         });
@@ -548,19 +412,11 @@ const make = Effect.gen(function* () {
             assistantMessageIds,
             (assistantMessageId) =>
               Effect.gen(function* () {
-                const assistantDeliveryMode =
-                  yield* resolveAssistantDeliveryModeForMessage({
-                    threadId: thread.id,
-                    sessionId: event.sessionId,
-                    turnId,
-                    messageId: assistantMessageId,
-                  });
                 yield* dispatchAssistantCompletion({
                   event,
                   threadId: thread.id,
                   messageId: assistantMessageId,
                   turnId,
-                  assistantDeliveryMode,
                   createdAt: now,
                   commandTag: "assistant-complete-finalize",
                 });
@@ -568,13 +424,11 @@ const make = Effect.gen(function* () {
             { concurrency: 1 },
           ).pipe(Effect.asVoid);
           yield* clearAssistantMessageIdsForTurn(event.sessionId, turnId);
-          yield* clearAssistantDeliveryModeForTurn(event.sessionId, turnId);
         }
       }
 
       if (event.type === "session.exited") {
         yield* clearTurnStateForSession(event.sessionId);
-        yield* clearPendingAssistantDeliveryModeForThread(thread.id);
       }
 
       if (event.type === "runtime.error") {
@@ -614,8 +468,8 @@ const make = Effect.gen(function* () {
     });
 
   const processDomainEvent = (event: TurnStartRequestedDomainEvent) =>
-    rememberPendingAssistantDeliveryModeForThread(
-      event.payload.threadId,
+    Ref.set(
+      assistantDeliveryModeRef,
       event.payload.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
     );
 
