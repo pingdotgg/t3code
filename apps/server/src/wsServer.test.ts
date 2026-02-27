@@ -323,14 +323,14 @@ describe("WebSocket Server", () => {
 
   async function createTestServer(
     options: {
-      persistenceLayer?: Layer.Layer<SqlClient.SqlClient, any>;
+      persistenceLayer?: Layer.Layer<SqlClient.SqlClient, never>;
       cwd?: string;
       autoBootstrapProjectFromCwd?: boolean;
       logWebSocketEvents?: boolean;
       devUrl?: string;
       authToken?: string;
       stateDir?: string;
-      providerLayer?: Layer.Layer<ProviderService, unknown>;
+      providerLayer?: Layer.Layer<ProviderService, never>;
       open?: OpenShape;
       gitManager?: GitManagerShape;
       gitCore?: Pick<GitCoreShape, "listBranches" | "initRepo" | "pullCurrentBranch">;

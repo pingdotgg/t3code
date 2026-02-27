@@ -66,14 +66,14 @@ export interface ServerShape {
    */
   readonly start: Effect.Effect<
     http.Server,
-    unknown,
+    ServerLifecycleError,
     Scope.Scope | ServerRuntimeServices | ServerConfig
   >;
 
   /**
    * Wait for process shutdown signals.
    */
-  readonly stopSignal: Effect.Effect<unknown, never>;
+  readonly stopSignal: Effect.Effect<void, never>;
 }
 
 /**
@@ -165,7 +165,7 @@ class RouteRequestError extends Schema.TaggedErrorClass<RouteRequestError>()("Ro
 
 export const createServer = Effect.fn(function* (): Effect.fn.Return<
   http.Server,
-  unknown, // TODO: This should not be unknown
+  ServerLifecycleError,
   Scope.Scope | ServerRuntimeServices | ServerConfig
 > {
   const serverConfig = yield* ServerConfig;
@@ -338,21 +338,27 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* Scope.provide(orchestrationReactor.start, subscriptionsScope);
 
   if (autoBootstrapProjectFromCwd) {
-    const snapshot = yield* projectionReadModelQuery.getSnapshot();
-    const existing = snapshot.projects.find((project) => project.workspaceRoot === cwd);
-    if (!existing) {
-      const createdAt = new Date().toISOString();
-      const projectName = path.basename(cwd) || "project";
-      yield* orchestrationEngine.dispatch({
-        type: "project.create",
-        commandId: CommandId.makeUnsafe(crypto.randomUUID()),
-        projectId: ProjectId.makeUnsafe(crypto.randomUUID()),
-        title: projectName,
-        workspaceRoot: cwd,
-        defaultModel: "gpt-5-codex",
-        createdAt,
-      });
-    }
+    yield* Effect.gen(function* () {
+      const snapshot = yield* projectionReadModelQuery.getSnapshot();
+      const existing = snapshot.projects.find((project) => project.workspaceRoot === cwd);
+      if (!existing) {
+        const createdAt = new Date().toISOString();
+        const projectName = path.basename(cwd) || "project";
+        yield* orchestrationEngine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe(crypto.randomUUID()),
+          projectId: ProjectId.makeUnsafe(crypto.randomUUID()),
+          title: projectName,
+          workspaceRoot: cwd,
+          defaultModel: "gpt-5-codex",
+          createdAt,
+        });
+      }
+    }).pipe(
+      Effect.mapError(
+        (cause) => new ServerLifecycleError({ operation: "autoBootstrapProject", cause }),
+      ),
+    );
   }
 
   const routeRequest = Effect.fnUntraced(function* (request: WebSocketRequest) {
@@ -618,7 +624,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   );
   yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeTerminalEvents()));
 
-  yield* NodeHttpServer.make(() => httpServer, listenOptions);
+  yield* NodeHttpServer.make(() => httpServer, listenOptions).pipe(
+    Effect.mapError((cause) => new ServerLifecycleError({ operation: "httpServerListen", cause })),
+  );
 
   yield* Effect.addFinalizer(() =>
     Effect.all([

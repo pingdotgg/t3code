@@ -39,9 +39,9 @@ function toGitCommandError(
         });
 }
 
-const collectOutput = Effect.fn(function* (
+const collectOutput = Effect.fn(function* <E>(
   input: Pick<ExecuteGitInput, "operation" | "cwd" | "args">,
-  stream: Stream.Stream<Uint8Array, unknown>,
+  stream: Stream.Stream<Uint8Array, E>,
   maxOutputBytes: number,
 ): Effect.fn.Return<string, GitCommandError> {
   const decoder = new TextDecoder();

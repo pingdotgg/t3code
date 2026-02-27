@@ -129,9 +129,9 @@ const makeCodexTextGeneration = Effect.gen(function* () {
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const readStreamAsString = (
+  const readStreamAsString = <E>(
     operation: string,
-    stream: Stream.Stream<Uint8Array, unknown>,
+    stream: Stream.Stream<Uint8Array, E>,
   ): Effect.Effect<string, TextGenerationError> =>
     Effect.gen(function* () {
       let text = "";

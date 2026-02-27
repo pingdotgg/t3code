@@ -17,6 +17,7 @@ import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderComma
 import { OrchestrationProjectionPipelineLive } from "./orchestration/Layers/ProjectionPipeline";
 import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers/ProjectionSnapshotQuery";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion";
+import { ProviderUnsupportedError } from "./provider/Errors";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
 import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
@@ -35,7 +36,7 @@ import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
 
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService,
-  unknown,
+  ProviderUnsupportedError,
   SqlClient.SqlClient | ServerConfig
 > {
   return Effect.gen(function* () {

@@ -40,9 +40,12 @@ function decodeForEvent<A>(
   eventType: OrchestrationEvent["type"],
   field: string,
 ): Effect.Effect<A, OrchestrationProjectorDecodeError> {
-  return Schema.decodeUnknownEffect(schema)(value).pipe(
-    Effect.mapError(toProjectorDecodeError(`${eventType}:${field}`)),
-  ) as Effect.Effect<A, OrchestrationProjectorDecodeError>;
+  return Effect.try({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    try: () => Schema.decodeUnknownSync(schema as any)(value) as A,
+    catch: (error) =>
+      toProjectorDecodeError(`${eventType}:${field}`)(error as Schema.SchemaError),
+  });
 }
 
 function retainThreadMessagesAfterRevert(
