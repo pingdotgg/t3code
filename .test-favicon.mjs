@@ -49,6 +49,16 @@ function test(projectCwd) {
   console.log("  Phase 2: no match");
 }
 
-test("/Users/theo/Code/Work/ct/t3chat");
-test("/Users/theo/Code/Work/lawn");
-test(process.cwd());
+function getTestPaths() {
+  const cliPaths = process.argv.slice(2).map((p) => p.trim()).filter(Boolean);
+  if (cliPaths.length > 0) return cliPaths;
+
+  const envPaths = process.env.TEST_PATHS?.split(path.delimiter).map((p) => p.trim()).filter(Boolean);
+  if (envPaths?.length) return envPaths;
+
+  return [process.cwd()];
+}
+
+for (const p of getTestPaths()) {
+  test(path.resolve(p));
+}
