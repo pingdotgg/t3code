@@ -15,6 +15,7 @@ import { newCommandId, newProjectId, newThreadId } from "../lib/utils";
 import { useStore } from "../store";
 import { isChatNewLocalShortcut, isChatNewShortcut } from "../keybindings";
 import { type Thread } from "../types";
+import { derivePendingApprovals } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
@@ -50,7 +51,7 @@ function formatRelativeTime(iso: string): string {
 }
 
 interface ThreadStatusPill {
-  label: "Working" | "Connecting" | "Completed" | "Awaiting response";
+  label: "Working" | "Connecting" | "Completed" | "Pending Approval";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -76,7 +77,7 @@ function hasUnseenCompletion(thread: Thread): boolean {
 function threadStatusPill(thread: Thread, hasPendingApprovals: boolean): ThreadStatusPill | null {
   if (hasPendingApprovals) {
     return {
-      label: "Awaiting response",
+      label: "Pending Approval",
       colorClass: "text-amber-600 dark:text-amber-300/90",
       dotClass: "bg-amber-500 dark:bg-amber-300/90",
       pulse: false,
@@ -158,7 +159,13 @@ export default function Sidebar() {
   const [newCwd, setNewCwd] = useState("");
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
-  const pendingApprovalByThreadId = useMemo(() => new Map<ThreadId, boolean>(), []);
+  const pendingApprovalByThreadId = useMemo(() => {
+    const map = new Map<ThreadId, boolean>();
+    for (const thread of state.threads) {
+      map.set(thread.id, derivePendingApprovals(thread.activities).length > 0);
+    }
+    return map;
+  }, [state.threads]);
 
   const handleNewThread = useCallback(
     (
