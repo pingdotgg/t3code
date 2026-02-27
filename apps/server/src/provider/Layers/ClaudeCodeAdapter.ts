@@ -31,7 +31,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
 } from "@t3tools/contracts";
-import { Cause, DateTime, Deferred, Effect, Layer, Queue, Random, Stream } from "effect";
+import { Cause, DateTime, Deferred, Effect, Layer, Queue, Random, Ref, Stream } from "effect";
 
 import {
   ProviderAdapterProcessError,
@@ -312,25 +312,12 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         readonly options: ClaudeQueryOptions;
       }) => query({ prompt: input.prompt, options: input.options }) as ClaudeQueryRuntime);
 
-    const sessions = new Map<
-      ReturnType<typeof ProviderSessionId.makeUnsafe>,
-      ClaudeSessionContext
-    >();
+    const sessions = new Map<ProviderSessionId, ClaudeSessionContext>();
     const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
 
-    const now = (): Effect.Effect<string> =>
-      DateTime.now.pipe(Effect.map(DateTime.formatIso));
-    const randomId = (): Effect.Effect<string> => Random.nextUUIDv4;
-    const makeEventId = (): Effect.Effect<ReturnType<typeof EventId.makeUnsafe>> =>
-      randomId().pipe(Effect.map((id) => EventId.makeUnsafe(id)));
-    const makeEventStamp = (): Effect.Effect<{
-      readonly eventId: ReturnType<typeof EventId.makeUnsafe>;
-      readonly createdAt: string;
-    }> =>
-      Effect.all({
-        eventId: makeEventId(),
-        createdAt: now(),
-      });
+    const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+    const nextEventId = Effect.map(Random.nextUUIDv4, (id) => EventId.makeUnsafe(id));
+    const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
 
     const offerRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
       Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid);
@@ -347,7 +334,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
       Effect.gen(function* () {
         const threadId =
           context.session.threadId ??
-          ProviderThreadId.makeUnsafe(`claude-thread-${yield* randomId()}`);
+          ProviderThreadId.makeUnsafe(`claude-thread-${yield* Random.nextUUIDv4}`);
         return {
           threadId,
           turns: context.turns.map((turn) => ({
@@ -360,9 +347,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
     const updateResumeCursor = (context: ClaudeSessionContext): Effect.Effect<void> =>
       Effect.gen(function* () {
         const threadId = context.session.threadId;
-        if (!threadId) {
-          return;
-        }
+        if (!threadId) return;
 
         const resumeCursor = {
           threadId,
@@ -374,7 +359,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         context.session = {
           ...context.session,
           resumeCursor,
-          updatedAt: yield* now(),
+          updatedAt: yield* nowIso,
         };
       });
 
@@ -387,7 +372,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         const changed = context.session.threadId !== nextThreadId;
 
         if (changed) {
-          const updatedAt = yield* now();
+          const updatedAt = yield* nowIso;
           context.session = {
             ...context.session,
             threadId: nextThreadId,
@@ -487,7 +472,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           ...(errorMessage ? { errorMessage } : {}),
         });
 
-        const updatedAt = yield* now();
+        const updatedAt = yield* nowIso;
         context.turnState = undefined;
         context.session = {
           ...context.session,
@@ -697,9 +682,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
       options?: { readonly emitExitEvent?: boolean },
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
-        if (context.stopped) {
-          return;
-        }
+        if (context.stopped) return;
 
         context.stopped = true;
 
@@ -725,11 +708,11 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           yield* completeTurn(context, "interrupted", "Session stopped.");
         }
 
-        yield* Queue.offer(context.promptQueue, { type: "terminate" }).pipe(Effect.ignore);
+        yield* Queue.shutdown(context.promptQueue);
 
-        yield* Effect.sync(() => context.query.close()).pipe(Effect.ignoreCause);
+        context.query.close();
 
-        const updatedAt = yield* now();
+        const updatedAt = yield* nowIso;
         context.session = {
           ...context.session,
           status: "closed",
@@ -786,44 +769,31 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           });
         }
 
-        const startedAt = yield* now();
-        const sessionId = ProviderSessionId.makeUnsafe(`claude-session-${yield* randomId()}`);
+        const startedAt = yield* nowIso;
+        const sessionId = ProviderSessionId.makeUnsafe(
+          `claude-session-${yield* Random.nextUUIDv4}`,
+        );
         const resumeState = readClaudeResumeState(input.resumeCursor);
         const threadId =
           resumeState?.threadId ??
-          ProviderThreadId.makeUnsafe(`claude-thread-${yield* randomId()}`);
+          ProviderThreadId.makeUnsafe(`claude-thread-${yield* Random.nextUUIDv4}`);
 
         const promptQueue = yield* Queue.unbounded<PromptQueueItem>();
-        const prompt: AsyncIterable<SDKUserMessage> = {
-          [Symbol.asyncIterator]() {
-            return {
-              next: async (): Promise<IteratorResult<SDKUserMessage>> => {
-                const item = await Effect.runPromise(Queue.take(promptQueue));
-                if (item.type === "terminate") {
-                  return {
-                    done: true,
-                    value: undefined,
-                  };
-                }
-
-                return {
-                  done: false,
-                  value: item.message,
-                };
-              },
-            };
-          },
-        };
+        const prompt = Stream.fromQueue(promptQueue).pipe(
+          Stream.filter((item) => item.type === "message"),
+          Stream.map((item) => item.message),
+          Stream.toAsyncIterable,
+        );
 
         const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
         const inFlightTools = new Map<number, ToolInFlight>();
 
-        let contextRef: ClaudeSessionContext | undefined;
+        const contextRef = yield* Ref.make<ClaudeSessionContext | undefined>(undefined);
 
         const canUseTool: CanUseTool = (toolName, toolInput, callbackOptions) =>
           Effect.runPromise(
             Effect.gen(function* () {
-              const context = contextRef;
+              const context = yield* Ref.get(contextRef);
               if (!context) {
                 return {
                   behavior: "deny",
@@ -839,7 +809,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
                 } satisfies PermissionResult;
               }
 
-              const requestId = ApprovalRequestId.makeUnsafe(yield* randomId());
+              const requestId = ApprovalRequestId.makeUnsafe(yield* Random.nextUUIDv4);
               const requestKind = classifyRequestKind(toolName);
               const detail = summarizeToolRequest(toolName, toolInput);
               const decisionDeferred = yield* Deferred.make<ProviderApprovalDecision>();
@@ -988,7 +958,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           lastThreadStartedId: undefined,
           stopped: false,
         };
-        contextRef = context;
+        yield* Ref.set(contextRef, context);
         sessions.set(sessionId, context);
 
         const sessionStartedStamp = yield* makeEventStamp();
@@ -1027,16 +997,16 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           });
         }
 
-        const turnId = ProviderTurnId.makeUnsafe(`claude-turn-${yield* randomId()}`);
+        const turnId = ProviderTurnId.makeUnsafe(`claude-turn-${yield* Random.nextUUIDv4}`);
         const turnState: ClaudeTurnState = {
           turnId,
-          assistantItemId: `claude-message-${yield* randomId()}`,
-          startedAt: yield* now(),
+          assistantItemId: `claude-message-${yield* Random.nextUUIDv4}`,
+          startedAt: yield* nowIso,
           items: [],
           messageCompleted: false,
         };
 
-        const updatedAt = yield* now();
+        const updatedAt = yield* nowIso;
         context.turnState = turnState;
         context.session = {
           ...context.session,
