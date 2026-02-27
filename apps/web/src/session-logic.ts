@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
   type ProviderKind,
   type TurnId,
@@ -73,6 +74,18 @@ export function formatElapsed(startIso: string, endIso: string | undefined): str
     return null;
   }
   return formatDuration(endedAt - startedAt);
+}
+
+export function isLatestTurnSettled(
+  latestTurn: Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "completedAt"> | null,
+  session: Pick<ThreadSession, "orchestrationStatus" | "activeTurnId"> | null,
+): boolean {
+  if (!latestTurn?.startedAt) return false;
+  if (!latestTurn.completedAt) return false;
+  if (!session) return true;
+  return !(
+    session.orchestrationStatus === "running" && session.activeTurnId === latestTurn.turnId
+  );
 }
 
 export function derivePendingApprovals(

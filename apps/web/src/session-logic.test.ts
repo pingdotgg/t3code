@@ -5,6 +5,7 @@ import {
   derivePendingApprovals,
   deriveWorkLogEntries,
   hasToolActivityForTurn,
+  isLatestTurnSettled,
 } from "./session-logic";
 
 function makeActivity(overrides: {
@@ -149,5 +150,44 @@ describe("hasToolActivityForTurn", () => {
 
     expect(hasToolActivityForTurn(activities, TurnId.makeUnsafe("turn-1"))).toBe(true);
     expect(hasToolActivityForTurn(activities, TurnId.makeUnsafe("turn-2"))).toBe(false);
+  });
+});
+
+describe("isLatestTurnSettled", () => {
+  const latestTurn = {
+    turnId: TurnId.makeUnsafe("turn-1"),
+    startedAt: "2026-02-27T21:10:00.000Z",
+    completedAt: "2026-02-27T21:10:06.000Z",
+  } as const;
+
+  it("returns false while the same turn is still active in a running session", () => {
+    expect(
+      isLatestTurnSettled(latestTurn, {
+        orchestrationStatus: "running",
+        activeTurnId: TurnId.makeUnsafe("turn-1"),
+      }),
+    ).toBe(false);
+  });
+
+  it("returns true once the session is no longer running that turn", () => {
+    expect(
+      isLatestTurnSettled(latestTurn, {
+        orchestrationStatus: "ready",
+        activeTurnId: undefined,
+      }),
+    ).toBe(true);
+  });
+
+  it("returns false when turn timestamps are incomplete", () => {
+    expect(
+      isLatestTurnSettled(
+        {
+          turnId: TurnId.makeUnsafe("turn-1"),
+          startedAt: null,
+          completedAt: "2026-02-27T21:10:06.000Z",
+        },
+        null,
+      ),
+    ).toBe(false);
   });
 });

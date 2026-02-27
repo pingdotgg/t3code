@@ -44,6 +44,7 @@ import {
   type PendingApproval,
   deriveWorkLogEntries,
   hasToolActivityForTurn,
+  isLatestTurnSettled,
   formatElapsed,
   formatTimestamp,
 } from "../session-logic";
@@ -382,10 +383,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const diffOpen = diffSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
+  const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
 
   useEffect(() => {
     if (!activeThread?.id) return;
+    if (!latestTurnSettled) return;
     if (!activeLatestTurn?.completedAt) return;
     const turnCompletedAt = Date.parse(activeLatestTurn.completedAt);
     if (Number.isNaN(turnCompletedAt)) return;
@@ -400,6 +403,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeThread?.id,
     activeThread?.lastVisitedAt,
     activeLatestTurn?.completedAt,
+    latestTurnSettled,
     dispatch,
   ]);
 
@@ -483,6 +487,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
 
   const completionSummary = useMemo(() => {
+    if (!latestTurnSettled) return null;
     if (!activeLatestTurn?.startedAt) return null;
     if (!activeLatestTurn.completedAt) return null;
     if (!latestTurnHasToolActivity) return null;
@@ -493,8 +498,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeLatestTurn?.completedAt,
     activeLatestTurn?.startedAt,
     latestTurnHasToolActivity,
+    latestTurnSettled,
   ]);
   const completionDividerBeforeEntryId = useMemo(() => {
+    if (!latestTurnSettled) return null;
     if (!activeLatestTurn?.startedAt) return null;
     if (!activeLatestTurn.completedAt) return null;
     if (!completionSummary) return null;
@@ -521,6 +528,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeLatestTurn?.completedAt,
     activeLatestTurn?.startedAt,
     completionSummary,
+    latestTurnSettled,
     timelineEntries,
   ]);
   const gitCwd = activeThread?.worktreePath ?? activeProject?.cwd ?? null;
