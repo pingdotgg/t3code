@@ -42,7 +42,9 @@ function ToggleGroup({
       orientation={orientation}
       {...props}
     >
-      <ToggleGroupContext.Provider value={{ size, variant }}>
+      <ToggleGroupContext.Provider
+        value={React.useMemo(() => ({ size, variant }), [size, variant])}
+      >
         {children}
       </ToggleGroupContext.Provider>
     </ToggleGroupPrimitive>
