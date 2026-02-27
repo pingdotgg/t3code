@@ -65,8 +65,6 @@ export default Effect.gen(function* () {
       provider_name TEXT,
       provider_session_id TEXT,
       provider_thread_id TEXT,
-      approval_policy TEXT NOT NULL,
-      sandbox_mode TEXT NOT NULL,
       active_turn_id TEXT,
       last_error TEXT,
       updated_at TEXT NOT NULL
