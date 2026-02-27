@@ -12,6 +12,7 @@ import type {
 import {
   ApprovalRequestId,
   EventId,
+  type ProviderKind,
   ProviderSessionStartInput,
   ProviderSessionId,
   ProviderThreadId,
@@ -52,7 +53,7 @@ const asRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 
-function makeFakeCodexAdapter() {
+function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
   const sessions = new Map<ProviderSessionId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
   let nextSession = 1;
@@ -64,7 +65,7 @@ function makeFakeCodexAdapter() {
       const threadId = ProviderThreadId.makeUnsafe(`thread-${next}`);
       const session: ProviderSession = {
         sessionId: ProviderSessionId.makeUnsafe(`sess-${next}`),
-        provider: "codex",
+        provider,
         status: "ready",
         threadId,
         resumeCursor: input.resumeCursor ?? { opaque: `cursor-${next}` },
@@ -85,7 +86,7 @@ function makeFakeCodexAdapter() {
       if (!sessions.has(input.sessionId)) {
         return Effect.fail(
           new ProviderAdapterSessionNotFoundError({
-            provider: "codex",
+            provider,
             sessionId: input.sessionId,
           }),
         );
@@ -160,7 +161,7 @@ function makeFakeCodexAdapter() {
   );
 
   const adapter: ProviderAdapterShape<ProviderAdapterError> = {
-    provider: "codex",
+    provider,
     startSession,
     sendTurn,
     interruptTurn,
@@ -199,12 +200,15 @@ const sleep = (ms: number) =>
 
 function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
+  const claude = makeFakeCodexAdapter("claudeCode");
   const registry: typeof ProviderAdapterRegistry.Service = {
     getByProvider: (provider) =>
       provider === "codex"
         ? Effect.succeed(codex.adapter)
-        : Effect.fail(new ProviderUnsupportedError({ provider })),
-    listProviders: () => Effect.succeed(["codex"]),
+        : provider === "claudeCode"
+          ? Effect.succeed(claude.adapter)
+          : Effect.fail(new ProviderUnsupportedError({ provider })),
+    listProviders: () => Effect.succeed(["codex", "claudeCode"]),
   };
 
   const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
@@ -227,6 +231,7 @@ function makeProviderServiceLayer() {
 
   return {
     codex,
+    claude,
     layer,
   };
 }
@@ -445,6 +450,27 @@ routing.layer("ProviderServiceLive routing", (it) => {
         sendAfterStop,
         new ProviderSessionNotFoundError({ sessionId: session.sessionId }),
       );
+    }),
+  );
+
+  it.effect("routes explicit claudeCode provider session starts to the claude adapter", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      const session = yield* provider.startSession(asThreadId("thread-claude"), {
+        provider: "claudeCode",
+        cwd: "/tmp/project-claude",
+      });
+
+      assert.equal(session.provider, "claudeCode");
+      assert.equal(routing.claude.startSession.mock.calls.length, 1);
+      const startInput = routing.claude.startSession.mock.calls[0]?.[0];
+      assert.equal(typeof startInput === "object" && startInput !== null, true);
+      if (startInput && typeof startInput === "object") {
+        const startPayload = startInput as { provider?: string; cwd?: string };
+        assert.equal(startPayload.provider, "claudeCode");
+        assert.equal(startPayload.cwd, "/tmp/project-claude");
+      }
     }),
   );
 
