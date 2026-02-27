@@ -29,13 +29,19 @@ type RenderablePatch =
       reason: string;
     };
 
-function getRenderablePatch(patch: string | undefined): RenderablePatch | null {
+function getRenderablePatch(
+  patch: string | undefined,
+  cacheScope = "diff-panel",
+): RenderablePatch | null {
   if (!patch) return null;
   const normalizedPatch = patch.trim();
   if (normalizedPatch.length === 0) return null;
 
   try {
-    const parsedPatches = parsePatchFiles(normalizedPatch, buildPatchCacheKey(normalizedPatch));
+    const parsedPatches = parsePatchFiles(
+      normalizedPatch,
+      buildPatchCacheKey(normalizedPatch, cacheScope),
+    );
     const files = parsedPatches.flatMap((parsedPatch) => parsedPatch.files);
     if (files.length > 0) {
       return { kind: "files", files };
@@ -190,7 +196,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const selectedPatch = selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff;
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
-  const renderablePatch = useMemo(() => getRenderablePatch(selectedPatch), [selectedPatch]);
+  const renderablePatch = useMemo(
+    () => getRenderablePatch(selectedPatch, `diff-panel:${resolvedTheme}`),
+    [resolvedTheme, selectedPatch],
+  );
   const renderableFiles = useMemo(() => {
     if (!renderablePatch || renderablePatch.kind !== "files") {
       return [];

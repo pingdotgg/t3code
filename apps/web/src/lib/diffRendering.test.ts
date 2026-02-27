@@ -20,4 +20,12 @@ describe("buildPatchCacheKey", () => {
 
     expect(buildPatchCacheKey(before)).not.toBe(buildPatchCacheKey(after));
   });
+
+  it("changes when cache scope changes", () => {
+    const patch = "diff --git a/a.ts b/a.ts\n+console.log('hello')";
+
+    expect(buildPatchCacheKey(patch, "diff-panel:light")).not.toBe(
+      buildPatchCacheKey(patch, "diff-panel:dark"),
+    );
+  });
 });
