@@ -116,16 +116,58 @@ function toRequestError(
   });
 }
 
-const unavailableRuntimeError = () => new Error("Claude Code runtime is not configured.");
-
 function makeUnavailableRuntime(): ClaudeCodeRuntime {
+  const unavailableDetail = "Claude Code runtime is not configured.";
+
   return {
-    startSession: () => Effect.fail(unavailableRuntimeError()),
-    sendTurn: () => Effect.fail(unavailableRuntimeError()),
-    interruptTurn: () => Effect.fail(unavailableRuntimeError()),
-    readThread: () => Effect.fail(unavailableRuntimeError()),
-    rollbackThread: () => Effect.fail(unavailableRuntimeError()),
-    respondToRequest: () => Effect.fail(unavailableRuntimeError()),
+    startSession: () =>
+      Effect.fail(
+        new ProviderAdapterProcessError({
+          provider: PROVIDER,
+          sessionId: "pending",
+          detail: unavailableDetail,
+        }),
+      ),
+    sendTurn: (_input) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "turn/start",
+          detail: unavailableDetail,
+        }),
+      ),
+    interruptTurn: (_sessionId) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "turn/interrupt",
+          detail: unavailableDetail,
+        }),
+      ),
+    readThread: (_sessionId) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "thread/read",
+          detail: unavailableDetail,
+        }),
+      ),
+    rollbackThread: (_sessionId) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "thread/rollback",
+          detail: unavailableDetail,
+        }),
+      ),
+    respondToRequest: (_sessionId) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "item/requestApproval/decision",
+          detail: unavailableDetail,
+        }),
+      ),
     stopSession: () => Effect.void,
     listSessions: () => Effect.succeed([]),
     hasSession: () => Effect.succeed(false),
