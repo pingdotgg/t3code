@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import { reducer, type AppState } from "./store";
@@ -29,6 +29,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     activities: [],
     error: null,
     createdAt: "2026-02-13T00:00:00.000Z",
+    latestTurn: null,
     branch: null,
     worktreePath: null,
     ...overrides,
@@ -58,7 +59,14 @@ describe("store reducer", () => {
     const latestTurnCompletedAt = "2026-02-25T12:30:00.000Z";
     const initialState = makeState(
       makeThread({
-        latestTurnCompletedAt,
+        latestTurn: {
+          turnId: TurnId.makeUnsafe("turn-1"),
+          state: "completed",
+          requestedAt: "2026-02-25T12:28:00.000Z",
+          startedAt: "2026-02-25T12:28:30.000Z",
+          completedAt: latestTurnCompletedAt,
+          assistantMessageId: null,
+        },
         lastVisitedAt: "2026-02-25T12:35:00.000Z",
       }),
     );
@@ -79,7 +87,7 @@ describe("store reducer", () => {
   it("does not change a thread without a completed turn", () => {
     const initialState = makeState(
       makeThread({
-        latestTurnCompletedAt: undefined,
+        latestTurn: null,
         lastVisitedAt: "2026-02-25T12:35:00.000Z",
       }),
     );

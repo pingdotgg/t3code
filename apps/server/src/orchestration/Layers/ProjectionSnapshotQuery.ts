@@ -1,8 +1,12 @@
 import {
+  IsoDateTime,
+  MessageId,
   OrchestrationCheckpointFile,
   OrchestrationReadModel,
   ProjectScript,
+  TurnId,
   type OrchestrationCheckpointSummary,
+  type OrchestrationLatestTurn,
   type OrchestrationMessage,
   type OrchestrationProject,
   type OrchestrationSession,
@@ -55,6 +59,15 @@ const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
   }),
 );
+const ProjectionLatestTurnDbRowSchema = Schema.Struct({
+  threadId: ProjectionThread.fields.threadId,
+  turnId: TurnId,
+  state: Schema.String,
+  requestedAt: IsoDateTime,
+  startedAt: Schema.NullOr(IsoDateTime),
+  completedAt: Schema.NullOr(IsoDateTime),
+  assistantMessageId: Schema.NullOr(MessageId),
+});
 const ProjectionStateDbRowSchema = ProjectionState;
 
 const REQUIRED_SNAPSHOT_PROJECTORS = [
@@ -226,6 +239,25 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const listLatestTurnRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionLatestTurnDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          state,
+          requested_at AS "requestedAt",
+          started_at AS "startedAt",
+          completed_at AS "completedAt",
+          assistant_message_id AS "assistantMessageId"
+        FROM projection_turns
+        WHERE turn_id IS NOT NULL
+        ORDER BY thread_id ASC, requested_at DESC, turn_id DESC
+      `,
+  });
+
   const listProjectionStateRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: ProjectionStateDbRowSchema,
@@ -250,6 +282,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             activityRows,
             sessionRows,
             checkpointRows,
+            latestTurnRows,
             stateRows,
           ] = yield* Effect.all([
             listProjectRows(undefined).pipe(
@@ -300,6 +333,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 ),
               ),
             ),
+            listLatestTurnRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getSnapshot:listLatestTurns:query",
+                  "ProjectionSnapshotQuery.getSnapshot:listLatestTurns:decodeRows",
+                ),
+              ),
+            ),
             listProjectionStateRows(undefined).pipe(
               Effect.mapError(
                 toPersistenceSqlOrDecodeError(
@@ -314,6 +355,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const activitiesByThread = new Map<string, Array<OrchestrationThreadActivity>>();
           const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
           const sessionsByThread = new Map<string, OrchestrationSession>();
+          const latestTurnByThread = new Map<string, OrchestrationLatestTurn>();
 
           let updatedAt: string | null = null;
 
@@ -372,6 +414,34 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             checkpointsByThread.set(row.threadId, threadCheckpoints);
           }
 
+          for (const row of latestTurnRows) {
+            updatedAt = maxIso(updatedAt, row.requestedAt);
+            if (row.startedAt !== null) {
+              updatedAt = maxIso(updatedAt, row.startedAt);
+            }
+            if (row.completedAt !== null) {
+              updatedAt = maxIso(updatedAt, row.completedAt);
+            }
+            if (latestTurnByThread.has(row.threadId)) {
+              continue;
+            }
+            latestTurnByThread.set(row.threadId, {
+              turnId: row.turnId,
+              state:
+                row.state === "error"
+                  ? "error"
+                  : row.state === "interrupted"
+                    ? "interrupted"
+                    : row.state === "completed"
+                      ? "completed"
+                      : "running",
+              requestedAt: row.requestedAt,
+              startedAt: row.startedAt,
+              completedAt: row.completedAt,
+              assistantMessageId: row.assistantMessageId,
+            });
+          }
+
           for (const row of sessionRows) {
             updatedAt = maxIso(updatedAt, row.updatedAt);
             sessionsByThread.set(row.threadId, {
@@ -406,7 +476,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             model: row.model,
             branch: row.branch,
             worktreePath: row.worktreePath,
-            latestTurnId: row.latestTurnId,
+            latestTurn: latestTurnByThread.get(row.threadId) ?? null,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
             deletedAt: row.deletedAt,

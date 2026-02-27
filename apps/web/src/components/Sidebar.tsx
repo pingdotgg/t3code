@@ -63,8 +63,8 @@ interface TerminalStatusIndicator {
 }
 
 function hasUnseenCompletion(thread: Thread): boolean {
-  if (!thread.latestTurnCompletedAt) return false;
-  const completedAt = Date.parse(thread.latestTurnCompletedAt);
+  if (!thread.latestTurn?.completedAt) return false;
+  const completedAt = Date.parse(thread.latestTurn.completedAt);
   if (Number.isNaN(completedAt)) return false;
   if (!thread.lastVisitedAt) return true;
 

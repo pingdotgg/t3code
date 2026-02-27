@@ -26,6 +26,12 @@ type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
 
+function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error") {
+  if (status === "error") return "error" as const;
+  if (status === "missing") return "interrupted" as const;
+  return "completed" as const;
+}
+
 function updateThread(
   threads: ReadonlyArray<OrchestrationThread>,
   threadId: ThreadId,
@@ -220,7 +226,7 @@ export function projectEvent(
             model: payload.model,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
-            latestTurnId: null,
+            latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             deletedAt: null,
@@ -351,7 +357,26 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             session,
-            latestTurnId: session.activeTurnId,
+            latestTurn:
+              session.status === "running" && session.activeTurnId !== null
+                ? {
+                    turnId: session.activeTurnId,
+                    state: "running",
+                    requestedAt:
+                      thread.latestTurn?.turnId === session.activeTurnId
+                        ? thread.latestTurn.requestedAt
+                        : session.updatedAt,
+                    startedAt:
+                      thread.latestTurn?.turnId === session.activeTurnId
+                        ? (thread.latestTurn.startedAt ?? session.updatedAt)
+                        : session.updatedAt,
+                    completedAt: null,
+                    assistantMessageId:
+                      thread.latestTurn?.turnId === session.activeTurnId
+                        ? thread.latestTurn.assistantMessageId
+                        : null,
+                  }
+                : thread.latestTurn,
             updatedAt: event.occurredAt,
           }),
         };
@@ -396,7 +421,20 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             checkpoints,
-            latestTurnId: payload.turnId,
+            latestTurn: {
+              turnId: payload.turnId,
+              state: checkpointStatusToLatestTurnState(payload.status),
+              requestedAt:
+                thread.latestTurn?.turnId === payload.turnId
+                  ? thread.latestTurn.requestedAt
+                  : payload.completedAt,
+              startedAt:
+                thread.latestTurn?.turnId === payload.turnId
+                  ? (thread.latestTurn.startedAt ?? payload.completedAt)
+                  : payload.completedAt,
+              completedAt: payload.completedAt,
+              assistantMessageId: payload.assistantMessageId,
+            },
             updatedAt: event.occurredAt,
           }),
         };
@@ -422,8 +460,18 @@ export function projectEvent(
           ).slice(-MAX_THREAD_MESSAGES);
           const activities = retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds);
 
-          const latestTurnId =
-            checkpoints.length > 0 ? (checkpoints[checkpoints.length - 1]?.turnId ?? null) : null;
+          const latestCheckpoint = checkpoints.at(-1) ?? null;
+          const latestTurn =
+            latestCheckpoint === null
+              ? null
+              : {
+                  turnId: latestCheckpoint.turnId,
+                  state: checkpointStatusToLatestTurnState(latestCheckpoint.status),
+                  requestedAt: latestCheckpoint.completedAt,
+                  startedAt: latestCheckpoint.completedAt,
+                  completedAt: latestCheckpoint.completedAt,
+                  assistantMessageId: latestCheckpoint.assistantMessageId,
+                };
 
           return {
             ...nextBase,
@@ -431,7 +479,7 @@ export function projectEvent(
               checkpoints,
               messages,
               activities,
-              latestTurnId,
+              latestTurn,
               updatedAt: event.occurredAt,
             }),
           };

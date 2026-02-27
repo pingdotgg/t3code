@@ -147,6 +147,14 @@ export function deriveWorkLogEntries(
     });
 }
 
+export function hasToolActivityForTurn(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  turnId: TurnId | null | undefined,
+): boolean {
+  if (!turnId) return false;
+  return activities.some((activity) => activity.turnId === turnId && activity.tone === "tool");
+}
+
 export function deriveTimelineEntries(
   messages: ChatMessage[],
   workEntries: WorkLogEntry[],

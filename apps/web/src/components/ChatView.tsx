@@ -43,7 +43,7 @@ import {
   deriveTimelineEntries,
   type PendingApproval,
   deriveWorkLogEntries,
-  formatDuration,
+  hasToolActivityForTurn,
   formatElapsed,
   formatTimestamp,
 } from "../session-logic";
@@ -381,12 +381,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const diffOpen = diffSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
+  const activeLatestTurn = activeThread?.latestTurn ?? null;
   const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
 
   useEffect(() => {
     if (!activeThread?.id) return;
-    if (!activeThread.latestTurnCompletedAt) return;
-    const turnCompletedAt = Date.parse(activeThread.latestTurnCompletedAt);
+    if (!activeLatestTurn?.completedAt) return;
+    const turnCompletedAt = Date.parse(activeLatestTurn.completedAt);
     if (Number.isNaN(turnCompletedAt)) return;
     const lastVisitedAt = activeThread.lastVisitedAt ? Date.parse(activeThread.lastVisitedAt) : NaN;
     if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= turnCompletedAt) return;
@@ -398,7 +399,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [
     activeThread?.id,
     activeThread?.lastVisitedAt,
-    activeThread?.latestTurnCompletedAt,
+    activeLatestTurn?.completedAt,
     dispatch,
   ]);
 
@@ -412,18 +413,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const nowIso = new Date(nowTick).toISOString();
   const threadActivities = activeThread?.activities ?? [];
   const workLogEntries = useMemo(
-    () => deriveWorkLogEntries(threadActivities, undefined),
-    [threadActivities],
+    () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
+    [activeLatestTurn?.turnId, threadActivities],
   );
   const latestTurnHasToolActivity = useMemo(() => {
-    const latestTurnId = activeThread?.latestTurnId;
-    if (!latestTurnId) {
-      return false;
-    }
-    return threadActivities.some(
-      (activity) => activity.turnId === latestTurnId && activity.tone === "tool",
-    );
-  }, [activeThread?.latestTurnId, threadActivities]);
+    return hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId);
+  }, [activeLatestTurn?.turnId, threadActivities]);
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -488,36 +483,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
 
   const completionSummary = useMemo(() => {
-    if (!activeThread?.latestTurnStartedAt) return null;
-    if (!activeThread.latestTurnCompletedAt) return null;
+    if (!activeLatestTurn?.startedAt) return null;
+    if (!activeLatestTurn.completedAt) return null;
     if (!latestTurnHasToolActivity) return null;
 
-    if (
-      typeof activeThread.latestTurnDurationMs === "number" &&
-      Number.isFinite(activeThread.latestTurnDurationMs) &&
-      activeThread.latestTurnDurationMs >= 0
-    ) {
-      return `Worked for ${formatDuration(activeThread.latestTurnDurationMs)}`;
-    }
-
-    const elapsed = formatElapsed(
-      activeThread.latestTurnStartedAt,
-      activeThread.latestTurnCompletedAt,
-    );
+    const elapsed = formatElapsed(activeLatestTurn.startedAt, activeLatestTurn.completedAt);
     return elapsed ? `Worked for ${elapsed}` : null;
   }, [
-    activeThread?.latestTurnStartedAt,
-    activeThread?.latestTurnCompletedAt,
-    activeThread?.latestTurnDurationMs,
+    activeLatestTurn?.completedAt,
+    activeLatestTurn?.startedAt,
     latestTurnHasToolActivity,
   ]);
   const completionDividerBeforeEntryId = useMemo(() => {
-    if (!activeThread?.latestTurnStartedAt) return null;
-    if (!activeThread.latestTurnCompletedAt) return null;
+    if (!activeLatestTurn?.startedAt) return null;
+    if (!activeLatestTurn.completedAt) return null;
     if (!completionSummary) return null;
 
-    const turnStartedAt = Date.parse(activeThread.latestTurnStartedAt);
-    const turnCompletedAt = Date.parse(activeThread.latestTurnCompletedAt);
+    const turnStartedAt = Date.parse(activeLatestTurn.startedAt);
+    const turnCompletedAt = Date.parse(activeLatestTurn.completedAt);
     if (Number.isNaN(turnStartedAt)) return null;
     if (Number.isNaN(turnCompletedAt)) return null;
 
@@ -535,8 +518,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     return inRangeMatch ?? fallbackMatch;
   }, [
-    activeThread?.latestTurnCompletedAt,
-    activeThread?.latestTurnStartedAt,
+    activeLatestTurn?.completedAt,
+    activeLatestTurn?.startedAt,
     completionSummary,
     timelineEntries,
   ]);

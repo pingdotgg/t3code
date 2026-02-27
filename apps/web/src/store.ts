@@ -414,19 +414,6 @@ export function reducer(state: AppState, action: Action): AppState {
         .filter((thread) => thread.deletedAt === null)
         .map((thread) => {
           const existing = existingThreadById.get(thread.id);
-          const latestTurnStartedAt =
-            thread.latestTurnId === null
-              ? undefined
-              : thread.messages.find(
-                  (message) => message.turnId === thread.latestTurnId && message.role === "user",
-                )?.createdAt;
-          const latestTurnCompletedAt = thread.checkpoints.find(
-            (checkpoint) => checkpoint.turnId === thread.latestTurnId,
-          )?.completedAt;
-          const latestTurnDurationMs =
-            latestTurnStartedAt && latestTurnCompletedAt
-              ? Math.max(0, Date.parse(latestTurnCompletedAt) - Date.parse(latestTurnStartedAt))
-              : undefined;
 
           return normalizeThreadTerminals({
             id: thread.id,
@@ -484,10 +471,7 @@ export function reducer(state: AppState, action: Action): AppState {
             }),
             error: thread.session?.lastError ?? null,
             createdAt: thread.createdAt,
-            latestTurnId: thread.latestTurnId ?? undefined,
-            latestTurnStartedAt,
-            latestTurnCompletedAt,
-            latestTurnDurationMs,
+            latestTurn: thread.latestTurn,
             lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,
             branch: thread.branch,
             worktreePath: thread.worktreePath,
@@ -537,10 +521,10 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         threads: updateThread(state.threads, action.threadId, (thread) => {
-          if (!thread.latestTurnCompletedAt) {
+          if (!thread.latestTurn?.completedAt) {
             return thread;
           }
-          const latestTurnCompletedAtMs = Date.parse(thread.latestTurnCompletedAt);
+          const latestTurnCompletedAtMs = Date.parse(thread.latestTurn.completedAt);
           if (Number.isNaN(latestTurnCompletedAtMs)) {
             return thread;
           }

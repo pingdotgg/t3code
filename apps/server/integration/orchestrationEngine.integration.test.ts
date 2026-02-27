@@ -319,7 +319,7 @@ it.live("runs multi-turn file edits and persists checkpoint diffs", () =>
       const secondTurnThread = yield* harness.waitForThread(
         THREAD_ID,
         (entry) =>
-          entry.latestTurnId === "turn-2" &&
+          entry.latestTurn?.turnId === "turn-2" &&
           entry.checkpoints.length === 2 &&
           entry.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 2),
       );
@@ -653,7 +653,7 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
       yield* harness.waitForThread(
         THREAD_ID,
         (entry) =>
-          entry.latestTurnId === "turn-2" &&
+          entry.latestTurn?.turnId === "turn-2" &&
           entry.checkpoints.length === 2 &&
           entry.activities.some((activity) => activity.turnId === "turn-2"),
         8000,

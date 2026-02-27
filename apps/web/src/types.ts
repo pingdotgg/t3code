@@ -1,4 +1,5 @@
 import type {
+  OrchestrationLatestTurn,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
   ProjectScript as ContractProjectScript,
@@ -89,10 +90,7 @@ export interface Thread {
   messages: ChatMessage[];
   error: string | null;
   createdAt: string;
-  latestTurnId?: TurnId | undefined;
-  latestTurnStartedAt?: string | undefined;
-  latestTurnCompletedAt?: string | undefined;
-  latestTurnDurationMs?: number | undefined;
+  latestTurn: OrchestrationLatestTurn | null;
   lastVisitedAt?: string | undefined;
   branch: string | null;
   worktreePath: string | null;

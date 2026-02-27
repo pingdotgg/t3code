@@ -191,6 +191,24 @@ export const OrchestrationThreadActivity = Schema.Struct({
 });
 export type OrchestrationThreadActivity = typeof OrchestrationThreadActivity.Type;
 
+export const OrchestrationLatestTurnState = Schema.Literals([
+  "running",
+  "interrupted",
+  "completed",
+  "error",
+]);
+export type OrchestrationLatestTurnState = typeof OrchestrationLatestTurnState.Type;
+
+export const OrchestrationLatestTurn = Schema.Struct({
+  turnId: TurnId,
+  state: OrchestrationLatestTurnState,
+  requestedAt: IsoDateTime,
+  startedAt: Schema.NullOr(IsoDateTime),
+  completedAt: Schema.NullOr(IsoDateTime),
+  assistantMessageId: Schema.NullOr(MessageId),
+});
+export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -198,7 +216,7 @@ export const OrchestrationThread = Schema.Struct({
   model: TrimmedNonEmptyString,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
-  latestTurnId: Schema.NullOr(TurnId),
+  latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),

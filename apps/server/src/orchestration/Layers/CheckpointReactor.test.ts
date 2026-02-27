@@ -93,7 +93,7 @@ function createProviderServiceHarness(cwd: string, hasSession = true, sessionCwd
 async function waitForThread(
   engine: OrchestrationEngineShape,
   predicate: (thread: {
-    latestTurnId: string | null;
+    latestTurn: { turnId: string } | null;
     checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
     activities: ReadonlyArray<{ kind: string }>;
   }) => boolean,
@@ -101,7 +101,7 @@ async function waitForThread(
 ) {
   const deadline = Date.now() + timeoutMs;
   const poll = async (): Promise<{
-    latestTurnId: string | null;
+    latestTurn: { turnId: string } | null;
     checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
     activities: ReadonlyArray<{ kind: string }>;
   }> => {
@@ -358,7 +358,7 @@ describe("CheckpointReactor", () => {
     await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
     const thread = await waitForThread(
       harness.engine,
-      (entry) => entry.latestTurnId === "turn-1" && entry.checkpoints.length === 1,
+      (entry) => entry.latestTurn?.turnId === "turn-1" && entry.checkpoints.length === 1,
     );
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
     expect(
@@ -453,7 +453,7 @@ describe("CheckpointReactor", () => {
 
     const thread = await waitForThread(
       harness.engine,
-      (entry) => entry.latestTurnId === "turn-main" && entry.checkpoints.length === 1,
+      (entry) => entry.latestTurn?.turnId === "turn-main" && entry.checkpoints.length === 1,
     );
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
   });
@@ -775,7 +775,7 @@ describe("CheckpointReactor", () => {
     await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
     const thread = await waitForThread(harness.engine, (entry) => entry.checkpoints.length === 1);
 
-    expect(thread.latestTurnId).toBe("turn-1");
+    expect(thread.latestTurn?.turnId).toBe("turn-1");
     expect(thread.checkpoints).toHaveLength(1);
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
     expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);

@@ -75,7 +75,7 @@ describe("orchestration projector", () => {
         model: "gpt-5-codex",
         branch: null,
         worktreePath: null,
-        latestTurnId: null,
+        latestTurn: null,
         createdAt: now,
         updatedAt: now,
         deletedAt: null,
@@ -207,7 +207,7 @@ describe("orchestration projector", () => {
     );
 
     const thread = afterRunning.threads[0];
-    expect(thread?.latestTurnId).toBe("turn-1");
+    expect(thread?.latestTurn?.turnId).toBe("turn-1");
     expect(thread?.session?.status).toBe("running");
   });
 
@@ -504,7 +504,7 @@ describe("orchestration projector", () => {
       thread?.activities.map((activity) => ({ id: activity.id, turnId: activity.turnId })),
     ).toEqual([{ id: "activity-1", turnId: "turn-1" }]);
     expect(thread?.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount)).toEqual([1]);
-    expect(thread?.latestTurnId).toBe("turn-1");
+    expect(thread?.latestTurn?.turnId).toBe("turn-1");
   });
 
   it("does not fallback-retain messages tied to removed turn IDs", async () => {
