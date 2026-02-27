@@ -185,9 +185,19 @@ export interface OrchestrationIntegrationHarness {
   readonly dispose: Effect.Effect<void, never>;
 }
 
-export const makeOrchestrationIntegrationHarness = Effect.gen(function* () {
+interface MakeOrchestrationIntegrationHarnessOptions {
+  readonly provider?: "codex" | "claudeCode";
+}
+
+export const makeOrchestrationIntegrationHarness = (
+  options?: MakeOrchestrationIntegrationHarnessOptions,
+) =>
+  Effect.gen(function* () {
   const sleep = (ms: number) => Effect.sleep(ms);
-  const adapterHarness = yield* makeTestProviderAdapterHarness;
+  const provider = options?.provider ?? "codex";
+  const adapterHarness = yield* makeTestProviderAdapterHarness({
+    provider,
+  });
 
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-orchestration-integration-"));
   const workspaceDir = path.join(rootDir, "workspace");
@@ -199,10 +209,10 @@ export const makeOrchestrationIntegrationHarness = Effect.gen(function* () {
 
   const registry: typeof ProviderAdapterRegistry.Service = {
     getByProvider: (provider) =>
-      provider === "codex"
+      provider === adapterHarness.provider
         ? Effect.succeed(adapterHarness.adapter)
         : Effect.fail(new ProviderUnsupportedError({ provider })),
-    listProviders: () => Effect.succeed(["codex"]),
+    listProviders: () => Effect.succeed([adapterHarness.provider]),
   };
 
   const persistenceLayer = makeSqlitePersistenceLive(dbPath);

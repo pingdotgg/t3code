@@ -42,7 +42,7 @@ interface IntegrationFixture {
 
 const makeIntegrationFixture = Effect.gen(function* () {
   const cwd = yield* makeWorkspaceDirectory;
-  const harness = yield* makeTestProviderAdapterHarness;
+  const harness = yield* makeTestProviderAdapterHarness();
 
   const registry: typeof ProviderAdapterRegistry.Service = {
     getByProvider: (provider) =>

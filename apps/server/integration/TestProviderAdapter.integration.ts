@@ -42,6 +42,7 @@ interface SessionState {
 
 export interface TestProviderAdapterHarness {
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
+  readonly provider: "codex" | "claudeCode";
   readonly queueTurnResponse: (
     sessionId: string,
     response: TestTurnResponse,
@@ -49,7 +50,10 @@ export interface TestProviderAdapterHarness {
   readonly queueTurnResponseForNextSession: (
     response: TestTurnResponse,
   ) => Effect.Effect<void, never>;
+  readonly getStartCount: () => number;
   readonly getRollbackCalls: (sessionId: string) => ReadonlyArray<number>;
+  readonly getInterruptCalls: (sessionId: string) => ReadonlyArray<ProviderTurnId | undefined>;
+  readonly listActiveSessionIds: () => ReadonlyArray<ProviderSessionId>;
   readonly getApprovalResponses: (sessionId: string) => ReadonlyArray<{
     readonly sessionId: ProviderSessionId;
     readonly requestId: ApprovalRequestId;
@@ -57,46 +61,57 @@ export interface TestProviderAdapterHarness {
   }>;
 }
 
-const PROVIDER = "codex" as const;
+interface MakeTestProviderAdapterHarnessOptions {
+  readonly provider?: "codex" | "claudeCode";
+}
 
 function nowIso(): string {
   return new Date().toISOString();
 }
 
-function sessionNotFound(sessionId: string): ProviderAdapterSessionNotFoundError {
+function sessionNotFound(
+  provider: "codex" | "claudeCode",
+  sessionId: string,
+): ProviderAdapterSessionNotFoundError {
   return new ProviderAdapterSessionNotFoundError({
-    provider: PROVIDER,
+    provider,
     sessionId,
   });
 }
 
-function missingSessionEffect(sessionId: string): Effect.Effect<never, ProviderAdapterError> {
-  return Effect.fail(sessionNotFound(sessionId));
+function missingSessionEffect(
+  provider: "codex" | "claudeCode",
+  sessionId: string,
+): Effect.Effect<never, ProviderAdapterError> {
+  return Effect.fail(sessionNotFound(provider, sessionId));
 }
 
-export const makeTestProviderAdapterHarness = Effect.gen(function* () {
-  const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
-  let sessionCount = 0;
-  const sessions = new Map<string, SessionState>();
-  const queuedResponsesForNextSession: TestTurnResponse[] = [];
-  const approvalResponsesBySession = new Map<
-    string,
-    Array<{
-      readonly sessionId: ProviderSessionId;
-      readonly requestId: ApprovalRequestId;
-      readonly decision: ProviderApprovalDecision;
-    }>
-  >();
+export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapterHarnessOptions) =>
+  Effect.gen(function* () {
+    const provider = options?.provider ?? "codex";
+    const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
+    let sessionCount = 0;
+    const sessions = new Map<string, SessionState>();
+    const queuedResponsesForNextSession: TestTurnResponse[] = [];
+    const interruptCallsBySession = new Map<string, Array<ProviderTurnId | undefined>>();
+    const approvalResponsesBySession = new Map<
+      string,
+      Array<{
+        readonly sessionId: ProviderSessionId;
+        readonly requestId: ApprovalRequestId;
+        readonly decision: ProviderApprovalDecision;
+      }>
+    >();
 
   const emit = (event: ProviderRuntimeEvent) => Queue.offer(runtimeEvents, event);
 
   const startSession: ProviderAdapterShape<ProviderAdapterError>["startSession"] = (input) =>
     Effect.gen(function* () {
-      if (input.provider !== undefined && input.provider !== PROVIDER) {
+      if (input.provider !== undefined && input.provider !== provider) {
         return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "startSession",
-          issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
+          issue: `Expected provider '${provider}' but received '${input.provider}'.`,
         });
       }
 
@@ -107,10 +122,11 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
 
       const session: ProviderSession = {
         sessionId,
-        provider: PROVIDER,
+        provider,
         status: "ready",
         threadId,
         cwd: input.cwd,
+        resumeCursor: input.resumeCursor ?? { sessionId },
         createdAt,
         updatedAt: createdAt,
       };
@@ -133,7 +149,7 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
     Effect.gen(function* () {
       const state = sessions.get(input.sessionId);
       if (!state) {
-        return yield* missingSessionEffect(input.sessionId);
+        return yield* missingSessionEffect(provider, input.sessionId);
       }
 
       state.turnCount += 1;
@@ -143,7 +159,7 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
       const response = state.queuedResponses.shift();
       if (!response) {
         return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "sendTurn",
           issue: `No queued turn response for session ${input.sessionId}.`,
         });
@@ -155,7 +171,7 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
         const rawEvent: Record<string, unknown> = {
           ...(fixtureEvent as Record<string, unknown>),
           eventId: randomUUID(),
-          provider: PROVIDER,
+          provider,
           sessionId: input.sessionId,
           createdAt: nowIso(),
         };
@@ -206,7 +222,7 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
         yield* emit({
           type: "turn.completed",
           eventId: EventId.makeUnsafe(randomUUID()),
-          provider: PROVIDER,
+          provider,
           sessionId: input.sessionId,
           createdAt: nowIso(),
           threadId: state.snapshot.threadId,
@@ -227,8 +243,15 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
 
   const interruptTurn: ProviderAdapterShape<ProviderAdapterError>["interruptTurn"] = (
     sessionId,
-    _turnId,
-  ) => (sessions.has(sessionId) ? Effect.void : missingSessionEffect(sessionId));
+    turnId,
+  ) =>
+    sessions.has(sessionId)
+      ? Effect.sync(() => {
+          const existing = interruptCallsBySession.get(sessionId) ?? [];
+          existing.push(turnId);
+          interruptCallsBySession.set(sessionId, existing);
+        })
+      : missingSessionEffect(provider, sessionId);
 
   const respondToRequest: ProviderAdapterShape<ProviderAdapterError>["respondToRequest"] = (
     sessionId,
@@ -245,7 +268,7 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
           });
           approvalResponsesBySession.set(sessionId, existing);
         })
-      : missingSessionEffect(sessionId);
+      : missingSessionEffect(provider, sessionId);
 
   const stopSession: ProviderAdapterShape<ProviderAdapterError>["stopSession"] = (sessionId) =>
     Effect.sync(() => {
@@ -261,7 +284,7 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
   const readThread: ProviderAdapterShape<ProviderAdapterError>["readThread"] = (sessionId) => {
     const state = sessions.get(sessionId);
     if (!state) {
-      return missingSessionEffect(sessionId);
+      return missingSessionEffect(provider, sessionId);
     }
     return Effect.succeed(state.snapshot);
   };
@@ -272,12 +295,12 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
   ) => {
     const state = sessions.get(sessionId);
     if (!state) {
-      return missingSessionEffect(sessionId);
+      return missingSessionEffect(provider, sessionId);
     }
     if (!Number.isInteger(numTurns) || numTurns < 0 || numTurns > state.snapshot.turns.length) {
       return Effect.fail(
         new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "rollbackThread",
           issue: "numTurns must be an integer between 0 and current turn count.",
         }),
@@ -301,7 +324,7 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
     });
 
   const adapter: ProviderAdapterShape<ProviderAdapterError> = {
-    provider: PROVIDER,
+    provider,
     startSession,
     sendTurn,
     interruptTurn,
@@ -325,7 +348,7 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
           ? Effect.sync(() => {
               state.queuedResponses.push(response);
             })
-          : Effect.fail(sessionNotFound(sessionId)),
+          : Effect.fail(sessionNotFound(provider, sessionId)),
       ),
     );
 
@@ -344,6 +367,19 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
     return [...state.rollbackCalls];
   };
 
+  const getStartCount = (): number => sessionCount;
+
+  const getInterruptCalls = (sessionId: string): ReadonlyArray<ProviderTurnId | undefined> => {
+    const calls = interruptCallsBySession.get(sessionId);
+    if (!calls) {
+      return [];
+    }
+    return [...calls];
+  };
+
+  const listActiveSessionIds = (): ReadonlyArray<ProviderSessionId> =>
+    Array.from(sessions.values(), (state) => state.session.sessionId);
+
   const getApprovalResponses = (
     sessionId: string,
   ): ReadonlyArray<{
@@ -360,9 +396,13 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
 
   return {
     adapter,
+    provider,
     queueTurnResponse,
     queueTurnResponseForNextSession,
+    getStartCount,
     getRollbackCalls,
+    getInterruptCalls,
+    listActiveSessionIds,
     getApprovalResponses,
   } satisfies TestProviderAdapterHarness;
 });
