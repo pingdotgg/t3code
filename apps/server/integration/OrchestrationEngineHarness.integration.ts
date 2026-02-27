@@ -170,11 +170,7 @@ export interface OrchestrationIntegrationHarness {
 }
 
 export const makeOrchestrationIntegrationHarness = Effect.gen(function* () {
-  const sleep = (ms: number) =>
-    Effect.tryPromise({
-      try: () => new Promise<void>((resolve) => setTimeout(resolve, ms)),
-      catch: (cause) => new OrchestrationHarnessRuntimeError({ operation: "sleep", cause }),
-    }).pipe(Effect.orDie);
+  const sleep = (ms: number) => Effect.sleep(ms);
   const adapterHarness = yield* makeTestProviderAdapterHarness;
 
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-orchestration-integration-"));

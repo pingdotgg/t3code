@@ -45,13 +45,6 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-class IntegrationSleepError extends Schema.TaggedErrorClass<IntegrationSleepError>()(
-  "IntegrationSleepError",
-  {
-    cause: Schema.optional(Schema.Defect),
-  },
-) {}
-
 class IntegrationWaitTimeoutError extends Schema.TaggedErrorClass<IntegrationWaitTimeoutError>()(
   "IntegrationWaitTimeoutError",
   {
@@ -59,11 +52,7 @@ class IntegrationWaitTimeoutError extends Schema.TaggedErrorClass<IntegrationWai
   },
 ) {}
 
-const sleep = (ms: number) =>
-  Effect.tryPromise({
-    try: () => new Promise<void>((resolve) => setTimeout(resolve, ms)),
-    catch: (cause) => new IntegrationSleepError({ cause }),
-  }).pipe(Effect.orDie);
+const sleep = (ms: number) => Effect.sleep(ms);
 
 function waitForSync<A>(
   read: () => A,
