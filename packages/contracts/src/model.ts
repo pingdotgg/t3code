@@ -13,9 +13,9 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "gpt-5.2", name: "GPT-5.2" },
   ],
   claudeCode: [
-    { slug: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
-    { slug: "claude-opus-4-1", name: "Claude Opus 4.1" },
-    { slug: "claude-haiku-3-5", name: "Claude Haiku 3.5" },
+    { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+    { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
+    { slug: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
   ],
 } as const satisfies Record<ProviderKind, readonly ModelOption[]>;
 
@@ -23,7 +23,7 @@ export type ModelSlug = (typeof MODEL_OPTIONS_BY_PROVIDER)[ProviderKind][number]
 
 export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, ModelSlug> = {
   codex: "gpt-5.3-codex",
-  claudeCode: "claude-sonnet-4-5",
+  claudeCode: "claude-sonnet-4-6",
 };
 
 // Backward compatibility for existing Codex-only call sites.
@@ -38,15 +38,18 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "gpt-5.3-spark": "gpt-5.3-codex-spark",
   },
   claudeCode: {
-    sonnet: "claude-sonnet-4-5",
-    "sonnet-4.5": "claude-sonnet-4-5",
-    "claude-sonnet-4.5": "claude-sonnet-4-5",
-    opus: "claude-opus-4-1",
-    "opus-4.1": "claude-opus-4-1",
-    "claude-opus-4.1": "claude-opus-4-1",
-    haiku: "claude-haiku-3-5",
-    "haiku-3.5": "claude-haiku-3-5",
-    "claude-haiku-3.5": "claude-haiku-3-5",
+    sonnet: "claude-sonnet-4-6",
+    "sonnet-4.6": "claude-sonnet-4-6",
+    "claude-sonnet-4.6": "claude-sonnet-4-6",
+    "claude-sonnet-4-6-20251117": "claude-sonnet-4-6",
+    opus: "claude-opus-4-6",
+    "opus-4.6": "claude-opus-4-6",
+    "claude-opus-4.6": "claude-opus-4-6",
+    "claude-opus-4-6-20251117": "claude-opus-4-6",
+    haiku: "claude-haiku-4-5",
+    "haiku-4.5": "claude-haiku-4-5",
+    "claude-haiku-4.5": "claude-haiku-4-5",
+    "claude-haiku-4-5-20251001": "claude-haiku-4-5",
   },
 };
 

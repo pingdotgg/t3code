@@ -31,8 +31,11 @@ describe("normalizeModelSlug", () => {
   });
 
   it("uses provider-specific aliases", () => {
-    expect(normalizeModelSlug("sonnet", "claudeCode")).toBe("claude-sonnet-4-5");
-    expect(normalizeModelSlug("opus-4.1", "claudeCode")).toBe("claude-opus-4-1");
+    expect(normalizeModelSlug("sonnet", "claudeCode")).toBe("claude-sonnet-4-6");
+    expect(normalizeModelSlug("opus-4.6", "claudeCode")).toBe("claude-opus-4-6");
+    expect(normalizeModelSlug("claude-haiku-4-5-20251001", "claudeCode")).toBe(
+      "claude-haiku-4-5",
+    );
   });
 });
 
@@ -57,7 +60,7 @@ describe("resolveModelSlug", () => {
     expect(resolveModelSlugForProvider("claudeCode", undefined)).toBe(
       DEFAULT_MODEL_BY_PROVIDER.claudeCode,
     );
-    expect(resolveModelSlugForProvider("claudeCode", "sonnet")).toBe("claude-sonnet-4-5");
+    expect(resolveModelSlugForProvider("claudeCode", "sonnet")).toBe("claude-sonnet-4-6");
     expect(resolveModelSlugForProvider("claudeCode", "gpt-5.3-codex")).toBe(
       DEFAULT_MODEL_BY_PROVIDER.claudeCode,
     );
