@@ -326,17 +326,16 @@ export const makeOrchestrationIntegrationHarness = Effect.gen(function* () {
       );
       const disposeRuntimeExit = yield* Effect.exit(Effect.promise(() => runtime.dispose()));
 
-      const failureCause =
-        Exit.isFailure(stopAllExit)
-          ? stopAllExit.cause
-          : Exit.isFailure(closeScopeExit)
-            ? closeScopeExit.cause
-            : Exit.isFailure(disposeRuntimeExit)
-              ? disposeRuntimeExit.cause
-              : null;
+      const failureCause = Exit.isFailure(stopAllExit)
+        ? stopAllExit.cause
+        : Exit.isFailure(closeScopeExit)
+          ? closeScopeExit.cause
+          : Exit.isFailure(disposeRuntimeExit)
+            ? disposeRuntimeExit.cause
+            : null;
 
       if (failureCause) {
-        yield* Effect.failCause(failureCause);
+        return yield* Effect.failCause(failureCause);
       }
     });
 
