@@ -28,10 +28,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { type ProviderThreadSnapshot } from "../Services/ProviderAdapter.ts";
-import {
-  ClaudeCodeAdapter,
-  type ClaudeCodeAdapterShape,
-} from "../Services/ClaudeCodeAdapter.ts";
+import { ClaudeCodeAdapter, type ClaudeCodeAdapterShape } from "../Services/ClaudeCodeAdapter.ts";
 
 const PROVIDER = "claudeCode" as const;
 
@@ -188,10 +185,7 @@ const makeClaudeCodeAdapter = (options?: ClaudeCodeAdapterLiveOptions) =>
         }
         return makeUnavailableRuntime();
       }),
-      (runtime) =>
-        runtime.stopAll().pipe(
-          Effect.orElseSucceed(() => undefined),
-        ),
+      (runtime) => runtime.stopAll(),
     );
 
     const startSession: ClaudeCodeAdapterShape["startSession"] = (input) => {
@@ -219,19 +213,19 @@ const makeClaudeCodeAdapter = (options?: ClaudeCodeAdapterLiveOptions) =>
     };
 
     const sendTurn: ClaudeCodeAdapterShape["sendTurn"] = (input) =>
-      runtime.sendTurn(input).pipe(
-        Effect.mapError((cause) => toRequestError(input.sessionId, "turn/start", cause)),
-      );
+      runtime
+        .sendTurn(input)
+        .pipe(Effect.mapError((cause) => toRequestError(input.sessionId, "turn/start", cause)));
 
     const interruptTurn: ClaudeCodeAdapterShape["interruptTurn"] = (sessionId, turnId) =>
-      runtime.interruptTurn(sessionId, turnId).pipe(
-        Effect.mapError((cause) => toRequestError(sessionId, "turn/interrupt", cause)),
-      );
+      runtime
+        .interruptTurn(sessionId, turnId)
+        .pipe(Effect.mapError((cause) => toRequestError(sessionId, "turn/interrupt", cause)));
 
     const readThread: ClaudeCodeAdapterShape["readThread"] = (sessionId) =>
-      runtime.readThread(sessionId).pipe(
-        Effect.mapError((cause) => toRequestError(sessionId, "thread/read", cause)),
-      );
+      runtime
+        .readThread(sessionId)
+        .pipe(Effect.mapError((cause) => toRequestError(sessionId, "thread/read", cause)));
 
     const rollbackThread: ClaudeCodeAdapterShape["rollbackThread"] = (sessionId, numTurns) => {
       if (!Number.isInteger(numTurns) || numTurns < 1) {
@@ -244,9 +238,9 @@ const makeClaudeCodeAdapter = (options?: ClaudeCodeAdapterLiveOptions) =>
         );
       }
 
-      return runtime.rollbackThread(sessionId, numTurns).pipe(
-        Effect.mapError((cause) => toRequestError(sessionId, "thread/rollback", cause)),
-      );
+      return runtime
+        .rollbackThread(sessionId, numTurns)
+        .pipe(Effect.mapError((cause) => toRequestError(sessionId, "thread/rollback", cause)));
     };
 
     const respondToRequest: ClaudeCodeAdapterShape["respondToRequest"] = (
@@ -254,15 +248,21 @@ const makeClaudeCodeAdapter = (options?: ClaudeCodeAdapterLiveOptions) =>
       requestId,
       decision,
     ) =>
-      runtime.respondToRequest(sessionId, requestId, decision).pipe(
-        Effect.mapError((cause) => toRequestError(sessionId, "item/requestApproval/decision", cause)),
-      );
+      runtime
+        .respondToRequest(sessionId, requestId, decision)
+        .pipe(
+          Effect.mapError((cause) =>
+            toRequestError(sessionId, "item/requestApproval/decision", cause),
+          ),
+        );
 
-    const stopSession: ClaudeCodeAdapterShape["stopSession"] = (sessionId) => runtime.stopSession(sessionId);
+    const stopSession: ClaudeCodeAdapterShape["stopSession"] = (sessionId) =>
+      runtime.stopSession(sessionId);
 
     const listSessions: ClaudeCodeAdapterShape["listSessions"] = () => runtime.listSessions();
 
-    const hasSession: ClaudeCodeAdapterShape["hasSession"] = (sessionId) => runtime.hasSession(sessionId);
+    const hasSession: ClaudeCodeAdapterShape["hasSession"] = (sessionId) =>
+      runtime.hasSession(sessionId);
 
     const stopAll: ClaudeCodeAdapterShape["stopAll"] = () => runtime.stopAll();
 
