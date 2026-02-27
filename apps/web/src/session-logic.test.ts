@@ -2,6 +2,7 @@ import { EventId, TurnId, type OrchestrationThreadActivity } from "@t3tools/cont
 import { describe, expect, it } from "vitest";
 
 import {
+  PROVIDER_OPTIONS,
   derivePendingApprovals,
   deriveWorkLogEntries,
   hasToolActivityForTurn,
@@ -198,5 +199,16 @@ describe("isLatestTurnSettled", () => {
         null,
       ),
     ).toBe(false);
+  });
+});
+
+describe("PROVIDER_OPTIONS", () => {
+  it("marks claudeCode as available", () => {
+    const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeCode");
+    expect(claude).toEqual({
+      value: "claudeCode",
+      label: "Claude Code",
+      available: true,
+    });
   });
 });

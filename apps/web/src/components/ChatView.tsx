@@ -6,6 +6,8 @@ import {
   type EditorId,
   type KeybindingCommand,
   type MessageId,
+  getDefaultModel,
+  getModelOptions,
   type ProjectId,
   type ProjectEntry,
   type ProjectScript,
@@ -16,10 +18,11 @@ import {
   type ResolvedKeybindingsConfig,
   type ProviderApprovalDecision,
   type ServerProviderStatus,
+  type ProviderKind,
   type ThreadId,
   type TurnId,
   normalizeModelSlug,
-  resolveModelSlug,
+  resolveModelSlugForProvider,
   OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -49,6 +52,7 @@ import {
   derivePhase,
   deriveTimelineEntries,
   type PendingApproval,
+  PROVIDER_OPTIONS,
   deriveWorkLogEntries,
   hasToolActivityForTurn,
   isLatestTurnSettled,
@@ -501,6 +505,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
+  const [selectedProviderByThread, setSelectedProviderByThread] = useState<
+    Partial<Record<ThreadId, ProviderKind>>
+  >({});
   const [isSwitchingRuntimeMode, setIsSwitchingRuntimeMode] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
@@ -624,20 +631,45 @@ export default function ChatView({ threadId }: ChatViewProps) {
     markThreadVisited,
   ]);
 
-  const baseThreadModel = resolveModelSlug(
-    activeThread?.model ?? activeProject?.model ?? DEFAULT_MODEL,
+  const sessionProvider = activeThread?.session?.provider ?? null;
+  const selectedProvider: ProviderKind =
+    (activeThread?.id ? selectedProviderByThread[activeThread.id] : undefined) ??
+    sessionProvider ??
+    "codex";
+  const baseThreadModel = resolveModelSlugForProvider(
+    selectedProvider,
+    activeThread?.model ?? activeProject?.model ?? getDefaultModel(selectedProvider) ?? DEFAULT_MODEL,
   );
-  const selectedModel = resolveModelSlug(composerDraft.model ?? baseThreadModel);
+  const selectedModel = resolveModelSlugForProvider(selectedProvider, composerDraft.model ?? baseThreadModel);
   const selectedEffort = composerDraft.effort ?? DEFAULT_REASONING;
   const modelOptions = useMemo(
-    () => getAppModelOptions(settings.customCodexModels, selectedModel),
-    [selectedModel, settings.customCodexModels],
-  );
-  const slashModelOptions = useMemo(
     () =>
-      getSlashModelOptions(settings.customCodexModels, composerTrigger?.query ?? "", selectedModel),
-    [composerTrigger?.query, selectedModel, settings.customCodexModels],
+      selectedProvider === "codex"
+        ? getAppModelOptions(settings.customCodexModels, selectedModel)
+        : getModelOptions(selectedProvider),
+    [selectedModel, selectedProvider, settings.customCodexModels],
   );
+  const slashModelOptions = useMemo(() => {
+    if (selectedProvider === "codex") {
+      return getSlashModelOptions(settings.customCodexModels, composerTrigger?.query ?? "", selectedModel);
+    }
+    const query = (composerTrigger?.query ?? "").trim().toLowerCase();
+    if (!query) {
+      return modelOptions;
+    }
+    return modelOptions.filter(({ slug, name }) => {
+      const searchSlug = slug.toLowerCase();
+      const searchName = name.toLowerCase();
+      return searchSlug.includes(query) || searchName.includes(query);
+    });
+  }, [composerTrigger?.query, modelOptions, selectedModel, selectedProvider, settings.customCodexModels]);
+  useEffect(() => {
+    if (!activeThread?.id || !sessionProvider) return;
+    setSelectedProviderByThread((existing) => {
+      if (existing[activeThread.id]) return existing;
+      return { ...existing, [activeThread.id]: sessionProvider };
+    });
+  }, [activeThread?.id, sessionProvider]);
   const phase = derivePhase(activeThread?.session ?? null);
   const isSendBusy = sendPhase !== "idle";
   const isPreparingWorktree = sendPhase === "preparing-worktree";
@@ -2119,6 +2151,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           attachments: turnAttachments,
         },
         model: selectedModel || undefined,
+        provider: selectedProvider,
         effort: selectedEffort || undefined,
         assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
         approvalPolicy,
@@ -2217,19 +2250,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
           type: "thread.meta.update",
           commandId: newCommandId(),
           threadId: activeThread.id,
-          model: resolvedModel,
+          model: resolveModelSlugForProvider(selectedProvider, model),
         });
       }
       scheduleComposerFocus();
     },
-    [
-      activeThread,
-      baseThreadModel,
-      isServerThread,
-      scheduleComposerFocus,
-      setComposerDraftModel,
-      threadId,
-    ],
+    [activeThread, scheduleComposerFocus, selectedProvider],
+  );
+  const onProviderSelect = useCallback(
+    (provider: ProviderKind) => {
+      if (!activeThread) return;
+      setSelectedProviderByThread((existing) => ({
+        ...existing,
+        [activeThread.id]: provider,
+      }));
+      scheduleComposerFocus();
+    },
+    [activeThread, scheduleComposerFocus],
   );
   const onEffortSelect = useCallback(
     (effort: ReasoningEffort) => {
@@ -2666,6 +2703,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
             {/* Bottom toolbar */}
             <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 pb-2.5 sm:flex-nowrap sm:gap-0 sm:px-3 sm:pb-3">
               <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible">
+                {/* Model picker */}
+                <ProviderPicker provider={selectedProvider} onProviderChange={onProviderSelect} />
+
+                {/* Divider */}
+                <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+
                 {/* Model picker */}
                 <ModelPicker
                   model={selectedModel}
@@ -3654,9 +3697,9 @@ const MessagesTimeline = memo(function MessagesTimeline({
 });
 
 const ModelPicker = memo(function ModelPicker(props: {
-  model: string;
-  options: ReadonlyArray<{ slug: string; name: string }>;
-  onModelChange: (model: string) => void;
+  model: ModelSlug;
+  options: ReadonlyArray<{ readonly slug: ModelSlug; readonly name: string }>;
+  onModelChange: (model: ModelSlug) => void;
 }) {
   return (
     <Select
@@ -3671,6 +3714,35 @@ const ModelPicker = memo(function ModelPicker(props: {
         {props.options.map(({ slug, name }) => (
           <SelectItem key={slug} value={slug}>
             {name}
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
+  );
+});
+
+const ProviderPicker = memo(function ProviderPicker(props: {
+  provider: ProviderKind;
+  onProviderChange: (provider: ProviderKind) => void;
+}) {
+  return (
+    <Select
+      items={PROVIDER_OPTIONS.filter((option) => option.available).map((option) => ({
+        label: option.label,
+        value: option.value,
+      }))}
+      value={props.provider}
+      onValueChange={(value) =>
+        value === "codex" || value === "claudeCode" ? props.onProviderChange(value) : undefined
+      }
+    >
+      <SelectTrigger size="sm" variant="ghost">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectPopup alignItemWithTrigger={false}>
+        {PROVIDER_OPTIONS.filter((option) => option.available).map(({ value, label }) => (
+          <SelectItem key={value} value={value}>
+            {label}
           </SelectItem>
         ))}
       </SelectPopup>
