@@ -30,6 +30,7 @@
     },
     "test": {
       "dependsOn": ["^build"],
+      "cache": false,
       "outputs": []
     }
   }

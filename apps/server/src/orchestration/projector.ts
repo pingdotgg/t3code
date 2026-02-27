@@ -41,10 +41,8 @@ function decodeForEvent<A>(
   field: string,
 ): Effect.Effect<A, OrchestrationProjectorDecodeError> {
   return Effect.try({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    try: () => Schema.decodeUnknownSync(schema as any)(value) as A,
-    catch: (error) =>
-      toProjectorDecodeError(`${eventType}:${field}`)(error as Schema.SchemaError),
+    try: () => Schema.decodeUnknownSync(schema as any)(value),
+    catch: (error) => toProjectorDecodeError(`${eventType}:${field}`)(error as Schema.SchemaError),
   });
 }
 
