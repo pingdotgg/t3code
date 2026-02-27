@@ -113,7 +113,7 @@ import {
 import { Separator } from "./ui/separator";
 import { Group, GroupSeparator } from "./ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu";
-import { CursorIcon, Icon, VisualStudioCode, Zed } from "./Icons";
+import { ClaudeAI, CursorIcon, Icon, OpenAI } from "./Icons";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { Badge } from "./ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -3717,6 +3717,11 @@ const PROVIDER_MODEL_GROUPS: ReadonlyArray<{
   options: getModelOptions(option.value),
 }));
 
+const PROVIDER_ICON_BY_PROVIDER: Record<ProviderKind, Icon> = {
+  codex: OpenAI,
+  claudeCode: ClaudeAI,
+};
+
 const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   provider: ProviderKind;
   model: ModelSlug;
@@ -3728,6 +3733,11 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       value: `${provider}:${slug}`,
     })),
   );
+  const selectedModelLabel =
+    PROVIDER_MODEL_GROUPS.find((group) => group.provider === props.provider)?.options.find(
+      (option) => option.slug === props.model,
+    )?.name ?? props.model;
+  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.provider];
 
   return (
     <Select
@@ -3754,7 +3764,16 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       }
     >
       <SelectTrigger size="sm" variant="ghost">
-        <SelectValue />
+        <span className="flex min-w-0 items-center gap-2">
+          <ProviderIcon
+            aria-hidden="true"
+            className={cn(
+              "size-4 shrink-0",
+              props.provider === "claudeCode" ? "" : "text-foreground/85",
+            )}
+          />
+          <span className="truncate">{selectedModelLabel}</span>
+        </span>
       </SelectTrigger>
       <SelectPopup alignItemWithTrigger={false}>
         {PROVIDER_MODEL_GROUPS.map(({ provider, label, options }) => (
