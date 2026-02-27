@@ -31,7 +31,6 @@ const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const BUFFERED_ASSISTANT_MESSAGE_SPILLED_CACHE_CAPACITY = 20_000;
 const BUFFERED_ASSISTANT_MESSAGE_SPILLED_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
-const BUFFERED_ASSISTANT_KEEP_CHARS = 8_000;
 
 type TurnStartRequestedDomainEvent = Extract<
   OrchestrationEvent,
@@ -245,12 +244,9 @@ const make = Effect.gen(function* () {
             return "";
           }
 
-          // Safety valve: spill oldest text as a persisted assistant delta to cap memory.
-          const spillChars = Math.max(1, nextText.length - BUFFERED_ASSISTANT_KEEP_CHARS);
-          const spillChunk = nextText.slice(0, spillChars);
-          const retainedTail = nextText.slice(spillChars);
-          yield* Cache.set(bufferedAssistantTextByMessageId, messageId, retainedTail);
-          return spillChunk;
+          // Safety valve: spill full buffered text as a persisted assistant delta to cap memory.
+          yield* Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
+          return nextText;
         }),
       ),
     );
