@@ -77,6 +77,21 @@ interface AttachmentSideEffects {
   readonly prunedThreadRelativePaths: Map<string, Set<string>>;
 }
 
+function toSafeThreadAttachmentSegment(threadId: string): string | null {
+  const segment = encodeURIComponent(threadId);
+  if (
+    segment.length === 0 ||
+    segment === "." ||
+    segment === ".." ||
+    segment.includes("/") ||
+    segment.includes("\\") ||
+    segment.includes("\0")
+  ) {
+    return null;
+  }
+  return segment;
+}
+
 function parseBase64DataUrl(
   dataUrl: string,
 ): { readonly mimeType: string; readonly base64: string } | null {
@@ -114,7 +129,14 @@ const materializeAttachmentsForProjection = Effect.fn(function* (input: {
 
   const path = yield* Path.Path;
   const attachmentsRootDir = path.join(serverConfig.value.stateDir, "attachments");
-  const threadSegment = encodeURIComponent(input.threadId);
+  const threadSegment = toSafeThreadAttachmentSegment(input.threadId);
+  if (!threadSegment) {
+    yield* Effect.logWarning("skipping attachment materialization for unsafe thread id", {
+      threadId: input.threadId,
+      messageId: input.messageId,
+    });
+    return input.attachments;
+  }
   const messageSegment = encodeURIComponent(input.messageId);
 
   return yield* Effect.forEach(
@@ -282,7 +304,11 @@ function collectThreadAttachmentRelativePaths(
   threadId: string,
   messages: ReadonlyArray<ProjectionThreadMessage>,
 ): Set<string> {
-  const threadPrefix = `${encodeURIComponent(threadId)}/`;
+  const threadSegment = toSafeThreadAttachmentSegment(threadId);
+  if (!threadSegment) {
+    return new Set();
+  }
+  const threadPrefix = `${threadSegment}/`;
   const relativePaths = new Set<string>();
   for (const message of messages) {
     for (const attachment of message.attachments ?? []) {
@@ -317,10 +343,18 @@ const runAttachmentSideEffects = Effect.fn(function* (input: {
 
   yield* Effect.forEach(
     input.sideEffects.deletedThreadIds,
-    (threadId) => {
-      const threadDir = input.path.join(attachmentsRootDir, encodeURIComponent(threadId));
-      return input.fileSystem.remove(threadDir, { recursive: true, force: true });
-    },
+    (threadId) =>
+      Effect.gen(function* () {
+        const threadSegment = toSafeThreadAttachmentSegment(threadId);
+        if (!threadSegment) {
+          yield* Effect.logWarning("skipping attachment cleanup for unsafe thread id", {
+            threadId,
+          });
+          return;
+        }
+        const threadDir = input.path.join(attachmentsRootDir, threadSegment);
+        yield* input.fileSystem.remove(threadDir, { recursive: true, force: true });
+      }),
     { concurrency: 1 },
   );
 
@@ -330,8 +364,13 @@ const runAttachmentSideEffects = Effect.fn(function* (input: {
       if (input.sideEffects.deletedThreadIds.has(threadId)) {
         return Effect.void;
       }
-      const threadDir = input.path.join(attachmentsRootDir, encodeURIComponent(threadId));
       return Effect.gen(function* () {
+        const threadSegment = toSafeThreadAttachmentSegment(threadId);
+        if (!threadSegment) {
+          yield* Effect.logWarning("skipping attachment prune for unsafe thread id", { threadId });
+          return;
+        }
+        const threadDir = input.path.join(attachmentsRootDir, threadSegment);
         const entries = yield* input.fileSystem
           .readDirectory(threadDir, { recursive: true })
           .pipe(Effect.catch(() => Effect.succeed([] as Array<string>)));
@@ -601,16 +640,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
                   stageFileWrite: (pendingWrite) => {
                     attachmentSideEffects.writes.push(pendingWrite);
                   },
-                }).pipe(
-                  Effect.provideService(Path.Path, path),
-                  Effect.catch((cause) =>
-                    Effect.logWarning("failed to persist message attachments", {
-                      threadId: event.payload.threadId,
-                      messageId: event.payload.messageId,
-                      cause,
-                    }).pipe(Effect.as(event.payload.attachments)),
-                  ),
-                )
+                }).pipe(Effect.provideService(Path.Path, path))
               : existingMessage?.attachments;
           yield* projectionThreadMessageRepository.upsert({
             messageId: event.payload.messageId,

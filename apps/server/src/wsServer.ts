@@ -23,7 +23,6 @@ import {
   WsPush,
   WsResponse,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
   Cause,
@@ -787,6 +786,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 });
 
 export const ServerLive = Layer.succeed(Server, {
-  start: createServer().pipe(Effect.provide(NodeServices.layer)),
+  start: createServer(),
   stopSignal: Effect.never,
 } satisfies ServerShape);

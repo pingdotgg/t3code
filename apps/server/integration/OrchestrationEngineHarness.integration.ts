@@ -215,14 +215,13 @@ export const makeOrchestrationIntegrationHarness = Effect.gen(function* () {
     Layer.provide(providerSessionDirectoryLayer),
     Layer.provide(Layer.succeed(ProviderAdapterRegistry, registry)),
   );
-  const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(NodeServices.layer));
 
   const runtimeServicesLayer = Layer.mergeAll(
     orchestrationLayer,
     OrchestrationProjectionSnapshotQueryLive,
     ProjectionCheckpointRepositoryLive,
     ProjectionPendingApprovalRepositoryLive,
-    checkpointStoreLayer,
+    CheckpointStoreLive,
     providerLayer,
   );
   const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Effect, Exit, Layer, PubSub, Scope, Stream } from "effect";
+import { Effect, Exit, Layer, PlatformError, PubSub, Scope, Stream } from "effect";
 import { describe, expect, it, afterEach, vi } from "vitest";
 import { createServer } from "./wsServer";
 import WebSocket from "ws";
@@ -40,13 +40,14 @@ import type {
 } from "@t3tools/contracts";
 import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager";
 import { makeSqlitePersistenceLive, SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient, SqlError } from "effect/unstable/sql";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
 import { Open, type OpenShape } from "./open";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import type { GitCoreShape } from "./git/Services/GitCore.ts";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
+import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
 
 interface PendingMessages {
   queue: unknown[];
@@ -354,7 +355,10 @@ describe("WebSocket Server", () => {
 
   async function createTestServer(
     options: {
-      persistenceLayer?: Layer.Layer<SqlClient.SqlClient, never>;
+      persistenceLayer?: Layer.Layer<
+        SqlClient.SqlClient,
+        SqlError.SqlError | MigrationError | PlatformError.PlatformError
+      >;
       cwd?: string;
       autoBootstrapProjectFromCwd?: boolean;
       logWebSocketEvents?: boolean;
@@ -614,9 +618,9 @@ describe("WebSocket Server", () => {
 
   it("includes bootstrap ids in welcome when cwd project and thread already exist", async () => {
     const stateDir = makeTempDir("t3code-state-bootstrap-existing-");
-    const persistenceLayer = makeSqlitePersistenceLive(
-      path.join(stateDir, "state.sqlite"),
-    ).pipe(Layer.provide(NodeServices.layer)) as unknown as Layer.Layer<SqlClient.SqlClient, never>;
+    const persistenceLayer = makeSqlitePersistenceLive(path.join(stateDir, "state.sqlite")).pipe(
+      Layer.provide(NodeServices.layer),
+    );
     const cwd = "/test/bootstrap-existing";
 
     server = await createTestServer({
