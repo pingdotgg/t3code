@@ -358,6 +358,128 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
+  it.effect(
+    "passes explicit empty attachment arrays through the projection pipeline to clear attachments",
+    () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const now = new Date().toISOString();
+        const later = new Date(Date.now() + 1_000).toISOString();
+
+        yield* eventStore.append({
+          type: "project.created",
+          eventId: EventId.makeUnsafe("evt-clear-attachments-1"),
+          aggregateKind: "project",
+          aggregateId: ProjectId.makeUnsafe("project-clear-attachments"),
+          occurredAt: now,
+          commandId: CommandId.makeUnsafe("cmd-clear-attachments-1"),
+          causationEventId: null,
+          correlationId: CommandId.makeUnsafe("cmd-clear-attachments-1"),
+          metadata: {},
+          payload: {
+            projectId: ProjectId.makeUnsafe("project-clear-attachments"),
+            title: "Project Clear Attachments",
+            workspaceRoot: "/tmp/project-clear-attachments",
+            defaultModel: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.makeUnsafe("evt-clear-attachments-2"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.makeUnsafe("thread-clear-attachments"),
+          occurredAt: now,
+          commandId: CommandId.makeUnsafe("cmd-clear-attachments-2"),
+          causationEventId: null,
+          correlationId: CommandId.makeUnsafe("cmd-clear-attachments-2"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.makeUnsafe("thread-clear-attachments"),
+            projectId: ProjectId.makeUnsafe("project-clear-attachments"),
+            title: "Thread Clear Attachments",
+            model: "gpt-5-codex",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.message-sent",
+          eventId: EventId.makeUnsafe("evt-clear-attachments-3"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.makeUnsafe("thread-clear-attachments"),
+          occurredAt: now,
+          commandId: CommandId.makeUnsafe("cmd-clear-attachments-3"),
+          causationEventId: null,
+          correlationId: CommandId.makeUnsafe("cmd-clear-attachments-3"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.makeUnsafe("thread-clear-attachments"),
+            messageId: MessageId.makeUnsafe("message-clear-attachments"),
+            role: "user",
+            text: "Has attachments",
+            attachments: [
+              {
+                type: "image",
+                name: "clear.png",
+                mimeType: "image/png",
+                sizeBytes: 5,
+                dataUrl: "data:image/png;base64,SGVsbG8=",
+              },
+            ],
+            turnId: null,
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.message-sent",
+          eventId: EventId.makeUnsafe("evt-clear-attachments-4"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.makeUnsafe("thread-clear-attachments"),
+          occurredAt: later,
+          commandId: CommandId.makeUnsafe("cmd-clear-attachments-4"),
+          causationEventId: null,
+          correlationId: CommandId.makeUnsafe("cmd-clear-attachments-4"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.makeUnsafe("thread-clear-attachments"),
+            messageId: MessageId.makeUnsafe("message-clear-attachments"),
+            role: "user",
+            text: "",
+            attachments: [],
+            turnId: null,
+            streaming: false,
+            createdAt: now,
+            updatedAt: later,
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly attachmentsJson: string | null;
+        }>`
+          SELECT
+            attachments_json AS "attachmentsJson"
+          FROM projection_thread_messages
+          WHERE message_id = 'message-clear-attachments'
+        `;
+        assert.equal(rows.length, 1);
+        assert.deepEqual(JSON.parse(rows[0]?.attachmentsJson ?? "null"), []);
+      }),
+  );
+
   it.effect("does not persist attachment files when projector transaction rolls back", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
