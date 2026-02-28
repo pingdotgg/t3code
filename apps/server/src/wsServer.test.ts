@@ -492,9 +492,9 @@ describe("WebSocket Server", () => {
     const attachmentPath = path.join(
       stateDir,
       "attachments",
-      "thread folder",
-      "message folder",
-      "file name.png",
+      "thread%20folder",
+      "message%20folder",
+      "file%20name.png",
     );
     fs.mkdirSync(path.dirname(attachmentPath), { recursive: true });
     fs.writeFileSync(attachmentPath, Buffer.from("hello-encoded-attachment"));
