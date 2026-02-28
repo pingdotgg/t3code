@@ -251,14 +251,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
         if (url.pathname.startsWith(ATTACHMENTS_ROUTE_PREFIX)) {
           const attachmentsRoot = path.resolve(path.join(serverConfig.stateDir, "attachments"));
-          const encodedRelativePath = url.pathname.slice(ATTACHMENTS_ROUTE_PREFIX.length);
-          let rawRelativePath: string;
-          try {
-            rawRelativePath = decodeURIComponent(encodedRelativePath);
-          } catch {
-            respond(400, { "Content-Type": "text/plain" }, "Invalid attachment path");
-            return;
-          }
+          const rawRelativePath = url.pathname.slice(ATTACHMENTS_ROUTE_PREFIX.length);
           const normalizedRelativePath = path.normalize(rawRelativePath).replace(/^[/\\]+/, "");
 
           if (
