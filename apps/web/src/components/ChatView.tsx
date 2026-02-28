@@ -111,6 +111,7 @@ import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import { useAppSettings } from "../appSettings";
+import { clamp } from "effect/Number";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
   if (!duration) return formatTimestamp(createdAt);
@@ -2338,13 +2339,7 @@ const MessageCopyButton = memo(function MessageCopyButton({ text }: { text: stri
   }, [text]);
 
   return (
-    <Button
-      type="button"
-      size="xs"
-      variant="outline"
-      onClick={handleCopy}
-      title="Copy message"
-    >
+    <Button type="button" size="xs" variant="outline" onClick={handleCopy} title="Copy message">
       {copied ? <CheckIcon className="size-3 text-success" /> : <CopyIcon className="size-3" />}
     </Button>
   );
@@ -2499,7 +2494,10 @@ const MessagesTimeline = memo(function MessagesTimeline({
     return firstCurrentTurnRowIndex;
   }, [activeTurnInProgress, activeTurnStartedAt, rows]);
 
-  const virtualizedRowCount = Math.max(0, Math.min(rows.length, firstUnvirtualizedRowIndex));
+  const virtualizedRowCount = clamp(firstUnvirtualizedRowIndex, {
+    minimum: 0,
+    maximum: rows.length,
+  });
 
   const rowVirtualizer = useVirtualizer({
     count: virtualizedRowCount,
@@ -2594,25 +2592,29 @@ const MessagesTimeline = memo(function MessagesTimeline({
               <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
                 {userImages.length > 0 && (
                   <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-                    {userImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
-                      <div
-                        key={image.id}
-                        className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
-                      >
-                        {image.previewUrl ? (
-                          <img
-                            src={image.previewUrl}
-                            alt={image.name}
-                            className="h-full max-h-[220px] w-full cursor-zoom-in object-cover"
-                            onClick={() => onImageExpand({ src: image.previewUrl!, name: image.name })}
-                          />
-                        ) : (
-                          <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
-                            {image.name}
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                    {userImages.map(
+                      (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+                        <div
+                          key={image.id}
+                          className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                        >
+                          {image.previewUrl ? (
+                            <img
+                              src={image.previewUrl}
+                              alt={image.name}
+                              className="h-full max-h-[220px] w-full cursor-zoom-in object-cover"
+                              onClick={() =>
+                                onImageExpand({ src: image.previewUrl!, name: image.name })
+                              }
+                            />
+                          ) : (
+                            <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
+                              {image.name}
+                            </div>
+                          )}
+                        </div>
+                      ),
+                    )}
                   </div>
                 )}
                 {row.message.text && (
