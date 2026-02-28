@@ -442,10 +442,10 @@ describe("ProviderCommandReactor", () => {
     expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ sessionId: asSessionId("sess-1") });
     expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
       provider: "claudeCode",
-      resumeCursor: { opaque: "cursor-1" },
       approvalPolicy: "on-request",
       sandboxMode: "workspace-write",
     });
+    expect(harness.startSession.mock.calls[1]?.[1]).not.toHaveProperty("resumeCursor");
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));

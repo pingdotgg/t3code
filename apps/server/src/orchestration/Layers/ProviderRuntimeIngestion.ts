@@ -65,6 +65,13 @@ function sameId(left: string | null | undefined, right: string | null | undefine
   return left === right;
 }
 
+function isSyntheticClaudeThreadId(
+  provider: ProviderRuntimeEvent["provider"],
+  threadId: ProviderThreadId | null,
+): boolean {
+  return provider === "claudeCode" && threadId !== null && threadId.startsWith("claude-thread-");
+}
+
 function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
@@ -345,14 +352,20 @@ const make = Effect.gen(function* () {
 
       const now = event.createdAt;
       const sessionProviderThreadId = thread.session?.providerThreadId ?? null;
+      const scopedSessionProviderThreadId = isSyntheticClaudeThreadId(
+        event.provider,
+        sessionProviderThreadId,
+      )
+        ? null
+        : sessionProviderThreadId;
       const eventProviderThreadId = toProviderThreadId(event.threadId);
       const eventTurnId = toTurnId("turnId" in event ? event.turnId : undefined);
       const activeTurnId = thread.session?.activeTurnId ?? null;
 
       const matchesThreadScope =
         eventProviderThreadId === null ||
-        sessionProviderThreadId === null ||
-        sameId(eventProviderThreadId, sessionProviderThreadId);
+        scopedSessionProviderThreadId === null ||
+        sameId(eventProviderThreadId, scopedSessionProviderThreadId);
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
       const missingTurnForActiveTurn = activeTurnId !== null && eventTurnId === undefined;
@@ -372,8 +385,8 @@ const make = Effect.gen(function* () {
             // Never let auxiliary/provider-side spawned threads replace the primary thread binding.
             if (
               eventProviderThreadId !== null &&
-              sessionProviderThreadId !== null &&
-              !sameId(eventProviderThreadId, sessionProviderThreadId)
+              scopedSessionProviderThreadId !== null &&
+              !sameId(eventProviderThreadId, scopedSessionProviderThreadId)
             ) {
               return false;
             }
@@ -395,7 +408,7 @@ const make = Effect.gen(function* () {
               return sameId(activeTurnId, eventTurnId);
             }
             // Without an active turn, only accept completion when no thread mismatch signal exists.
-            return eventProviderThreadId === null || sessionProviderThreadId === null;
+            return eventProviderThreadId === null || scopedSessionProviderThreadId === null;
           default:
             return true;
         }
@@ -415,7 +428,8 @@ const make = Effect.gen(function* () {
             : event.threadId !== undefined
               ? ProviderThreadId.makeUnsafe(event.threadId)
               : null;
-        const providerThreadId = providerThreadIdFromEvent ?? sessionProviderThreadId ?? null;
+        const providerThreadId =
+          providerThreadIdFromEvent ?? scopedSessionProviderThreadId ?? null;
         const status =
           event.type === "turn.started"
             ? "running"

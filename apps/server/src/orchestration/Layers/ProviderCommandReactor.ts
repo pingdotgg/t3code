@@ -245,7 +245,9 @@ const make = Effect.gen(function* () {
         return existingSessionId;
       }
 
-      const resumeCursor = yield* resolveResumeCursorForSession(existingSessionId);
+      const resumeCursor = providerChanged
+        ? undefined
+        : yield* resolveResumeCursorForSession(existingSessionId);
       const restartedSession = yield* startProviderSession({
         ...(resumeCursor !== undefined ? { resumeCursor } : {}),
         ...(options?.provider !== undefined ? { provider: options.provider } : {}),
