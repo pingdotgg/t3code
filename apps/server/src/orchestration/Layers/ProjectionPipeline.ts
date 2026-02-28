@@ -364,9 +364,8 @@ const runAttachmentSideEffects = Effect.fn(function* (input: {
 
   const writesByPath = new Map<string, Uint8Array>();
   for (const pendingWrite of input.sideEffects.writes) {
-    if (!writesByPath.has(pendingWrite.absolutePath)) {
-      writesByPath.set(pendingWrite.absolutePath, pendingWrite.bytes);
-    }
+    // Last write wins for a path so updated attachment contents replace stale bytes.
+    writesByPath.set(pendingWrite.absolutePath, pendingWrite.bytes);
   }
   yield* Effect.forEach(
     writesByPath.entries(),
@@ -375,12 +374,7 @@ const runAttachmentSideEffects = Effect.fn(function* (input: {
         yield* input.fileSystem.makeDirectory(input.path.dirname(absolutePath), {
           recursive: true,
         });
-        const alreadyExists = yield* input.fileSystem
-          .exists(absolutePath)
-          .pipe(Effect.catch(() => Effect.succeed(false)));
-        if (!alreadyExists) {
-          yield* input.fileSystem.writeFile(absolutePath, bytes);
-        }
+        yield* input.fileSystem.writeFile(absolutePath, bytes);
       }),
     { concurrency: 1 },
   );
