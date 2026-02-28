@@ -11,16 +11,13 @@ import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch"
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { buildPatchCacheKey } from "../lib/diffRendering";
+import { resolveDiffThemeName } from "../lib/diffThemes";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useStore } from "../store";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
-
-function resolveDiffThemeName(theme: "light" | "dark") {
-  return theme === "dark" ? "pierre-dark" : "pierre-light";
-}
 
 type RenderablePatch =
   | {

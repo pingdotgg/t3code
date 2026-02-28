@@ -6,7 +6,6 @@ import { createHashHistory, createRouter, createBrowserHistory } from "@tanstack
 import { StoreProvider } from "./store";
 
 import "@xterm/xterm/css/xterm.css";
-import "highlight.js/styles/github-dark.css";
 import "./index.css";
 
 import { APP_DISPLAY_NAME } from "./branding";

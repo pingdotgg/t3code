@@ -2,12 +2,9 @@ import { WorkerPoolContextProvider, useWorkerPool } from "@pierre/diffs/react";
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import { useEffect, useMemo, type ReactNode } from "react";
 import { useTheme } from "../hooks/useTheme";
+import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffThemes";
 
-function resolveDiffThemeName(theme: "light" | "dark") {
-  return theme === "dark" ? "pierre-dark" : "pierre-light";
-}
-
-function DiffWorkerThemeSync({ themeName }: { themeName: "pierre-light" | "pierre-dark" }) {
+function DiffWorkerThemeSync({ themeName }: { themeName: DiffThemeName }) {
   const workerPool = useWorkerPool();
 
   useEffect(() => {
