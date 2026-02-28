@@ -438,6 +438,9 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     const input = decodeTerminalWriteInput(raw);
     const session = this.requireSession(input.threadId, input.terminalId);
     if (!session.process || session.status !== "running") {
+      if (session.status === "exited") {
+        return;
+      }
       throw new Error(
         `Terminal is not running for thread: ${input.threadId}, terminal: ${input.terminalId}`,
       );

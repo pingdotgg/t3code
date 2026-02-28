@@ -112,6 +112,7 @@ interface TerminalViewportProps {
   terminalId: string;
   cwd: string;
   runtimeEnv?: Record<string, string>;
+  onSessionExited: () => void;
   focusRequestId: number;
   autoFocus: boolean;
   resizeEpoch: number;
@@ -123,6 +124,7 @@ function TerminalViewport({
   terminalId,
   cwd,
   runtimeEnv,
+  onSessionExited,
   focusRequestId,
   autoFocus,
   resizeEpoch,
@@ -131,6 +133,12 @@ function TerminalViewport({
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const onSessionExitedRef = useRef(onSessionExited);
+  const hasHandledExitRef = useRef(false);
+
+  useEffect(() => {
+    onSessionExitedRef.current = onSessionExited;
+  }, [onSessionExited]);
 
   useEffect(() => {
     const mount = containerRef.current;
@@ -306,6 +314,7 @@ function TerminalViewport({
       }
 
       if (event.type === "started" || event.type === "restarted") {
+        hasHandledExitRef.current = false;
         activeTerminal.write("\u001bc");
         if (event.snapshot.history.length > 0) {
           activeTerminal.write(event.snapshot.history);
@@ -335,6 +344,13 @@ function TerminalViewport({
           activeTerminal,
           details.length > 0 ? `Process exited (${details})` : "Process exited",
         );
+        if (hasHandledExitRef.current) {
+          return;
+        }
+        hasHandledExitRef.current = true;
+        window.setTimeout(() => {
+          onSessionExitedRef.current();
+        }, 0);
       }
     });
 
@@ -783,6 +799,7 @@ export default function ThreadTerminalDrawer({
                         terminalId={terminalId}
                         cwd={cwd}
                         {...(runtimeEnv ? { runtimeEnv } : {})}
+                        onSessionExited={() => onCloseTerminal(terminalId)}
                         focusRequestId={focusRequestId}
                         autoFocus={terminalId === resolvedActiveTerminalId}
                         resizeEpoch={resizeEpoch}
@@ -800,6 +817,7 @@ export default function ThreadTerminalDrawer({
                   terminalId={resolvedActiveTerminalId}
                   cwd={cwd}
                   {...(runtimeEnv ? { runtimeEnv } : {})}
+                  onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
                   focusRequestId={focusRequestId}
                   autoFocus
                   resizeEpoch={resizeEpoch}

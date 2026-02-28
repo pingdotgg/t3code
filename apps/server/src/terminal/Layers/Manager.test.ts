@@ -394,6 +394,21 @@ describe("TerminalManager", () => {
     manager.dispose();
   });
 
+  it("ignores trailing writes after terminal exit", async () => {
+    const { manager, ptyAdapter } = makeManager();
+    await manager.open(openInput());
+    const process = ptyAdapter.processes[0];
+    expect(process).toBeDefined();
+    if (!process) return;
+
+    process.emitExit({ exitCode: 0, signal: 0 });
+
+    await expect(manager.write({ threadId: "thread-1", data: "\r" })).resolves.toBeUndefined();
+    expect(process.writes).toEqual([]);
+
+    manager.dispose();
+  });
+
   it("emits subprocess activity events when child-process state changes", async () => {
     let hasRunningSubprocess = false;
     const { manager } = makeManager(5, {
