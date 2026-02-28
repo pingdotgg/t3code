@@ -314,6 +314,48 @@ label:has(> select#reasoning-effort) select {
   font-size: 0.875rem;
 }
 
+.chat-markdown .chat-markdown-codeblock {
+  position: relative;
+  margin: 0.65rem 0;
+}
+
+.chat-markdown .chat-markdown-codeblock pre {
+  margin: 0;
+}
+
+.chat-markdown .chat-markdown-copy-button {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.5rem;
+  width: 1.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--background) 82%, transparent);
+  color: var(--muted-foreground);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.chat-markdown .chat-markdown-codeblock:hover .chat-markdown-copy-button,
+.chat-markdown .chat-markdown-codeblock:focus-within .chat-markdown-copy-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.chat-markdown .chat-markdown-copy-button:hover {
+  color: var(--foreground);
+  border-color: color-mix(in srgb, var(--border) 70%, var(--foreground));
+}
+
 .chat-markdown .chat-markdown-shiki .shiki {
   background: color-mix(in srgb, var(--muted) 78%, var(--background)) !important;
 }
