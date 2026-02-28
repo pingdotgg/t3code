@@ -247,6 +247,117 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
+  it.effect("materializes only image data URLs and uses a safe extension whitelist", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = new Date().toISOString();
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-"));
+
+      const serverConfig = {
+        mode: "web",
+        port: 0,
+        host: undefined,
+        cwd: "/tmp/project-attachments",
+        keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
+        stateDir,
+        staticDir: undefined,
+        devUrl: undefined,
+        noBrowser: true,
+        authToken: undefined,
+        autoBootstrapProjectFromCwd: false,
+        logWebSocketEvents: false,
+      } satisfies ServerConfigShape;
+
+      yield* eventStore.append({
+        type: "thread.message-sent",
+        eventId: EventId.makeUnsafe("evt-attachments-safe"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-attachments-safe"),
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-attachments-safe"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-attachments-safe"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-attachments-safe"),
+          messageId: MessageId.makeUnsafe("message-attachments-safe"),
+          role: "user",
+          text: "Inspect this",
+          attachments: [
+            {
+              type: "image",
+              name: "untrusted.exe",
+              mimeType: "image/x-unknown",
+              sizeBytes: 5,
+              dataUrl: "data:image/x-unknown;base64,SGVsbG8=",
+            },
+            {
+              type: "image",
+              name: "not-image.png",
+              mimeType: "image/png",
+              sizeBytes: 5,
+              dataUrl: "data:text/plain;base64,SGVsbG8=",
+            },
+          ],
+          turnId: null,
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* projectionPipeline.bootstrap.pipe(Effect.provideService(ServerConfig, serverConfig));
+
+      const rows = yield* sql<{
+        readonly attachmentsJson: string | null;
+      }>`
+        SELECT
+          attachments_json AS "attachmentsJson"
+        FROM projection_thread_messages
+        WHERE message_id = 'message-attachments-safe'
+      `;
+      assert.equal(rows.length, 1);
+      assert.deepEqual(JSON.parse(rows[0]?.attachmentsJson ?? "null"), [
+        {
+          type: "image",
+          name: "untrusted.exe",
+          mimeType: "image/x-unknown",
+          sizeBytes: 5,
+          dataUrl: "/attachments/thread-attachments-safe/message-attachments-safe/0.bin",
+        },
+        {
+          type: "image",
+          name: "not-image.png",
+          mimeType: "image/png",
+          sizeBytes: 5,
+          dataUrl: "data:text/plain;base64,SGVsbG8=",
+        },
+      ]);
+
+      const firstAttachmentPath = path.join(
+        stateDir,
+        "attachments",
+        "thread-attachments-safe",
+        "message-attachments-safe",
+        "0.bin",
+      );
+      assert.equal(fs.existsSync(firstAttachmentPath), true);
+      assert.deepEqual(fs.readFileSync(firstAttachmentPath), Buffer.from("SGVsbG8=", "base64"));
+
+      const secondAttachmentPath = path.join(
+        stateDir,
+        "attachments",
+        "thread-attachments-safe",
+        "message-attachments-safe",
+        "1.png",
+      );
+      assert.equal(fs.existsSync(secondAttachmentPath), false);
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }),
+  );
+
   it.effect("resumes from projector last_applied_sequence without replaying older events", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;

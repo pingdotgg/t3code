@@ -210,7 +210,12 @@ function resolveWsHttpOrigin(): string {
 
   try {
     const wsUrl = new URL(wsCandidate);
-    const protocol = wsUrl.protocol === "wss:" ? "https:" : "http:";
+    const protocol =
+      wsUrl.protocol === "wss:"
+        ? "https:"
+        : wsUrl.protocol === "ws:"
+          ? "http:"
+          : wsUrl.protocol;
     return `${protocol}//${wsUrl.host}`;
   } catch {
     return window.location.origin;

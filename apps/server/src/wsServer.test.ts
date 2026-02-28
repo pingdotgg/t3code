@@ -296,6 +296,36 @@ async function waitForPush(
   return take(maxMessages);
 }
 
+async function requestPath(
+  port: number,
+  requestPath: string,
+): Promise<{ statusCode: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = Http.request(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path: requestPath,
+        method: "GET",
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        res.on("end", () => {
+          resolve({
+            statusCode: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf8"),
+          });
+        });
+      },
+    );
+    req.once("error", reject);
+    req.end();
+  });
+}
+
 function compileKeybindings(bindings: KeybindingsConfig): ResolvedKeybindingsConfig {
   const resolved: Array<ResolvedKeybindingsConfig[number]> = [];
   for (const binding of bindings) {
@@ -331,6 +361,7 @@ describe("WebSocket Server", () => {
       devUrl?: string;
       authToken?: string;
       stateDir?: string;
+      staticDir?: string;
       providerLayer?: Layer.Layer<ProviderService, never>;
       open?: OpenShape;
       gitManager?: GitManagerShape;
@@ -354,7 +385,7 @@ describe("WebSocket Server", () => {
       cwd: options.cwd ?? "/test/project",
       keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
       stateDir,
-      staticDir: undefined,
+      staticDir: options.staticDir,
       devUrl: options.devUrl ? new URL(options.devUrl) : undefined,
       noBrowser: true,
       authToken: options.authToken,
@@ -454,6 +485,36 @@ describe("WebSocket Server", () => {
     expect(response.headers.get("content-type")).toContain("image/png");
     const bytes = Buffer.from(await response.arrayBuffer());
     expect(bytes).toEqual(Buffer.from("hello-attachment"));
+  });
+
+  it("serves static index for root path", async () => {
+    const stateDir = makeTempDir("t3code-state-static-root-");
+    const staticDir = makeTempDir("t3code-static-root-");
+    fs.writeFileSync(path.join(staticDir, "index.html"), "<h1>static-root</h1>", "utf8");
+
+    server = await createTestServer({ cwd: "/test/project", stateDir, staticDir });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    const response = await fetch(`http://127.0.0.1:${port}/`);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("static-root");
+  });
+
+  it("rejects static path traversal attempts", async () => {
+    const stateDir = makeTempDir("t3code-state-static-traversal-");
+    const staticDir = makeTempDir("t3code-static-traversal-");
+    fs.writeFileSync(path.join(staticDir, "index.html"), "<h1>safe</h1>", "utf8");
+
+    server = await createTestServer({ cwd: "/test/project", stateDir, staticDir });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    const response = await requestPath(port, "/..%2f..%2fetc/passwd");
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toBe("Invalid static file path");
   });
 
   it("bootstraps the cwd project on startup when enabled", async () => {

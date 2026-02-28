@@ -70,6 +70,17 @@ const IMAGE_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
   "image/tiff": ".tiff",
   "image/heic": ".heic",
 };
+const SAFE_IMAGE_FILE_EXTENSIONS = new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".gif",
+  ".webp",
+  ".bmp",
+  ".tiff",
+  ".svg",
+  ".ico",
+]);
 
 function parseBase64DataUrl(
   dataUrl: string,
@@ -87,14 +98,18 @@ function parseBase64DataUrl(
 }
 
 function inferImageExtension(attachment: Extract<ChatAttachment, { type: "image" }>): string {
-  const fromMime = IMAGE_EXTENSION_BY_MIME_TYPE[attachment.mimeType.toLowerCase()];
-  if (fromMime) {
-    return fromMime;
+  const normalizedMimeType = attachment.mimeType.trim().toLowerCase();
+  if (normalizedMimeType.startsWith("image/")) {
+    const fromMime = IMAGE_EXTENSION_BY_MIME_TYPE[normalizedMimeType];
+    if (fromMime) {
+      return fromMime;
+    }
   }
+
   const fromName = attachment.name.includes(".")
     ? `.${attachment.name.split(".").slice(-1)[0]?.toLowerCase() ?? ""}`
     : "";
-  if (/^\.[a-z0-9]{1,12}$/.test(fromName)) {
+  if (/^\.[a-z0-9]{1,12}$/.test(fromName) && SAFE_IMAGE_FILE_EXTENSIONS.has(fromName)) {
     return fromName;
   }
   return ".bin";
@@ -132,13 +147,19 @@ const materializeAttachmentsForProjection = Effect.fn(function* (input: {
         if (!parsed) {
           return attachment;
         }
+        if (!parsed.mimeType.startsWith("image/")) {
+          return attachment;
+        }
 
         const bytes = Buffer.from(parsed.base64, "base64");
         if (bytes.byteLength === 0) {
           return attachment;
         }
 
-        const fileName = `${index}${inferImageExtension(attachment)}`;
+        const fileName = `${index}${inferImageExtension({
+          ...attachment,
+          mimeType: parsed.mimeType,
+        })}`;
         const relativePath = `${threadSegment}/${messageSegment}/${fileName}`;
         const absolutePath = path.join(attachmentsRootDir, threadSegment, messageSegment, fileName);
         yield* fileSystem.makeDirectory(path.dirname(absolutePath), { recursive: true });

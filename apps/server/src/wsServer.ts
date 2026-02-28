@@ -315,17 +315,50 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           return;
         }
 
-        let filePath = path.join(staticDir, url.pathname);
+        const staticRoot = path.resolve(staticDir);
+        const staticRequestPath = url.pathname === "/" ? "/index.html" : url.pathname;
+        const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
+        const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
+        const staticRelativePath = path
+          .normalize(rawStaticRelativePath)
+          .replace(/^[/\\]+/, "");
+        const hasPathTraversalSegment = staticRelativePath.startsWith("..");
+        if (
+          staticRelativePath.length === 0 ||
+          hasRawLeadingParentSegment ||
+          hasPathTraversalSegment ||
+          staticRelativePath.includes("\0")
+        ) {
+          respond(400, { "Content-Type": "text/plain" }, "Invalid static file path");
+          return;
+        }
+
+        const isWithinStaticRoot = (candidate: string) =>
+          candidate === staticRoot ||
+          candidate.startsWith(
+            staticRoot.endsWith(path.sep) ? staticRoot : `${staticRoot}${path.sep}`,
+          );
+
+        let filePath = path.resolve(staticRoot, staticRelativePath);
+        if (!isWithinStaticRoot(filePath)) {
+          respond(400, { "Content-Type": "text/plain" }, "Invalid static file path");
+          return;
+        }
+
         const ext = path.extname(filePath);
         if (!ext) {
-          filePath = path.join(filePath, "index.html");
+          filePath = path.resolve(filePath, "index.html");
+          if (!isWithinStaticRoot(filePath)) {
+            respond(400, { "Content-Type": "text/plain" }, "Invalid static file path");
+            return;
+          }
         }
 
         const fileInfo = yield* fileSystem
           .stat(filePath)
           .pipe(Effect.catch(() => Effect.succeed(null)));
         if (!fileInfo || fileInfo.type !== "File") {
-          const indexPath = path.join(staticDir, "index.html");
+          const indexPath = path.resolve(staticRoot, "index.html");
           const indexData = yield* fileSystem
             .readFile(indexPath)
             .pipe(Effect.catch(() => Effect.succeed(null)));

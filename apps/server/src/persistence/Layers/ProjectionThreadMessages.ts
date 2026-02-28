@@ -23,8 +23,9 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
 
   const upsertProjectionThreadMessageRow = SqlSchema.void({
     Request: ProjectionThreadMessage,
-    execute: (row) =>
-      sql`
+    execute: (row) => {
+      const nextAttachmentsJson = row.attachments !== undefined ? JSON.stringify(row.attachments) : null;
+      return sql`
         INSERT INTO projection_thread_messages (
           message_id,
           thread_id,
@@ -42,7 +43,14 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           ${row.turnId},
           ${row.role},
           ${row.text},
-          ${row.attachments !== undefined ? JSON.stringify(row.attachments) : null},
+          COALESCE(
+            ${nextAttachmentsJson},
+            (
+              SELECT attachments_json
+              FROM projection_thread_messages
+              WHERE message_id = ${row.messageId}
+            )
+          ),
           ${row.isStreaming ? 1 : 0},
           ${row.createdAt},
           ${row.updatedAt}
@@ -53,11 +61,15 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           turn_id = excluded.turn_id,
           role = excluded.role,
           text = excluded.text,
-          attachments_json = excluded.attachments_json,
+          attachments_json = COALESCE(
+            excluded.attachments_json,
+            projection_thread_messages.attachments_json
+          ),
           is_streaming = excluded.is_streaming,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at
-      `,
+      `;
+    },
   });
 
   const listProjectionThreadMessageRows = SqlSchema.findAll({
