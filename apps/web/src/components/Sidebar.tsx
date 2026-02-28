@@ -1,12 +1,13 @@
-import { ChevronRightIcon, FolderIcon, TerminalIcon } from "lucide-react";
+import { ChevronRightIcon, FolderIcon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   DEFAULT_MODEL,
   ProjectId,
   ThreadId,
+  type GitStatusResult,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
@@ -16,7 +17,7 @@ import { useStore } from "../store";
 import { isChatNewLocalShortcut, isChatNewShortcut } from "../keybindings";
 import { type Thread } from "../types";
 import { derivePendingApprovals } from "../session-logic";
-import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
+import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { toastManager } from "./ui/toast";
@@ -62,6 +63,13 @@ interface TerminalStatusIndicator {
   colorClass: string;
   pulse: boolean;
 }
+
+interface PrStatusIndicator {
+  label: "PR open" | "PR closed" | "PR merged";
+  colorClass: string;
+}
+
+type ThreadPrState = NonNullable<GitStatusResult["pr"]>["state"] | null;
 
 function hasUnseenCompletion(thread: Thread): boolean {
   if (!thread.latestTurn?.completedAt) return false;
@@ -123,6 +131,28 @@ function terminalStatusIndicator(thread: Thread): TerminalStatusIndicator | null
     colorClass: "text-teal-600 dark:text-teal-300/90",
     pulse: true,
   };
+}
+
+function prStatusIndicator(prState: ThreadPrState): PrStatusIndicator | null {
+  if (prState === "open") {
+    return {
+      label: "PR open",
+      colorClass: "text-emerald-600 dark:text-emerald-300/90",
+    };
+  }
+  if (prState === "closed") {
+    return {
+      label: "PR closed",
+      colorClass: "text-zinc-500 dark:text-zinc-400/80",
+    };
+  }
+  if (prState === "merged") {
+    return {
+      label: "PR merged",
+      colorClass: "text-violet-600 dark:text-violet-300/90",
+    };
+  }
+  return null;
 }
 
 function T3Wordmark() {
@@ -210,6 +240,58 @@ export default function Sidebar() {
     }
     return map;
   }, [state.threads]);
+  const projectCwdById = useMemo(
+    () => new Map(state.projects.map((project) => [project.id, project.cwd] as const)),
+    [state.projects],
+  );
+  const threadGitTargets = useMemo(
+    () =>
+      state.threads.map((thread) => ({
+        threadId: thread.id,
+        branch: thread.branch,
+        cwd: thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null,
+      })),
+    [projectCwdById, state.threads],
+  );
+  const threadGitStatusCwds = useMemo(
+    () =>
+      [
+        ...new Set(
+          threadGitTargets
+            .filter((target) => target.branch !== null)
+            .map((target) => target.cwd)
+            .filter((cwd): cwd is string => cwd !== null),
+        ),
+      ],
+    [threadGitTargets],
+  );
+  const threadGitStatusQueries = useQueries({
+    queries: threadGitStatusCwds.map((cwd) => ({
+      ...gitStatusQueryOptions(cwd),
+      staleTime: 30_000,
+      refetchInterval: 60_000,
+    })),
+  });
+  const prStateByThreadId = useMemo(() => {
+    const statusByCwd = new Map<string, GitStatusResult>();
+    for (let index = 0; index < threadGitStatusCwds.length; index += 1) {
+      const cwd = threadGitStatusCwds[index];
+      if (!cwd) continue;
+      const status = threadGitStatusQueries[index]?.data;
+      if (status) {
+        statusByCwd.set(cwd, status);
+      }
+    }
+
+    const map = new Map<ThreadId, ThreadPrState>();
+    for (const target of threadGitTargets) {
+      const status = target.cwd ? statusByCwd.get(target.cwd) : undefined;
+      const branchMatches =
+        target.branch !== null && status?.branch !== null && status?.branch === target.branch;
+      map.set(target.threadId, branchMatches ? status?.pr?.state ?? null : null);
+    }
+    return map;
+  }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
 
   const handleNewThread = useCallback(
     (
@@ -632,6 +714,7 @@ export default function Sidebar() {
                             thread,
                             pendingApprovalByThreadId.get(thread.id) === true,
                           );
+                          const prStatus = prStatusIndicator(prStateByThreadId.get(thread.id) ?? null);
                           const terminalStatus = terminalStatusIndicator(thread);
 
                           return (
@@ -677,6 +760,16 @@ export default function Sidebar() {
                                   </span>
                                 </div>
                                 <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                                  {prStatus && (
+                                    <span
+                                      role="img"
+                                      aria-label={prStatus.label}
+                                      title={prStatus.label}
+                                      className={`inline-flex items-center justify-center ${prStatus.colorClass}`}
+                                    >
+                                      <GitPullRequestIcon className="size-3" />
+                                    </span>
+                                  )}
                                   {terminalStatus && (
                                     <span
                                       role="img"

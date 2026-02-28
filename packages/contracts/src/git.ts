@@ -18,6 +18,8 @@ export const GitPrStepStatus = Schema.Literals([
   "opened_existing",
   "skipped_not_requested",
 ]);
+export const GitStatusPrState = Schema.Literals(["open", "closed", "merged"]);
+export type GitStatusPrState = typeof GitStatusPrState.Type;
 
 export const GitBranch = Schema.Struct({
   name: TrimmedNonEmptyStringSchema,
@@ -91,6 +93,16 @@ export type GitInitInput = typeof GitInitInput.Type;
 
 // RPC Results
 
+export const GitStatusPr = Schema.Struct({
+  number: PositiveInt,
+  title: TrimmedNonEmptyStringSchema,
+  url: Schema.String,
+  baseBranch: TrimmedNonEmptyStringSchema,
+  headBranch: TrimmedNonEmptyStringSchema,
+  state: GitStatusPrState,
+});
+export type GitStatusPr = typeof GitStatusPr.Type;
+
 export const GitStatusResult = Schema.Struct({
   branch: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
   hasWorkingTreeChanges: Schema.Boolean,
@@ -108,15 +120,7 @@ export const GitStatusResult = Schema.Struct({
   hasUpstream: Schema.Boolean,
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
-  openPr: Schema.NullOr(
-    Schema.Struct({
-      number: PositiveInt,
-      title: TrimmedNonEmptyStringSchema,
-      url: Schema.String,
-      baseBranch: TrimmedNonEmptyStringSchema,
-      headBranch: TrimmedNonEmptyStringSchema,
-    }),
-  ),
+  pr: Schema.NullOr(GitStatusPr),
 });
 export type GitStatusResult = typeof GitStatusResult.Type;
 

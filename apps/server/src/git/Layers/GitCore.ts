@@ -393,7 +393,7 @@ const makeGitCore = Effect.gen(function* () {
         hasUpstream: details.hasUpstream,
         aheadCount: details.aheadCount,
         behindCount: details.behindCount,
-        openPr: null,
+        pr: null,
       })),
     );
 

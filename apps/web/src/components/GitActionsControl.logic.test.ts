@@ -20,7 +20,7 @@ function status(overrides: Partial<GitStatusResult> = {}): GitStatusResult {
     hasUpstream: true,
     aheadCount: 0,
     behindCount: 0,
-    openPr: null,
+    pr: null,
     ...overrides,
   };
 }
@@ -29,12 +29,13 @@ describe("when: branch is clean and has an open PR", () => {
   it("resolveQuickAction opens the existing PR", () => {
     const quick = resolveQuickAction(
       status({
-        openPr: {
+        pr: {
           number: 10,
           title: "Open PR",
           url: "https://example.com/pr/10",
           baseBranch: "main",
           headBranch: "feature/test",
+          state: "open",
         },
       }),
       false,
@@ -45,12 +46,13 @@ describe("when: branch is clean and has an open PR", () => {
   it("buildMenuItems disables commit/push and enables open PR", () => {
     const items = buildMenuItems(
       status({
-        openPr: {
+        pr: {
           number: 11,
           title: "Existing PR",
           url: "https://example.com/pr/11",
           baseBranch: "main",
           headBranch: "feature/test",
+          state: "open",
         },
       }),
       false,
@@ -147,12 +149,13 @@ describe("when: branch is clean, ahead, and has an open PR", () => {
     const quick = resolveQuickAction(
       status({
         aheadCount: 3,
-        openPr: {
+        pr: {
           number: 13,
           title: "Open PR",
           url: "https://example.com/pr/13",
           baseBranch: "main",
           headBranch: "feature/test",
+          state: "open",
         },
       }),
       false,
@@ -164,12 +167,13 @@ describe("when: branch is clean, ahead, and has an open PR", () => {
     const items = buildMenuItems(
       status({
         aheadCount: 2,
-        openPr: {
+        pr: {
           number: 12,
           title: "Existing PR",
           url: "https://example.com/pr/12",
           baseBranch: "main",
           headBranch: "feature/test",
+          state: "open",
         },
       }),
       false,
@@ -204,7 +208,7 @@ describe("when: branch is clean, ahead, and has an open PR", () => {
 
 describe("when: branch is clean, ahead, and has no open PR", () => {
   it("resolveQuickAction pushes and creates a PR", () => {
-    const quick = resolveQuickAction(status({ aheadCount: 2, openPr: null }), false);
+    const quick = resolveQuickAction(status({ aheadCount: 2, pr: null }), false);
     assert.deepInclude(quick, {
       kind: "run_action",
       action: "commit_push_pr",
@@ -213,7 +217,7 @@ describe("when: branch is clean, ahead, and has no open PR", () => {
   });
 
   it("buildMenuItems enables push and create PR, with commit disabled", () => {
-    const items = buildMenuItems(status({ aheadCount: 2, openPr: null }), false);
+    const items = buildMenuItems(status({ aheadCount: 2, pr: null }), false);
     assert.deepEqual(items, [
       {
         id: "commit",
@@ -246,14 +250,14 @@ describe("when: branch is clean, ahead, and has no open PR", () => {
 describe("when: branch is clean, up to date, and has no open PR", () => {
   it("resolveQuickAction returns disabled no-action state", () => {
     const quick = resolveQuickAction(
-      status({ aheadCount: 0, behindCount: 0, hasWorkingTreeChanges: false, openPr: null }),
+      status({ aheadCount: 0, behindCount: 0, hasWorkingTreeChanges: false, pr: null }),
       false,
     );
     assert.deepInclude(quick, { kind: "show_hint", label: "Commit", disabled: true });
   });
 
   it("buildMenuItems disables commit, push, and create PR", () => {
-    const items = buildMenuItems(status({ aheadCount: 0, behindCount: 0, openPr: null }), false);
+    const items = buildMenuItems(status({ aheadCount: 0, behindCount: 0, pr: null }), false);
     assert.deepEqual(items, [
       {
         id: "commit",
@@ -290,7 +294,7 @@ describe("when: branch is behind upstream", () => {
   });
 
   it("buildMenuItems disables push and create PR", () => {
-    const items = buildMenuItems(status({ behindCount: 1, openPr: null }), false);
+    const items = buildMenuItems(status({ behindCount: 1, pr: null }), false);
     assert.deepEqual(items, [
       {
         id: "commit",
@@ -346,12 +350,13 @@ describe("when: working tree has local changes", () => {
     const quick = resolveQuickAction(
       status({
         hasWorkingTreeChanges: true,
-        openPr: {
+        pr: {
           number: 16,
           title: "Existing PR",
           url: "https://example.com/pr/16",
           baseBranch: "main",
           headBranch: "feature/test",
+          state: "open",
         },
       }),
       false,
@@ -411,7 +416,7 @@ describe("when: on default branch without open PR", () => {
 
   it("resolveQuickAction returns push when branch is ahead", () => {
     const quick = resolveQuickAction(
-      status({ branch: "main", aheadCount: 2, openPr: null }),
+      status({ branch: "main", aheadCount: 2, pr: null }),
       false,
       true,
     );
@@ -511,7 +516,7 @@ describe("when: HEAD is detached and there are no local changes", () => {
 describe("when: branch has no upstream configured", () => {
   it("resolveQuickAction returns disabled commit state when clean and no commits are ahead", () => {
     const quick = resolveQuickAction(
-      status({ hasUpstream: false, openPr: null, aheadCount: 0 }),
+      status({ hasUpstream: false, pr: null, aheadCount: 0 }),
       false,
     );
     assert.deepInclude(quick, {
@@ -526,12 +531,13 @@ describe("when: branch has no upstream configured", () => {
       status({
         hasUpstream: false,
         aheadCount: 0,
-        openPr: {
+        pr: {
           number: 14,
           title: "Existing PR",
           url: "https://example.com/pr/14",
           baseBranch: "main",
           headBranch: "feature/test",
+          state: "open",
         },
       }),
       false,
@@ -548,12 +554,13 @@ describe("when: branch has no upstream configured", () => {
       status({
         hasUpstream: false,
         aheadCount: 1,
-        openPr: {
+        pr: {
           number: 15,
           title: "Existing PR",
           url: "https://example.com/pr/15",
           baseBranch: "main",
           headBranch: "feature/test",
+          state: "open",
         },
       }),
       false,
@@ -568,7 +575,7 @@ describe("when: branch has no upstream configured", () => {
 
   it("buildMenuItems disables push and create PR when no commits are ahead", () => {
     const items = buildMenuItems(
-      status({ hasUpstream: false, openPr: null, aheadCount: 0 }),
+      status({ hasUpstream: false, pr: null, aheadCount: 0 }),
       false,
     );
     assert.deepEqual(items, [

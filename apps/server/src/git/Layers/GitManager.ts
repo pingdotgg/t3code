@@ -16,6 +16,62 @@ interface OpenPrInfo {
   headRefName: string;
 }
 
+interface PullRequestInfo extends OpenPrInfo {
+  state: "open" | "closed" | "merged";
+  updatedAt: string | null;
+}
+
+function parsePullRequestList(raw: unknown): PullRequestInfo[] {
+  if (!Array.isArray(raw)) return [];
+
+  const parsed: PullRequestInfo[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const number = record.number;
+    const title = record.title;
+    const url = record.url;
+    const baseRefName = record.baseRefName;
+    const headRefName = record.headRefName;
+    const state = record.state;
+    const mergedAt = record.mergedAt;
+    const updatedAt = record.updatedAt;
+    if (typeof number !== "number" || !Number.isInteger(number) || number <= 0) {
+      continue;
+    }
+    if (
+      typeof title !== "string" ||
+      typeof url !== "string" ||
+      typeof baseRefName !== "string" ||
+      typeof headRefName !== "string"
+    ) {
+      continue;
+    }
+
+    let normalizedState: "open" | "closed" | "merged";
+    if ((typeof mergedAt === "string" && mergedAt.trim().length > 0) || state === "MERGED") {
+      normalizedState = "merged";
+    } else if (state === "OPEN" || state === undefined || state === null) {
+      normalizedState = "open";
+    } else if (state === "CLOSED") {
+      normalizedState = "closed";
+    } else {
+      continue;
+    }
+
+    parsed.push({
+      number,
+      title,
+      url,
+      baseRefName,
+      headRefName,
+      state: normalizedState,
+      updatedAt: typeof updatedAt === "string" && updatedAt.trim().length > 0 ? updatedAt : null,
+    });
+  }
+  return parsed;
+}
+
 function gitManagerError(operation: string, detail: string, cause?: unknown): GitManagerError {
   return new GitManagerError({
     operation,
@@ -79,12 +135,13 @@ function extractBranchFromRef(ref: string): string {
   return normalized.slice(firstSlash + 1).trim();
 }
 
-function toStatusOpenPr(pr: OpenPrInfo): {
+function toStatusPr(pr: PullRequestInfo): {
   number: number;
   title: string;
   url: string;
   baseBranch: string;
   headBranch: string;
+  state: "open" | "closed" | "merged";
 } {
   return {
     number: pr.number,
@@ -92,6 +149,7 @@ function toStatusOpenPr(pr: OpenPrInfo): {
     url: pr.url,
     baseBranch: pr.baseRefName,
     headBranch: pr.headRefName,
+    state: pr.state,
   };
 }
 
@@ -123,9 +181,55 @@ export const makeGitManager = Effect.gen(function* () {
             url: first.url,
             baseRefName: first.baseRefName,
             headRefName: first.headRefName,
-          } satisfies OpenPrInfo;
+            state: "open",
+            updatedAt: null,
+          } satisfies PullRequestInfo;
         }),
       );
+
+  const findLatestPr = (cwd: string, branch: string) =>
+    Effect.gen(function* () {
+      const stdout = yield* gitHubCli
+        .execute({
+          cwd,
+          args: [
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--state",
+            "all",
+            "--limit",
+            "20",
+            "--json",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt",
+          ],
+        })
+        .pipe(Effect.map((result) => result.stdout));
+
+      const raw = stdout.trim();
+      if (raw.length === 0) {
+        return null;
+      }
+
+      const parsedJson = yield* Effect.try({
+        try: () => JSON.parse(raw) as unknown,
+        catch: (cause) =>
+          gitManagerError("findLatestPr", "GitHub CLI returned invalid PR list JSON.", cause),
+      });
+
+      const parsed = parsePullRequestList(parsedJson).toSorted((a, b) => {
+        const left = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+        const right = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+        return right - left;
+      });
+
+      const latestOpenPr = parsed.find((pr) => pr.state === "open");
+      if (latestOpenPr) {
+        return latestOpenPr;
+      }
+      return parsed[0] ?? null;
+    });
 
   const resolveBaseBranch = (cwd: string, branch: string, upstreamRef: string | null) =>
     Effect.gen(function* () {
@@ -258,10 +362,10 @@ export const makeGitManager = Effect.gen(function* () {
   const status: GitManagerShape["status"] = Effect.fnUntraced(function* (input) {
     const details = yield* gitCore.statusDetails(input.cwd);
 
-    const openPr =
-      details.branch && details.hasUpstream
-        ? yield* findOpenPr(input.cwd, details.branch).pipe(
-            Effect.map((pr) => (pr ? toStatusOpenPr(pr) : null)),
+    const pr =
+      details.branch !== null
+        ? yield* findLatestPr(input.cwd, details.branch).pipe(
+            Effect.map((latest) => (latest ? toStatusPr(latest) : null)),
             Effect.catch(() => Effect.succeed(null)),
           )
         : null;
@@ -273,7 +377,7 @@ export const makeGitManager = Effect.gen(function* () {
       hasUpstream: details.hasUpstream,
       aheadCount: details.aheadCount,
       behindCount: details.behindCount,
-      openPr,
+      pr,
     };
   });
 

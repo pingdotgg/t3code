@@ -108,7 +108,7 @@ export function buildMenuItems(
 
   const hasBranch = gitStatus.branch !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
-  const hasOpenPr = gitStatus.openPr !== null;
+  const hasOpenPr = gitStatus.pr?.state === "open";
   const isBehind = gitStatus.behindCount > 0;
   const canCommit = !isBusy && hasChanges;
   const canPush = !isBusy && hasBranch && !hasChanges && !isBehind && gitStatus.aheadCount > 0;
@@ -178,7 +178,7 @@ export function resolveQuickAction(
 
   const hasBranch = gitStatus.branch !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
-  const hasOpenPr = gitStatus.openPr !== null;
+  const hasOpenPr = gitStatus.pr?.state === "open";
   const isAhead = gitStatus.aheadCount > 0;
   const isBehind = gitStatus.behindCount > 0;
   const isDiverged = isAhead && isBehind;
