@@ -532,6 +532,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
             provider: "codex",
             cwd: "/tmp/project-send-turn",
             resumeThreadId: initial.threadId,
+            resumeCursor: initial.resumeCursor,
           },
         ],
       ]);
