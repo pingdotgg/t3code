@@ -5,11 +5,12 @@ export const MODEL_OPTIONS = [
   { slug: "gpt-5.2", name: "GPT-5.2" },
 ] as const;
 
-export type ModelSlug = (typeof MODEL_OPTIONS)[number]["slug"];
+export type BuiltInModelSlug = (typeof MODEL_OPTIONS)[number]["slug"];
+export type ModelSlug = string;
 
 export const DEFAULT_MODEL = "gpt-5.3-codex";
 
-export const MODEL_SLUG_ALIASES: Record<string, ModelSlug> = {
+export const MODEL_SLUG_ALIASES: Record<string, BuiltInModelSlug> = {
   "5.3": "gpt-5.3-codex",
   "gpt-5.3": "gpt-5.3-codex",
   "5.3-spark": "gpt-5.3-codex-spark",
@@ -26,16 +27,12 @@ export function normalizeModelSlug(model: string | null | undefined): ModelSlug 
     return null;
   }
 
-  return MODEL_SLUG_ALIASES[trimmed] ?? (trimmed as ModelSlug);
+  return MODEL_SLUG_ALIASES[trimmed] ?? trimmed;
 }
 
 export function resolveModelSlug(model: string | null | undefined): ModelSlug {
   const normalized = normalizeModelSlug(model);
-  if (!normalized) {
-    return DEFAULT_MODEL;
-  }
-
-  return MODEL_OPTIONS.some((option) => option.slug === normalized) ? normalized : DEFAULT_MODEL;
+  return normalized ?? DEFAULT_MODEL;
 }
 
 export const REASONING_OPTIONS = ["xhigh", "high", "medium", "low"] as const;

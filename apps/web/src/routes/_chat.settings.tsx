@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
+import { MODEL_OPTIONS, normalizeModelSlug } from "@t3tools/contracts";
 
-import { useAppSettings } from "../appSettings";
+import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -52,9 +53,12 @@ function SettingsRouteView() {
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
+  const [customModelInput, setCustomModelInput] = useState("");
+  const [customModelError, setCustomModelError] = useState<string | null>(null);
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const customCodexModels = settings.customCodexModels;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
   const openKeybindingsFile = useCallback(() => {
@@ -73,6 +77,42 @@ function SettingsRouteView() {
         setIsOpeningKeybindings(false);
       });
   }, [keybindingsConfigPath]);
+
+  const addCustomModel = useCallback(() => {
+    const normalized = normalizeModelSlug(customModelInput);
+    if (!normalized) {
+      setCustomModelError("Enter a model slug.");
+      return;
+    }
+    if (MODEL_OPTIONS.some((option) => option.slug === normalized)) {
+      setCustomModelError("That model is already built in.");
+      return;
+    }
+    if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
+      setCustomModelError(`Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`);
+      return;
+    }
+    if (customCodexModels.includes(normalized)) {
+      setCustomModelError("That custom model is already saved.");
+      return;
+    }
+
+    updateSettings({
+      customCodexModels: [...customCodexModels, normalized],
+    });
+    setCustomModelInput("");
+    setCustomModelError(null);
+  }, [customCodexModels, customModelInput, updateSettings]);
+
+  const removeCustomModel = useCallback(
+    (slug: string) => {
+      updateSettings({
+        customCodexModels: customCodexModels.filter((model) => model !== slug),
+      });
+      setCustomModelError(null);
+    },
+    [customCodexModels, updateSettings],
+  );
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
@@ -189,6 +229,96 @@ function SettingsRouteView() {
                   >
                     Reset codex overrides
                   </Button>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Models</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Save additional Codex model slugs so they appear in the chat model picker.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <form
+                  className="flex flex-col gap-3 sm:flex-row sm:items-start"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    addCustomModel();
+                  }}
+                >
+                  <label className="block flex-1 space-y-1">
+                    <span className="text-xs font-medium text-foreground">Custom model slug</span>
+                    <Input
+                      value={customModelInput}
+                      onChange={(event) => {
+                        setCustomModelInput(event.target.value);
+                        if (customModelError) {
+                          setCustomModelError(null);
+                        }
+                      }}
+                      placeholder="your-model-slug"
+                      spellCheck={false}
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      Example: <code>gpt-6.7-codex-ultra-preview</code>
+                    </span>
+                  </label>
+
+                  <Button className="sm:mt-6" type="submit">
+                    Add model
+                  </Button>
+                </form>
+
+                {customModelError ? (
+                  <p className="text-xs text-destructive">{customModelError}</p>
+                ) : null}
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                    <p>Saved custom models: {customCodexModels.length}</p>
+                    {customCodexModels.length > 0 ? (
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() =>
+                          updateSettings({
+                            customCodexModels: defaults.customCodexModels,
+                          })
+                        }
+                      >
+                        Reset custom models
+                      </Button>
+                    ) : null}
+                  </div>
+
+                  {customCodexModels.length > 0 ? (
+                    <div className="space-y-2">
+                      {customCodexModels.map((slug) => (
+                        <div
+                          key={slug}
+                          className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2"
+                        >
+                          <code className="min-w-0 flex-1 truncate text-xs text-foreground">
+                            {slug}
+                          </code>
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            onClick={() => removeCustomModel(slug)}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-border bg-background px-3 py-4 text-xs text-muted-foreground">
+                      No custom models saved yet.
+                    </div>
+                  )}
                 </div>
               </div>
             </section>

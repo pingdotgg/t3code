@@ -6,11 +6,9 @@ import {
   type EditorId,
   type KeybindingCommand,
   type MessageId,
-  MODEL_OPTIONS,
   type ProjectId,
   type ProjectEntry,
   type ProjectScript,
-  ModelSlug,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   REASONING_OPTIONS,
@@ -112,7 +110,7 @@ import { Toggle } from "./ui/toggle";
 import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
-import { useAppSettings } from "../appSettings";
+import { getAppModelOptions, useAppSettings } from "../appSettings";
 import { clamp } from "effect/Number";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
@@ -129,12 +127,6 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
-const SEARCHABLE_MODEL_OPTIONS = MODEL_OPTIONS.map(({ slug, name }) => ({
-  slug,
-  name,
-  searchSlug: slug.toLowerCase(),
-  searchName: name.toLowerCase(),
-}));
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
@@ -216,7 +208,7 @@ type ComposerCommandItem =
   | {
       id: string;
       type: "model";
-      model: ModelSlug;
+      model: string;
       label: string;
       description: string;
     };
@@ -438,6 +430,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const selectedModel = resolveModelSlug(
     activeThread?.model ?? activeProject?.model ?? DEFAULT_MODEL,
   );
+  const modelOptions = useMemo(
+    () => getAppModelOptions(settings.customCodexModels, selectedModel),
+    [selectedModel, settings.customCodexModels],
+  );
   const phase = derivePhase(activeThread?.session ?? null);
   const isSendBusy = sendPhase !== "idle";
   const isPreparingWorktree = sendPhase === "preparing-worktree";
@@ -614,18 +610,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
       ];
     }
 
-    return SEARCHABLE_MODEL_OPTIONS.filter(({ searchSlug, searchName }) => {
-      const query = composerTrigger.query.trim().toLowerCase();
-      if (!query) return true;
-      return searchSlug.includes(query) || searchName.includes(query);
-    }).map(({ slug, name }) => ({
-      id: `model:${slug}`,
-      type: "model",
-      model: slug,
-      label: name,
-      description: slug,
-    }));
-  }, [composerTrigger, workspaceEntries]);
+    return modelOptions
+      .map(({ slug, name }) => ({
+        slug,
+        name,
+        searchSlug: slug.toLowerCase(),
+        searchName: name.toLowerCase(),
+      }))
+      .filter(({ searchSlug, searchName }) => {
+        const query = composerTrigger.query.trim().toLowerCase();
+        if (!query) return true;
+        return searchSlug.includes(query) || searchName.includes(query);
+      })
+      .map(({ slug, name }) => ({
+        id: `model:${slug}`,
+        type: "model" as const,
+        model: slug,
+        label: name,
+        description: slug,
+      }));
+  }, [composerTrigger, modelOptions, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -1660,7 +1664,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
 
   const onModelSelect = useCallback(
-    (model: ModelSlug) => {
+    (model: string) => {
       const api = readNativeApi();
       if (!activeThread) return;
       if (api) {
@@ -2012,7 +2016,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
             <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 pb-2.5 sm:flex-nowrap sm:gap-0 sm:px-3 sm:pb-3">
               <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible">
                 {/* Model picker */}
-                <ModelPicker model={selectedModel} onModelChange={onModelSelect} />
+                <ModelPicker
+                  model={selectedModel}
+                  options={modelOptions}
+                  onModelChange={onModelSelect}
+                />
 
                 {/* Divider */}
                 <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
@@ -2912,12 +2920,13 @@ const MessagesTimeline = memo(function MessagesTimeline({
 });
 
 const ModelPicker = memo(function ModelPicker(props: {
-  model: ModelSlug;
-  onModelChange: (model: ModelSlug) => void;
+  model: string;
+  options: ReadonlyArray<{ slug: string; name: string }>;
+  onModelChange: (model: string) => void;
 }) {
   return (
     <Select
-      items={MODEL_OPTIONS.map((option) => ({ label: option.name, value: option.slug }))}
+      items={props.options.map((option) => ({ label: option.name, value: option.slug }))}
       value={props.model}
       onValueChange={(value) => (value ? props.onModelChange(value) : undefined)}
     >
@@ -2925,7 +2934,7 @@ const ModelPicker = memo(function ModelPicker(props: {
         <SelectValue />
       </SelectTrigger>
       <SelectPopup alignItemWithTrigger={false}>
-        {MODEL_OPTIONS.map(({ slug, name }) => (
+        {props.options.map(({ slug, name }) => (
           <SelectItem key={slug} value={slug}>
             {name}
           </SelectItem>
