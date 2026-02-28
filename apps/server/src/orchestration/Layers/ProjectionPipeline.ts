@@ -101,14 +101,12 @@ function parseBase64DataUrl(
   dataUrl: string,
 ): { readonly mimeType: string; readonly base64: string } | null {
   const match = /^data:([^;,]+);base64,([a-z0-9+/=\r\n]+)$/i.exec(dataUrl.trim());
-  if (!match) {
-    return null;
-  }
+  if (!match) return null;
+
   const mimeType = match[1]?.trim().toLowerCase();
   const base64 = match[2]?.replace(/\s+/g, "");
-  if (!mimeType || !base64) {
-    return null;
-  }
+  if (!mimeType || !base64) return null;
+
   return { mimeType, base64 };
 }
 
