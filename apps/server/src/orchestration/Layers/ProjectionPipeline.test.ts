@@ -230,7 +230,7 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
           name: "example.png",
           mimeType: "image/png",
           sizeBytes: 5,
-          dataUrl: "/attachments/thread-attachments/message-attachments/0.png",
+          dataUrl: "/attachments/thread-attachments/message-attachments-0.png",
         },
       ]);
 
@@ -238,8 +238,7 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
         stateDir,
         "attachments",
         "thread-attachments",
-        "message-attachments",
-        "0.png",
+        "message-attachments-0.png",
       );
       assert.equal(fs.existsSync(attachmentPath), true);
       assert.deepEqual(fs.readFileSync(attachmentPath), Buffer.from("SGVsbG8=", "base64"));
@@ -325,7 +324,7 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
           name: "untrusted.exe",
           mimeType: "image/x-unknown",
           sizeBytes: 5,
-          dataUrl: "/attachments/thread-attachments-safe/message-attachments-safe/0.bin",
+          dataUrl: "/attachments/thread-attachments-safe/message-attachments-safe-0.bin",
         },
         {
           type: "image",
@@ -340,8 +339,7 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
         stateDir,
         "attachments",
         "thread-attachments-safe",
-        "message-attachments-safe",
-        "0.bin",
+        "message-attachments-safe-0.bin",
       );
       assert.equal(fs.existsSync(firstAttachmentPath), true);
       assert.deepEqual(fs.readFileSync(firstAttachmentPath), Buffer.from("SGVsbG8=", "base64"));
@@ -350,8 +348,7 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
         stateDir,
         "attachments",
         "thread-attachments-safe",
-        "message-attachments-safe",
-        "1.png",
+        "message-attachments-safe-1.png",
       );
       assert.equal(fs.existsSync(secondAttachmentPath), false);
       fs.rmSync(stateDir, { recursive: true, force: true });
@@ -614,8 +611,7 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
         stateDir,
         "attachments",
         "thread-overwrite",
-        "message-overwrite",
-        "0.png",
+        "message-overwrite-0.png",
       );
       assert.equal(fs.existsSync(attachmentPath), true);
       assert.deepEqual(fs.readFileSync(attachmentPath), Buffer.from("V29ybGQ=", "base64"));
@@ -753,8 +749,7 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
         stateDir,
         "attachments",
         "thread-rollback",
-        "message-rollback",
-        "0.png",
+        "message-rollback-0.png",
       );
       assert.equal(fs.existsSync(attachmentPath), false);
       yield* sql`DROP TRIGGER IF EXISTS fail_thread_messages_projection_state_update`;
@@ -945,15 +940,13 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
         stateDir,
         "attachments",
         "thread-revert-files",
-        "message-keep",
-        "0.png",
+        "message-keep-0.png",
       );
       const removePath = path.join(
         stateDir,
         "attachments",
         "thread-revert-files",
-        "message-remove",
-        "0.png",
+        "message-remove-0.png",
       );
       assert.equal(fs.existsSync(keepPath), true);
       assert.equal(fs.existsSync(removePath), true);

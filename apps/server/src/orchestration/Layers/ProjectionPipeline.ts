@@ -140,8 +140,9 @@ const materializeAttachmentsForProjection = Effect.fn(function* (input: {
           ...attachment,
           mimeType: parsed.mimeType,
         })}`;
-        const relativePath = `${threadSegment}/${messageSegment}/${fileName}`;
-        const absolutePath = path.join(attachmentsRootDir, threadSegment, messageSegment, fileName);
+        const uniqueFileName = `${messageSegment}-${fileName}`;
+        const relativePath = `${threadSegment}/${uniqueFileName}`;
+        const absolutePath = path.join(attachmentsRootDir, threadSegment, uniqueFileName);
         input.stageFileWrite({ absolutePath, bytes });
 
         return {
