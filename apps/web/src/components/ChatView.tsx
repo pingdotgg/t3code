@@ -74,6 +74,8 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import {
   BotIcon,
   ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
   FileIcon,
   FolderIcon,
@@ -166,9 +168,34 @@ interface ComposerImageAttachment extends Omit<ChatImageAttachment, "previewUrl"
   file: File;
 }
 
-interface ExpandedImagePreview {
+interface ExpandedImageItem {
   src: string;
   name: string;
+}
+
+interface ExpandedImagePreview {
+  images: ExpandedImageItem[];
+  index: number;
+}
+
+function buildExpandedImagePreview(
+  images: ReadonlyArray<{ id: string; name: string; previewUrl?: string }>,
+  selectedImageId: string,
+): ExpandedImagePreview | null {
+  const previewableImages = images.flatMap((image) =>
+    image.previewUrl ? [{ id: image.id, src: image.previewUrl, name: image.name }] : [],
+  );
+  if (previewableImages.length === 0) {
+    return null;
+  }
+  const selectedIndex = previewableImages.findIndex((image) => image.id === selectedImageId);
+  if (selectedIndex < 0) {
+    return null;
+  }
+  return {
+    images: previewableImages.map((image) => ({ src: image.src, name: image.name })),
+    index: selectedIndex,
+  };
 }
 
 type ComposerCommandItem =
@@ -1071,22 +1098,53 @@ export default function ChatView({ threadId }: ChatViewProps) {
     };
   }, [revokePreviewUrls]);
 
-  /**
-   * Close expanded image on Escape key
-   */
+  const closeExpandedImage = useCallback(() => {
+    setExpandedImage(null);
+  }, []);
+  const navigateExpandedImage = useCallback((direction: -1 | 1) => {
+    setExpandedImage((existing) => {
+      if (!existing || existing.images.length <= 1) {
+        return existing;
+      }
+      const nextIndex =
+        (existing.index + direction + existing.images.length) % existing.images.length;
+      if (nextIndex === existing.index) {
+        return existing;
+      }
+      return { ...existing, index: nextIndex };
+    });
+  }, []);
+
   useEffect(() => {
     if (!expandedImage) {
       return;
     }
 
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setExpandedImage(null);
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeExpandedImage();
+        return;
+      }
+      if (expandedImage.images.length <= 1) {
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        event.stopPropagation();
+        navigateExpandedImage(-1);
+        return;
+      }
+      if (event.key !== "ArrowRight") return;
+      event.preventDefault();
+      event.stopPropagation();
+      navigateExpandedImage(1);
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [expandedImage]);
+  }, [closeExpandedImage, expandedImage, navigateExpandedImage]);
 
   const activeWorktreePath = activeThread?.worktreePath;
 
@@ -1723,9 +1781,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       [groupId]: !existing[groupId],
     }));
   }, []);
-  const onExpandTimelineImage = useCallback((image: ExpandedImagePreview) => {
-    setExpandedImage(image);
+  const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
+    setExpandedImage(preview);
   }, []);
+  const expandedImageItem = expandedImage ? expandedImage.images[expandedImage.index] : null;
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
       void navigate({
@@ -1888,9 +1947,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           src={image.previewUrl}
                           alt={image.name}
                           className="h-full w-full cursor-zoom-in object-cover"
-                          onClick={() =>
-                            setExpandedImage({ src: image.previewUrl, name: image.name })
-                          }
+                          onClick={() => {
+                            const preview = buildExpandedImagePreview(composerImages, image.id);
+                            if (!preview) return;
+                            setExpandedImage(preview);
+                          }}
                         />
                       ) : (
                         <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
@@ -2114,14 +2175,29 @@ export default function ChatView({ threadId }: ChatViewProps) {
         );
       })()}
 
-      {expandedImage && (
+      {expandedImage && expandedImageItem && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 py-6 [-webkit-app-region:no-drag]"
           role="dialog"
           aria-modal="true"
           aria-label="Expanded image preview"
-          onClick={() => setExpandedImage(null)}
+          onClick={closeExpandedImage}
         >
+          {expandedImage.images.length > 1 && (
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="absolute left-2 top-1/2 z-10 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white sm:left-6"
+              aria-label="Previous image"
+              onClick={(event) => {
+                event.stopPropagation();
+                navigateExpandedImage(-1);
+              }}
+            >
+              <ChevronLeftIcon className="size-5" />
+            </Button>
+          )}
           <div
             className="relative isolate max-h-[92vh] max-w-[92vw]"
             onClick={(event) => event.stopPropagation()}
@@ -2131,21 +2207,39 @@ export default function ChatView({ threadId }: ChatViewProps) {
               size="icon-xs"
               variant="ghost"
               className="absolute right-2 top-2"
-              onClick={() => setExpandedImage(null)}
+              onClick={closeExpandedImage}
               aria-label="Close image preview"
             >
               <XIcon />
             </Button>
             <img
-              src={expandedImage.src}
-              alt={expandedImage.name}
+              src={expandedImageItem.src}
+              alt={expandedImageItem.name}
               className="max-h-[86vh] max-w-[92vw] select-none rounded-lg border border-border/70 bg-background object-contain shadow-2xl"
               draggable={false}
             />
             <p className="mt-2 max-w-[92vw] truncate text-center text-xs text-muted-foreground/80">
-              {expandedImage.name}
+              {expandedImageItem.name}
+              {expandedImage.images.length > 1
+                ? ` (${expandedImage.index + 1}/${expandedImage.images.length})`
+                : ""}
             </p>
           </div>
+          {expandedImage.images.length > 1 && (
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="absolute right-2 top-1/2 z-10 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white sm:right-6"
+              aria-label="Next image"
+              onClick={(event) => {
+                event.stopPropagation();
+                navigateExpandedImage(1);
+              }}
+            >
+              <ChevronRightIcon className="size-5" />
+            </Button>
+          )}
         </div>
       )}
     </div>
@@ -2362,7 +2456,7 @@ interface MessagesTimelineProps {
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
-  onImageExpand: (image: ExpandedImagePreview) => void;
+  onImageExpand: (preview: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
 }
 
@@ -2603,9 +2697,11 @@ const MessagesTimeline = memo(function MessagesTimeline({
                               src={image.previewUrl}
                               alt={image.name}
                               className="h-full max-h-[220px] w-full cursor-zoom-in object-cover"
-                              onClick={() =>
-                                onImageExpand({ src: image.previewUrl!, name: image.name })
-                              }
+                              onClick={() => {
+                                const preview = buildExpandedImagePreview(userImages, image.id);
+                                if (!preview) return;
+                                onImageExpand(preview);
+                              }}
                             />
                           ) : (
                             <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
