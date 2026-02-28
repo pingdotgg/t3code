@@ -184,7 +184,9 @@ const make = Effect.gen(function* () {
     const desiredSandboxMode =
       options?.sandboxMode ?? thread.session?.sandboxMode ?? DEFAULT_SANDBOX_MODE;
     const currentProvider: ProviderKind | undefined =
-      thread.session?.providerName === "codex" || thread.session?.providerName === "claudeCode"
+      thread.session?.providerName === "codex" ||
+      thread.session?.providerName === "claudeCode" ||
+      thread.session?.providerName === "cursor"
         ? thread.session.providerName
         : undefined;
     const preferredProvider: ProviderKind | undefined = options?.provider ?? currentProvider;

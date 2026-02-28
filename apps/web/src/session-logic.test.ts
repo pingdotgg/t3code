@@ -235,4 +235,13 @@ describe("PROVIDER_OPTIONS", () => {
       available: true,
     });
   });
+
+  it("marks cursor as available", () => {
+    const cursor = PROVIDER_OPTIONS.find((option) => option.value === "cursor");
+    expect(cursor).toEqual({
+      value: "cursor",
+      label: "Cursor Agent",
+      available: true,
+    });
+  });
 });

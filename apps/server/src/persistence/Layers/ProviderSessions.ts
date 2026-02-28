@@ -13,7 +13,7 @@ import {
   type ProviderSessionRepositoryShape,
 } from "../Services/ProviderSessions.ts";
 
-const ProviderKind = Schema.Literals(["codex", "claudeCode"]);
+const ProviderKind = Schema.Literals(["codex", "claudeCode", "cursor"]);
 
 const ProviderSessionRowSchema = Schema.Struct({
   sessionId: ProviderSessionId,
