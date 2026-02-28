@@ -43,12 +43,13 @@ const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
   }),
 );
+const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
+  Struct.assign({
+    isStreaming: Schema.Number,
+    attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+  }),
+);
 const ProjectionThreadDbRowSchema = ProjectionThread;
-const ProjectionThreadMessageDbRowSchema = Schema.Struct({
-  ...ProjectionThreadMessage.fields,
-  isStreaming: Schema.Number,
-  attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
-});
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   Struct.assign({
     payload: Schema.fromJsonString(Schema.Unknown),

@@ -1,6 +1,6 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Schema, Struct } from "effect";
 import { ChatAttachment } from "@t3tools/contracts";
 
 import { toPersistenceSqlError } from "../Errors.ts";
@@ -12,11 +12,12 @@ import {
   ProjectionThreadMessage,
 } from "../Services/ProjectionThreadMessages.ts";
 
-const ProjectionThreadMessageDbRowSchema = Schema.Struct({
-  ...ProjectionThreadMessage.fields,
-  isStreaming: Schema.Number,
-  attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
-});
+const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
+  Struct.assign({
+    isStreaming: Schema.Number,
+    attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+  }),
+);
 
 const makeProjectionThreadMessageRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -24,7 +25,8 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
   const upsertProjectionThreadMessageRow = SqlSchema.void({
     Request: ProjectionThreadMessage,
     execute: (row) => {
-      const nextAttachmentsJson = row.attachments !== undefined ? JSON.stringify(row.attachments) : null;
+      const nextAttachmentsJson =
+        row.attachments !== undefined ? JSON.stringify(row.attachments) : null;
       return sql`
         INSERT INTO projection_thread_messages (
           message_id,
