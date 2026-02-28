@@ -378,6 +378,7 @@ it.effect(
         [
           {
             provider: "codex",
+            cwd: "/tmp/project",
             resumeThreadId: startedSession.threadId,
           },
         ],
@@ -465,6 +466,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         [
           {
             provider: "codex",
+            cwd: "/tmp/project",
             resumeThreadId: initial.threadId,
           },
         ],
@@ -472,6 +474,38 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(routing.codex.rollbackThread.mock.calls.length, 1);
       const rollbackCall = routing.codex.rollbackThread.mock.calls[0];
       assert.equal(rollbackCall?.[1], 1);
+    }),
+  );
+
+  it.effect("recovers stale sessions for sendTurn using persisted cwd", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      const initial = yield* provider.startSession(asThreadId("thread-1"), {
+        provider: "codex",
+        cwd: "/tmp/project-send-turn",
+      });
+
+      yield* provider.stopAll();
+      routing.codex.startSession.mockClear();
+      routing.codex.sendTurn.mockClear();
+
+      yield* provider.sendTurn({
+        sessionId: initial.sessionId,
+        input: "resume",
+        attachments: [],
+      });
+
+      assert.deepEqual(routing.codex.startSession.mock.calls, [
+        [
+          {
+            provider: "codex",
+            cwd: "/tmp/project-send-turn",
+            resumeThreadId: initial.threadId,
+          },
+        ],
+      ]);
+      assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
     }),
   );
 

@@ -93,6 +93,18 @@ function toRuntimePayloadFromSession(session: ProviderSession): Record<string, u
   };
 }
 
+function readPersistedCwd(runtimePayload: ProviderSessionBinding["runtimePayload"]): string | undefined {
+  if (!runtimePayload || typeof runtimePayload !== "object" || Array.isArray(runtimePayload)) {
+    return undefined;
+  }
+  const rawCwd = runtimePayload.cwd;
+  if (typeof rawCwd !== "string") {
+    return undefined;
+  }
+  const trimmed = rawCwd.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 const makeProviderService = (options?: ProviderServiceLiveOptions) =>
   Effect.gen(function* () {
     const canonicalEventLogger =
@@ -266,8 +278,11 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           );
         }
 
+        const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
+
         const resumed = yield* adapter.startSession({
           provider: input.binding.provider,
+          ...(persistedCwd ? { cwd: persistedCwd } : {}),
           ...(resumeThreadId ? { resumeThreadId } : {}),
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
         });
