@@ -349,6 +349,9 @@ function TerminalViewport({
         }
         hasHandledExitRef.current = true;
         window.setTimeout(() => {
+          if (!hasHandledExitRef.current) {
+            return;
+          }
           onSessionExitedRef.current();
         }, 0);
       }
