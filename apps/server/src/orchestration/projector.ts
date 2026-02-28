@@ -124,6 +124,23 @@ function retainThreadActivitiesAfterRevert(
   );
 }
 
+function compareThreadActivities(
+  left: OrchestrationThread["activities"][number],
+  right: OrchestrationThread["activities"][number],
+): number {
+  if (left.sequence !== undefined && right.sequence !== undefined) {
+    if (left.sequence !== right.sequence) {
+      return left.sequence - right.sequence;
+    }
+  } else if (left.sequence !== undefined) {
+    return 1;
+  } else if (right.sequence !== undefined) {
+    return -1;
+  }
+
+  return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
+}
+
 export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
@@ -503,7 +520,7 @@ export function projectEvent(
             ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
             payload.activity,
           ]
-            .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
+            .toSorted(compareThreadActivities)
             .slice(-500);
 
           return {

@@ -505,6 +505,73 @@ describe("ClaudeCodeAdapterLive", () => {
     );
   });
 
+  it.effect("does not fabricate provider thread ids before first SDK session_id", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeCodeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 5).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        provider: "claudeCode",
+      });
+      assert.equal(session.threadId, undefined);
+
+      const turn = yield* adapter.sendTurn({
+        sessionId: session.sessionId,
+        input: "hello",
+        attachments: [],
+      });
+      assert.equal(turn.threadId, undefined);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-thread-real",
+        uuid: "stream-thread-real",
+        parent_tool_use_id: null,
+        event: {
+          type: "message_start",
+          message: {
+            id: "msg-thread-real",
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-thread-real",
+        uuid: "result-thread-real",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.deepEqual(
+        runtimeEvents.map((event) => event.type),
+        ["session.started", "turn.started", "thread.started", "message.completed", "turn.completed"],
+      );
+
+      const sessionStarted = runtimeEvents[0];
+      assert.equal(sessionStarted?.type, "session.started");
+      if (sessionStarted?.type === "session.started") {
+        assert.equal("threadId" in sessionStarted, false);
+      }
+
+      const threadStarted = runtimeEvents[2];
+      assert.equal(threadStarted?.type, "thread.started");
+      if (threadStarted?.type === "thread.started") {
+        assert.equal(threadStarted.threadId, "sdk-thread-real");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("bridges approval request/response lifecycle through canUseTool", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

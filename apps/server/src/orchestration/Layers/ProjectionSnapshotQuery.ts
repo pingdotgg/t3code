@@ -2,6 +2,7 @@ import {
   ChatAttachment,
   IsoDateTime,
   MessageId,
+  NonNegativeInt,
   OrchestrationCheckpointFile,
   OrchestrationReadModel,
   ProjectScript,
@@ -53,6 +54,7 @@ const ProjectionThreadDbRowSchema = ProjectionThread;
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   Struct.assign({
     payload: Schema.fromJsonString(Schema.Unknown),
+    sequence: Schema.NullOr(NonNegativeInt),
   }),
 );
 const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession;
@@ -195,9 +197,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           kind,
           summary,
           payload_json AS "payload",
+          sequence,
           created_at AS "createdAt"
         FROM projection_thread_activities
-        ORDER BY thread_id ASC, created_at ASC, activity_id ASC
+        ORDER BY
+          thread_id ASC,
+          CASE WHEN sequence IS NULL THEN 0 ELSE 1 END ASC,
+          sequence ASC,
+          created_at ASC,
+          activity_id ASC
       `,
   });
 
@@ -398,6 +406,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               summary: row.summary,
               payload: row.payload,
               turnId: row.turnId,
+              ...(row.sequence !== null ? { sequence: row.sequence } : {}),
               createdAt: row.createdAt,
             });
             activitiesByThread.set(row.threadId, threadActivities);

@@ -17,6 +17,7 @@ function makeActivity(overrides: {
   tone?: OrchestrationThreadActivity["tone"];
   payload?: Record<string, unknown>;
   turnId?: string;
+  sequence?: number;
 }): OrchestrationThreadActivity {
   const payload = overrides.payload ?? {};
   return {
@@ -27,6 +28,7 @@ function makeActivity(overrides: {
     tone: overrides.tone ?? "tool",
     payload,
     turnId: overrides.turnId ? TurnId.makeUnsafe(overrides.turnId) : null,
+    ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
   };
 }
 
@@ -130,6 +132,28 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities, undefined);
     expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
+  });
+
+  it("orders work log by activity sequence when present", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "second",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        sequence: 2,
+        summary: "Tool call complete",
+        kind: "tool.completed",
+      }),
+      makeActivity({
+        id: "first",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        sequence: 1,
+        summary: "Tool call complete",
+        kind: "tool.completed",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+    expect(entries.map((entry) => entry.id)).toEqual(["first", "second"]);
   });
 });
 

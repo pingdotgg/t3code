@@ -79,6 +79,7 @@ function truncateDetail(value: string, limit = 180): string {
 function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
 ): ReadonlyArray<OrchestrationThreadActivity> {
+  const maybeSequence = event.sessionSequence !== undefined ? { sequence: event.sessionSequence } : {};
   switch (event.type) {
     case "approval.requested": {
       return [
@@ -97,6 +98,7 @@ function runtimeEventToActivities(
             ...(event.detail ? { detail: truncateDetail(event.detail) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
         },
       ];
     }
@@ -115,6 +117,7 @@ function runtimeEventToActivities(
             ...(event.decision ? { decision: event.decision } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
         },
       ];
     }
@@ -131,6 +134,7 @@ function runtimeEventToActivities(
             message: truncateDetail(event.message),
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
         },
       ];
     }
@@ -148,6 +152,7 @@ function runtimeEventToActivities(
             ...(event.detail ? { detail: truncateDetail(event.detail) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
         },
       ];
     }
@@ -165,6 +170,7 @@ function runtimeEventToActivities(
             ...(event.detail ? { detail: truncateDetail(event.detail) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
         },
       ];
     }

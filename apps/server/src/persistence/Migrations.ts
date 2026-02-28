@@ -19,6 +19,7 @@ import Migration0004 from "./Migrations/004_ProviderSessionRuntime.ts";
 import Migration0005 from "./Migrations/005_Projections.ts";
 import Migration0006 from "./Migrations/006_ProjectionThreadSessionRuntimeModeColumns.ts";
 import Migration0007 from "./Migrations/007_ProjectionThreadMessageAttachments.ts";
+import Migration0008 from "./Migrations/008_ProjectionThreadActivitySequence.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -38,6 +39,7 @@ const loader = Migrator.fromRecord({
   "5_Projections": Migration0005,
   "6_ProjectionThreadSessionRuntimeModeColumns": Migration0006,
   "7_ProjectionThreadMessageAttachments": Migration0007,
+  "8_ProjectionThreadActivitySequence": Migration0008,
 });
 
 /**

@@ -9,6 +9,7 @@
 import {
   EventId,
   IsoDateTime,
+  NonNegativeInt,
   OrchestrationThreadActivityTone,
   ThreadId,
   TurnId,
@@ -26,6 +27,7 @@ export const ProjectionThreadActivity = Schema.Struct({
   kind: Schema.String,
   summary: Schema.String,
   payload: Schema.Unknown,
+  sequence: Schema.optional(NonNegativeInt),
   createdAt: IsoDateTime,
 });
 export type ProjectionThreadActivity = typeof ProjectionThreadActivity.Type;
@@ -57,7 +59,8 @@ export interface ProjectionThreadActivityRepositoryShape {
   /**
    * List projected thread activity rows for a thread.
    *
-   * Returned in ascending creation order.
+   * Returned in ascending runtime sequence order (or creation order when
+   * sequence is unavailable).
    */
   readonly listByThreadId: (
     input: ListProjectionThreadActivitiesInput,
