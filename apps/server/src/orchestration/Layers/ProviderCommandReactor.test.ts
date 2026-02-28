@@ -91,7 +91,9 @@ describe("ProviderCommandReactor", () => {
         typeof input === "object" &&
         input !== null &&
         "provider" in input &&
-        (input.provider === "codex" || input.provider === "claudeCode")
+        (input.provider === "codex" ||
+          input.provider === "claudeCode" ||
+          input.provider === "cursor")
           ? input.provider
           : "codex";
       const resumeCursor =
@@ -282,6 +284,44 @@ describe("ProviderCommandReactor", () => {
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.providerName).toBe("claudeCode");
+    expect(thread?.session?.providerSessionId).toBe("sess-1");
+  });
+
+  it("starts first turn with cursor provider when provider is specified", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-provider-cursor"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-provider-cursor"),
+          role: "user",
+          text: "hello cursor",
+          attachments: [],
+        },
+        provider: "cursor",
+        approvalPolicy: "on-request",
+        sandboxMode: "workspace-write",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      provider: "cursor",
+      cwd: "/tmp/provider-project",
+      model: "gpt-5-codex",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+    });
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(thread?.session?.providerName).toBe("cursor");
     expect(thread?.session?.providerSessionId).toBe("sess-1");
   });
 

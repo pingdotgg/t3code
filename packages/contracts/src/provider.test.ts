@@ -46,4 +46,18 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.approvalPolicy).toBe("never");
     expect(parsed.sandboxMode).toBe("danger-full-access");
   });
+
+  it("accepts cursor provider payloads", () => {
+    const parsed = decodeProviderSessionStartInput({
+      provider: "cursor",
+      cwd: "/tmp/workspace",
+      model: "composer-1.5",
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+    });
+    expect(parsed.provider).toBe("cursor");
+    expect(parsed.model).toBe("composer-1.5");
+    expect(parsed.approvalPolicy).toBe("on-request");
+    expect(parsed.sandboxMode).toBe("workspace-write");
+  });
 });
