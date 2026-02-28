@@ -331,47 +331,13 @@ label:has(> select#reasoning-effort) select {
 }
 
 /* Diffs theme bridge (match diff surfaces to app palette) */
-.diff-render-surface [data-diffs-header],
-.diff-render-surface [data-diff],
-.diff-render-surface [data-file],
-.diff-render-surface [data-error-wrapper],
-.diff-render-surface [data-virtualizer-buffer] {
-  --diffs-light-bg: color-mix(in srgb, var(--card) 92%, var(--background));
-  --diffs-dark-bg: color-mix(in srgb, var(--card) 92%, var(--background));
-
-  --diffs-bg-context-override: color-mix(in srgb, var(--background) 97%, var(--foreground));
-  --diffs-bg-hover-override: color-mix(in srgb, var(--background) 94%, var(--foreground));
-  --diffs-bg-separator-override: color-mix(in srgb, var(--background) 95%, var(--foreground));
-  --diffs-bg-buffer-override: color-mix(in srgb, var(--background) 90%, var(--foreground));
-
-  --diffs-bg-addition-override: color-mix(in srgb, var(--background) 92%, var(--success));
-  --diffs-bg-addition-number-override: color-mix(in srgb, var(--background) 88%, var(--success));
-  --diffs-bg-addition-hover-override: color-mix(in srgb, var(--background) 85%, var(--success));
-  --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--background) 80%, var(--success));
-
-  --diffs-bg-deletion-override: color-mix(in srgb, var(--background) 92%, var(--destructive));
-  --diffs-bg-deletion-number-override: color-mix(
-    in srgb,
-    var(--background) 88%,
-    var(--destructive)
-  );
-  --diffs-bg-deletion-hover-override: color-mix(in srgb, var(--background) 85%, var(--destructive));
-  --diffs-bg-deletion-emphasis-override: color-mix(
-    in srgb,
-    var(--background) 80%,
-    var(--destructive)
-  );
+.diff-panel-viewport {
+  background: color-mix(in srgb, var(--background) 94%, var(--card));
 }
 
-.diff-render-surface [data-file-info] {
-  background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
-  border-block-color: var(--border) !important;
-  color: var(--foreground) !important;
-}
-
-.diff-render-file [data-diff],
-.diff-render-file [data-file] {
+.diff-render-file {
   border: 1px solid var(--border);
   border-radius: 0.5rem;
   overflow: clip;
+  background: color-mix(in srgb, var(--card) 92%, var(--background));
 }
