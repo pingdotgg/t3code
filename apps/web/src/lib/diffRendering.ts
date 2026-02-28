@@ -3,7 +3,11 @@ const FNV_PRIME_32 = 0x01000193;
 const SECONDARY_HASH_SEED = 0x9e3779b9;
 const SECONDARY_HASH_MULTIPLIER = 0x85ebca6b;
 
-function fnv1a32(input: string, seed: number, multiplier: number): number {
+export function fnv1a32(
+  input: string,
+  seed = FNV_OFFSET_BASIS_32,
+  multiplier = FNV_PRIME_32,
+): number {
   let hash = seed >>> 0;
   for (let index = 0; index < input.length; index += 1) {
     hash ^= input.charCodeAt(index);

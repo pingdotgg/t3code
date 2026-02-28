@@ -14,6 +14,7 @@ import remarkGfm from "remark-gfm";
 import { LRUCache } from "../lib/lruCache";
 import { readNativeApi } from "../nativeApi";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffThemes";
+import { fnv1a32 } from "../lib/diffRendering";
 import { useTheme } from "../hooks/useTheme";
 import { resolveMarkdownFileLinkTarget } from "../markdown-links";
 import { preferredTerminalEditor } from "../terminal-links";
@@ -31,17 +32,11 @@ const highlightedCodeCache = new LRUCache<string>(
   MAX_HIGHLIGHT_CACHE_ENTRIES,
   MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
 );
-const inFlightHighlights = new Map<string, Promise<string>>();
-
-function hashString(input: string): string {
-  // FNV-1a 32-bit hash.
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(36);
+interface InFlightHighlight {
+  promise: Promise<string>;
+  enableCache: () => void;
 }
+const inFlightHighlights = new Map<string, InFlightHighlight>();
 
 function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
@@ -100,7 +95,7 @@ async function highlightCodeBlock(code: string, language: string, themeName: Dif
 }
 
 function createHighlightCacheKey(code: string, language: string, themeName: DiffThemeName): string {
-  return `${hashString(code)}:${code.length}:${language}:${themeName}`;
+  return `${fnv1a32(code).toString(36)}:${code.length}:${language}:${themeName}`;
 }
 
 function estimateHighlightedSize(html: string, code: string): number {
@@ -129,12 +124,16 @@ function getCachedOrCreateHighlight({
 
   const existingInFlight = inFlightHighlights.get(cacheKey);
   if (existingInFlight) {
-    return existingInFlight;
+    if (useCache) {
+      existingInFlight.enableCache();
+    }
+    return existingInFlight.promise;
   }
 
-  const request = highlightCodeBlock(code, language, themeName)
+  let shouldCache = useCache;
+  const requestPromise = highlightCodeBlock(code, language, themeName)
     .then((html) => {
-      if (useCache) {
+      if (shouldCache) {
         highlightedCodeCache.set(cacheKey, html, estimateHighlightedSize(html, code));
       }
       return html;
@@ -143,8 +142,13 @@ function getCachedOrCreateHighlight({
       inFlightHighlights.delete(cacheKey);
     });
 
-  inFlightHighlights.set(cacheKey, request);
-  return request;
+  inFlightHighlights.set(cacheKey, {
+    promise: requestPromise,
+    enableCache: () => {
+      shouldCache = true;
+    },
+  });
+  return requestPromise;
 }
 
 interface ShikiCodeBlockProps {
@@ -156,24 +160,41 @@ interface ShikiCodeBlockProps {
 }
 
 function ShikiCodeBlock({ className, code, themeName, isStreaming, fallback }: ShikiCodeBlockProps) {
-  const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null);
+  const language = extractFenceLanguage(className);
+  const cacheKey = createHighlightCacheKey(code, language, themeName);
+  const [highlightState, setHighlightState] = useState<{
+    cacheKey: string;
+    html: string | null;
+  }>(() => ({
+    cacheKey,
+    html: isStreaming ? null : (highlightedCodeCache.get(cacheKey) ?? null),
+  }));
+  const cachedHighlightedHtml = isStreaming ? null : (highlightedCodeCache.get(cacheKey) ?? null);
+  const highlightedHtml =
+    cachedHighlightedHtml ?? (highlightState.cacheKey === cacheKey ? highlightState.html : null);
 
   useEffect(() => {
     let cancelled = false;
-    const language = extractFenceLanguage(className);
-    const cacheKey = createHighlightCacheKey(code, language, themeName);
 
-    if (!isStreaming) {
-      const cached = highlightedCodeCache.get(cacheKey);
-      if (cached) {
-        setHighlightedHtml(cached);
-        return () => {
-          cancelled = true;
-        };
-      }
+    if (cachedHighlightedHtml) {
+      setHighlightState((current) => {
+        if (current.cacheKey === cacheKey && current.html === cachedHighlightedHtml) {
+          return current;
+        }
+        return { cacheKey, html: cachedHighlightedHtml };
+      });
+      return () => {
+        cancelled = true;
+      };
     }
 
-    setHighlightedHtml(null);
+    setHighlightState((current) => {
+      if (current.cacheKey === cacheKey) {
+        return current;
+      }
+      return { cacheKey, html: null };
+    });
+
     void getCachedOrCreateHighlight({
       cacheKey,
       code,
@@ -185,18 +206,19 @@ function ShikiCodeBlock({ className, code, themeName, isStreaming, fallback }: S
         if (cancelled) {
           return;
         }
-        setHighlightedHtml(html);
+        setHighlightState((current) => {
+          if (current.cacheKey === cacheKey && current.html === html) {
+            return current;
+          }
+          return { cacheKey, html };
+        });
       })
-      .catch(() => {
-        if (!cancelled) {
-          setHighlightedHtml(null);
-        }
-      });
+      .catch(() => undefined);
 
     return () => {
       cancelled = true;
     };
-  }, [className, code, themeName, isStreaming]);
+  }, [cacheKey, cachedHighlightedHtml, code, isStreaming, language, themeName]);
 
   if (!highlightedHtml) {
     return fallback;
