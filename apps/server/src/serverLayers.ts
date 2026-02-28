@@ -57,7 +57,9 @@ export function makeServerProviderLayer(): Layer.Layer<
     const codexAdapterLayer = makeCodexAdapterLive(
       nativeEventLogger ? { nativeEventLogger } : undefined,
     );
-    const claudeAdapterLayer = makeClaudeCodeAdapterLive();
+    const claudeAdapterLayer = makeClaudeCodeAdapterLive({
+      nativeEventLogPath: path.join(providerLogsDir, "provider-native.ndjson"),
+    });
     const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
       Layer.provide(Layer.mergeAll(codexAdapterLayer, claudeAdapterLayer)),
       Layer.provideMerge(providerSessionDirectoryLayer),

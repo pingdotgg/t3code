@@ -42,6 +42,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { ClaudeCodeAdapter, type ClaudeCodeAdapterShape } from "../Services/ClaudeCodeAdapter.ts";
+import { makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "claudeCode" as const;
 
@@ -67,6 +68,8 @@ interface ClaudeTurnState {
   readonly startedAt: string;
   readonly items: Array<unknown>;
   readonly messageCompleted: boolean;
+  readonly emittedTextDelta: boolean;
+  readonly fallbackAssistantText: string;
 }
 
 interface PendingApproval {
@@ -114,6 +117,7 @@ export interface ClaudeCodeAdapterLiveOptions {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
   }) => ClaudeQueryRuntime;
+  readonly nativeEventLogPath?: string;
 }
 
 function isUuid(value: string): boolean {
@@ -272,6 +276,30 @@ function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStat
   return "failed";
 }
 
+function extractAssistantText(message: SDKMessage): string {
+  if (message.type !== "assistant") {
+    return "";
+  }
+
+  const content = (message.message as { content?: unknown } | undefined)?.content;
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const fragments: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    const candidate = block as { type?: unknown; text?: unknown };
+    if (candidate.type === "text" && typeof candidate.text === "string" && candidate.text.length > 0) {
+      fragments.push(candidate.text);
+    }
+  }
+
+  return fragments.join("");
+}
+
 function toSessionError(
   sessionId: ReturnType<typeof ProviderSessionId.makeUnsafe>,
   cause: unknown,
@@ -311,8 +339,72 @@ function toRequestError(
   });
 }
 
+function sdkMessageType(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as { type?: unknown };
+  return typeof record.type === "string" ? record.type : undefined;
+}
+
+function sdkMessageSubtype(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as { subtype?: unknown };
+  return typeof record.subtype === "string" ? record.subtype : undefined;
+}
+
+function sdkNativeMethod(message: SDKMessage): string {
+  const subtype = sdkMessageSubtype(message);
+  if (subtype) {
+    return `claude/${message.type}/${subtype}`;
+  }
+
+  if (message.type === "stream_event") {
+    const streamType = sdkMessageType(message.event);
+    if (streamType) {
+      const deltaType =
+        streamType === "content_block_delta" ? sdkMessageType((message.event as { delta?: unknown }).delta) : undefined;
+      if (deltaType) {
+        return `claude/${message.type}/${streamType}/${deltaType}`;
+      }
+      return `claude/${message.type}/${streamType}`;
+    }
+  }
+
+  return `claude/${message.type}`;
+}
+
+function sdkNativeItemId(message: SDKMessage): string | undefined {
+  if (message.type === "assistant") {
+    const maybeId = (message.message as { id?: unknown }).id;
+    if (typeof maybeId === "string") {
+      return maybeId;
+    }
+    return undefined;
+  }
+
+  if (message.type === "stream_event") {
+    const event = message.event as {
+      type?: unknown;
+      content_block?: { id?: unknown };
+    };
+    if (event.type === "content_block_start" && typeof event.content_block?.id === "string") {
+      return event.content_block.id;
+    }
+  }
+
+  return undefined;
+}
+
 function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
   return Effect.gen(function* () {
+    const nativeEventLogger =
+      options?.nativeEventLogPath !== undefined
+        ? makeEventNdjsonLogger(options.nativeEventLogPath)
+        : undefined;
+
     const createQuery =
       options?.createQuery ??
       ((input: {
@@ -329,6 +421,38 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
 
     const offerRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
       Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid);
+
+    const logNativeSdkMessage = (
+      context: ClaudeSessionContext,
+      message: SDKMessage,
+    ): Effect.Effect<void> =>
+      Effect.sync(() => {
+        if (!nativeEventLogger) {
+          return;
+        }
+
+        const observedAt = new Date().toISOString();
+        const itemId = sdkNativeItemId(message);
+
+        nativeEventLogger.write({
+          observedAt,
+          event: {
+            id:
+              "uuid" in message && typeof message.uuid === "string"
+                ? message.uuid
+                : crypto.randomUUID(),
+            kind: "notification",
+            provider: PROVIDER,
+            sessionId: context.session.sessionId,
+            createdAt: observedAt,
+            method: sdkNativeMethod(message),
+            ...(typeof message.session_id === "string" ? { threadId: message.session_id } : {}),
+            ...(context.turnState ? { turnId: context.turnState.turnId } : {}),
+            ...(itemId ? { itemId: ProviderItemId.makeUnsafe(itemId) } : {}),
+            payload: message,
+          },
+        });
+      });
 
     const snapshotThread = (
       context: ClaudeSessionContext,
@@ -450,6 +574,21 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         }
 
         if (!turnState.messageCompleted) {
+          if (!turnState.emittedTextDelta && turnState.fallbackAssistantText.length > 0) {
+            const deltaStamp = yield* makeEventStamp();
+            yield* offerRuntimeEvent({
+              type: "message.delta",
+              eventId: deltaStamp.eventId,
+              provider: PROVIDER,
+              sessionId: context.session.sessionId,
+              createdAt: deltaStamp.createdAt,
+              ...(context.session.threadId ? { threadId: context.session.threadId } : {}),
+              turnId: turnState.turnId,
+              itemId: ProviderItemId.makeUnsafe(turnState.assistantItemId),
+              delta: turnState.fallbackAssistantText,
+            });
+          }
+
           const stamp = yield* makeEventStamp();
           yield* offerRuntimeEvent({
             type: "message.completed",
@@ -510,6 +649,12 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
             event.delta.text.length > 0 &&
             context.turnState
           ) {
+            if (!context.turnState.emittedTextDelta) {
+              context.turnState = {
+                ...context.turnState,
+                emittedTextDelta: true,
+              };
+            }
             const stamp = yield* makeEventStamp();
             yield* offerRuntimeEvent({
               type: "message.delta",
@@ -606,22 +751,15 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
 
         if (context.turnState) {
           context.turnState.items.push(message.message);
-          if (!context.turnState.messageCompleted) {
+          const fallbackAssistantText = extractAssistantText(message);
+          if (
+            fallbackAssistantText.length > 0 &&
+            fallbackAssistantText !== context.turnState.fallbackAssistantText
+          ) {
             context.turnState = {
               ...context.turnState,
-              messageCompleted: true,
+              fallbackAssistantText,
             };
-            const stamp = yield* makeEventStamp();
-            yield* offerRuntimeEvent({
-              type: "message.completed",
-              eventId: stamp.eventId,
-              provider: PROVIDER,
-              sessionId: context.session.sessionId,
-              createdAt: stamp.createdAt,
-              itemId: ProviderItemId.makeUnsafe(context.turnState.assistantItemId),
-              ...(context.session.threadId ? { threadId: context.session.threadId } : {}),
-              turnId: context.turnState.turnId,
-            });
           }
         }
 
@@ -653,6 +791,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
       message: SDKMessage,
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
+        yield* logNativeSdkMessage(context, message);
         yield* ensureThreadId(context, message);
 
         switch (message.type) {
@@ -1014,6 +1153,8 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           startedAt: yield* nowIso,
           items: [],
           messageCompleted: false,
+          emittedTextDelta: false,
+          fallbackAssistantText: "",
         };
 
         const updatedAt = yield* nowIso;

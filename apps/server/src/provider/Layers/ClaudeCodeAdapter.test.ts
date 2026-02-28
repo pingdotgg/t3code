@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import type {
   Options as ClaudeQueryOptions,
   PermissionMode,
@@ -109,7 +113,7 @@ interface Harness {
     | undefined;
 }
 
-function makeHarness(): Harness {
+function makeHarness(config?: { readonly nativeEventLogPath?: string }): Harness {
   const query = new FakeClaudeQuery();
   let createInput:
     | {
@@ -118,15 +122,20 @@ function makeHarness(): Harness {
       }
     | undefined;
 
-  const options: ClaudeCodeAdapterLiveOptions = {
+  const adapterOptions: ClaudeCodeAdapterLiveOptions = {
     createQuery: (input) => {
       createInput = input;
       return query;
     },
+    ...(config?.nativeEventLogPath
+      ? {
+          nativeEventLogPath: config.nativeEventLogPath,
+        }
+      : {}),
   };
 
   return {
-    layer: makeClaudeCodeAdapterLive(options),
+    layer: makeClaudeCodeAdapterLive(adapterOptions),
     query,
     getLastCreateQueryInput: () => createInput,
   };
@@ -298,6 +307,155 @@ describe("ClaudeCodeAdapterLive", () => {
       if (turnCompleted?.type === "turn.completed") {
         assert.equal(turnCompleted.turnId, turn.turnId);
         assert.equal(turnCompleted.status, "completed");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("emits completion only after turn result when assistant frames arrive before deltas", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeCodeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        provider: "claudeCode",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        sessionId: session.sessionId,
+        input: "hello",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-early-assistant",
+        uuid: "assistant-early",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-message-early",
+          content: [{ type: "tool_use", id: "tool-early", name: "Read", input: { path: "a.ts" } }],
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-early-assistant",
+        uuid: "stream-early",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: {
+            type: "text_delta",
+            text: "Late text",
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-early-assistant",
+        uuid: "result-early",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.deepEqual(
+        runtimeEvents.map((event) => event.type),
+        [
+          "session.started",
+          "turn.started",
+          "thread.started",
+          "message.delta",
+          "message.completed",
+          "turn.completed",
+        ],
+      );
+
+      const deltaIndex = runtimeEvents.findIndex((event) => event.type === "message.delta");
+      const completedIndex = runtimeEvents.findIndex((event) => event.type === "message.completed");
+      assert.equal(deltaIndex >= 0 && completedIndex >= 0 && deltaIndex < completedIndex, true);
+
+      const deltaEvent = runtimeEvents[deltaIndex];
+      assert.equal(deltaEvent?.type, "message.delta");
+      if (deltaEvent?.type === "message.delta") {
+        assert.equal(deltaEvent.delta, "Late text");
+        assert.equal(deltaEvent.turnId, turn.turnId);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("falls back to assistant payload text when stream deltas are absent", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeCodeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        provider: "claudeCode",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        sessionId: session.sessionId,
+        input: "hello",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-fallback-text",
+        uuid: "assistant-fallback",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-message-fallback",
+          content: [{ type: "text", text: "Fallback hello" }],
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-fallback-text",
+        uuid: "result-fallback",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.deepEqual(
+        runtimeEvents.map((event) => event.type),
+        [
+          "session.started",
+          "turn.started",
+          "thread.started",
+          "message.delta",
+          "message.completed",
+          "turn.completed",
+        ],
+      );
+
+      const deltaEvent = runtimeEvents.find((event) => event.type === "message.delta");
+      assert.equal(deltaEvent?.type, "message.delta");
+      if (deltaEvent?.type === "message.delta") {
+        assert.equal(deltaEvent.delta, "Fallback hello");
+        assert.equal(deltaEvent.turnId, turn.turnId);
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -523,6 +681,93 @@ describe("ClaudeCodeAdapterLive", () => {
 
       assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-6"]);
     }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("writes provider-native observability records when enabled", () => {
+    const nativeLogDir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-native-events-"));
+    const nativeEventLogPath = path.join(nativeLogDir, "provider-native.ndjson");
+    const harness = makeHarness({ nativeEventLogPath });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeCodeAdapter;
+
+      const session = yield* adapter.startSession({
+        provider: "claudeCode",
+      });
+      const turn = yield* adapter.sendTurn({
+        sessionId: session.sessionId,
+        input: "hello",
+        attachments: [],
+      });
+
+      const turnCompletedFiber = yield* Stream.filter(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runHead, Effect.forkChild);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-native-log",
+        uuid: "stream-native-log",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: {
+            type: "text_delta",
+            text: "hi",
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-native-log",
+        uuid: "result-native-log",
+      } as unknown as SDKMessage);
+
+      const turnCompleted = yield* Fiber.join(turnCompletedFiber);
+      assert.equal(turnCompleted._tag, "Some");
+
+      const lines = fs
+        .readFileSync(nativeEventLogPath, "utf8")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+      assert.equal(lines.length > 0, true);
+
+      const records = lines.map((line) => JSON.parse(line) as {
+        event?: {
+          provider?: string;
+          method?: string;
+          sessionId?: string;
+          turnId?: string;
+        };
+      });
+
+      assert.equal(records.some((record) => record.event?.provider === "claudeCode"), true);
+      assert.equal(records.some((record) => record.event?.sessionId === session.sessionId), true);
+      assert.equal(records.some((record) => record.event?.turnId === turn.turnId), true);
+      assert.equal(
+        records.some(
+          (record) => record.event?.method === "claude/stream_event/content_block_delta/text_delta",
+        ),
+        true,
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          fs.rmSync(nativeLogDir, {
+            recursive: true,
+            force: true,
+          });
+        }),
+      ),
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );

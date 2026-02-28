@@ -407,8 +407,8 @@ const make = Effect.gen(function* () {
             if (activeTurnId !== null && eventTurnId !== undefined) {
               return sameId(activeTurnId, eventTurnId);
             }
-            // Without an active turn, only accept completion when no thread mismatch signal exists.
-            return eventProviderThreadId === null || scopedSessionProviderThreadId === null;
+            // If no active turn is tracked, accept completion scoped to this thread.
+            return true;
           default:
             return true;
         }
@@ -421,7 +421,12 @@ const make = Effect.gen(function* () {
         event.type === "turn.started" ||
         event.type === "turn.completed"
       ) {
-        const nextActiveTurnId = event.type === "turn.started" ? (eventTurnId ?? null) : null;
+        const nextActiveTurnId =
+          event.type === "turn.started"
+            ? (eventTurnId ?? null)
+            : event.type === "turn.completed" || event.type === "session.exited"
+              ? null
+              : activeTurnId;
         const providerThreadIdFromEvent =
           event.type === "thread.started"
             ? ProviderThreadId.makeUnsafe(event.threadId)
@@ -430,14 +435,21 @@ const make = Effect.gen(function* () {
               : null;
         const providerThreadId =
           providerThreadIdFromEvent ?? scopedSessionProviderThreadId ?? null;
-        const status =
-          event.type === "turn.started"
-            ? "running"
-            : event.type === "session.exited"
-              ? "stopped"
-              : event.type === "turn.completed" && event.status === "failed"
-                ? "error"
-                : "ready";
+        const status = (() => {
+          switch (event.type) {
+            case "turn.started":
+              return "running";
+            case "session.exited":
+              return "stopped";
+            case "turn.completed":
+              return event.status === "failed" ? "error" : "ready";
+            case "session.started":
+            case "thread.started":
+              // Provider thread/session start notifications can arrive during an
+              // active turn; preserve turn-running state in that case.
+              return activeTurnId !== null ? "running" : "ready";
+          }
+        })();
         const lastError =
           event.type === "turn.completed" && event.status === "failed"
             ? (event.errorMessage ?? thread.session?.lastError ?? "Turn failed")
