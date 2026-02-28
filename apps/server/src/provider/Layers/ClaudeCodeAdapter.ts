@@ -1036,7 +1036,9 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           );
 
         const providerOptions = input.providerOptions?.claudeCode;
-        const permissionMode = toPermissionMode(providerOptions?.permissionMode);
+        const permissionMode =
+          toPermissionMode(providerOptions?.permissionMode) ??
+          (input.approvalPolicy === "never" ? "bypassPermissions" : undefined);
 
         const queryOptions: ClaudeQueryOptions = {
           ...(input.cwd ? { cwd: input.cwd } : {}),

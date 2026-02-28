@@ -103,6 +103,18 @@ export function resolveModelSlugForProvider(
   return resolveModelSlug(model, provider);
 }
 
-export const REASONING_OPTIONS = ["xhigh", "high", "medium", "low"] as const;
-export type ReasoningEffort = (typeof REASONING_OPTIONS)[number];
+export const REASONING_OPTIONS_BY_PROVIDER = {
+  codex: ["xhigh", "high", "medium", "low"],
+  claudeCode: [],
+} as const satisfies Record<ProviderKind, readonly string[]>;
+
+// Backward compatibility for existing Codex-only call sites.
+export const REASONING_OPTIONS = REASONING_OPTIONS_BY_PROVIDER.codex;
+export type ReasoningEffort = (typeof REASONING_OPTIONS_BY_PROVIDER.codex)[number];
 export const DEFAULT_REASONING: ReasoningEffort = "high";
+
+export function getReasoningOptions(
+  provider: ProviderKind = "codex",
+): ReadonlyArray<ReasoningEffort> {
+  return REASONING_OPTIONS_BY_PROVIDER[provider] as ReadonlyArray<ReasoningEffort>;
+}

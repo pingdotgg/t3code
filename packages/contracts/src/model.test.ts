@@ -7,7 +7,9 @@ import {
   MODEL_OPTIONS_BY_PROVIDER,
   getDefaultModel,
   getModelOptions,
+  getReasoningOptions,
   normalizeModelSlug,
+  REASONING_OPTIONS,
   resolveModelSlug,
   resolveModelSlugForProvider,
 } from "./model";
@@ -70,5 +72,15 @@ describe("resolveModelSlug", () => {
     expect(getDefaultModel()).toBe(DEFAULT_MODEL);
     expect(getModelOptions()).toEqual(MODEL_OPTIONS);
     expect(getModelOptions("claudeCode")).toEqual(MODEL_OPTIONS_BY_PROVIDER.claudeCode);
+  });
+});
+
+describe("getReasoningOptions", () => {
+  it("returns codex reasoning options for codex", () => {
+    expect(getReasoningOptions("codex")).toEqual(REASONING_OPTIONS);
+  });
+
+  it("returns no reasoning options for claudeCode", () => {
+    expect(getReasoningOptions("claudeCode")).toEqual([]);
   });
 });
