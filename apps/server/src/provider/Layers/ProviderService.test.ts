@@ -28,7 +28,6 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   ProviderAdapterSessionNotFoundError,
   ProviderSessionNotFoundError,
-  ProviderValidationError,
   ProviderUnsupportedError,
   type ProviderAdapterError,
 } from "../Errors.ts";
@@ -648,6 +647,62 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
     }),
   );
 
+  it.effect("assigns monotonic per-session sequence numbers to canonical runtime events", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const session = yield* provider.startSession(asThreadId("thread-seq"), {
+        provider: "codex",
+      });
+
+      const receivedRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
+      const consumer = yield* Stream.take(provider.streamEvents, 3).pipe(
+        Stream.runForEach((event) => Ref.update(receivedRef, (current) => [...current, event])),
+        Effect.forkChild,
+      );
+      yield* sleep(20);
+
+      fanout.codex.emit({
+        type: "tool.started",
+        eventId: asEventId("evt-seq-1"),
+        provider: "codex",
+        sessionId: session.sessionId,
+        createdAt: new Date().toISOString(),
+        threadId: asProviderThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        toolKind: "command",
+        title: "Command run",
+      });
+      fanout.codex.emit({
+        type: "tool.completed",
+        eventId: asEventId("evt-seq-2"),
+        provider: "codex",
+        sessionId: session.sessionId,
+        createdAt: new Date().toISOString(),
+        threadId: asProviderThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        toolKind: "command",
+        title: "Command run",
+      });
+      fanout.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-seq-3"),
+        provider: "codex",
+        sessionId: session.sessionId,
+        createdAt: new Date().toISOString(),
+        threadId: asProviderThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        status: "completed",
+      });
+
+      yield* Fiber.join(consumer);
+      const received = yield* Ref.get(receivedRef);
+      assert.deepEqual(
+        received.map((event) => event.sessionSequence),
+        [1, 2, 3],
+      );
+    }),
+  );
+
   it.effect("keeps subscriber delivery ordered and isolates failing subscribers", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
@@ -746,9 +801,10 @@ validation.layer("ProviderServiceLive validation", (it) => {
     }),
   );
 
-  it.effect("fails startSession when adapter returns no threadId", () =>
+  it.effect("accepts startSession when adapter has not emitted provider thread id yet", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
 
       validation.codex.startSession.mockImplementationOnce((input: ProviderSessionStartInput) =>
         Effect.sync(() => {
@@ -757,27 +813,28 @@ validation.layer("ProviderServiceLive validation", (it) => {
             sessionId: asSessionId("sess-missing-thread"),
             provider: "codex",
             status: "ready",
-            cwd: input.cwd ?? process.cwd(),
-            createdAt: now,
-            updatedAt: now,
-          } satisfies ProviderSession;
-        }),
+          cwd: input.cwd ?? process.cwd(),
+          createdAt: now,
+          updatedAt: now,
+        } satisfies ProviderSession;
+      }),
       );
 
-      const failure = yield* Effect.result(
-        provider.startSession(asThreadId("thread-missing"), {
-          provider: "codex",
-          cwd: "/tmp/project",
-        }),
-      );
+      const session = yield* provider.startSession(asThreadId("thread-missing"), {
+        provider: "codex",
+        cwd: "/tmp/project",
+      });
 
-      assertFailure(
-        failure,
-        new ProviderValidationError({
-          operation: "ProviderService.startSession",
-          issue: "Provider 'codex' returned a session without threadId.",
-        }),
-      );
+      assert.equal(session.sessionId, asSessionId("sess-missing-thread"));
+      assert.equal(session.threadId, undefined);
+
+      const runtime = yield* runtimeRepository.getBySessionId({
+        providerSessionId: session.sessionId,
+      });
+      assert.equal(Option.isSome(runtime), true);
+      if (Option.isSome(runtime)) {
+        assert.equal(runtime.value.providerThreadId, null);
+      }
     }),
   );
 });

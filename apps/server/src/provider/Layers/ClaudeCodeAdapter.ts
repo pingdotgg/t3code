@@ -126,6 +126,10 @@ function isUuid(value: string): boolean {
   );
 }
 
+function isSyntheticClaudeThreadId(value: string): boolean {
+  return value.startsWith("claude-thread-");
+}
+
 function toMessage(cause: unknown, fallback: string): string {
   if (cause instanceof Error && cause.message.length > 0) {
     return cause.message;
@@ -158,7 +162,11 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
     turnCount?: unknown;
   };
 
-  const threadId = typeof cursor.threadId === "string" ? cursor.threadId : undefined;
+  const threadIdCandidate = typeof cursor.threadId === "string" ? cursor.threadId : undefined;
+  const threadId =
+    threadIdCandidate && !isSyntheticClaudeThreadId(threadIdCandidate)
+      ? threadIdCandidate
+      : undefined;
   const resumeCandidate =
     typeof cursor.resume === "string"
       ? cursor.resume
@@ -464,9 +472,14 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
       }>;
     }> =>
       Effect.gen(function* () {
-        const threadId =
-          context.session.threadId ??
-          ProviderThreadId.makeUnsafe(`claude-thread-${yield* Random.nextUUIDv4}`);
+        const threadId = context.session.threadId;
+        if (!threadId) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "readThread",
+            issue: "Session thread id is not initialized yet.",
+          });
+        }
         return {
           threadId,
           turns: context.turns.map((turn) => ({
@@ -500,6 +513,9 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
       message: SDKMessage,
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
+        if (typeof message.session_id !== "string" || message.session_id.length === 0) {
+          return;
+        }
         const nextThreadId = ProviderThreadId.makeUnsafe(message.session_id);
         context.resumeSessionId = message.session_id;
         const changed = context.session.threadId !== nextThreadId;
@@ -922,9 +938,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           `claude-session-${yield* Random.nextUUIDv4}`,
         );
         const resumeState = readClaudeResumeState(input.resumeCursor);
-        const threadId =
-          resumeState?.threadId ??
-          ProviderThreadId.makeUnsafe(`claude-thread-${yield* Random.nextUUIDv4}`);
+        const threadId = resumeState?.threadId;
 
         const promptQueue = yield* Queue.unbounded<PromptQueueItem>();
         const prompt = Stream.fromQueue(promptQueue).pipe(
@@ -1082,9 +1096,9 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           status: "ready",
           ...(input.cwd ? { cwd: input.cwd } : {}),
           ...(input.model ? { model: input.model } : {}),
-          threadId,
+          ...(threadId ? { threadId } : {}),
           resumeCursor: {
-            threadId,
+            ...(threadId ? { threadId } : {}),
             ...(resumeState?.resume ? { resume: resumeState.resume } : {}),
             ...(resumeState?.resumeSessionAt
               ? { resumeSessionAt: resumeState.resumeSessionAt }
@@ -1119,7 +1133,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           provider: PROVIDER,
           sessionId,
           createdAt: sessionStartedStamp.createdAt,
-          threadId,
+          ...(threadId ? { threadId } : {}),
         });
 
         Effect.runFork(runSdkStream(context));
@@ -1186,17 +1200,8 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           message,
         }).pipe(Effect.mapError((cause) => toRequestError(input.sessionId, "turn/start", cause)));
 
-        const threadId = context.session.threadId;
-        if (!threadId) {
-          return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "sendTurn",
-            issue: "Session thread id is not initialized.",
-          });
-        }
-
         return {
-          threadId,
+          ...(context.session.threadId ? { threadId: context.session.threadId } : {}),
           turnId,
           ...(context.session.resumeCursor !== undefined
             ? { resumeCursor: context.session.resumeCursor }
