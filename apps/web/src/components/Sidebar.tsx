@@ -22,6 +22,7 @@ import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { toastManager } from "./ui/toast";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
   SidebarFooter,
@@ -67,9 +68,11 @@ interface TerminalStatusIndicator {
 interface PrStatusIndicator {
   label: "PR open" | "PR closed" | "PR merged";
   colorClass: string;
+  tooltip: string;
+  url: string;
 }
 
-type ThreadPrState = NonNullable<GitStatusResult["pr"]>["state"] | null;
+type ThreadPr = GitStatusResult["pr"];
 
 function hasUnseenCompletion(thread: Thread): boolean {
   if (!thread.latestTurn?.completedAt) return false;
@@ -133,23 +136,31 @@ function terminalStatusIndicator(thread: Thread): TerminalStatusIndicator | null
   };
 }
 
-function prStatusIndicator(prState: ThreadPrState): PrStatusIndicator | null {
-  if (prState === "open") {
+function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
+  if (!pr) return null;
+
+  if (pr.state === "open") {
     return {
       label: "PR open",
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
+      tooltip: `#${pr.number} PR open: ${pr.title}`,
+      url: pr.url,
     };
   }
-  if (prState === "closed") {
+  if (pr.state === "closed") {
     return {
       label: "PR closed",
       colorClass: "text-zinc-500 dark:text-zinc-400/80",
+      tooltip: `#${pr.number} PR closed: ${pr.title}`,
+      url: pr.url,
     };
   }
-  if (prState === "merged") {
+  if (pr.state === "merged") {
     return {
       label: "PR merged",
       colorClass: "text-violet-600 dark:text-violet-300/90",
+      tooltip: `#${pr.number} PR merged: ${pr.title}`,
+      url: pr.url,
     };
   }
   return null;
@@ -272,7 +283,7 @@ export default function Sidebar() {
       refetchInterval: 60_000,
     })),
   });
-  const prStateByThreadId = useMemo(() => {
+  const prByThreadId = useMemo(() => {
     const statusByCwd = new Map<string, GitStatusResult>();
     for (let index = 0; index < threadGitStatusCwds.length; index += 1) {
       const cwd = threadGitStatusCwds[index];
@@ -283,15 +294,37 @@ export default function Sidebar() {
       }
     }
 
-    const map = new Map<ThreadId, ThreadPrState>();
+    const map = new Map<ThreadId, ThreadPr>();
     for (const target of threadGitTargets) {
       const status = target.cwd ? statusByCwd.get(target.cwd) : undefined;
       const branchMatches =
         target.branch !== null && status?.branch !== null && status?.branch === target.branch;
-      map.set(target.threadId, branchMatches ? status?.pr?.state ?? null : null);
+      map.set(target.threadId, branchMatches ? status?.pr ?? null : null);
     }
     return map;
   }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
+
+  const openPrLink = useCallback((event: React.MouseEvent<HTMLElement>, prUrl: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const api = readNativeApi();
+    if (!api) {
+      toastManager.add({
+        type: "error",
+        title: "Link opening is unavailable.",
+      });
+      return;
+    }
+
+    void api.shell.openExternal(prUrl).catch((error) => {
+      toastManager.add({
+        type: "error",
+        title: "Unable to open PR link",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    });
+  }, []);
 
   const handleNewThread = useCallback(
     (
@@ -714,13 +747,13 @@ export default function Sidebar() {
                             thread,
                             pendingApprovalByThreadId.get(thread.id) === true,
                           );
-                          const prStatus = prStatusIndicator(prStateByThreadId.get(thread.id) ?? null);
+                          const prStatus = prStatusIndicator(prByThreadId.get(thread.id) ?? null);
                           const terminalStatus = terminalStatusIndicator(thread);
 
                           return (
                             <SidebarMenuSubItem key={thread.id} className="w-full">
                               <SidebarMenuSubButton
-                                render={<button type="button" />}
+                                render={<div role="button" tabIndex={0} />}
                                 size="sm"
                                 isActive={isActive}
                                 className={`h-7 w-full translate-x-0 justify-start px-2 text-left hover:bg-accent hover:text-foreground ${
@@ -729,6 +762,14 @@ export default function Sidebar() {
                                     : "text-muted-foreground"
                                 }`}
                                 onClick={() => {
+                                  void navigate({
+                                    to: "/$threadId",
+                                    params: { threadId: thread.id },
+                                  });
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key !== "Enter" && event.key !== " ") return;
+                                  event.preventDefault();
                                   void navigate({
                                     to: "/$threadId",
                                     params: { threadId: thread.id },
@@ -761,14 +802,24 @@ export default function Sidebar() {
                                 </div>
                                 <div className="ml-auto flex shrink-0 items-center gap-1.5">
                                   {prStatus && (
-                                    <span
-                                      role="img"
-                                      aria-label={prStatus.label}
-                                      title={prStatus.label}
-                                      className={`inline-flex items-center justify-center ${prStatus.colorClass}`}
-                                    >
-                                      <GitPullRequestIcon className="size-3" />
-                                    </span>
+                                    <Tooltip>
+                                      <TooltipTrigger
+                                        render={
+                                          <button
+                                            type="button"
+                                            aria-label={prStatus.tooltip}
+                                            title={prStatus.tooltip}
+                                            className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
+                                            onClick={(event) => {
+                                              openPrLink(event, prStatus.url);
+                                            }}
+                                          >
+                                            <GitPullRequestIcon className="size-3" />
+                                          </button>
+                                        }
+                                      />
+                                      <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
+                                    </Tooltip>
                                   )}
                                   {terminalStatus && (
                                     <span
