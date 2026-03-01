@@ -1,0 +1,215 @@
+{
+  "counts": {
+    "notificationsByMethod": {
+      "session/update": 732
+    },
+    "sessionUpdateByType": {
+      "available_commands_update": 1,
+      "agent_thought_chunk": 199,
+      "agent_message_chunk": 520,
+      "tool_call": 6,
+      "tool_call_update": 6
+    },
+    "serverRequestsByMethod": {
+      "session/request_permission": 2
+    },
+    "permissionDecisions": {
+      "reject-once": 2
+    }
+  },
+  "samples": {
+    "initializeResult": {
+      "protocolVersion": 1,
+      "agentCapabilities": {
+        "loadSession": true,
+        "mcpCapabilities": {
+          "http": true,
+          "sse": true
+        },
+        "promptCapabilities": {
+          "audio": false,
+          "embeddedContext": false,
+          "image": true
+        }
+      },
+      "authMethods": [
+        {
+          "id": "cursor_login",
+          "name": "Cursor Login",
+          "description": "Authenticate using existing Cursor login credentials. Run 'agent login' first if not logged in."
+        }
+      ]
+    },
+    "authenticateResult": {},
+    "sessionNewResult": {
+      "sessionId": "f5de5474-061b-41ac-905c-5e5a29e46985",
+      "modes": {
+        "currentModeId": "agent",
+        "availableModes": [
+          {
+            "id": "agent",
+            "name": "Agent",
+            "description": "Full agent capabilities with tool access"
+          },
+          {
+            "id": "plan",
+            "name": "Plan",
+            "description": "Read-only mode for planning and designing before implementation"
+          },
+          {
+            "id": "ask",
+            "name": "Ask",
+            "description": "Q&A mode - no edits or command execution"
+          }
+        ]
+      }
+    },
+    "sessionPromptResultByScenario": {
+      "hello": {
+        "stopReason": "end_turn"
+      },
+      "tooling": {
+        "stopReason": "end_turn"
+      },
+      "cancel": {
+        "stopReason": "end_turn"
+      }
+    },
+    "sessionUpdateByType": {
+      "available_commands_update": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f5de5474-061b-41ac-905c-5e5a29e46985",
+          "update": {
+            "sessionUpdate": "available_commands_update",
+            "availableCommands": [
+              {
+                "name": "copy-request-id",
+                "description": "Copy the last request ID to clipboard"
+              },
+              {
+                "name": "create-rule",
+                "description": "Create Cursor rules for persistent AI guidance. Use when you want to create a rule, add coding standards, set up project conventions, configure file-specific patterns, create RULE.md files, or asks about .cursor/rules/ or AGENTS.md. (builtin skill)"
+              },
+              {
+                "name": "create-skill",
+                "description": "Guides users through creating effective Agent Skills for Cursor. Use when you want to create, write, or author a new skill, or asks about skill structure, best practices, or SKILL.md format. (builtin skill)"
+              },
+              {
+                "name": "create-subagent",
+                "description": "Create custom subagents for specialized AI tasks. Use when you want to create a new type of subagent, set up task-specific agents, configure code reviewers, debuggers, or domain-specific assistants with custom prompts. (builtin skill)"
+              },
+              {
+                "name": "migrate-to-skills",
+                "description": "Convert 'Applied intelligently' Cursor rules (.cursor/rules/*.mdc) and slash commands (.cursor/commands/*.md) to Agent Skills format (.cursor/skills/). Use when you want to migrate rules or commands to skills, convert .mdc rules to SKILL.md format, or consolidate commands into the skills directory. (builtin skill)"
+              },
+              {
+                "name": "update-cursor-settings",
+                "description": "Modify Cursor/VSCode user settings in settings.json. Use when you want to change editor settings, preferences, configuration, themes, font size, tab size, format on save, auto save, keybindings, or any settings.json values. (builtin skill)"
+              }
+            ]
+          }
+        }
+      },
+      "agent_thought_chunk": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f5de5474-061b-41ac-905c-5e5a29e46985",
+          "update": {
+            "sessionUpdate": "agent_thought_chunk",
+            "content": {
+              "type": "text",
+              "text": "\nThe user "
+            }
+          }
+        }
+      },
+      "agent_message_chunk": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f5de5474-061b-41ac-905c-5e5a29e46985",
+          "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "\nHello — how can I help you today?"
+            }
+          }
+        }
+      },
+      "tool_call": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f5de5474-061b-41ac-905c-5e5a29e46985",
+          "update": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "tool_dd65a93e-1b2e-499f-b556-b72aa3152ef",
+            "title": "Terminal",
+            "kind": "execute",
+            "status": "pending",
+            "rawInput": {}
+          }
+        }
+      },
+      "tool_call_update": {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+          "sessionId": "f5de5474-061b-41ac-905c-5e5a29e46985",
+          "update": {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "tool_dd65a93e-1b2e-499f-b556-b72aa3152ef",
+            "status": "in_progress"
+          }
+        }
+      }
+    },
+    "serverRequestByMethod": {
+      "session/request_permission": {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "session/request_permission",
+        "params": {
+          "sessionId": "f5de5474-061b-41ac-905c-5e5a29e46985",
+          "toolCall": {
+            "toolCallId": "tool_dd65a93e-1b2e-499f-b556-b72aa3152ef",
+            "title": "`pwd`",
+            "kind": "execute",
+            "status": "pending",
+            "content": [
+              {
+                "type": "content",
+                "content": {
+                  "type": "text",
+                  "text": "Not in allowlist: pwd"
+                }
+              }
+            ]
+          },
+          "options": [
+            {
+              "optionId": "allow-once",
+              "name": "Allow once",
+              "kind": "allow_once"
+            },
+            {
+              "optionId": "allow-always",
+              "name": "Allow always",
+              "kind": "allow_always"
+            },
+            {
+              "optionId": "reject-once",
+              "name": "Reject",
+              "kind": "reject_once"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "stderr": []
+}
