@@ -52,11 +52,17 @@ describe("ProviderSessionStartInput", () => {
       provider: "cursor",
       cwd: "/tmp/workspace",
       model: "composer-1.5",
+      providerOptions: {
+        cursor: {
+          binaryPath: "/usr/local/bin/agent",
+        },
+      },
       approvalPolicy: "on-request",
       sandboxMode: "workspace-write",
     });
     expect(parsed.provider).toBe("cursor");
     expect(parsed.model).toBe("composer-1.5");
+    expect(parsed.providerOptions?.cursor?.binaryPath).toBe("/usr/local/bin/agent");
     expect(parsed.approvalPolicy).toBe("on-request");
     expect(parsed.sandboxMode).toBe("workspace-write");
   });

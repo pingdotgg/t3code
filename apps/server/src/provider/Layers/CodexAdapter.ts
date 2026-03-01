@@ -7,11 +7,10 @@
  * @module CodexAdapterLive
  */
 import {
+  type CanonicalItemType,
+  type CanonicalRequestType,
   type ProviderEvent,
   type ProviderRuntimeEvent,
-  type ProviderRuntimeTurnStatus,
-  type ProviderRuntimeToolKind,
-  ProviderItemId,
   ProviderApprovalDecision,
   ProviderSessionId,
   ProviderThreadId,
@@ -100,7 +99,11 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function toTurnStatus(value: unknown): ProviderRuntimeTurnStatus | undefined {
+function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function toTurnStatus(value: unknown): "completed" | "failed" | "cancelled" | "interrupted" {
   switch (value) {
     case "completed":
     case "failed":
@@ -108,7 +111,7 @@ function toTurnStatus(value: unknown): ProviderRuntimeTurnStatus | undefined {
     case "interrupted":
       return value;
     default:
-      return undefined;
+      return "completed";
   }
 }
 
@@ -123,29 +126,53 @@ function normalizeItemType(raw: unknown): string {
     .toLowerCase();
 }
 
-function shouldDropItemType(type: string): boolean {
-  if (type.includes("preamble") || type.includes("reasoning") || type.includes("thought")) {
-    return true;
-  }
-  return type === "work" || type.startsWith("work ");
+function toCanonicalItemType(raw: unknown): CanonicalItemType {
+  const type = normalizeItemType(raw);
+  if (type.includes("user")) return "user_message";
+  if (type.includes("agent message") || type.includes("assistant")) return "assistant_message";
+  if (type.includes("reasoning") || type.includes("thought")) return "reasoning";
+  if (type.includes("plan") || type.includes("todo")) return "plan";
+  if (type.includes("command")) return "command_execution";
+  if (type.includes("file change") || type.includes("patch") || type.includes("edit")) return "file_change";
+  if (type.includes("mcp")) return "mcp_tool_call";
+  if (type.includes("dynamic tool")) return "dynamic_tool_call";
+  if (type.includes("collab")) return "collab_agent_tool_call";
+  if (type.includes("web search")) return "web_search";
+  if (type.includes("image")) return "image_view";
+  if (type.includes("review entered")) return "review_entered";
+  if (type.includes("review exited")) return "review_exited";
+  if (type.includes("compact")) return "context_compaction";
+  if (type.includes("error")) return "error";
+  return "unknown";
 }
 
-function toolMeta(type: string):
-  | {
-      readonly toolKind: ProviderRuntimeToolKind;
-      readonly title: string;
-    }
-  | undefined {
-  if (type.includes("command")) {
-    return { toolKind: "command", title: "Command run" };
+function itemTitle(itemType: CanonicalItemType): string | undefined {
+  switch (itemType) {
+    case "assistant_message":
+      return "Assistant message";
+    case "user_message":
+      return "User message";
+    case "reasoning":
+      return "Reasoning";
+    case "plan":
+      return "Plan";
+    case "command_execution":
+      return "Command run";
+    case "file_change":
+      return "File change";
+    case "mcp_tool_call":
+      return "MCP tool call";
+    case "dynamic_tool_call":
+      return "Tool call";
+    case "web_search":
+      return "Web search";
+    case "image_view":
+      return "Image view";
+    case "error":
+      return "Error";
+    default:
+      return undefined;
   }
-  if (type.includes("file change")) {
-    return { toolKind: "file-change", title: "File change" };
-  }
-  if (type.includes("tool")) {
-    return { toolKind: "other", title: "Tool call" };
-  }
-  return undefined;
 }
 
 function itemDetail(
@@ -174,58 +201,104 @@ function itemDetail(
   return undefined;
 }
 
-function mapMessageCompletedEvent(event: ProviderEvent): ProviderRuntimeEvent | undefined {
-  if (event.method !== "item/completed") {
-    return undefined;
+function toRequestTypeFromMethod(method: string): CanonicalRequestType {
+  switch (method) {
+    case "item/commandExecution/requestApproval":
+      return "command_execution_approval";
+    case "item/fileChange/requestApproval":
+      return "file_change_approval";
+    case "applyPatchApproval":
+      return "apply_patch_approval";
+    case "execCommandApproval":
+      return "exec_command_approval";
+    case "item/tool/requestUserInput":
+      return "tool_user_input";
+    case "item/tool/call":
+      return "dynamic_tool_call";
+    case "account/chatgptAuthTokens/refresh":
+      return "auth_tokens_refresh";
+    default:
+      return "unknown";
   }
-
-  const payload = asObject(event.payload);
-  const item = asObject(payload?.item);
-  if (!item) {
-    return undefined;
-  }
-
-  const normalizedType = normalizeItemType(item.type ?? item.kind);
-  if (!normalizedType.includes("agent message")) {
-    return undefined;
-  }
-
-  const itemId = event.itemId ?? asString(item.id);
-  if (!itemId) {
-    return undefined;
-  }
-
-  return {
-    type: "message.completed",
-    eventId: event.id,
-    provider: event.provider,
-    sessionId: event.sessionId,
-    createdAt: event.createdAt,
-    itemId: ProviderItemId.makeUnsafe(itemId),
-    ...(event.threadId ? { threadId: event.threadId } : {}),
-    ...(event.turnId ? { turnId: event.turnId } : {}),
-  };
 }
 
-function mapToolEvent(event: ProviderEvent): ProviderRuntimeEvent | undefined {
-  if (event.method !== "item/started" && event.method !== "item/completed") {
-    return undefined;
+function toRequestTypeFromKind(kind: unknown): CanonicalRequestType {
+  switch (kind) {
+    case "command":
+      return "command_execution_approval";
+    case "file-change":
+      return "file_change_approval";
+    default:
+      return "unknown";
   }
-  const payload = asObject(event.payload);
-  const item = asObject(payload?.item);
-  if (!item) {
-    return undefined;
-  }
-  const normalizedType = normalizeItemType(item.type ?? item.kind);
-  if (shouldDropItemType(normalizedType)) {
-    return undefined;
-  }
-  const meta = toolMeta(normalizedType);
-  if (!meta) {
-    return undefined;
-  }
+}
 
-  const eventBase = {
+function toThreadState(value: unknown):
+  | "active"
+  | "idle"
+  | "archived"
+  | "closed"
+  | "compacted"
+  | "error" {
+  switch (value) {
+    case "idle":
+      return "idle";
+    case "archived":
+      return "archived";
+    case "closed":
+      return "closed";
+    case "compacted":
+      return "compacted";
+    case "error":
+    case "failed":
+      return "error";
+    default:
+      return "active";
+  }
+}
+
+function contentStreamKindFromMethod(
+  method: string,
+): "assistant_text" | "reasoning_text" | "reasoning_summary_text" | "plan_text" | "command_output" | "file_change_output" {
+  switch (method) {
+    case "item/agentMessage/delta":
+      return "assistant_text";
+    case "item/reasoning/textDelta":
+      return "reasoning_text";
+    case "item/reasoning/summaryTextDelta":
+      return "reasoning_summary_text";
+    case "item/plan/delta":
+      return "plan_text";
+    case "item/commandExecution/outputDelta":
+      return "command_output";
+    case "item/fileChange/outputDelta":
+      return "file_change_output";
+    default:
+      return "assistant_text";
+  }
+}
+
+function eventRawSource(event: ProviderEvent): ProviderRuntimeEvent["raw"]["source"] {
+  return event.kind === "request" ? "codex.app-server.request" : "codex.app-server.notification";
+}
+
+function providerRefsFromEvent(event: ProviderEvent): ProviderRuntimeEvent["providerRefs"] | undefined {
+  const refs: Record<string, string> = {
+    providerSessionId: event.sessionId,
+  };
+  if (event.threadId) refs.providerThreadId = event.threadId;
+  if (event.turnId) refs.providerTurnId = event.turnId;
+  if (event.itemId) refs.providerItemId = event.itemId;
+  if (event.requestId) refs.providerRequestId = event.requestId;
+
+  return Object.keys(refs).length > 0
+    ? (refs as ProviderRuntimeEvent["providerRefs"])
+    : undefined;
+}
+
+function runtimeEventBase(event: ProviderEvent): Omit<ProviderRuntimeEvent, "type" | "payload"> {
+  const refs = providerRefsFromEvent(event);
+  return {
     eventId: event.id,
     provider: event.provider,
     sessionId: event.sessionId,
@@ -233,21 +306,50 @@ function mapToolEvent(event: ProviderEvent): ProviderRuntimeEvent | undefined {
     ...(event.threadId ? { threadId: event.threadId } : {}),
     ...(event.turnId ? { turnId: event.turnId } : {}),
     ...(event.itemId ? { itemId: event.itemId } : {}),
-    toolKind: meta.toolKind,
-    title: meta.title,
-    ...(payload ? { detail: itemDetail(item, payload) } : {}),
-  } as const;
+    ...(event.requestId ? { requestId: event.requestId } : {}),
+    ...(refs ? { providerRefs: refs } : {}),
+    raw: {
+      source: eventRawSource(event),
+      method: event.method,
+      payload: event.payload ?? {},
+    },
+  };
+}
 
-  if (event.method === "item/started") {
-    return {
-      type: "tool.started",
-      ...eventBase,
-    };
+function mapItemLifecycle(
+  event: ProviderEvent,
+  lifecycle: "item.started" | "item.updated" | "item.completed",
+): ProviderRuntimeEvent | undefined {
+  const payload = asObject(event.payload);
+  const item = asObject(payload?.item);
+  const source = item ?? payload;
+  if (!source) {
+    return undefined;
   }
 
+  const itemType = toCanonicalItemType(source.type ?? source.kind);
+  if (itemType === "unknown" && lifecycle !== "item.updated") {
+    return undefined;
+  }
+
+  const detail = itemDetail(source, payload ?? source);
+  const status =
+    lifecycle === "item.started"
+      ? "inProgress"
+      : lifecycle === "item.completed"
+        ? "completed"
+        : undefined;
+
   return {
-    type: "tool.completed",
-    ...eventBase,
+    ...runtimeEventBase(event),
+    type: lifecycle,
+    payload: {
+      itemType,
+      ...(status ? { status } : {}),
+      ...(itemTitle(itemType) ? { title: itemTitle(itemType) } : {}),
+      ...(detail ? { detail } : {}),
+      ...(event.payload !== undefined ? { data: event.payload } : {}),
+    },
   };
 }
 
@@ -261,78 +363,87 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
     }
     return [
       {
+        ...runtimeEventBase(event),
         type: "runtime.error",
-        eventId: event.id,
-        provider: event.provider,
-        sessionId: event.sessionId,
-        createdAt: event.createdAt,
-        ...(event.threadId ? { threadId: event.threadId } : {}),
-        ...(event.turnId ? { turnId: event.turnId } : {}),
-        ...(event.itemId ? { itemId: event.itemId } : {}),
-        message: event.message,
+        payload: {
+          message: event.message,
+          class: "provider_error",
+          ...(event.payload !== undefined ? { detail: event.payload } : {}),
+        },
       },
     ];
   }
 
-  if (event.kind === "request" && event.requestId && event.requestKind) {
+  if (event.kind === "request") {
     const detail =
       asString(payload?.command) ?? asString(payload?.reason) ?? asString(payload?.prompt);
     return [
       {
-        type: "approval.requested",
-        eventId: event.id,
-        provider: event.provider,
-        sessionId: event.sessionId,
-        createdAt: event.createdAt,
-        ...(event.threadId ? { threadId: event.threadId } : {}),
-        ...(event.turnId ? { turnId: event.turnId } : {}),
-        ...(event.itemId ? { itemId: event.itemId } : {}),
-        requestId: event.requestId,
-        requestKind: event.requestKind,
-        ...(detail ? { detail } : {}),
+        ...runtimeEventBase(event),
+        type: "request.opened",
+        payload: {
+          requestType: toRequestTypeFromMethod(event.method),
+          ...(detail ? { detail } : {}),
+          ...(event.payload !== undefined ? { args: event.payload } : {}),
+        },
       },
     ];
   }
 
   if (event.method === "item/requestApproval/decision" && event.requestId) {
     const decision = Schema.decodeUnknownSync(ProviderApprovalDecision)(payload?.decision);
+    const requestType =
+      event.requestKind !== undefined
+        ? toRequestTypeFromKind(event.requestKind)
+        : toRequestTypeFromMethod(event.method);
     return [
       {
-        type: "approval.resolved",
-        eventId: event.id,
-        provider: event.provider,
-        sessionId: event.sessionId,
-        createdAt: event.createdAt,
-        ...(event.threadId ? { threadId: event.threadId } : {}),
-        ...(event.turnId ? { turnId: event.turnId } : {}),
-        ...(event.itemId ? { itemId: event.itemId } : {}),
-        requestId: event.requestId,
-        ...(event.requestKind ? { requestKind: event.requestKind } : {}),
-        ...(decision ? { decision } : {}),
+        ...runtimeEventBase(event),
+        type: "request.resolved",
+        payload: {
+          requestType,
+          ...(decision ? { decision } : {}),
+          ...(event.payload !== undefined ? { resolution: event.payload } : {}),
+        },
       },
     ];
   }
 
-  const messageCompleted = mapMessageCompletedEvent(event);
-  if (messageCompleted) {
-    return [messageCompleted];
+  if (event.method === "session/connecting") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "session.state.changed",
+        payload: {
+          state: "starting",
+          ...(event.message ? { reason: event.message } : {}),
+        },
+      },
+    ];
   }
 
-  const tool = mapToolEvent(event);
-  if (tool) {
-    return [tool];
+  if (event.method === "session/ready") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "session.state.changed",
+        payload: {
+          state: "ready",
+          ...(event.message ? { reason: event.message } : {}),
+        },
+      },
+    ];
   }
 
   if (event.method === "session/started") {
     return [
       {
+        ...runtimeEventBase(event),
         type: "session.started",
-        eventId: event.id,
-        provider: event.provider,
-        sessionId: event.sessionId,
-        createdAt: event.createdAt,
-        ...(event.threadId ? { threadId: event.threadId } : {}),
-        ...(event.message ? { message: event.message } : {}),
+        payload: {
+          ...(event.message ? { message: event.message } : {}),
+          ...(event.payload !== undefined ? { resume: event.payload } : {}),
+        },
       },
     ];
   }
@@ -340,33 +451,82 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "session/exited" || event.method === "session/closed") {
     return [
       {
+        ...runtimeEventBase(event),
         type: "session.exited",
-        eventId: event.id,
-        provider: event.provider,
-        sessionId: event.sessionId,
-        createdAt: event.createdAt,
-        ...(event.threadId ? { threadId: event.threadId } : {}),
-        ...(event.message ? { message: event.message } : {}),
+        payload: {
+          ...(event.message ? { reason: event.message } : {}),
+          ...(event.method === "session/closed" ? { exitKind: "graceful" } : {}),
+        },
       },
     ];
   }
 
   if (event.method === "thread/started") {
     const payloadThreadId = asString(asObject(payload?.thread)?.id);
-    const threadId =
+    const providerThreadId =
       event.threadId ??
       (payloadThreadId ? ProviderThreadId.makeUnsafe(payloadThreadId) : undefined);
-    if (!threadId) {
+    if (!providerThreadId) {
       return [];
     }
     return [
       {
+        ...runtimeEventBase(event),
         type: "thread.started",
-        eventId: event.id,
-        provider: event.provider,
-        sessionId: event.sessionId,
-        createdAt: event.createdAt,
-        threadId,
+        payload: {
+          providerThreadId,
+        },
+      },
+    ];
+  }
+
+  if (
+    event.method === "thread/status/changed" ||
+    event.method === "thread/archived" ||
+    event.method === "thread/unarchived" ||
+    event.method === "thread/closed" ||
+    event.method === "thread/compacted"
+  ) {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "thread.state.changed",
+        payload: {
+          state:
+            event.method === "thread/archived"
+              ? "archived"
+              : event.method === "thread/closed"
+                ? "closed"
+                : event.method === "thread/compacted"
+                  ? "compacted"
+                  : toThreadState(asObject(payload?.thread)?.state ?? payload?.state),
+          ...(event.payload !== undefined ? { detail: event.payload } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/name/updated") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "thread.metadata.updated",
+        payload: {
+          ...(asString(payload?.threadName) ? { name: asString(payload?.threadName) } : {}),
+          ...(event.payload !== undefined ? { metadata: asObject(event.payload) } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/tokenUsage/updated") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "thread.token-usage.updated",
+        payload: {
+          usage: event.payload ?? {},
+        },
       },
     ];
   }
@@ -380,52 +540,360 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
     }
     return [
       {
-        type: "turn.started",
-        eventId: event.id,
-        provider: event.provider,
-        sessionId: event.sessionId,
-        createdAt: event.createdAt,
-        ...(event.threadId ? { threadId: event.threadId } : {}),
+        ...runtimeEventBase(event),
         turnId,
+        type: "turn.started",
+        payload: {
+          ...(asString(turn?.model) ? { model: asString(turn?.model) } : {}),
+          ...(asString(turn?.effort) ? { effort: asString(turn?.effort) } : {}),
+        },
       },
     ];
   }
 
   if (event.method === "turn/completed") {
+    const errorMessage = asString(asObject(turn?.error)?.message);
     return [
       {
+        ...runtimeEventBase(event),
         type: "turn.completed",
-        eventId: event.id,
-        provider: event.provider,
-        sessionId: event.sessionId,
-        createdAt: event.createdAt,
-        ...(event.threadId ? { threadId: event.threadId } : {}),
-        ...(event.turnId ? { turnId: event.turnId } : {}),
-        ...(toTurnStatus(turn?.status) ? { status: toTurnStatus(turn?.status) } : {}),
-        ...(asString(asObject(turn?.error)?.message)
-          ? { errorMessage: asString(asObject(turn?.error)?.message) }
-          : {}),
+        payload: {
+          state: toTurnStatus(turn?.status),
+          ...(asString(turn?.stopReason) ? { stopReason: asString(turn?.stopReason) } : {}),
+          ...(turn?.usage !== undefined ? { usage: turn.usage } : {}),
+          ...(asObject(turn?.modelUsage) ? { modelUsage: asObject(turn?.modelUsage) } : {}),
+          ...(asNumber(turn?.totalCostUsd) !== undefined
+            ? { totalCostUsd: asNumber(turn?.totalCostUsd) }
+            : {}),
+          ...(errorMessage ? { errorMessage } : {}),
+        },
       },
     ];
   }
 
-  if (event.method === "item/agentMessage/delta" && event.textDelta && event.textDelta.length > 0) {
+  if (event.method === "turn/aborted") {
     return [
       {
-        type: "message.delta",
-        eventId: event.id,
-        provider: event.provider,
-        sessionId: event.sessionId,
-        createdAt: event.createdAt,
-        ...(event.threadId ? { threadId: event.threadId } : {}),
-        ...(event.turnId ? { turnId: event.turnId } : {}),
-        ...(event.itemId ? { itemId: event.itemId } : {}),
-        delta: event.textDelta,
+        ...runtimeEventBase(event),
+        type: "turn.aborted",
+        payload: {
+          reason: event.message ?? "Turn aborted",
+        },
       },
     ];
   }
 
-  return [];
+  if (event.method === "turn/plan/updated") {
+    const steps = Array.isArray(payload?.plan) ? payload.plan : [];
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "turn.plan.updated",
+        payload: {
+          ...(asString(payload?.explanation) ? { explanation: asString(payload?.explanation) } : {}),
+          plan: steps
+            .map((entry) => asObject(entry))
+            .filter((entry): entry is Record<string, unknown> => entry !== undefined)
+            .map((entry) => ({
+              step: asString(entry.step) ?? "step",
+              status:
+                entry.status === "completed" || entry.status === "inProgress"
+                  ? entry.status
+                  : "pending",
+            })),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "turn/diff/updated") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "turn.diff.updated",
+        payload: {
+          unifiedDiff:
+            asString(payload?.unifiedDiff) ??
+            asString(payload?.diff) ??
+            asString(payload?.patch) ??
+            "",
+        },
+      },
+    ];
+  }
+
+  if (event.method === "item/started") {
+    const started = mapItemLifecycle(event, "item.started");
+    return started ? [started] : [];
+  }
+
+  if (event.method === "item/completed") {
+    const completed = mapItemLifecycle(event, "item.completed");
+    return completed ? [completed] : [];
+  }
+
+  if (
+    event.method === "item/reasoning/summaryPartAdded" ||
+    event.method === "item/commandExecution/terminalInteraction"
+  ) {
+    const updated = mapItemLifecycle(event, "item.updated");
+    return updated ? [updated] : [];
+  }
+
+  if (
+    event.method === "item/agentMessage/delta" ||
+    event.method === "item/plan/delta" ||
+    event.method === "item/commandExecution/outputDelta" ||
+    event.method === "item/fileChange/outputDelta" ||
+    event.method === "item/reasoning/summaryTextDelta" ||
+    event.method === "item/reasoning/textDelta"
+  ) {
+    const delta =
+      event.textDelta ??
+      asString(payload?.delta) ??
+      asString(payload?.text) ??
+      asString(asObject(payload?.content)?.text);
+    if (!delta || delta.length === 0) {
+      return [];
+    }
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "content.delta",
+        payload: {
+          streamKind: contentStreamKindFromMethod(event.method),
+          delta,
+          ...(typeof payload?.contentIndex === "number" ? { contentIndex: payload.contentIndex } : {}),
+          ...(typeof payload?.summaryIndex === "number" ? { summaryIndex: payload.summaryIndex } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "item/mcpToolCall/progress") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "tool.progress",
+        payload: {
+          ...(asString(payload?.toolUseId) ? { toolUseId: asString(payload?.toolUseId) } : {}),
+          ...(asString(payload?.toolName) ? { toolName: asString(payload?.toolName) } : {}),
+          ...(asString(payload?.summary) ? { summary: asString(payload?.summary) } : {}),
+          ...(asNumber(payload?.elapsedSeconds) !== undefined
+            ? { elapsedSeconds: asNumber(payload?.elapsedSeconds) }
+            : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "serverRequest/resolved") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "request.resolved",
+        payload: {
+          requestType: "unknown",
+          ...(event.payload !== undefined ? { resolution: event.payload } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "model/rerouted") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "model.rerouted",
+        payload: {
+          fromModel: asString(payload?.fromModel) ?? "unknown",
+          toModel: asString(payload?.toModel) ?? "unknown",
+          reason: asString(payload?.reason) ?? "unknown",
+        },
+      },
+    ];
+  }
+
+  if (event.method === "deprecationNotice") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "deprecation.notice",
+        payload: {
+          summary: asString(payload?.summary) ?? "Deprecation notice",
+          ...(asString(payload?.details) ? { details: asString(payload?.details) } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "configWarning") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "config.warning",
+        payload: {
+          summary: asString(payload?.summary) ?? "Configuration warning",
+          ...(asString(payload?.details) ? { details: asString(payload?.details) } : {}),
+          ...(asString(payload?.path) ? { path: asString(payload?.path) } : {}),
+          ...(payload?.range !== undefined ? { range: payload.range } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "account/updated") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "account.updated",
+        payload: {
+          account: event.payload ?? {},
+        },
+      },
+    ];
+  }
+
+  if (event.method === "account/rateLimits/updated") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "account.rate-limits.updated",
+        payload: {
+          rateLimits: event.payload ?? {},
+        },
+      },
+    ];
+  }
+
+  if (event.method === "mcpServer/oauthLogin/completed") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "mcp.oauth.completed",
+        payload: {
+          success: payload?.success === true,
+          ...(asString(payload?.name) ? { name: asString(payload?.name) } : {}),
+          ...(asString(payload?.error) ? { error: asString(payload?.error) } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/realtime/started") {
+    const realtimeSessionId = asString(payload?.realtimeSessionId);
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "thread.realtime.started",
+        payload: {
+          realtimeSessionId,
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/realtime/itemAdded") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "thread.realtime.item-added",
+        payload: {
+          item: event.payload ?? {},
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/realtime/outputAudio/delta") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "thread.realtime.audio.delta",
+        payload: {
+          audio: event.payload ?? {},
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/realtime/error") {
+    const message = asString(payload?.message) ?? event.message ?? "Realtime error";
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "thread.realtime.error",
+        payload: {
+          message,
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/realtime/closed") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "thread.realtime.closed",
+        payload: {
+          reason: event.message,
+        },
+      },
+    ];
+  }
+
+  if (event.method === "error") {
+    const message =
+      asString(asObject(payload?.error)?.message) ?? event.message ?? "Provider runtime error";
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "runtime.error",
+        payload: {
+          message,
+          class: "provider_error",
+          ...(event.payload !== undefined ? { detail: event.payload } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "windows/worldWritableWarning") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "runtime.warning",
+        payload: {
+          message: event.message ?? "Windows world-writable warning",
+          ...(event.payload !== undefined ? { detail: event.payload } : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "windowsSandbox/setupCompleted") {
+    return [
+      {
+        ...runtimeEventBase(event),
+        type: "runtime.warning",
+        payload: {
+          message: event.message ?? "Windows sandbox setup completed",
+          ...(event.payload !== undefined ? { detail: event.payload } : {}),
+        },
+      },
+    ];
+  }
+
+  return [
+    {
+      ...runtimeEventBase(event),
+      type: "runtime.warning",
+      payload: {
+        message: `Unhandled Codex provider event method: ${event.method}`,
+        ...(event.payload !== undefined ? { detail: event.payload } : {}),
+      },
+    },
+  ];
 }
 
 const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>

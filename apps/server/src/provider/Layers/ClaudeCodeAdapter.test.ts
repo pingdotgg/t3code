@@ -229,7 +229,7 @@ describe("ClaudeCodeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeCodeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 8).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 11).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -315,40 +315,43 @@ describe("ClaudeCodeAdapterLive", () => {
         runtimeEvents.map((event) => event.type),
         [
           "session.started",
+          "session.configured",
+          "session.state.changed",
           "turn.started",
           "thread.started",
-          "message.delta",
-          "tool.started",
-          "tool.completed",
-          "message.completed",
+          "content.delta",
+          "item.started",
+          "item.completed",
+          "item.updated",
+          "item.completed",
           "turn.completed",
         ],
       );
 
-      const turnStarted = runtimeEvents[1];
+      const turnStarted = runtimeEvents[3];
       assert.equal(turnStarted?.type, "turn.started");
       if (turnStarted?.type === "turn.started") {
         assert.equal(turnStarted.turnId, turn.turnId);
       }
 
-      const deltaEvent = runtimeEvents[3];
-      assert.equal(deltaEvent?.type, "message.delta");
-      if (deltaEvent?.type === "message.delta") {
-        assert.equal(deltaEvent.delta, "Hi");
+      const deltaEvent = runtimeEvents.find((event) => event.type === "content.delta");
+      assert.equal(deltaEvent?.type, "content.delta");
+      if (deltaEvent?.type === "content.delta") {
+        assert.equal(deltaEvent.payload.delta, "Hi");
         assert.equal(deltaEvent.turnId, turn.turnId);
       }
 
-      const toolStarted = runtimeEvents[4];
-      assert.equal(toolStarted?.type, "tool.started");
-      if (toolStarted?.type === "tool.started") {
-        assert.equal(toolStarted.toolKind, "command");
+      const toolStarted = runtimeEvents.find((event) => event.type === "item.started");
+      assert.equal(toolStarted?.type, "item.started");
+      if (toolStarted?.type === "item.started") {
+        assert.equal(toolStarted.payload.itemType, "command_execution");
       }
 
-      const turnCompleted = runtimeEvents[7];
+      const turnCompleted = runtimeEvents[runtimeEvents.length - 1];
       assert.equal(turnCompleted?.type, "turn.completed");
       if (turnCompleted?.type === "turn.completed") {
         assert.equal(turnCompleted.turnId, turn.turnId);
-        assert.equal(turnCompleted.status, "completed");
+        assert.equal(turnCompleted.payload.state, "completed");
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -361,7 +364,7 @@ describe("ClaudeCodeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeCodeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 9).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -416,22 +419,25 @@ describe("ClaudeCodeAdapterLive", () => {
         runtimeEvents.map((event) => event.type),
         [
           "session.started",
+          "session.configured",
+          "session.state.changed",
           "turn.started",
           "thread.started",
-          "message.delta",
-          "message.completed",
+          "item.updated",
+          "content.delta",
+          "item.completed",
           "turn.completed",
         ],
       );
 
-      const deltaIndex = runtimeEvents.findIndex((event) => event.type === "message.delta");
-      const completedIndex = runtimeEvents.findIndex((event) => event.type === "message.completed");
+      const deltaIndex = runtimeEvents.findIndex((event) => event.type === "content.delta");
+      const completedIndex = runtimeEvents.findIndex((event) => event.type === "item.completed");
       assert.equal(deltaIndex >= 0 && completedIndex >= 0 && deltaIndex < completedIndex, true);
 
       const deltaEvent = runtimeEvents[deltaIndex];
-      assert.equal(deltaEvent?.type, "message.delta");
-      if (deltaEvent?.type === "message.delta") {
-        assert.equal(deltaEvent.delta, "Late text");
+      assert.equal(deltaEvent?.type, "content.delta");
+      if (deltaEvent?.type === "content.delta") {
+        assert.equal(deltaEvent.payload.delta, "Late text");
         assert.equal(deltaEvent.turnId, turn.turnId);
       }
     }).pipe(
@@ -445,7 +451,7 @@ describe("ClaudeCodeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeCodeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 9).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -485,18 +491,21 @@ describe("ClaudeCodeAdapterLive", () => {
         runtimeEvents.map((event) => event.type),
         [
           "session.started",
+          "session.configured",
+          "session.state.changed",
           "turn.started",
           "thread.started",
-          "message.delta",
-          "message.completed",
+          "item.updated",
+          "content.delta",
+          "item.completed",
           "turn.completed",
         ],
       );
 
-      const deltaEvent = runtimeEvents.find((event) => event.type === "message.delta");
-      assert.equal(deltaEvent?.type, "message.delta");
-      if (deltaEvent?.type === "message.delta") {
-        assert.equal(deltaEvent.delta, "Fallback hello");
+      const deltaEvent = runtimeEvents.find((event) => event.type === "content.delta");
+      assert.equal(deltaEvent?.type, "content.delta");
+      if (deltaEvent?.type === "content.delta") {
+        assert.equal(deltaEvent.payload.delta, "Fallback hello");
         assert.equal(deltaEvent.turnId, turn.turnId);
       }
     }).pipe(
@@ -552,7 +561,13 @@ describe("ClaudeCodeAdapterLive", () => {
       const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
       assert.deepEqual(
         runtimeEvents.map((event) => event.type),
-        ["session.started", "turn.started", "thread.started", "message.completed", "turn.completed"],
+        [
+          "session.started",
+          "session.configured",
+          "session.state.changed",
+          "turn.started",
+          "thread.started",
+        ],
       );
 
       const sessionStarted = runtimeEvents[0];
@@ -561,7 +576,7 @@ describe("ClaudeCodeAdapterLive", () => {
         assert.equal("threadId" in sessionStarted, false);
       }
 
-      const threadStarted = runtimeEvents[2];
+      const threadStarted = runtimeEvents[4];
       assert.equal(threadStarted?.type, "thread.started");
       if (threadStarted?.type === "thread.started") {
         assert.equal(threadStarted.threadId, "sdk-thread-real");
@@ -582,8 +597,7 @@ describe("ClaudeCodeAdapterLive", () => {
         approvalPolicy: "on-request",
       });
 
-      const consumeSessionStarted = yield* Stream.runHead(adapter.streamEvents);
-      assert.equal(consumeSessionStarted._tag, "Some");
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
 
       const createInput = harness.getLastCreateQueryInput();
       const canUseTool = createInput?.options.canUseTool;
@@ -613,8 +627,8 @@ describe("ClaudeCodeAdapterLive", () => {
       if (requested._tag !== "Some") {
         return;
       }
-      assert.equal(requested.value.type, "approval.requested");
-      if (requested.value.type !== "approval.requested") {
+      assert.equal(requested.value.type, "request.opened");
+      if (requested.value.type !== "request.opened") {
         return;
       }
 
@@ -629,12 +643,12 @@ describe("ClaudeCodeAdapterLive", () => {
       if (resolved._tag !== "Some") {
         return;
       }
-      assert.equal(resolved.value.type, "approval.resolved");
-      if (resolved.value.type !== "approval.resolved") {
+      assert.equal(resolved.value.type, "request.resolved");
+      if (resolved.value.type !== "request.resolved") {
         return;
       }
       assert.equal(resolved.value.requestId, requested.value.requestId);
-      assert.equal(resolved.value.decision, "accept");
+      assert.equal(resolved.value.payload.decision, "accept");
 
       const permissionResult = yield* Effect.promise(() => permissionPromise);
       assert.equal((permissionResult as PermissionResult).behavior, "allow");
