@@ -153,10 +153,9 @@ export function createWsNativeApi(): NativeApi {
           return;
         }
 
-        const popup = window.open(url, "_blank", "noopener,noreferrer");
-        if (!popup) {
-          throw new Error("Unable to open link. Allow popups and try again.");
-        }
+        // Some mobile browsers can return null here even when the tab opens.
+        // Avoid false negatives and let the browser handle popup policy.
+        window.open(url, "_blank", "noopener,noreferrer");
       },
     },
     git: {
