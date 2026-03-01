@@ -62,9 +62,15 @@ export const ClaudeCodeProviderStartOptions = Schema.Struct({
 });
 export type ClaudeCodeProviderStartOptions = typeof ClaudeCodeProviderStartOptions.Type;
 
+export const CursorProviderStartOptions = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type CursorProviderStartOptions = typeof CursorProviderStartOptions.Type;
+
 export const ProviderStartOptions = Schema.Struct({
   codex: Schema.optional(CodexProviderStartOptions),
   claudeCode: Schema.optional(ClaudeCodeProviderStartOptions),
+  cursor: Schema.optional(CursorProviderStartOptions),
 });
 export type ProviderStartOptions = typeof ProviderStartOptions.Type;
 

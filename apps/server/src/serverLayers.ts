@@ -20,6 +20,7 @@ import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRun
 import { ProviderUnsupportedError } from "./provider/Errors";
 import { makeClaudeCodeAdapterLive } from "./provider/Layers/ClaudeCodeAdapter";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
+import { makeCursorAdapterLive } from "./provider/Layers/CursorAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
 import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
@@ -60,8 +61,11 @@ export function makeServerProviderLayer(): Layer.Layer<
     const claudeAdapterLayer = makeClaudeCodeAdapterLive({
       nativeEventLogPath: path.join(providerLogsDir, "provider-native.ndjson"),
     });
+    const cursorAdapterLayer = makeCursorAdapterLive({
+      nativeEventLogPath: path.join(providerLogsDir, "provider-native.ndjson"),
+    });
     const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
-      Layer.provide(Layer.mergeAll(codexAdapterLayer, claudeAdapterLayer)),
+      Layer.provide(Layer.mergeAll(codexAdapterLayer, claudeAdapterLayer, cursorAdapterLayer)),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
     return makeProviderServiceLive(
