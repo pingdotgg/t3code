@@ -7,12 +7,14 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   MODEL_OPTIONS,
   MODEL_OPTIONS_BY_PROVIDER,
+  REASONING_EFFORT_OPTIONS_BY_PROVIDER,
+  DEFAULT_REASONING_EFFORT_BY_PROVIDER,
   getDefaultModel,
+  getDefaultReasoningEffort,
   getCursorModelFamilyOptions,
   getModelOptions,
-  getReasoningOptions,
+  getReasoningEffortOptions,
   normalizeModelSlug,
-  REASONING_OPTIONS,
   parseCursorModelSelection,
   resolveCursorModelFromSelection,
   resolveModelSlug,
@@ -148,12 +150,32 @@ describe("cursor model selection", () => {
   });
 });
 
-describe("getReasoningOptions", () => {
+describe("getReasoningEffortOptions", () => {
   it("returns codex reasoning options for codex", () => {
-    expect(getReasoningOptions("codex")).toEqual(REASONING_OPTIONS);
+    expect(getReasoningEffortOptions("codex")).toEqual(
+      REASONING_EFFORT_OPTIONS_BY_PROVIDER.codex,
+    );
   });
 
   it("returns no reasoning options for claudeCode", () => {
-    expect(getReasoningOptions("claudeCode")).toEqual([]);
+    expect(getReasoningEffortOptions("claudeCode")).toEqual([]);
+  });
+
+  it("returns no reasoning options for cursor", () => {
+    expect(getReasoningEffortOptions("cursor")).toEqual([]);
+  });
+});
+
+describe("getDefaultReasoningEffort", () => {
+  it("returns provider-scoped defaults", () => {
+    expect(getDefaultReasoningEffort("codex")).toBe(
+      DEFAULT_REASONING_EFFORT_BY_PROVIDER.codex,
+    );
+    expect(getDefaultReasoningEffort("claudeCode")).toBe(
+      DEFAULT_REASONING_EFFORT_BY_PROVIDER.claudeCode,
+    );
+    expect(getDefaultReasoningEffort("cursor")).toBe(
+      DEFAULT_REASONING_EFFORT_BY_PROVIDER.cursor,
+    );
   });
 });

@@ -491,18 +491,31 @@ export function resolveModelSlugForProvider(
   return resolveModelSlug(model, provider);
 }
 
-export const REASONING_OPTIONS_BY_PROVIDER = {
-  codex: ["xhigh", "high", "medium", "low"],
+const CODEX_REASONING_EFFORT_OPTIONS = ["xhigh", "high", "medium", "low"] as const;
+export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORT_OPTIONS)[number];
+
+export const REASONING_EFFORT_OPTIONS_BY_PROVIDER = {
+  codex: CODEX_REASONING_EFFORT_OPTIONS,
   claudeCode: [],
-} as const satisfies Record<ProviderKind, readonly string[]>;
+  cursor: [],
+} as const satisfies Record<ProviderKind, readonly CodexReasoningEffort[]>;
 
-// Backward compatibility for existing Codex-only call sites.
-export const REASONING_OPTIONS = REASONING_OPTIONS_BY_PROVIDER.codex;
-export type ReasoningEffort = (typeof REASONING_OPTIONS_BY_PROVIDER.codex)[number];
-export const DEFAULT_REASONING: ReasoningEffort = "high";
+export const DEFAULT_REASONING_EFFORT_BY_PROVIDER = {
+  codex: "high",
+  claudeCode: null,
+  cursor: null,
+} as const satisfies Record<ProviderKind, CodexReasoningEffort | null>;
 
-export function getReasoningOptions(
+export function getReasoningEffortOptions(
   provider: ProviderKind = "codex",
-): ReadonlyArray<ReasoningEffort> {
-  return REASONING_OPTIONS_BY_PROVIDER[provider] as ReadonlyArray<ReasoningEffort>;
+): ReadonlyArray<CodexReasoningEffort> {
+  return REASONING_EFFORT_OPTIONS_BY_PROVIDER[provider];
+}
+
+export function getDefaultReasoningEffort(provider: "codex"): CodexReasoningEffort;
+export function getDefaultReasoningEffort(provider: ProviderKind): CodexReasoningEffort | null;
+export function getDefaultReasoningEffort(
+  provider: ProviderKind = "codex",
+): CodexReasoningEffort | null {
+  return DEFAULT_REASONING_EFFORT_BY_PROVIDER[provider];
 }
