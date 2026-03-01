@@ -414,6 +414,38 @@ it.layer(TestLayer)("git integration", (it) => {
         ).toBe(true);
       }),
     );
+
+    it.effect("includes remoteName metadata for remotes with slash in the name", () =>
+      Effect.gen(function* () {
+        const remote = yield* makeTmpDir();
+        const tmp = yield* makeTmpDir();
+        const remoteName = "my-org/upstream";
+
+        yield* git(remote, ["init", "--bare"]);
+        yield* initRepoWithCommit(tmp);
+        const defaultBranch = (yield* listGitBranches({ cwd: tmp })).branches.find(
+          (branch) => branch.current,
+        )!.name;
+
+        yield* git(tmp, ["remote", "add", remoteName, remote]);
+        yield* git(tmp, ["push", "-u", remoteName, defaultBranch]);
+
+        const remoteOnlyBranch = "feature/remote-with-remote-name";
+        yield* git(tmp, ["checkout", "-b", remoteOnlyBranch]);
+        yield* git(tmp, ["push", "-u", remoteName, remoteOnlyBranch]);
+        yield* git(tmp, ["checkout", defaultBranch]);
+        yield* git(tmp, ["branch", "-D", remoteOnlyBranch]);
+
+        const result = yield* listGitBranches({ cwd: tmp });
+        const remoteBranch = result.branches.find(
+          (branch) => branch.name === `${remoteName}/${remoteOnlyBranch}`,
+        );
+
+        expect(remoteBranch).toBeDefined();
+        expect(remoteBranch?.isRemote).toBe(true);
+        expect(remoteBranch?.remoteName).toBe(remoteName);
+      }),
+    );
   });
 
   // ── checkoutGitBranch ──
@@ -633,6 +665,60 @@ it.layer(TestLayer)("git integration", (it) => {
         yield* initRepoWithCommit(tmp);
         const result = yield* Effect.result(checkoutGitBranch({ cwd: tmp, branch: "nonexistent" }));
         expect(result._tag).toBe("Failure");
+      }),
+    );
+
+    it.effect(
+      "does not silently checkout a local branch when a remote ref no longer exists",
+      () =>
+        Effect.gen(function* () {
+          const remote = yield* makeTmpDir();
+          const source = yield* makeTmpDir();
+          yield* git(remote, ["init", "--bare"]);
+
+          yield* initRepoWithCommit(source);
+          const defaultBranch = (yield* listGitBranches({ cwd: source })).branches.find(
+            (branch) => branch.current,
+          )!.name;
+          yield* git(source, ["remote", "add", "origin", remote]);
+          yield* git(source, ["push", "-u", "origin", defaultBranch]);
+
+          yield* createGitBranch({ cwd: source, branch: "feature" });
+
+          const checkoutResult = yield* Effect.result(
+            checkoutGitBranch({ cwd: source, branch: "origin/feature" }),
+          );
+          expect(checkoutResult._tag).toBe("Failure");
+          expect(yield* git(source, ["branch", "--show-current"])).toBe(defaultBranch);
+        }),
+    );
+
+    it.effect("checks out a remote tracking branch when remote name contains slashes", () =>
+      Effect.gen(function* () {
+        const remote = yield* makeTmpDir();
+        const source = yield* makeTmpDir();
+        const remoteName = "my-org/upstream";
+        const featureBranch = "feature";
+        yield* git(remote, ["init", "--bare"]);
+
+        yield* initRepoWithCommit(source);
+        const defaultBranch = (yield* listGitBranches({ cwd: source })).branches.find(
+          (branch) => branch.current,
+        )!.name;
+        yield* git(source, ["remote", "add", remoteName, remote]);
+        yield* git(source, ["push", "-u", remoteName, defaultBranch]);
+
+        yield* git(source, ["checkout", "-b", featureBranch]);
+        yield* writeTextFile(path.join(source, "feature.txt"), "feature content\n");
+        yield* git(source, ["add", "feature.txt"]);
+        yield* git(source, ["commit", "-m", "feature commit"]);
+        yield* git(source, ["push", "-u", remoteName, featureBranch]);
+        yield* git(source, ["checkout", defaultBranch]);
+        yield* git(source, ["branch", "-D", featureBranch]);
+
+        yield* checkoutGitBranch({ cwd: source, branch: `${remoteName}/${featureBranch}` });
+
+        expect(yield* git(source, ["branch", "--show-current"])).toBe("upstream/feature");
       }),
     );
 

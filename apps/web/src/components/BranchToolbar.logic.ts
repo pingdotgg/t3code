@@ -8,12 +8,42 @@ interface DeriveSyncedLocalBranchInput {
   queryBranches: ReadonlyArray<GitBranch> | undefined;
 }
 
-export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
-  const separatorIndex = branchName.indexOf("/");
-  if (separatorIndex <= 0 || separatorIndex === branchName.length - 1) {
+export function deriveLocalBranchNameFromRemoteRef(
+  branchName: string,
+  remoteName?: string,
+): string {
+  if (remoteName) {
+    const remotePrefix = `${remoteName}/`;
+    if (branchName.startsWith(remotePrefix) && branchName.length > remotePrefix.length) {
+      return branchName.slice(remotePrefix.length);
+    }
+  }
+
+  const firstSeparatorIndex = branchName.indexOf("/");
+  if (firstSeparatorIndex <= 0 || firstSeparatorIndex === branchName.length - 1) {
     return branchName;
   }
-  return branchName.slice(separatorIndex + 1);
+  return branchName.slice(firstSeparatorIndex + 1);
+}
+
+function deriveLocalBranchNameCandidatesFromRemoteRef(
+  branchName: string,
+  remoteName?: string,
+): ReadonlyArray<string> {
+  const candidates = new Set<string>();
+  const firstSlashCandidate = deriveLocalBranchNameFromRemoteRef(branchName);
+  if (firstSlashCandidate.length > 0) {
+    candidates.add(firstSlashCandidate);
+  }
+
+  if (remoteName) {
+    const remotePrefix = `${remoteName}/`;
+    if (branchName.startsWith(remotePrefix) && branchName.length > remotePrefix.length) {
+      candidates.add(branchName.slice(remotePrefix.length));
+    }
+  }
+
+  return [...candidates];
 }
 
 export function dedupeRemoteBranchesWithLocalMatches(
@@ -28,8 +58,11 @@ export function dedupeRemoteBranchesWithLocalMatches(
       return true;
     }
 
-    const localBranchName = deriveLocalBranchNameFromRemoteRef(branch.name);
-    return !localBranchNames.has(localBranchName);
+    const localBranchCandidates = deriveLocalBranchNameCandidatesFromRemoteRef(
+      branch.name,
+      branch.remoteName,
+    );
+    return !localBranchCandidates.some((candidate) => localBranchNames.has(candidate));
   });
 }
 

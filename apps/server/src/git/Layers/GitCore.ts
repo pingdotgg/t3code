@@ -90,17 +90,61 @@ function parseBranchLine(line: string): { name: string; current: boolean } | nul
   };
 }
 
-function parseRemoteTrackingCandidate(
+function parseRemoteNames(stdout: string): ReadonlyArray<string> {
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .toSorted((a, b) => b.length - a.length);
+}
+
+function parseRemoteRefWithRemoteNames(
   branchName: string,
-): { remoteRef: string; localBranch: string } | null {
-  const separatorIndex = branchName.indexOf("/");
-  if (separatorIndex <= 0 || separatorIndex === branchName.length - 1) return null;
-  const localBranch = branchName.slice(separatorIndex + 1).trim();
-  if (localBranch.length === 0) return null;
-  return {
-    remoteRef: branchName.trim(),
-    localBranch,
-  };
+  remoteNames: ReadonlyArray<string>,
+): { remoteRef: string; remoteName: string; localBranch: string } | null {
+  const trimmedBranchName = branchName.trim();
+  if (trimmedBranchName.length === 0) return null;
+
+  for (const remoteName of remoteNames) {
+    const remotePrefix = `${remoteName}/`;
+    if (!trimmedBranchName.startsWith(remotePrefix)) {
+      continue;
+    }
+    const localBranch = trimmedBranchName.slice(remotePrefix.length).trim();
+    if (localBranch.length === 0) {
+      return null;
+    }
+    return {
+      remoteRef: trimmedBranchName,
+      remoteName,
+      localBranch,
+    };
+  }
+
+  return null;
+}
+
+function parseTrackingBranchByUpstreamRef(
+  stdout: string,
+  upstreamRef: string,
+): string | null {
+  for (const line of stdout.split("\n")) {
+    const trimmedLine = line.trim();
+    if (trimmedLine.length === 0) {
+      continue;
+    }
+    const [branchNameRaw, upstreamBranchRaw = ""] = trimmedLine.split("\t");
+    const branchName = branchNameRaw?.trim() ?? "";
+    const upstreamBranch = upstreamBranchRaw.trim();
+    if (branchName.length === 0 || upstreamBranch.length === 0) {
+      continue;
+    }
+    if (upstreamBranch === upstreamRef) {
+      return branchName;
+    }
+  }
+
+  return null;
 }
 
 function commandLabel(args: readonly string[]): string {
@@ -619,7 +663,8 @@ const makeGitCore = Effect.gen(function* () {
         );
       }
 
-      const [defaultRef, worktreeList, remoteBranchResult, branchLastCommit] = yield* Effect.all(
+      const [defaultRef, worktreeList, remoteBranchResult, remoteNamesResult, branchLastCommit] =
+        yield* Effect.all(
         [
           executeGit(
             "GitCore.listBranches.defaultRef",
@@ -648,10 +693,16 @@ const makeGitCore = Effect.gen(function* () {
               allowNonZeroExit: true,
             },
           ),
+          executeGit("GitCore.listBranches.remoteNames", input.cwd, ["remote"], {
+            timeoutMs: 5_000,
+            allowNonZeroExit: true,
+          }),
           branchRecencyPromise,
         ],
         { concurrency: "unbounded" },
       );
+
+      const remoteNames = remoteNamesResult.code === 0 ? parseRemoteNames(remoteNamesResult.stdout) : [];
 
       const defaultBranch =
         defaultRef.code === 0
@@ -705,13 +756,27 @@ const makeGitCore = Effect.gen(function* () {
               .split("\n")
               .map(parseBranchLine)
               .filter((branch): branch is { name: string; current: boolean } => branch !== null)
-              .map((branch) => ({
-                name: branch.name,
-                current: false,
-                isRemote: true,
-                isDefault: false,
-                worktreePath: null,
-              }))
+              .map((branch) => {
+                const parsedRemoteRef = parseRemoteRefWithRemoteNames(branch.name, remoteNames);
+                const remoteBranch: {
+                  name: string;
+                  current: boolean;
+                  isRemote: boolean;
+                  remoteName?: string;
+                  isDefault: boolean;
+                  worktreePath: string | null;
+                } = {
+                  name: branch.name,
+                  current: false,
+                  isRemote: true,
+                  isDefault: false,
+                  worktreePath: null,
+                };
+                if (parsedRemoteRef) {
+                  remoteBranch.remoteName = parsedRemoteRef.remoteName;
+                }
+                return remoteBranch;
+              })
               .toSorted((a, b) => {
                 const aLastCommit = branchLastCommit.get(a.name) ?? 0;
                 const bLastCommit = branchLastCommit.get(b.name) ?? 0;
@@ -781,23 +846,7 @@ const makeGitCore = Effect.gen(function* () {
 
   const checkoutBranch: GitCoreShape["checkoutBranch"] = (input) =>
     Effect.gen(function* () {
-      const trackingCandidate = parseRemoteTrackingCandidate(input.branch);
-      if (!trackingCandidate) {
-        yield* executeGit("GitCore.checkoutBranch.checkout", input.cwd, ["checkout", input.branch], {
-          timeoutMs: 10_000,
-          fallbackErrorMessage: "git checkout failed",
-        });
-
-        // Refresh upstream refs in the background so checkout remains responsive.
-        yield* Effect.sync(() => {
-          void Effect.runPromise(
-            refreshCheckedOutBranchUpstream(input.cwd).pipe(Effect.catch(() => Effect.void)),
-          );
-        });
-        return;
-      }
-
-      const [localInputExists, remoteExists, localTrackingExists] = yield* Effect.all(
+      const [localInputExists, remoteExists] = yield* Effect.all(
         [
           executeGit(
             "GitCore.checkoutBranch.localInputExists",
@@ -811,16 +860,7 @@ const makeGitCore = Effect.gen(function* () {
           executeGit(
             "GitCore.checkoutBranch.remoteExists",
             input.cwd,
-            ["show-ref", "--verify", "--quiet", `refs/remotes/${trackingCandidate.remoteRef}`],
-            {
-              timeoutMs: 5_000,
-              allowNonZeroExit: true,
-            },
-          ).pipe(Effect.map((result) => result.code === 0)),
-          executeGit(
-            "GitCore.checkoutBranch.localTrackingExists",
-            input.cwd,
-            ["show-ref", "--verify", "--quiet", `refs/heads/${trackingCandidate.localBranch}`],
+            ["show-ref", "--verify", "--quiet", `refs/remotes/${input.branch}`],
             {
               timeoutMs: 5_000,
               allowNonZeroExit: true,
@@ -830,12 +870,33 @@ const makeGitCore = Effect.gen(function* () {
         { concurrency: "unbounded" },
       );
 
+      const localTrackingBranch =
+        remoteExists
+          ? yield* executeGit(
+              "GitCore.checkoutBranch.localTrackingBranch",
+              input.cwd,
+              ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)", "refs/heads"],
+              {
+                timeoutMs: 5_000,
+                allowNonZeroExit: true,
+              },
+            ).pipe(
+              Effect.map((result) =>
+                result.code === 0
+                  ? parseTrackingBranchByUpstreamRef(result.stdout, input.branch)
+                  : null,
+              ),
+            )
+          : null;
+
       const checkoutArgs =
         localInputExists
           ? ["checkout", input.branch]
-          : remoteExists && !localTrackingExists
-          ? ["checkout", "--track", trackingCandidate.remoteRef]
-          : ["checkout", localTrackingExists ? trackingCandidate.localBranch : input.branch];
+          : remoteExists && !localTrackingBranch
+          ? ["checkout", "--track", input.branch]
+          : remoteExists && localTrackingBranch
+          ? ["checkout", localTrackingBranch]
+          : ["checkout", input.branch];
 
       yield* executeGit("GitCore.checkoutBranch.checkout", input.cwd, checkoutArgs, {
         timeoutMs: 10_000,

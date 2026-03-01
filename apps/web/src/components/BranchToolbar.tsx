@@ -179,13 +179,20 @@ export default function BranchToolbar({
     }
 
     const selectedBranchName = branch.isRemote
-      ? deriveLocalBranchNameFromRemoteRef(branch.name)
+      ? deriveLocalBranchNameFromRemoteRef(branch.name, branch.remoteName)
       : branch.name;
 
     checkoutMutation.mutate(branch.name, {
-      onSuccess: () => {
+      onSuccess: async () => {
         setThreadError(null);
-        setThreadBranch(selectedBranchName, activeWorktreePath);
+        let nextBranchName = selectedBranchName;
+        if (branch.isRemote) {
+          const status = await api.git.status({ cwd: branchCwd }).catch(() => null);
+          if (status?.branch) {
+            nextBranchName = status.branch;
+          }
+        }
+        setThreadBranch(nextBranchName, activeWorktreePath);
         setIsBranchMenuOpen(false);
         onComposerFocusRequest?.();
       },

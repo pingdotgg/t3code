@@ -67,6 +67,12 @@ describe("deriveLocalBranchNameFromRemoteRef", () => {
     expect(deriveLocalBranchNameFromRemoteRef("origin/feature/demo")).toBe("feature/demo");
   });
 
+  it("supports remote names that contain slashes", () => {
+    expect(
+      deriveLocalBranchNameFromRemoteRef("my-org/upstream/feature/demo", "my-org/upstream"),
+    ).toBe("feature/demo");
+  });
+
   it("returns the original name when ref is malformed", () => {
     expect(deriveLocalBranchNameFromRemoteRef("origin/")).toBe("origin/");
     expect(deriveLocalBranchNameFromRemoteRef("/feature/demo")).toBe("/feature/demo");
@@ -85,6 +91,7 @@ describe("dedupeRemoteBranchesWithLocalMatches", () => {
       {
         name: "origin/feature/demo",
         isRemote: true,
+        remoteName: "origin",
         current: false,
         isDefault: false,
         worktreePath: null,
@@ -92,6 +99,7 @@ describe("dedupeRemoteBranchesWithLocalMatches", () => {
       {
         name: "origin/feature/remote-only",
         isRemote: true,
+        remoteName: "origin",
         current: false,
         isDefault: false,
         worktreePath: null,
@@ -115,6 +123,7 @@ describe("dedupeRemoteBranchesWithLocalMatches", () => {
       {
         name: "origin/feature/remote-only",
         isRemote: true,
+        remoteName: "origin",
         current: false,
         isDefault: false,
         worktreePath: null,
@@ -124,6 +133,52 @@ describe("dedupeRemoteBranchesWithLocalMatches", () => {
     expect(dedupeRemoteBranchesWithLocalMatches(input).map((branch) => branch.name)).toEqual([
       "feature/local",
       "origin/feature/remote-only",
+    ]);
+  });
+
+  it("dedupes remote refs for remotes whose names contain slashes", () => {
+    const input: GitBranch[] = [
+      {
+        name: "feature/demo",
+        current: false,
+        isDefault: false,
+        worktreePath: null,
+      },
+      {
+        name: "my-org/upstream/feature/demo",
+        isRemote: true,
+        remoteName: "my-org/upstream",
+        current: false,
+        isDefault: false,
+        worktreePath: null,
+      },
+    ];
+
+    expect(dedupeRemoteBranchesWithLocalMatches(input).map((branch) => branch.name)).toEqual([
+      "feature/demo",
+    ]);
+  });
+
+  it("dedupes remote refs when git tracks with first-slash local naming", () => {
+    const input: GitBranch[] = [
+      {
+        name: "upstream/feature",
+        current: false,
+        isDefault: false,
+        worktreePath: null,
+      },
+      {
+        name: "my-org/upstream/feature",
+        isRemote: true,
+        remoteName: "my-org/upstream",
+        current: false,
+        isDefault: false,
+        worktreePath: null,
+      },
+    ];
+
+    expect(dedupeRemoteBranchesWithLocalMatches(input).map((branch) => branch.name)).toEqual([
+      "upstream/feature",
     ]);
   });
 });
