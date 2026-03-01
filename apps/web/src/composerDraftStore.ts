@@ -116,9 +116,6 @@ const EMPTY_PERSISTED_DRAFT_STORE_STATE: PersistedComposerDraftStoreState = {
   projectDraftThreadIdByProjectId: {},
 };
 
-let persistedDraftStateCache: PersistedComposerDraftStoreState = EMPTY_PERSISTED_DRAFT_STORE_STATE;
-let persistedDraftStorageChars: number | null = null;
-
 const EMPTY_IMAGES: ComposerImageAttachment[] = [];
 const EMPTY_IDS: string[] = [];
 const EMPTY_PERSISTED_ATTACHMENTS: PersistedComposerImageAttachment[] = [];
@@ -337,17 +334,25 @@ function parsePersistedDraftStateRaw(raw: string | null): PersistedComposerDraft
   }
 }
 
-function readPersistedAttachmentIdsFromCache(threadId: ThreadId): string[] {
+function readPersistedAttachmentIdsFromStorage(threadId: ThreadId): string[] {
   if (threadId.length === 0) {
     return [];
   }
-  return (persistedDraftStateCache.draftsByThreadId[threadId]?.attachments ?? []).map(
-    (attachment) => attachment.id,
-  );
+  try {
+    const raw = localStorage.getItem(COMPOSER_DRAFT_STORAGE_KEY);
+    const persisted = parsePersistedDraftStateRaw(raw);
+    return (persisted.draftsByThreadId[threadId]?.attachments ?? []).map(
+      (attachment) => attachment.id,
+    );
+  } catch {
+    return [];
+  }
 }
 
-function fileFromDataUrl(dataUrl: string, name: string, mimeType: string): File | null {
-  const [rawHeader, payload] = dataUrl.split(",", 2);
+function hydreatePersistedComposerImageAttachment(
+  attachment: PersistedComposerImageAttachment,
+): File | null {
+  const [rawHeader, payload] = attachment.dataUrl.split(",", 2);
   const header = rawHeader ?? "";
   if (!payload) {
     return null;
@@ -359,15 +364,17 @@ function fileFromDataUrl(dataUrl: string, name: string, mimeType: string): File 
       const inferredMimeType =
         header.startsWith("data:") && header.includes(";")
           ? header.slice("data:".length, header.indexOf(";"))
-          : mimeType;
-      return new File([decodedText], name, { type: inferredMimeType || mimeType });
+          : attachment.mimeType;
+      return new File([decodedText], attachment.name, {
+        type: inferredMimeType || attachment.mimeType,
+      });
     }
     const binary = atob(payload);
     const bytes = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index += 1) {
       bytes[index] = binary.charCodeAt(index);
     }
-    return new File([bytes], name, { type: mimeType });
+    return new File([bytes], attachment.name, { type: attachment.mimeType });
   } catch {
     return null;
   }
@@ -377,10 +384,9 @@ function hydrateImagesFromPersisted(
   attachments: PersistedComposerImageAttachment[],
 ): ComposerImageAttachment[] {
   return attachments.flatMap((attachment) => {
-    const file = fileFromDataUrl(attachment.dataUrl, attachment.name, attachment.mimeType);
-    if (!file) {
-      return [];
-    }
+    const file = hydreatePersistedComposerImageAttachment(attachment);
+    if (!file) return [];
+
     return [
       {
         type: "image" as const,
@@ -408,52 +414,6 @@ function toHydratedThreadDraft(
     effort: persistedDraft.effort ?? null,
   };
 }
-
-const composerDraftStorage = createJSONStorage(() => ({
-  getItem: (name: string): string | null => {
-    if (typeof window === "undefined") {
-      persistedDraftStateCache = EMPTY_PERSISTED_DRAFT_STORE_STATE;
-      persistedDraftStorageChars = null;
-      return null;
-    }
-    try {
-      const raw = window.localStorage.getItem(name);
-      persistedDraftStateCache = parsePersistedDraftStateRaw(raw);
-      persistedDraftStorageChars = raw?.length ?? 0;
-      return raw;
-    } catch {
-      persistedDraftStateCache = EMPTY_PERSISTED_DRAFT_STORE_STATE;
-      persistedDraftStorageChars = null;
-      return null;
-    }
-  },
-  setItem: (name: string, value: string): void => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    try {
-      window.localStorage.setItem(name, value);
-      persistedDraftStateCache = parsePersistedDraftStateRaw(value);
-      persistedDraftStorageChars = value.length;
-    } catch {
-      // Quota/storage errors are expected for large drafts. Keep last successful snapshot.
-    }
-  },
-  removeItem: (name: string): void => {
-    if (typeof window === "undefined") {
-      persistedDraftStateCache = EMPTY_PERSISTED_DRAFT_STORE_STATE;
-      persistedDraftStorageChars = null;
-      return;
-    }
-    try {
-      window.localStorage.removeItem(name);
-    } catch {
-      // Ignore remove failures; clear in-memory cache regardless.
-    }
-    persistedDraftStateCache = EMPTY_PERSISTED_DRAFT_STORE_STATE;
-    persistedDraftStorageChars = 0;
-  },
-}));
 
 export const useComposerDraftStore = create<ComposerDraftStoreState>()(
   persist(
@@ -890,7 +850,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           return { draftsByThreadId: nextDraftsByThreadId };
         });
         Promise.resolve().then(() => {
-          const persistedIdSet = new Set(readPersistedAttachmentIdsFromCache(threadId));
+          const persistedIdSet = new Set(readPersistedAttachmentIdsFromStorage(threadId));
           set((state) => {
             const current = state.draftsByThreadId[threadId];
             if (!current) {
@@ -983,7 +943,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
     {
       name: COMPOSER_DRAFT_STORAGE_KEY,
       version: 1,
-      storage: composerDraftStorage,
+      storage: createJSONStorage(() => localStorage),
       partialize: (state) => {
         const persistedDraftsByThreadId: PersistedComposerDraftStoreState["draftsByThreadId"] = {};
         for (const [threadId, draft] of Object.entries(state.draftsByThreadId)) {
@@ -1019,7 +979,6 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
       },
       merge: (persistedState, currentState) => {
         const normalizedPersisted = normalizePersistedComposerDraftState(persistedState);
-        persistedDraftStateCache = normalizedPersisted;
         const draftsByThreadId = Object.fromEntries(
           Object.entries(normalizedPersisted.draftsByThreadId).map(([threadId, draft]) => [
             threadId,
@@ -1039,8 +998,4 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
 
 export function useComposerThreadDraft(threadId: ThreadId): ComposerThreadDraftState {
   return useComposerDraftStore((state) => state.draftsByThreadId[threadId] ?? EMPTY_THREAD_DRAFT);
-}
-
-export function readComposerDraftPersistStorageChars(): number | null {
-  return persistedDraftStorageChars;
 }

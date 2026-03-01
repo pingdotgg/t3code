@@ -115,7 +115,6 @@ import {
   type ComposerImageAttachment,
   type DraftThreadState,
   type PersistedComposerImageAttachment,
-  readComposerDraftPersistStorageChars,
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../composerDraftStore";
@@ -138,8 +137,6 @@ const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 const WORKTREE_BRANCH_PREFIX = "t3code";
-const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
-const ENABLE_DRAFT_PERSIST_DEBUG_LOGS = import.meta.env.DEV;
 
 function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
   const stored = localStorage.getItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
@@ -292,13 +289,6 @@ function cloneComposerImageForRetry(image: ComposerImageAttachment): ComposerIma
   } catch {
     return image;
   }
-}
-
-function debugDraftPersist(message: string, payload: Record<string, unknown>): void {
-  if (!ENABLE_DRAFT_PERSIST_DEBUG_LOGS) {
-    return;
-  }
-  console.debug(`[draft-persist] ${message}`, payload);
 }
 
 const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
@@ -1261,31 +1251,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           return;
         }
         // Stage attachments in persisted draft state first so persist middleware can write them.
-        const stagedAttachmentIds = serialized.map((attachment) => attachment.id);
-        debugDraftPersist("stage", {
-          threadId,
-          attachmentCount: serialized.length,
-          serializationFailedCount: serializationFailedImageIds.length,
-          serializationFailedImageIds,
-          attachmentMeta: serialized.map((attachment) => ({
-            id: attachment.id,
-            name: attachment.name,
-            sizeBytes: attachment.sizeBytes,
-            dataUrlChars: attachment.dataUrl.length,
-          })),
-          storageCharsBefore: readComposerDraftPersistStorageChars(),
-        });
-        syncComposerDraftPersistedAttachments(
-          threadId,
-          serialized,
-        );
-        debugDraftPersist("reconcile-request", {
-          threadId,
-          stagedCount: stagedAttachmentIds.length,
-          serializationFailedCount: serializationFailedImageIds.length,
-          storageCharsAfter: readComposerDraftPersistStorageChars(),
-        });
-      } catch (error) {
+        syncComposerDraftPersistedAttachments(threadId, serialized);
+      } catch {
         const currentImageIds = new Set(composerImages.map((image) => image.id));
         const fallbackPersistedAttachments =
           useComposerDraftStore.getState().draftsByThreadId[threadId]?.persistedAttachments ?? [];
@@ -1296,13 +1263,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
         const fallbackAttachments = fallbackPersistedAttachments.filter((attachment) =>
           fallbackPersistedIdSet.has(attachment.id),
         );
-        debugDraftPersist("error", {
-          threadId,
-          error: error instanceof Error ? error.message : String(error),
-          imageIds: composerImages.map((image) => image.id),
-          fallbackPersistedCount: fallbackPersistedIds.length,
-          storageChars: readComposerDraftPersistStorageChars(),
-        });
         if (cancelled) {
           return;
         }
