@@ -2,17 +2,18 @@ import {
   type ApprovalRequestId,
   CURSOR_REASONING_OPTIONS,
   DEFAULT_MODEL,
-  DEFAULT_REASONING,
   EDITORS,
   type EditorId,
   type KeybindingCommand,
+  type CodexReasoningEffort,
   type CursorReasoningOption,
   type MessageId,
   getDefaultModel,
+  getDefaultReasoningEffort,
   getCursorModelCapabilities,
   getCursorModelFamilyOptions,
   getModelOptions,
-  getReasoningOptions,
+  getReasoningEffortOptions,
   type ProjectId,
   type ProjectEntry,
   type ProjectScript,
@@ -20,7 +21,6 @@ import {
   parseCursorModelSelection,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
-  type ReasoningEffort,
   type ResolvedKeybindingsConfig,
   type ProviderApprovalDecision,
   type ServerProviderStatus,
@@ -683,8 +683,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       DEFAULT_MODEL,
   );
   const selectedModel = resolveModelSlugForProvider(selectedProvider, composerDraft.model ?? baseThreadModel);
-  const selectedEffort = composerDraft.effort ?? DEFAULT_REASONING;
-  const reasoningOptions = getReasoningOptions(selectedProvider);
+  const selectedEffort = composerDraft.effort ?? getDefaultReasoningEffort(selectedProvider);
+  const reasoningOptions = getReasoningEffortOptions(selectedProvider);
   const supportsReasoningEffort = reasoningOptions.length > 0;
   const selectedCursorModel = useMemo(
     () => (selectedProvider === "cursor" ? parseCursorModelSelection(selectedModel) : null),
@@ -2386,8 +2386,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [onProviderModelSelect, selectedModel, selectedProvider],
   );
   const onEffortSelect = useCallback(
-    (effort: ReasoningEffort) => {
-      setComposerDraftEffort(threadId, effort);
+    (effort: CodexReasoningEffort) => {
+      setSelectedEffort(effort);
       scheduleComposerFocus();
     },
     [scheduleComposerFocus, setComposerDraftEffort, threadId],
@@ -4132,10 +4132,12 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 });
 
 const ReasoningEffortPicker = memo(function ReasoningEffortPicker(props: {
-  effort: ReasoningEffort;
-  options: ReadonlyArray<ReasoningEffort>;
-  onEffortChange: (effort: ReasoningEffort) => void;
+  effort: CodexReasoningEffort;
+  options: ReadonlyArray<CodexReasoningEffort>;
+  onEffortChange: (effort: CodexReasoningEffort) => void;
 }) {
+  const defaultReasoningEffort = getDefaultReasoningEffort("codex");
+
   return (
     <Select
       value={props.effort}
@@ -4148,7 +4150,7 @@ const ReasoningEffortPicker = memo(function ReasoningEffortPicker(props: {
         {props.options.map((effort) => (
           <SelectItem key={effort} value={effort}>
             {effort}
-            {effort === DEFAULT_REASONING ? " (default)" : ""}
+            {effort === defaultReasoningEffort ? " (default)" : ""}
           </SelectItem>
         ))}
       </SelectPopup>
