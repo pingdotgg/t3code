@@ -61,6 +61,14 @@ const DIFF_PANEL_UNSAFE_CSS = `
   color: var(--foreground) !important;
 }
 
+[data-diffs-header] {
+  position: sticky !important;
+  top: 0;
+  z-index: 4;
+  background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
+  border-bottom: 1px solid var(--border) !important;
+}
+
 [data-title] {
   cursor: pointer;
   transition:
