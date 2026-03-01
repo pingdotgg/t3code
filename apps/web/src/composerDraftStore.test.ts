@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type ComposerImageAttachment, useComposerDraftStore } from "./composerDraftStore";
@@ -33,7 +33,7 @@ describe("composerDraftStore addImages", () => {
   let revokeSpy: ReturnType<typeof vi.fn<(url: string) => void>>;
 
   beforeEach(() => {
-    useComposerDraftStore.setState({ draftsByThreadId: {} });
+    useComposerDraftStore.setState({ draftsByThreadId: {}, projectDraftThreadIdByProjectId: {} });
     originalRevokeObjectUrl = URL.revokeObjectURL;
     revokeSpy = vi.fn();
     URL.revokeObjectURL = revokeSpy;
@@ -83,7 +83,7 @@ describe("composerDraftStore addImages", () => {
       name: "same.png",
       mimeType: "image/png",
       sizeBytes: 9,
-      lastModified: 777,
+      lastModified: 999,
     });
 
     useComposerDraftStore.getState().addImage(threadId, first);
@@ -109,5 +109,72 @@ describe("composerDraftStore addImages", () => {
     const draft = useComposerDraftStore.getState().draftsByThreadId[threadId];
     expect(draft?.images.map((image) => image.id)).toEqual(["img-shared"]);
     expect(revokeSpy).not.toHaveBeenCalledWith("blob:shared");
+  });
+});
+
+describe("composerDraftStore clearComposerContent", () => {
+  const threadId = ThreadId.makeUnsafe("thread-clear");
+  let originalRevokeObjectUrl: typeof URL.revokeObjectURL;
+  let revokeSpy: ReturnType<typeof vi.fn<(url: string) => void>>;
+
+  beforeEach(() => {
+    useComposerDraftStore.setState({ draftsByThreadId: {}, projectDraftThreadIdByProjectId: {} });
+    originalRevokeObjectUrl = URL.revokeObjectURL;
+    revokeSpy = vi.fn();
+    URL.revokeObjectURL = revokeSpy;
+  });
+
+  afterEach(() => {
+    URL.revokeObjectURL = originalRevokeObjectUrl;
+  });
+
+  it("does not revoke blob preview URLs when clearing composer content", () => {
+    const first = makeImage({
+      id: "img-optimistic",
+      previewUrl: "blob:optimistic",
+    });
+    useComposerDraftStore.getState().addImage(threadId, first);
+
+    useComposerDraftStore.getState().clearComposerContent(threadId);
+
+    const draft = useComposerDraftStore.getState().draftsByThreadId[threadId];
+    expect(draft).toBeUndefined();
+    expect(revokeSpy).not.toHaveBeenCalledWith("blob:optimistic");
+  });
+});
+
+describe("composerDraftStore project draft thread mapping", () => {
+  const projectId = ProjectId.makeUnsafe("project-a");
+  const threadId = ThreadId.makeUnsafe("thread-a");
+  const otherThreadId = ThreadId.makeUnsafe("thread-b");
+
+  beforeEach(() => {
+    useComposerDraftStore.setState({ draftsByThreadId: {}, projectDraftThreadIdByProjectId: {} });
+  });
+
+  it("stores and reads project draft thread ids via actions", () => {
+    const store = useComposerDraftStore.getState();
+    expect(store.readProjectDraftThreadId(projectId)).toBeNull();
+
+    store.setProjectDraftThreadId(projectId, threadId);
+    expect(useComposerDraftStore.getState().readProjectDraftThreadId(projectId)).toBe(threadId);
+  });
+
+  it("clears only matching project draft mapping entries", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId);
+
+    store.clearProjectDraftThreadById(projectId, otherThreadId);
+    expect(useComposerDraftStore.getState().readProjectDraftThreadId(projectId)).toBe(threadId);
+
+    store.clearProjectDraftThreadById(projectId, threadId);
+    expect(useComposerDraftStore.getState().readProjectDraftThreadId(projectId)).toBeNull();
+  });
+
+  it("clears project draft mapping by project id", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId);
+    store.clearProjectDraftThreadId(projectId);
+    expect(useComposerDraftStore.getState().readProjectDraftThreadId(projectId)).toBeNull();
   });
 });

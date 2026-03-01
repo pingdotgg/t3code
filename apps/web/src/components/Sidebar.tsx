@@ -21,12 +21,6 @@ import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
-import {
-  clearProjectDraftThreadById,
-  clearProjectDraftThreadId,
-  readProjectDraftThreadId,
-  writeProjectDraftThreadId,
-} from "../projectDraftThreads";
 import { toastManager } from "./ui/toast";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -240,6 +234,12 @@ function ProjectFavicon({ cwd }: { cwd: string }) {
 export default function Sidebar() {
   const { state, dispatch } = useStore();
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearThreadDraft);
+  const readProjectDraftThreadId = useComposerDraftStore((store) => store.readProjectDraftThreadId);
+  const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
+  const clearProjectDraftThreadId = useComposerDraftStore((store) => store.clearProjectDraftThreadId);
+  const clearProjectDraftThreadById = useComposerDraftStore(
+    (store) => store.clearProjectDraftThreadById,
+  );
   const navigate = useNavigate();
   const { settings: appSettings } = useAppSettings();
   const routeThreadId = useParams({
@@ -388,7 +388,7 @@ export default function Sidebar() {
       if (reusableStoredDraftThread) {
         return (async () => {
           await applyThreadOptions(reusableStoredDraftThread);
-          writeProjectDraftThreadId(projectId, reusableStoredDraftThread.id);
+          setProjectDraftThreadId(projectId, reusableStoredDraftThread.id);
           if (routeThreadId === reusableStoredDraftThread.id) {
             return;
           }
@@ -414,7 +414,7 @@ export default function Sidebar() {
       if (reusableDraftThread) {
         return (async () => {
           await applyThreadOptions(reusableDraftThread);
-          writeProjectDraftThreadId(projectId, reusableDraftThread.id);
+          setProjectDraftThreadId(projectId, reusableDraftThread.id);
           if (routeThreadId === reusableDraftThread.id) {
             return;
           }
@@ -440,7 +440,7 @@ export default function Sidebar() {
           worktreePath: options?.worktreePath ?? null,
           createdAt,
         });
-        writeProjectDraftThreadId(projectId, threadId);
+        setProjectDraftThreadId(projectId, threadId);
 
         // Ensure route guards can see the new thread before navigating.
         try {
@@ -456,7 +456,16 @@ export default function Sidebar() {
         });
       })();
     },
-    [dispatch, navigate, routeThreadId, state.projects, state.threads],
+    [
+      clearProjectDraftThreadId,
+      dispatch,
+      navigate,
+      readProjectDraftThreadId,
+      routeThreadId,
+      setProjectDraftThreadId,
+      state.projects,
+      state.threads,
+    ],
   );
 
   const focusMostRecentThreadForProject = useCallback(
@@ -648,6 +657,7 @@ export default function Sidebar() {
     [
       appSettings.confirmThreadDelete,
       clearComposerDraftForThread,
+      clearProjectDraftThreadById,
       dispatch,
       navigate,
       removeWorktreeMutation,
@@ -709,7 +719,7 @@ export default function Sidebar() {
         });
       }
     },
-    [clearComposerDraftForThread, state.projects, state.threads],
+    [clearComposerDraftForThread, clearProjectDraftThreadId, state.projects, state.threads],
   );
 
   useEffect(() => {

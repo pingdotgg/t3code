@@ -1,5 +1,6 @@
 import {
   DEFAULT_REASONING,
+  ProjectId,
   REASONING_OPTIONS,
   ThreadId,
   normalizeModelSlug,
@@ -67,6 +68,7 @@ interface PersistedComposerThreadDraftState {
 
 interface PersistedComposerDraftStoreState {
   draftsByThreadId: Record<ThreadId, PersistedComposerThreadDraftState>;
+  projectDraftThreadIdByProjectId: Record<ProjectId, ThreadId>;
 }
 
 export interface ComposerThreadDraftState {
@@ -81,6 +83,11 @@ export interface ComposerThreadDraftState {
 
 interface ComposerDraftStoreState {
   draftsByThreadId: Record<ThreadId, ComposerThreadDraftState>;
+  projectDraftThreadIdByProjectId: Record<ProjectId, ThreadId>;
+  readProjectDraftThreadId: (projectId: ProjectId) => ThreadId | null;
+  setProjectDraftThreadId: (projectId: ProjectId, threadId: ThreadId) => void;
+  clearProjectDraftThreadId: (projectId: ProjectId) => void;
+  clearProjectDraftThreadById: (projectId: ProjectId, threadId: ThreadId) => void;
   setPrompt: (threadId: ThreadId, prompt: string) => void;
   setCursor: (threadId: ThreadId, cursor: number) => void;
   setModel: (threadId: ThreadId, model: string | null | undefined) => void;
@@ -122,8 +129,9 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
 }
 
 function composerImageDedupKey(image: ComposerImageAttachment): string {
-  const lastModified = Number.isFinite(image.file.lastModified) ? image.file.lastModified : 0;
-  return `${image.mimeType}\u0000${image.sizeBytes}\u0000${lastModified}\u0000${image.name}`;
+  // Keep this independent from File.lastModified so dedupe is stable for hydrated
+  // images reconstructed from localStorage (which get a fresh lastModified value).
+  return `${image.mimeType}\u0000${image.sizeBytes}\u0000${image.name}`;
 }
 
 function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
@@ -179,12 +187,29 @@ function normalizePersistedAttachment(value: unknown): PersistedComposerImageAtt
 
 function normalizePersistedComposerDraftState(value: unknown): PersistedComposerDraftStoreState {
   if (!value || typeof value !== "object") {
-    return { draftsByThreadId: {} };
+    return { draftsByThreadId: {}, projectDraftThreadIdByProjectId: {} };
   }
   const candidate = value as Record<string, unknown>;
   const rawDraftMap = candidate.draftsByThreadId;
+  const rawProjectDraftThreadIdByProjectId = candidate.projectDraftThreadIdByProjectId;
+  const projectDraftThreadIdByProjectId: PersistedComposerDraftStoreState["projectDraftThreadIdByProjectId"] =
+    {};
+  if (rawProjectDraftThreadIdByProjectId && typeof rawProjectDraftThreadIdByProjectId === "object") {
+    for (const [projectId, threadId] of Object.entries(
+      rawProjectDraftThreadIdByProjectId as Record<string, unknown>,
+    )) {
+      if (
+        typeof projectId === "string" &&
+        projectId.length > 0 &&
+        typeof threadId === "string" &&
+        threadId.length > 0
+      ) {
+        projectDraftThreadIdByProjectId[projectId as ProjectId] = threadId as ThreadId;
+      }
+    }
+  }
   if (!rawDraftMap || typeof rawDraftMap !== "object") {
-    return { draftsByThreadId: {} };
+    return { draftsByThreadId: {}, projectDraftThreadIdByProjectId };
   }
   const nextDraftsByThreadId: PersistedComposerDraftStoreState["draftsByThreadId"] = {};
   for (const [threadId, draftValue] of Object.entries(rawDraftMap as Record<string, unknown>)) {
@@ -225,7 +250,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
       ...(effort ? { effort } : {}),
     };
   }
-  return { draftsByThreadId: nextDraftsByThreadId };
+  return { draftsByThreadId: nextDraftsByThreadId, projectDraftThreadIdByProjectId };
 }
 
 function fileFromDataUrl(dataUrl: string, name: string, mimeType: string): File | null {
@@ -279,12 +304,12 @@ function hydrateImagesFromPersisted(
 
 function readPersistedDraftStateFromLocalStorage(): PersistedComposerDraftStoreState {
   if (typeof window === "undefined") {
-    return { draftsByThreadId: {} };
+    return { draftsByThreadId: {}, projectDraftThreadIdByProjectId: {} };
   }
   try {
     const raw = window.localStorage.getItem(COMPOSER_DRAFT_STORAGE_KEY);
     if (!raw) {
-      return { draftsByThreadId: {} };
+      return { draftsByThreadId: {}, projectDraftThreadIdByProjectId: {} };
     }
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === "object" && "state" in parsed) {
@@ -292,7 +317,7 @@ function readPersistedDraftStateFromLocalStorage(): PersistedComposerDraftStoreS
     }
     return normalizePersistedComposerDraftState(parsed);
   } catch {
-    return { draftsByThreadId: {} };
+    return { draftsByThreadId: {}, projectDraftThreadIdByProjectId: {} };
   }
 }
 
@@ -314,6 +339,57 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
   persist(
     (set, get) => ({
       draftsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+      readProjectDraftThreadId: (projectId) => {
+        if (projectId.length === 0) {
+          return null;
+        }
+        return get().projectDraftThreadIdByProjectId[projectId] ?? null;
+      },
+      setProjectDraftThreadId: (projectId, threadId) => {
+        if (projectId.length === 0 || threadId.length === 0) {
+          return;
+        }
+        set((state) => {
+          if (state.projectDraftThreadIdByProjectId[projectId] === threadId) {
+            return state;
+          }
+          return {
+            projectDraftThreadIdByProjectId: {
+              ...state.projectDraftThreadIdByProjectId,
+              [projectId]: threadId,
+            },
+          };
+        });
+      },
+      clearProjectDraftThreadId: (projectId) => {
+        if (projectId.length === 0) {
+          return;
+        }
+        set((state) => {
+          if (state.projectDraftThreadIdByProjectId[projectId] === undefined) {
+            return state;
+          }
+          const { [projectId]: _removed, ...rest } = state.projectDraftThreadIdByProjectId;
+          return {
+            projectDraftThreadIdByProjectId: rest,
+          };
+        });
+      },
+      clearProjectDraftThreadById: (projectId, threadId) => {
+        if (projectId.length === 0 || threadId.length === 0) {
+          return;
+        }
+        set((state) => {
+          if (state.projectDraftThreadIdByProjectId[projectId] !== threadId) {
+            return state;
+          }
+          const { [projectId]: _removed, ...rest } = state.projectDraftThreadIdByProjectId;
+          return {
+            projectDraftThreadIdByProjectId: rest,
+          };
+        });
+      },
       setPrompt: (threadId, prompt) => {
         if (threadId.length === 0) {
           return;
@@ -579,12 +655,6 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         if (threadId.length === 0) {
           return;
         }
-        const existing = get().draftsByThreadId[threadId];
-        if (existing) {
-          for (const image of existing.images) {
-            revokeObjectPreviewUrl(image.previewUrl);
-          }
-        }
         set((state) => {
           const current = state.draftsByThreadId[threadId];
           if (!current) {
@@ -659,6 +729,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         }
         return {
           draftsByThreadId: persistedDraftsByThreadId,
+          projectDraftThreadIdByProjectId: state.projectDraftThreadIdByProjectId,
         };
       },
       merge: (persistedState, currentState) => {
@@ -672,6 +743,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         return {
           ...currentState,
           draftsByThreadId,
+          projectDraftThreadIdByProjectId: normalizedPersisted.projectDraftThreadIdByProjectId,
         };
       },
     },
