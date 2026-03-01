@@ -233,18 +233,10 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-function hashBranchSeed(value: string): string {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index++) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
-function buildTemporaryWorktreeBranchName(message: string): string {
-  const seed = `${Date.now()}:${message.trim().toLowerCase()}:${crypto.randomUUID()}`;
-  return `${WORKTREE_BRANCH_PREFIX}/${hashBranchSeed(seed)}`;
+function buildTemporaryWorktreeBranchName(): string {
+  // Keep the 8-hex suffix shape for backend temporary-branch detection.
+  const token = crypto.randomUUID().slice(0, 8).toLowerCase();
+  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
 }
 
 const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
@@ -1544,7 +1536,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       // On first message: lock in branch + create worktree if needed.
       if (baseBranchForWorktree) {
         setSendPhase("preparing-worktree");
-        const newBranch = buildTemporaryWorktreeBranchName(trimmed);
+        const newBranch = buildTemporaryWorktreeBranchName();
         const result = await createWorktreeMutation.mutateAsync({
           cwd: activeProject.cwd,
           branch: baseBranchForWorktree,
