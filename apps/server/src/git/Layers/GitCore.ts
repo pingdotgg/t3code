@@ -148,6 +148,15 @@ function parseTrackingBranchByUpstreamRef(
   return null;
 }
 
+function deriveLocalBranchNameFromRemoteRef(branchName: string): string | null {
+  const separatorIndex = branchName.indexOf("/");
+  if (separatorIndex <= 0 || separatorIndex === branchName.length - 1) {
+    return null;
+  }
+  const localBranch = branchName.slice(separatorIndex + 1).trim();
+  return localBranch.length > 0 ? localBranch : null;
+}
+
 function commandLabel(args: readonly string[]): string {
   return `git ${args.join(" ")}`;
 }
@@ -921,8 +930,24 @@ const makeGitCore = Effect.gen(function* () {
             )
           : null;
 
+      const localTrackedBranchCandidate = deriveLocalBranchNameFromRemoteRef(input.branch);
+      const localTrackedBranchTargetExists =
+        remoteExists && localTrackedBranchCandidate
+          ? yield* executeGit(
+              "GitCore.checkoutBranch.localTrackedBranchTargetExists",
+              input.cwd,
+              ["show-ref", "--verify", "--quiet", `refs/heads/${localTrackedBranchCandidate}`],
+              {
+                timeoutMs: 5_000,
+                allowNonZeroExit: true,
+              },
+            ).pipe(Effect.map((result) => result.code === 0))
+          : false;
+
       const checkoutArgs =
         localInputExists
+          ? ["checkout", input.branch]
+          : remoteExists && !localTrackingBranch && localTrackedBranchTargetExists
           ? ["checkout", input.branch]
           : remoteExists && !localTrackingBranch
           ? ["checkout", "--track", input.branch]

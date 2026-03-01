@@ -179,7 +179,7 @@ export default function BranchToolbar({
     }
 
     const selectedBranchName = branch.isRemote
-      ? deriveLocalBranchNameFromRemoteRef(branch.name, branch.remoteName)
+      ? deriveLocalBranchNameFromRemoteRef(branch.name)
       : branch.name;
 
     checkoutMutation.mutate(branch.name, {

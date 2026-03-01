@@ -8,17 +8,7 @@ interface DeriveSyncedLocalBranchInput {
   queryBranches: ReadonlyArray<GitBranch> | undefined;
 }
 
-export function deriveLocalBranchNameFromRemoteRef(
-  branchName: string,
-  remoteName?: string,
-): string {
-  if (remoteName) {
-    const remotePrefix = `${remoteName}/`;
-    if (branchName.startsWith(remotePrefix) && branchName.length > remotePrefix.length) {
-      return branchName.slice(remotePrefix.length);
-    }
-  }
-
+export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
   const firstSeparatorIndex = branchName.indexOf("/");
   if (firstSeparatorIndex <= 0 || firstSeparatorIndex === branchName.length - 1) {
     return branchName;

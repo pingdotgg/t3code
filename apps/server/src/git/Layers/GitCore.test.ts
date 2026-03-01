@@ -734,6 +734,33 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect(
+      "falls back to detached checkout when --track would conflict with an existing local branch",
+      () =>
+        Effect.gen(function* () {
+          const remote = yield* makeTmpDir();
+          const source = yield* makeTmpDir();
+          yield* git(remote, ["init", "--bare"]);
+
+          yield* initRepoWithCommit(source);
+          const defaultBranch = (yield* listGitBranches({ cwd: source })).branches.find(
+            (branch) => branch.current,
+          )!.name;
+          yield* git(source, ["remote", "add", "origin", remote]);
+          yield* git(source, ["push", "-u", "origin", defaultBranch]);
+
+          // Keep local branch but remove tracking so `--track origin/<branch>`
+          // would attempt to create an already-existing local branch.
+          yield* git(source, ["branch", "--unset-upstream"]);
+
+          yield* checkoutGitBranch({ cwd: source, branch: `origin/${defaultBranch}` });
+
+          const core = yield* GitCore;
+          const status = yield* core.statusDetails(source);
+          expect(status.branch).toBeNull();
+        }),
+    );
+
     it.effect("throws when checkout would overwrite uncommitted changes", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

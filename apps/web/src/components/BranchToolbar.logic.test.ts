@@ -68,9 +68,9 @@ describe("deriveLocalBranchNameFromRemoteRef", () => {
   });
 
   it("supports remote names that contain slashes", () => {
-    expect(
-      deriveLocalBranchNameFromRemoteRef("my-org/upstream/feature/demo", "my-org/upstream"),
-    ).toBe("feature/demo");
+    expect(deriveLocalBranchNameFromRemoteRef("my-org/upstream/feature/demo")).toBe(
+      "upstream/feature/demo",
+    );
   });
 
   it("returns the original name when ref is malformed", () => {
