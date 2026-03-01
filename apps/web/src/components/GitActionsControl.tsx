@@ -342,6 +342,8 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                       action: "commit_push",
                       forcePushOnlyProgress: true,
                       onConfirmed: closeResultToast,
+                      statusOverride: actionStatus,
+                      isDefaultBranchOverride: actionIsDefaultBranch,
                     });
                   },
                 },
@@ -364,7 +366,11 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                       children: "Create PR",
                       onClick: () => {
                         closeResultToast();
-                        void runGitActionWithToast({ action: "commit_push_pr" });
+                        void runGitActionWithToast({
+                          action: "commit_push_pr",
+                          statusOverride: actionStatus,
+                          isDefaultBranchOverride: actionIsDefaultBranch,
+                        });
                       },
                     },
                   }
