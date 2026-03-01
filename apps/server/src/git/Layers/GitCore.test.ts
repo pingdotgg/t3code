@@ -1170,13 +1170,19 @@ it.layer(TestLayer)("git integration", (it) => {
           yield* git(remote, ["init", "--bare"]);
 
           yield* initRepoWithCommit(source);
+          const initialBranch = (yield* listGitBranches({ cwd: source })).branches.find(
+            (branch) => branch.current,
+          )!.name;
           yield* git(source, ["remote", "add", "origin", remote]);
-          yield* git(source, ["push", "-u", "origin", "main"]);
+          yield* git(source, ["push", "-u", "origin", initialBranch]);
           yield* git(source, ["checkout", "-b", "feature/remote-base-only"]);
-          yield* writeTextFile(path.join(source, "feature.txt"), "ahead of origin/main\n");
+          yield* writeTextFile(
+            path.join(source, "feature.txt"),
+            `ahead of origin/${initialBranch}\n`,
+          );
           yield* git(source, ["add", "feature.txt"]);
           yield* git(source, ["commit", "-m", "feature commit"]);
-          yield* git(source, ["branch", "-D", "main"]);
+          yield* git(source, ["branch", "-D", initialBranch]);
 
           const core = yield* GitCore;
           const details = yield* core.statusDetails(source);
