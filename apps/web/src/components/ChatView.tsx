@@ -118,7 +118,6 @@ import {
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../composerDraftStore";
-import { clearProjectDraftThreadById } from "../projectDraftThreads";
 import { clamp } from "effect/Number";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
@@ -429,6 +428,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (store) => store.syncPersistedAttachments,
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
+  const clearProjectDraftThreadById = useComposerDraftStore(
+    (store) => store.clearProjectDraftThreadById,
+  );
   const promptRef = useRef(prompt);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
