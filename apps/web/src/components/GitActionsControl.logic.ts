@@ -27,6 +27,7 @@ export interface GitQuickAction {
 
 const SHORT_SHA_LENGTH = 7;
 const TOAST_DESCRIPTION_MAX = 72;
+const AUTO_FEATURE_BRANCH_PREFIX = "feature/stacked";
 
 function shortenSha(sha: string | undefined): string | null {
   if (!sha) return null;
@@ -251,4 +252,31 @@ export function requiresDefaultBranchConfirmation(
 ): boolean {
   if (!isDefaultBranch) return false;
   return action === "commit_push" || action === "commit_push_pr";
+}
+
+function formatDateForBranch(now: Date): string {
+  const year = now.getUTCFullYear();
+  const month = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(now.getUTCDate()).padStart(2, "0");
+  return `${year}${month}${day}`;
+}
+
+export function resolveAutoFeatureBranchName(
+  existingBranchNames: readonly string[],
+  now = new Date(),
+): string {
+  const daySlug = formatDateForBranch(now);
+  const base = `${AUTO_FEATURE_BRANCH_PREFIX}-${daySlug}`;
+  const existingNames = new Set(existingBranchNames);
+
+  if (!existingNames.has(base)) {
+    return base;
+  }
+
+  let suffix = 2;
+  while (existingNames.has(`${base}-${suffix}`)) {
+    suffix += 1;
+  }
+
+  return `${base}-${suffix}`;
 }

@@ -11,6 +11,7 @@ import {
   type GitDialogAction,
   type GitQuickAction,
   requiresDefaultBranchConfirmation,
+  resolveAutoFeatureBranchName,
   resolveQuickAction,
   summarizeGitResult,
 } from "./GitActionsControl.logic";
@@ -32,6 +33,7 @@ import { Textarea } from "~/components/ui/textarea";
 import { toastManager } from "~/components/ui/toast";
 import {
   gitBranchesQueryOptions,
+  gitCreateBranchAndCheckoutMutationOptions,
   gitInitMutationOptions,
   gitMutationKeys,
   gitPullMutationOptions,
@@ -45,6 +47,13 @@ import { readNativeApi } from "~/nativeApi";
 interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadId: ThreadId | null;
+}
+
+interface PendingDefaultBranchAction {
+  action: GitStackedAction;
+  commitMessage?: string;
+  forcePushOnlyProgress: boolean;
+  onConfirmed?: () => void;
 }
 
 function getMenuActionDisabledReason(
@@ -118,6 +127,12 @@ const DIALOG_DESCRIPTION_BY_ACTION = {
   create_pr: "Create a pull request using generated title/body content.",
 };
 
+const DEFAULT_BRANCH_ACTION_DESCRIPTION: Record<GitStackedAction, string> = {
+  commit: "commit changes",
+  commit_push: "commit and push changes",
+  commit_push_pr: "commit, push, and create a PR",
+};
+
 function GitActionItemIcon({ icon }: { icon: GitActionIconName }) {
   if (icon === "commit") return <GitCommitIcon />;
   if (icon === "push") return <CloudUploadIcon />;
@@ -145,6 +160,8 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const queryClient = useQueryClient();
   const [activeDialogAction, setActiveDialogAction] = useState<GitDialogAction | null>(null);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
+  const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
+    useState<PendingDefaultBranchAction | null>(null);
 
   const { data: gitStatus = null, error: gitStatusError } = useQuery(gitStatusQueryOptions(gitCwd));
 
@@ -167,12 +184,18 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const runImmediateGitActionMutation = useMutation(
     gitRunStackedActionMutationOptions({ cwd: gitCwd, queryClient }),
   );
+  const createBranchAndCheckoutMutation = useMutation(
+    gitCreateBranchAndCheckoutMutationOptions({ cwd: gitCwd, queryClient }),
+  );
   const pullMutation = useMutation(gitPullMutationOptions({ cwd: gitCwd, queryClient }));
 
   const isRunStackedActionRunning =
     useIsMutating({ mutationKey: gitMutationKeys.runStackedAction(gitCwd) }) > 0;
+  const isCreateBranchAndCheckoutRunning =
+    useIsMutating({ mutationKey: gitMutationKeys.createBranchAndCheckout(gitCwd) }) > 0;
   const isPullRunning = useIsMutating({ mutationKey: gitMutationKeys.pull(gitCwd) }) > 0;
-  const isGitActionRunning = isRunStackedActionRunning || isPullRunning;
+  const isGitActionRunning =
+    isRunStackedActionRunning || isCreateBranchAndCheckoutRunning || isPullRunning;
   const isDefaultBranch = useMemo(() => {
     const branchName = gitStatusForActions?.branch;
     if (!branchName) return false;
@@ -191,23 +214,6 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const quickActionDisabledReason = quickAction.disabled
     ? (quickAction.hint ?? "This action is currently unavailable.")
     : null;
-
-  const maybeConfirmPushToDefaultBranch = useCallback(
-    async (action: GitStackedAction): Promise<boolean> => {
-      const api = readNativeApi();
-      if (!api) return false;
-      if (
-        !requiresDefaultBranchConfirmation(action, isDefaultBranch) ||
-        !gitStatusForActions?.branch
-      ) {
-        return true;
-      }
-      return api.dialogs.confirm(
-        `You're about to push to the default branch "${gitStatusForActions.branch}". Continue?`,
-      );
-    },
-    [gitStatusForActions?.branch, isDefaultBranch],
-  );
 
   const openExistingPr = useCallback(async () => {
     const api = readNativeApi();
@@ -237,29 +243,48 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       });
     });
   }, [gitStatusForActions?.pr?.state, gitStatusForActions?.pr?.url, threadToastData]);
+
   const runGitActionWithToast = useCallback(
     async ({
       action,
       commitMessage,
       forcePushOnlyProgress = false,
       onConfirmed,
+      skipDefaultBranchPrompt = false,
+      statusOverride,
+      isDefaultBranchOverride,
     }: {
       action: GitStackedAction;
       commitMessage?: string;
       forcePushOnlyProgress?: boolean;
       onConfirmed?: () => void;
+      skipDefaultBranchPrompt?: boolean;
+      statusOverride?: GitStatusResult | null;
+      isDefaultBranchOverride?: boolean;
     }) => {
-      const confirmed = await maybeConfirmPushToDefaultBranch(action);
-      if (!confirmed) return;
+      const actionStatus = statusOverride ?? gitStatusForActions;
+      const actionIsDefaultBranch = isDefaultBranchOverride ?? isDefaultBranch;
+      const actionBranch = actionStatus?.branch ?? null;
+      if (
+        !skipDefaultBranchPrompt &&
+        requiresDefaultBranchConfirmation(action, actionIsDefaultBranch) &&
+        actionBranch
+      ) {
+        setPendingDefaultBranchAction({
+          action,
+          ...(commitMessage ? { commitMessage } : {}),
+          forcePushOnlyProgress,
+          ...(onConfirmed ? { onConfirmed } : {}),
+        });
+        return;
+      }
       onConfirmed?.();
 
-      const pushTarget = gitStatusForActions?.branch
-        ? `origin/${gitStatusForActions.branch}`
-        : undefined;
+      const pushTarget = actionBranch ? `origin/${actionBranch}` : undefined;
       const progressStages = buildGitActionProgressStages({
         action,
         hasCustomCommitMessage: !!commitMessage?.trim(),
-        hasWorkingTreeChanges: !!gitStatusForActions?.hasWorkingTreeChanges,
+        hasWorkingTreeChanges: !!actionStatus?.hasWorkingTreeChanges,
         forcePushOnly: forcePushOnlyProgress,
         ...(pushTarget ? { pushTarget } : {}),
       });
@@ -295,14 +320,18 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         stopProgressUpdates();
         const resultToast = summarizeGitResult(result);
 
-        const existingOpenPrUrl =
-          gitStatusForActions?.pr?.state === "open" ? gitStatusForActions.pr.url : undefined;
+        const existingOpenPrUrl = actionStatus?.pr?.state === "open" ? actionStatus.pr.url : undefined;
         const prUrl = result.pr.url ?? existingOpenPrUrl;
         const shouldOfferPushCta = action === "commit" && result.commit.status === "created";
         const shouldOfferOpenPrCta =
-          (action === "commit_push" || action === "commit_push_pr") && !!prUrl && !isDefaultBranch;
+          (action === "commit_push" || action === "commit_push_pr") &&
+          !!prUrl &&
+          !actionIsDefaultBranch;
         const shouldOfferCreatePrCta =
-          action === "commit_push" && !prUrl && result.push.status === "pushed" && !isDefaultBranch;
+          action === "commit_push" &&
+          !prUrl &&
+          result.push.status === "pushed" &&
+          !actionIsDefaultBranch;
         const closeResultToast = () => {
           toastManager.close(progressToastId);
         };
@@ -365,16 +394,66 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     },
 
     [
-      gitStatusForActions?.branch,
-      gitStatusForActions?.hasWorkingTreeChanges,
-      gitStatusForActions?.pr,
       isDefaultBranch,
-      maybeConfirmPushToDefaultBranch,
       runImmediateGitActionMutation,
       setActiveDialogAction,
+      setPendingDefaultBranchAction,
       threadToastData,
+      gitStatusForActions,
     ],
   );
+
+  const continuePendingDefaultBranchAction = useCallback(() => {
+    if (!pendingDefaultBranchAction) return;
+    const pendingAction = pendingDefaultBranchAction;
+    setPendingDefaultBranchAction(null);
+    void runGitActionWithToast({
+      ...pendingAction,
+      skipDefaultBranchPrompt: true,
+    });
+  }, [pendingDefaultBranchAction, runGitActionWithToast]);
+
+  const checkoutFeatureBranchAndContinuePendingAction = useCallback(() => {
+    if (!pendingDefaultBranchAction) return;
+    const pendingAction = pendingDefaultBranchAction;
+    const branchName = resolveAutoFeatureBranchName(branchList?.branches.map((branch) => branch.name) ?? []);
+    setPendingDefaultBranchAction(null);
+
+    const checkoutPromise = createBranchAndCheckoutMutation.mutateAsync(branchName);
+    toastManager.promise(checkoutPromise, {
+      loading: { title: `Creating ${branchName}...`, data: threadToastData },
+      success: () => ({
+        title: `Checked out ${branchName}`,
+        data: threadToastData,
+      }),
+      error: (error) => ({
+        title: "Failed to checkout feature branch",
+        description: error instanceof Error ? error.message : "An error occurred.",
+        data: threadToastData,
+      }),
+    });
+
+    void checkoutPromise
+      .then(() => {
+        const statusOverride = gitStatusForActions
+          ? { ...gitStatusForActions, branch: branchName, pr: null }
+          : null;
+        return runGitActionWithToast({
+          ...pendingAction,
+          skipDefaultBranchPrompt: true,
+          statusOverride,
+          isDefaultBranchOverride: false,
+        });
+      })
+      .catch(() => undefined);
+  }, [
+    branchList?.branches,
+    createBranchAndCheckoutMutation,
+    gitStatusForActions,
+    pendingDefaultBranchAction,
+    runGitActionWithToast,
+    threadToastData,
+  ]);
 
   const runQuickAction = useCallback(() => {
     if (quickAction.kind === "open_pr") {
@@ -736,6 +815,40 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                 : activeDialogAction === "push"
                   ? "Push"
                   : "Create PR"}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+
+      <Dialog
+        open={pendingDefaultBranchAction !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingDefaultBranchAction(null);
+          }
+        }}
+      >
+        <DialogPopup>
+          <DialogHeader>
+            <DialogTitle>Commit to default branch?</DialogTitle>
+            <DialogDescription>
+              This action will{" "}
+              {pendingDefaultBranchAction
+                ? DEFAULT_BRANCH_ACTION_DESCRIPTION[pendingDefaultBranchAction.action]
+                : "push changes"}{" "}
+              on "{gitStatusForActions?.branch ?? "default"}". You can continue on this branch or
+              create a feature branch and run the same action there.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setPendingDefaultBranchAction(null)}>
+              Abort
+            </Button>
+            <Button variant="outline" size="sm" onClick={continuePendingDefaultBranchAction}>
+              Commit to {gitStatusForActions?.branch ?? "default"}
+            </Button>
+            <Button size="sm" onClick={checkoutFeatureBranchAndContinuePendingAction}>
+              Checkout feature branch & continue
             </Button>
           </DialogFooter>
         </DialogPopup>

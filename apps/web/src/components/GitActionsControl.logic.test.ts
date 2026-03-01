@@ -4,6 +4,7 @@ import {
   buildGitActionProgressStages,
   buildMenuItems,
   requiresDefaultBranchConfirmation,
+  resolveAutoFeatureBranchName,
   resolveQuickAction,
   summarizeGitResult,
 } from "./GitActionsControl.logic";
@@ -730,5 +731,22 @@ describe("summarizeGitResult", () => {
       title: "Created PR #99",
       description: "feat: this title is intentionally extremely long so we can validate t...",
     });
+  });
+});
+
+describe("resolveAutoFeatureBranchName", () => {
+  const day = new Date("2026-03-01T12:00:00.000Z");
+
+  it("returns the base auto feature branch name when available", () => {
+    const branch = resolveAutoFeatureBranchName(["main", "feature/other"], day);
+    assert.equal(branch, "feature/stacked-20260301");
+  });
+
+  it("increments suffix when the base name already exists", () => {
+    const branch = resolveAutoFeatureBranchName(
+      ["main", "feature/stacked-20260301", "feature/stacked-20260301-2"],
+      day,
+    );
+    assert.equal(branch, "feature/stacked-20260301-3");
   });
 });
