@@ -82,7 +82,8 @@ function parseBranchLine(line: string): { name: string; current: boolean } | nul
 
   const name = trimmed.replace(/^[*+]\s+/, "");
   // Exclude symbolic refs like: "origin/HEAD -> origin/main".
-  if (name.includes(" -> ")) return null;
+  // Exclude detached HEAD pseudo-refs like: "(HEAD detached at origin/main)".
+  if (name.includes(" -> ") || name.startsWith("(")) return null;
 
   return {
     name,

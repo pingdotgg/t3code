@@ -266,6 +266,18 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect("does not include detached HEAD pseudo-refs as branches", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        yield* git(tmp, ["checkout", "--detach", "HEAD"]);
+
+        const result = yield* listGitBranches({ cwd: tmp });
+        expect(result.branches.some((branch) => branch.name.startsWith("("))).toBe(false);
+        expect(result.branches.some((branch) => branch.current)).toBe(false);
+      }),
+    );
+
     it.effect("keeps current branch first and sorts the remaining branches by recency", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
