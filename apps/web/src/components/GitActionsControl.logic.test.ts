@@ -515,19 +515,20 @@ describe("when: HEAD is detached and there are no local changes", () => {
 });
 
 describe("when: branch has no upstream configured", () => {
-  it("resolveQuickAction returns disabled commit state when clean and no commits are ahead", () => {
+  it("resolveQuickAction runs push and create PR when clean, no upstream, and no local commits are ahead", () => {
     const quick = resolveQuickAction(
       status({ hasUpstream: false, pr: null, aheadCount: 0 }),
       false,
     );
     assert.deepInclude(quick, {
-      kind: "show_hint",
-      label: "Commit",
-      disabled: true,
+      kind: "run_action",
+      action: "commit_push_pr",
+      label: "Push & create PR",
+      disabled: false,
     });
   });
 
-  it("resolveQuickAction remains disabled when clean, no upstream, and no local commits ahead", () => {
+  it("resolveQuickAction runs push when clean and no upstream even if PR metadata exists", () => {
     const quick = resolveQuickAction(
       status({
         hasUpstream: false,
@@ -544,9 +545,10 @@ describe("when: branch has no upstream configured", () => {
       false,
     );
     assert.deepInclude(quick, {
-      kind: "show_hint",
-      label: "Commit",
-      disabled: true,
+      kind: "run_action",
+      action: "commit_push",
+      label: "Push",
+      disabled: false,
     });
   });
 
@@ -574,7 +576,7 @@ describe("when: branch has no upstream configured", () => {
     });
   });
 
-  it("buildMenuItems disables push and create PR when no commits are ahead", () => {
+  it("buildMenuItems enables push and create PR to publish branch when no upstream exists", () => {
     const items = buildMenuItems(
       status({ hasUpstream: false, pr: null, aheadCount: 0 }),
       false,
@@ -591,7 +593,7 @@ describe("when: branch has no upstream configured", () => {
       {
         id: "push",
         label: "Push",
-        disabled: true,
+        disabled: false,
         icon: "push",
         kind: "open_dialog",
         dialogAction: "push",
@@ -599,7 +601,7 @@ describe("when: branch has no upstream configured", () => {
       {
         id: "pr",
         label: "Create PR",
-        disabled: true,
+        disabled: false,
         icon: "pr",
         kind: "open_dialog",
         dialogAction: "create_pr",

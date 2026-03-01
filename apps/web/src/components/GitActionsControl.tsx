@@ -8,7 +8,6 @@ import {
   buildMenuItems,
   type GitActionIconName,
   type GitActionMenuItem,
-  type GitDialogAction,
   type GitQuickAction,
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
@@ -88,6 +87,9 @@ function getMenuActionDisabledReason(
     if (isBehind) {
       return "Branch is behind upstream. Pull/rebase before pushing.";
     }
+    if (!gitStatus.hasUpstream) {
+      return "Branch has no upstream. Push to publish it.";
+    }
     if (!isAhead) {
       return "No local commits to push.";
     }
@@ -103,11 +105,11 @@ function getMenuActionDisabledReason(
   if (hasChanges) {
     return "Commit local changes before creating a PR.";
   }
-  if (!isAhead) {
-    return "No local commits to include in a PR.";
-  }
   if (!gitStatus.hasUpstream) {
     return "Set an upstream branch before creating a PR.";
+  }
+  if (!isAhead) {
+    return "No local commits to include in a PR.";
   }
   if (isBehind) {
     return "Branch is behind upstream. Pull/rebase before creating a PR.";
@@ -115,17 +117,9 @@ function getMenuActionDisabledReason(
   return "Create PR is currently unavailable.";
 }
 
-const DIALOG_TITLE_BY_ACTION = {
-  commit: "Commit changes",
-  push: "Push branch",
-  create_pr: "Create pull request",
-};
-
-const DIALOG_DESCRIPTION_BY_ACTION = {
-  commit: "Review and confirm your commit. Leave the message blank to auto-generate one.",
-  push: "Push this branch now.",
-  create_pr: "Create a pull request using generated title/body content.",
-};
+const COMMIT_DIALOG_TITLE = "Commit changes";
+const COMMIT_DIALOG_DESCRIPTION =
+  "Review and confirm your commit. Leave the message blank to auto-generate one.";
 
 const DEFAULT_BRANCH_ACTION_DESCRIPTION: Record<GitStackedAction, string> = {
   commit: "commit changes",
@@ -158,7 +152,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     [activeThreadId],
   );
   const queryClient = useQueryClient();
-  const [activeDialogAction, setActiveDialogAction] = useState<GitDialogAction | null>(null);
+  const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
     useState<PendingDefaultBranchAction | null>(null);
@@ -376,7 +370,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                       children: "Create PR",
                       onClick: () => {
                         closeResultToast();
-                        setActiveDialogAction("create_pr");
+                        void runGitActionWithToast({ action: "commit_push_pr" });
                       },
                     },
                   }
@@ -396,7 +390,6 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     [
       isDefaultBranch,
       runImmediateGitActionMutation,
-      setActiveDialogAction,
       setPendingDefaultBranchAction,
       threadToastData,
       gitStatusForActions,
@@ -455,6 +448,54 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     threadToastData,
   ]);
 
+  const runDialogActionOnNewBranch = useCallback(() => {
+    if (!isCommitDialogOpen) return;
+    const action: GitStackedAction = "commit";
+    const commitMessage = dialogCommitMessage.trim();
+    const branchName = resolveAutoFeatureBranchName(branchList?.branches.map((branch) => branch.name) ?? []);
+
+    setIsCommitDialogOpen(false);
+    setDialogCommitMessage("");
+
+    const checkoutPromise = createBranchAndCheckoutMutation.mutateAsync(branchName);
+    toastManager.promise(checkoutPromise, {
+      loading: { title: `Creating ${branchName}...`, data: threadToastData },
+      success: () => ({
+        title: `Checked out ${branchName}`,
+        data: threadToastData,
+      }),
+      error: (error) => ({
+        title: "Failed to checkout feature branch",
+        description: error instanceof Error ? error.message : "An error occurred.",
+        data: threadToastData,
+      }),
+    });
+
+    void checkoutPromise
+      .then(() => {
+        const statusOverride = gitStatusForActions
+          ? { ...gitStatusForActions, branch: branchName, pr: null }
+          : null;
+        return runGitActionWithToast({
+          action,
+          ...(commitMessage ? { commitMessage } : {}),
+          skipDefaultBranchPrompt: true,
+          statusOverride,
+          isDefaultBranchOverride: false,
+        });
+      })
+      .catch(() => undefined);
+  }, [
+    branchList?.branches,
+    createBranchAndCheckoutMutation,
+    dialogCommitMessage,
+    gitStatusForActions,
+    isCommitDialogOpen,
+    runGitActionWithToast,
+    setIsCommitDialogOpen,
+    threadToastData,
+  ]);
+
   const runQuickAction = useCallback(() => {
     if (quickAction.kind === "open_pr") {
       void openExistingPr();
@@ -506,30 +547,24 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         void runGitActionWithToast({ action: "commit_push", forcePushOnlyProgress: true });
         return;
       }
-      if (item.dialogAction) {
-        setActiveDialogAction(item.dialogAction);
+      if (item.dialogAction === "create_pr") {
+        void runGitActionWithToast({ action: "commit_push_pr" });
+        return;
       }
+      setIsCommitDialogOpen(true);
     },
-    [openExistingPr, runGitActionWithToast],
+    [openExistingPr, runGitActionWithToast, setIsCommitDialogOpen],
   );
 
   const runDialogAction = useCallback(() => {
-    if (!activeDialogAction) return;
-    const action: GitStackedAction =
-      activeDialogAction === "commit"
-        ? "commit"
-        : activeDialogAction === "push"
-          ? "commit_push"
-          : "commit_push_pr";
-    const commitMessage = activeDialogAction === "commit" ? dialogCommitMessage.trim() : "";
-    const forcePushOnlyProgress = activeDialogAction === "push";
-    setActiveDialogAction(null);
+    if (!isCommitDialogOpen) return;
+    const commitMessage = dialogCommitMessage.trim();
+    setIsCommitDialogOpen(false);
     void runGitActionWithToast({
-      action,
+      action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
-      ...(forcePushOnlyProgress ? { forcePushOnlyProgress } : {}),
     });
-  }, [activeDialogAction, dialogCommitMessage, runGitActionWithToast]);
+  }, [dialogCommitMessage, isCommitDialogOpen, runGitActionWithToast, setIsCommitDialogOpen]);
 
   const openChangedFileInEditor = useCallback(
     (filePath: string) => {
@@ -685,68 +720,29 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       )}
 
       <Dialog
-        open={activeDialogAction !== null}
+        open={isCommitDialogOpen}
         onOpenChange={(open) => {
           if (!open) {
-            setActiveDialogAction(null);
+            setIsCommitDialogOpen(false);
             setDialogCommitMessage("");
           }
         }}
       >
         <DialogPopup>
           <DialogHeader>
-            <DialogTitle>{DIALOG_TITLE_BY_ACTION[activeDialogAction ?? "commit"]}</DialogTitle>
-            <DialogDescription>
-              {DIALOG_DESCRIPTION_BY_ACTION[activeDialogAction ?? "commit"]}
-            </DialogDescription>
+            <DialogTitle>{COMMIT_DIALOG_TITLE}</DialogTitle>
+            <DialogDescription>{COMMIT_DIALOG_DESCRIPTION}</DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-4">
             <div className="space-y-3 rounded-lg border border-input bg-muted/40 p-3 text-xs">
               <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
                 <span className="text-muted-foreground">Branch</span>
-                <span className="font-medium">
-                  {gitStatusForActions?.branch ?? "(detached HEAD)"}
+                <span className="flex items-center justify-between gap-2">
+                  <span className="font-medium">{gitStatusForActions?.branch ?? "(detached HEAD)"}</span>
+                  {isDefaultBranch && (
+                    <span className="text-right text-warning text-xs">Warning: default branch</span>
+                  )}
                 </span>
-                {activeDialogAction !== "commit" && (
-                  <>
-                    <span className="text-muted-foreground">Upstream</span>
-                    <span className="font-medium">
-                      {!gitStatusForActions || !gitStatusForActions.hasUpstream
-                        ? "No upstream configured"
-                        : gitStatusForActions.aheadCount === 0 &&
-                            gitStatusForActions.behindCount === 0
-                          ? "Up to date"
-                          : gitStatusForActions.aheadCount > 0 &&
-                              gitStatusForActions.behindCount > 0
-                            ? `Diverged (+${gitStatusForActions.aheadCount} / -${gitStatusForActions.behindCount})`
-                            : gitStatusForActions.aheadCount > 0
-                              ? `Ahead by ${gitStatusForActions.aheadCount}`
-                              : `Behind by ${gitStatusForActions.behindCount}`}
-                    </span>
-                    <span className="text-muted-foreground">Working tree</span>
-                    <span className="font-medium">
-                      {!gitStatusForActions || !gitStatusForActions.hasWorkingTreeChanges
-                        ? "Clean"
-                        : `${gitStatusForActions.workingTree.files.length} file(s)`}
-                    </span>
-                    <span className="text-muted-foreground">Diff</span>
-                    <span className="font-mono">
-                      {!gitStatusForActions || !gitStatusForActions.hasWorkingTreeChanges ? (
-                        "none"
-                      ) : (
-                        <>
-                          <span className="text-success">
-                            +{gitStatusForActions.workingTree.insertions}
-                          </span>
-                          <span className="text-muted-foreground"> / </span>
-                          <span className="text-destructive">
-                            -{gitStatusForActions.workingTree.deletions}
-                          </span>
-                        </>
-                      )}
-                    </span>
-                  </>
-                )}
               </div>
               <div className="space-y-1">
                 <p className="text-muted-foreground">Files</p>
@@ -786,35 +782,32 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                 )}
               </div>
             </div>
-            {activeDialogAction === "commit" && (
-              <div className="space-y-1">
-                <p className="text-xs font-medium">Commit message (optional)</p>
-                <Textarea
-                  value={dialogCommitMessage}
-                  onChange={(event) => setDialogCommitMessage(event.target.value)}
-                  placeholder="Leave empty to auto-generate"
-                  size="sm"
-                />
-              </div>
-            )}
+            <div className="space-y-1">
+              <p className="text-xs font-medium">Commit message (optional)</p>
+              <Textarea
+                value={dialogCommitMessage}
+                onChange={(event) => setDialogCommitMessage(event.target.value)}
+                placeholder="Leave empty to auto-generate"
+                size="sm"
+              />
+            </div>
           </DialogPanel>
           <DialogFooter>
             <Button
               variant="outline"
               size="sm"
               onClick={() => {
-                setActiveDialogAction(null);
+                setIsCommitDialogOpen(false);
                 setDialogCommitMessage("");
               }}
             >
               Cancel
             </Button>
+            <Button variant="outline" size="sm" onClick={runDialogActionOnNewBranch}>
+              Commit on new branch
+            </Button>
             <Button size="sm" onClick={runDialogAction}>
-              {activeDialogAction === "commit"
-                ? "Commit"
-                : activeDialogAction === "push"
-                  ? "Push"
-                  : "Create PR"}
+              Commit
             </Button>
           </DialogFooter>
         </DialogPopup>
