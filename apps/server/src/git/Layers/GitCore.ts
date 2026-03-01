@@ -630,12 +630,25 @@ const makeGitCore = Effect.gen(function* () {
         );
       }
 
-      if (details.aheadCount === 0 && details.behindCount === 0) {
-        return {
-          status: "skipped_up_to_date" as const,
-          branch,
-          ...(details.upstreamRef ? { upstreamBranch: details.upstreamRef } : {}),
-        };
+      const hasNoLocalDelta = details.aheadCount === 0 && details.behindCount === 0;
+      if (hasNoLocalDelta) {
+        if (details.hasUpstream) {
+          return {
+            status: "skipped_up_to_date" as const,
+            branch,
+            ...(details.upstreamRef ? { upstreamBranch: details.upstreamRef } : {}),
+          };
+        }
+
+        const comparableBaseBranch = yield* resolveBaseBranchForNoUpstream(cwd, branch).pipe(
+          Effect.catch(() => Effect.succeed(null)),
+        );
+        if (comparableBaseBranch) {
+          return {
+            status: "skipped_up_to_date" as const,
+            branch,
+          };
+        }
       }
 
       if (!details.hasUpstream) {

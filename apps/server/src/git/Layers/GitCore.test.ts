@@ -1177,6 +1177,31 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect("pushes with upstream setup when no comparable base branch exists", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const remote = yield* makeTmpDir();
+        yield* git(tmp, ["init", "--initial-branch=trunk"]);
+        yield* git(tmp, ["config", "user.email", "test@test.com"]);
+        yield* git(tmp, ["config", "user.name", "Test"]);
+        yield* writeTextFile(path.join(tmp, "README.md"), "hello\n");
+        yield* git(tmp, ["add", "README.md"]);
+        yield* git(tmp, ["commit", "-m", "initial"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(tmp, ["remote", "add", "origin", remote]);
+        yield* git(tmp, ["checkout", "-b", "feature/no-base"]);
+
+        const core = yield* GitCore;
+        const pushed = yield* core.pushCurrentBranch(tmp, null);
+        expect(pushed.status).toBe("pushed");
+        expect(pushed.setUpstream).toBe(true);
+        expect(pushed.upstreamBranch).toBe("origin/feature/no-base");
+        expect(yield* git(tmp, ["rev-parse", "--abbrev-ref", "@{upstream}"])).toBe(
+          "origin/feature/no-base",
+        );
+      }),
+    );
+
     it.effect("includes command context when worktree removal fails", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
