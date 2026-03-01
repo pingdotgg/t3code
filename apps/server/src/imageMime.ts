@@ -1,7 +1,5 @@
 import Mime from "@effect/platform-node/Mime";
 
-export const ATTACHMENTS_ROUTE_PREFIX = "/attachments";
-
 export const IMAGE_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
   "image/avif": ".avif",
   "image/bmp": ".bmp",

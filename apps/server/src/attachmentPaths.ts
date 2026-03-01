@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { ATTACHMENTS_ROUTE_PREFIX } from "./imageMime.ts";
+export const ATTACHMENTS_ROUTE_PREFIX = "/attachments";
 
 export function normalizeAttachmentRelativePath(rawRelativePath: string): string | null {
   const normalized = path.normalize(rawRelativePath).replace(/^[/\\]+/, "");

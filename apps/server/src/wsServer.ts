@@ -55,8 +55,11 @@ import { Open } from "./open";
 import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
-import { normalizeAttachmentRelativePath, resolveAttachmentRelativePath } from "./attachmentPaths";
-import { ATTACHMENTS_ROUTE_PREFIX } from "./imageMime.ts";
+import {
+  ATTACHMENTS_ROUTE_PREFIX,
+  normalizeAttachmentRelativePath,
+  resolveAttachmentRelativePath,
+} from "./attachmentPaths";
 
 /**
  * ServerShape - Service API for server lifecycle control.
