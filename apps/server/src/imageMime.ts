@@ -32,7 +32,7 @@ export const SAFE_IMAGE_FILE_EXTENSIONS = new Set([
 export function parseBase64DataUrl(
   dataUrl: string,
 ): { readonly mimeType: string; readonly base64: string } | null {
-  const match = /^data:([^,]+),([a-z0-9+/=\r\n]+)$/i.exec(dataUrl.trim());
+  const match = /^data:([^,]+),([a-z0-9+/=\r\n ]+)$/i.exec(dataUrl.trim());
   if (!match) return null;
 
   const headerParts = (match[1] ?? "")
@@ -55,7 +55,10 @@ export function parseBase64DataUrl(
 }
 
 export function inferImageExtension(input: { mimeType: string; fileName?: string }): string {
-  const fromMime = IMAGE_EXTENSION_BY_MIME_TYPE[input.mimeType.toLowerCase()];
+  const key = input.mimeType.toLowerCase();
+  const fromMime = Object.hasOwn(IMAGE_EXTENSION_BY_MIME_TYPE, key)
+    ? IMAGE_EXTENSION_BY_MIME_TYPE[key]
+    : undefined;
   if (fromMime) {
     return fromMime;
   }

@@ -1,5 +1,3 @@
-import fs from "node:fs";
-
 import {
   type ChatAttachment,
   CommandId,
@@ -14,7 +12,7 @@ import {
   type ProviderThreadId,
   type TurnId,
 } from "@t3tools/contracts";
-import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Stream } from "effect";
+import { Cache, Cause, Duration, Effect, FileSystem, Layer, Option, Queue, Stream } from "effect";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import {
@@ -111,6 +109,7 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const git = yield* GitCore;
   const textGeneration = yield* TextGeneration;
+  const fileSystem = yield* FileSystem.FileSystem;
   const serverConfig = yield* Effect.service(ServerConfig);
   const handledTurnStartKeys = yield* Cache.make<string, true>({
     capacity: HANDLED_TURN_START_KEY_MAX,
@@ -333,14 +332,10 @@ const make = Effect.gen(function* () {
           return attachment;
         }
 
-        const isFile = yield* Effect.sync(() => {
-          try {
-            return fs.statSync(resolvedMaterializedPath).isFile();
-          } catch {
-            return false;
-          }
-        });
-        if (!isFile) {
+        const fileInfo = yield* fileSystem
+          .stat(resolvedMaterializedPath)
+          .pipe(Effect.catch(() => Effect.succeed(null)));
+        if (!fileInfo || fileInfo.type !== "File") {
           return attachment;
         }
         return {

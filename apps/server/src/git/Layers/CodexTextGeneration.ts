@@ -107,6 +107,11 @@ const makeCodexTextGeneration = Effect.gen(function* () {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverConfig = yield* Effect.service(ServerConfig);
 
+  type MaterializedImageAttachments = {
+    readonly imagePaths: ReadonlyArray<string>;
+    readonly tempImagePaths: ReadonlyArray<string>;
+  };
+
   const readStreamAsString = <E>(
     operation: string,
     stream: Stream.Stream<Uint8Array, E>,
@@ -176,10 +181,12 @@ const makeCodexTextGeneration = Effect.gen(function* () {
   const materializeImageAttachments = (
     operation: "generateCommitMessage" | "generatePrContent" | "generateBranchName",
     attachments: BranchNameGenerationInput["attachments"],
-  ): Effect.Effect<ReadonlyArray<string>, TextGenerationError> =>
-    Effect.gen(function* () {
+  ): Effect.Effect<MaterializedImageAttachments, TextGenerationError> => {
+    const tempImagePaths: string[] = [];
+
+    return Effect.gen(function* () {
       if (!attachments || attachments.length === 0) {
-        return [];
+        return { imagePaths: [], tempImagePaths };
       }
 
       const imagePaths: string[] = [];
@@ -206,6 +213,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
             extension,
           );
           imagePaths.push(imagePath);
+          tempImagePaths.push(imagePath);
           continue;
         }
 
@@ -213,20 +221,26 @@ const makeCodexTextGeneration = Effect.gen(function* () {
           stateDir: serverConfig.stateDir,
           dataUrl: attachment.dataUrl,
         });
-        const localPath = persistedPath ?? attachment.dataUrl;
-        if (!path.isAbsolute(localPath)) {
+        if (!persistedPath || !path.isAbsolute(persistedPath)) {
           continue;
         }
         const fileInfo = yield* fileSystem
-          .stat(localPath)
+          .stat(persistedPath)
           .pipe(Effect.catch(() => Effect.succeed(null)));
         if (!fileInfo || fileInfo.type !== "File") {
           continue;
         }
-        imagePaths.push(localPath);
+        imagePaths.push(persistedPath);
       }
-      return imagePaths;
-    });
+      return { imagePaths, tempImagePaths };
+    }).pipe(
+      Effect.tapError(() =>
+        Effect.all(tempImagePaths.map((filePath) => safeUnlink(filePath)), {
+          concurrency: "unbounded",
+        }).pipe(Effect.asVoid),
+      ),
+    );
+  };
 
   const runCodexJson = <S extends Schema.Top>({
     operation,
@@ -234,12 +248,14 @@ const makeCodexTextGeneration = Effect.gen(function* () {
     prompt,
     outputSchemaJson,
     imagePaths = [],
+    cleanupPaths = [],
   }: {
     operation: "generateCommitMessage" | "generatePrContent" | "generateBranchName";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
     imagePaths?: ReadonlyArray<string>;
+    cleanupPaths?: ReadonlyArray<string>;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
       const schemaPath = yield* writeTempFile(
@@ -313,7 +329,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       });
 
       const cleanup = Effect.all(
-        [schemaPath, outputPath, ...imagePaths].map((filePath) => safeUnlink(filePath)),
+        [schemaPath, outputPath, ...cleanupPaths].map((filePath) => safeUnlink(filePath)),
         {
           concurrency: "unbounded",
         },
@@ -438,7 +454,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
 
   const generateBranchName: TextGenerationShape["generateBranchName"] = (input) => {
     return Effect.gen(function* () {
-      const imagePaths = yield* materializeImageAttachments(
+      const { imagePaths, tempImagePaths } = yield* materializeImageAttachments(
         "generateBranchName",
         input.attachments,
       );
@@ -476,6 +492,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
           branch: Schema.String,
         }),
         imagePaths,
+        cleanupPaths: tempImagePaths,
       });
 
       return {

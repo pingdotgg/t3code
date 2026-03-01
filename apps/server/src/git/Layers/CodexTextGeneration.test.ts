@@ -350,12 +350,69 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
             ],
           })
           .pipe(
+            Effect.tap(() =>
+              fs.stat(imagePath).pipe(
+                Effect.map((fileInfo) => {
+                  expect(fileInfo.type).toBe("File");
+                }),
+              ),
+            ),
+          )
+          .pipe(
             Effect.ensuring(
               fs.remove(imagePath).pipe(Effect.catch(() => Effect.void)),
             ),
           );
 
         expect(generated.branch).toBe("fix/ui-regression");
+      }),
+    ),
+  );
+
+  it.effect("ignores absolute non-route attachment paths for codex image inputs", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          branch: "fix/ui-regression",
+        }),
+        requireImage: true,
+      },
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3code-codex-attachment-bypass-",
+        });
+        const absoluteImagePath = path.join(tempDir, "outside.png");
+        yield* fs.writeFile(absoluteImagePath, Buffer.from("hello"));
+
+        const textGeneration = yield* TextGeneration;
+        const result = yield* textGeneration
+          .generateBranchName({
+            cwd: process.cwd(),
+            message: "Fix layout bug from screenshot.",
+            attachments: [
+              {
+                type: "image",
+                name: "outside.png",
+                mimeType: "image/png",
+                sizeBytes: 5,
+                dataUrl: absoluteImagePath,
+              },
+            ],
+          })
+          .pipe(
+            Effect.match({
+              onFailure: (error) => ({ _tag: "Left" as const, left: error }),
+              onSuccess: (value) => ({ _tag: "Right" as const, right: value }),
+            }),
+          );
+
+        expect(result._tag).toBe("Left");
+        if (result._tag === "Left") {
+          expect(result.left).toBeInstanceOf(TextGenerationError);
+          expect(result.left.message).toContain("missing --image input");
+        }
       }),
     ),
   );
