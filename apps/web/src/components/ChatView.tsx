@@ -53,6 +53,7 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_THREAD_TERMINAL_COUNT,
   type ChatMessage,
+  type Thread,
   type TurnDiffSummary,
 } from "../types";
 import { basenameOfPath, getVscodeIconUrlForEntry } from "../vscode-icons";
@@ -113,6 +114,7 @@ import { getAppModelOptions, useAppSettings } from "../appSettings";
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
   type ComposerImageAttachment,
+  type DraftThreadState,
   type PersistedComposerImageAttachment,
   readPersistedComposerDraftAttachments,
   useComposerDraftStore,
@@ -192,6 +194,42 @@ function buildExpandedImagePreview(
   return {
     images: previewableImages.map((image) => ({ src: image.src, name: image.name })),
     index: selectedIndex,
+  };
+}
+
+function buildLocalDraftThread(
+  threadId: ThreadId,
+  draftThread: DraftThreadState,
+  fallbackModel: string,
+): Thread {
+  return {
+    id: threadId,
+    codexThreadId: null,
+    projectId: draftThread.projectId,
+    title: "New thread",
+    model: fallbackModel,
+    terminalOpen: false,
+    terminalHeight: 280,
+    terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+    runningTerminalIds: [],
+    activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
+    terminalGroups: [
+      {
+        id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
+      },
+    ],
+    activeTerminalGroupId: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+    session: null,
+    messages: [],
+    error: null,
+    createdAt: draftThread.createdAt,
+    latestTurn: null,
+    lastVisitedAt: draftThread.createdAt,
+    branch: draftThread.branch,
+    worktreePath: draftThread.worktreePath,
+    turnDiffSummaries: [],
+    activities: [],
   };
 }
 
@@ -428,9 +466,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (store) => store.syncPersistedAttachments,
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
-  const clearProjectDraftThreadById = useComposerDraftStore(
-    (store) => store.clearProjectDraftThreadById,
-  );
+  const clearDraftThread = useComposerDraftStore((store) => store.clearDraftThread);
+  const draftThread = useComposerDraftStore((store) => store.draftThreadsByThreadId[threadId] ?? null);
   const promptRef = useRef(prompt);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
@@ -488,7 +525,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [removeComposerDraftImage, threadId],
   );
 
-  const activeThread = state.threads.find((t) => t.id === threadId);
+  const serverThread = state.threads.find((t) => t.id === threadId);
+  const fallbackDraftProject = state.projects.find((project) => project.id === draftThread?.projectId);
+  const localDraftThread = useMemo(
+    () =>
+      draftThread
+        ? buildLocalDraftThread(threadId, draftThread, fallbackDraftProject?.model ?? DEFAULT_MODEL)
+        : undefined,
+    [draftThread, fallbackDraftProject?.model, threadId],
+  );
+  const activeThread = serverThread ?? localDraftThread;
+  const isServerThread = serverThread !== undefined;
+  const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const diffSearch = useMemo(
     () => parseDiffRouteSearch(rawSearch as Record<string, unknown>),
     [rawSearch],
@@ -876,7 +924,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       },
     ) => {
       const api = readNativeApi();
-      if (!api || !activeThreadId || !activeProject || !activeThread) return;
+      if (!api || !activeThreadId || !activeProject || !activeThread || !isServerThread) return;
       if (options?.rememberAsLastInvoked !== false) {
         setLastInvokedScriptByProjectId((current) => {
           if (current[activeProject.id] === script.id) return current;
@@ -948,7 +996,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
       }
     },
-    [activeProject, activeThread, activeThreadId, dispatch, gitCwd],
+    [activeProject, activeThread, activeThreadId, dispatch, gitCwd, isServerThread],
   );
   const persistProjectScripts = useCallback(
     async (input: {
@@ -1634,7 +1682,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!trimmed && composerImages.length === 0) return;
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
-    const isFirstMessage = activeThread.messages.length === 0;
+    const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
       isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
         ? activeThread.branch
@@ -1693,7 +1741,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     clearComposerDraftContent(threadIdForSend);
     setComposerHighlightedItemId(null);
 
-    let attemptedTurnStart = false;
+    let createdServerThreadForLocalDraft = false;
+    let turnStartSucceeded = false;
+    let nextThreadBranch = activeThread.branch;
+    let nextThreadWorktreePath = activeThread.worktreePath;
     try {
       // On first message: lock in branch + create worktree if needed.
       if (baseBranchForWorktree) {
@@ -1704,23 +1755,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
           branch: baseBranchForWorktree,
           newBranch,
         });
-        await api.orchestration.dispatchCommand({
-          type: "thread.meta.update",
-          commandId: newCommandId(),
-          threadId: threadIdForSend,
-          branch: result.worktree.branch,
-          worktreePath: result.worktree.path,
-        });
-        // Keep local thread state in sync immediately so terminal drawer opens
-        // with the worktree cwd/env instead of briefly using the project root.
-        dispatch({
-          type: "SET_THREAD_BRANCH",
-          threadId: threadIdForSend,
-          branch: result.worktree.branch,
-          worktreePath: result.worktree.path,
-        });
+        nextThreadBranch = result.worktree.branch;
+        nextThreadWorktreePath = result.worktree.path;
+        if (isServerThread) {
+          await api.orchestration.dispatchCommand({
+            type: "thread.meta.update",
+            commandId: newCommandId(),
+            threadId: threadIdForSend,
+            branch: result.worktree.branch,
+            worktreePath: result.worktree.path,
+          });
+          // Keep local thread state in sync immediately so terminal drawer opens
+          // with the worktree cwd/env instead of briefly using the project root.
+          dispatch({
+            type: "SET_THREAD_BRANCH",
+            threadId: threadIdForSend,
+            branch: result.worktree.branch,
+            worktreePath: result.worktree.path,
+          });
+        }
         const setupScript = setupProjectScript(activeProject.scripts);
-        if (setupScript) {
+        if (setupScript && isServerThread) {
           await runProjectScript(setupScript, {
             cwd: result.worktree.path,
             worktreePath: result.worktree.path,
@@ -1729,14 +1784,30 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
       }
 
+      const titleSeed =
+        trimmed ||
+        (composerImagesSnapshot.length > 0
+          ? `Image: ${composerImagesSnapshot[0]?.name ?? "attachment"}`
+          : "New thread");
+      const title = truncateTitle(titleSeed);
+
+      if (isLocalDraftThread) {
+        await api.orchestration.dispatchCommand({
+          type: "thread.create",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          projectId: activeProject.id,
+          title,
+          model: selectedModel ?? activeProject.model ?? DEFAULT_MODEL,
+          branch: nextThreadBranch,
+          worktreePath: nextThreadWorktreePath,
+          createdAt: activeThread.createdAt,
+        });
+        createdServerThreadForLocalDraft = true;
+      }
+
       // Auto-title from first message
-      if (isFirstMessage) {
-        const titleSeed =
-          trimmed ||
-          (composerImagesSnapshot.length > 0
-            ? `Image: ${composerImagesSnapshot[0]?.name ?? "attachment"}`
-            : "New thread");
-        const title = truncateTitle(titleSeed);
+      if (isFirstMessage && isServerThread) {
         await api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
@@ -1747,7 +1818,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       setSendPhase("sending-turn");
       const turnAttachments = await turnAttachmentsPromise;
-      attemptedTurnStart = true;
       const approvalPolicy = state.runtimeMode === "full-access" ? "never" : "on-request";
       const sandboxMode =
         state.runtimeMode === "full-access" ? "danger-full-access" : "workspace-write";
@@ -1768,12 +1838,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
         sandboxMode,
         createdAt: messageCreatedAt,
       });
+      turnStartSucceeded = true;
       if (isFirstMessage) {
-        clearProjectDraftThreadById(activeProject.id, threadIdForSend);
+        clearDraftThread(threadIdForSend);
       }
     } catch (err) {
+      if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
+        await api.orchestration
+          .dispatchCommand({
+            type: "thread.delete",
+            commandId: newCommandId(),
+            threadId: threadIdForSend,
+          })
+          .catch(() => undefined);
+      }
       if (
-        !attemptedTurnStart &&
+        !turnStartSucceeded &&
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0
       ) {
@@ -1841,7 +1921,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const normalizedModel = resolveModelSlug(model);
       setComposerDraftModel(threadId, normalizedModel);
       const api = readNativeApi();
-      if (api && activeThread) {
+      if (api && isServerThread && activeThread) {
         void api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
@@ -1851,7 +1931,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       scheduleComposerFocus();
     },
-    [activeThread, scheduleComposerFocus, setComposerDraftModel, threadId],
+    [activeThread, isServerThread, scheduleComposerFocus, setComposerDraftModel, threadId],
   );
   const onEffortSelect = useCallback(
     (effort: ReasoningEffort) => {

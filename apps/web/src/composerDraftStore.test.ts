@@ -33,7 +33,11 @@ describe("composerDraftStore addImages", () => {
   let revokeSpy: ReturnType<typeof vi.fn<(url: string) => void>>;
 
   beforeEach(() => {
-    useComposerDraftStore.setState({ draftsByThreadId: {}, projectDraftThreadIdByProjectId: {} });
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
     originalRevokeObjectUrl = URL.revokeObjectURL;
     revokeSpy = vi.fn();
     URL.revokeObjectURL = revokeSpy;
@@ -118,7 +122,11 @@ describe("composerDraftStore clearComposerContent", () => {
   let revokeSpy: ReturnType<typeof vi.fn<(url: string) => void>>;
 
   beforeEach(() => {
-    useComposerDraftStore.setState({ draftsByThreadId: {}, projectDraftThreadIdByProjectId: {} });
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
     originalRevokeObjectUrl = URL.revokeObjectURL;
     revokeSpy = vi.fn();
     URL.revokeObjectURL = revokeSpy;
@@ -149,15 +157,30 @@ describe("composerDraftStore project draft thread mapping", () => {
   const otherThreadId = ThreadId.makeUnsafe("thread-b");
 
   beforeEach(() => {
-    useComposerDraftStore.setState({ draftsByThreadId: {}, projectDraftThreadIdByProjectId: {} });
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
   });
 
   it("stores and reads project draft thread ids via actions", () => {
     const store = useComposerDraftStore.getState();
     expect(store.readProjectDraftThreadId(projectId)).toBeNull();
+    expect(store.readDraftThread(threadId)).toBeNull();
 
-    store.setProjectDraftThreadId(projectId, threadId);
+    store.setProjectDraftThreadId(projectId, threadId, {
+      branch: "feature/test",
+      worktreePath: "/tmp/worktree-test",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
     expect(useComposerDraftStore.getState().readProjectDraftThreadId(projectId)).toBe(threadId);
+    expect(useComposerDraftStore.getState().readDraftThread(threadId)).toEqual({
+      projectId,
+      branch: "feature/test",
+      worktreePath: "/tmp/worktree-test",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
   });
 
   it("clears only matching project draft mapping entries", () => {
@@ -169,6 +192,7 @@ describe("composerDraftStore project draft thread mapping", () => {
 
     store.clearProjectDraftThreadById(projectId, threadId);
     expect(useComposerDraftStore.getState().readProjectDraftThreadId(projectId)).toBeNull();
+    expect(useComposerDraftStore.getState().readDraftThread(threadId)).toBeNull();
   });
 
   it("clears project draft mapping by project id", () => {
@@ -176,5 +200,32 @@ describe("composerDraftStore project draft thread mapping", () => {
     store.setProjectDraftThreadId(projectId, threadId);
     store.clearProjectDraftThreadId(projectId);
     expect(useComposerDraftStore.getState().readProjectDraftThreadId(projectId)).toBeNull();
+    expect(useComposerDraftStore.getState().readDraftThread(threadId)).toBeNull();
+  });
+
+  it("clears draft registration independently", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId);
+    store.clearDraftThread(threadId);
+    expect(useComposerDraftStore.getState().readProjectDraftThreadId(projectId)).toBeNull();
+    expect(useComposerDraftStore.getState().readDraftThread(threadId)).toBeNull();
+  });
+
+  it("updates branch context on an existing draft thread", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId, {
+      branch: "main",
+      worktreePath: null,
+    });
+    store.setDraftThreadContext(threadId, {
+      branch: "feature/next",
+      worktreePath: "/tmp/feature-next",
+    });
+    expect(useComposerDraftStore.getState().readProjectDraftThreadId(projectId)).toBe(threadId);
+    expect(useComposerDraftStore.getState().readDraftThread(threadId)).toMatchObject({
+      projectId,
+      branch: "feature/next",
+      worktreePath: "/tmp/feature-next",
+    });
   });
 });

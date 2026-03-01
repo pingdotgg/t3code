@@ -75,10 +75,6 @@ interface PrStatusIndicator {
 
 type ThreadPr = GitStatusResult["pr"];
 
-function shouldShowThreadInSidebar(thread: Thread): boolean {
-  return thread.messages.some((message) => message.role === "user");
-}
-
 function hasUnseenCompletion(thread: Thread): boolean {
   if (!thread.latestTurn?.completedAt) return false;
   const completedAt = Date.parse(thread.latestTurn.completedAt);
@@ -234,8 +230,10 @@ function ProjectFavicon({ cwd }: { cwd: string }) {
 export default function Sidebar() {
   const { state, dispatch } = useStore();
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearThreadDraft);
+  const readDraftThread = useComposerDraftStore((store) => store.readDraftThread);
   const readProjectDraftThreadId = useComposerDraftStore((store) => store.readProjectDraftThreadId);
   const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const clearProjectDraftThreadId = useComposerDraftStore((store) => store.clearProjectDraftThreadId);
   const clearProjectDraftThreadById = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadById,
@@ -346,55 +344,25 @@ export default function Sidebar() {
         worktreePath?: string | null;
       },
     ): Promise<void> => {
-      const api = readNativeApi();
-      if (!api) return Promise.resolve();
       const hasBranchOption = options?.branch !== undefined;
       const hasWorktreePathOption = options?.worktreePath !== undefined;
-      const applyThreadOptions = async (thread: Thread): Promise<void> => {
-        if (!hasBranchOption && !hasWorktreePathOption) {
-          return;
-        }
-        const nextBranch = hasBranchOption ? (options?.branch ?? null) : thread.branch;
-        const nextWorktreePath = hasWorktreePathOption
-          ? (options?.worktreePath ?? null)
-          : thread.worktreePath;
-        if (thread.branch === nextBranch && thread.worktreePath === nextWorktreePath) {
-          return;
-        }
-        await api.orchestration.dispatchCommand({
-          type: "thread.meta.update",
-          commandId: newCommandId(),
-          threadId: thread.id,
-          ...(hasBranchOption ? { branch: nextBranch } : {}),
-          ...(hasWorktreePathOption ? { worktreePath: nextWorktreePath } : {}),
-        });
-        dispatch({
-          type: "SET_THREAD_BRANCH",
-          threadId: thread.id,
-          branch: nextBranch,
-          worktreePath: nextWorktreePath,
-        });
-      };
       const storedDraftThreadId = readProjectDraftThreadId(projectId);
-      const storedDraftThread = storedDraftThreadId
-        ? state.threads.find((thread) => thread.id === storedDraftThreadId)
-        : undefined;
-      const reusableStoredDraftThread =
-        storedDraftThread &&
-        storedDraftThread.projectId === projectId &&
-        !shouldShowThreadInSidebar(storedDraftThread)
-          ? storedDraftThread
-          : null;
-      if (reusableStoredDraftThread) {
+      const storedDraftThread = storedDraftThreadId ? readDraftThread(storedDraftThreadId) : null;
+      if (storedDraftThread && storedDraftThread.projectId === projectId && storedDraftThreadId) {
         return (async () => {
-          await applyThreadOptions(reusableStoredDraftThread);
-          setProjectDraftThreadId(projectId, reusableStoredDraftThread.id);
-          if (routeThreadId === reusableStoredDraftThread.id) {
+          if (hasBranchOption || hasWorktreePathOption) {
+            setDraftThreadContext(storedDraftThreadId, {
+              ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
+              ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
+            });
+          }
+          setProjectDraftThreadId(projectId, storedDraftThreadId);
+          if (routeThreadId === storedDraftThreadId) {
             return;
           }
           await navigate({
             to: "/$threadId",
-            params: { threadId: reusableStoredDraftThread.id },
+            params: { threadId: storedDraftThreadId },
           });
         })();
       }
@@ -402,53 +370,25 @@ export default function Sidebar() {
         clearProjectDraftThreadId(projectId);
       }
 
-      const activeThread = routeThreadId
-        ? state.threads.find((thread) => thread.id === routeThreadId)
-        : undefined;
-      const reusableDraftThread =
-        activeThread &&
-        activeThread.projectId === projectId &&
-        !shouldShowThreadInSidebar(activeThread)
-          ? activeThread
-          : null;
-      if (reusableDraftThread) {
-        return (async () => {
-          await applyThreadOptions(reusableDraftThread);
-          setProjectDraftThreadId(projectId, reusableDraftThread.id);
-          if (routeThreadId === reusableDraftThread.id) {
-            return;
-          }
-          await navigate({
-            to: "/$threadId",
-            params: { threadId: reusableDraftThread.id },
+      const activeDraftThread = routeThreadId ? readDraftThread(routeThreadId) : null;
+      if (activeDraftThread && routeThreadId && activeDraftThread.projectId === projectId) {
+        if (hasBranchOption || hasWorktreePathOption) {
+          setDraftThreadContext(routeThreadId, {
+            ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
+            ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
           });
-        })();
+        }
+        setProjectDraftThreadId(projectId, routeThreadId);
+        return Promise.resolve();
       }
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
-      const model =
-        state.projects.find((project) => project.id === projectId)?.model ?? DEFAULT_MODEL;
       return (async () => {
-        await api.orchestration.dispatchCommand({
-          type: "thread.create",
-          commandId: newCommandId(),
-          threadId,
-          projectId,
-          title: "New thread",
-          model,
+        setProjectDraftThreadId(projectId, threadId, {
+          createdAt,
           branch: options?.branch ?? null,
           worktreePath: options?.worktreePath ?? null,
-          createdAt,
         });
-        setProjectDraftThreadId(projectId, threadId);
-
-        // Ensure route guards can see the new thread before navigating.
-        try {
-          const snapshot = await api.orchestration.getSnapshot();
-          dispatch({ type: "SYNC_SERVER_READ_MODEL", readModel: snapshot });
-        } catch {
-          // Event stream can still hydrate the thread shortly after dispatch.
-        }
 
         await navigate({
           to: "/$threadId",
@@ -458,13 +398,12 @@ export default function Sidebar() {
     },
     [
       clearProjectDraftThreadId,
-      dispatch,
       navigate,
+      readDraftThread,
       readProjectDraftThreadId,
       routeThreadId,
+      setDraftThreadContext,
       setProjectDraftThreadId,
-      state.projects,
-      state.threads,
     ],
   );
 
@@ -678,9 +617,7 @@ export default function Sidebar() {
       if (!project) return;
 
       const projectThreads = state.threads.filter((thread) => thread.projectId === projectId);
-      const visibleThreads = projectThreads.filter(shouldShowThreadInSidebar);
-      const draftThreads = projectThreads.filter((thread) => !shouldShowThreadInSidebar(thread));
-      if (visibleThreads.length > 0) {
+      if (projectThreads.length > 0) {
         toastManager.add({
           type: "warning",
           title: "Project is not empty",
@@ -695,13 +632,9 @@ export default function Sidebar() {
       if (!confirmed) return;
 
       try {
-        for (const draftThread of draftThreads) {
-          await api.orchestration.dispatchCommand({
-            type: "thread.delete",
-            commandId: newCommandId(),
-            threadId: draftThread.id,
-          });
-          clearComposerDraftForThread(draftThread.id);
+        const projectDraftThreadId = readProjectDraftThreadId(projectId);
+        if (projectDraftThreadId) {
+          clearComposerDraftForThread(projectDraftThreadId);
         }
         clearProjectDraftThreadId(projectId);
         await api.orchestration.dispatchCommand({
@@ -719,7 +652,13 @@ export default function Sidebar() {
         });
       }
     },
-    [clearComposerDraftForThread, clearProjectDraftThreadId, state.projects, state.threads],
+    [
+      clearComposerDraftForThread,
+      clearProjectDraftThreadId,
+      readProjectDraftThreadId,
+      state.projects,
+      state.threads,
+    ],
   );
 
   useEffect(() => {
@@ -727,8 +666,9 @@ export default function Sidebar() {
       const activeThread = routeThreadId
         ? state.threads.find((thread) => thread.id === routeThreadId)
         : undefined;
+      const activeDraftThread = routeThreadId ? readDraftThread(routeThreadId) : null;
       if (isChatNewLocalShortcut(event, keybindings)) {
-        const projectId = activeThread?.projectId ?? state.projects[0]?.id;
+        const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? state.projects[0]?.id;
         if (!projectId) return;
         event.preventDefault();
         void handleNewThread(projectId);
@@ -736,12 +676,12 @@ export default function Sidebar() {
       }
 
       if (!isChatNewShortcut(event, keybindings)) return;
-      const projectId = activeThread?.projectId ?? state.projects[0]?.id;
+      const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? state.projects[0]?.id;
       if (!projectId) return;
       event.preventDefault();
       void handleNewThread(projectId, {
-        branch: activeThread?.branch ?? null,
-        worktreePath: activeThread?.worktreePath ?? null,
+        branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,
+        worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
       });
     };
 
@@ -749,7 +689,7 @@ export default function Sidebar() {
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
-  }, [handleNewThread, keybindings, routeThreadId, state.projects, state.threads]);
+  }, [handleNewThread, keybindings, readDraftThread, routeThreadId, state.projects, state.threads]);
 
   const onCreateThreadClick = () => {
     if (state.projects.length === 0) {
@@ -808,7 +748,6 @@ export default function Sidebar() {
             {state.projects.map((project) => {
               const visibleThreads = state.threads
                 .filter((thread) => thread.projectId === project.id)
-                .filter(shouldShowThreadInSidebar)
                 .toSorted((a, b) => {
                   const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
                   if (byDate !== 0) return byDate;

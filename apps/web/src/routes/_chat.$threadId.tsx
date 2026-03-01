@@ -3,6 +3,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Suspense, lazy, type ReactNode, useCallback, useEffect } from "react";
 
 import ChatView from "../components/ChatView";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useStore } from "../store";
@@ -139,6 +140,10 @@ function ChatThreadRouteView() {
   });
   const search = Route.useSearch();
   const threadExists = state.threads.some((thread) => thread.id === threadId);
+  const draftThreadExists = useComposerDraftStore(
+    (store) => store.draftThreadsByThreadId[threadId] !== undefined,
+  );
+  const routeThreadExists = threadExists || draftThreadExists;
   const diffOpen = search.diff === "1";
   const shouldUseDiffSheet = useMediaQuery(DIFF_INLINE_LAYOUT_MEDIA_QUERY);
   const closeDiff = useCallback(() => {
@@ -166,13 +171,13 @@ function ChatThreadRouteView() {
       return;
     }
 
-    if (!threadExists) {
+    if (!routeThreadExists) {
       void navigate({ to: "/", replace: true });
       return;
     }
-  }, [navigate, state.threadsHydrated, threadExists, threadId]);
+  }, [navigate, routeThreadExists, state.threadsHydrated, threadId]);
 
-  if (!state.threadsHydrated || !threadExists) {
+  if (!state.threadsHydrated || !routeThreadExists) {
     return null;
   }
 
