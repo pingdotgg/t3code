@@ -7,6 +7,8 @@ import { ChevronLeftIcon, ChevronRightIcon, Columns2Icon, Rows3Icon } from "luci
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
+import { readNativeApi } from "../nativeApi";
+import { preferredTerminalEditor, resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
@@ -57,6 +59,21 @@ const DIFF_PANEL_UNSAFE_CSS = `
   background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
   border-block-color: var(--border) !important;
   color: var(--foreground) !important;
+}
+
+[data-title] {
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    text-decoration-color 120ms ease;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 2px;
+}
+
+[data-title]:hover {
+  color: color-mix(in srgb, var(--foreground) 84%, var(--primary)) !important;
+  text-decoration-color: currentColor;
 }
 `;
 
@@ -144,6 +161,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
   const activeThreadId = routeThreadId;
   const activeThread = state.threads.find((thread) => thread.id === activeThreadId);
+  const activeProject = state.projects.find((project) => project.id === activeThread?.projectId);
+  const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const orderedTurnDiffSummaries = useMemo(
@@ -263,6 +282,18 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     ).find((element) => element.dataset.diffFilePath === selectedFilePath);
     target?.scrollIntoView({ block: "nearest" });
   }, [selectedFilePath, renderableFiles]);
+
+  const openDiffFileInEditor = useCallback(
+    (filePath: string) => {
+      const api = readNativeApi();
+      if (!api) return;
+      const targetPath = activeCwd ? resolvePathLinkTarget(filePath, activeCwd) : filePath;
+      void api.shell.openInEditor(targetPath, preferredTerminalEditor()).catch((error) => {
+        console.warn("Failed to open diff file in editor.", error);
+      });
+    },
+    [activeCwd],
+  );
 
   const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;
@@ -508,7 +539,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
               </div>
             ) : renderablePatch.kind === "files" ? (
               <Virtualizer
-                className="diff-render-surface h-full min-h-0 overflow-auto px-3 py-2"
+                className="diff-render-surface h-full min-h-0 overflow-auto p-2 "
                 config={{
                   overscrollSize: 600,
                   intersectionObserverMargin: 1200,
@@ -522,7 +553,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                     <div
                       key={themedFileKey}
                       data-diff-file-path={filePath}
-                      className="diff-render-file rounded-md"
+                      className="diff-render-file mb-2 rounded-md last:mb-0"
+                      onClickCapture={(event) => {
+                        const nativeEvent = event.nativeEvent as MouseEvent;
+                        const composedPath = nativeEvent.composedPath?.() ?? [];
+                        const clickedHeader = composedPath.some((node) => {
+                          if (!(node instanceof Element)) return false;
+                          return node.hasAttribute("data-title");
+                        });
+                        if (!clickedHeader) return;
+                        openDiffFileInEditor(filePath);
+                      }}
                     >
                       <FileDiff
                         fileDiff={fileDiff}
@@ -539,7 +580,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                 })}
               </Virtualizer>
             ) : (
-              <div className="h-full overflow-auto px-3 py-2">
+              <div className="h-full overflow-auto p-2">
                 <div className="space-y-2">
                   <p className="text-[11px] text-muted-foreground/75">{renderablePatch.reason}</p>
                   <pre className="max-h-[72vh] overflow-auto rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90">
