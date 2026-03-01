@@ -20,6 +20,8 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import { GitCore, type GitCoreShape } from "../../git/Services/GitCore.ts";
+import { TextGeneration, type TextGenerationShape } from "../../git/Services/TextGeneration.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { ProviderCommandReactorLive } from "./ProviderCommandReactor.ts";
@@ -92,6 +94,16 @@ describe("ProviderCommandReactor", () => {
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
     const respondToRequest = vi.fn((_: unknown) => Effect.void);
     const stopSession = vi.fn((_: unknown) => Effect.void);
+    const renameBranch = vi.fn((_: unknown) =>
+      Effect.succeed({
+        branch: "t3code/generated-name",
+      }),
+    );
+    const generateBranchName = vi.fn((_: unknown) =>
+      Effect.succeed({
+        branch: "generated-name" as string | null,
+      }),
+    );
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
     const service: ProviderServiceShape = {
@@ -115,6 +127,13 @@ describe("ProviderCommandReactor", () => {
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
+      Layer.provideMerge(Layer.succeed(GitCore, { renameBranch } as unknown as GitCoreShape)),
+      Layer.provideMerge(
+        Layer.succeed(
+          TextGeneration,
+          { generateBranchName } as unknown as TextGenerationShape,
+        ),
+      ),
     );
     runtime = ManagedRuntime.make(layer);
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
@@ -155,6 +174,8 @@ describe("ProviderCommandReactor", () => {
       interruptTurn,
       respondToRequest,
       stopSession,
+      renameBranch,
+      generateBranchName,
     };
   }
 
@@ -194,6 +215,174 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.providerSessionId).toBe("sess-1");
     expect(thread?.session?.approvalPolicy).toBe("on-request");
     expect(thread?.session?.sandboxMode).toBe("workspace-write");
+  });
+
+  it("generates and renames temporary worktree branch on first turn", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.makeUnsafe("cmd-thread-meta-set-temp-branch"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        branch: "t3code/89abc123",
+        worktreePath: "/tmp/provider-project/.t3/worktrees/t3code-89abc123",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-worktree-rename"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-worktree-rename"),
+          role: "user",
+          text: "Fix visual bug from screenshot",
+          attachments: [
+            {
+              type: "image",
+              name: "bug.png",
+              mimeType: "image/png",
+              sizeBytes: 5,
+              dataUrl: "data:image/png;base64,SGVsbG8=",
+            },
+          ],
+        },
+        approvalPolicy: "on-request",
+        sandboxMode: "workspace-write",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
+    await waitFor(() => harness.renameBranch.mock.calls.length === 1);
+
+    expect(harness.generateBranchName.mock.calls[0]?.[0]).toEqual({
+      cwd: "/tmp/provider-project/.t3/worktrees/t3code-89abc123",
+      message: "Fix visual bug from screenshot",
+      attachments: [
+        {
+          type: "image",
+          name: "bug.png",
+          mimeType: "image/png",
+          sizeBytes: 5,
+          dataUrl: "data:image/png;base64,SGVsbG8=",
+        },
+      ],
+    });
+    expect(harness.renameBranch.mock.calls[0]?.[0]).toEqual({
+      cwd: "/tmp/provider-project/.t3/worktrees/t3code-89abc123",
+      oldBranch: "t3code/89abc123",
+      newBranch: "t3code/generated-name",
+    });
+
+    await waitFor(() => {
+      const readModel = Effect.runSync(harness.engine.getReadModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+      return thread?.branch === "t3code/generated-name";
+    });
+  });
+
+  it("skips worktree branch generation after the first user turn", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.makeUnsafe("cmd-thread-meta-set-temp-branch-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        branch: "t3code/1234abcd",
+        worktreePath: "/tmp/provider-project/.t3/worktrees/t3code-1234abcd",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-first"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-first"),
+          role: "user",
+          text: "first",
+          attachments: [],
+        },
+        approvalPolicy: "on-request",
+        sandboxMode: "workspace-write",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-second"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-second"),
+          role: "user",
+          text: "second",
+          attachments: [],
+        },
+        approvalPolicy: "on-request",
+        sandboxMode: "workspace-write",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.generateBranchName.mock.calls.length).toBe(1);
+    expect(harness.renameBranch.mock.calls.length).toBe(1);
+  });
+
+  it("skips worktree rename when generated branch is null", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    harness.generateBranchName.mockImplementationOnce((_: unknown) =>
+      Effect.succeed({
+        branch: null,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.makeUnsafe("cmd-thread-meta-set-temp-branch-null"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        branch: "t3code/0000abcd",
+        worktreePath: "/tmp/provider-project/.t3/worktrees/t3code-0000abcd",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-null-branch"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-null-branch"),
+          role: "user",
+          text: "Fix visual regression",
+          attachments: [],
+        },
+        approvalPolicy: "on-request",
+        sandboxMode: "workspace-write",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
+    await Effect.runPromise(Effect.sleep("20 millis"));
+    expect(harness.renameBranch.mock.calls.length).toBe(0);
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(thread?.branch).toBe("t3code/0000abcd");
   });
 
   it("reuses the same provider session when runtime mode is unchanged", async () => {

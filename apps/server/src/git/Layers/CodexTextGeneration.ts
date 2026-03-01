@@ -503,7 +503,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
         (attachment) => `- ${attachment.name} (${attachment.mimeType}, ${attachment.sizeBytes} bytes)`,
       );
 
-      const prompt = [
+      const promptSections = [
         "You generate concise git branch names.",
         "Return a JSON object with key: branch.",
         "Rules:",
@@ -512,14 +512,17 @@ const makeCodexTextGeneration = Effect.gen(function* () {
         "- Use plain words only, no issue prefixes and no punctuation-heavy text.",
         "- If images are attached, use them as primary context for visual/UI issues.",
         "",
-        `Image attachments supplied to the model: ${imagePaths.length}`,
-        "",
         "User message:",
         limitSection(input.message, 8_000),
-        "",
-        "Attachment metadata:",
-        attachmentLines.length > 0 ? limitSection(attachmentLines.join("\n"), 4_000) : "- none",
-      ].join("\n");
+      ];
+      if (attachmentLines.length > 0) {
+        promptSections.push(
+          "",
+          "Attachment metadata:",
+          limitSection(attachmentLines.join("\n"), 4_000),
+        );
+      }
+      const prompt = promptSections.join("\n");
 
       const generated = yield* runCodexJson({
         operation: "generateBranchName",

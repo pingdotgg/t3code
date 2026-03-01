@@ -11,9 +11,7 @@ import {
 } from "./orchestration";
 import {
   GitCheckoutInput,
-  GitGenerateAndRenameBranchInput,
   GitCreateBranchInput,
-  GitGenerateBranchNameInput,
   GitCreateWorktreeInput,
   GitInitInput,
   GitListBranchesInput,
@@ -53,8 +51,6 @@ export const WS_METHODS = {
   gitRunStackedAction: "git.runStackedAction",
   gitListBranches: "git.listBranches",
   gitCreateWorktree: "git.createWorktree",
-  gitGenerateBranchName: "git.generateBranchName",
-  gitGenerateAndRenameBranch: "git.generateAndRenameBranch",
   gitRenameBranch: "git.renameBranch",
   gitRemoveWorktree: "git.removeWorktree",
   gitCreateBranch: "git.createBranch",
@@ -117,8 +113,6 @@ export const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.gitRunStackedAction, GitRunStackedActionInput),
   tagRequestBody(WS_METHODS.gitListBranches, GitListBranchesInput),
   tagRequestBody(WS_METHODS.gitCreateWorktree, GitCreateWorktreeInput),
-  tagRequestBody(WS_METHODS.gitGenerateBranchName, GitGenerateBranchNameInput),
-  tagRequestBody(WS_METHODS.gitGenerateAndRenameBranch, GitGenerateAndRenameBranchInput),
   tagRequestBody(WS_METHODS.gitRenameBranch, GitRenameBranchInput),
   tagRequestBody(WS_METHODS.gitRemoveWorktree, GitRemoveWorktreeInput),
   tagRequestBody(WS_METHODS.gitCreateBranch, GitCreateBranchInput),

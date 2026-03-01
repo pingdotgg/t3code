@@ -46,7 +46,6 @@ import { Open, type OpenShape } from "./open";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import type { GitCoreShape } from "./git/Services/GitCore.ts";
 import { GitCore } from "./git/Services/GitCore.ts";
-import { TextGeneration, type TextGenerationShape } from "./git/Services/TextGeneration.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
 
@@ -374,7 +373,6 @@ describe("WebSocket Server", () => {
         GitCoreShape,
         "listBranches" | "initRepo" | "pullCurrentBranch" | "renameBranch"
       >;
-      textGeneration?: Pick<TextGenerationShape, "generateBranchName">;
       terminalManager?: TerminalManagerShape;
     } = {},
   ): Promise<Http.Server> {
@@ -406,9 +404,6 @@ describe("WebSocket Server", () => {
       options.gitManager ? Layer.succeed(GitManager, options.gitManager) : Layer.empty,
       options.gitCore
         ? Layer.succeed(GitCore, options.gitCore as unknown as GitCoreShape)
-        : Layer.empty,
-      options.textGeneration
-        ? Layer.succeed(TextGeneration, options.textGeneration as unknown as TextGenerationShape)
         : Layer.empty,
       options.terminalManager
         ? Layer.succeed(TerminalManager, options.terminalManager)
@@ -1477,7 +1472,6 @@ describe("WebSocket Server", () => {
     );
     const initRepo = vi.fn(() => Effect.void);
     const renameBranch = vi.fn(() => Effect.succeed({ branch: "t3code/new-name" }));
-    const generateBranchName = vi.fn(() => Effect.succeed({ branch: "new-name" as const }));
     const pullCurrentBranch = vi.fn(() =>
       Effect.fail(
         new GitCommandError({
@@ -1496,9 +1490,6 @@ describe("WebSocket Server", () => {
         initRepo,
         renameBranch,
         pullCurrentBranch,
-      },
-      textGeneration: {
-        generateBranchName,
       },
     });
     const addr = server.address();
@@ -1522,61 +1513,6 @@ describe("WebSocket Server", () => {
     expect(pullResponse.error?.message).toContain("No upstream configured");
     expect(pullCurrentBranch).toHaveBeenCalledWith("/repo/path");
 
-    const generatedBranchResponse = await sendRequest(ws, WS_METHODS.gitGenerateBranchName, {
-      cwd: "/repo/path",
-      message: "Add retry logic for websocket reconnects",
-      attachments: [
-        {
-          type: "image",
-          name: "bug.png",
-          mimeType: "image/png",
-          sizeBytes: 5,
-          dataUrl: "data:image/png;base64,SGVsbG8=",
-        },
-      ],
-    });
-    expect(generatedBranchResponse.error).toBeUndefined();
-    expect(generatedBranchResponse.result).toEqual({ branch: "new-name" });
-    expect(generateBranchName).toHaveBeenCalledWith({
-      cwd: "/repo/path",
-      message: "Add retry logic for websocket reconnects",
-      attachments: [
-        {
-          type: "image",
-          name: "bug.png",
-          mimeType: "image/png",
-          sizeBytes: 5,
-          dataUrl: "data:image/png;base64,SGVsbG8=",
-        },
-      ],
-    });
-
-    const generateAndRenameResponse = await sendRequest(
-      ws,
-      WS_METHODS.gitGenerateAndRenameBranch,
-      {
-        cwd: "/repo/path",
-        oldBranch: "t3code/tmp-123",
-        message: "Add retry logic for websocket reconnects",
-        attachments: [
-          {
-            type: "image",
-            name: "bug.png",
-            mimeType: "image/png",
-            sizeBytes: 5,
-            dataUrl: "data:image/png;base64,SGVsbG8=",
-          },
-        ],
-      },
-    );
-    expect(generateAndRenameResponse.error).toBeUndefined();
-    expect(generateAndRenameResponse.result).toEqual({ branch: "t3code/new-name" });
-    expect(renameBranch).toHaveBeenCalledWith({
-      cwd: "/repo/path",
-      oldBranch: "t3code/tmp-123",
-      newBranch: "t3code/new-name",
-    });
-
     const renameResponse = await sendRequest(ws, WS_METHODS.gitRenameBranch, {
       cwd: "/repo/path",
       oldBranch: "t3code/tmp-456",
@@ -1589,52 +1525,6 @@ describe("WebSocket Server", () => {
       oldBranch: "t3code/tmp-456",
       newBranch: "t3code/new-name",
     });
-  });
-
-  it("skips rename in git.generateAndRenameBranch when branch generation returns null", async () => {
-    const renameBranch = vi.fn(() => Effect.succeed({ branch: "t3code/new-name" }));
-    const generateBranchName = vi.fn(() => Effect.succeed({ branch: null }));
-
-    server = await createTestServer({
-      cwd: "/test",
-      gitCore: {
-        listBranches: () =>
-          Effect.succeed({
-            branches: [],
-            isRepo: false,
-          }),
-        initRepo: () => Effect.void,
-        renameBranch,
-        pullCurrentBranch: () =>
-          Effect.fail(
-            new GitCommandError({
-              operation: "GitCore.test.pullCurrentBranch",
-              detail: "No upstream configured",
-              command: "git pull",
-              cwd: "/repo/path",
-            }),
-          ),
-      },
-      textGeneration: {
-        generateBranchName,
-      },
-    });
-    const addr = server.address();
-    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
-    const ws = await connectWs(port);
-    connections.push(ws);
-    await waitForMessage(ws);
-
-    const response = await sendRequest(ws, WS_METHODS.gitGenerateAndRenameBranch, {
-      cwd: "/repo/path",
-      oldBranch: "t3code/tmp-123",
-      message: "Fix visual regression",
-      attachments: [],
-    });
-
-    expect(response.error).toBeUndefined();
-    expect(response.result).toEqual({ branch: null });
-    expect(renameBranch).not.toHaveBeenCalled();
   });
 
   it("supports git.status over websocket", async () => {

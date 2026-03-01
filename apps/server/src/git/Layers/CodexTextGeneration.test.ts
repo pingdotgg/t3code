@@ -38,7 +38,19 @@ function makeFakeCodexBinary(dir: string) {
         '  printf "%s\\n" "missing --image input" >&2',
         "  exit 2",
         "fi",
-        "cat >/dev/null",
+        'stdin_content="$(cat)"',
+        'if [ -n "$T3_FAKE_CODEX_STDIN_MUST_CONTAIN" ]; then',
+        '  printf "%s" "$stdin_content" | grep -F -- "$T3_FAKE_CODEX_STDIN_MUST_CONTAIN" >/dev/null || {',
+        '    printf "%s\\n" "stdin missing expected content" >&2',
+        "    exit 3",
+        "  }",
+        "fi",
+        'if [ -n "$T3_FAKE_CODEX_STDIN_MUST_NOT_CONTAIN" ]; then',
+        '  if printf "%s" "$stdin_content" | grep -F -- "$T3_FAKE_CODEX_STDIN_MUST_NOT_CONTAIN" >/dev/null; then',
+        '    printf "%s\\n" "stdin contained forbidden content" >&2',
+        "    exit 4",
+        "  fi",
+        "fi",
         'if [ -n "$T3_FAKE_CODEX_STDERR" ]; then',
         '  printf "%s\\n" "$T3_FAKE_CODEX_STDERR" >&2',
         "fi",
@@ -60,6 +72,8 @@ function withFakeCodexEnv<A, E, R>(
     exitCode?: number;
     stderr?: string;
     requireImage?: boolean;
+    stdinMustContain?: string;
+    stdinMustNotContain?: string;
   },
   effect: Effect.Effect<A, E, R>,
 ) {
@@ -73,6 +87,8 @@ function withFakeCodexEnv<A, E, R>(
       const previousExitCode = process.env.T3_FAKE_CODEX_EXIT_CODE;
       const previousStderr = process.env.T3_FAKE_CODEX_STDERR;
       const previousRequireImage = process.env.T3_FAKE_CODEX_REQUIRE_IMAGE;
+      const previousStdinMustContain = process.env.T3_FAKE_CODEX_STDIN_MUST_CONTAIN;
+      const previousStdinMustNotContain = process.env.T3_FAKE_CODEX_STDIN_MUST_NOT_CONTAIN;
 
       yield* Effect.sync(() => {
         process.env.PATH = `${binDir}:${previousPath ?? ""}`;
@@ -95,6 +111,18 @@ function withFakeCodexEnv<A, E, R>(
         } else {
           delete process.env.T3_FAKE_CODEX_REQUIRE_IMAGE;
         }
+
+        if (input.stdinMustContain !== undefined) {
+          process.env.T3_FAKE_CODEX_STDIN_MUST_CONTAIN = input.stdinMustContain;
+        } else {
+          delete process.env.T3_FAKE_CODEX_STDIN_MUST_CONTAIN;
+        }
+
+        if (input.stdinMustNotContain !== undefined) {
+          process.env.T3_FAKE_CODEX_STDIN_MUST_NOT_CONTAIN = input.stdinMustNotContain;
+        } else {
+          delete process.env.T3_FAKE_CODEX_STDIN_MUST_NOT_CONTAIN;
+        }
       });
 
       return {
@@ -103,6 +131,8 @@ function withFakeCodexEnv<A, E, R>(
         previousExitCode,
         previousStderr,
         previousRequireImage,
+        previousStdinMustContain,
+        previousStdinMustNotContain,
       };
     }),
     () => effect,
@@ -132,6 +162,18 @@ function withFakeCodexEnv<A, E, R>(
           delete process.env.T3_FAKE_CODEX_REQUIRE_IMAGE;
         } else {
           process.env.T3_FAKE_CODEX_REQUIRE_IMAGE = previous.previousRequireImage;
+        }
+
+        if (previous.previousStdinMustContain === undefined) {
+          delete process.env.T3_FAKE_CODEX_STDIN_MUST_CONTAIN;
+        } else {
+          process.env.T3_FAKE_CODEX_STDIN_MUST_CONTAIN = previous.previousStdinMustContain;
+        }
+
+        if (previous.previousStdinMustNotContain === undefined) {
+          delete process.env.T3_FAKE_CODEX_STDIN_MUST_NOT_CONTAIN;
+        } else {
+          process.env.T3_FAKE_CODEX_STDIN_MUST_NOT_CONTAIN = previous.previousStdinMustNotContain;
         }
       }),
   );
@@ -202,6 +244,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         output: JSON.stringify({
           branch: "  Feat/Session  ",
         }),
+        stdinMustNotContain: "Image attachments supplied to the model",
       },
       Effect.gen(function* () {
         const textGeneration = yield* TextGeneration;
@@ -216,6 +259,27 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
     ),
   );
 
+  it.effect("omits attachment metadata section when no attachments are provided", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          branch: "fix/session-timeout",
+        }),
+        stdinMustNotContain: "Attachment metadata:",
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generateBranchName({
+          cwd: process.cwd(),
+          message: "Fix timeout behavior.",
+        });
+
+        expect(generated.branch).toBe("fix/session-timeout");
+      }),
+    ),
+  );
+
   it.effect("passes image attachments through as codex image inputs", () =>
     withFakeCodexEnv(
       {
@@ -223,6 +287,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
           branch: "fix/ui-regression",
         }),
         requireImage: true,
+        stdinMustContain: "Attachment metadata:",
       },
       Effect.gen(function* () {
         const textGeneration = yield* TextGeneration;

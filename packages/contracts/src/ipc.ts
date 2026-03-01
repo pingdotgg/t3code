@@ -1,10 +1,6 @@
 import type {
   GitCheckoutInput,
   GitCreateBranchInput,
-  GitGenerateAndRenameBranchInput,
-  GitGenerateAndRenameBranchResult,
-  GitGenerateBranchNameInput,
-  GitGenerateBranchNameResult,
   GitRenameBranchInput,
   GitRenameBranchResult,
   GitCreateWorktreeInput,
@@ -80,10 +76,6 @@ export interface NativeApi {
     // Existing branch/worktree API
     listBranches: (input: GitListBranchesInput) => Promise<GitListBranchesResult>;
     createWorktree: (input: GitCreateWorktreeInput) => Promise<GitCreateWorktreeResult>;
-    generateBranchName: (input: GitGenerateBranchNameInput) => Promise<GitGenerateBranchNameResult>;
-    generateAndRenameBranch: (
-      input: GitGenerateAndRenameBranchInput,
-    ) => Promise<GitGenerateAndRenameBranchResult>;
     renameBranch: (input: GitRenameBranchInput) => Promise<GitRenameBranchResult>;
     removeWorktree: (input: GitRemoveWorktreeInput) => Promise<void>;
     createBranch: (input: GitCreateBranchInput) => Promise<void>;

@@ -54,7 +54,6 @@ import { clamp } from "effect/Number";
 import { Open } from "./open";
 import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore.ts";
-import { TextGeneration } from "./git/Services/TextGeneration.ts";
 import { ATTACHMENTS_ROUTE_PREFIX, tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
 
 /**
@@ -136,31 +135,6 @@ function stripRequestTag<T extends { _tag: string }>(body: T) {
   return Struct.omit(body, ["_tag"]);
 }
 
-const WORKTREE_BRANCH_PREFIX = "t3code";
-
-function buildGeneratedWorktreeBranchName(raw: string): string {
-  const normalized = raw
-    .trim()
-    .toLowerCase()
-    .replace(/^refs\/heads\//, "")
-    .replace(/['"`]/g, "");
-
-  const withoutPrefix = normalized.startsWith(`${WORKTREE_BRANCH_PREFIX}/`)
-    ? normalized.slice(`${WORKTREE_BRANCH_PREFIX}/`.length)
-    : normalized;
-
-  const branchFragment = withoutPrefix
-    .replace(/[^a-z0-9/_-]+/g, "-")
-    .replace(/\/+/g, "/")
-    .replace(/-+/g, "-")
-    .replace(/^[./_-]+|[./_-]+$/g, "")
-    .slice(0, 64)
-    .replace(/[./_-]+$/g, "");
-
-  const safeFragment = branchFragment.length > 0 ? branchFragment : "update";
-  return `${WORKTREE_BRANCH_PREFIX}/${safeFragment}`;
-}
-
 export type ServerCoreRuntimeServices =
   | OrchestrationEngineService
   | ProjectionSnapshotQuery
@@ -172,7 +146,6 @@ export type ServerRuntimeServices =
   | ServerCoreRuntimeServices
   | GitManager
   | GitCore
-  | TextGeneration
   | TerminalManager
   | Keybindings
   | Open;
@@ -211,7 +184,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
   const git = yield* GitCore;
-  const textGeneration = yield* TextGeneration;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -598,32 +570,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.gitCreateWorktree: {
         const body = stripRequestTag(request.body);
         return yield* git.createWorktree(body);
-      }
-
-      case WS_METHODS.gitGenerateBranchName: {
-        const body = stripRequestTag(request.body);
-        return yield* textGeneration.generateBranchName(body);
-      }
-
-      case WS_METHODS.gitGenerateAndRenameBranch: {
-        const body = stripRequestTag(request.body);
-        const generated = yield* textGeneration.generateBranchName({
-          cwd: body.cwd,
-          message: body.message,
-          ...(body.attachments !== undefined ? { attachments: body.attachments } : {}),
-        });
-        if (!generated.branch) {
-          return { branch: null };
-        }
-        const targetBranch = buildGeneratedWorktreeBranchName(generated.branch);
-        if (targetBranch === body.oldBranch) {
-          return { branch: body.oldBranch };
-        }
-        return yield* git.renameBranch({
-          cwd: body.cwd,
-          oldBranch: body.oldBranch,
-          newBranch: targetBranch,
-        });
       }
 
       case WS_METHODS.gitRenameBranch: {

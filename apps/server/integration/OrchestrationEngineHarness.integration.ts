@@ -23,6 +23,8 @@ import {
 
 import { CheckpointStoreLive } from "../src/checkpointing/Layers/CheckpointStore.ts";
 import { CheckpointStore } from "../src/checkpointing/Services/CheckpointStore.ts";
+import { GitCore, type GitCoreShape } from "../src/git/Services/GitCore.ts";
+import { TextGeneration, type TextGenerationShape } from "../src/git/Services/TextGeneration.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../src/persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../src/persistence/Layers/OrchestrationEventStore.ts";
 import { ProjectionCheckpointRepositoryLive } from "../src/persistence/Layers/ProjectionCheckpoints.ts";
@@ -227,8 +229,23 @@ export const makeOrchestrationIntegrationHarness = Effect.gen(function* () {
   const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
     Layer.provideMerge(runtimeServicesLayer),
   );
+  const gitCoreLayer = Layer.succeed(
+    GitCore,
+    {
+      renameBranch: (input: Parameters<GitCoreShape["renameBranch"]>[0]) =>
+        Effect.succeed({ branch: input.newBranch }),
+    } as unknown as GitCoreShape,
+  );
+  const textGenerationLayer = Layer.succeed(
+    TextGeneration,
+    {
+      generateBranchName: () => Effect.succeed({ branch: null }),
+    } as unknown as TextGenerationShape,
+  );
   const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
     Layer.provideMerge(runtimeServicesLayer),
+    Layer.provideMerge(gitCoreLayer),
+    Layer.provideMerge(textGenerationLayer),
   );
   const checkpointReactorLayer = CheckpointReactorLive.pipe(
     Layer.provideMerge(runtimeServicesLayer),

@@ -247,43 +247,6 @@ function buildTemporaryWorktreeBranchName(message: string): string {
   return `${WORKTREE_BRANCH_PREFIX}/${hashBranchSeed(seed)}`;
 }
 
-function imageReferenceForBranchNaming(image: ComposerImageAttachment): string {
-  const maybePath = (image.file as File & { path?: unknown }).path;
-  if (typeof maybePath === "string" && maybePath.trim().length > 0) {
-    return maybePath.trim();
-  }
-  return image.name;
-}
-
-function buildBranchNameGenerationMessage(
-  text: string,
-  images: ReadonlyArray<ComposerImageAttachment>,
-): string {
-  const trimmedText = text.trim();
-  const imageReferences = Array.from(
-    new Set(
-      images
-        .map((image) => imageReferenceForBranchNaming(image).trim())
-        .filter((reference) => reference.length > 0),
-    ),
-  );
-  const attachmentsSection =
-    imageReferences.length > 0
-      ? `Attached images:\n${imageReferences.map((reference) => `- ${reference}`).join("\n")}`
-      : "";
-
-  if (trimmedText.length > 0 && attachmentsSection.length > 0) {
-    return `${trimmedText}\n\n${attachmentsSection}`;
-  }
-  if (trimmedText.length > 0) {
-    return trimmedText;
-  }
-  if (attachmentsSection.length > 0) {
-    return attachmentsSection;
-  }
-  return "New worktree change";
-}
-
 const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
   pathValue: string;
   kind: "file" | "directory";
@@ -1530,7 +1493,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const composerImagesSnapshot = [...composerImages];
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
-    const branchNameMessage = buildBranchNameGenerationMessage(trimmed, composerImagesSnapshot);
     const turnAttachmentsPromise = Promise.all(
       composerImagesSnapshot.map(
         async (
@@ -1578,7 +1540,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setComposerHighlightedItemId(null);
 
     let attemptedTurnStart = false;
-    let pendingWorktreeBranchRename: Promise<void> | null = null;
     try {
       // On first message: lock in branch + create worktree if needed.
       if (baseBranchForWorktree) {
@@ -1603,36 +1564,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           threadId: threadIdForSend,
           branch: result.worktree.branch,
           worktreePath: result.worktree.path,
-        });
-        pendingWorktreeBranchRename = (async () => {
-          const turnAttachments = await turnAttachmentsPromise;
-          const renamed = await api.git.generateAndRenameBranch({
-            cwd: result.worktree.path,
-            oldBranch: result.worktree.branch,
-            message: branchNameMessage,
-            attachments: turnAttachments,
-          });
-          if (!renamed.branch || renamed.branch === result.worktree.branch) {
-            return;
-          }
-          await api.orchestration.dispatchCommand({
-            type: "thread.meta.update",
-            commandId: newCommandId(),
-            threadId: threadIdForSend,
-            branch: renamed.branch,
-            worktreePath: result.worktree.path,
-          });
-          dispatch({
-            type: "SET_THREAD_BRANCH",
-            threadId: threadIdForSend,
-            branch: renamed.branch,
-            worktreePath: result.worktree.path,
-          });
-        })().catch((error) => {
-          console.warn("Failed to rename generated worktree branch", {
-            threadId: threadIdForSend,
-            error: error instanceof Error ? error.message : String(error),
-          });
         });
         const setupScript = setupProjectScript(activeProject.scripts);
         if (setupScript) {
@@ -1683,9 +1614,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
         sandboxMode,
         createdAt: messageCreatedAt,
       });
-      if (pendingWorktreeBranchRename) {
-        void pendingWorktreeBranchRename;
-      }
     } catch (err) {
       if (
         !attemptedTurnStart &&
