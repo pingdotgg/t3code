@@ -7,6 +7,7 @@ Define a **breaking** canonical provider-runtime event model that can represent 
 - Claude Agent SDK types (`@anthropic-ai/claude-agent-sdk@0.2.62`)
 - Codex App Server protocol (`schema/json/*`, including `ServerNotification`, `ServerRequest`, `EventMsg`, and v2 payload schemas)
 - Codex TypeScript SDK thread events/items (`sdk/typescript/src/events.ts`, `items.ts`)
+- Cursor ACP protocol (`agent acp` JSON-RPC 2.0 over stdio)
 
 This is a mapping/spec document only (no downstream compatibility constraints).
 
@@ -24,7 +25,10 @@ type RuntimeEventRaw = {
     | "codex.eventmsg"
     | "claude.sdk.message"
     | "claude.sdk.permission"
-    | "codex.sdk.thread-event";
+    | "codex.sdk.thread-event"
+    | "cursor.acp.notification"
+    | "cursor.acp.request"
+    | "cursor.acp.response";
   method?: string;
   messageType?: string;
   payload: unknown;
@@ -464,7 +468,47 @@ EventMsg is broader than server notification coverage. Important equivalents:
 
 ---
 
-## 5) Codex SDK Thread Events -> Canonical Mapping
+## 5) Cursor ACP -> Canonical Mapping
+
+### 5.1 ACP session lifecycle (JSON-RPC methods)
+
+| Cursor ACP method                    | Canonical V2                                                             | Notes                                                                                         |
+| ------------------------------------ | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `initialize` (response)              | `session.configured`                                                     | preserve `protocolVersion`, `agentCapabilities`, `authMethods`                                |
+| `authenticate` (response)            | `auth.status`                                                            | success when empty result; errors map to `runtime.error(class=permission_error)`              |
+| `session/new` (response)             | `session.started` + `thread.started` + `session.state.changed(ready)`    | persist `sessionId` in `providerRefs.providerSessionId`; preserve `modes` in payload/raw      |
+| `session/load` (response)            | `session.started` + `thread.started` + `session.state.changed(ready)`    | resume path; note ACP requires `sessionId`, `cwd`, `mcpServers` in request                    |
+| `session/prompt` (response)          | `turn.completed`                                                         | map `stopReason` (`end_turn`, `cancelled`, etc.)                                              |
+| `session/cancel` (error `-32601`)    | `runtime.warning`                                                        | currently unsupported in observed ACP version; adapter should fall back to process interrupt   |
+
+### 5.2 ACP notifications (`session/update`)
+
+| Cursor ACP `update.sessionUpdate` | Canonical V2                             | Notes                                                                                       |
+| --------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `available_commands_update`       | `session.configured`                     | preserve `availableCommands`; optional secondary `runtime.warning` if list changes mid-turn |
+| `agent_thought_chunk`             | `content.delta` (`streamKind=reasoning_text`) | map `content.text`                                                                           |
+| `agent_message_chunk`             | `content.delta` (`streamKind=assistant_text`) | map `content.text`                                                                           |
+| `tool_call`                       | `item.started`                           | map `toolCallId` -> `itemId`; dedupe starts because ACP may emit multiple `tool_call` updates for the same id |
+| `tool_call_update` (`in_progress`) | `item.updated`                           | include status + partial metadata                                                           |
+| `tool_call_update` (`completed`)  | `item.completed`                         | include `rawOutput` summary when present (terminal stdout/stderr, search totals, etc.)     |
+
+### 5.3 ACP server requests (permission)
+
+| Cursor ACP request method       | Canonical V2                 | Notes                                                                                                         |
+| ------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `session/request_permission`    | `request.opened`             | `requestType` usually `command_execution_approval` for `kind=execute`; preserve options (`allow/reject`)    |
+| permission response sent by T3  | `request.resolved`           | map T3 decision -> ACP `optionId` (`allow-once`, `allow-always`, `reject-once`)                             |
+
+### 5.4 ACP runtime/error mapping notes
+
+1. Unknown session on `session/prompt` (`-32603`) -> `runtime.error(class=provider_error)` and terminate active turn as failed.
+2. Invalid params / method-not-found (`-32602`, `-32601`) -> `runtime.error(class=validation_error)` or `runtime.warning` depending recoverability.
+3. Concurrent `session/prompt` calls can cancel earlier prompt (`stopReason=cancelled`) -> emit `turn.completed(state=cancelled)` for the superseded turn.
+4. Keep all ACP envelopes in `raw` with `source` set to `cursor.acp.notification` or `cursor.acp.request`.
+
+---
+
+## 6) Codex SDK Thread Events -> Canonical Mapping
 
 (For parity with direct Codex SDK integrations and to cross-reference app-server behavior.)
 
@@ -483,24 +527,24 @@ Codex SDK `ThreadItem.type` (`agent_message`, `reasoning`, `command_execution`, 
 
 ---
 
-## 6) Cross-Provider Equivalence (Claude <-> Codex)
+## 7) Cross-Provider Equivalence (Claude <-> Codex <-> Cursor ACP)
 
-| Concept                     | Codex source                                 | Claude source                                               | Canonical                       |
-| --------------------------- | -------------------------------------------- | ----------------------------------------------------------- | ------------------------------- |
-| Turn start                  | `turn/started`                               | first active response turn + `sendTurn` start               | `turn.started`                  |
-| Turn completion             | `turn/completed`                             | `result`                                                    | `turn.completed`                |
-| Assistant text streaming    | `item/agentMessage/delta`                    | `stream_event content_block_delta[text_delta]`              | `content.delta(assistant_text)` |
-| Tool call start             | `item/started` with tool item                | `content_block_start tool_use/server_tool_use/mcp_tool_use` | `item.started`                  |
-| Tool call end               | `item/completed` with tool item              | `content_block_stop`                                        | `item.completed`                |
-| Approval required           | server request `.../requestApproval`         | `canUseTool` callback                                       | `request.opened`                |
-| Approval resolved           | `serverRequest/resolved` + response decision | callback resolution decision                                | `request.resolved`              |
-| Runtime error               | `error` notification / failed turn           | `result error_*` or assistant error                         | `runtime.error`                 |
-| Model reroute               | `model/rerouted`                             | (none native, but could appear as result/meta)              | `model.rerouted`                |
-| Session capabilities/config | `session_configured`/init responses          | `system:init`                                               | `session.configured`            |
+| Concept                     | Codex source                                 | Claude source                                               | Cursor ACP source                                 | Canonical                       |
+| --------------------------- | -------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------- | ------------------------------- |
+| Turn start                  | `turn/started`                               | first active response turn + `sendTurn` start               | `session/prompt` dispatch lifecycle               | `turn.started`                  |
+| Turn completion             | `turn/completed`                             | `result`                                                    | `session/prompt` response (`stopReason`)          | `turn.completed`                |
+| Assistant text streaming    | `item/agentMessage/delta`                    | `stream_event content_block_delta[text_delta]`              | `session/update:agent_message_chunk`              | `content.delta(assistant_text)` |
+| Reasoning/thought streaming | `item/reasoning/textDelta`                   | reasoning deltas in `stream_event`                          | `session/update:agent_thought_chunk`              | `content.delta(reasoning_text)` |
+| Tool call start             | `item/started` with tool item                | `content_block_start tool_use/server_tool_use/mcp_tool_use` | `session/update:tool_call`                        | `item.started`                  |
+| Tool call end               | `item/completed` with tool item              | `content_block_stop`                                        | `session/update:tool_call_update(completed)`      | `item.completed`                |
+| Approval required           | server request `.../requestApproval`         | `canUseTool` callback                                       | `session/request_permission`                      | `request.opened`                |
+| Approval resolved           | `serverRequest/resolved` + response decision | callback resolution decision                                | JSON-RPC response to permission request id        | `request.resolved`              |
+| Runtime error               | `error` notification / failed turn           | `result error_*` or assistant error                         | JSON-RPC error response (`-3260x` etc.)           | `runtime.error`                 |
+| Session capabilities/config | `session_configured`/init responses          | `system:init`                                               | `initialize` / `available_commands_update`        | `session.configured`            |
 
 ---
 
-## 7) Implementation Guidance
+## 8) Implementation Guidance
 
 1. Emit one canonical event per source message minimum; emit additional derived events when needed (for example `runtime.error` + `turn.completed`).
 2. Always attach `raw` payload so provider-specific detail is never lost.
@@ -513,7 +557,7 @@ Codex SDK `ThreadItem.type` (`agent_message`, `reasoning`, `command_execution`, 
 
 ---
 
-## 8) Summary of Breaking Schema Direction
+## 9) Summary of Breaking Schema Direction
 
 - Move from a small, chat-centric runtime union to an **item/lifecycle/protocol-complete canonical runtime model**.
 - Normalize Claude and Codex onto the same event families (`turn`, `item`, `content`, `request`, `task`, `hook`, `state`), keeping provider specifics in `payload` + `raw`.
