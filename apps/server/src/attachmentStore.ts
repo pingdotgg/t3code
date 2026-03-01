@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 
 import type { ChatAttachment } from "@t3tools/contracts";
 
@@ -10,17 +11,17 @@ import {
 import { inferImageExtension, SAFE_IMAGE_FILE_EXTENSIONS } from "./imageMime.ts";
 
 const ATTACHMENT_FILENAME_EXTENSIONS = [...SAFE_IMAGE_FILE_EXTENSIONS, ".bin"];
+const ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS = 80;
 
 function toSafeThreadAttachmentSegment(threadId: string): string | null {
-  const segment = encodeURIComponent(threadId);
-  if (
-    segment.length === 0 ||
-    segment === "." ||
-    segment === ".." ||
-    segment.includes("/") ||
-    segment.includes("\\") ||
-    segment.includes("\0")
-  ) {
+  const segment = threadId
+    .trim()
+    .replace(/[^a-z0-9_-]+/gi, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "")
+    .slice(0, ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS)
+    .replace(/[-_]+$/g, "");
+  if (segment.length === 0) {
     return null;
   }
   return segment;
@@ -73,7 +74,7 @@ export function resolveAttachmentPathById(input: {
       stateDir: input.stateDir,
       relativePath: `${normalizedId}${extension}`,
     });
-    if (maybePath) {
+    if (maybePath && existsSync(maybePath)) {
       return maybePath;
     }
   }
@@ -92,4 +93,3 @@ export function parseAttachmentIdFromRelativePath(relativePath: string): string 
   const id = normalized.slice(0, extensionIndex);
   return id.length > 0 && !id.includes(".") ? id : null;
 }
-

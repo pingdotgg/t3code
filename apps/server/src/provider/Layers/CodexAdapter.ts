@@ -489,10 +489,12 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
                 attachment,
               });
               if (!attachmentPath) {
-                return yield* toRequestError(
-                  input.sessionId,
-                  "turn/start",
-                  new Error(`Invalid attachment id '${attachment.id}'.`),
+                return yield* Effect.fail(
+                  toRequestError(
+                    input.sessionId,
+                    "turn/start",
+                    new Error(`Invalid attachment id '${attachment.id}'.`),
+                  ),
                 );
               }
               const bytes = yield* fileSystem.readFile(attachmentPath).pipe(

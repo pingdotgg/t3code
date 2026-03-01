@@ -348,18 +348,23 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
             return;
           }
 
-          const filePath =
-            !normalizedRelativePath.includes("/") && !normalizedRelativePath.includes(".")
-              ? resolveAttachmentPathById({
-                  stateDir: serverConfig.stateDir,
-                  attachmentId: normalizedRelativePath,
-                })
-              : resolveAttachmentRelativePath({
-                  stateDir: serverConfig.stateDir,
-                  relativePath: normalizedRelativePath,
-                });
+          const isIdLookup =
+            !normalizedRelativePath.includes("/") && !normalizedRelativePath.includes(".");
+          const filePath = isIdLookup
+            ? resolveAttachmentPathById({
+                stateDir: serverConfig.stateDir,
+                attachmentId: normalizedRelativePath,
+              })
+            : resolveAttachmentRelativePath({
+                stateDir: serverConfig.stateDir,
+                relativePath: normalizedRelativePath,
+              });
           if (!filePath) {
-            respond(400, { "Content-Type": "text/plain" }, "Invalid attachment path");
+            respond(
+              isIdLookup ? 404 : 400,
+              { "Content-Type": "text/plain" },
+              isIdLookup ? "Not Found" : "Invalid attachment path",
+            );
             return;
           }
 
