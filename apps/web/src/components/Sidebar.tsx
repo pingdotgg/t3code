@@ -348,24 +348,55 @@ export default function Sidebar() {
     ): Promise<void> => {
       const api = readNativeApi();
       if (!api) return Promise.resolve();
+      const hasBranchOption = options?.branch !== undefined;
+      const hasWorktreePathOption = options?.worktreePath !== undefined;
+      const applyThreadOptions = async (thread: Thread): Promise<void> => {
+        if (!hasBranchOption && !hasWorktreePathOption) {
+          return;
+        }
+        const nextBranch = hasBranchOption ? (options?.branch ?? null) : thread.branch;
+        const nextWorktreePath = hasWorktreePathOption
+          ? (options?.worktreePath ?? null)
+          : thread.worktreePath;
+        if (thread.branch === nextBranch && thread.worktreePath === nextWorktreePath) {
+          return;
+        }
+        await api.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId: thread.id,
+          ...(hasBranchOption ? { branch: nextBranch } : {}),
+          ...(hasWorktreePathOption ? { worktreePath: nextWorktreePath } : {}),
+        });
+        dispatch({
+          type: "SET_THREAD_BRANCH",
+          threadId: thread.id,
+          branch: nextBranch,
+          worktreePath: nextWorktreePath,
+        });
+      };
       const storedDraftThreadId = readProjectDraftThreadId(projectId);
       const storedDraftThread = storedDraftThreadId
         ? state.threads.find((thread) => thread.id === storedDraftThreadId)
         : undefined;
-      const reusableStoredDraftThreadId =
+      const reusableStoredDraftThread =
         storedDraftThread &&
         storedDraftThread.projectId === projectId &&
         !shouldShowThreadInSidebar(storedDraftThread)
-          ? storedDraftThread.id
+          ? storedDraftThread
           : null;
-      if (reusableStoredDraftThreadId) {
-        if (routeThreadId === reusableStoredDraftThreadId) {
-          return Promise.resolve();
-        }
-        return navigate({
-          to: "/$threadId",
-          params: { threadId: reusableStoredDraftThreadId },
-        });
+      if (reusableStoredDraftThread) {
+        return (async () => {
+          await applyThreadOptions(reusableStoredDraftThread);
+          writeProjectDraftThreadId(projectId, reusableStoredDraftThread.id);
+          if (routeThreadId === reusableStoredDraftThread.id) {
+            return;
+          }
+          await navigate({
+            to: "/$threadId",
+            params: { threadId: reusableStoredDraftThread.id },
+          });
+        })();
       }
       if (storedDraftThreadId) {
         clearProjectDraftThreadId(projectId);
@@ -374,15 +405,24 @@ export default function Sidebar() {
       const activeThread = routeThreadId
         ? state.threads.find((thread) => thread.id === routeThreadId)
         : undefined;
-      const reusableDraftThreadId =
+      const reusableDraftThread =
         activeThread &&
         activeThread.projectId === projectId &&
         !shouldShowThreadInSidebar(activeThread)
-          ? activeThread.id
+          ? activeThread
           : null;
-      if (reusableDraftThreadId) {
-        writeProjectDraftThreadId(projectId, reusableDraftThreadId);
-        return Promise.resolve();
+      if (reusableDraftThread) {
+        return (async () => {
+          await applyThreadOptions(reusableDraftThread);
+          writeProjectDraftThreadId(projectId, reusableDraftThread.id);
+          if (routeThreadId === reusableDraftThread.id) {
+            return;
+          }
+          await navigate({
+            to: "/$threadId",
+            params: { threadId: reusableDraftThread.id },
+          });
+        })();
       }
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
