@@ -111,6 +111,7 @@ import { newCommandId, newMessageId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import { getAppModelOptions, useAppSettings } from "../appSettings";
 import {
+  COMPOSER_DRAFT_STORAGE_KEY,
   type ComposerImageAttachment,
   type PersistedComposerImageAttachment,
   readPersistedComposerDraftAttachments,
@@ -241,6 +242,20 @@ function buildTemporaryWorktreeBranchName(): string {
   // Keep the 8-hex suffix shape for backend temporary-branch detection.
   const token = crypto.randomUUID().slice(0, 8).toLowerCase();
   return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+}
+
+function cloneComposerImageForRetry(image: ComposerImageAttachment): ComposerImageAttachment {
+  if (typeof URL === "undefined" || !image.previewUrl.startsWith("blob:")) {
+    return image;
+  }
+  try {
+    return {
+      ...image,
+      previewUrl: URL.createObjectURL(image.file),
+    };
+  } catch {
+    return image;
+  }
 }
 
 function readComposerDraftStorageChars(): number | null {
@@ -1765,7 +1780,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         );
         promptRef.current = trimmed;
         setPrompt(trimmed);
-        addComposerImagesToDraft(composerImagesSnapshot);
+        addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageForRetry));
         setComposerCursor(trimmed.length);
       }
       setThreadError(

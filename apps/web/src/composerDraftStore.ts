@@ -9,7 +9,7 @@ import type { ChatImageAttachment } from "./types";
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 
-const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
+export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
 
 const SAFE_LOCAL_STORAGE: StateStorage = {
   getItem: (key) => {
@@ -119,6 +119,11 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     model: null,
     effort: null,
   };
+}
+
+function composerImageDedupKey(image: ComposerImageAttachment): string {
+  const lastModified = Number.isFinite(image.file.lastModified) ? image.file.lastModified : 0;
+  return `${image.mimeType}\u0000${image.sizeBytes}\u0000${lastModified}\u0000${image.name}`;
 }
 
 function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
@@ -427,14 +432,22 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         set((state) => {
           const existing = state.draftsByThreadId[threadId] ?? createEmptyThreadDraft();
           const existingIds = new Set(existing.images.map((image) => image.id));
+          const existingDedupKeys = new Set(existing.images.map((image) => composerImageDedupKey(image)));
+          const acceptedPreviewUrls = new Set(existing.images.map((image) => image.previewUrl));
           const dedupedIncoming: ComposerImageAttachment[] = [];
           for (const image of images) {
-            if (existingIds.has(image.id)) {
-              revokeObjectPreviewUrl(image.previewUrl);
+            const dedupKey = composerImageDedupKey(image);
+            if (existingIds.has(image.id) || existingDedupKeys.has(dedupKey)) {
+              // Avoid revoking a blob URL that's still referenced by an accepted image.
+              if (!acceptedPreviewUrls.has(image.previewUrl)) {
+                revokeObjectPreviewUrl(image.previewUrl);
+              }
               continue;
             }
             dedupedIncoming.push(image);
             existingIds.add(image.id);
+            existingDedupKeys.add(dedupKey);
+            acceptedPreviewUrls.add(image.previewUrl);
           }
           if (dedupedIncoming.length === 0) {
             return state;
