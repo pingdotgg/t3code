@@ -421,7 +421,6 @@ const make = Effect.gen(function* () {
             { threadId: input.threadId, cwd, oldBranch, cause: Cause.pretty(cause) },
           ),
         ),
-        Effect.forkScoped,
       );
   });
 
@@ -464,7 +463,7 @@ const make = Effect.gen(function* () {
       messageId: message.id,
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: branchGenerationAttachments } : {}),
-    });
+    }).pipe(Effect.forkScoped);
 
     yield* sendTurnForThread({
       threadId: event.payload.threadId,

@@ -32,10 +32,22 @@ export const SAFE_IMAGE_FILE_EXTENSIONS = new Set([
 export function parseBase64DataUrl(
   dataUrl: string,
 ): { readonly mimeType: string; readonly base64: string } | null {
-  const match = /^data:([^;,]+);base64,([a-z0-9+/=\r\n]+)$/i.exec(dataUrl.trim());
+  const match = /^data:([^,]+),([a-z0-9+/=\r\n]+)$/i.exec(dataUrl.trim());
   if (!match) return null;
 
-  const mimeType = match[1]?.trim().toLowerCase();
+  const headerParts = (match[1] ?? "")
+    .split(";")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (headerParts.length < 2) {
+    return null;
+  }
+  const trailingToken = headerParts.at(-1)?.toLowerCase();
+  if (trailingToken !== "base64") {
+    return null;
+  }
+
+  const mimeType = headerParts[0]?.toLowerCase();
   const base64 = match[2]?.replace(/\s+/g, "");
   if (!mimeType || !base64) return null;
 
