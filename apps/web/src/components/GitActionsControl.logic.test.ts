@@ -515,20 +515,20 @@ describe("when: HEAD is detached and there are no local changes", () => {
 });
 
 describe("when: branch has no upstream configured", () => {
-  it("resolveQuickAction runs push when clean, no upstream, and no local commits are ahead", () => {
+  it("resolveQuickAction is disabled when clean, no upstream, and no local commits are ahead", () => {
     const quick = resolveQuickAction(
       status({ hasUpstream: false, pr: null, aheadCount: 0 }),
       false,
     );
     assert.deepInclude(quick, {
-      kind: "run_action",
-      action: "commit_push",
+      kind: "show_hint",
       label: "Push",
-      disabled: false,
+      hint: "No local commits to push.",
+      disabled: true,
     });
   });
 
-  it("resolveQuickAction runs push when clean and no upstream even if PR metadata exists", () => {
+  it("resolveQuickAction opens PR when clean, no upstream, no local commits are ahead, and PR exists", () => {
     const quick = resolveQuickAction(
       status({
         hasUpstream: false,
@@ -545,9 +545,8 @@ describe("when: branch has no upstream configured", () => {
       false,
     );
     assert.deepInclude(quick, {
-      kind: "run_action",
-      action: "commit_push",
-      label: "Push",
+      kind: "open_pr",
+      label: "Open PR",
       disabled: false,
     });
   });
@@ -576,7 +575,7 @@ describe("when: branch has no upstream configured", () => {
     });
   });
 
-  it("buildMenuItems enables push but keeps create PR disabled when no commits are ahead", () => {
+  it("buildMenuItems disables push and create PR when no commits are ahead", () => {
     const items = buildMenuItems(
       status({ hasUpstream: false, pr: null, aheadCount: 0 }),
       false,
@@ -593,7 +592,7 @@ describe("when: branch has no upstream configured", () => {
       {
         id: "push",
         label: "Push",
-        disabled: false,
+        disabled: true,
         icon: "push",
         kind: "open_dialog",
         dialogAction: "push",
@@ -659,12 +658,31 @@ describe("when: branch has no upstream configured", () => {
     ]);
   });
 
-  it("resolveQuickAction uses push-only on default branch when no upstream exists", () => {
+  it("resolveQuickAction is disabled on default branch when no upstream exists and no commits are ahead", () => {
     const quick = resolveQuickAction(
       status({
         branch: "main",
         hasUpstream: false,
         aheadCount: 0,
+        pr: null,
+      }),
+      false,
+      true,
+    );
+    assert.deepInclude(quick, {
+      kind: "show_hint",
+      label: "Push",
+      hint: "No local commits to push.",
+      disabled: true,
+    });
+  });
+
+  it("resolveQuickAction uses push-only on default branch when no upstream exists and commits are ahead", () => {
+    const quick = resolveQuickAction(
+      status({
+        branch: "main",
+        hasUpstream: false,
+        aheadCount: 1,
         pr: null,
       }),
       false,

@@ -551,6 +551,56 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect(
+    "pushes and creates PR from a no-upstream branch when local commits are ahead of base",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/no-upstream-pr"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        fs.writeFileSync(path.join(repoDir, "feature.txt"), "feature\n");
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListSequence: [
+              "[]",
+              JSON.stringify([
+                {
+                  number: 77,
+                  title: "Add no-upstream PR flow",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/77",
+                  baseRefName: "main",
+                  headRefName: "feature/no-upstream-pr",
+                },
+              ]),
+            ],
+          },
+        });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        });
+
+        expect(result.commit.status).toBe("created");
+        expect(result.push.status).toBe("pushed");
+        expect(result.push.setUpstream).toBe(true);
+        expect(result.pr.status).toBe("created");
+        expect(
+          yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"]).pipe(
+            Effect.map((result) => result.stdout.trim()),
+          ),
+        ).toBe("origin/feature/no-upstream-pr");
+        expect(
+          ghCalls.some((call) =>
+            call.includes("pr create --base main --head feature/no-upstream-pr"),
+          ),
+        ).toBe(true);
+      }),
+  );
+
   it.effect("skips push when branch is already up to date", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

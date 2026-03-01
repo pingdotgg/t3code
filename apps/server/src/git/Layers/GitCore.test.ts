@@ -1141,6 +1141,42 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect("computes ahead count against base branch when no upstream is configured", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const core = yield* GitCore;
+
+        yield* core.createBranch({ cwd: tmp, branch: "feature/no-upstream-ahead" });
+        yield* core.checkoutBranch({ cwd: tmp, branch: "feature/no-upstream-ahead" });
+        yield* writeTextFile(path.join(tmp, "feature.txt"), "ahead of base\n");
+        yield* git(tmp, ["add", "feature.txt"]);
+        yield* git(tmp, ["commit", "-m", "feature commit"]);
+
+        const details = yield* core.statusDetails(tmp);
+        expect(details.branch).toBe("feature/no-upstream-ahead");
+        expect(details.hasUpstream).toBe(false);
+        expect(details.aheadCount).toBe(1);
+        expect(details.behindCount).toBe(0);
+      }),
+    );
+
+    it.effect("skips push when no upstream is configured and branch is not ahead of base", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const core = yield* GitCore;
+
+        yield* core.createBranch({ cwd: tmp, branch: "feature/no-upstream-no-ahead" });
+        yield* core.checkoutBranch({ cwd: tmp, branch: "feature/no-upstream-no-ahead" });
+
+        const pushed = yield* core.pushCurrentBranch(tmp, null);
+        expect(pushed.status).toBe("skipped_up_to_date");
+        expect(pushed.branch).toBe("feature/no-upstream-no-ahead");
+        expect(pushed.setUpstream).toBeUndefined();
+      }),
+    );
+
     it.effect("includes command context when worktree removal fails", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

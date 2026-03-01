@@ -87,9 +87,6 @@ function getMenuActionDisabledReason(
     if (isBehind) {
       return "Branch is behind upstream. Pull/rebase before pushing.";
     }
-    if (!gitStatus.hasUpstream) {
-      return "Branch has no upstream. Push to publish it.";
-    }
     if (!isAhead) {
       return "No local commits to push.";
     }
@@ -104,9 +101,6 @@ function getMenuActionDisabledReason(
   }
   if (hasChanges) {
     return "Commit local changes before creating a PR.";
-  }
-  if (!gitStatus.hasUpstream) {
-    return "Set an upstream branch before creating a PR.";
   }
   if (!isAhead) {
     return "No local commits to include in a PR.";

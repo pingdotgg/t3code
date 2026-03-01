@@ -7,6 +7,7 @@ import { GitCore, type GitCoreShape } from "../Services/GitCore.ts";
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
+const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
 
 class StatusUpstreamRefreshCacheKey extends Data.Class<{
   cwd: string;
@@ -159,6 +160,16 @@ function deriveLocalBranchNameFromRemoteRef(branchName: string): string | null {
 
 function commandLabel(args: readonly string[]): string {
   return `git ${args.join(" ")}`;
+}
+
+function parseDefaultBranchFromRemoteHeadRef(value: string): string | null {
+  const trimmed = value.trim();
+  const prefix = "refs/remotes/origin/";
+  if (!trimmed.startsWith(prefix)) {
+    return null;
+  }
+  const branch = trimmed.slice(prefix.length).trim();
+  return branch.length > 0 ? branch : null;
 }
 
 function createGitCommandError(
@@ -340,6 +351,79 @@ const makeGitCore = Effect.gen(function* () {
       yield* fetchUpstreamRef(cwd, upstream);
     });
 
+  const resolveDefaultBranchName = (cwd: string): Effect.Effect<string | null, GitCommandError> =>
+    executeGit("GitCore.resolveDefaultBranchName", cwd, ["symbolic-ref", "refs/remotes/origin/HEAD"], {
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.map((result) => {
+        if (result.code !== 0) {
+          return null;
+        }
+        return parseDefaultBranchFromRemoteHeadRef(result.stdout);
+      }),
+    );
+
+  const branchExists = (cwd: string, branch: string): Effect.Effect<boolean, GitCommandError> =>
+    executeGit("GitCore.branchExists", cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
+      allowNonZeroExit: true,
+    }).pipe(Effect.map((result) => result.code === 0));
+
+  const resolveBaseBranchForNoUpstream = (
+    cwd: string,
+    branch: string,
+  ): Effect.Effect<string | null, GitCommandError> =>
+    Effect.gen(function* () {
+      const configuredBaseBranch = yield* runGitStdout(
+        "GitCore.resolveBaseBranchForNoUpstream.config",
+        cwd,
+        ["config", "--get", `branch.${branch}.gh-merge-base`],
+        true,
+      ).pipe(Effect.map((stdout) => stdout.trim()));
+
+      const defaultBranch = yield* resolveDefaultBranchName(cwd);
+      const candidates = [
+        configuredBaseBranch.length > 0 ? configuredBaseBranch : null,
+        defaultBranch,
+        ...DEFAULT_BASE_BRANCH_CANDIDATES,
+      ];
+
+      for (const candidate of candidates) {
+        if (!candidate || candidate === branch) {
+          continue;
+        }
+
+        if (yield* branchExists(cwd, candidate)) {
+          return candidate;
+        }
+      }
+
+      return null;
+    });
+
+  const computeAheadCountAgainstBase = (
+    cwd: string,
+    branch: string,
+  ): Effect.Effect<number, GitCommandError> =>
+    Effect.gen(function* () {
+      const baseBranch = yield* resolveBaseBranchForNoUpstream(cwd, branch);
+      if (!baseBranch) {
+        return 0;
+      }
+
+      const result = yield* executeGit(
+        "GitCore.computeAheadCountAgainstBase",
+        cwd,
+        ["rev-list", "--count", `${baseBranch}..HEAD`],
+        { allowNonZeroExit: true },
+      );
+      if (result.code !== 0) {
+        return 0;
+      }
+
+      const parsed = Number.parseInt(result.stdout.trim(), 10);
+      return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+    });
+
   const readBranchRecency = (cwd: string): Effect.Effect<Map<string, number>, GitCommandError> =>
     Effect.gen(function* () {
       const branchRecency = yield* executeGit(
@@ -429,6 +513,14 @@ const makeGitCore = Effect.gen(function* () {
           if (pathValue) changedFilesWithoutNumstat.add(pathValue);
         }
       }
+
+      if (!upstreamRef && branch) {
+        aheadCount = yield* computeAheadCountAgainstBase(cwd, branch).pipe(
+          Effect.catch(() => Effect.succeed(0)),
+        );
+        behindCount = 0;
+      }
+
       const stagedEntries = parseNumstatEntries(stagedNumstatStdout);
       const unstagedEntries = parseNumstatEntries(unstagedNumstatStdout);
       const fileStatMap = new Map<string, { insertions: number; deletions: number }>();
@@ -538,7 +630,7 @@ const makeGitCore = Effect.gen(function* () {
         );
       }
 
-      if (details.hasUpstream && details.aheadCount === 0 && details.behindCount === 0) {
+      if (details.aheadCount === 0 && details.behindCount === 0) {
         return {
           status: "skipped_up_to_date" as const,
           branch,

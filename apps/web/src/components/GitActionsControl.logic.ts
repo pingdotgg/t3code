@@ -111,14 +111,8 @@ export function buildMenuItems(
   const hasChanges = gitStatus.hasWorkingTreeChanges;
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isBehind = gitStatus.behindCount > 0;
-  const canPublishUntrackedBranch = !gitStatus.hasUpstream;
   const canCommit = !isBusy && hasChanges;
-  const canPush =
-    !isBusy &&
-    hasBranch &&
-    !hasChanges &&
-    !isBehind &&
-    (gitStatus.aheadCount > 0 || canPublishUntrackedBranch);
+  const canPush = !isBusy && hasBranch && !hasChanges && !isBehind && gitStatus.aheadCount > 0;
   const canCreatePr =
     !isBusy &&
     hasBranch &&
@@ -211,10 +205,18 @@ export function resolveQuickAction(
   }
 
   if (!gitStatus.hasUpstream) {
-    if (hasOpenPr || isDefaultBranch) {
-      return { label: "Push", disabled: false, kind: "run_action", action: "commit_push" };
-    }
     if (!isAhead) {
+      if (hasOpenPr) {
+        return { label: "Open PR", disabled: false, kind: "open_pr" };
+      }
+      return {
+        label: "Push",
+        disabled: true,
+        kind: "show_hint",
+        hint: "No local commits to push.",
+      };
+    }
+    if (hasOpenPr || isDefaultBranch) {
       return { label: "Push", disabled: false, kind: "run_action", action: "commit_push" };
     }
     return {
