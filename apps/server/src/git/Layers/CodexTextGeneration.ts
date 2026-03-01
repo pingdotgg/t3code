@@ -20,35 +20,6 @@ const CODEX_MODEL = "gpt-5.3-codex";
 const CODEX_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
 
-const COMMIT_OUTPUT_SCHEMA_JSON = {
-  type: "object",
-  properties: {
-    subject: { type: "string" },
-    body: { type: "string" },
-  },
-  required: ["subject", "body"],
-  additionalProperties: false,
-} as const;
-
-const PR_OUTPUT_SCHEMA_JSON = {
-  type: "object",
-  properties: {
-    title: { type: "string" },
-    body: { type: "string" },
-  },
-  required: ["title", "body"],
-  additionalProperties: false,
-} as const;
-
-const BRANCH_NAME_OUTPUT_SCHEMA_JSON = {
-  type: "object",
-  properties: {
-    branch: { type: "string" },
-  },
-  required: ["branch"],
-  additionalProperties: false,
-} as const;
-
 function normalizeCodexError(
   operation: string,
   error: unknown,
@@ -83,44 +54,6 @@ function normalizeCodexError(
     detail: fallback,
     cause: error,
   });
-}
-
-function parseCommitOutput(raw: unknown): { subject: string; body: string } {
-  if (!raw || typeof raw !== "object") {
-    throw new Error("Codex returned a non-object commit message payload.");
-  }
-  const record = raw as Record<string, unknown>;
-  const subject = typeof record.subject === "string" ? record.subject.trim() : "";
-  const body = typeof record.body === "string" ? record.body : "";
-  if (subject.length === 0) {
-    throw new Error("Codex returned an empty commit subject.");
-  }
-  return { subject, body };
-}
-
-function parsePrOutput(raw: unknown): { title: string; body: string } {
-  if (!raw || typeof raw !== "object") {
-    throw new Error("Codex returned a non-object PR payload.");
-  }
-  const record = raw as Record<string, unknown>;
-  const title = typeof record.title === "string" ? record.title.trim() : "";
-  const body = typeof record.body === "string" ? record.body.trim() : "";
-  if (title.length === 0 || body.length === 0) {
-    throw new Error("Codex returned an invalid PR title/body payload.");
-  }
-  return { title, body };
-}
-
-function parseBranchNameOutput(raw: unknown): { branch: string } {
-  if (!raw || typeof raw !== "object") {
-    throw new Error("Codex returned a non-object branch payload.");
-  }
-  const record = raw as Record<string, unknown>;
-  const branch = typeof record.branch === "string" ? record.branch.trim() : "";
-  if (branch.length === 0) {
-    throw new Error("Codex returned an empty branch name payload.");
-  }
-  return { branch };
 }
 
 function limitSection(value: string, maxChars: number): string {
@@ -276,20 +209,19 @@ const makeCodexTextGeneration = Effect.gen(function* () {
           continue;
         }
 
-        const persistedPath =
-          Option.isSome(serverConfig)
-            ? resolveAttachmentRoutePath({
-                stateDir: serverConfig.value.stateDir,
-                dataUrl: attachment.dataUrl,
-              })
-            : null;
+        const persistedPath = Option.isSome(serverConfig)
+          ? resolveAttachmentRoutePath({
+              stateDir: serverConfig.value.stateDir,
+              dataUrl: attachment.dataUrl,
+            })
+          : null;
         const localPath = persistedPath ?? attachment.dataUrl;
         if (!path.isAbsolute(localPath)) {
           continue;
         }
-        const fileInfo = yield* fileSystem.stat(localPath).pipe(
-          Effect.catch(() => Effect.succeed(null)),
-        );
+        const fileInfo = yield* fileSystem
+          .stat(localPath)
+          .pipe(Effect.catch(() => Effect.succeed(null)));
         if (!fileInfo || fileInfo.type !== "File") {
           continue;
         }
@@ -298,26 +230,24 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       return imagePaths;
     });
 
-  const runCodexJson = <T>({
+  const runCodexJson = <S extends Schema.Top>({
     operation,
     cwd,
     prompt,
     outputSchemaJson,
     imagePaths = [],
-    parse,
   }: {
     operation: "generateCommitMessage" | "generatePrContent" | "generateBranchName";
     cwd: string;
     prompt: string;
-    outputSchemaJson: object;
+    outputSchemaJson: S;
     imagePaths?: ReadonlyArray<string>;
-    parse: (raw: unknown) => T;
-  }): Effect.Effect<T, TextGenerationError> =>
+  }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
       const schemaPath = yield* writeTempFile(
         operation,
         "codex-schema",
-        JSON.stringify(outputSchemaJson),
+        JSON.stringify(Schema.toJsonSchemaDocument(outputSchemaJson).schema),
       );
       const outputPath = yield* writeTempFile(operation, "codex-output", "");
 
@@ -406,7 +336,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
           ),
         );
 
-        const rawOutput = yield* fileSystem.readFileString(outputPath).pipe(
+        return yield* fileSystem.readFileString(outputPath).pipe(
           Effect.mapError(
             (cause) =>
               new TextGenerationError({
@@ -415,30 +345,17 @@ const makeCodexTextGeneration = Effect.gen(function* () {
                 cause,
               }),
           ),
+          Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson))),
+          Effect.catchTag("SchemaError", (cause) =>
+            Effect.fail(
+              new TextGenerationError({
+                operation,
+                detail: "Codex returned invalid structured output.",
+                cause,
+              }),
+            ),
+          ),
         );
-        const trimmed = rawOutput.trim();
-        if (trimmed.length === 0) {
-          return yield* new TextGenerationError({
-            operation,
-            detail: "Codex returned an empty response.",
-          });
-        }
-
-        const parsedJson = yield* Effect.try({
-          try: () => JSON.parse(trimmed) as unknown,
-          catch: (cause) =>
-            new TextGenerationError({
-              operation,
-              detail: "Codex returned invalid JSON output.",
-              cause,
-            }),
-        });
-
-        return yield* Effect.try({
-          try: () => parse(parsedJson),
-          catch: (cause) =>
-            normalizeCodexError(operation, cause, "Codex returned invalid structured output"),
-        });
       }).pipe(Effect.ensuring(cleanup));
     });
 
@@ -464,8 +381,10 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       operation: "generateCommitMessage",
       cwd: input.cwd,
       prompt,
-      outputSchemaJson: COMMIT_OUTPUT_SCHEMA_JSON,
-      parse: (raw) => parseCommitOutput(raw),
+      outputSchemaJson: Schema.Struct({
+        subject: Schema.String,
+        body: Schema.String,
+      }),
     }).pipe(
       Effect.map(
         (generated) =>
@@ -504,8 +423,10 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       operation: "generatePrContent",
       cwd: input.cwd,
       prompt,
-      outputSchemaJson: PR_OUTPUT_SCHEMA_JSON,
-      parse: (raw) => parsePrOutput(raw),
+      outputSchemaJson: Schema.Struct({
+        title: Schema.String,
+        body: Schema.String,
+      }),
     }).pipe(
       Effect.map(
         (generated) =>
@@ -519,9 +440,13 @@ const makeCodexTextGeneration = Effect.gen(function* () {
 
   const generateBranchName: TextGenerationShape["generateBranchName"] = (input) => {
     return Effect.gen(function* () {
-      const imagePaths = yield* materializeImageAttachments("generateBranchName", input.attachments);
+      const imagePaths = yield* materializeImageAttachments(
+        "generateBranchName",
+        input.attachments,
+      );
       const attachmentLines = (input.attachments ?? []).map(
-        (attachment) => `- ${attachment.name} (${attachment.mimeType}, ${attachment.sizeBytes} bytes)`,
+        (attachment) =>
+          `- ${attachment.name} (${attachment.mimeType}, ${attachment.sizeBytes} bytes)`,
       );
 
       const promptSections = [
@@ -549,9 +474,10 @@ const makeCodexTextGeneration = Effect.gen(function* () {
         operation: "generateBranchName",
         cwd: input.cwd,
         prompt,
-        outputSchemaJson: BRANCH_NAME_OUTPUT_SCHEMA_JSON,
+        outputSchemaJson: Schema.Struct({
+          branch: Schema.String,
+        }),
         imagePaths,
-        parse: (raw) => parseBranchNameOutput(raw),
       });
 
       return {

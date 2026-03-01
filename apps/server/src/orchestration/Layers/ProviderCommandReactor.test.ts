@@ -122,7 +122,7 @@ describe("ProviderCommandReactor", () => {
         branch: "t3code/generated-name",
       }),
     );
-    const generateBranchName = vi.fn((_: unknown) =>
+    const generateBranchName = vi.fn<TextGenerationShape["generateBranchName"]>(() =>
       Effect.succeed({
         branch: "generated-name",
       }),
@@ -152,18 +152,13 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
       Layer.provideMerge(Layer.succeed(GitCore, { renameBranch } as unknown as GitCoreShape)),
       Layer.provideMerge(
-        Layer.succeed(
-          TextGeneration,
-          { generateBranchName } as unknown as TextGenerationShape,
-        ),
+        Layer.succeed(TextGeneration, { generateBranchName } as unknown as TextGenerationShape),
       ),
     );
     const layer =
       input?.stateDir !== undefined
         ? liveLayer.pipe(
-            Layer.provideMerge(
-              Layer.succeed(ServerConfig, makeTestServerConfig(input.stateDir)),
-            ),
+            Layer.provideMerge(Layer.succeed(ServerConfig, makeTestServerConfig(input.stateDir))),
           )
         : liveLayer;
     runtime = ManagedRuntime.make(layer);
@@ -311,7 +306,9 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => {
       const readModel = Effect.runSync(harness.engine.getReadModel());
-      const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+      const thread = readModel.threads.find(
+        (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
+      );
       return thread?.branch === "t3code/generated-name";
     });
   });
@@ -628,8 +625,8 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
 
-    harness.startSession.mockImplementationOnce((_: unknown, __: unknown) =>
-      Effect.fail(new Error("simulated restart failure")) as never,
+    harness.startSession.mockImplementationOnce(
+      (_: unknown, __: unknown) => Effect.fail(new Error("simulated restart failure")) as never,
     );
 
     await Effect.runPromise(
