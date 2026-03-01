@@ -2,8 +2,6 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 
-export const ATTACHMENTS_ROUTE_PREFIX = "/attachments";
-
 const FAVICON_MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",

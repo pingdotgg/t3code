@@ -38,8 +38,11 @@ import {
   type OrchestrationProjectionPipelineShape,
 } from "../Services/ProjectionPipeline.ts";
 import { attachmentRouteToRelativePath } from "../../attachmentPaths.ts";
-import { ATTACHMENTS_ROUTE_PREFIX } from "../../projectFaviconRoute.ts";
-import { inferImageExtension, parseBase64DataUrl } from "../../imageMime.ts";
+import {
+  ATTACHMENTS_ROUTE_PREFIX,
+  inferImageExtension,
+  parseBase64DataUrl,
+} from "../../imageMime.ts";
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",

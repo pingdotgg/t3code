@@ -1,14 +1,10 @@
 import path from "node:path";
 
-import { ATTACHMENTS_ROUTE_PREFIX } from "./projectFaviconRoute.ts";
+import { ATTACHMENTS_ROUTE_PREFIX } from "./imageMime.ts";
 
 export function normalizeAttachmentRelativePath(rawRelativePath: string): string | null {
   const normalized = path.normalize(rawRelativePath).replace(/^[/\\]+/, "");
-  if (
-    normalized.length === 0 ||
-    normalized.startsWith("..") ||
-    normalized.includes("\0")
-  ) {
+  if (normalized.length === 0 || normalized.startsWith("..") || normalized.includes("\0")) {
     return null;
   }
   return normalized.replace(/\\/g, "/");
