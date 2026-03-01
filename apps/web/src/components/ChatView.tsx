@@ -53,7 +53,6 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_THREAD_TERMINAL_COUNT,
   type ChatMessage,
-  type ChatImageAttachment,
   type TurnDiffSummary,
 } from "../types";
 import { basenameOfPath, getVscodeIconUrlForEntry } from "../vscode-icons";
@@ -111,6 +110,14 @@ import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import { getAppModelOptions, useAppSettings } from "../appSettings";
+import {
+  type ComposerImageAttachment,
+  type PersistedComposerImageAttachment,
+  readPersistedComposerDraftAttachments,
+  useComposerDraftStore,
+  useComposerThreadDraft,
+} from "../composerDraftStore";
+import { clearProjectDraftThreadById } from "../projectDraftThreads";
 import { clamp } from "effect/Number";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
@@ -130,6 +137,8 @@ const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 const WORKTREE_BRANCH_PREFIX = "t3code";
+const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
+const ENABLE_DRAFT_PERSIST_DEBUG_LOGS = import.meta.env.DEV;
 
 function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
   const stored = localStorage.getItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
@@ -154,11 +163,6 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   if (tone === "tool") return "text-muted-foreground/70";
   if (tone === "thinking") return "text-muted-foreground/50";
   return "text-muted-foreground/40";
-}
-
-interface ComposerImageAttachment extends Omit<ChatImageAttachment, "previewUrl"> {
-  previewUrl: string;
-  file: File;
 }
 
 interface ExpandedImageItem {
@@ -237,6 +241,25 @@ function buildTemporaryWorktreeBranchName(): string {
   // Keep the 8-hex suffix shape for backend temporary-branch detection.
   const token = crypto.randomUUID().slice(0, 8).toLowerCase();
   return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+}
+
+function readComposerDraftStorageChars(): number | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(COMPOSER_DRAFT_STORAGE_KEY);
+    return raw?.length ?? 0;
+  } catch {
+    return null;
+  }
+}
+
+function debugDraftPersist(message: string, payload: Record<string, unknown>): void {
+  if (!ENABLE_DRAFT_PERSIST_DEBUG_LOGS) {
+    return;
+  }
+  console.debug(`[draft-persist] ${message}`, payload);
 }
 
 const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
@@ -372,23 +395,38 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
   const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
-  const [prompt, setPrompt] = useState("");
+  const composerDraft = useComposerThreadDraft(threadId);
+  const prompt = composerDraft.prompt;
+  const composerImages = composerDraft.images;
+  const composerCursor = composerDraft.cursor;
+  const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
+  const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const setComposerDraftCursor = useComposerDraftStore((store) => store.setCursor);
+  const setComposerDraftModel = useComposerDraftStore((store) => store.setModel);
+  const setComposerDraftEffort = useComposerDraftStore((store) => store.setEffort);
+  const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
+  const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
+  const removeComposerDraftImage = useComposerDraftStore((store) => store.removeImage);
+  const clearComposerDraftPersistedAttachments = useComposerDraftStore(
+    (store) => store.clearPersistedAttachments,
+  );
+  const syncComposerDraftPersistedAttachments = useComposerDraftStore(
+    (store) => store.syncPersistedAttachments,
+  );
+  const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const promptRef = useRef(prompt);
-  const [composerImages, setComposerImages] = useState<ComposerImageAttachment[]>([]);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
-  const [selectedEffort, setSelectedEffort] = useState(DEFAULT_REASONING);
   const [envMode, setEnvMode] = useState<"local" | "worktree">("local");
   const [isSwitchingRuntimeMode, setIsSwitchingRuntimeMode] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
-  const [composerCursor, setComposerCursor] = useState(0);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useState<
     Record<string, string>
@@ -401,6 +439,37 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const sendInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
+
+  const setPrompt = useCallback(
+    (nextPrompt: string) => {
+      setComposerDraftPrompt(threadId, nextPrompt);
+    },
+    [setComposerDraftPrompt, threadId],
+  );
+  const setComposerCursor = useCallback(
+    (nextCursor: number) => {
+      setComposerDraftCursor(threadId, nextCursor);
+    },
+    [setComposerDraftCursor, threadId],
+  );
+  const addComposerImage = useCallback(
+    (image: ComposerImageAttachment) => {
+      addComposerDraftImage(threadId, image);
+    },
+    [addComposerDraftImage, threadId],
+  );
+  const addComposerImagesToDraft = useCallback(
+    (images: ComposerImageAttachment[]) => {
+      addComposerDraftImages(threadId, images);
+    },
+    [addComposerDraftImages, threadId],
+  );
+  const removeComposerImageFromDraft = useCallback(
+    (imageId: string) => {
+      removeComposerDraftImage(threadId, imageId);
+    },
+    [removeComposerDraftImage, threadId],
+  );
 
   const activeThread = state.threads.find((t) => t.id === threadId);
   const diffSearch = useMemo(
@@ -435,8 +504,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
 
   const selectedModel = resolveModelSlug(
-    activeThread?.model ?? activeProject?.model ?? DEFAULT_MODEL,
+    composerDraft.model ?? activeThread?.model ?? activeProject?.model ?? DEFAULT_MODEL,
   );
+  const selectedEffort = composerDraft.effort ?? DEFAULT_REASONING;
   const modelOptions = useMemo(
     () => getAppModelOptions(settings.customCodexModels, selectedModel),
     [selectedModel, settings.customCodexModels],
@@ -645,6 +715,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       null,
     [composerHighlightedItemId, composerMenuItems],
   );
+  const nonPersistedComposerImageIdSet = useMemo(
+    () => new Set(nonPersistedComposerImageIds),
+    [nonPersistedComposerImageIds],
+  );
   const keybindings = keybindingsQuery.data ?? EMPTY_KEYBINDINGS;
   const threadTerminalRuntimeEnv = useMemo(() => {
     if (!activeProject?.cwd) return {};
@@ -693,12 +767,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const hasReachedTerminalLimit =
     (activeThread?.terminalIds.length ?? 0) >= MAX_THREAD_TERMINAL_COUNT;
 
-  const revokePreviewUrls = useCallback((images: Array<{ previewUrl?: string }>) => {
-    for (const image of images) {
-      if (!image.previewUrl) continue;
-      URL.revokeObjectURL(image.previewUrl);
-    }
-  }, []);
   const focusComposer = useCallback(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -1088,26 +1156,115 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeThread?.id, activeThread?.messages]);
 
   useEffect(() => {
-    setComposerImages((existing) => {
-      revokePreviewUrls(existing);
-      return [];
-    });
+    promptRef.current = prompt;
+  }, [prompt]);
+
+  useEffect(() => {
     setOptimisticUserMessages([]);
-    setPrompt("");
-    promptRef.current = "";
     setSendPhase("idle");
-    setComposerCursor(0);
     setComposerHighlightedItemId(null);
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     setExpandedImage(null);
-  }, [activeThread?.id, revokePreviewUrls]);
+  }, [threadId]);
 
   useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (composerImages.length === 0) {
+        clearComposerDraftPersistedAttachments(threadId);
+        return;
+      }
+      try {
+        const currentPersistedAttachments =
+          useComposerDraftStore.getState().draftsByThreadId[threadId]?.persistedAttachments ?? [];
+        const existingPersistedById = new Map(
+          currentPersistedAttachments.map((attachment) => [attachment.id, attachment]),
+        );
+        const stagedAttachmentById = new Map<string, PersistedComposerImageAttachment>();
+        const serializationFailedImageIds: string[] = [];
+        await Promise.all(
+          composerImages.map(async (image) => {
+            try {
+              const dataUrl = await readFileAsDataUrl(image.file);
+              stagedAttachmentById.set(image.id, {
+                id: image.id,
+                name: image.name,
+                mimeType: image.mimeType,
+                sizeBytes: image.sizeBytes,
+                dataUrl,
+              });
+            } catch {
+              const existingPersisted = existingPersistedById.get(image.id);
+              if (existingPersisted) {
+                stagedAttachmentById.set(image.id, existingPersisted);
+              } else {
+                serializationFailedImageIds.push(image.id);
+              }
+            }
+          }),
+        );
+        const serialized = Array.from(stagedAttachmentById.values());
+        if (cancelled) {
+          return;
+        }
+        // Stage attachments in persisted draft state first so persist middleware can write them.
+        const stagedAttachmentIds = serialized.map((attachment) => attachment.id);
+        debugDraftPersist("stage", {
+          threadId,
+          attachmentCount: serialized.length,
+          serializationFailedCount: serializationFailedImageIds.length,
+          serializationFailedImageIds,
+          attachmentMeta: serialized.map((attachment) => ({
+            id: attachment.id,
+            name: attachment.name,
+            sizeBytes: attachment.sizeBytes,
+            dataUrlChars: attachment.dataUrl.length,
+          })),
+          storageCharsBefore: readComposerDraftStorageChars(),
+        });
+        syncComposerDraftPersistedAttachments(
+          threadId,
+          serialized,
+        );
+        debugDraftPersist("reconcile-request", {
+          threadId,
+          stagedCount: stagedAttachmentIds.length,
+          serializationFailedCount: serializationFailedImageIds.length,
+          storageCharsAfter: readComposerDraftStorageChars(),
+        });
+      } catch (error) {
+        const currentImageIds = new Set(composerImages.map((image) => image.id));
+        const fallbackPersistedAttachments = readPersistedComposerDraftAttachments(threadId);
+        const fallbackPersistedIds = fallbackPersistedAttachments
+          .map((attachment) => attachment.id)
+          .filter((id) => currentImageIds.has(id));
+        const fallbackPersistedIdSet = new Set(fallbackPersistedIds);
+        const fallbackAttachments = fallbackPersistedAttachments.filter((attachment) =>
+          fallbackPersistedIdSet.has(attachment.id),
+        );
+        debugDraftPersist("error", {
+          threadId,
+          error: error instanceof Error ? error.message : String(error),
+          imageIds: composerImages.map((image) => image.id),
+          fallbackPersistedCount: fallbackPersistedIds.length,
+          storageChars: readComposerDraftStorageChars(),
+        });
+        if (cancelled) {
+          return;
+        }
+        syncComposerDraftPersistedAttachments(threadId, fallbackAttachments);
+      }
+    })();
     return () => {
-      revokePreviewUrls(composerImagesRef.current);
+      cancelled = true;
     };
-  }, [revokePreviewUrls]);
+  }, [
+    clearComposerDraftPersistedAttachments,
+    composerImages,
+    syncComposerDraftPersistedAttachments,
+    threadId,
+  ]);
 
   const closeExpandedImage = useCallback(() => {
     setExpandedImage(null);
@@ -1310,7 +1467,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const addComposerImages = (files: File[]) => {
     if (!activeThreadId || files.length === 0) return;
 
-    const nextImages = [...composerImagesRef.current];
+    const nextImages: ComposerImageAttachment[] = [];
+    let nextImageCount = composerImagesRef.current.length;
     let error: string | null = null;
     for (const file of files) {
       if (!file.type.startsWith("image/")) {
@@ -1321,7 +1479,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
         continue;
       }
-      if (nextImages.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+      if (nextImageCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
         error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
         break;
       }
@@ -1336,20 +1494,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
         previewUrl,
         file,
       });
+      nextImageCount += 1;
     }
 
-    setComposerImages(nextImages);
+    if (nextImages.length === 1 && nextImages[0]) {
+      addComposerImage(nextImages[0]);
+    } else if (nextImages.length > 1) {
+      addComposerImagesToDraft(nextImages);
+    }
     setThreadError(activeThreadId, error);
   };
 
   const removeComposerImage = (imageId: string) => {
-    setComposerImages((existing) => {
-      const match = existing.find((image) => image.id === imageId);
-      if (match?.previewUrl) {
-        URL.revokeObjectURL(match.previewUrl);
-      }
-      return existing.filter((image) => image.id !== imageId);
-    });
+    removeComposerImageFromDraft(imageId);
   };
 
   const onComposerPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -1516,9 +1673,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     setThreadError(threadIdForSend, null);
     promptRef.current = "";
-    setPrompt("");
-    setComposerImages([]);
-    setComposerCursor(0);
+    clearComposerDraftContent(threadIdForSend);
     setComposerHighlightedItemId(null);
 
     let attemptedTurnStart = false;
@@ -1596,6 +1751,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         sandboxMode,
         createdAt: messageCreatedAt,
       });
+      if (isFirstMessage) {
+        clearProjectDraftThreadById(activeProject.id, threadIdForSend);
+      }
     } catch (err) {
       if (
         !attemptedTurnStart &&
@@ -1607,7 +1765,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         );
         promptRef.current = trimmed;
         setPrompt(trimmed);
-        setComposerImages(composerImagesSnapshot);
+        addComposerImagesToDraft(composerImagesSnapshot);
         setComposerCursor(trimmed.length);
       }
       setThreadError(
@@ -1663,26 +1821,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const onModelSelect = useCallback(
     (model: string) => {
+      const normalizedModel = resolveModelSlug(model);
+      setComposerDraftModel(threadId, normalizedModel);
       const api = readNativeApi();
-      if (!activeThread) return;
-      if (api) {
+      if (api && activeThread) {
         void api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
           threadId: activeThread.id,
-          model: resolveModelSlug(model),
+          model: normalizedModel,
         });
       }
       scheduleComposerFocus();
     },
-    [activeThread, scheduleComposerFocus],
+    [activeThread, scheduleComposerFocus, setComposerDraftModel, threadId],
   );
   const onEffortSelect = useCallback(
     (effort: ReasoningEffort) => {
-      setSelectedEffort(effort);
+      setComposerDraftEffort(threadId, effort);
       scheduleComposerFocus();
     },
-    [scheduleComposerFocus],
+    [scheduleComposerFocus, setComposerDraftEffort, threadId],
   );
   const onEnvModeChange = useCallback(
     (mode: "local" | "worktree") => {
@@ -1705,7 +1864,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setComposerCursor(next.cursor);
       });
     },
-    [],
+    [setComposerCursor, setPrompt],
   );
 
   const onSelectComposerItem = useCallback(
@@ -1748,7 +1907,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     promptRef.current = nextPrompt;
     setPrompt(nextPrompt);
     setComposerCursor(nextCursor);
-  }, []);
+  }, [setComposerCursor, setPrompt]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (composerMenuOpen && composerMenuItems.length > 0) {
@@ -1959,6 +2118,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
                           {image.name}
                         </div>
+                      )}
+                      {nonPersistedComposerImageIdSet.has(image.id) && (
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <span
+                                role="img"
+                                aria-label="Draft attachment may not persist"
+                                className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
+                              >
+                                <CircleAlertIcon className="size-3" />
+                              </span>
+                            }
+                          />
+                          <TooltipPopup side="top" className="max-w-64 whitespace-normal leading-tight">
+                            Draft attachment could not be saved locally and may be lost on navigation.
+                          </TooltipPopup>
+                        </Tooltip>
                       )}
                       <Button
                         variant="ghost"

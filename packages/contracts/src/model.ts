@@ -11,8 +11,11 @@ export type ModelSlug = string;
 export const DEFAULT_MODEL = "gpt-5.3-codex";
 
 export const MODEL_SLUG_ALIASES: Record<string, BuiltInModelSlug> = {
+  "gpt-5": "gpt-5.3-codex",
+  "gpt-5-codex": "gpt-5.3-codex",
   "5.3": "gpt-5.3-codex",
   "gpt-5.3": "gpt-5.3-codex",
+  "gpt-5-codex-spark": "gpt-5.3-codex-spark",
   "5.3-spark": "gpt-5.3-codex-spark",
   "gpt-5.3-spark": "gpt-5.3-codex-spark",
 };

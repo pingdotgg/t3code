@@ -20,6 +20,13 @@ import { derivePendingApprovals } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
+import { useComposerDraftStore } from "../composerDraftStore";
+import {
+  clearProjectDraftThreadById,
+  clearProjectDraftThreadId,
+  readProjectDraftThreadId,
+  writeProjectDraftThreadId,
+} from "../projectDraftThreads";
 import { toastManager } from "./ui/toast";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -73,6 +80,10 @@ interface PrStatusIndicator {
 }
 
 type ThreadPr = GitStatusResult["pr"];
+
+function shouldShowThreadInSidebar(thread: Thread): boolean {
+  return thread.messages.some((message) => message.role === "user");
+}
 
 function hasUnseenCompletion(thread: Thread): boolean {
   if (!thread.latestTurn?.completedAt) return false;
@@ -228,6 +239,7 @@ function ProjectFavicon({ cwd }: { cwd: string }) {
 
 export default function Sidebar() {
   const { state, dispatch } = useStore();
+  const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearThreadDraft);
   const navigate = useNavigate();
   const { settings: appSettings } = useAppSettings();
   const routeThreadId = useParams({
@@ -336,6 +348,42 @@ export default function Sidebar() {
     ): Promise<void> => {
       const api = readNativeApi();
       if (!api) return Promise.resolve();
+      const storedDraftThreadId = readProjectDraftThreadId(projectId);
+      const storedDraftThread = storedDraftThreadId
+        ? state.threads.find((thread) => thread.id === storedDraftThreadId)
+        : undefined;
+      const reusableStoredDraftThreadId =
+        storedDraftThread &&
+        storedDraftThread.projectId === projectId &&
+        !shouldShowThreadInSidebar(storedDraftThread)
+          ? storedDraftThread.id
+          : null;
+      if (reusableStoredDraftThreadId) {
+        if (routeThreadId === reusableStoredDraftThreadId) {
+          return Promise.resolve();
+        }
+        return navigate({
+          to: "/$threadId",
+          params: { threadId: reusableStoredDraftThreadId },
+        });
+      }
+      if (storedDraftThreadId) {
+        clearProjectDraftThreadId(projectId);
+      }
+
+      const activeThread = routeThreadId
+        ? state.threads.find((thread) => thread.id === routeThreadId)
+        : undefined;
+      const reusableDraftThreadId =
+        activeThread &&
+        activeThread.projectId === projectId &&
+        !shouldShowThreadInSidebar(activeThread)
+          ? activeThread.id
+          : null;
+      if (reusableDraftThreadId) {
+        writeProjectDraftThreadId(projectId, reusableDraftThreadId);
+        return Promise.resolve();
+      }
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
       const model =
@@ -352,6 +400,7 @@ export default function Sidebar() {
           worktreePath: options?.worktreePath ?? null,
           createdAt,
         });
+        writeProjectDraftThreadId(projectId, threadId);
 
         // Ensure route guards can see the new thread before navigating.
         try {
@@ -367,7 +416,7 @@ export default function Sidebar() {
         });
       })();
     },
-    [dispatch, navigate, state.projects],
+    [dispatch, navigate, routeThreadId, state.projects, state.threads],
   );
 
   const focusMostRecentThreadForProject = useCallback(
@@ -517,6 +566,8 @@ export default function Sidebar() {
         commandId: newCommandId(),
         threadId,
       });
+      clearComposerDraftForThread(threadId);
+      clearProjectDraftThreadById(thread.projectId, thread.id);
       if (shouldNavigateToFallback) {
         if (fallbackThreadId) {
           void navigate({
@@ -556,6 +607,7 @@ export default function Sidebar() {
     },
     [
       appSettings.confirmThreadDelete,
+      clearComposerDraftForThread,
       dispatch,
       navigate,
       removeWorktreeMutation,
@@ -576,7 +628,9 @@ export default function Sidebar() {
       if (!project) return;
 
       const projectThreads = state.threads.filter((thread) => thread.projectId === projectId);
-      if (projectThreads.length > 0) {
+      const visibleThreads = projectThreads.filter(shouldShowThreadInSidebar);
+      const draftThreads = projectThreads.filter((thread) => !shouldShowThreadInSidebar(thread));
+      if (visibleThreads.length > 0) {
         toastManager.add({
           type: "warning",
           title: "Project is not empty",
@@ -591,6 +645,15 @@ export default function Sidebar() {
       if (!confirmed) return;
 
       try {
+        for (const draftThread of draftThreads) {
+          await api.orchestration.dispatchCommand({
+            type: "thread.delete",
+            commandId: newCommandId(),
+            threadId: draftThread.id,
+          });
+          clearComposerDraftForThread(draftThread.id);
+        }
+        clearProjectDraftThreadId(projectId);
         await api.orchestration.dispatchCommand({
           type: "project.delete",
           commandId: newCommandId(),
@@ -606,7 +669,7 @@ export default function Sidebar() {
         });
       }
     },
-    [state.projects, state.threads],
+    [clearComposerDraftForThread, state.projects, state.threads],
   );
 
   useEffect(() => {
@@ -693,8 +756,9 @@ export default function Sidebar() {
         <SidebarGroup className="px-2 py-2">
           <SidebarMenu>
             {state.projects.map((project) => {
-              const threads = state.threads
+              const visibleThreads = state.threads
                 .filter((thread) => thread.projectId === project.id)
+                .filter(shouldShowThreadInSidebar)
                 .toSorted((a, b) => {
                   const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
                   if (byDate !== 0) return byDate;
@@ -736,12 +800,14 @@ export default function Sidebar() {
                       <span className="flex-1 truncate text-xs font-medium text-foreground/90">
                         {project.name}
                       </span>
-                      <span className="text-[10px] text-muted-foreground/60">{threads.length}</span>
+                      <span className="text-[10px] text-muted-foreground/60">
+                        {visibleThreads.length}
+                      </span>
                     </CollapsibleTrigger>
 
                     <CollapsibleContent>
                       <SidebarMenuSub className="mx-1 my-0 w-full translate-x-0 gap-0 px-1.5 py-0">
-                        {threads.map((thread) => {
+                        {visibleThreads.map((thread) => {
                           const isActive = routeThreadId === thread.id;
                           const threadStatus = threadStatusPill(
                             thread,
