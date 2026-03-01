@@ -455,7 +455,7 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const resolvedAttachments = yield* resolvePersistedAttachments({
+    const branchGenerationAttachments = yield* resolvePersistedAttachments({
       threadId: event.payload.threadId,
       messageId: message.id,
       attachments: message.attachments,
@@ -467,13 +467,13 @@ const make = Effect.gen(function* () {
       worktreePath: thread.worktreePath,
       messageId: message.id,
       messageText: message.text,
-      ...(message.attachments !== undefined ? { attachments: resolvedAttachments } : {}),
+      ...(message.attachments !== undefined ? { attachments: branchGenerationAttachments } : {}),
     });
 
     yield* sendTurnForThread({
       threadId: event.payload.threadId,
       messageText: message.text,
-      ...(message.attachments !== undefined ? { attachments: resolvedAttachments } : {}),
+      ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
       ...(event.payload.effort !== undefined ? { effort: event.payload.effort } : {}),
       approvalPolicy: event.payload.approvalPolicy,

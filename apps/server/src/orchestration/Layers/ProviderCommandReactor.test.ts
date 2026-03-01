@@ -385,7 +385,7 @@ describe("ProviderCommandReactor", () => {
           name: "bug.png",
           mimeType: "image/png",
           sizeBytes: 5,
-          dataUrl: expectedAttachmentPath,
+          dataUrl: "data:image/png;base64,SGVsbG8=",
         },
       ],
     });
