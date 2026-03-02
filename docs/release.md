@@ -12,7 +12,27 @@ This document covers how to run desktop releases from one tag, first without sig
   - Linux `x64` AppImage
   - Windows `x64` NSIS installer
 - Publishes one GitHub Release with all produced files.
+- Publishes the CLI package (`apps/server`, npm package `t3`) with OIDC trusted publishing.
 - Signing is optional and auto-detected per platform from secrets.
+
+## 0) npm OIDC trusted publishing setup (CLI)
+
+The workflow publishes the CLI with `bun publish` from `apps/server` after bumping
+the package version to the release tag version.
+
+Checklist:
+
+1. Confirm npm org/user owns package `t3` (or rename package first if needed).
+2. In npm package settings, configure Trusted Publisher:
+   - Provider: GitHub Actions
+   - Repository: this repo
+   - Workflow file: `.github/workflows/release.yml`
+   - Environment (if used): match your npm trusted publishing config
+3. Ensure npm account and org policies allow trusted publishing for the package.
+4. Create release tag `vX.Y.Z` and push; workflow will:
+   - set `apps/server/package.json` version to `X.Y.Z`
+   - build web + server
+   - run `bun publish --access public`
 
 ## 1) Dry-run release without signing
 
