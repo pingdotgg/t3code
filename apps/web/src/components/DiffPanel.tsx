@@ -166,14 +166,15 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
   });
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
+  const { state } = useStore();
   const activeThreadId = routeThreadId;
-  const activeThread = useStore((state) =>
-    activeThreadId ? state.threads.find((thread) => thread.id === activeThreadId) : undefined,
-  );
+  const activeThread = activeThreadId
+    ? state.threads.find((thread) => thread.id === activeThreadId)
+    : undefined;
   const activeProjectId = activeThread?.projectId ?? null;
-  const activeProject = useStore((state) =>
-    activeProjectId ? state.projects.find((project) => project.id === activeProjectId) : undefined,
-  );
+  const activeProject = activeProjectId
+    ? state.projects.find((project) => project.id === activeProjectId)
+    : undefined;
   const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);

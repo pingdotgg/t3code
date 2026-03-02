@@ -432,7 +432,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   return createElement(Fragment, null, children);
 }
 
-export function useStore() {
+type UseStoreCombinedResult = {
+  state: Pick<AppStore, "projects" | "threads" | "threadsHydrated" | "runtimeMode">;
+  dispatch: AppStore;
+};
+
+export function useStore(): UseStoreCombinedResult {
   const state = useAppStore((s) => ({
     projects: s.projects,
     threads: s.threads,
