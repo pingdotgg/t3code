@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  createDefaultDraftThreadTerminalState,
-  reduceDraftThreadTerminalState,
-} from "./draftThreadTerminalState";
+  createDefaultThreadTerminalState,
+  reduceThreadTerminalState,
+} from "./threadTerminalState";
 
-describe("draftThreadTerminalState", () => {
+describe("threadTerminalState", () => {
   it("creates a closed default terminal state", () => {
-    expect(createDefaultDraftThreadTerminalState()).toEqual({
+    expect(createDefaultThreadTerminalState()).toEqual({
       terminalOpen: false,
       terminalHeight: 280,
       terminalIds: ["default"],
@@ -19,11 +19,11 @@ describe("draftThreadTerminalState", () => {
   });
 
   it("opens and splits terminal tabs into the active group", () => {
-    const opened = reduceDraftThreadTerminalState(createDefaultDraftThreadTerminalState(), {
+    const opened = reduceThreadTerminalState(createDefaultThreadTerminalState(), {
       type: "set-open",
       open: true,
     });
-    const split = reduceDraftThreadTerminalState(opened, {
+    const split = reduceThreadTerminalState(opened, {
       type: "split",
       terminalId: "terminal-2",
     });
@@ -40,7 +40,7 @@ describe("draftThreadTerminalState", () => {
   });
 
   it("creates new terminals in a new group", () => {
-    const next = reduceDraftThreadTerminalState(createDefaultDraftThreadTerminalState(), {
+    const next = reduceThreadTerminalState(createDefaultThreadTerminalState(), {
       type: "new",
       terminalId: "terminal-2",
     });
@@ -55,25 +55,25 @@ describe("draftThreadTerminalState", () => {
   });
 
   it("resets to default when closing the last terminal", () => {
-    const closed = reduceDraftThreadTerminalState(createDefaultDraftThreadTerminalState(), {
+    const closed = reduceThreadTerminalState(createDefaultThreadTerminalState(), {
       type: "close",
       terminalId: "default",
     });
 
-    expect(closed).toEqual(createDefaultDraftThreadTerminalState());
+    expect(closed).toEqual(createDefaultThreadTerminalState());
   });
 
   it("keeps a valid active terminal after closing an active split terminal", () => {
-    const splitOnce = reduceDraftThreadTerminalState(createDefaultDraftThreadTerminalState(), {
+    const splitOnce = reduceThreadTerminalState(createDefaultThreadTerminalState(), {
       type: "split",
       terminalId: "terminal-2",
     });
-    const splitTwice = reduceDraftThreadTerminalState(splitOnce, {
+    const splitTwice = reduceThreadTerminalState(splitOnce, {
       type: "split",
       terminalId: "terminal-3",
     });
 
-    const closed = reduceDraftThreadTerminalState(splitTwice, {
+    const closed = reduceThreadTerminalState(splitTwice, {
       type: "close",
       terminalId: "terminal-3",
     });
