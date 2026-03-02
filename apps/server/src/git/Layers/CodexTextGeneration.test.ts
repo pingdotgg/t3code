@@ -189,15 +189,15 @@ function withFakeCodexEnv<A, E, R>(
 const CodexTextGenerationTestLayer = makeCodexTextGenerationTestLayer(process.cwd());
 
 it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
-  it.effect("generates and sanitizes commit messages", () =>
+  it.effect("generates and sanitizes commit messages without branch by default", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
           subject:
             "  Add important change to the system with too much detail and a trailing period.\nsecondary line",
           body: "\n- added migration\n- updated tests\n",
-          branch: "fix/important-system-change",
         }),
+        stdinMustNotContain: "branch must be a short semantic git branch fragment",
       },
       Effect.gen(function* () {
         const textGeneration = yield* TextGeneration;
@@ -212,6 +212,33 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         expect(generated.subject.length).toBeLessThanOrEqual(72);
         expect(generated.subject.endsWith(".")).toBe(false);
         expect(generated.body).toBe("- added migration\n- updated tests");
+        expect(generated.branch).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.effect("generates commit message with branch when includeBranch is true", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          subject: "Add important change",
+          body: "",
+          branch: "fix/important-system-change",
+        }),
+        stdinMustContain: "branch must be a short semantic git branch fragment",
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/codex-effect",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          includeBranch: true,
+        });
+
+        expect(generated.subject).toBe("Add important change");
         expect(generated.branch).toBe("feature/fix/important-system-change");
       }),
     ),

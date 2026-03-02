@@ -336,13 +336,19 @@ const makeCodexTextGeneration = Effect.gen(function* () {
     });
 
   const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = (input) => {
+    const wantsBranch = input.includeBranch === true;
+
     const prompt = [
       "You write concise git commit messages.",
-      "Return a JSON object with keys: subject, body, branch.",
+      wantsBranch
+        ? "Return a JSON object with keys: subject, body, branch."
+        : "Return a JSON object with keys: subject, body.",
       "Rules:",
       "- subject must be imperative, <= 72 chars, and no trailing period",
       "- body can be empty string or short bullet points",
-      "- branch must be a short semantic git branch fragment for this change",
+      ...(wantsBranch
+        ? ["- branch must be a short semantic git branch fragment for this change"]
+        : []),
       "- capture the primary user-visible or developer-visible change",
       "",
       `Branch: ${input.branch ?? "(detached)"}`,
@@ -354,22 +360,31 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       limitSection(input.stagedPatch, 40_000),
     ].join("\n");
 
+    const outputSchemaJson = wantsBranch
+      ? Schema.Struct({
+          subject: Schema.String,
+          body: Schema.String,
+          branch: Schema.String,
+        })
+      : Schema.Struct({
+          subject: Schema.String,
+          body: Schema.String,
+        });
+
     return runCodexJson({
       operation: "generateCommitMessage",
       cwd: input.cwd,
       prompt,
-      outputSchemaJson: Schema.Struct({
-        subject: Schema.String,
-        body: Schema.String,
-        branch: Schema.String,
-      }),
+      outputSchemaJson,
     }).pipe(
       Effect.map(
         (generated) =>
           ({
             subject: sanitizeCommitSubject(generated.subject),
             body: generated.body.trim(),
-            branch: sanitizeFeatureBranchName(generated.branch),
+            ...("branch" in generated && typeof generated.branch === "string"
+              ? { branch: sanitizeFeatureBranchName(generated.branch) }
+              : {}),
           }) satisfies CommitMessageGenerationResult,
       ),
     );
@@ -419,7 +434,10 @@ const makeCodexTextGeneration = Effect.gen(function* () {
 
   const generateBranchName: TextGenerationShape["generateBranchName"] = (input) => {
     return Effect.gen(function* () {
-      const { imagePaths } = yield* materializeImageAttachments("generateBranchName", input.attachments);
+      const { imagePaths } = yield* materializeImageAttachments(
+        "generateBranchName",
+        input.attachments,
+      );
       const attachmentLines = (input.attachments ?? []).map(
         (attachment) =>
           `- ${attachment.name} (${attachment.mimeType}, ${attachment.sizeBytes} bytes)`,

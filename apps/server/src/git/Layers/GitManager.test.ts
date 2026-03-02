@@ -32,7 +32,11 @@ interface FakeGitTextGeneration {
     branch: string | null;
     stagedSummary: string;
     stagedPatch: string;
-  }) => Effect.Effect<{ subject: string; body: string; branch: string }, TextGenerationError>;
+    includeBranch?: boolean;
+  }) => Effect.Effect<
+    { subject: string; body: string; branch?: string | undefined },
+    TextGenerationError
+  >;
   generatePrContent: (input: {
     cwd: string;
     baseBranch: string;
@@ -104,11 +108,13 @@ function createBareRemote(): Effect.Effect<
 
 function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): TextGenerationShape {
   const implementation: FakeGitTextGeneration = {
-    generateCommitMessage: () =>
+    generateCommitMessage: (input) =>
       Effect.succeed({
         subject: "Implement stacked git actions",
         body: "",
-        branch: "feature/implement-stacked-git-actions",
+        ...(input.includeBranch
+          ? { branch: "feature/implement-stacked-git-actions" }
+          : {}),
       }),
     generatePrContent: () =>
       Effect.succeed({
@@ -506,13 +512,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         textGeneration: {
-          generateCommitMessage: () =>
+          generateCommitMessage: (input) =>
             Effect.sync(() => {
               generatedCount += 1;
               return {
                 subject: "this should not be used",
                 body: "",
-                branch: "feature/unused",
+                ...(input.includeBranch ? { branch: "feature/unused" } : {}),
               };
             }),
         },
@@ -566,13 +572,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const { manager } = yield* makeManager({
         textGeneration: {
-          generateCommitMessage: () =>
+          generateCommitMessage: (input) =>
             Effect.sync(() => {
               generatedCount += 1;
               return {
                 subject: "unused",
                 body: "",
-                branch: "feature/unused",
+                ...(input.includeBranch ? { branch: "feature/unused" } : {}),
               };
             }),
         },
