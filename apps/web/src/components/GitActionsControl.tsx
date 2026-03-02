@@ -11,6 +11,7 @@ import {
   type GitQuickAction,
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
+  resolveDefaultBranchActionDialogCopy,
   resolveQuickAction,
   summarizeGitResult,
 } from "./GitActionsControl.logic";
@@ -50,6 +51,8 @@ interface GitActionsControlProps {
 
 interface PendingDefaultBranchAction {
   action: GitStackedAction;
+  branchName: string;
+  includesCommit: boolean;
   commitMessage?: string;
   forcePushOnlyProgress: boolean;
   onConfirmed?: () => void;
@@ -114,12 +117,6 @@ function getMenuActionDisabledReason(
 const COMMIT_DIALOG_TITLE = "Commit changes";
 const COMMIT_DIALOG_DESCRIPTION =
   "Review and confirm your commit. Leave the message blank to auto-generate one.";
-
-const DEFAULT_BRANCH_ACTION_DESCRIPTION: Record<GitStackedAction, string> = {
-  commit: "commit changes",
-  commit_push: "commit and push changes",
-  commit_push_pr: "commit, push, and create a PR",
-};
 
 function GitActionItemIcon({ icon }: { icon: GitActionIconName }) {
   if (icon === "commit") return <GitCommitIcon />;
@@ -202,6 +199,13 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const quickActionDisabledReason = quickAction.disabled
     ? (quickAction.hint ?? "This action is currently unavailable.")
     : null;
+  const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
+    ? resolveDefaultBranchActionDialogCopy({
+        action: pendingDefaultBranchAction.action,
+        branchName: pendingDefaultBranchAction.branchName,
+        includesCommit: pendingDefaultBranchAction.includesCommit,
+      })
+    : null;
 
   const openExistingPr = useCallback(async () => {
     const api = readNativeApi();
@@ -253,6 +257,8 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       const actionStatus = statusOverride ?? gitStatusForActions;
       const actionIsDefaultBranch = isDefaultBranchOverride ?? isDefaultBranch;
       const actionBranch = actionStatus?.branch ?? null;
+      const includesCommit =
+        !forcePushOnlyProgress && (action === "commit" || !!actionStatus?.hasWorkingTreeChanges);
       if (
         !skipDefaultBranchPrompt &&
         requiresDefaultBranchConfirmation(action, actionIsDefaultBranch) &&
@@ -260,6 +266,8 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       ) {
         setPendingDefaultBranchAction({
           action,
+          branchName: actionBranch,
+          includesCommit,
           ...(commitMessage ? { commitMessage } : {}),
           forcePushOnlyProgress,
           ...(onConfirmed ? { onConfirmed } : {}),
@@ -398,10 +406,13 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
   const continuePendingDefaultBranchAction = useCallback(() => {
     if (!pendingDefaultBranchAction) return;
-    const pendingAction = pendingDefaultBranchAction;
+    const { action, commitMessage, forcePushOnlyProgress, onConfirmed } = pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
-      ...pendingAction,
+      action,
+      ...(commitMessage ? { commitMessage } : {}),
+      forcePushOnlyProgress,
+      ...(onConfirmed ? { onConfirmed } : {}),
       skipDefaultBranchPrompt: true,
     });
   }, [pendingDefaultBranchAction, runGitActionWithToast]);
@@ -456,9 +467,14 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
   const checkoutFeatureBranchAndContinuePendingAction = useCallback(() => {
     if (!pendingDefaultBranchAction) return;
-    const pendingAction = pendingDefaultBranchAction;
+    const { action, commitMessage, forcePushOnlyProgress, onConfirmed } = pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
-    checkoutNewBranchAndRunAction(pendingAction);
+    checkoutNewBranchAndRunAction({
+      action,
+      ...(commitMessage ? { commitMessage } : {}),
+      forcePushOnlyProgress,
+      ...(onConfirmed ? { onConfirmed } : {}),
+    });
   }, [pendingDefaultBranchAction, checkoutNewBranchAndRunAction]);
 
   const runDialogActionOnNewBranch = useCallback(() => {
@@ -801,22 +817,17 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       >
         <DialogPopup>
           <DialogHeader>
-            <DialogTitle>Commit to default branch?</DialogTitle>
-            <DialogDescription>
-              This action will{" "}
-              {pendingDefaultBranchAction
-                ? DEFAULT_BRANCH_ACTION_DESCRIPTION[pendingDefaultBranchAction.action]
-                : "push changes"}{" "}
-              on "{gitStatusForActions?.branch ?? "default"}". You can continue on this branch or
-              create a feature branch and run the same action there.
-            </DialogDescription>
+            <DialogTitle>
+              {pendingDefaultBranchActionCopy?.title ?? "Run action on default branch?"}
+            </DialogTitle>
+            <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setPendingDefaultBranchAction(null)}>
               Abort
             </Button>
             <Button variant="outline" size="sm" onClick={continuePendingDefaultBranchAction}>
-              Commit to {gitStatusForActions?.branch ?? "default"}
+              {pendingDefaultBranchActionCopy?.continueLabel ?? "Continue"}
             </Button>
             <Button size="sm" onClick={checkoutFeatureBranchAndContinuePendingAction}>
               Checkout feature branch & continue

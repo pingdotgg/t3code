@@ -25,6 +25,12 @@ export interface GitQuickAction {
   hint?: string;
 }
 
+export interface DefaultBranchActionDialogCopy {
+  title: string;
+  description: string;
+  continueLabel: string;
+}
+
 const SHORT_SHA_LENGTH = 7;
 const TOAST_DESCRIPTION_MAX = 72;
 const AUTO_FEATURE_BRANCH_PREFIX = "feature/stacked";
@@ -274,6 +280,51 @@ export function requiresDefaultBranchConfirmation(
 ): boolean {
   if (!isDefaultBranch) return false;
   return action === "commit_push" || action === "commit_push_pr";
+}
+
+export function resolveDefaultBranchActionDialogCopy(input: {
+  action: GitStackedAction;
+  branchName: string;
+  includesCommit: boolean;
+}): DefaultBranchActionDialogCopy {
+  const branchLabel = input.branchName;
+  const suffix = ` on "${branchLabel}". You can continue on this branch or create a feature branch and run the same action there.`;
+
+  if (input.action === "commit") {
+    return {
+      title: "Commit to default branch?",
+      description: `This action will commit changes${suffix}`,
+      continueLabel: `Commit to ${branchLabel}`,
+    };
+  }
+
+  if (input.action === "commit_push") {
+    if (input.includesCommit) {
+      return {
+        title: "Commit & push to default branch?",
+        description: `This action will commit and push changes${suffix}`,
+        continueLabel: `Commit & push to ${branchLabel}`,
+      };
+    }
+    return {
+      title: "Push to default branch?",
+      description: `This action will push local commits${suffix}`,
+      continueLabel: `Push to ${branchLabel}`,
+    };
+  }
+
+  if (input.includesCommit) {
+    return {
+      title: "Commit, push & create PR from default branch?",
+      description: `This action will commit, push, and create a PR${suffix}`,
+      continueLabel: `Commit, push & create PR`,
+    };
+  }
+  return {
+    title: "Push & create PR from default branch?",
+    description: `This action will push local commits and create a PR${suffix}`,
+    continueLabel: "Push & create PR",
+  };
 }
 
 function formatDateForBranch(now: Date): string {
