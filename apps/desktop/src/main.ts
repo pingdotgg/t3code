@@ -7,6 +7,8 @@ import * as Path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
+import type { DesktopUpdateState } from "@t3tools/contracts";
+import { autoUpdater } from "electron-updater";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
 import { NetService } from "@t3tools/shared/Net";
@@ -21,6 +23,10 @@ const CONFIRM_CHANNEL = "desktop:confirm";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
+const UPDATE_STATE_CHANNEL = "desktop:update-state";
+const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
+const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
+const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const STATE_DIR =
   process.env.T3CODE_STATE_DIR?.trim() || Path.join(OS.homedir(), ".t3", "userdata");
 const DESKTOP_SCHEME = "t3";
@@ -34,6 +40,8 @@ const LOG_DIR = Path.join(STATE_DIR, "logs");
 const LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const LOG_FILE_MAX_FILES = 10;
 const APP_RUN_ID = Crypto.randomBytes(6).toString("hex");
+const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
+const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess.ChildProcess | null = null;
@@ -194,6 +202,20 @@ function getDestructiveMenuIcon(): Electron.NativeImage | undefined {
     return undefined;
   }
 }
+let updatePollTimer: ReturnType<typeof setInterval> | null = null;
+let updateCheckInFlight = false;
+let updateDownloadInFlight = false;
+let updaterConfigured = false;
+let updateState: DesktopUpdateState = {
+  enabled: false,
+  status: "disabled",
+  currentVersion: app.getVersion(),
+  availableVersion: null,
+  downloadedVersion: null,
+  downloadPercent: null,
+  checkedAt: null,
+  message: null,
+};
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -401,6 +423,20 @@ function dispatchMenuAction(action: string): void {
   send();
 }
 
+function handleCheckForUpdatesMenuClick(): void {
+  if (updateState.status === "downloaded") {
+    installDownloadedUpdate();
+    return;
+  }
+
+  if (!shouldEnableAutoUpdates()) {
+    console.info("[desktop-updater] Manual update check requested, but updates are disabled.");
+    return;
+  }
+
+  void checkForUpdates("menu");
+}
+
 function configureApplicationMenu(): void {
   const template: MenuItemConstructorOptions[] = [];
 
@@ -409,6 +445,11 @@ function configureApplicationMenu(): void {
       label: app.name,
       submenu: [
         { role: "about" },
+        {
+          label: "Check for Updates...",
+          click: () => handleCheckForUpdatesMenuClick(),
+        },
+        { type: "separator" },
         {
           label: "Settings...",
           accelerator: "CmdOrCtrl+,",
@@ -446,6 +487,15 @@ function configureApplicationMenu(): void {
     { role: "editMenu" },
     { role: "viewMenu" },
     { role: "windowMenu" },
+    {
+      role: "help",
+      submenu: [
+        {
+          label: "Check for Updates...",
+          click: () => handleCheckForUpdatesMenuClick(),
+        },
+      ],
+    },
   );
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -492,6 +542,198 @@ function configureAppIdentity(): void {
   }
 }
 
+function clearUpdatePollTimer(): void {
+  if (!updatePollTimer) return;
+  clearInterval(updatePollTimer);
+  updatePollTimer = null;
+}
+
+function emitUpdateState(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) continue;
+    window.webContents.send(UPDATE_STATE_CHANNEL, updateState);
+  }
+}
+
+function setUpdateState(patch: Partial<DesktopUpdateState>): void {
+  updateState = { ...updateState, ...patch };
+  emitUpdateState();
+}
+
+function shouldEnableAutoUpdates(): boolean {
+  if (isDevelopment || !app.isPackaged) {
+    return false;
+  }
+  if (process.env.T3CODE_DISABLE_AUTO_UPDATE === "1") {
+    return false;
+  }
+  if (process.platform === "linux" && !process.env.APPIMAGE) {
+    // electron-updater only supports Linux auto-updates when running from AppImage.
+    return false;
+  }
+  return true;
+}
+
+async function checkForUpdates(reason: string): Promise<void> {
+  if (!updaterConfigured || updateCheckInFlight) return;
+  updateCheckInFlight = true;
+  setUpdateState({
+    status: "checking",
+    checkedAt: new Date().toISOString(),
+    message: null,
+    downloadPercent: null,
+  });
+  console.info(`[desktop-updater] Checking for updates (${reason})...`);
+
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    setUpdateState({
+      status: "error",
+      message,
+      checkedAt: new Date().toISOString(),
+      downloadPercent: null,
+    });
+    console.error(`[desktop-updater] Failed to check for updates: ${message}`);
+  } finally {
+    updateCheckInFlight = false;
+  }
+}
+
+async function downloadAvailableUpdate(): Promise<void> {
+  if (!updaterConfigured || updateDownloadInFlight || updateState.status !== "available") {
+    return;
+  }
+  updateDownloadInFlight = true;
+  setUpdateState({
+    status: "downloading",
+    downloadPercent: 0,
+    message: null,
+  });
+  console.info("[desktop-updater] Downloading update...");
+
+  try {
+    await autoUpdater.downloadUpdate();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    setUpdateState({
+      status: "error",
+      message,
+      downloadPercent: null,
+    });
+    console.error(`[desktop-updater] Failed to download update: ${message}`);
+  } finally {
+    updateDownloadInFlight = false;
+  }
+}
+
+function installDownloadedUpdate(): void {
+  if (!updaterConfigured || updateState.status !== "downloaded") return;
+
+  isQuitting = true;
+  clearUpdatePollTimer();
+  stopBackend();
+  autoUpdater.quitAndInstall();
+}
+
+function configureAutoUpdater(): void {
+  const enabled = shouldEnableAutoUpdates();
+  setUpdateState({
+    enabled,
+    status: enabled ? "idle" : "disabled",
+    currentVersion: app.getVersion(),
+    availableVersion: null,
+    downloadedVersion: null,
+    downloadPercent: null,
+    checkedAt: null,
+    message: null,
+  });
+  if (!enabled) {
+    return;
+  }
+  updaterConfigured = true;
+
+  const githubToken =
+    process.env.T3CODE_DESKTOP_UPDATE_GITHUB_TOKEN?.trim() ||
+    process.env.GH_TOKEN?.trim() ||
+    "";
+  if (githubToken) {
+    autoUpdater.requestHeaders = {
+      ...autoUpdater.requestHeaders,
+      Authorization: `Bearer ${githubToken}`,
+    };
+  }
+
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.allowPrerelease = app.getVersion().includes("-");
+
+  autoUpdater.on("checking-for-update", () => {
+    console.info("[desktop-updater] Looking for updates...");
+  });
+  autoUpdater.on("update-available", (info) => {
+    setUpdateState({
+      status: "available",
+      availableVersion: info.version,
+      downloadedVersion: null,
+      downloadPercent: null,
+      checkedAt: new Date().toISOString(),
+      message: null,
+    });
+    console.info(`[desktop-updater] Update available: ${info.version}`);
+  });
+  autoUpdater.on("update-not-available", () => {
+    setUpdateState({
+      status: "up-to-date",
+      availableVersion: null,
+      downloadedVersion: null,
+      downloadPercent: null,
+      checkedAt: new Date().toISOString(),
+      message: null,
+    });
+    console.info("[desktop-updater] No updates available.");
+  });
+  autoUpdater.on("error", (error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    setUpdateState({
+      status: "error",
+      message,
+    });
+    console.error(`[desktop-updater] Updater error: ${message}`);
+  });
+  autoUpdater.on("download-progress", (progress) => {
+    const percent = Math.floor(progress.percent);
+    setUpdateState({
+      status: "downloading",
+      downloadPercent: progress.percent,
+      message: null,
+    });
+    if (percent % 10 === 0) {
+      console.info(`[desktop-updater] Download progress: ${percent}%`);
+    }
+  });
+  autoUpdater.on("update-downloaded", (info) => {
+    setUpdateState({
+      status: "downloaded",
+      availableVersion: info.version,
+      downloadedVersion: info.version,
+      downloadPercent: 100,
+      message: null,
+    });
+    console.info(`[desktop-updater] Update downloaded: ${info.version}`);
+  });
+
+  const startupTimer = setTimeout(() => {
+    void checkForUpdates("startup");
+  }, AUTO_UPDATE_STARTUP_DELAY_MS);
+  startupTimer.unref();
+
+  updatePollTimer = setInterval(() => {
+    void checkForUpdates("poll");
+  }, AUTO_UPDATE_POLL_INTERVAL_MS);
+  updatePollTimer.unref();
+}
 function backendEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
@@ -704,6 +946,19 @@ function registerIpcHandlers(): void {
       return false;
     }
   });
+
+  ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL);
+  ipcMain.handle(UPDATE_GET_STATE_CHANNEL, async () => updateState);
+
+  ipcMain.removeHandler(UPDATE_DOWNLOAD_CHANNEL);
+  ipcMain.handle(UPDATE_DOWNLOAD_CHANNEL, async () => {
+    await downloadAvailableUpdate();
+  });
+
+  ipcMain.removeHandler(UPDATE_INSTALL_CHANNEL);
+  ipcMain.handle(UPDATE_INSTALL_CHANNEL, async () => {
+    installDownloadedUpdate();
+  });
 }
 
 function getIconOption(): { icon: string } | Record<string, never> {
@@ -740,6 +995,7 @@ function createWindow(): BrowserWindow {
   });
   window.webContents.on("did-finish-load", () => {
     window.setTitle(APP_DISPLAY_NAME);
+    emitUpdateState();
   });
   window.once("ready-to-show", () => {
     window.show();
@@ -787,6 +1043,7 @@ async function bootstrap(): Promise<void> {
 app.on("before-quit", () => {
   isQuitting = true;
   writeDesktopLogHeader("before-quit received");
+  clearUpdatePollTimer();
   stopBackend();
   restoreStdIoCapture?.();
 });
@@ -798,6 +1055,7 @@ app
     configureAppIdentity();
     configureApplicationMenu();
     registerDesktopProtocol();
+    configureAutoUpdater();
     void bootstrap().catch((error) => {
       handleFatalStartupError("bootstrap", error);
     });
@@ -823,6 +1081,7 @@ if (process.platform !== "win32") {
     if (isQuitting) return;
     isQuitting = true;
     writeDesktopLogHeader("SIGINT received");
+    clearUpdatePollTimer();
     stopBackend();
     restoreStdIoCapture?.();
     app.quit();
@@ -832,6 +1091,7 @@ if (process.platform !== "win32") {
     if (isQuitting) return;
     isQuitting = true;
     writeDesktopLogHeader("SIGTERM received");
+    clearUpdatePollTimer();
     stopBackend();
     restoreStdIoCapture?.();
     app.quit();

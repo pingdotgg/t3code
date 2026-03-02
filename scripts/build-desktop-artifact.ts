@@ -322,6 +322,71 @@ function validateBundledClientAssets(clientDir: string) {
   });
 }
 
+function resolveCatalogDependencies(
+  dependencies: Record<string, unknown>,
+  catalog: Record<string, unknown>,
+  dependencySourceLabel: string,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(dependencies).map(([dependencyName, spec]) => {
+      if (typeof spec !== "string" || !spec.startsWith("catalog:")) {
+        return [dependencyName, spec];
+      }
+
+      const catalogKey = spec.slice("catalog:".length).trim();
+      const lookupKey = catalogKey.length > 0 ? catalogKey : dependencyName;
+      const resolvedSpec = catalog[lookupKey];
+      if (typeof resolvedSpec !== "string" || resolvedSpec.length === 0) {
+        throw new BuildScriptError({
+          message: `Unable to resolve '${spec}' for ${dependencySourceLabel} dependency '${dependencyName}'. Expected key '${lookupKey}' in root workspace catalog.`,
+        });
+      }
+
+      return [dependencyName, resolvedSpec];
+    }),
+  );
+}
+
+function resolveDesktopRuntimeDependencies(
+  dependencies: Record<string, unknown> | undefined,
+  catalog: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!dependencies || Object.keys(dependencies).length === 0) {
+    return {};
+  }
+
+  const runtimeDependencies = Object.fromEntries(
+    Object.entries(dependencies).filter(([dependencyName]) => dependencyName !== "electron"),
+  );
+
+  return resolveCatalogDependencies(runtimeDependencies, catalog, "apps/desktop");
+}
+
+function resolveGitHubPublishConfig():
+  | {
+      readonly provider: "github";
+      readonly owner: string;
+      readonly repo: string;
+      readonly releaseType: "release";
+    }
+  | undefined {
+  const rawRepo =
+    process.env.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() ||
+    process.env.GITHUB_REPOSITORY?.trim() ||
+    "";
+  if (!rawRepo) return undefined;
+
+  const [owner, repo, ...rest] = rawRepo.split("/");
+  if (!owner || !repo || rest.length > 0) return undefined;
+
+  return {
+    provider: "github",
+    owner,
+    repo,
+    releaseType: "release",
+  };
+}
+
 const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -336,10 +401,14 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       buildResources: "apps/desktop/resources",
     },
   };
+  const publishConfig = resolveGitHubPublishConfig();
+  if (publishConfig) {
+    buildConfig.publish = [publishConfig];
+  }
 
   if (platform === "mac") {
     buildConfig.mac = {
-      target: [target],
+      target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
     };
@@ -416,19 +485,35 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   const electronVersion = desktopPackageJson.dependencies.electron;
 
-  const dependencies = serverPackageJson.dependencies;
-  if (!dependencies || Object.keys(dependencies).length === 0) {
+  const serverDependencies = serverPackageJson.dependencies;
+  if (!serverDependencies || Object.keys(serverDependencies).length === 0) {
     return yield* new BuildScriptError({
       message: "Could not resolve production dependencies from apps/server/package.json.",
     });
   }
 
-  const resolvedDependencies = yield* Effect.try({
+  const resolvedServerDependencies = yield* Effect.try({
     try: () =>
-      resolveCatalogDependencies(dependencies, rootPackageJson.workspaces.catalog, "apps/server"),
+      resolveCatalogDependencies(
+        serverDependencies,
+        rootPackageJson.workspaces.catalog,
+        "apps/server",
+      ),
     catch: (cause) =>
       new BuildScriptError({
         message: "Could not resolve production dependencies from apps/server/package.json.",
+        cause,
+      }),
+  });
+  const resolvedDesktopRuntimeDependencies = yield* Effect.try({
+    try: () =>
+      resolveDesktopRuntimeDependencies(
+        desktopPackageJson.dependencies,
+        rootPackageJson.workspaces.catalog,
+      ),
+    catch: (cause) =>
+      new BuildScriptError({
+        message: "Could not resolve desktop runtime dependencies from apps/desktop/package.json.",
         cause,
       }),
   });
@@ -500,7 +585,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       desktopPackageJson.productName ?? "T3 Code",
       options.signed,
     ),
-    dependencies: resolvedDependencies,
+    dependencies: {
+      ...resolvedServerDependencies,
+      ...resolvedDesktopRuntimeDependencies,
+    },
     devDependencies: {
       electron: electronVersion,
     },

@@ -240,11 +240,36 @@ jobs:
 
           bun run dist:desktop:artifact -- "${args[@]}"
 
+      - name: Collect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-publish
+
+          shopt -s nullglob
+          for pattern in \
+            "release/*.dmg" \
+            "release/*.zip" \
+            "release/*.AppImage" \
+            "release/*.exe" \
+            "release/*.blockmap" \
+            "release/latest*.yml"; do
+            for file in $pattern; do
+              cp "$file" release-publish/
+            done
+          done
+
+          if [[ "${{ matrix.platform }}" == "mac" && "${{ matrix.arch }}" != "arm64" ]]; then
+            if [[ -f release-publish/latest-mac.yml ]]; then
+              mv release-publish/latest-mac.yml "release-publish/latest-mac-${{ matrix.arch }}.yml"
+            fi
+          fi
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
-          path: release/*
+          path: release-publish/*
           if-no-files-found: error
 
   publish_cli:
@@ -293,5 +318,11 @@ jobs:
           tag_name: ${{ needs.preflight.outputs.tag }}
           name: T3 Code v${{ needs.preflight.outputs.version }}
           generate_release_notes: true
-          files: release-assets/*
+          files: |
+            release-assets/*.dmg
+            release-assets/*.zip
+            release-assets/*.AppImage
+            release-assets/*.exe
+            release-assets/*.blockmap
+            release-assets/latest*.yml
           fail_on_unmatched_files: true

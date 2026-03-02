@@ -12,8 +12,28 @@ This document covers how to run desktop releases from one tag, first without sig
   - Linux `x64` AppImage
   - Windows `x64` NSIS installer
 - Publishes one GitHub Release with all produced files.
+- Includes Electron auto-update metadata (for example `latest*.yml` and `*.blockmap`) in release assets.
 - Publishes the CLI package (`apps/server`, npm package `t3`) with OIDC trusted publishing.
 - Signing is optional and auto-detected per platform from secrets.
+
+## Desktop auto-update notes
+
+- Runtime updater: `electron-updater` in `apps/desktop/src/main.ts`.
+- Update UX:
+  - Background checks run on startup delay + interval.
+  - No automatic download or install.
+  - The desktop UI shows a rocket update button when an update is available; click once to download, click again after download to restart/install.
+- Provider: GitHub Releases (`provider: github`) configured at build time.
+- Repository slug source:
+  - `T3CODE_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.
+  - otherwise `GITHUB_REPOSITORY` from GitHub Actions.
+- Temporary private-repo auth workaround:
+  - set `T3CODE_DESKTOP_UPDATE_GITHUB_TOKEN` (or `GH_TOKEN`) in the desktop app runtime environment.
+  - the app forwards it as an `Authorization: Bearer <token>` request header for updater HTTP calls.
+- Required release assets for updater:
+  - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)
+  - `latest*.yml` metadata
+  - `*.blockmap` files (used for differential downloads)
 
 ## 0) npm OIDC trusted publishing setup (CLI)
 

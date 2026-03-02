@@ -1,7 +1,8 @@
-import { ChevronRightIcon, FolderIcon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
+import { ChevronRightIcon, FolderIcon, GitPullRequestIcon, RocketIcon, TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_MODEL,
+  type DesktopUpdateState,
   ProjectId,
   ThreadId,
   type GitStatusResult,
@@ -75,6 +76,21 @@ interface PrStatusIndicator {
 }
 
 type ThreadPr = GitStatusResult["pr"];
+
+function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string {
+  if (state.status === "available") {
+    return `Update ${state.availableVersion ?? "available"} ready to download`;
+  }
+  if (state.status === "downloading") {
+    const progress =
+      typeof state.downloadPercent === "number" ? ` (${Math.floor(state.downloadPercent)}%)` : "";
+    return `Downloading update${progress}`;
+  }
+  if (state.status === "downloaded") {
+    return `Update ${state.downloadedVersion ?? state.availableVersion ?? "ready"} downloaded. Click to restart and install.`;
+  }
+  return "Update available";
+}
 
 function hasUnseenCompletion(thread: Thread): boolean {
   if (!thread.latestTurn?.completedAt) return false;
@@ -270,6 +286,7 @@ export default function Sidebar() {
   const [renamingTitle, setRenamingTitle] = useState("");
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
+  const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
   const pendingApprovalByThreadId = useMemo(() => {
     const map = new Map<ThreadId, boolean>();
     for (const thread of threads) {
@@ -783,6 +800,36 @@ export default function Sidebar() {
     };
   }, [getDraftThread, handleNewThread, keybindings, projects, routeThreadId, threads]);
 
+  useEffect(() => {
+    if (!isElectron) return;
+    const bridge = window.desktopBridge;
+    if (
+      !bridge ||
+      typeof bridge.getUpdateState !== "function" ||
+      typeof bridge.onUpdateState !== "function"
+    ) {
+      return;
+    }
+
+    let disposed = false;
+    void bridge
+      .getUpdateState()
+      .then((nextState) => {
+        if (disposed) return;
+        setDesktopUpdateState(nextState);
+      })
+      .catch(() => undefined);
+
+    const unsubscribe = bridge.onUpdateState((nextState) => {
+      setDesktopUpdateState(nextState);
+    });
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
+
   const onCreateThreadClick = () => {
     if (projects.length === 0) {
       setAddingProject(true);
@@ -791,6 +838,51 @@ export default function Sidebar() {
     const firstProject = projects[0];
     if (firstProject) void handleNewThread(firstProject.id);
   };
+
+  const showDesktopUpdateButton =
+    isElectron &&
+    desktopUpdateState?.enabled === true &&
+    (desktopUpdateState.status === "available" ||
+      desktopUpdateState.status === "downloading" ||
+      desktopUpdateState.status === "downloaded");
+
+  const desktopUpdateTooltip = desktopUpdateState
+    ? getDesktopUpdateButtonTooltip(desktopUpdateState)
+    : "Update available";
+
+  const desktopUpdateButtonDisabled = desktopUpdateState?.status === "downloading";
+  const desktopUpdateButtonClasses =
+    desktopUpdateState?.status === "downloaded"
+      ? "text-emerald-500"
+      : desktopUpdateState?.status === "downloading"
+        ? "text-sky-400"
+        : "text-amber-500 animate-pulse";
+
+  const handleDesktopUpdateButtonClick = useCallback(() => {
+    const bridge = window.desktopBridge;
+    if (!bridge || !desktopUpdateState) return;
+
+    if (desktopUpdateState.status === "available") {
+      void bridge.downloadUpdate().catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not start update download",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      });
+      return;
+    }
+
+    if (desktopUpdateState.status === "downloaded") {
+      void bridge.installUpdate().catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not install update",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      });
+    }
+  }, [desktopUpdateState]);
 
   const wordmark = (
     <div className="flex items-center gap-2">
@@ -824,6 +916,24 @@ export default function Sidebar() {
         <>
           <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[82px]">
             {wordmark}
+            {showDesktopUpdateButton && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label={desktopUpdateTooltip}
+                      disabled={desktopUpdateButtonDisabled}
+                      className={`inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60 ${desktopUpdateButtonClasses}`}
+                      onClick={handleDesktopUpdateButtonClick}
+                    >
+                      <RocketIcon className="size-3.5" />
+                    </button>
+                  }
+                />
+                <TooltipPopup side="bottom">{desktopUpdateTooltip}</TooltipPopup>
+              </Tooltip>
+            )}
           </SidebarHeader>
           <div className="px-4 py-2">{newThreadButton}</div>
         </>
