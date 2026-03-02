@@ -543,7 +543,11 @@ export default function Sidebar() {
           description: error instanceof Error ? error.message : "An error occurred.",
         });
       }
-      cancelRename();
+      setRenamingThreadId((current) => {
+        if (current !== threadId) return current;
+        renamingInputRef.current = null;
+        return null;
+      });
     },
     [cancelRename],
   );
