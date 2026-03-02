@@ -4,7 +4,11 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { createAttachmentId, resolveAttachmentPathById } from "./attachmentStore.ts";
+import {
+  createAttachmentId,
+  parseThreadSegmentFromAttachmentId,
+  resolveAttachmentPathById,
+} from "./attachmentStore.ts";
 
 describe("attachmentStore", () => {
   it("sanitizes thread ids when creating attachment ids", () => {
@@ -14,12 +18,20 @@ describe("attachmentStore", () => {
       return;
     }
 
-    const [threadSegment] = attachmentId.split("-", 1);
+    const threadSegment = parseThreadSegmentFromAttachmentId(attachmentId);
     expect(threadSegment).toBeTruthy();
     expect(threadSegment).toMatch(/^[a-z0-9_-]+$/i);
     expect(threadSegment).not.toContain(".");
     expect(threadSegment).not.toContain("%");
     expect(threadSegment).not.toContain("/");
+  });
+
+  it("parses exact thread segments from attachment ids without prefix collisions", () => {
+    const fooId = "foo-00000000-0000-4000-8000-000000000001";
+    const fooBarId = "foo-bar-00000000-0000-4000-8000-000000000002";
+
+    expect(parseThreadSegmentFromAttachmentId(fooId)).toBe("foo");
+    expect(parseThreadSegmentFromAttachmentId(fooBarId)).toBe("foo-bar");
   });
 
   it("resolves attachment path by id using the extension that exists on disk", () => {

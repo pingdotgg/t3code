@@ -37,7 +37,12 @@ import {
   OrchestrationProjectionPipeline,
   type OrchestrationProjectionPipelineShape,
 } from "../Services/ProjectionPipeline.ts";
-import { attachmentRelativePath, toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
+import {
+  attachmentRelativePath,
+  parseAttachmentIdFromRelativePath,
+  parseThreadSegmentFromAttachmentId,
+  toSafeThreadAttachmentSegment,
+} from "../../attachmentStore.ts";
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",
@@ -198,7 +203,8 @@ function collectThreadAttachmentRelativePaths(
       if (attachment.type !== "image") {
         continue;
       }
-      if (!attachment.id.startsWith(`${threadSegment}-`)) {
+      const attachmentThreadSegment = parseThreadSegmentFromAttachmentId(attachment.id);
+      if (!attachmentThreadSegment || attachmentThreadSegment !== threadSegment) {
         continue;
       }
       relativePaths.add(attachmentRelativePath(attachment));
@@ -236,7 +242,12 @@ const runAttachmentSideEffects = Effect.fn(function* (sideEffects: AttachmentSid
               if (normalizedEntry.length === 0 || normalizedEntry.includes("/")) {
                 return;
               }
-              if (!normalizedEntry.startsWith(`${threadSegment}-`)) {
+              const attachmentId = parseAttachmentIdFromRelativePath(normalizedEntry);
+              if (!attachmentId) {
+                return;
+              }
+              const attachmentThreadSegment = parseThreadSegmentFromAttachmentId(attachmentId);
+              if (!attachmentThreadSegment || attachmentThreadSegment !== threadSegment) {
                 return;
               }
               yield* fileSystem.remove(path.join(attachmentsRootDir, normalizedEntry), {
@@ -272,7 +283,12 @@ const runAttachmentSideEffects = Effect.fn(function* (sideEffects: AttachmentSid
               if (relativePath.length === 0 || relativePath.includes("/")) {
                 return;
               }
-              if (!relativePath.startsWith(`${threadSegment}-`)) {
+              const attachmentId = parseAttachmentIdFromRelativePath(relativePath);
+              if (!attachmentId) {
+                return;
+              }
+              const attachmentThreadSegment = parseThreadSegmentFromAttachmentId(attachmentId);
+              if (!attachmentThreadSegment || attachmentThreadSegment !== threadSegment) {
                 return;
               }
 

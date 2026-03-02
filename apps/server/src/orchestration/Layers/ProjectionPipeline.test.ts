@@ -734,8 +734,10 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
           const eventStore = yield* OrchestrationEventStore;
           const now = new Date().toISOString();
           const threadId = ThreadId.makeUnsafe("thread revert.files");
-          const keepAttachmentId = "thread-revert-files-keep";
-          const removeAttachmentId = "thread-revert-files-remove";
+          const keepAttachmentId = "thread-revert-files-00000000-0000-4000-8000-000000000001";
+          const removeAttachmentId = "thread-revert-files-00000000-0000-4000-8000-000000000002";
+          const otherThreadAttachmentId =
+            "thread-revert-files-extra-00000000-0000-4000-8000-000000000003";
 
           const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
             eventStore
@@ -904,8 +906,11 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
       fs.mkdirSync(path.join(stateDir, "attachments"), { recursive: true });
       fs.writeFileSync(keepPath, Buffer.from("keep"));
       fs.writeFileSync(removePath, Buffer.from("remove"));
+      const otherThreadPath = path.join(stateDir, "attachments", `${otherThreadAttachmentId}.png`);
+      fs.writeFileSync(otherThreadPath, Buffer.from("other"));
       assert.equal(fs.existsSync(keepPath), true);
       assert.equal(fs.existsSync(removePath), true);
+      assert.equal(fs.existsSync(otherThreadPath), true);
 
       yield* appendAndProject({
         type: "thread.reverted",
@@ -925,6 +930,7 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
 
           assert.equal(fs.existsSync(keepPath), true);
           assert.equal(fs.existsSync(removePath), false);
+          assert.equal(fs.existsSync(otherThreadPath), true);
         }).pipe(
           (effect) => runWithProjectionPipelineLayer(stateDir, effect),
           Effect.ensuring(Effect.sync(() => fs.rmSync(stateDir, { recursive: true, force: true }))),
@@ -943,7 +949,9 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
           const eventStore = yield* OrchestrationEventStore;
           const now = new Date().toISOString();
           const threadId = ThreadId.makeUnsafe("thread delete.files");
-          const attachmentId = "thread-delete-files-att-1";
+          const attachmentId = "thread-delete-files-00000000-0000-4000-8000-000000000001";
+          const otherThreadAttachmentId =
+            "thread-delete-files-extra-00000000-0000-4000-8000-000000000002";
 
           const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
             eventStore
@@ -1025,9 +1033,16 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
       });
 
       const threadAttachmentPath = path.join(stateDir, "attachments", `${attachmentId}.png`);
+      const otherThreadAttachmentPath = path.join(
+        stateDir,
+        "attachments",
+        `${otherThreadAttachmentId}.png`,
+      );
       fs.mkdirSync(path.join(stateDir, "attachments"), { recursive: true });
       fs.writeFileSync(threadAttachmentPath, Buffer.from("delete"));
+      fs.writeFileSync(otherThreadAttachmentPath, Buffer.from("other-thread"));
       assert.equal(fs.existsSync(threadAttachmentPath), true);
+      assert.equal(fs.existsSync(otherThreadAttachmentPath), true);
 
       yield* appendAndProject({
         type: "thread.deleted",
@@ -1046,6 +1061,7 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
       });
 
           assert.equal(fs.existsSync(threadAttachmentPath), false);
+          assert.equal(fs.existsSync(otherThreadAttachmentPath), true);
         }).pipe(
           (effect) => runWithProjectionPipelineLayer(stateDir, effect),
           Effect.ensuring(Effect.sync(() => fs.rmSync(stateDir, { recursive: true, force: true }))),
