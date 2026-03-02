@@ -1,5 +1,9 @@
 # CLAUDE.md
 
+## Task Completion Requirements
+
+- Both `bun lint` and `bun typecheck` must pass before considering tasks completed.
+
 ## Project Snapshot
 
 T3 Code is a minimal web GUI for using code agents like Codex and Claude Code (coming soon).
