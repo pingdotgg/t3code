@@ -85,10 +85,14 @@ function limitContext(value: string, maxChars: number): string {
   return `${value.slice(0, maxChars)}\n\n[truncated]`;
 }
 
-function sanitizeCommitMessage(generated: { subject: string; body: string; branch: string }): {
+function sanitizeCommitMessage(generated: {
   subject: string;
   body: string;
-  branch: string;
+  branch?: string | undefined;
+}): {
+  subject: string;
+  body: string;
+  branch?: string | undefined;
 } {
   const rawSubject = generated.subject.trim().split(/\r?\n/g)[0]?.trim() ?? "";
   const subject = rawSubject.replace(/[.]+$/g, "").trim();
@@ -96,7 +100,7 @@ function sanitizeCommitMessage(generated: { subject: string; body: string; branc
   return {
     subject: safeSubject,
     body: generated.body.trim(),
-    branch: generated.branch,
+    ...(generated.branch !== undefined ? { branch: generated.branch } : {}),
   };
 }
 
@@ -293,6 +297,8 @@ export const makeGitManager = Effect.gen(function* () {
     cwd: string;
     branch: string | null;
     commitMessage?: string;
+    /** When true, also produce a semantic feature branch name. */
+    includeBranch?: boolean;
   }) =>
     Effect.gen(function* () {
       const context = yield* gitCore.prepareCommitContext(input.cwd);
@@ -302,11 +308,12 @@ export const makeGitManager = Effect.gen(function* () {
 
       const customCommit = parseCustomCommitMessage(input.commitMessage ?? "");
       if (customCommit) {
-        const branch = sanitizeFeatureBranchName(customCommit.subject);
         return {
           subject: customCommit.subject,
           body: customCommit.body,
-          branch,
+          ...(input.includeBranch
+            ? { branch: sanitizeFeatureBranchName(customCommit.subject) }
+            : {}),
           commitMessage: formatCommitMessage(customCommit.subject, customCommit.body),
         };
       }
@@ -317,14 +324,16 @@ export const makeGitManager = Effect.gen(function* () {
           branch: input.branch,
           stagedSummary: limitContext(context.stagedSummary, 8_000),
           stagedPatch: limitContext(context.stagedPatch, 50_000),
+          ...(input.includeBranch !== undefined ? { includeBranch: input.includeBranch } : {}),
         })
         .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
 
-      const branch = sanitizeFeatureBranchName(generated.branch);
       return {
         subject: generated.subject,
         body: generated.body,
-        branch,
+        ...(generated.branch !== undefined
+          ? { branch: sanitizeFeatureBranchName(generated.branch) }
+          : {}),
         commitMessage: formatCommitMessage(generated.subject, generated.body),
       };
     });
@@ -456,6 +465,7 @@ export const makeGitManager = Effect.gen(function* () {
         cwd: input.cwd,
         branch: details.branch,
         ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
+        includeBranch: true,
       });
       if (!suggestion) {
         return yield* gitManagerError(
@@ -466,7 +476,7 @@ export const makeGitManager = Effect.gen(function* () {
 
       return {
         commitMessage: suggestion.commitMessage,
-        branch: suggestion.branch,
+        branch: suggestion.branch ?? sanitizeFeatureBranchName(suggestion.subject),
       };
     },
   );
