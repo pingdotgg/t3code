@@ -710,8 +710,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
             }
 
             let changed = false;
-            const attachments = message.attachments.map((attachment, index) => {
-              const handoffPreviewUrl = handoffPreviewUrls[index];
+            let imageIndex = 0;
+            const attachments = message.attachments.map((attachment) => {
+              if (attachment.type !== "image") {
+                return attachment;
+              }
+              const handoffPreviewUrl = handoffPreviewUrls[imageIndex];
+              imageIndex += 1;
               if (!handoffPreviewUrl || attachment.previewUrl === handoffPreviewUrl) {
                 return attachment;
               }
