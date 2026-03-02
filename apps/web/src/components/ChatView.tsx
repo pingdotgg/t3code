@@ -940,10 +940,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
         worktreePath?: string | null;
         preferNewTerminal?: boolean;
         rememberAsLastInvoked?: boolean;
+        allowLocalDraftThread?: boolean;
       },
     ) => {
       const api = readNativeApi();
-      if (!api || !activeThreadId || !activeProject || !activeThread || !isServerThread) return;
+      if (!api || !activeThreadId || !activeProject || !activeThread) return;
+      if (!isServerThread && !options?.allowLocalDraftThread) return;
       if (options?.rememberAsLastInvoked !== false) {
         setLastInvokedScriptByProjectId((current) => {
           if (current[activeProject.id] === script.id) return current;
@@ -1787,14 +1789,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
             worktreePath: result.worktree.path,
           });
         }
-        const setupScript = setupProjectScript(activeProject.scripts);
-        if (setupScript && isServerThread) {
-          await runProjectScript(setupScript, {
-            cwd: result.worktree.path,
-            worktreePath: result.worktree.path,
-            rememberAsLastInvoked: false,
-          });
-        }
       }
 
       const titleSeed =
@@ -1817,6 +1811,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
           createdAt: activeThread.createdAt,
         });
         createdServerThreadForLocalDraft = true;
+      }
+
+      const setupScript = baseBranchForWorktree
+        ? setupProjectScript(activeProject.scripts)
+        : null;
+      if (setupScript && (isServerThread || createdServerThreadForLocalDraft)) {
+        await runProjectScript(setupScript, {
+          worktreePath: nextThreadWorktreePath,
+          rememberAsLastInvoked: false,
+          allowLocalDraftThread: createdServerThreadForLocalDraft,
+          ...(nextThreadWorktreePath ? { cwd: nextThreadWorktreePath } : {}),
+        });
       }
 
       // Auto-title from first message
