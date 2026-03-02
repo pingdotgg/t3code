@@ -43,14 +43,9 @@ export function resolveAutoFeatureBranchName(
   preferredBranch?: string,
 ): string {
   const preferred = preferredBranch?.trim();
-  const normalized = sanitizeBranchFragment(
+  const resolvedBase = sanitizeFeatureBranchName(
     preferred && preferred.length > 0 ? preferred : AUTO_FEATURE_BRANCH_FALLBACK,
   );
-  const resolvedBase = normalized.includes("/")
-    ? normalized.startsWith("feature/")
-      ? normalized
-      : `feature/${normalized}`
-    : `feature/${normalized}`;
   const existingNames = new Set(existingBranchNames);
 
   if (!existingNames.has(resolvedBase)) {
