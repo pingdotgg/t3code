@@ -443,38 +443,41 @@ export default function Sidebar() {
       const cwd = rawCwd.trim();
       if (!cwd || isAddingProject) return;
       const api = readNativeApi();
+      if (!api) return;
 
       setIsAddingProject(true);
-      try {
-        if (!api) return;
-        const existing = projects.find((project) => project.cwd === cwd);
-        if (existing) {
-          focusMostRecentThreadForProject(existing.id);
-        } else {
-          const projectId = newProjectId();
-          const createdAt = new Date().toISOString();
-          const title = cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd;
-          const projectCreated = await api.orchestration
-            .dispatchCommand({
-              type: "project.create",
-              commandId: newCommandId(),
-              projectId,
-              title,
-              workspaceRoot: cwd,
-              defaultModel: DEFAULT_MODEL,
-              createdAt,
-            })
-            .then(() => true)
-            .catch(() => false);
-          if (projectCreated) {
-            await handleNewThread(projectId).catch(() => undefined);
-          }
-        }
-      } finally {
+      const finishAddingProject = () => {
         setIsAddingProject(false);
         setNewCwd("");
         setAddingProject(false);
+      };
+
+      const existing = projects.find((project) => project.cwd === cwd);
+      if (existing) {
+        focusMostRecentThreadForProject(existing.id);
+        finishAddingProject();
+        return;
       }
+
+      const projectId = newProjectId();
+      const createdAt = new Date().toISOString();
+      const title = cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd;
+      const projectCreated = await api.orchestration
+        .dispatchCommand({
+          type: "project.create",
+          commandId: newCommandId(),
+          projectId,
+          title,
+          workspaceRoot: cwd,
+          defaultModel: DEFAULT_MODEL,
+          createdAt,
+        })
+        .then(() => true)
+        .catch(() => false);
+      if (projectCreated) {
+        await handleNewThread(projectId).catch(() => undefined);
+      }
+      finishAddingProject();
     },
     [focusMostRecentThreadForProject, handleNewThread, isAddingProject, projects],
   );
