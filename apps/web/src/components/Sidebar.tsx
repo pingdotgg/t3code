@@ -514,19 +514,27 @@ export default function Sidebar() {
 
   const commitRename = useCallback(
     async (threadId: ThreadId, newTitle: string, originalTitle: string) => {
+      const finishRename = () => {
+        setRenamingThreadId((current) => {
+          if (current !== threadId) return current;
+          renamingInputRef.current = null;
+          return null;
+        });
+      };
+
       const trimmed = newTitle.trim();
       if (trimmed.length === 0) {
         toastManager.add({ type: "warning", title: "Thread title cannot be empty" });
-        cancelRename();
+        finishRename();
         return;
       }
       if (trimmed === originalTitle) {
-        cancelRename();
+        finishRename();
         return;
       }
       const api = readNativeApi();
       if (!api) {
-        cancelRename();
+        finishRename();
         return;
       }
       try {
@@ -543,13 +551,9 @@ export default function Sidebar() {
           description: error instanceof Error ? error.message : "An error occurred.",
         });
       }
-      setRenamingThreadId((current) => {
-        if (current !== threadId) return current;
-        renamingInputRef.current = null;
-        return null;
-      });
+      finishRename();
     },
-    [cancelRename],
+    [],
   );
 
   const handleThreadContextMenu = useCallback(
