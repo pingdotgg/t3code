@@ -260,7 +260,13 @@ export async function findFirstAvailableOffset({
 }) {
   for (let candidate = startOffset; ; candidate += 1) {
     const { serverPort, webPort } = portPairForOffset(candidate);
-    if (serverPort > MAX_PORT || webPort > MAX_PORT) {
+    const serverPortOutOfRange = serverPort > MAX_PORT;
+    const webPortOutOfRange = webPort > MAX_PORT;
+    if (
+      (requireServerPort && serverPortOutOfRange) ||
+      (requireWebPort && webPortOutOfRange) ||
+      (!requireServerPort && !requireWebPort && (serverPortOutOfRange || webPortOutOfRange))
+    ) {
       break;
     }
 

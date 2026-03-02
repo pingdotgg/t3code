@@ -149,6 +149,17 @@ describe("findFirstAvailableOffset", () => {
 
     expect(offset).toBe(2);
   });
+
+  it("allows offsets where only non-required ports exceed max", async () => {
+    const offset = await findFirstAvailableOffset({
+      startOffset: 59_803,
+      requireServerPort: true,
+      requireWebPort: false,
+      checkPortAvailability: async () => true,
+    });
+
+    expect(offset).toBe(59_803);
+  });
 });
 
 describe("resolveModePortOffsets", () => {
