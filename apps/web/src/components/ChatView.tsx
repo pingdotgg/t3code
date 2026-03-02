@@ -1284,7 +1284,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   // Auto-scroll on new messages
   const messageCount = timelineMessages.length;
-  const workLogCount = workLogEntries.length;
   const scrollMessagesToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const scrollContainer = messagesScrollRef.current;
     if (!scrollContainer) return;
@@ -1354,11 +1353,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!shouldAutoScrollRef.current) return;
     scheduleStickToBottom();
   }, [messageCount, scheduleStickToBottom]);
-  useEffect(() => {
-    if (phase !== "running") return;
-    if (!shouldAutoScrollRef.current) return;
-    scheduleStickToBottom();
-  }, [phase, scheduleStickToBottom, workLogCount]);
   useEffect(() => {
     if (phase !== "running") return;
     if (!shouldAutoScrollRef.current) return;
