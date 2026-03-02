@@ -400,11 +400,6 @@ const makeGitCore = Effect.gen(function* () {
       }),
     );
 
-  const branchExists = (cwd: string, branch: string): Effect.Effect<boolean, GitCommandError> =>
-    executeGit("GitCore.branchExists", cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
-      allowNonZeroExit: true,
-    }).pipe(Effect.map((result) => result.code === 0));
-
   const remoteBranchExists = (
     cwd: string,
     branch: string,
