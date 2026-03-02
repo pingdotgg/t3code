@@ -445,7 +445,14 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       void checkoutPromise
         .then(() => {
           const statusOverride = gitStatusForActions
-            ? { ...gitStatusForActions, branch: branchName, pr: null }
+            ? {
+                ...gitStatusForActions,
+                branch: branchName,
+                pr: null,
+                hasUpstream: false,
+                aheadCount: 0,
+                behindCount: 0,
+              }
             : null;
           return runGitActionWithToast({
             ...actionParams,
