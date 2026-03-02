@@ -22,6 +22,7 @@ const MODE_ARGS = {
   "dev:server": ["run", "dev", "--filter=t3"],
   "dev:web": ["run", "dev", "--filter=@t3tools/web"],
   "dev:desktop": ["run", "dev", "--filter=@t3tools/desktop", "--filter=@t3tools/web", "--parallel"],
+  "dev:mobile": ["run", "dev", "--filter=@t3tools/mobile", "--filter=t3", "--parallel"],
 };
 const FORWARDED_ENV_FLAGS = {
   "state-dir": { envName: "T3CODE_STATE_DIR", expectsValue: true },
@@ -192,7 +193,7 @@ export function createDevRunnerEnv({ mode, env, offset, envOverrides }) {
   }
   output.VITE_WS_URL = `ws://localhost:${parsedServerPort}`;
 
-  if (mode === "dev" || mode === "dev:server" || mode === "dev:web") {
+  if (mode === "dev" || mode === "dev:server" || mode === "dev:web" || mode === "dev:mobile") {
     // Running server/web in browser mode should not inherit desktop launcher state.
     output.T3CODE_MODE = "web";
     if (!("T3CODE_NO_BROWSER" in envOverrides)) {

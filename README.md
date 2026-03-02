@@ -4,6 +4,7 @@ T3 Code is a minimal web GUI for coding agents. Currently Codex-first, with Clau
 
 Run `npx t3` in any project directory to launch the web interface.
 Run `bun run dev:desktop` to launch the Electron desktop app in this monorepo.
+Run `bun run dev:mobile` to launch the Expo mobile client alongside the backend.
 
 ## Architecture
 
@@ -32,6 +33,7 @@ T3 Code runs as a **Node.js WebSocket server** that wraps `codex app-server` (JS
 - `/apps/server`: Node.js WebSocket server. Wraps Codex app-server, serves the built web app, and opens the browser on start.
 - `/apps/web`: React + Vite UI. Session control, conversation, and provider event rendering. Connects to the server via WebSocket.
 - `/apps/desktop`: Electron shell. Spawns a desktop-scoped `t3` backend process and loads the shared web app.
+- `/apps/mobile`: Expo React Native client with Uniwind styling. Supports saved backend profiles and connects directly to the server over WebSocket.
 - `/packages/contracts`: Shared Zod schemas and TypeScript contracts for provider events, WebSocket protocol, and model/session types.
 
 ## Codex prerequisites
@@ -48,6 +50,9 @@ bun run dev
 
 # Desktop development
 bun run dev:desktop
+
+# Mobile development (Expo + backend server)
+bun run dev:mobile
 
 # Desktop development on an isolated port set
 T3CODE_DEV_INSTANCE=feature-xyz bun run dev:desktop
@@ -68,6 +73,7 @@ npx t3
 - `bun run dev` — Starts contracts, server, and web in `turbo watch` mode.
 - `bun run dev:server` — Starts just the WebSocket server (uses Bun TypeScript execution).
 - `bun run dev:web` — Starts just the Vite dev server for the web app.
+- `bun run dev:mobile` — Starts the backend server and Expo mobile app in parallel.
 - Dev commands default `T3CODE_STATE_DIR` to `~/.t3/dev` to keep dev state isolated from desktop/prod state.
 - Override server CLI-equivalent flags from root dev commands with `--`, for example:
   `bun run dev -- --state-dir ~/.t3/another-dev-state`

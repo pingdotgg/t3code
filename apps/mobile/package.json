@@ -1,0 +1,33 @@
+{
+  "name": "@t3tools/mobile",
+  "version": "0.0.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "dev": "expo start",
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "^2.2.0",
+    "@t3tools/contracts": "workspace:*",
+    "@tanstack/react-query": "^5.90.0",
+    "effect": "catalog:",
+    "expo": "~55.0.4",
+    "expo-status-bar": "~55.0.4",
+    "react": "19.2.0",
+    "react-native": "0.83.2",
+    "tailwindcss": "^4.1.17",
+    "uniwind": "^1.4.0"
+  },
+  "devDependencies": {
+    "babel-preset-expo": "^55.0.10",
+    "@types/react": "~19.2.2",
+    "typescript": "~5.9.2",
+    "vitest": "^4.0.0"
+  }
+}

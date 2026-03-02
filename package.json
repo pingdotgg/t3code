@@ -20,6 +20,7 @@
     "dev:server": "bun run scripts/dev-runner.mjs dev:server",
     "dev:web": "bun run scripts/dev-runner.mjs dev:web",
     "dev:desktop": "bun run scripts/dev-runner.mjs dev:desktop",
+    "dev:mobile": "bun run scripts/dev-runner.mjs dev:mobile",
     "start": "turbo run start --filter=t3",
     "start:desktop": "turbo run start --filter=@t3tools/desktop",
     "build": "turbo run build",
