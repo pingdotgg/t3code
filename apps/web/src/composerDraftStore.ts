@@ -1,4 +1,5 @@
 import {
+  DEFAULT_MODEL,
   DEFAULT_REASONING,
   ProjectId,
   REASONING_OPTIONS,
@@ -119,7 +120,10 @@ const EMPTY_PERSISTED_DRAFT_STORE_STATE: PersistedComposerDraftStoreState = {
 const EMPTY_IMAGES: ComposerImageAttachment[] = [];
 const EMPTY_IDS: string[] = [];
 const EMPTY_PERSISTED_ATTACHMENTS: PersistedComposerImageAttachment[] = [];
-const EMPTY_THREAD_DRAFT: ComposerThreadDraftState = {
+Object.freeze(EMPTY_IMAGES);
+Object.freeze(EMPTY_IDS);
+Object.freeze(EMPTY_PERSISTED_ATTACHMENTS);
+const EMPTY_THREAD_DRAFT = Object.freeze({
   prompt: "",
   cursor: 0,
   images: EMPTY_IMAGES,
@@ -127,7 +131,7 @@ const EMPTY_THREAD_DRAFT: ComposerThreadDraftState = {
   persistedAttachments: EMPTY_PERSISTED_ATTACHMENTS,
   model: null,
   effort: null,
-};
+}) as ComposerThreadDraftState;
 
 const REASONING_EFFORT_VALUES = new Set<ReasoningEffort>(REASONING_OPTIONS);
 
@@ -667,7 +671,11 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         if (threadId.length === 0) {
           return;
         }
-        const normalizedModel = normalizeModelSlug(model) ?? null;
+        const normalizedModelCandidate = normalizeModelSlug(model);
+        const normalizedModel =
+          normalizedModelCandidate && normalizedModelCandidate !== DEFAULT_MODEL
+            ? normalizedModelCandidate
+            : null;
         set((state) => {
           const existing = state.draftsByThreadId[threadId];
           if (!existing && normalizedModel === null) {

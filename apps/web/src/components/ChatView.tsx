@@ -17,6 +17,7 @@ import {
   type ProviderApprovalDecision,
   type ThreadId,
   type TurnId,
+  normalizeModelSlug,
   resolveModelSlug,
 } from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -197,6 +198,7 @@ function buildLocalDraftThread(
   threadId: ThreadId,
   draftThread: DraftThreadState,
   fallbackModel: string,
+  error: string | null,
 ): Thread {
   return {
     id: threadId,
@@ -218,7 +220,7 @@ function buildLocalDraftThread(
     activeTerminalGroupId: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
     session: null,
     messages: [],
-    error: null,
+    error,
     createdAt: draftThread.createdAt,
     latestTurn: null,
     lastVisitedAt: draftThread.createdAt,
@@ -227,6 +229,25 @@ function buildLocalDraftThread(
     turnDiffSummaries: [],
     activities: [],
   };
+}
+
+function revokeBlobPreviewUrl(previewUrl: string | undefined): void {
+  if (!previewUrl || typeof URL === "undefined" || !previewUrl.startsWith("blob:")) {
+    return;
+  }
+  URL.revokeObjectURL(previewUrl);
+}
+
+function revokeUserMessagePreviewUrls(message: ChatMessage): void {
+  if (message.role !== "user" || !message.attachments) {
+    return;
+  }
+  for (const attachment of message.attachments) {
+    if (attachment.type !== "image") {
+      continue;
+    }
+    revokeBlobPreviewUrl(attachment.previewUrl);
+  }
 }
 
 type ComposerCommandItem =
@@ -449,6 +470,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
+  const [localDraftErrorsByThreadId, setLocalDraftErrorsByThreadId] = useState<
+    Record<ThreadId, string | null>
+  >({});
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
@@ -504,12 +528,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const serverThread = state.threads.find((t) => t.id === threadId);
   const fallbackDraftProject = state.projects.find((project) => project.id === draftThread?.projectId);
+  const localDraftError = localDraftErrorsByThreadId[threadId] ?? null;
   const localDraftThread = useMemo(
     () =>
       draftThread
-        ? buildLocalDraftThread(threadId, draftThread, fallbackDraftProject?.model ?? DEFAULT_MODEL)
+        ? buildLocalDraftThread(
+            threadId,
+            draftThread,
+            fallbackDraftProject?.model ?? DEFAULT_MODEL,
+            localDraftError,
+          )
         : undefined,
-    [draftThread, fallbackDraftProject?.model, threadId],
+    [draftThread, fallbackDraftProject?.model, localDraftError, threadId],
   );
   const activeThread = serverThread ?? localDraftThread;
   const isServerThread = serverThread !== undefined;
@@ -523,6 +553,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
+
+  useEffect(() => {
+    if (!serverThread) {
+      return;
+    }
+    setLocalDraftErrorsByThreadId((existing) => {
+      if (!(threadId in existing)) {
+        return existing;
+      }
+      const { [threadId]: _removed, ...rest } = existing;
+      return rest as Record<ThreadId, string | null>;
+    });
+  }, [serverThread, threadId]);
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -545,9 +588,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     dispatch,
   ]);
 
-  const selectedModel = resolveModelSlug(
-    composerDraft.model ?? activeThread?.model ?? activeProject?.model ?? DEFAULT_MODEL,
-  );
+  const baseThreadModel = resolveModelSlug(activeThread?.model ?? activeProject?.model ?? DEFAULT_MODEL);
+  const selectedModel = resolveModelSlug(composerDraft.model ?? baseThreadModel);
   const selectedEffort = composerDraft.effort ?? DEFAULT_REASONING;
   const modelOptions = useMemo(
     () => getAppModelOptions(settings.customCodexModels, selectedModel),
@@ -1184,7 +1226,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   useEffect(() => {
     if (!activeThread?.id) {
-      setOptimisticUserMessages([]);
+      setOptimisticUserMessages((existing) => {
+        for (const message of existing) {
+          revokeUserMessagePreviewUrls(message);
+        }
+        return [];
+      });
       return;
     }
     if (activeThread.messages.length === 0) {
@@ -1192,6 +1239,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     const serverIds = new Set(activeThread.messages.map((message) => message.id));
     setOptimisticUserMessages((existing) => {
+      const removed = existing.filter((message) => serverIds.has(message.id));
+      for (const message of removed) {
+        revokeUserMessagePreviewUrls(message);
+      }
       const next = existing.filter((message) => !serverIds.has(message.id));
       return next.length === existing.length ? existing : next;
     });
@@ -1202,7 +1253,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [prompt]);
 
   useEffect(() => {
-    setOptimisticUserMessages([]);
+    setOptimisticUserMessages((existing) => {
+      for (const message of existing) {
+        revokeUserMessagePreviewUrls(message);
+      }
+      return [];
+    });
     setSendPhase("idle");
     setComposerHighlightedItemId(null);
     dragDepthRef.current = 0;
@@ -1224,7 +1280,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           currentPersistedAttachments.map((attachment) => [attachment.id, attachment]),
         );
         const stagedAttachmentById = new Map<string, PersistedComposerImageAttachment>();
-        const serializationFailedImageIds: string[] = [];
         await Promise.all(
           composerImages.map(async (image) => {
             try {
@@ -1240,8 +1295,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
               const existingPersisted = existingPersistedById.get(image.id);
               if (existingPersisted) {
                 stagedAttachmentById.set(image.id, existingPersisted);
-              } else {
-                serializationFailedImageIds.push(image.id);
               }
             }
           }),
@@ -1468,13 +1521,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const setThreadError = useCallback(
     (threadId: ThreadId | null, error: string | null) => {
       if (!threadId) return;
-      dispatch({
-        type: "SET_ERROR",
-        threadId,
-        error,
+      if (state.threads.some((thread) => thread.id === threadId)) {
+        dispatch({
+          type: "SET_ERROR",
+          threadId,
+          error,
+        });
+        return;
+      }
+      setLocalDraftErrorsByThreadId((existing) => {
+        if ((existing[threadId] ?? null) === error) {
+          return existing;
+        }
+        return {
+          ...existing,
+          [threadId]: error,
+        };
       });
     },
-    [dispatch],
+    [dispatch, state.threads],
   );
 
   const addComposerImages = (files: File[]) => {
@@ -1805,9 +1870,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0
       ) {
-        setOptimisticUserMessages((existing) =>
-          existing.filter((message) => message.id !== messageIdForSend),
-        );
+        setOptimisticUserMessages((existing) => {
+          const removed = existing.filter((message) => message.id === messageIdForSend);
+          for (const message of removed) {
+            revokeUserMessagePreviewUrls(message);
+          }
+          const next = existing.filter((message) => message.id !== messageIdForSend);
+          return next.length === existing.length ? existing : next;
+        });
         promptRef.current = trimmed;
         setPrompt(trimmed);
         addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageForRetry));
@@ -1866,20 +1936,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const onModelSelect = useCallback(
     (model: string) => {
-      const normalizedModel = resolveModelSlug(model);
-      setComposerDraftModel(threadId, normalizedModel);
+      const normalizedModel = normalizeModelSlug(model);
+      const resolvedModel = normalizedModel ?? baseThreadModel;
+      setComposerDraftModel(threadId, resolvedModel === baseThreadModel ? null : resolvedModel);
       const api = readNativeApi();
       if (api && isServerThread && activeThread) {
         void api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
           threadId: activeThread.id,
-          model: normalizedModel,
+          model: resolvedModel,
         });
       }
       scheduleComposerFocus();
     },
-    [activeThread, isServerThread, scheduleComposerFocus, setComposerDraftModel, threadId],
+    [
+      activeThread,
+      baseThreadModel,
+      isServerThread,
+      scheduleComposerFocus,
+      setComposerDraftModel,
+      threadId,
+    ],
   );
   const onEffortSelect = useCallback(
     (effort: ReasoningEffort) => {
