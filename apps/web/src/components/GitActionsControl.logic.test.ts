@@ -910,18 +910,26 @@ describe("summarizeGitResult", () => {
 });
 
 describe("resolveAutoFeatureBranchName", () => {
-  const day = new Date("2026-03-01T12:00:00.000Z");
-
-  it("returns the base auto feature branch name when available", () => {
-    const branch = resolveAutoFeatureBranchName(["main", "feature/other"], day);
-    assert.equal(branch, "feature/stacked-20260301");
+  it("uses semantic preferred branch names when available", () => {
+    const branch = resolveAutoFeatureBranchName(["main", "feature/other"], "fix toast copy");
+    assert.equal(branch, "feature/fix-toast-copy");
   });
 
-  it("increments suffix when the base name already exists", () => {
+  it("normalizes preferred names that already include a branch namespace", () => {
+    const branch = resolveAutoFeatureBranchName(["main"], "feature/refine-toolbar-actions");
+    assert.equal(branch, "feature/refine-toolbar-actions");
+  });
+
+  it("increments suffix when the preferred branch name already exists", () => {
     const branch = resolveAutoFeatureBranchName(
-      ["main", "feature/stacked-20260301", "feature/stacked-20260301-2"],
-      day,
+      ["main", "feature/fix-toast-copy", "feature/fix-toast-copy-2"],
+      "fix toast copy",
     );
-    assert.equal(branch, "feature/stacked-20260301-3");
+    assert.equal(branch, "feature/fix-toast-copy-3");
+  });
+
+  it("falls back to feature/update when no preferred name is provided", () => {
+    const branch = resolveAutoFeatureBranchName(["main"]);
+    assert.equal(branch, "feature/update");
   });
 });

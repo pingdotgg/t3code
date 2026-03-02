@@ -196,6 +196,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
           subject:
             "  Add important change to the system with too much detail and a trailing period.\nsecondary line",
           body: "\n- added migration\n- updated tests\n",
+          branch: "fix/important-system-change",
         }),
       },
       Effect.gen(function* () {
@@ -211,6 +212,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         expect(generated.subject.length).toBeLessThanOrEqual(72);
         expect(generated.subject.endsWith(".")).toBe(false);
         expect(generated.body).toBe("- added migration\n- updated tests");
+        expect(generated.branch).toBe("feature/fix/important-system-change");
       }),
     ),
   );

@@ -85,9 +85,10 @@ function limitContext(value: string, maxChars: number): string {
   return `${value.slice(0, maxChars)}\n\n[truncated]`;
 }
 
-function sanitizeCommitMessage(generated: { subject: string; body: string }): {
+function sanitizeCommitMessage(generated: { subject: string; body: string; branch: string }): {
   subject: string;
   body: string;
+  branch: string;
 } {
   const rawSubject = generated.subject.trim().split(/\r?\n/g)[0]?.trim() ?? "";
   const subject = rawSubject.replace(/[.]+$/g, "").trim();
@@ -95,7 +96,42 @@ function sanitizeCommitMessage(generated: { subject: string; body: string }): {
   return {
     subject: safeSubject,
     body: generated.body.trim(),
+    branch: generated.branch,
   };
+}
+
+function sanitizeBranchFragment(raw: string): string {
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/['"`]/g, "")
+    .replace(/^[./\s_-]+|[./\s_-]+$/g, "");
+
+  const branchFragment = normalized
+    .replace(/[^a-z0-9/_-]+/g, "-")
+    .replace(/\/+/g, "/")
+    .replace(/-+/g, "-")
+    .replace(/^[./_-]+|[./_-]+$/g, "")
+    .slice(0, 64)
+    .replace(/[./_-]+$/g, "");
+
+  return branchFragment.length > 0 ? branchFragment : "update";
+}
+
+function sanitizeFeatureBranchName(raw: string): string {
+  const sanitized = sanitizeBranchFragment(raw);
+  if (sanitized.includes("/")) {
+    return sanitized.startsWith("feature/") ? sanitized : `feature/${sanitized}`;
+  }
+  return `feature/${sanitized}`;
+}
+
+function formatCommitMessage(subject: string, body: string): string {
+  const trimmedBody = body.trim();
+  if (trimmedBody.length === 0) {
+    return subject;
+  }
+  return `${subject}\n\n${trimmedBody}`;
 }
 
 function parseCustomCommitMessage(raw: string): { subject: string; body: string } | null {
@@ -253,30 +289,62 @@ export const makeGitManager = Effect.gen(function* () {
       return "main";
     });
 
+  const resolveCommitAndBranchSuggestion = (input: {
+    cwd: string;
+    branch: string | null;
+    commitMessage?: string;
+  }) =>
+    Effect.gen(function* () {
+      const context = yield* gitCore.prepareCommitContext(input.cwd);
+      if (!context) {
+        return null;
+      }
+
+      const customCommit = parseCustomCommitMessage(input.commitMessage ?? "");
+      if (customCommit) {
+        const branch = sanitizeFeatureBranchName(customCommit.subject);
+        return {
+          subject: customCommit.subject,
+          body: customCommit.body,
+          branch,
+          commitMessage: formatCommitMessage(customCommit.subject, customCommit.body),
+        };
+      }
+
+      const generated = yield* textGeneration
+        .generateCommitMessage({
+          cwd: input.cwd,
+          branch: input.branch,
+          stagedSummary: limitContext(context.stagedSummary, 8_000),
+          stagedPatch: limitContext(context.stagedPatch, 50_000),
+        })
+        .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
+
+      const branch = sanitizeFeatureBranchName(generated.branch);
+      return {
+        subject: generated.subject,
+        body: generated.body,
+        branch,
+        commitMessage: formatCommitMessage(generated.subject, generated.body),
+      };
+    });
+
   const runCommitStep = (cwd: string, branch: string | null, commitMessage?: string) =>
     Effect.gen(function* () {
-      const context = yield* gitCore.prepareCommitContext(cwd);
-      if (!context) {
+      const suggestion = yield* resolveCommitAndBranchSuggestion({
+        cwd,
+        branch,
+        ...(commitMessage ? { commitMessage } : {}),
+      });
+      if (!suggestion) {
         return { status: "skipped_no_changes" as const };
       }
 
-      let generated = parseCustomCommitMessage(commitMessage ?? "");
-      if (!generated) {
-        generated = yield* textGeneration
-          .generateCommitMessage({
-            cwd,
-            branch,
-            stagedSummary: limitContext(context.stagedSummary, 8_000),
-            stagedPatch: limitContext(context.stagedPatch, 50_000),
-          })
-          .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
-      }
-
-      const { commitSha } = yield* gitCore.commit(cwd, generated.subject, generated.body);
+      const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body);
       return {
         status: "created" as const,
         commitSha,
-        subject: generated.subject,
+        subject: suggestion.subject,
       };
     });
 
@@ -381,6 +449,28 @@ export const makeGitManager = Effect.gen(function* () {
     };
   });
 
+  const suggestCommitAndBranch: GitManagerShape["suggestCommitAndBranch"] = Effect.fnUntraced(
+    function* (input) {
+      const details = yield* gitCore.statusDetails(input.cwd);
+      const suggestion = yield* resolveCommitAndBranchSuggestion({
+        cwd: input.cwd,
+        branch: details.branch,
+        ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
+      });
+      if (!suggestion) {
+        return yield* gitManagerError(
+          "suggestCommitAndBranch",
+          "Cannot suggest a commit and branch because there are no changes to commit.",
+        );
+      }
+
+      return {
+        commitMessage: suggestion.commitMessage,
+        branch: suggestion.branch,
+      };
+    },
+  );
+
   const runStackedAction: GitManagerShape["runStackedAction"] = Effect.fnUntraced(
     function* (input) {
       const wantsPush = input.action !== "commit";
@@ -419,6 +509,7 @@ export const makeGitManager = Effect.gen(function* () {
   return {
     status,
     runStackedAction,
+    suggestCommitAndBranch,
   } satisfies GitManagerShape;
 });
 

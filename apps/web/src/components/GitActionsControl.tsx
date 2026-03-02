@@ -39,6 +39,7 @@ import {
   gitMutationKeys,
   gitPullMutationOptions,
   gitRunStackedActionMutationOptions,
+  gitSuggestCommitAndBranchMutationOptions,
   gitStatusQueryOptions,
   invalidateGitQueries,
 } from "~/lib/gitReactQuery";
@@ -172,6 +173,9 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const runImmediateGitActionMutation = useMutation(
     gitRunStackedActionMutationOptions({ cwd: gitCwd, queryClient }),
   );
+  const suggestCommitAndBranchMutation = useMutation(
+    gitSuggestCommitAndBranchMutationOptions({ cwd: gitCwd }),
+  );
   const createBranchAndCheckoutMutation = useMutation(
     gitCreateBranchAndCheckoutMutationOptions({ cwd: gitCwd, queryClient }),
   );
@@ -179,11 +183,16 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
   const isRunStackedActionRunning =
     useIsMutating({ mutationKey: gitMutationKeys.runStackedAction(gitCwd) }) > 0;
+  const isSuggestCommitAndBranchRunning =
+    useIsMutating({ mutationKey: gitMutationKeys.suggestCommitAndBranch(gitCwd) }) > 0;
   const isCreateBranchAndCheckoutRunning =
     useIsMutating({ mutationKey: gitMutationKeys.createBranchAndCheckout(gitCwd) }) > 0;
   const isPullRunning = useIsMutating({ mutationKey: gitMutationKeys.pull(gitCwd) }) > 0;
   const isGitActionRunning =
-    isRunStackedActionRunning || isCreateBranchAndCheckoutRunning || isPullRunning;
+    isRunStackedActionRunning ||
+    isSuggestCommitAndBranchRunning ||
+    isCreateBranchAndCheckoutRunning ||
+    isPullRunning;
   const isDefaultBranch = useMemo(() => {
     const branchName = gitStatusForActions?.branch;
     if (!branchName) return false;
@@ -443,20 +452,43 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       forcePushOnlyProgress?: boolean;
       onConfirmed?: () => void;
     }) => {
-      const branchName = resolveAutoFeatureBranchName(
-        branchList?.branches.map((branch) => branch.name) ?? [],
-      );
+      const existingBranchNames = branchList?.branches.map((branch) => branch.name) ?? [];
+      const providedCommitMessage = actionParams.commitMessage?.trim() || undefined;
+      const shouldSuggestCommitAndBranch =
+        !providedCommitMessage && !!gitStatusForActions?.hasWorkingTreeChanges;
 
-      const checkoutPromise = createBranchAndCheckoutMutation.mutateAsync(branchName);
       const checkoutToastId = toastManager.add({
         type: "loading",
-        title: `Creating ${branchName}...`,
+        title: "Preparing feature branch...",
         timeout: 0,
         data: threadToastData,
       });
 
-      void checkoutPromise
-        .then(() => {
+      const suggestionPromise = shouldSuggestCommitAndBranch
+        ? suggestCommitAndBranchMutation.mutateAsync({}).catch(() => null)
+        : Promise.resolve(null);
+
+      void suggestionPromise
+        .then((suggestion) => {
+          const preferredBranch =
+            suggestion?.branch ??
+            (providedCommitMessage ? providedCommitMessage.split(/\r?\n/g)[0]?.trim() : undefined);
+          const branchName = resolveAutoFeatureBranchName(existingBranchNames, preferredBranch);
+          const resolvedCommitMessage = suggestion?.commitMessage ?? providedCommitMessage;
+
+          toastManager.update(checkoutToastId, {
+            type: "loading",
+            title: `Creating ${branchName}...`,
+            timeout: 0,
+            data: threadToastData,
+          });
+
+          return createBranchAndCheckoutMutation.mutateAsync(branchName).then(() => ({
+            branchName,
+            resolvedCommitMessage,
+          }));
+        })
+        .then(({ branchName, resolvedCommitMessage }) => {
           const statusOverride = gitStatusForActions
             ? {
                 ...gitStatusForActions,
@@ -469,6 +501,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
             : null;
           return runGitActionWithToast({
             ...actionParams,
+            ...(resolvedCommitMessage ? { commitMessage: resolvedCommitMessage } : {}),
             skipDefaultBranchPrompt: true,
             statusOverride,
             isDefaultBranchOverride: false,
@@ -489,6 +522,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       createBranchAndCheckoutMutation,
       gitStatusForActions,
       runGitActionWithToast,
+      suggestCommitAndBranchMutation,
       threadToastData,
     ],
   );

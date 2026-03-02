@@ -32,7 +32,7 @@ interface FakeGitTextGeneration {
     branch: string | null;
     stagedSummary: string;
     stagedPatch: string;
-  }) => Effect.Effect<{ subject: string; body: string }, TextGenerationError>;
+  }) => Effect.Effect<{ subject: string; body: string; branch: string }, TextGenerationError>;
   generatePrContent: (input: {
     cwd: string;
     baseBranch: string;
@@ -108,6 +108,7 @@ function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): T
       Effect.succeed({
         subject: "Implement stacked git actions",
         body: "",
+        branch: "feature/implement-stacked-git-actions",
       }),
     generatePrContent: () =>
       Effect.succeed({
@@ -286,6 +287,16 @@ function runStackedAction(
   },
 ) {
   return manager.runStackedAction(input);
+}
+
+function suggestCommitAndBranch(
+  manager: GitManagerShape,
+  input: {
+    cwd: string;
+    commitMessage?: string;
+  },
+) {
+  return manager.suggestCommitAndBranch(input);
 }
 
 function makeManager(input?: {
@@ -501,6 +512,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
               return {
                 subject: "this should not be used",
                 body: "",
+                branch: "feature/unused",
               };
             }),
         },
@@ -527,6 +539,57 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("suggests commit message and semantic branch for dirty worktree", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\nsuggest\n");
+
+      const { manager } = yield* makeManager();
+      const suggestion = yield* suggestCommitAndBranch(manager, {
+        cwd: repoDir,
+      });
+
+      expect(suggestion).toEqual({
+        commitMessage: "Implement stacked git actions",
+        branch: "feature/implement-stacked-git-actions",
+      });
+    }),
+  );
+
+  it.effect("suggests branch from custom commit message without AI generation", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\ncustom-suggest\n");
+      let generatedCount = 0;
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: () =>
+            Effect.sync(() => {
+              generatedCount += 1;
+              return {
+                subject: "unused",
+                body: "",
+                branch: "feature/unused",
+              };
+            }),
+        },
+      });
+      const suggestion = yield* suggestCommitAndBranch(manager, {
+        cwd: repoDir,
+        commitMessage: "feat: custom summary line\n\n- details from user",
+      });
+
+      expect(suggestion).toEqual({
+        commitMessage: "feat: custom summary line\n\n- details from user",
+        branch: "feature/feat-custom-summary-line",
+      });
+      expect(generatedCount).toBe(0);
+    }),
+  );
+
   it.effect("skips commit when there are no uncommitted changes", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -541,6 +604,23 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(result.commit.status).toBe("skipped_no_changes");
       expect(result.push.status).toBe("skipped_not_requested");
       expect(result.pr.status).toBe("skipped_not_requested");
+    }),
+  );
+
+  it.effect("returns a clear error when suggesting from clean worktree", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+
+      const { manager } = yield* makeManager();
+      const errorMessage = yield* suggestCommitAndBranch(manager, {
+        cwd: repoDir,
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+
+      expect(errorMessage).toContain("no changes to commit");
     }),
   );
 

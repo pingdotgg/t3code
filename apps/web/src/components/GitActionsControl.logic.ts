@@ -35,7 +35,7 @@ export type DefaultBranchConfirmableAction = "commit_push" | "commit_push_pr";
 
 const SHORT_SHA_LENGTH = 7;
 const TOAST_DESCRIPTION_MAX = 72;
-const AUTO_FEATURE_BRANCH_PREFIX = "feature/stacked";
+const AUTO_FEATURE_BRANCH_FALLBACK = "feature/update";
 
 function shortenSha(sha: string | undefined): string | null {
   if (!sha) return null;
@@ -321,29 +321,47 @@ export function resolveDefaultBranchActionDialogCopy(input: {
   };
 }
 
-function formatDateForBranch(now: Date): string {
-  const year = now.getUTCFullYear();
-  const month = String(now.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(now.getUTCDate()).padStart(2, "0");
-  return `${year}${month}${day}`;
+function sanitizeBranchFragment(raw: string): string {
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/['"`]/g, "")
+    .replace(/^[./\s_-]+|[./\s_-]+$/g, "");
+
+  const branchFragment = normalized
+    .replace(/[^a-z0-9/_-]+/g, "-")
+    .replace(/\/+/g, "/")
+    .replace(/-+/g, "-")
+    .replace(/^[./_-]+|[./_-]+$/g, "")
+    .slice(0, 64)
+    .replace(/[./_-]+$/g, "");
+
+  return branchFragment.length > 0 ? branchFragment : "update";
 }
 
 export function resolveAutoFeatureBranchName(
   existingBranchNames: readonly string[],
-  now = new Date(),
+  preferredBranch?: string,
 ): string {
-  const daySlug = formatDateForBranch(now);
-  const base = `${AUTO_FEATURE_BRANCH_PREFIX}-${daySlug}`;
+  const preferred = preferredBranch?.trim();
+  const normalized = sanitizeBranchFragment(
+    preferred && preferred.length > 0 ? preferred : AUTO_FEATURE_BRANCH_FALLBACK,
+  );
+  const resolvedBase = normalized.includes("/")
+    ? normalized.startsWith("feature/")
+      ? normalized
+      : `feature/${normalized}`
+    : `feature/${normalized}`;
   const existingNames = new Set(existingBranchNames);
 
-  if (!existingNames.has(base)) {
-    return base;
+  if (!existingNames.has(resolvedBase)) {
+    return resolvedBase;
   }
 
   let suffix = 2;
-  while (existingNames.has(`${base}-${suffix}`)) {
+  while (existingNames.has(`${resolvedBase}-${suffix}`)) {
     suffix += 1;
   }
 
-  return `${base}-${suffix}`;
+  return `${resolvedBase}-${suffix}`;
 }
