@@ -14,6 +14,7 @@
       "@effect/language-service": "0.75.1"
     }
   },
+  "type": "module",
   "scripts": {
     "dev": "bun run scripts/dev-runner.mjs dev",
     "dev:server": "bun run scripts/dev-runner.mjs dev:server",
