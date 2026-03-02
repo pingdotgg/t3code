@@ -8,6 +8,7 @@ import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 
+import type { ContextMenuItem } from "@t3tools/contracts";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { fixPath } from "./fixPath";
 
@@ -35,12 +36,6 @@ let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
 let desktopProtocolRegistered = false;
-
-interface DesktopContextMenuItem {
-  id: string;
-  label: string;
-  destructive?: boolean;
-}
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 
@@ -439,7 +434,7 @@ function registerIpcHandlers(): void {
     CONTEXT_MENU_CHANNEL,
     async (
       _event,
-      items: DesktopContextMenuItem[],
+      items: ContextMenuItem[],
       position?: { x: number; y: number },
     ) => {
       const normalizedItems = items
