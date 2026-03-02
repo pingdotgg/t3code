@@ -22,6 +22,7 @@ export interface CommitMessageGenerationInput {
 export interface CommitMessageGenerationResult {
   subject: string;
   body: string;
+  branch: string;
 }
 
 export interface PrContentGenerationInput {

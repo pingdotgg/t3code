@@ -18,6 +18,7 @@ import {
   GitPullInput,
   GitRemoveWorktreeInput,
   GitRunStackedActionInput,
+  GitSuggestCommitAndBranchInput,
   GitStatusInput,
 } from "./git";
 import {
@@ -48,6 +49,7 @@ export const WS_METHODS = {
   gitPull: "git.pull",
   gitStatus: "git.status",
   gitRunStackedAction: "git.runStackedAction",
+  gitSuggestCommitAndBranch: "git.suggestCommitAndBranch",
   gitListBranches: "git.listBranches",
   gitCreateWorktree: "git.createWorktree",
   gitRemoveWorktree: "git.removeWorktree",
@@ -109,6 +111,7 @@ export const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.gitPull, GitPullInput),
   tagRequestBody(WS_METHODS.gitStatus, GitStatusInput),
   tagRequestBody(WS_METHODS.gitRunStackedAction, GitRunStackedActionInput),
+  tagRequestBody(WS_METHODS.gitSuggestCommitAndBranch, GitSuggestCommitAndBranchInput),
   tagRequestBody(WS_METHODS.gitListBranches, GitListBranchesInput),
   tagRequestBody(WS_METHODS.gitCreateWorktree, GitCreateWorktreeInput),
   tagRequestBody(WS_METHODS.gitRemoveWorktree, GitRemoveWorktreeInput),

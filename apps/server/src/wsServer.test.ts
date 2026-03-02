@@ -1555,7 +1555,8 @@ describe("WebSocket Server", () => {
 
     const status = vi.fn(() => Effect.succeed(statusResult));
     const runStackedAction = vi.fn(() => Effect.void as any);
-    const gitManager: GitManagerShape = { status, runStackedAction };
+    const suggestCommitAndBranch = vi.fn(() => Effect.void as any);
+    const gitManager: GitManagerShape = { status, runStackedAction, suggestCommitAndBranch };
 
     server = await createTestServer({ cwd: "/test", gitManager });
     const addr = server.address();
@@ -1585,6 +1586,7 @@ describe("WebSocket Server", () => {
     const gitManager: GitManagerShape = {
       status: vi.fn(() => Effect.void as any),
       runStackedAction,
+      suggestCommitAndBranch: vi.fn(() => Effect.void as any),
     };
 
     server = await createTestServer({ cwd: "/test", gitManager });
@@ -1605,6 +1607,34 @@ describe("WebSocket Server", () => {
       cwd: "/test",
       action: "commit_push",
     });
+  });
+
+  it("supports git.suggestCommitAndBranch over websocket", async () => {
+    const suggestCommitAndBranchResult = {
+      commitMessage: "feat: improve git actions",
+      branch: "feature/improve-git-actions",
+    };
+    const suggestCommitAndBranch = vi.fn(() => Effect.succeed(suggestCommitAndBranchResult));
+    const gitManager: GitManagerShape = {
+      status: vi.fn(() => Effect.void as any),
+      runStackedAction: vi.fn(() => Effect.void as any),
+      suggestCommitAndBranch,
+    };
+
+    server = await createTestServer({ cwd: "/test", gitManager });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.gitSuggestCommitAndBranch, {
+      cwd: "/test",
+    });
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual(suggestCommitAndBranchResult);
+    expect(suggestCommitAndBranch).toHaveBeenCalledWith({ cwd: "/test" });
   });
 
   it("rejects websocket connections without a valid auth token", async () => {

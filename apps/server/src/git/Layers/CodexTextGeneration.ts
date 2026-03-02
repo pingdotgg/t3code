@@ -111,6 +111,14 @@ function sanitizeBranchName(raw: string): string {
   return branchFragment.length > 0 ? branchFragment : "update";
 }
 
+function sanitizeFeatureBranchName(raw: string): string {
+  const sanitized = sanitizeBranchName(raw);
+  if (sanitized.includes("/")) {
+    return sanitized.startsWith("feature/") ? sanitized : `feature/${sanitized}`;
+  }
+  return `feature/${sanitized}`;
+}
+
 const makeCodexTextGeneration = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -330,10 +338,11 @@ const makeCodexTextGeneration = Effect.gen(function* () {
   const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = (input) => {
     const prompt = [
       "You write concise git commit messages.",
-      "Return a JSON object with keys: subject, body.",
+      "Return a JSON object with keys: subject, body, branch.",
       "Rules:",
       "- subject must be imperative, <= 72 chars, and no trailing period",
       "- body can be empty string or short bullet points",
+      "- branch must be a short semantic git branch fragment for this change",
       "- capture the primary user-visible or developer-visible change",
       "",
       `Branch: ${input.branch ?? "(detached)"}`,
@@ -352,6 +361,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       outputSchemaJson: Schema.Struct({
         subject: Schema.String,
         body: Schema.String,
+        branch: Schema.String,
       }),
     }).pipe(
       Effect.map(
@@ -359,6 +369,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
           ({
             subject: sanitizeCommitSubject(generated.subject),
             body: generated.body.trim(),
+            branch: sanitizeFeatureBranchName(generated.branch),
           }) satisfies CommitMessageGenerationResult,
       ),
     );

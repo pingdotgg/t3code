@@ -6,6 +6,7 @@ import {
   ProjectId,
   ThreadId,
   WS_CHANNELS,
+  WS_METHODS,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -376,5 +377,4 @@ describe("wsNativeApi", () => {
       { x: 20, y: 30 },
     );
   });
-
 });

@@ -4,6 +4,7 @@ import {
   gitMutationKeys,
   gitPullMutationOptions,
   gitRunStackedActionMutationOptions,
+  gitSuggestCommitAndBranchMutationOptions,
 } from "./gitReactQuery";
 
 describe("gitMutationKeys", () => {
@@ -15,6 +16,12 @@ describe("gitMutationKeys", () => {
 
   it("scopes pull keys by cwd", () => {
     expect(gitMutationKeys.pull("/repo/a")).not.toEqual(gitMutationKeys.pull("/repo/b"));
+  });
+
+  it("scopes suggest-commit-and-branch keys by cwd", () => {
+    expect(gitMutationKeys.suggestCommitAndBranch("/repo/a")).not.toEqual(
+      gitMutationKeys.suggestCommitAndBranch("/repo/b"),
+    );
   });
 });
 
@@ -29,5 +36,10 @@ describe("git mutation options", () => {
   it("attaches cwd-scoped mutation key for pull", () => {
     const options = gitPullMutationOptions({ cwd: "/repo/a", queryClient });
     expect(options.mutationKey).toEqual(gitMutationKeys.pull("/repo/a"));
+  });
+
+  it("attaches cwd-scoped mutation key for suggestCommitAndBranch", () => {
+    const options = gitSuggestCommitAndBranchMutationOptions({ cwd: "/repo/a" });
+    expect(options.mutationKey).toEqual(gitMutationKeys.suggestCommitAndBranch("/repo/a"));
   });
 });

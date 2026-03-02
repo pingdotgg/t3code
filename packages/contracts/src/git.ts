@@ -56,6 +56,12 @@ export const GitRunStackedActionInput = Schema.Struct({
 });
 export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 
+export const GitSuggestCommitAndBranchInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
+});
+export type GitSuggestCommitAndBranchInput = typeof GitSuggestCommitAndBranchInput.Type;
+
 export const GitListBranchesInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
 });
@@ -160,6 +166,12 @@ export const GitRunStackedActionResult = Schema.Struct({
   }),
 });
 export type GitRunStackedActionResult = typeof GitRunStackedActionResult.Type;
+
+export const GitSuggestCommitAndBranchResult = Schema.Struct({
+  commitMessage: TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000)),
+  branch: TrimmedNonEmptyStringSchema,
+});
+export type GitSuggestCommitAndBranchResult = typeof GitSuggestCommitAndBranchResult.Type;
 
 export const GitPullResult = Schema.Struct({
   status: Schema.Literals(["pulled", "skipped_up_to_date"]),
