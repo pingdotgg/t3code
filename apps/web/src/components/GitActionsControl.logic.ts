@@ -31,6 +31,8 @@ export interface DefaultBranchActionDialogCopy {
   continueLabel: string;
 }
 
+export type DefaultBranchConfirmableAction = "commit_push" | "commit_push_pr";
+
 const SHORT_SHA_LENGTH = 7;
 const TOAST_DESCRIPTION_MAX = 72;
 const AUTO_FEATURE_BRANCH_PREFIX = "feature/stacked";
@@ -283,20 +285,12 @@ export function requiresDefaultBranchConfirmation(
 }
 
 export function resolveDefaultBranchActionDialogCopy(input: {
-  action: GitStackedAction;
+  action: DefaultBranchConfirmableAction;
   branchName: string;
   includesCommit: boolean;
 }): DefaultBranchActionDialogCopy {
   const branchLabel = input.branchName;
   const suffix = ` on "${branchLabel}". You can continue on this branch or create a feature branch and run the same action there.`;
-
-  if (input.action === "commit") {
-    return {
-      title: "Commit to default branch?",
-      description: `This action will commit changes${suffix}`,
-      continueLabel: `Commit to ${branchLabel}`,
-    };
-  }
 
   if (input.action === "commit_push") {
     if (input.includesCommit) {

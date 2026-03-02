@@ -9,6 +9,7 @@ import {
   type GitActionIconName,
   type GitActionMenuItem,
   type GitQuickAction,
+  type DefaultBranchConfirmableAction,
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
@@ -50,7 +51,7 @@ interface GitActionsControlProps {
 }
 
 interface PendingDefaultBranchAction {
-  action: GitStackedAction;
+  action: DefaultBranchConfirmableAction;
   branchName: string;
   includesCommit: boolean;
   commitMessage?: string;
@@ -268,6 +269,9 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         requiresDefaultBranchConfirmation(action, actionIsDefaultBranch) &&
         actionBranch
       ) {
+        if (action !== "commit_push" && action !== "commit_push_pr") {
+          return;
+        }
         setPendingDefaultBranchAction({
           action,
           branchName: actionBranch,
@@ -578,11 +582,18 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
     setIsCommitDialogOpen(false);
+    setDialogCommitMessage("");
     void runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
     });
-  }, [dialogCommitMessage, isCommitDialogOpen, runGitActionWithToast, setIsCommitDialogOpen]);
+  }, [
+    dialogCommitMessage,
+    isCommitDialogOpen,
+    runGitActionWithToast,
+    setDialogCommitMessage,
+    setIsCommitDialogOpen,
+  ]);
 
   const openChangedFileInEditor = useCallback(
     (filePath: string) => {

@@ -381,6 +381,11 @@ const makeGitCore = Effect.gen(function* () {
       },
     ).pipe(Effect.map((result) => result.code === 0));
 
+  const originRemoteExists = (cwd: string): Effect.Effect<boolean, GitCommandError> =>
+    executeGit("GitCore.originRemoteExists", cwd, ["remote", "get-url", "origin"], {
+      allowNonZeroExit: true,
+    }).pipe(Effect.map((result) => result.code === 0));
+
   const resolveBaseBranchForNoUpstream = (
     cwd: string,
     branch: string,
@@ -668,10 +673,25 @@ const makeGitCore = Effect.gen(function* () {
           Effect.catch(() => Effect.succeed(null)),
         );
         if (comparableBaseBranch) {
-          return {
-            status: "skipped_up_to_date" as const,
-            branch,
-          };
+          const hasOriginRemote = yield* originRemoteExists(cwd).pipe(
+            Effect.catch(() => Effect.succeed(false)),
+          );
+          if (!hasOriginRemote) {
+            return {
+              status: "skipped_up_to_date" as const,
+              branch,
+            };
+          }
+
+          const hasRemoteBranch = yield* remoteBranchExists(cwd, branch).pipe(
+            Effect.catch(() => Effect.succeed(false)),
+          );
+          if (hasRemoteBranch) {
+            return {
+              status: "skipped_up_to_date" as const,
+              branch,
+            };
+          }
         }
       }
 
