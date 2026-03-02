@@ -355,9 +355,11 @@ function readPersistedAttachmentIdsFromStorage(threadId: ThreadId): string[] {
 function hydreatePersistedComposerImageAttachment(
   attachment: PersistedComposerImageAttachment,
 ): File | null {
-  const [rawHeader, payload] = attachment.dataUrl.split(",", 2);
-  const header = rawHeader ?? "";
-  if (!payload) {
+  const commaIndex = attachment.dataUrl.indexOf(",");
+  const header =
+    commaIndex === -1 ? attachment.dataUrl : attachment.dataUrl.slice(0, commaIndex);
+  const payload = commaIndex === -1 ? "" : attachment.dataUrl.slice(commaIndex + 1);
+  if (payload.length === 0) {
     return null;
   }
   try {
@@ -484,14 +486,20 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             ...state.draftThreadsByThreadId,
             [threadId]: nextDraftThread,
           };
+          let nextDraftsByThreadId = state.draftsByThreadId;
           if (
             previousThreadIdForProject &&
             previousThreadIdForProject !== threadId &&
             !Object.values(nextProjectDraftThreadIdByProjectId).includes(previousThreadIdForProject)
           ) {
             delete nextDraftThreadsByThreadId[previousThreadIdForProject];
+            if (state.draftsByThreadId[previousThreadIdForProject] !== undefined) {
+              nextDraftsByThreadId = { ...state.draftsByThreadId };
+              delete nextDraftsByThreadId[previousThreadIdForProject];
+            }
           }
           return {
+            draftsByThreadId: nextDraftsByThreadId,
             draftThreadsByThreadId: nextDraftThreadsByThreadId,
             projectDraftThreadIdByProjectId: nextProjectDraftThreadIdByProjectId,
           };
@@ -563,10 +571,16 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           const nextDraftThreadsByThreadId: Record<ThreadId, DraftThreadState> = {
             ...state.draftThreadsByThreadId,
           };
+          let nextDraftsByThreadId = state.draftsByThreadId;
           if (!Object.values(restProjectMappings).includes(threadId)) {
             delete nextDraftThreadsByThreadId[threadId];
+            if (state.draftsByThreadId[threadId] !== undefined) {
+              nextDraftsByThreadId = { ...state.draftsByThreadId };
+              delete nextDraftsByThreadId[threadId];
+            }
           }
           return {
+            draftsByThreadId: nextDraftsByThreadId,
             draftThreadsByThreadId: nextDraftThreadsByThreadId,
             projectDraftThreadIdByProjectId: restProjectMappings,
           };
@@ -586,10 +600,16 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           const nextDraftThreadsByThreadId: Record<ThreadId, DraftThreadState> = {
             ...state.draftThreadsByThreadId,
           };
+          let nextDraftsByThreadId = state.draftsByThreadId;
           if (!Object.values(restProjectMappings).includes(threadId)) {
             delete nextDraftThreadsByThreadId[threadId];
+            if (state.draftsByThreadId[threadId] !== undefined) {
+              nextDraftsByThreadId = { ...state.draftsByThreadId };
+              delete nextDraftsByThreadId[threadId];
+            }
           }
           return {
+            draftsByThreadId: nextDraftsByThreadId,
             draftThreadsByThreadId: nextDraftThreadsByThreadId,
             projectDraftThreadIdByProjectId: restProjectMappings,
           };

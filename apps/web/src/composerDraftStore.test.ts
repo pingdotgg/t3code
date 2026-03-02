@@ -156,6 +156,7 @@ describe("composerDraftStore clearComposerContent", () => {
 
 describe("composerDraftStore project draft thread mapping", () => {
   const projectId = ProjectId.makeUnsafe("project-a");
+  const otherProjectId = ProjectId.makeUnsafe("project-b");
   const threadId = ThreadId.makeUnsafe("thread-a");
   const otherThreadId = ThreadId.makeUnsafe("thread-b");
 
@@ -195,6 +196,7 @@ describe("composerDraftStore project draft thread mapping", () => {
   it("clears only matching project draft mapping entries", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectId, threadId);
+    store.setPrompt(threadId, "hello");
 
     store.clearProjectDraftThreadById(projectId, otherThreadId);
     expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)?.threadId).toBe(
@@ -204,14 +206,46 @@ describe("composerDraftStore project draft thread mapping", () => {
     store.clearProjectDraftThreadById(projectId, threadId);
     expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)).toBeNull();
     expect(useComposerDraftStore.getState().getDraftThread(threadId)).toBeNull();
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
   });
 
   it("clears project draft mapping by project id", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectId, threadId);
+    store.setPrompt(threadId, "hello");
     store.clearProjectDraftThreadId(projectId);
     expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)).toBeNull();
     expect(useComposerDraftStore.getState().getDraftThread(threadId)).toBeNull();
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+
+  it("clears orphaned composer drafts when remapping a project to a new draft thread", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId);
+    store.setPrompt(threadId, "orphan me");
+
+    store.setProjectDraftThreadId(projectId, otherThreadId);
+
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)?.threadId).toBe(
+      otherThreadId,
+    );
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toBeNull();
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+
+  it("keeps composer drafts when the thread is still mapped by another project", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId);
+    store.setProjectDraftThreadId(otherProjectId, threadId);
+    store.setPrompt(threadId, "keep me");
+
+    store.clearProjectDraftThreadId(projectId);
+
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)).toBeNull();
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(otherProjectId)?.threadId).toBe(
+      threadId,
+    );
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.prompt).toBe("keep me");
   });
 
   it("clears draft registration independently", () => {

@@ -141,7 +141,7 @@ function ChatThreadRouteView() {
   const search = Route.useSearch();
   const threadExists = state.threads.some((thread) => thread.id === threadId);
   const draftThreadExists = useComposerDraftStore(
-    (store) => store.draftThreadsByThreadId[threadId] !== undefined,
+    (store) => Object.hasOwn(store.draftThreadsByThreadId, threadId),
   );
   const routeThreadExists = threadExists || draftThreadExists;
   const diffOpen = search.diff === "1";
