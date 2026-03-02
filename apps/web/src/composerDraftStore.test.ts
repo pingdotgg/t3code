@@ -275,6 +275,24 @@ describe("composerDraftStore project draft thread mapping", () => {
       worktreePath: "/tmp/feature-next",
     });
   });
+
+  it("preserves existing branch and worktree when setProjectDraftThreadId receives undefined", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId, {
+      branch: "main",
+      worktreePath: "/tmp/main-worktree",
+    });
+    store.setProjectDraftThreadId(projectId, threadId, {
+      branch: undefined,
+      worktreePath: undefined,
+    });
+
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toMatchObject({
+      projectId,
+      branch: "main",
+      worktreePath: "/tmp/main-worktree",
+    });
+  });
 });
 
 describe("composerDraftStore setModel", () => {

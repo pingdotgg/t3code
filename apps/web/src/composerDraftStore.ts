@@ -460,13 +460,13 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             projectId,
             createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
             branch:
-              options && "branch" in options
-                ? (options.branch ?? null)
-                : (existingThread?.branch ?? null),
+              options?.branch === undefined
+                ? (existingThread?.branch ?? null)
+                : (options.branch ?? null),
             worktreePath:
-              options && "worktreePath" in options
-                ? (options.worktreePath ?? null)
-                : (existingThread?.worktreePath ?? null),
+              options?.worktreePath === undefined
+                ? (existingThread?.worktreePath ?? null)
+                : (options.worktreePath ?? null),
           };
           const hasSameProjectMapping = previousThreadIdForProject === threadId;
           const hasSameDraftThread =
