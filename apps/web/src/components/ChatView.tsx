@@ -124,7 +124,7 @@ import {
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../composerDraftStore";
-import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import { useTerminalStateStore } from "../terminalStateStore";
 import { clamp } from "effect/Number";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
@@ -437,17 +437,13 @@ interface ChatViewProps {
 }
 
 export default function ChatView({ threadId }: ChatViewProps) {
-  const markThreadVisited = useStore((state) => state.markThreadVisited);
-  const setThreadTerminalOpen = useStore((state) => state.setThreadTerminalOpen);
-  const splitThreadTerminalAction = useStore((state) => state.splitThreadTerminal);
-  const newThreadTerminalAction = useStore((state) => state.newThreadTerminal);
-  const setThreadActiveTerminal = useStore((state) => state.setThreadActiveTerminal);
-  const closeThreadTerminalAction = useStore((state) => state.closeThreadTerminal);
-  const setThreadErrorAction = useStore((state) => state.setThreadError);
-  const setThreadBranchAction = useStore((state) => state.setThreadBranch);
-  const setRuntimeMode = useStore((state) => state.setRuntimeMode);
-  const setThreadTerminalHeight = useStore((state) => state.setThreadTerminalHeight);
-  const runtimeMode = useStore((state) => state.runtimeMode);
+  const threads = useStore((store) => store.threads);
+  const projects = useStore((store) => store.projects);
+  const runtimeMode = useStore((store) => store.runtimeMode);
+  const markThreadVisited = useStore((store) => store.markThreadVisited);
+  const setStoreThreadError = useStore((store) => store.setError);
+  const setStoreRuntimeMode = useStore((store) => store.setRuntimeMode);
+  const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const { settings } = useAppSettings();
   const navigate = useNavigate();
   const rawSearch = useSearch({
@@ -530,9 +526,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setMessagesScrollElement(element);
   }, []);
 
-  const terminalState = useTerminalStateStore((state) =>
-    selectThreadTerminalState(state.terminalStateByThreadId, threadId),
-  );
+  const terminalState = useTerminalStateStore((state) => state.getTerminalState(threadId));
   const storeSetTerminalOpen = useTerminalStateStore((s) => s.setTerminalOpen);
   const storeSetTerminalHeight = useTerminalStateStore((s) => s.setTerminalHeight);
   const storeSplitTerminal = useTerminalStateStore((s) => s.splitTerminal);
@@ -571,6 +565,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [removeComposerDraftImage, threadId],
   );
 
+  const serverThread = threads.find((t) => t.id === threadId);
+  const fallbackDraftProject = projects.find((project) => project.id === draftThread?.projectId);
   const localDraftError = localDraftErrorsByThreadId[threadId] ?? null;
   const localDraftThread = useMemo(
     () =>
@@ -595,10 +591,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeThreadId = activeThread?.id ?? null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
-  const activeProjectId = activeThread?.projectId ?? null;
-  const activeProject = useStore((state) =>
-    activeProjectId ? state.projects.find((project) => project.id === activeProjectId) : undefined,
-  );
+  const activeProject = projects.find((p) => p.id === activeThread?.projectId);
 
   useEffect(() => {
     if (!serverThread) {
@@ -622,7 +615,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const lastVisitedAt = activeThread.lastVisitedAt ? Date.parse(activeThread.lastVisitedAt) : NaN;
     if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= turnCompletedAt) return;
 
-    dispatch.markThreadVisited(activeThread.id);
+    markThreadVisited(activeThread.id);
   }, [
     activeThread?.id,
     activeThread?.lastVisitedAt,
@@ -983,8 +976,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const setThreadError = useCallback(
     (targetThreadId: ThreadId | null, error: string | null) => {
       if (!targetThreadId) return;
-      if (state.threads.some((thread) => thread.id === targetThreadId)) {
-        dispatch.setError(targetThreadId, error);
+      if (threads.some((thread) => thread.id === targetThreadId)) {
+        setStoreThreadError(targetThreadId, error);
         return;
       }
       setLocalDraftErrorsByThreadId((existing) => {
@@ -997,7 +990,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         };
       });
     },
-    [dispatch, state.threads],
+    [setStoreThreadError, threads],
   );
 
   const focusComposer = useCallback(() => {
@@ -1155,7 +1148,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activeProject,
       activeThread,
       activeThreadId,
-      dispatch,
       gitCwd,
       isLocalDraftThread,
       isServerThread,
@@ -1266,15 +1258,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
 
   const handleRuntimeModeChange = async (mode: "approval-required" | "full-access") => {
-    if (mode === state.runtimeMode) return;
-    dispatch.setRuntimeMode(mode);
+    if (mode === runtimeMode) return;
+    setStoreRuntimeMode(mode);
     scheduleComposerFocus();
     const api = readNativeApi();
     if (!api) return;
 
-    const runningThreadIds = useStore
-      .getState()
-      .threads
+    const runningThreadIds = threads
       .filter((thread) => thread.session !== null && thread.session.status !== "closed")
       .map((thread) => thread.id);
 
@@ -1891,7 +1881,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const shouldCreateWorktree =
       isFirstMessage && envMode === "worktree" && !activeThread.worktreePath;
     if (shouldCreateWorktree && !activeThread.branch) {
-      dispatch.setError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
+      setStoreThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
     }
 
@@ -1964,7 +1954,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           });
           // Keep local thread state in sync immediately so terminal drawer opens
           // with the worktree cwd/env instead of briefly using the project root.
-          dispatch.setThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
+          setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
         }
       }
 
@@ -2015,7 +2005,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setSendPhase("sending-turn");
       const turnAttachments = await turnAttachmentsPromise;
       const approvalPolicy = runtimeMode === "full-access" ? "never" : "on-request";
-      const sandboxMode = runtimeMode === "full-access" ? "danger-full-access" : "workspace-write";
+      const sandboxMode =
+        runtimeMode === "full-access" ? "danger-full-access" : "workspace-write";
       await api.orchestration.dispatchCommand({
         type: "thread.turn.start",
         commandId: newCommandId(),
@@ -2103,13 +2094,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
           createdAt: new Date().toISOString(),
         });
       } catch (err) {
-        dispatch.setError(activeThreadId, err instanceof Error ? err.message : "Failed to submit approval decision.");
+        setStoreThreadError(
+          activeThreadId,
+          err instanceof Error ? err.message : "Failed to submit approval decision.",
+        );
       } finally {
         setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
       }
       setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
     },
-    [activeThreadId, setThreadErrorAction],
+    [activeThreadId, setStoreThreadError],
   );
 
   const onModelSelect = useCallback(
@@ -3544,12 +3538,12 @@ const OpenInPicker = memo(function OpenInPicker({
   ] satisfies { label: string; Icon: Icon; value: EditorId }[];
   const primaryOption = options.find(({ value }) => value === lastEditor);
 
-  const activeThread = useStore((state) =>
-    activeThreadId ? state.threads.find((thread) => thread.id === activeThreadId) : undefined,
+  const activeThread = useStore((store) =>
+    activeThreadId ? store.threads.find((thread) => thread.id === activeThreadId) : undefined,
   );
   const activeProjectId = activeThread?.projectId ?? null;
-  const activeProject = useStore((state) =>
-    activeProjectId ? state.projects.find((project) => project.id === activeProjectId) : undefined,
+  const activeProject = useStore((store) =>
+    activeProjectId ? store.projects.find((project) => project.id === activeProjectId) : undefined,
   );
 
   const openInEditor = useCallback(

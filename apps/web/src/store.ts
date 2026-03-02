@@ -400,7 +400,7 @@ interface AppStore extends AppState {
   setRuntimeMode: (mode: RuntimeMode) => void;
 }
 
-export const useAppStore = create<AppStore>((set, _get) => ({
+export const useStore = create<AppStore>((set, _get) => ({
   ...readPersistedState(),
   syncServerReadModel: (readModel) =>
     set((state) => syncServerReadModel(state, readModel)),
@@ -421,31 +421,11 @@ export const useAppStore = create<AppStore>((set, _get) => ({
 }));
 
 // Persist on every state change (only runtimeMode + expandedProjectCwds)
-useAppStore.subscribe((state) => persistState(state));
-
-// ── useStore (state + store API for call sites that want both) ────────────────
+useStore.subscribe((state) => persistState(state));
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
-    persistState(useAppStore.getState());
+    persistState(useStore.getState());
   }, []);
   return createElement(Fragment, null, children);
-}
-
-type UseStoreCombinedResult = {
-  state: Pick<AppStore, "projects" | "threads" | "threadsHydrated" | "runtimeMode">;
-  dispatch: AppStore;
-};
-
-export function useStore(): UseStoreCombinedResult {
-  const state = useAppStore((s) => ({
-    projects: s.projects,
-    threads: s.threads,
-    threadsHydrated: s.threadsHydrated,
-    runtimeMode: s.runtimeMode,
-  }));
-  return {
-    state,
-    dispatch: useAppStore.getState(),
-  };
 }

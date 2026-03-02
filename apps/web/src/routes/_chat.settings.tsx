@@ -48,8 +48,8 @@ const RUNTIME_MODE_OPTIONS = [
 
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
-  const runtimeMode = useStore((state) => state.runtimeMode);
-  const setRuntimeMode = useStore((state) => state.setRuntimeMode);
+  const runtimeMode = useStore((store) => store.runtimeMode);
+  const setRuntimeMode = useStore((store) => store.setRuntimeMode);
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
@@ -349,7 +349,7 @@ function SettingsRouteView() {
                           : "border-border bg-background text-muted-foreground hover:bg-accent"
                       }`}
                       onClick={() => {
-                        dispatch.setRuntimeMode(option.value);
+                        setRuntimeMode(option.value);
                       }}
                     >
                       <span className="flex flex-col">

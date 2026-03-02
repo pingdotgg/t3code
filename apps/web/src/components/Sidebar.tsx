@@ -21,7 +21,7 @@ import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
-import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import { useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -231,16 +231,16 @@ function ProjectFavicon({ cwd }: { cwd: string }) {
 }
 
 export default function Sidebar() {
-  const projects = useStore((state) => state.projects);
-  const threads = useStore((state) => state.threads);
-  const markThreadUnread = useStore((state) => state.markThreadUnread);
-  const toggleProject = useStore((state) => state.toggleProject);
+  const projects = useStore((store) => store.projects);
+  const threads = useStore((store) => store.threads);
+  const markThreadUnread = useStore((store) => store.markThreadUnread);
+  const toggleProject = useStore((store) => store.toggleProject);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearThreadDraft);
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
   );
   const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
-  const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
+  const getTerminalState = useTerminalStateStore((state) => state.getTerminalState);
   const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const clearProjectDraftThreadId = useComposerDraftStore(
@@ -445,7 +445,8 @@ export default function Sidebar() {
       const api = readNativeApi();
 
       setIsAddingProject(true);
-      if (api) {
+      try {
+        if (!api) return;
         const existing = projects.find((project) => project.cwd === cwd);
         if (existing) {
           focusMostRecentThreadForProject(existing.id);
@@ -509,7 +510,7 @@ export default function Sidebar() {
         position,
       );
       if (clicked === "mark-unread") {
-        dispatch.markThreadUnread(threadId);
+        markThreadUnread(threadId);
         return;
       }
       if (clicked !== "delete") return;
@@ -616,9 +617,9 @@ export default function Sidebar() {
       clearProjectDraftThreadById,
       markThreadUnread,
       navigate,
+      projects,
       removeWorktreeMutation,
       routeThreadId,
-      projects,
       threads,
     ],
   );
@@ -709,7 +710,7 @@ export default function Sidebar() {
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
-  }, [getDraftThread, handleNewThread, keybindings, routeThreadId, projects, threads]);
+  }, [getDraftThread, handleNewThread, keybindings, projects, routeThreadId, threads]);
 
   const onCreateThreadClick = () => {
     if (projects.length === 0) {
@@ -781,7 +782,7 @@ export default function Sidebar() {
                   open={project.expanded}
                   onOpenChange={(open) => {
                     if (open === project.expanded) return;
-                    dispatch.toggleProject(project.id);
+                    toggleProject(project.id);
                   }}
                 >
                   <SidebarMenuItem>
@@ -824,8 +825,7 @@ export default function Sidebar() {
                           );
                           const prStatus = prStatusIndicator(prByThreadId.get(thread.id) ?? null);
                           const terminalStatus = terminalStatusFromRunningIds(
-                            selectThreadTerminalState(terminalStateByThreadId, thread.id)
-                              .runningTerminalIds,
+                            getTerminalState(thread.id).runningTerminalIds,
                           );
 
                           return (

@@ -43,8 +43,10 @@ export default function BranchToolbar({
   envLocked,
   onComposerFocusRequest,
 }: BranchToolbarProps) {
-  const setThreadBranchAction = useStore((state) => state.setThreadBranch);
-  const setThreadErrorAction = useStore((state) => state.setThreadError);
+  const threads = useStore((store) => store.threads);
+  const projects = useStore((store) => store.projects);
+  const setThreadBranchAction = useStore((store) => store.setThreadBranch);
+  const setThreadErrorAction = useStore((store) => store.setError);
   const draftThread = useComposerDraftStore((store) => store.getDraftThread(threadId));
   const serverThread = useStore((state) =>
     state.threads.find((thread) => thread.id === threadId),
@@ -59,6 +61,9 @@ export default function BranchToolbar({
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
 
+  const serverThread = threads.find((thread) => thread.id === threadId);
+  const activeProjectId = serverThread?.projectId ?? draftThread?.projectId ?? null;
+  const activeProject = projects.find((project) => project.id === activeProjectId);
   const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
   const activeThreadBranch = serverThread?.branch ?? draftThread?.branch ?? null;
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
@@ -119,7 +124,7 @@ export default function BranchToolbar({
       });
     }
     if (hasServerThread) {
-      dispatch.setThreadBranch(activeThreadId, syncedBranch, null);
+      setThreadBranchAction(activeThreadId, syncedBranch, null);
       return;
     }
     setDraftThreadContext(threadId, {
@@ -142,7 +147,7 @@ export default function BranchToolbar({
 
   const setThreadError = (error: string | null) => {
     if (!activeThreadId) return;
-    dispatch.setError(activeThreadId, error);
+    setThreadErrorAction(activeThreadId, error);
   };
 
   const setThreadBranch = (branch: string | null, worktreePath: string | null) => {
@@ -171,7 +176,7 @@ export default function BranchToolbar({
       });
     }
     if (hasServerThread) {
-      dispatch.setThreadBranch(activeThreadId, branch, worktreePath);
+      setThreadBranchAction(activeThreadId, branch, worktreePath);
       return;
     }
     setDraftThreadContext(threadId, {

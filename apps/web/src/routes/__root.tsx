@@ -124,9 +124,8 @@ function errorDetails(error: unknown): string {
 }
 
 function EventRouter() {
-  const syncServerReadModel = useStore((state) => state.syncServerReadModel);
-  const setThreadTerminalActivity = useStore((state) => state.setThreadTerminalActivity);
-  const setProjectExpanded = useStore((state) => state.setProjectExpanded);
+  const syncServerReadModel = useStore((store) => store.syncServerReadModel);
+  const setProjectExpanded = useStore((store) => store.setProjectExpanded);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
@@ -150,7 +149,7 @@ function EventRouter() {
       const snapshot = await api.orchestration.getSnapshot();
       if (disposed) return;
       latestSequence = Math.max(latestSequence, snapshot.snapshotSequence);
-      dispatch.syncServerReadModel(snapshot);
+      syncServerReadModel(snapshot);
       if (pending) {
         pending = false;
         await flushSnapshotSync();
@@ -205,7 +204,7 @@ function EventRouter() {
         if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
           return;
         }
-        dispatch.setProjectExpanded(payload.bootstrapProjectId, true);
+        setProjectExpanded(payload.bootstrapProjectId, true);
 
         if (pathnameRef.current !== "/") {
           return;
@@ -270,7 +269,7 @@ function EventRouter() {
       unsubWelcome();
       unsubServerConfigUpdated();
     };
-  }, [navigate, queryClient, setProjectExpanded, setThreadTerminalActivity, syncServerReadModel]);
+  }, [navigate, queryClient, setProjectExpanded, syncServerReadModel]);
 
   return null;
 }
