@@ -1,9 +1,9 @@
-import {
-  type GitRunStackedActionResult,
-  type GitStackedAction,
-  type GitStatusResult,
-  sanitizeBranchFragment,
+import type {
+  GitRunStackedActionResult,
+  GitStackedAction,
+  GitStatusResult,
 } from "@t3tools/contracts";
+import { sanitizeBranchFragment } from "@t3tools/shared/git";
 
 export type GitActionIconName = "commit" | "push" | "pr";
 

@@ -50,6 +50,7 @@
         "@effect/language-service": "0.75.1",
         "@effect/vitest": "catalog:",
         "@t3tools/contracts": "workspace:*",
+        "@t3tools/shared": "workspace:*",
         "@t3tools/web": "workspace:*",
         "@types/bun": "^1.3.9",
         "@types/node": "^24.10.13",
@@ -67,6 +68,7 @@
         "@lexical/react": "^0.41.0",
         "@pierre/diffs": "^1.1.0-beta.16",
         "@t3tools/contracts": "workspace:*",
+        "@t3tools/shared": "workspace:*",
         "@tanstack/react-pacer": "^0.19.4",
         "@tanstack/react-query": "^5.90.0",
         "@tanstack/react-router": "^1.160.2",
@@ -107,6 +109,13 @@
         "@effect/language-service": "0.75.1",
         "@effect/vitest": "catalog:",
         "tsdown": "^0.20.3",
+        "typescript": "^5.7.3",
+      },
+    },
+    "packages/shared": {
+      "name": "@t3tools/shared",
+      "version": "0.0.0-alpha.1",
+      "devDependencies": {
         "typescript": "^5.7.3",
       },
     },
@@ -536,6 +545,8 @@
     "@t3tools/contracts": ["@t3tools/contracts@workspace:packages/contracts"],
 
     "@t3tools/desktop": ["@t3tools/desktop@workspace:apps/desktop"],
+
+    "@t3tools/shared": ["@t3tools/shared@workspace:packages/shared"],
 
     "@t3tools/web": ["@t3tools/web@workspace:apps/web"],
 

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { Effect, FileSystem, Layer, Path } from "effect";
-import { sanitizeFeatureBranchName } from "@t3tools/contracts";
+import { sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
 import { GitManagerError } from "../Errors.ts";
 import { GitManager, type GitManagerShape } from "../Services/GitManager.ts";
