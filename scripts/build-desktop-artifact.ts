@@ -568,7 +568,7 @@ const buildDesktopArtifact = Effect.fn(function* (options: ResolvedBuildOptions)
   );
 });
 
-export const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
+const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   platform: Flag.choice("platform", BuildPlatform.literals).pipe(
     Flag.withDescription("Build platform (env: T3CODE_DESKTOP_PLATFORM)."),
     Flag.optional,
