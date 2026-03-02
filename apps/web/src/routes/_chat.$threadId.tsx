@@ -139,8 +139,8 @@ function ChatThreadRouteView() {
     select: (params) => ThreadId.makeUnsafe(params.threadId),
   });
   const search = Route.useSearch();
-  const threadExists = useStore(
-    useCallback((state) => state.threads.some((thread) => thread.id === threadId), [threadId]),
+  const threadExists = useStore((state) =>
+    state.threads.some((thread) => thread.id === threadId),
   );
   const draftThreadExists = useComposerDraftStore(
     (store) => Object.hasOwn(store.draftThreadsByThreadId, threadId),

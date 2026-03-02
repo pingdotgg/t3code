@@ -1,6 +1,6 @@
 import type { GitBranch, ThreadId } from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { newCommandId } from "../lib/utils";
 import {
@@ -46,16 +46,12 @@ export default function BranchToolbar({
   const setThreadBranchAction = useStore((state) => state.setThreadBranch);
   const setThreadErrorAction = useStore((state) => state.setThreadError);
   const draftThread = useComposerDraftStore((store) => store.getDraftThread(threadId));
-  const serverThread = useStore(
-    useCallback((state) => state.threads.find((thread) => thread.id === threadId), [threadId]),
+  const serverThread = useStore((state) =>
+    state.threads.find((thread) => thread.id === threadId),
   );
   const activeProjectId = serverThread?.projectId ?? draftThread?.projectId ?? null;
-  const activeProject = useStore(
-    useCallback(
-      (state) =>
-        activeProjectId ? state.projects.find((project) => project.id === activeProjectId) : undefined,
-      [activeProjectId],
-    ),
+  const activeProject = useStore((state) =>
+    activeProjectId ? state.projects.find((project) => project.id === activeProjectId) : undefined,
   );
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const queryClient = useQueryClient();

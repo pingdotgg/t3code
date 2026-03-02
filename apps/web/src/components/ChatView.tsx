@@ -490,18 +490,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const clearDraftThread = useComposerDraftStore((store) => store.clearDraftThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const draftThread = useComposerDraftStore((store) => store.draftThreadsByThreadId[threadId] ?? null);
-  const serverThread = useStore(
-    useCallback((state) => state.threads.find((thread) => thread.id === threadId), [threadId]),
+  const serverThread = useStore((state) =>
+    state.threads.find((thread) => thread.id === threadId),
   );
   const fallbackDraftProjectId = draftThread?.projectId ?? null;
-  const fallbackDraftProject = useStore(
-    useCallback(
-      (state) =>
-        fallbackDraftProjectId
-          ? state.projects.find((project) => project.id === fallbackDraftProjectId)
-          : undefined,
-      [fallbackDraftProjectId],
-    ),
+  const fallbackDraftProject = useStore((state) =>
+    fallbackDraftProjectId
+      ? state.projects.find((project) => project.id === fallbackDraftProjectId)
+      : undefined,
   );
   const promptRef = useRef(prompt);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
@@ -601,12 +597,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProjectId = activeThread?.projectId ?? null;
-  const activeProject = useStore(
-    useCallback(
-      (state) =>
-        activeProjectId ? state.projects.find((project) => project.id === activeProjectId) : undefined,
-      [activeProjectId],
-    ),
+  const activeProject = useStore((state) =>
+    activeProjectId ? state.projects.find((project) => project.id === activeProjectId) : undefined,
   );
 
   useEffect(() => {
@@ -3541,20 +3533,12 @@ const OpenInPicker = memo(function OpenInPicker({
   ] satisfies { label: string; Icon: Icon; value: EditorId }[];
   const primaryOption = options.find(({ value }) => value === lastEditor);
 
-  const activeThread = useStore(
-    useCallback(
-      (state) =>
-        activeThreadId ? state.threads.find((thread) => thread.id === activeThreadId) : undefined,
-      [activeThreadId],
-    ),
+  const activeThread = useStore((state) =>
+    activeThreadId ? state.threads.find((thread) => thread.id === activeThreadId) : undefined,
   );
   const activeProjectId = activeThread?.projectId ?? null;
-  const activeProject = useStore(
-    useCallback(
-      (state) =>
-        activeProjectId ? state.projects.find((project) => project.id === activeProjectId) : undefined,
-      [activeProjectId],
-    ),
+  const activeProject = useStore((state) =>
+    activeProjectId ? state.projects.find((project) => project.id === activeProjectId) : undefined,
   );
 
   const openInEditor = useCallback(

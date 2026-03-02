@@ -167,20 +167,12 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   });
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
   const activeThreadId = routeThreadId;
-  const activeThread = useStore(
-    useCallback(
-      (state) =>
-        activeThreadId ? state.threads.find((thread) => thread.id === activeThreadId) : undefined,
-      [activeThreadId],
-    ),
+  const activeThread = useStore((state) =>
+    activeThreadId ? state.threads.find((thread) => thread.id === activeThreadId) : undefined,
   );
   const activeProjectId = activeThread?.projectId ?? null;
-  const activeProject = useStore(
-    useCallback(
-      (state) =>
-        activeProjectId ? state.projects.find((project) => project.id === activeProjectId) : undefined,
-      [activeProjectId],
-    ),
+  const activeProject = useStore((state) =>
+    activeProjectId ? state.projects.find((project) => project.id === activeProjectId) : undefined,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
