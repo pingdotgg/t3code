@@ -68,7 +68,6 @@ beforeEach(() => {
   subscribeMock.mockClear();
   channelListeners.clear();
   Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
-  Reflect.deleteProperty(getWindowForTest(), "prompt");
 });
 
 afterEach(() => {
@@ -377,37 +376,4 @@ describe("wsNativeApi", () => {
     );
   });
 
-  it("forwards prompt calls to desktop bridge", async () => {
-    const prompt = vi.fn().mockResolvedValue("renamed");
-    Object.defineProperty(getWindowForTest(), "desktopBridge", {
-      configurable: true,
-      writable: true,
-      value: {
-        prompt,
-      },
-    });
-
-    const { createWsNativeApi } = await import("./wsNativeApi");
-    const api = createWsNativeApi();
-    const value = await api.dialogs.prompt("Rename thread", "Old title");
-
-    expect(value).toBe("renamed");
-    expect(prompt).toHaveBeenCalledWith("Rename thread", "Old title");
-  });
-
-  it("uses browser prompt fallback when desktop bridge is unavailable", async () => {
-    const prompt = vi.fn().mockReturnValue("renamed");
-    Object.defineProperty(getWindowForTest(), "prompt", {
-      configurable: true,
-      writable: true,
-      value: prompt,
-    });
-
-    const { createWsNativeApi } = await import("./wsNativeApi");
-    const api = createWsNativeApi();
-    const value = await api.dialogs.prompt("Rename thread", "Old title");
-
-    expect(value).toBe("renamed");
-    expect(prompt).toHaveBeenCalledWith("Rename thread", "Old title");
-  });
 });

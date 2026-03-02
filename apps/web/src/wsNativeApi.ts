@@ -124,16 +124,6 @@ export function createWsNativeApi(): NativeApi {
         }
         return window.confirm(message);
       },
-      prompt: async (message, defaultValue) => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.prompt(message, defaultValue);
-        }
-        try {
-          return window.prompt(message, defaultValue ?? "");
-        } catch {
-          return null;
-        }
-      },
     },
     terminal: {
       open: (input) => transport.request(WS_METHODS.terminalOpen, input),

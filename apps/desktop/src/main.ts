@@ -10,13 +10,11 @@ import type { MenuItemConstructorOptions } from "electron";
 
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { fixPath } from "./fixPath";
-import { showDesktopPromptDialog } from "./promptDialog";
 
 fixPath();
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
-const PROMPT_CHANNEL = "desktop:prompt";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
@@ -434,20 +432,6 @@ function registerIpcHandlers(): void {
 
     const owner = BrowserWindow.getFocusedWindow() ?? mainWindow;
     return showDesktopConfirmDialog(message, owner);
-  });
-
-  ipcMain.removeHandler(PROMPT_CHANNEL);
-  ipcMain.handle(PROMPT_CHANNEL, async (_event, message: unknown, defaultValue: unknown) => {
-    if (typeof message !== "string") {
-      return null;
-    }
-
-    const owner = BrowserWindow.getFocusedWindow() ?? mainWindow;
-    return showDesktopPromptDialog(
-      message,
-      typeof defaultValue === "string" ? defaultValue : "",
-      owner,
-    );
   });
 
   ipcMain.removeHandler(CONTEXT_MENU_CHANNEL);
