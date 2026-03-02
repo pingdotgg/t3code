@@ -9,6 +9,7 @@ import {
   gitCreateBranchAndCheckoutMutationOptions,
 } from "../lib/gitReactQuery";
 import { readNativeApi } from "../nativeApi";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
 import {
   dedupeRemoteBranchesWithLocalMatches,
@@ -43,17 +44,21 @@ export default function BranchToolbar({
   onComposerFocusRequest,
 }: BranchToolbarProps) {
   const { state, dispatch } = useStore();
+  const draftThread = useComposerDraftStore((store) => store.getDraftThread(threadId));
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const queryClient = useQueryClient();
 
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
 
-  const activeThread = state.threads.find((thread) => thread.id === threadId);
-  const activeProject = state.projects.find((project) => project.id === activeThread?.projectId);
-  const activeThreadId = activeThread?.id;
-  const activeThreadBranch = activeThread?.branch ?? null;
-  const activeWorktreePath = activeThread?.worktreePath ?? null;
+  const serverThread = state.threads.find((thread) => thread.id === threadId);
+  const activeProjectId = serverThread?.projectId ?? draftThread?.projectId ?? null;
+  const activeProject = state.projects.find((project) => project.id === activeProjectId);
+  const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
+  const activeThreadBranch = serverThread?.branch ?? draftThread?.branch ?? null;
+  const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const branchCwd = activeWorktreePath ?? activeProject?.cwd ?? null;
+  const hasServerThread = serverThread !== undefined;
 
   // ── Queries ───────────────────────────────────────────────────────────
 
@@ -95,7 +100,7 @@ export default function BranchToolbar({
     if (!activeThreadId || !syncedBranch) return;
     const api = readNativeApi();
 
-    if (api) {
+    if (api && hasServerThread) {
       void api.orchestration.dispatchCommand({
         type: "thread.meta.update",
         commandId: newCommandId(),
@@ -104,13 +109,30 @@ export default function BranchToolbar({
         worktreePath: null,
       });
     }
-    dispatch({
-      type: "SET_THREAD_BRANCH",
-      threadId: activeThreadId,
+    if (hasServerThread) {
+      dispatch({
+        type: "SET_THREAD_BRANCH",
+        threadId: activeThreadId,
+        branch: syncedBranch,
+        worktreePath: null,
+      });
+      return;
+    }
+    setDraftThreadContext(threadId, {
       branch: syncedBranch,
       worktreePath: null,
     });
-  }, [activeThreadId, activeWorktreePath, activeThreadBranch, queryBranches, envMode, dispatch]);
+  }, [
+    activeThreadId,
+    activeWorktreePath,
+    activeThreadBranch,
+    queryBranches,
+    envMode,
+    dispatch,
+    hasServerThread,
+    setDraftThreadContext,
+    threadId,
+  ]);
 
   useEffect(() => {
     if (isBranchMenuOpen) return;
@@ -129,7 +151,7 @@ export default function BranchToolbar({
     const api = readNativeApi();
     // If the effective cwd is about to change, stop the running session so the
     // next message creates a new one with the correct cwd.
-    const sessionId = activeThread?.session?.sessionId;
+    const sessionId = serverThread?.session?.sessionId;
     if (sessionId && worktreePath !== activeWorktreePath && api) {
       void api.orchestration
         .dispatchCommand({
@@ -140,7 +162,7 @@ export default function BranchToolbar({
         })
         .catch(() => undefined);
     }
-    if (api) {
+    if (api && hasServerThread) {
       void api.orchestration.dispatchCommand({
         type: "thread.meta.update",
         commandId: newCommandId(),
@@ -149,7 +171,14 @@ export default function BranchToolbar({
         worktreePath,
       });
     }
-    dispatch({ type: "SET_THREAD_BRANCH", threadId: activeThreadId, branch, worktreePath });
+    if (hasServerThread) {
+      dispatch({ type: "SET_THREAD_BRANCH", threadId: activeThreadId, branch, worktreePath });
+      return;
+    }
+    setDraftThreadContext(threadId, {
+      branch,
+      worktreePath,
+    });
   };
 
   const selectBranch = (branch: GitBranch) => {
@@ -221,7 +250,7 @@ export default function BranchToolbar({
     });
   };
 
-  if (!activeThread || !activeProject) return null;
+  if (!activeThreadId || !activeProject) return null;
 
   return (
     <div className="mx-auto flex w-full max-w-3xl items-center justify-between px-5 pb-3 pt-1">
@@ -248,7 +277,7 @@ export default function BranchToolbar({
         autoHighlight
         onOpenChange={(open) => setIsBranchMenuOpen(open)}
         open={isBranchMenuOpen}
-        value={activeThread.branch}
+        value={activeThreadBranch}
       >
         <ComboboxTrigger
           render={<Button variant="ghost" size="xs" />}
@@ -256,10 +285,10 @@ export default function BranchToolbar({
           disabled={branchesQuery.isLoading}
         >
           <span className="max-w-[240px] truncate">
-            {activeThread.branch
+            {activeThreadBranch
               ? envMode === "worktree" && !activeWorktreePath
-                ? `From ${activeThread.branch}`
-                : activeThread.branch
+                ? `From ${activeThreadBranch}`
+                : activeThreadBranch
               : "Select branch"}
           </span>
           <ChevronDownIcon />
@@ -313,7 +342,7 @@ export default function BranchToolbar({
                   key={itemValue}
                   value={itemValue}
                   className={
-                    itemValue === activeThread.branch ? "bg-accent text-foreground" : undefined
+                    itemValue === activeThreadBranch ? "bg-accent text-foreground" : undefined
                   }
                   onClick={() => selectBranch(branch)}
                 >
