@@ -9,6 +9,8 @@ const FAVICON_MIME_TYPES: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
+const FALLBACK_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#6b728080" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-fallback="project-favicon"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg>`;
+
 // Well-known favicon paths checked in order.
 const FAVICON_CANDIDATES = [
   "favicon.svg",
@@ -85,6 +87,14 @@ function serveFaviconFile(filePath: string, res: http.ServerResponse): void {
   });
 }
 
+function serveFallbackFavicon(res: http.ServerResponse): void {
+  res.writeHead(200, {
+    "Content-Type": "image/svg+xml",
+    "Cache-Control": "public, max-age=3600",
+  });
+  res.end(FALLBACK_FAVICON_SVG);
+}
+
 export function tryHandleProjectFaviconRequest(url: URL, res: http.ServerResponse): boolean {
   if (url.pathname !== "/api/project-favicon") {
     return false;
@@ -118,8 +128,7 @@ export function tryHandleProjectFaviconRequest(url: URL, res: http.ServerRespons
 
   const trySourceFiles = (index: number): void => {
     if (index >= ICON_SOURCE_FILES.length) {
-      res.writeHead(404, { "Content-Type": "text/plain" });
-      res.end("No favicon found");
+      serveFallbackFavicon(res);
       return;
     }
     const sourceFile = path.join(projectCwd, ICON_SOURCE_FILES[index]!);

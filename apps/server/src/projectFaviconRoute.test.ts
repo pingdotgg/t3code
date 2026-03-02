@@ -152,4 +152,16 @@ describe("tryHandleProjectFaviconRequest", () => {
       expect(response.body).toBe("<svg>brand-obj-order</svg>");
     });
   });
+
+  it("serves a fallback favicon when no icon exists", async () => {
+    const projectDir = makeTempDir("t3code-favicon-route-fallback-");
+
+    await withRouteServer(async (baseUrl) => {
+      const pathname = `/api/project-favicon?cwd=${encodeURIComponent(projectDir)}`;
+      const response = await request(baseUrl, pathname);
+      expect(response.statusCode).toBe(200);
+      expect(response.contentType).toContain("image/svg+xml");
+      expect(response.body).toContain('data-fallback="project-favicon"');
+    });
+  });
 });
