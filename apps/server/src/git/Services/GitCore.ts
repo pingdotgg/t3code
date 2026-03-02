@@ -157,6 +157,11 @@ export interface GitCoreShape {
    * Initialize a repository in the provided directory.
    */
   readonly initRepo: (input: GitInitInput) => Effect.Effect<void, GitCommandError>;
+
+  /**
+   * List local branch names (short format).
+   */
+  readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
 }
 
 /**

@@ -1172,6 +1172,20 @@ const makeGitCore = Effect.gen(function* () {
       fallbackErrorMessage: "git init failed",
     }).pipe(Effect.asVoid);
 
+  const listLocalBranchNames: GitCoreShape["listLocalBranchNames"] = (cwd) =>
+    runGitStdout("GitCore.listLocalBranchNames", cwd, [
+      "branch",
+      "--list",
+      "--format=%(refname:short)",
+    ]).pipe(
+      Effect.map((stdout) =>
+        stdout
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0),
+      ),
+    );
+
   return {
     status,
     statusDetails,
@@ -1188,6 +1202,7 @@ const makeGitCore = Effect.gen(function* () {
     createBranch,
     checkoutBranch,
     initRepo,
+    listLocalBranchNames,
   } satisfies GitCoreShape;
 });
 

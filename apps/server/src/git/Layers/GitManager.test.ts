@@ -290,19 +290,10 @@ function runStackedAction(
     cwd: string;
     action: "commit" | "commit_push" | "commit_push_pr";
     commitMessage?: string;
+    featureBranch?: boolean;
   },
 ) {
   return manager.runStackedAction(input);
-}
-
-function suggestCommitAndBranch(
-  manager: GitManagerShape,
-  input: {
-    cwd: string;
-    commitMessage?: string;
-  },
-) {
-  return manager.suggestCommitAndBranch(input);
 }
 
 function makeManager(input?: {
@@ -492,6 +483,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         action: "commit",
       });
 
+      expect(result.branch.status).toBe("skipped_not_requested");
       expect(result.commit.status).toBe("created");
       expect(result.push.status).toBe("skipped_not_requested");
       expect(result.pr.status).toBe("skipped_not_requested");
@@ -529,6 +521,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         commitMessage: "feat: custom summary line\n\n- details from user",
       });
 
+      expect(result.branch.status).toBe("skipped_not_requested");
       expect(result.commit.status).toBe("created");
       expect(result.commit.subject).toBe("feat: custom summary line");
       expect(generatedCount).toBe(0);
@@ -545,29 +538,39 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("suggests commit message and semantic branch for dirty worktree", () =>
+  it.effect("creates feature branch, commits, and pushes with featureBranch option", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
-      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\nsuggest\n");
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\nfeature-branch\n");
 
       const { manager } = yield* makeManager();
-      const suggestion = yield* suggestCommitAndBranch(manager, {
+      const result = yield* runStackedAction(manager, {
         cwd: repoDir,
+        action: "commit_push",
+        featureBranch: true,
       });
 
-      expect(suggestion).toEqual({
-        commitMessage: "Implement stacked git actions",
-        branch: "feature/implement-stacked-git-actions",
-      });
+      expect(result.branch.status).toBe("created");
+      expect(result.branch.name).toBe("feature/implement-stacked-git-actions");
+      expect(result.commit.status).toBe("created");
+      expect(result.push.status).toBe("pushed");
+      expect(
+        yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]).pipe(
+          Effect.map((result) => result.stdout.trim()),
+        ),
+      ).toBe("feature/implement-stacked-git-actions");
     }),
   );
 
-  it.effect("suggests branch from custom commit message without AI generation", () =>
+  it.effect("featureBranch uses custom commit message and derives branch name", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
-      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\ncustom-suggest\n");
+      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\ncustom-feature\n");
       let generatedCount = 0;
 
       const { manager } = yield* makeManager({
@@ -583,15 +586,17 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             }),
         },
       });
-      const suggestion = yield* suggestCommitAndBranch(manager, {
+      const result = yield* runStackedAction(manager, {
         cwd: repoDir,
+        action: "commit",
+        featureBranch: true,
         commitMessage: "feat: custom summary line\n\n- details from user",
       });
 
-      expect(suggestion).toEqual({
-        commitMessage: "feat: custom summary line\n\n- details from user",
-        branch: "feature/feat-custom-summary-line",
-      });
+      expect(result.branch.status).toBe("created");
+      expect(result.branch.name).toBe("feature/feat-custom-summary-line");
+      expect(result.commit.status).toBe("created");
+      expect(result.commit.subject).toBe("feat: custom summary line");
       expect(generatedCount).toBe(0);
     }),
   );
@@ -607,20 +612,23 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         action: "commit",
       });
 
+      expect(result.branch.status).toBe("skipped_not_requested");
       expect(result.commit.status).toBe("skipped_no_changes");
       expect(result.push.status).toBe("skipped_not_requested");
       expect(result.pr.status).toBe("skipped_not_requested");
     }),
   );
 
-  it.effect("returns a clear error when suggesting from clean worktree", () =>
+  it.effect("featureBranch returns error when worktree is clean", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
 
       const { manager } = yield* makeManager();
-      const errorMessage = yield* suggestCommitAndBranch(manager, {
+      const errorMessage = yield* runStackedAction(manager, {
         cwd: repoDir,
+        action: "commit",
+        featureBranch: true,
       }).pipe(
         Effect.flip,
         Effect.map((error) => error.message),
@@ -645,6 +653,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         action: "commit_push",
       });
 
+      expect(result.branch.status).toBe("skipped_not_requested");
       expect(result.commit.status).toBe("created");
       expect(result.push.status).toBe("pushed");
       expect(result.push.setUpstream).toBe(true);
@@ -689,6 +698,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           action: "commit_push_pr",
         });
 
+        expect(result.branch.status).toBe("skipped_not_requested");
         expect(result.commit.status).toBe("created");
         expect(result.push.status).toBe("pushed");
         expect(result.push.setUpstream).toBe(true);
@@ -721,6 +731,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         action: "commit_push",
       });
 
+      expect(result.branch.status).toBe("skipped_not_requested");
       expect(result.commit.status).toBe("skipped_no_changes");
       expect(result.push.status).toBe("skipped_up_to_date");
     }),
@@ -755,6 +766,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         action: "commit_push_pr",
       });
 
+      expect(result.branch.status).toBe("skipped_not_requested");
       expect(result.pr.status).toBe("opened_existing");
       expect(result.pr.number).toBe(42);
       expect(ghCalls.some((call) => call.startsWith("pr view "))).toBe(false);
@@ -795,6 +807,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         action: "commit_push_pr",
       });
 
+      expect(result.branch.status).toBe("skipped_not_requested");
       expect(result.pr.status).toBe("created");
       expect(result.pr.number).toBe(88);
       expect(

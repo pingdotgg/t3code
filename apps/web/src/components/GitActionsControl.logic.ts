@@ -3,7 +3,6 @@ import type {
   GitStackedAction,
   GitStatusResult,
 } from "@t3tools/contracts";
-import { sanitizeBranchFragment } from "@t3tools/shared/git";
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
@@ -36,7 +35,6 @@ export type DefaultBranchConfirmableAction = "commit_push" | "commit_push_pr";
 
 const SHORT_SHA_LENGTH = 7;
 const TOAST_DESCRIPTION_MAX = 72;
-const AUTO_FEATURE_BRANCH_FALLBACK = "feature/update";
 
 function shortenSha(sha: string | undefined): string | null {
   if (!sha) return null;
@@ -59,7 +57,9 @@ export function buildGitActionProgressStages(input: {
   hasWorkingTreeChanges: boolean;
   forcePushOnly?: boolean;
   pushTarget?: string;
+  featureBranch?: boolean;
 }): string[] {
+  const branchStages = input.featureBranch ? ["Preparing feature branch..."] : [];
   const shouldIncludeCommitStages =
     !input.forcePushOnly && (input.action === "commit" || input.hasWorkingTreeChanges);
   const commitStages = !shouldIncludeCommitStages
@@ -69,12 +69,12 @@ export function buildGitActionProgressStages(input: {
       : ["Generating commit message...", "Committing..."];
   const pushStage = input.pushTarget ? `Pushing to ${input.pushTarget}...` : "Pushing...";
   if (input.action === "commit") {
-    return commitStages;
+    return [...branchStages, ...commitStages];
   }
   if (input.action === "commit_push") {
-    return [...commitStages, pushStage];
+    return [...branchStages, ...commitStages, pushStage];
   }
-  return [...commitStages, pushStage, "Creating PR..."];
+  return [...branchStages, ...commitStages, pushStage, "Creating PR..."];
 }
 
 const withDescription = (title: string, description: string | undefined) =>
@@ -322,29 +322,5 @@ export function resolveDefaultBranchActionDialogCopy(input: {
   };
 }
 
-export function resolveAutoFeatureBranchName(
-  existingBranchNames: readonly string[],
-  preferredBranch?: string,
-): string {
-  const preferred = preferredBranch?.trim();
-  const normalized = sanitizeBranchFragment(
-    preferred && preferred.length > 0 ? preferred : AUTO_FEATURE_BRANCH_FALLBACK,
-  );
-  const resolvedBase = normalized.includes("/")
-    ? normalized.startsWith("feature/")
-      ? normalized
-      : `feature/${normalized}`
-    : `feature/${normalized}`;
-  const existingNames = new Set(existingBranchNames);
-
-  if (!existingNames.has(resolvedBase)) {
-    return resolvedBase;
-  }
-
-  let suffix = 2;
-  while (existingNames.has(`${resolvedBase}-${suffix}`)) {
-    suffix += 1;
-  }
-
-  return `${resolvedBase}-${suffix}`;
-}
+// Re-export from shared for backwards compatibility in this module's exports
+export { resolveAutoFeatureBranchName } from "@t3tools/shared/git";

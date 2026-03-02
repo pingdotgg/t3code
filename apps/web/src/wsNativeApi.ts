@@ -163,8 +163,6 @@ export function createWsNativeApi(): NativeApi {
       pull: (input) => transport.request(WS_METHODS.gitPull, input),
       status: (input) => transport.request(WS_METHODS.gitStatus, input),
       runStackedAction: (input) => transport.request(WS_METHODS.gitRunStackedAction, input),
-      suggestCommitAndBranch: (input) =>
-        transport.request(WS_METHODS.gitSuggestCommitAndBranch, input),
       listBranches: (input) => transport.request(WS_METHODS.gitListBranches, input),
       createWorktree: (input) => transport.request(WS_METHODS.gitCreateWorktree, input),
       removeWorktree: (input) => transport.request(WS_METHODS.gitRemoveWorktree, input),

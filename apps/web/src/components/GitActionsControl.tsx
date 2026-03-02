@@ -1,4 +1,4 @@
-import { type GitStatusResult, type GitStackedAction, type ThreadId } from "@t3tools/contracts";
+import type { GitStackedAction, GitStatusResult, ThreadId } from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
@@ -11,7 +11,6 @@ import {
   type GitQuickAction,
   type DefaultBranchConfirmableAction,
   requiresDefaultBranchConfirmation,
-  resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
   resolveQuickAction,
   summarizeGitResult,
@@ -34,12 +33,10 @@ import { Textarea } from "~/components/ui/textarea";
 import { toastManager } from "~/components/ui/toast";
 import {
   gitBranchesQueryOptions,
-  gitCreateBranchAndCheckoutMutationOptions,
   gitInitMutationOptions,
   gitMutationKeys,
   gitPullMutationOptions,
   gitRunStackedActionMutationOptions,
-  gitSuggestCommitAndBranchMutationOptions,
   gitStatusQueryOptions,
   invalidateGitQueries,
 } from "~/lib/gitReactQuery";
@@ -59,8 +56,6 @@ interface PendingDefaultBranchAction {
   forcePushOnlyProgress: boolean;
   onConfirmed?: () => void;
 }
-
-type GitActionToastId = ReturnType<typeof toastManager.add>;
 
 function getMenuActionDisabledReason(
   item: GitActionMenuItem,
@@ -173,26 +168,12 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const runImmediateGitActionMutation = useMutation(
     gitRunStackedActionMutationOptions({ cwd: gitCwd, queryClient }),
   );
-  const suggestCommitAndBranchMutation = useMutation(
-    gitSuggestCommitAndBranchMutationOptions({ cwd: gitCwd }),
-  );
-  const createBranchAndCheckoutMutation = useMutation(
-    gitCreateBranchAndCheckoutMutationOptions({ cwd: gitCwd, queryClient }),
-  );
   const pullMutation = useMutation(gitPullMutationOptions({ cwd: gitCwd, queryClient }));
 
   const isRunStackedActionRunning =
     useIsMutating({ mutationKey: gitMutationKeys.runStackedAction(gitCwd) }) > 0;
-  const isSuggestCommitAndBranchRunning =
-    useIsMutating({ mutationKey: gitMutationKeys.suggestCommitAndBranch(gitCwd) }) > 0;
-  const isCreateBranchAndCheckoutRunning =
-    useIsMutating({ mutationKey: gitMutationKeys.createBranchAndCheckout(gitCwd) }) > 0;
   const isPullRunning = useIsMutating({ mutationKey: gitMutationKeys.pull(gitCwd) }) > 0;
-  const isGitActionRunning =
-    isRunStackedActionRunning ||
-    isSuggestCommitAndBranchRunning ||
-    isCreateBranchAndCheckoutRunning ||
-    isPullRunning;
+  const isGitActionRunning = isRunStackedActionRunning || isPullRunning;
   const isDefaultBranch = useMemo(() => {
     const branchName = gitStatusForActions?.branch;
     if (!branchName) return false;
@@ -255,26 +236,23 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       forcePushOnlyProgress = false,
       onConfirmed,
       skipDefaultBranchPrompt = false,
-      statusOverride,
-      isDefaultBranchOverride,
-      progressToastId,
+      featureBranch = false,
     }: {
       action: GitStackedAction;
       commitMessage?: string;
       forcePushOnlyProgress?: boolean;
       onConfirmed?: () => void;
       skipDefaultBranchPrompt?: boolean;
-      statusOverride?: GitStatusResult | null;
-      isDefaultBranchOverride?: boolean;
-      progressToastId?: GitActionToastId;
+      featureBranch?: boolean;
     }) => {
-      const actionStatus = statusOverride ?? gitStatusForActions;
-      const actionIsDefaultBranch = isDefaultBranchOverride ?? isDefaultBranch;
+      const actionStatus = gitStatusForActions;
+      const actionIsDefaultBranch = featureBranch ? false : isDefaultBranch;
       const actionBranch = actionStatus?.branch ?? null;
       const includesCommit =
         !forcePushOnlyProgress && (action === "commit" || !!actionStatus?.hasWorkingTreeChanges);
       if (
         !skipDefaultBranchPrompt &&
+        !featureBranch &&
         requiresDefaultBranchConfirmation(action, actionIsDefaultBranch) &&
         actionBranch
       ) {
@@ -293,36 +271,26 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       }
       onConfirmed?.();
 
-      const pushTarget = actionBranch ? `origin/${actionBranch}` : undefined;
+      const pushTarget = !featureBranch && actionBranch ? `origin/${actionBranch}` : undefined;
       const progressStages = buildGitActionProgressStages({
         action,
         hasCustomCommitMessage: !!commitMessage?.trim(),
         hasWorkingTreeChanges: !!actionStatus?.hasWorkingTreeChanges,
         forcePushOnly: forcePushOnlyProgress,
+        featureBranch,
         ...(pushTarget ? { pushTarget } : {}),
       });
-      const resolvedProgressToastId =
-        progressToastId ??
-        toastManager.add({
-          type: "loading",
-          title: progressStages[0] ?? "Running git action...",
-          timeout: 0,
-          data: threadToastData,
-        });
-
-      if (progressToastId) {
-        toastManager.update(progressToastId, {
-          type: "loading",
-          title: progressStages[0] ?? "Running git action...",
-          timeout: 0,
-          data: threadToastData,
-        });
-      }
+      const progressToastId = toastManager.add({
+        type: "loading",
+        title: progressStages[0] ?? "Running git action...",
+        timeout: 0,
+        data: threadToastData,
+      });
 
       let stageIndex = 0;
       const stageInterval = setInterval(() => {
         stageIndex = Math.min(stageIndex + 1, progressStages.length - 1);
-        toastManager.update(resolvedProgressToastId, {
+        toastManager.update(progressToastId, {
           title: progressStages[stageIndex] ?? "Running git action...",
           type: "loading",
           timeout: 0,
@@ -337,6 +305,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       const promise = runImmediateGitActionMutation.mutateAsync({
         action,
         ...(commitMessage ? { commitMessage } : {}),
+        ...(featureBranch ? { featureBranch } : {}),
       });
 
       try {
@@ -357,10 +326,10 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
           result.push.status === "pushed" &&
           !actionIsDefaultBranch;
         const closeResultToast = () => {
-          toastManager.close(resolvedProgressToastId);
+          toastManager.close(progressToastId);
         };
 
-        toastManager.update(resolvedProgressToastId, {
+        toastManager.update(progressToastId, {
           type: "success",
           title: resultToast.title,
           description: resultToast.description,
@@ -378,8 +347,6 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                       action: "commit_push",
                       forcePushOnlyProgress: true,
                       onConfirmed: closeResultToast,
-                      statusOverride: actionStatus,
-                      isDefaultBranchOverride: actionIsDefaultBranch,
                     });
                   },
                 },
@@ -404,8 +371,6 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                         closeResultToast();
                         void runGitActionWithToast({
                           action: "commit_push_pr",
-                          statusOverride: actionStatus,
-                          isDefaultBranchOverride: actionIsDefaultBranch,
                         });
                       },
                     },
@@ -414,7 +379,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         });
       } catch (err) {
         stopProgressUpdates();
-        toastManager.update(resolvedProgressToastId, {
+        toastManager.update(progressToastId, {
           type: "error",
           title: "Action failed",
           description: err instanceof Error ? err.message : "An error occurred.",
@@ -449,92 +414,24 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     (actionParams: {
       action: GitStackedAction;
       commitMessage?: string;
-      forcePushOnlyProgress?: boolean;
       onConfirmed?: () => void;
     }) => {
-      const existingBranchNames = branchList?.branches.map((branch) => branch.name) ?? [];
-      const providedCommitMessage = actionParams.commitMessage?.trim() || undefined;
-      const shouldSuggestCommitAndBranch =
-        !providedCommitMessage && !!gitStatusForActions?.hasWorkingTreeChanges;
-
-      const checkoutToastId = toastManager.add({
-        type: "loading",
-        title: "Preparing feature branch...",
-        timeout: 0,
-        data: threadToastData,
+      void runGitActionWithToast({
+        ...actionParams,
+        featureBranch: true,
+        skipDefaultBranchPrompt: true,
       });
-
-      const suggestionPromise = shouldSuggestCommitAndBranch
-        ? suggestCommitAndBranchMutation.mutateAsync({}).catch(() => null)
-        : Promise.resolve(null);
-
-      void suggestionPromise
-        .then((suggestion) => {
-          const preferredBranch =
-            suggestion?.branch ??
-            (providedCommitMessage ? providedCommitMessage.split(/\r?\n/g)[0]?.trim() : undefined);
-          const branchName = resolveAutoFeatureBranchName(existingBranchNames, preferredBranch);
-          const resolvedCommitMessage = suggestion?.commitMessage ?? providedCommitMessage;
-
-          toastManager.update(checkoutToastId, {
-            type: "loading",
-            title: `Creating ${branchName}...`,
-            timeout: 0,
-            data: threadToastData,
-          });
-
-          return createBranchAndCheckoutMutation.mutateAsync(branchName).then(() => ({
-            branchName,
-            resolvedCommitMessage,
-          }));
-        })
-        .then(({ branchName, resolvedCommitMessage }) => {
-          const statusOverride = gitStatusForActions
-            ? {
-                ...gitStatusForActions,
-                branch: branchName,
-                pr: null,
-                hasUpstream: false,
-                aheadCount: 0,
-                behindCount: 0,
-              }
-            : null;
-          return runGitActionWithToast({
-            ...actionParams,
-            ...(resolvedCommitMessage ? { commitMessage: resolvedCommitMessage } : {}),
-            skipDefaultBranchPrompt: true,
-            statusOverride,
-            isDefaultBranchOverride: false,
-            progressToastId: checkoutToastId,
-          });
-        })
-        .catch((error) => {
-          toastManager.update(checkoutToastId, {
-            type: "error",
-          title: "Failed to checkout feature branch",
-          description: error instanceof Error ? error.message : "An error occurred.",
-          data: threadToastData,
-          });
-        });
     },
-    [
-      branchList?.branches,
-      createBranchAndCheckoutMutation,
-      gitStatusForActions,
-      runGitActionWithToast,
-      suggestCommitAndBranchMutation,
-      threadToastData,
-    ],
+    [runGitActionWithToast],
   );
 
   const checkoutFeatureBranchAndContinuePendingAction = useCallback(() => {
     if (!pendingDefaultBranchAction) return;
-    const { action, commitMessage, forcePushOnlyProgress, onConfirmed } = pendingDefaultBranchAction;
+    const { action, commitMessage, onConfirmed } = pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     checkoutNewBranchAndRunAction({
       action,
       ...(commitMessage ? { commitMessage } : {}),
-      forcePushOnlyProgress,
       ...(onConfirmed ? { onConfirmed } : {}),
     });
   }, [pendingDefaultBranchAction, checkoutNewBranchAndRunAction]);

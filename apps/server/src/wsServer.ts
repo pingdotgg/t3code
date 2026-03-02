@@ -668,11 +668,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* gitManager.runStackedAction(body);
       }
 
-      case WS_METHODS.gitSuggestCommitAndBranch: {
-        const body = stripRequestTag(request.body);
-        return yield* gitManager.suggestCommitAndBranch(body);
-      }
-
       case WS_METHODS.gitListBranches: {
         const body = stripRequestTag(request.body);
         return yield* git.listBranches(body);

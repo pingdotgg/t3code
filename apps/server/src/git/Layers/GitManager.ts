@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { Effect, FileSystem, Layer, Path } from "effect";
-import { sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { resolveAutoFeatureBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
 import { GitManagerError } from "../Errors.ts";
 import { GitManager, type GitManagerShape } from "../Services/GitManager.ts";
@@ -431,28 +431,33 @@ export const makeGitManager = Effect.gen(function* () {
     };
   });
 
-  const suggestCommitAndBranch: GitManagerShape["suggestCommitAndBranch"] = Effect.fnUntraced(
-    function* (input) {
-      const details = yield* gitCore.statusDetails(input.cwd);
+  const runFeatureBranchStep = (cwd: string, branch: string | null, commitMessage?: string) =>
+    Effect.gen(function* () {
       const suggestion = yield* resolveCommitAndBranchSuggestion({
-        cwd: input.cwd,
-        branch: details.branch,
-        ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
+        cwd,
+        branch,
+        ...(commitMessage ? { commitMessage } : {}),
         includeBranch: true,
       });
       if (!suggestion) {
         return yield* gitManagerError(
-          "suggestCommitAndBranch",
-          "Cannot suggest a commit and branch because there are no changes to commit.",
+          "runFeatureBranchStep",
+          "Cannot create a feature branch because there are no changes to commit.",
         );
       }
 
+      const preferredBranch = suggestion.branch ?? sanitizeFeatureBranchName(suggestion.subject);
+      const existingBranchNames = yield* gitCore.listLocalBranchNames(cwd);
+      const resolvedBranch = resolveAutoFeatureBranchName(existingBranchNames, preferredBranch);
+
+      yield* gitCore.createBranch({ cwd, branch: resolvedBranch });
+      yield* gitCore.checkoutBranch({ cwd, branch: resolvedBranch });
+
       return {
-        commitMessage: suggestion.commitMessage,
-        branch: suggestion.branch ?? sanitizeFeatureBranchName(suggestion.subject),
+        branchStep: { status: "created" as const, name: resolvedBranch },
+        resolvedCommitMessage: suggestion.commitMessage,
       };
-    },
-  );
+    });
 
   const runStackedAction: GitManagerShape["runStackedAction"] = Effect.fnUntraced(
     function* (input) {
@@ -460,28 +465,46 @@ export const makeGitManager = Effect.gen(function* () {
       const wantsPr = input.action === "commit_push_pr";
 
       const initialStatus = yield* gitCore.statusDetails(input.cwd);
-      if (wantsPush && !initialStatus.branch) {
+      if (!input.featureBranch && wantsPush && !initialStatus.branch) {
         return yield* gitManagerError("runStackedAction", "Cannot push from detached HEAD.");
       }
-      if (wantsPr && !initialStatus.branch) {
+      if (!input.featureBranch && wantsPr && !initialStatus.branch) {
         return yield* gitManagerError(
           "runStackedAction",
           "Cannot create a pull request from detached HEAD.",
         );
       }
 
-      const commit = yield* runCommitStep(input.cwd, initialStatus.branch, input.commitMessage);
+      let branchStep: { status: "created" | "skipped_not_requested"; name?: string };
+      let commitMessageForStep = input.commitMessage;
+
+      if (input.featureBranch) {
+        const result = yield* runFeatureBranchStep(
+          input.cwd,
+          initialStatus.branch,
+          input.commitMessage,
+        );
+        branchStep = result.branchStep;
+        commitMessageForStep = result.resolvedCommitMessage;
+      } else {
+        branchStep = { status: "skipped_not_requested" as const };
+      }
+
+      const currentBranch = branchStep.name ?? initialStatus.branch;
+
+      const commit = yield* runCommitStep(input.cwd, currentBranch, commitMessageForStep);
 
       const push = wantsPush
-        ? yield* gitCore.pushCurrentBranch(input.cwd, initialStatus.branch)
+        ? yield* gitCore.pushCurrentBranch(input.cwd, currentBranch)
         : { status: "skipped_not_requested" as const };
 
       const pr = wantsPr
-        ? yield* runPrStep(input.cwd, initialStatus.branch)
+        ? yield* runPrStep(input.cwd, currentBranch)
         : { status: "skipped_not_requested" as const };
 
       return {
         action: input.action,
+        branch: branchStep,
         commit,
         push,
         pr,
@@ -492,7 +515,6 @@ export const makeGitManager = Effect.gen(function* () {
   return {
     status,
     runStackedAction,
-    suggestCommitAndBranch,
   } satisfies GitManagerShape;
 });
 
