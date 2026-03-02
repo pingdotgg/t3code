@@ -361,12 +361,16 @@ const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
 const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   item: ComposerCommandItem;
   resolvedTheme: "light" | "dark";
+  isActive: boolean;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
   return (
     <CommandItem
       value={props.item.id}
-      className="cursor-pointer select-none gap-2"
+      className={cn(
+        "cursor-pointer select-none gap-2",
+        props.isActive && "bg-accent text-accent-foreground",
+      )}
       onMouseDown={(event) => {
         event.preventDefault();
       }}
@@ -400,6 +404,7 @@ const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   resolvedTheme: "light" | "dark";
   isLoading: boolean;
   triggerKind: ComposerTriggerKind | null;
+  activeItemId: string | null;
   onHighlightedItemChange: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
@@ -419,6 +424,7 @@ const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               key={item.id}
               item={item}
               resolvedTheme={props.resolvedTheme}
+              isActive={props.activeItemId === item.id}
               onSelect={props.onSelect}
             />
           ))}
@@ -1390,6 +1396,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [phase, scheduleStickToBottom, timelineEntries]);
 
   useEffect(() => {
+    setExpandedWorkGroups({});
+  }, [activeThread?.id]);
+
+  useEffect(() => {
+    if (!composerMenuOpen) {
+      setComposerHighlightedItemId(null);
+      return;
+    }
+    setComposerHighlightedItemId((existing) =>
+      existing && composerMenuItems.some((item) => item.id === existing)
+        ? existing
+        : (composerMenuItems[0]?.id ?? null),
+    );
+  }, [composerMenuItems, composerMenuOpen]);
+
+  useEffect(() => {
+    setIsRevertingCheckpoint(false);
+  }, [activeThread?.id]);
+
+  useEffect(() => {
     if (!activeThread?.id || terminalState.terminalOpen) return;
     const frame = window.requestAnimationFrame(() => {
       focusComposer();
@@ -2274,12 +2300,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       workspaceEntriesQuery.isLoading ||
       workspaceEntriesQuery.isFetching);
 
-  const onPromptChange = useCallback((nextPrompt: string, nextCursor: number) => {
+  const onPromptChange = useCallback((nextPrompt: string, nextCursor: number, cursorAdjacentToMention: boolean) => {
     promptRef.current = nextPrompt;
     setPrompt(nextPrompt);
     setComposerCursor(nextCursor);
     setComposerTrigger(
-      detectComposerTrigger(nextPrompt, expandCollapsedComposerCursor(nextPrompt, nextCursor)),
+      cursorAdjacentToMention
+        ? null
+        : detectComposerTrigger(nextPrompt, expandCollapsedComposerCursor(nextPrompt, nextCursor)),
     );
   }, [setPrompt]);
 
@@ -2301,8 +2329,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
         if (selectedItem) {
           onSelectComposerItem(selectedItem);
+          return true;
         }
-        return true;
       }
     }
 
@@ -2464,6 +2492,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     resolvedTheme={resolvedTheme}
                     isLoading={isComposerMenuLoading}
                     triggerKind={composerTriggerKind}
+                    activeItemId={activeComposerMenuItem?.id ?? null}
                     onHighlightedItemChange={onComposerMenuItemHighlighted}
                     onSelect={onSelectComposerItem}
                   />
