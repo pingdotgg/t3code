@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ThreadId, type TurnId } from "@t3tools/contracts";
 import { ChevronLeftIcon, ChevronRightIcon, Columns2Icon, Rows3Icon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type WheelEvent as ReactWheelEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
 import { readNativeApi } from "../nativeApi";
@@ -156,7 +156,6 @@ export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
-  const { state } = useStore();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
@@ -168,8 +167,21 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   });
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
   const activeThreadId = routeThreadId;
-  const activeThread = state.threads.find((thread) => thread.id === activeThreadId);
-  const activeProject = state.projects.find((project) => project.id === activeThread?.projectId);
+  const activeThread = useStore(
+    useCallback(
+      (state) =>
+        activeThreadId ? state.threads.find((thread) => thread.id === activeThreadId) : undefined,
+      [activeThreadId],
+    ),
+  );
+  const activeProjectId = activeThread?.projectId ?? null;
+  const activeProject = useStore(
+    useCallback(
+      (state) =>
+        activeProjectId ? state.projects.find((project) => project.id === activeProjectId) : undefined,
+      [activeProjectId],
+    ),
+  );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
@@ -342,7 +354,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     if (!element) return;
     element.scrollBy({ left: offset, behavior: "smooth" });
   }, []);
-  const onTurnStripWheel = useCallback((event: WheelEvent) => {
+  const onTurnStripWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
     const element = turnStripRef.current;
     if (!element) return;
     if (element.scrollWidth <= element.clientWidth + 1) return;
@@ -356,24 +368,26 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     const element = turnStripRef.current;
     if (!element) return;
 
-    updateTurnStripScrollState();
+    const frameId = window.requestAnimationFrame(() => updateTurnStripScrollState());
     const onScroll = () => updateTurnStripScrollState();
 
     element.addEventListener("scroll", onScroll, { passive: true });
-    element.addEventListener("wheel", onTurnStripWheel, { passive: false });
 
     const resizeObserver = new ResizeObserver(() => updateTurnStripScrollState());
     resizeObserver.observe(element);
 
     return () => {
+      window.cancelAnimationFrame(frameId);
       element.removeEventListener("scroll", onScroll);
-      element.removeEventListener("wheel", onTurnStripWheel);
       resizeObserver.disconnect();
     };
-  }, [updateTurnStripScrollState, onTurnStripWheel]);
+  }, [updateTurnStripScrollState]);
 
   useEffect(() => {
-    updateTurnStripScrollState();
+    const frameId = window.requestAnimationFrame(() => updateTurnStripScrollState());
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
   }, [orderedTurnDiffSummaries, selectedTurnId, updateTurnStripScrollState]);
 
   useEffect(() => {
@@ -422,7 +436,11 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         >
           <ChevronRightIcon className="size-3.5" />
         </button>
-        <div ref={turnStripRef} className="turn-chip-strip flex gap-1 overflow-x-auto px-8 py-0.5">
+        <div
+          ref={turnStripRef}
+          className="turn-chip-strip flex gap-1 overflow-x-auto px-8 py-0.5"
+          onWheel={onTurnStripWheel}
+        >
           <button
             type="button"
             className="shrink-0 rounded-md"

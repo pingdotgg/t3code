@@ -1,12 +1,5 @@
-import {
-  type Dispatch,
-  type ReactNode,
-  createContext,
-  createElement,
-  useContext,
-  useEffect,
-  useReducer,
-} from "react";
+import { type ReactNode } from "react";
+import { create } from "zustand";
 
 import {
   DEFAULT_MODEL,
@@ -65,6 +58,29 @@ export interface AppState {
   threads: Thread[];
   threadsHydrated: boolean;
   runtimeMode: RuntimeMode;
+}
+
+interface AppStore extends AppState {
+  syncServerReadModel: (readModel: OrchestrationReadModel) => void;
+  markThreadVisited: (threadId: ThreadId, visitedAt?: string) => void;
+  markThreadUnread: (threadId: ThreadId) => void;
+  toggleProject: (projectId: Project["id"]) => void;
+  setThreadTerminalActivity: (
+    threadId: ThreadId,
+    terminalId: string,
+    hasRunningSubprocess: boolean,
+  ) => void;
+  setProjectExpanded: (projectId: Project["id"], expanded: boolean) => void;
+  toggleThreadTerminal: (threadId: ThreadId) => void;
+  setThreadTerminalOpen: (threadId: ThreadId, open: boolean) => void;
+  setThreadTerminalHeight: (threadId: ThreadId, height: number) => void;
+  splitThreadTerminal: (threadId: ThreadId, terminalId: string) => void;
+  newThreadTerminal: (threadId: ThreadId, terminalId: string) => void;
+  setThreadActiveTerminal: (threadId: ThreadId, terminalId: string) => void;
+  closeThreadTerminal: (threadId: ThreadId, terminalId: string) => void;
+  setThreadError: (threadId: ThreadId, error: string | null) => void;
+  setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
+  setRuntimeMode: (mode: RuntimeMode) => void;
 }
 
 const PERSISTED_STATE_KEY = "t3code:renderer-state:v7";
@@ -804,23 +820,66 @@ export function reducer(state: AppState, action: Action): AppState {
   }
 }
 
-// ── Context ──────────────────────────────────────────────────────────
-
-const StoreContext = createContext<{
-  state: AppState;
-  dispatch: Dispatch<Action>;
-}>({ state: initialState, dispatch: () => {} });
-
-export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, undefined, readPersistedState);
-
-  useEffect(() => {
-    persistState(state);
-  }, [state]);
-
-  return createElement(StoreContext.Provider, { value: { state, dispatch } }, children);
+function toAppState(store: AppStore): AppState {
+  return {
+    projects: store.projects,
+    threads: store.threads,
+    threadsHydrated: store.threadsHydrated,
+    runtimeMode: store.runtimeMode,
+  };
 }
 
-export function useStore() {
-  return useContext(StoreContext);
+export const useStore = create<AppStore>((set, get) => {
+  const applyAction = (action: Action): void => {
+    const currentState = toAppState(get());
+    const nextState = reducer(currentState, action);
+    if (nextState === currentState) {
+      return;
+    }
+    persistState(nextState);
+    set(nextState);
+  };
+
+  return {
+    ...readPersistedState(),
+    syncServerReadModel: (readModel) => applyAction({ type: "SYNC_SERVER_READ_MODEL", readModel }),
+    markThreadVisited: (threadId, visitedAt) =>
+      applyAction({
+        type: "MARK_THREAD_VISITED",
+        threadId,
+        ...(visitedAt === undefined ? {} : { visitedAt }),
+      }),
+    markThreadUnread: (threadId) => applyAction({ type: "MARK_THREAD_UNREAD", threadId }),
+    toggleProject: (projectId) => applyAction({ type: "TOGGLE_PROJECT", projectId }),
+    setThreadTerminalActivity: (threadId, terminalId, hasRunningSubprocess) =>
+      applyAction({
+        type: "SET_THREAD_TERMINAL_ACTIVITY",
+        threadId,
+        terminalId,
+        hasRunningSubprocess,
+      }),
+    setProjectExpanded: (projectId, expanded) =>
+      applyAction({ type: "SET_PROJECT_EXPANDED", projectId, expanded }),
+    toggleThreadTerminal: (threadId) => applyAction({ type: "TOGGLE_THREAD_TERMINAL", threadId }),
+    setThreadTerminalOpen: (threadId, open) =>
+      applyAction({ type: "SET_THREAD_TERMINAL_OPEN", threadId, open }),
+    setThreadTerminalHeight: (threadId, height) =>
+      applyAction({ type: "SET_THREAD_TERMINAL_HEIGHT", threadId, height }),
+    splitThreadTerminal: (threadId, terminalId) =>
+      applyAction({ type: "SPLIT_THREAD_TERMINAL", threadId, terminalId }),
+    newThreadTerminal: (threadId, terminalId) =>
+      applyAction({ type: "NEW_THREAD_TERMINAL", threadId, terminalId }),
+    setThreadActiveTerminal: (threadId, terminalId) =>
+      applyAction({ type: "SET_THREAD_ACTIVE_TERMINAL", threadId, terminalId }),
+    closeThreadTerminal: (threadId, terminalId) =>
+      applyAction({ type: "CLOSE_THREAD_TERMINAL", threadId, terminalId }),
+    setThreadError: (threadId, error) => applyAction({ type: "SET_ERROR", threadId, error }),
+    setThreadBranch: (threadId, branch, worktreePath) =>
+      applyAction({ type: "SET_THREAD_BRANCH", threadId, branch, worktreePath }),
+    setRuntimeMode: (mode) => applyAction({ type: "SET_RUNTIME_MODE", mode }),
+  };
+});
+
+export function StoreProvider({ children }: { children: ReactNode }) {
+  return children;
 }

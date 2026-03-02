@@ -133,13 +133,15 @@ const DiffPanelInlineSidebar = (props: {
 };
 
 function ChatThreadRouteView() {
-  const { state } = useStore();
+  const threadsHydrated = useStore((state) => state.threadsHydrated);
   const navigate = useNavigate();
   const threadId = Route.useParams({
     select: (params) => ThreadId.makeUnsafe(params.threadId),
   });
   const search = Route.useSearch();
-  const threadExists = state.threads.some((thread) => thread.id === threadId);
+  const threadExists = useStore(
+    useCallback((state) => state.threads.some((thread) => thread.id === threadId), [threadId]),
+  );
   const draftThreadExists = useComposerDraftStore(
     (store) => Object.hasOwn(store.draftThreadsByThreadId, threadId),
   );
@@ -167,7 +169,7 @@ function ChatThreadRouteView() {
   }, [navigate, threadId]);
 
   useEffect(() => {
-    if (!state.threadsHydrated) {
+    if (!threadsHydrated) {
       return;
     }
 
@@ -175,9 +177,9 @@ function ChatThreadRouteView() {
       void navigate({ to: "/", replace: true });
       return;
     }
-  }, [navigate, routeThreadExists, state.threadsHydrated, threadId]);
+  }, [navigate, routeThreadExists, threadsHydrated, threadId]);
 
-  if (!state.threadsHydrated || !routeThreadExists) {
+  if (!threadsHydrated || !routeThreadExists) {
     return null;
   }
 

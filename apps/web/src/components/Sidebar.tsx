@@ -228,7 +228,10 @@ function ProjectFavicon({ cwd }: { cwd: string }) {
 }
 
 export default function Sidebar() {
-  const { state, dispatch } = useStore();
+  const projects = useStore((state) => state.projects);
+  const threads = useStore((state) => state.threads);
+  const markThreadUnread = useStore((state) => state.markThreadUnread);
+  const toggleProject = useStore((state) => state.toggleProject);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearThreadDraft);
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
@@ -260,23 +263,23 @@ export default function Sidebar() {
   const [isAddingProject, setIsAddingProject] = useState(false);
   const pendingApprovalByThreadId = useMemo(() => {
     const map = new Map<ThreadId, boolean>();
-    for (const thread of state.threads) {
+    for (const thread of threads) {
       map.set(thread.id, derivePendingApprovals(thread.activities).length > 0);
     }
     return map;
-  }, [state.threads]);
+  }, [threads]);
   const projectCwdById = useMemo(
-    () => new Map(state.projects.map((project) => [project.id, project.cwd] as const)),
-    [state.projects],
+    () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
+    [projects],
   );
   const threadGitTargets = useMemo(
     () =>
-      state.threads.map((thread) => ({
+      threads.map((thread) => ({
         threadId: thread.id,
         branch: thread.branch,
         cwd: thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null,
       })),
-    [projectCwdById, state.threads],
+    [projectCwdById, threads],
   );
   const threadGitStatusCwds = useMemo(
     () => [
@@ -414,7 +417,7 @@ export default function Sidebar() {
 
   const focusMostRecentThreadForProject = useCallback(
     (projectId: ProjectId) => {
-      const latestThread = state.threads
+      const latestThread = threads
         .filter((thread) => thread.projectId === projectId)
         .toSorted((a, b) => {
           const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
@@ -428,7 +431,7 @@ export default function Sidebar() {
         params: { threadId: latestThread.id },
       });
     },
-    [navigate, state.threads],
+    [navigate, threads],
   );
 
   const addProjectFromPath = useCallback(
@@ -438,34 +441,36 @@ export default function Sidebar() {
       const api = readNativeApi();
 
       setIsAddingProject(true);
-      try {
-        if (!api) return;
-        const existing = state.projects.find((project) => project.cwd === cwd);
+      if (api) {
+        const existing = projects.find((project) => project.cwd === cwd);
         if (existing) {
           focusMostRecentThreadForProject(existing.id);
-          return;
+        } else {
+          const projectId = newProjectId();
+          const createdAt = new Date().toISOString();
+          const title = cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd;
+          const projectCreated = await api.orchestration
+            .dispatchCommand({
+              type: "project.create",
+              commandId: newCommandId(),
+              projectId,
+              title,
+              workspaceRoot: cwd,
+              defaultModel: DEFAULT_MODEL,
+              createdAt,
+            })
+            .then(() => true)
+            .catch(() => false);
+          if (projectCreated) {
+            await handleNewThread(projectId).catch(() => undefined);
+          }
         }
-
-        const projectId = newProjectId();
-        const createdAt = new Date().toISOString();
-        const title = cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd;
-        await api.orchestration.dispatchCommand({
-          type: "project.create",
-          commandId: newCommandId(),
-          projectId,
-          title,
-          workspaceRoot: cwd,
-          defaultModel: DEFAULT_MODEL,
-          createdAt,
-        });
-        await handleNewThread(projectId);
-      } finally {
-        setIsAddingProject(false);
-        setNewCwd("");
-        setAddingProject(false);
       }
+      setIsAddingProject(false);
+      setNewCwd("");
+      setAddingProject(false);
     },
-    [focusMostRecentThreadForProject, handleNewThread, isAddingProject, state.projects],
+    [focusMostRecentThreadForProject, handleNewThread, isAddingProject, projects],
   );
 
   const handleAddProject = () => {
@@ -476,13 +481,16 @@ export default function Sidebar() {
     const api = readNativeApi();
     if (!api || isPickingFolder) return;
     setIsPickingFolder(true);
+    let pickedPath: string | null = null;
     try {
-      const pickedPath = await api.dialogs.pickFolder();
-      if (!pickedPath) return;
-      await addProjectFromPath(pickedPath);
-    } finally {
-      setIsPickingFolder(false);
+      pickedPath = await api.dialogs.pickFolder();
+    } catch {
+      // Ignore picker failures and leave the current thread selection unchanged.
     }
+    if (pickedPath) {
+      await addProjectFromPath(pickedPath);
+    }
+    setIsPickingFolder(false);
   };
 
   const handleThreadContextMenu = useCallback(
@@ -497,12 +505,12 @@ export default function Sidebar() {
         position,
       );
       if (clicked === "mark-unread") {
-        dispatch({ type: "MARK_THREAD_UNREAD", threadId });
+        markThreadUnread(threadId);
         return;
       }
       if (clicked !== "delete") return;
 
-      const thread = state.threads.find((t) => t.id === threadId);
+      const thread = threads.find((t) => t.id === threadId);
       if (!thread) return;
       if (appSettings.confirmThreadDelete) {
         const confirmed = await api.dialogs.confirm(
@@ -515,8 +523,8 @@ export default function Sidebar() {
           return;
         }
       }
-      const threadProject = state.projects.find((project) => project.id === thread.projectId);
-      const orphanedWorktreePath = getOrphanedWorktreePathForThread(state.threads, threadId);
+      const threadProject = projects.find((project) => project.id === thread.projectId);
+      const orphanedWorktreePath = getOrphanedWorktreePathForThread(threads, threadId);
       const displayWorktreePath = orphanedWorktreePath
         ? formatWorktreePathForDisplay(orphanedWorktreePath)
         : null;
@@ -553,7 +561,7 @@ export default function Sidebar() {
       }
 
       const shouldNavigateToFallback = routeThreadId === threadId;
-      const fallbackThreadId = state.threads.find((entry) => entry.id !== threadId)?.id ?? null;
+      const fallbackThreadId = threads.find((entry) => entry.id !== threadId)?.id ?? null;
       await api.orchestration.dispatchCommand({
         type: "thread.delete",
         commandId: newCommandId(),
@@ -602,12 +610,12 @@ export default function Sidebar() {
       appSettings.confirmThreadDelete,
       clearComposerDraftForThread,
       clearProjectDraftThreadById,
-      dispatch,
+      markThreadUnread,
       navigate,
       removeWorktreeMutation,
       routeThreadId,
-      state.projects,
-      state.threads,
+      projects,
+      threads,
     ],
   );
 
@@ -618,10 +626,10 @@ export default function Sidebar() {
       const clicked = await api.contextMenu.show([{ id: "delete", label: "Delete" }], position);
       if (clicked !== "delete") return;
 
-      const project = state.projects.find((entry) => entry.id === projectId);
+      const project = projects.find((entry) => entry.id === projectId);
       if (!project) return;
 
-      const projectThreads = state.threads.filter((thread) => thread.projectId === projectId);
+      const projectThreads = threads.filter((thread) => thread.projectId === projectId);
       if (projectThreads.length > 0) {
         toastManager.add({
           type: "warning",
@@ -661,20 +669,20 @@ export default function Sidebar() {
       clearComposerDraftForThread,
       clearProjectDraftThreadId,
       getDraftThreadByProjectId,
-      state.projects,
-      state.threads,
+      projects,
+      threads,
     ],
   );
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       const activeThread = routeThreadId
-        ? state.threads.find((thread) => thread.id === routeThreadId)
+        ? threads.find((thread) => thread.id === routeThreadId)
         : undefined;
       const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
       if (isChatNewLocalShortcut(event, keybindings)) {
         const projectId =
-          activeThread?.projectId ?? activeDraftThread?.projectId ?? state.projects[0]?.id;
+          activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
         if (!projectId) return;
         event.preventDefault();
         void handleNewThread(projectId);
@@ -683,7 +691,7 @@ export default function Sidebar() {
 
       if (!isChatNewShortcut(event, keybindings)) return;
       const projectId =
-        activeThread?.projectId ?? activeDraftThread?.projectId ?? state.projects[0]?.id;
+        activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
       if (!projectId) return;
       event.preventDefault();
       void handleNewThread(projectId, {
@@ -697,14 +705,14 @@ export default function Sidebar() {
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
-  }, [getDraftThread, handleNewThread, keybindings, routeThreadId, state.projects, state.threads]);
+  }, [getDraftThread, handleNewThread, keybindings, routeThreadId, projects, threads]);
 
   const onCreateThreadClick = () => {
-    if (state.projects.length === 0) {
+    if (projects.length === 0) {
       setAddingProject(true);
       return;
     }
-    const firstProject = state.projects[0];
+    const firstProject = projects[0];
     if (firstProject) void handleNewThread(firstProject.id);
   };
 
@@ -753,8 +761,8 @@ export default function Sidebar() {
       <SidebarContent className="gap-0">
         <SidebarGroup className="px-2 py-2">
           <SidebarMenu>
-            {state.projects.map((project) => {
-              const visibleThreads = state.threads
+            {projects.map((project) => {
+              const visibleThreads = threads
                 .filter((thread) => thread.projectId === project.id)
                 .toSorted((a, b) => {
                   const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
@@ -769,7 +777,7 @@ export default function Sidebar() {
                   open={project.expanded}
                   onOpenChange={(open) => {
                     if (open === project.expanded) return;
-                    dispatch({ type: "TOGGLE_PROJECT", projectId: project.id });
+                    toggleProject(project.id);
                   }}
                 >
                   <SidebarMenuItem>
@@ -929,7 +937,7 @@ export default function Sidebar() {
             })}
           </SidebarMenu>
 
-          {state.projects.length === 0 && !addingProject && (
+          {projects.length === 0 && !addingProject && (
             <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
               No projects yet.
               <br />

@@ -1,6 +1,6 @@
 import type { GitBranch, ThreadId } from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { newCommandId } from "../lib/utils";
 import {
@@ -43,17 +43,26 @@ export default function BranchToolbar({
   envLocked,
   onComposerFocusRequest,
 }: BranchToolbarProps) {
-  const { state, dispatch } = useStore();
+  const setThreadBranchAction = useStore((state) => state.setThreadBranch);
+  const setThreadErrorAction = useStore((state) => state.setThreadError);
   const draftThread = useComposerDraftStore((store) => store.getDraftThread(threadId));
+  const serverThread = useStore(
+    useCallback((state) => state.threads.find((thread) => thread.id === threadId), [threadId]),
+  );
+  const activeProjectId = serverThread?.projectId ?? draftThread?.projectId ?? null;
+  const activeProject = useStore(
+    useCallback(
+      (state) =>
+        activeProjectId ? state.projects.find((project) => project.id === activeProjectId) : undefined,
+      [activeProjectId],
+    ),
+  );
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const queryClient = useQueryClient();
 
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
 
-  const serverThread = state.threads.find((thread) => thread.id === threadId);
-  const activeProjectId = serverThread?.projectId ?? draftThread?.projectId ?? null;
-  const activeProject = state.projects.find((project) => project.id === activeProjectId);
   const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
   const activeThreadBranch = serverThread?.branch ?? draftThread?.branch ?? null;
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
@@ -114,12 +123,7 @@ export default function BranchToolbar({
       });
     }
     if (hasServerThread) {
-      dispatch({
-        type: "SET_THREAD_BRANCH",
-        threadId: activeThreadId,
-        branch: syncedBranch,
-        worktreePath: null,
-      });
+      setThreadBranchAction(activeThreadId, syncedBranch, null);
       return;
     }
     setDraftThreadContext(threadId, {
@@ -132,22 +136,17 @@ export default function BranchToolbar({
     activeThreadBranch,
     queryBranches,
     effectiveEnvMode,
-    dispatch,
+    setThreadBranchAction,
     hasServerThread,
     setDraftThreadContext,
     threadId,
   ]);
 
-  useEffect(() => {
-    if (isBranchMenuOpen) return;
-    setBranchQuery("");
-  }, [isBranchMenuOpen]);
-
   // ── Helpers ───────────────────────────────────────────────────────────
 
   const setThreadError = (error: string | null) => {
     if (!activeThreadId) return;
-    dispatch({ type: "SET_ERROR", threadId: activeThreadId, error });
+    setThreadErrorAction(activeThreadId, error);
   };
 
   const setThreadBranch = (branch: string | null, worktreePath: string | null) => {
@@ -176,7 +175,7 @@ export default function BranchToolbar({
       });
     }
     if (hasServerThread) {
-      dispatch({ type: "SET_THREAD_BRANCH", threadId: activeThreadId, branch, worktreePath });
+      setThreadBranchAction(activeThreadId, branch, worktreePath);
       return;
     }
     setDraftThreadContext(threadId, {
@@ -282,7 +281,12 @@ export default function BranchToolbar({
       <Combobox
         items={branchPickerItems}
         autoHighlight
-        onOpenChange={(open) => setIsBranchMenuOpen(open)}
+        onOpenChange={(open) => {
+          setIsBranchMenuOpen(open);
+          if (!open) {
+            setBranchQuery("");
+          }
+        }}
         open={isBranchMenuOpen}
         value={activeThreadBranch}
       >

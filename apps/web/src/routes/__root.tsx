@@ -123,14 +123,19 @@ function errorDetails(error: unknown): string {
 }
 
 function EventRouter() {
-  const { dispatch } = useStore();
+  const syncServerReadModel = useStore((state) => state.syncServerReadModel);
+  const setThreadTerminalActivity = useStore((state) => state.setThreadTerminalActivity);
+  const setProjectExpanded = useStore((state) => state.setProjectExpanded);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const pathnameRef = useRef(pathname);
   const lastConfigIssuesSignatureRef = useRef<string | null>(null);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
-  pathnameRef.current = pathname;
+
+  useEffect(() => {
+    pathnameRef.current = pathname;
+  }, [pathname]);
 
   useEffect(() => {
     const api = readNativeApi();
@@ -144,7 +149,7 @@ function EventRouter() {
       const snapshot = await api.orchestration.getSnapshot();
       if (disposed) return;
       latestSequence = Math.max(latestSequence, snapshot.snapshotSequence);
-      dispatch({ type: "SYNC_SERVER_READ_MODEL", readModel: snapshot });
+      syncServerReadModel(snapshot);
       if (pending) {
         pending = false;
         await flushSnapshotSync();
@@ -157,14 +162,13 @@ function EventRouter() {
         return;
       }
       syncing = true;
+      pending = false;
       try {
-        pending = false;
         await flushSnapshotSync();
       } catch {
         // Keep prior state and wait for next domain event to trigger a resync.
-      } finally {
-        syncing = false;
       }
+      syncing = false;
     };
 
     void syncSnapshot().catch(() => undefined);
@@ -184,12 +188,11 @@ function EventRouter() {
       if (hasRunningSubprocess === null) {
         return;
       }
-      dispatch({
-        type: "SET_THREAD_TERMINAL_ACTIVITY",
-        threadId: ThreadId.makeUnsafe(event.threadId),
-        terminalId: event.terminalId,
+      setThreadTerminalActivity(
+        ThreadId.makeUnsafe(event.threadId),
+        event.terminalId,
         hasRunningSubprocess,
-      });
+      );
     });
     const unsubWelcome = onServerWelcome((payload) => {
       void (async () => {
@@ -201,11 +204,7 @@ function EventRouter() {
         if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
           return;
         }
-        dispatch({
-          type: "SET_PROJECT_EXPANDED",
-          projectId: payload.bootstrapProjectId,
-          expanded: true,
-        });
+        setProjectExpanded(payload.bootstrapProjectId, true);
 
         if (pathnameRef.current !== "/") {
           return;
@@ -270,7 +269,7 @@ function EventRouter() {
       unsubWelcome();
       unsubServerConfigUpdated();
     };
-  }, [dispatch, navigate, queryClient]);
+  }, [navigate, queryClient, setProjectExpanded, setThreadTerminalActivity, syncServerReadModel]);
 
   return null;
 }

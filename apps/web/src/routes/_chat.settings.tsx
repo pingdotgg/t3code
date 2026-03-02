@@ -48,7 +48,8 @@ const RUNTIME_MODE_OPTIONS = [
 
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
-  const { state, dispatch } = useStore();
+  const runtimeMode = useStore((state) => state.runtimeMode);
+  const setRuntimeMode = useStore((state) => state.setRuntimeMode);
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
@@ -186,9 +187,10 @@ function SettingsRouteView() {
               </div>
 
               <div className="space-y-4">
-                <label className="block space-y-1">
+                <label htmlFor="codex-binary-path" className="block space-y-1">
                   <span className="text-xs font-medium text-foreground">Codex binary path</span>
                   <Input
+                    id="codex-binary-path"
                     value={codexBinaryPath}
                     onChange={(event) => updateSettings({ codexBinaryPath: event.target.value })}
                     placeholder="codex"
@@ -199,9 +201,10 @@ function SettingsRouteView() {
                   </span>
                 </label>
 
-                <label className="block space-y-1">
+                <label htmlFor="codex-home-path" className="block space-y-1">
                   <span className="text-xs font-medium text-foreground">CODEX_HOME path</span>
                   <Input
+                    id="codex-home-path"
                     value={codexHomePath}
                     onChange={(event) => updateSettings({ codexHomePath: event.target.value })}
                     placeholder="/Users/you/.codex"
@@ -242,22 +245,22 @@ function SettingsRouteView() {
               </div>
 
               <div className="space-y-4">
-                <form
-                  className="flex flex-col gap-3 sm:flex-row sm:items-start"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    addCustomModel();
-                  }}
-                >
-                  <label className="block flex-1 space-y-1">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                  <label htmlFor="custom-model-slug" className="block flex-1 space-y-1">
                     <span className="text-xs font-medium text-foreground">Custom model slug</span>
                     <Input
+                      id="custom-model-slug"
                       value={customModelInput}
                       onChange={(event) => {
                         setCustomModelInput(event.target.value);
                         if (customModelError) {
                           setCustomModelError(null);
                         }
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter") return;
+                        event.preventDefault();
+                        addCustomModel();
                       }}
                       placeholder="your-model-slug"
                       spellCheck={false}
@@ -267,10 +270,10 @@ function SettingsRouteView() {
                     </span>
                   </label>
 
-                  <Button className="sm:mt-6" type="submit">
+                  <Button className="sm:mt-6" type="button" onClick={addCustomModel}>
                     Add model
                   </Button>
-                </form>
+                </div>
 
                 {customModelError ? (
                   <p className="text-xs text-destructive">{customModelError}</p>
@@ -333,7 +336,7 @@ function SettingsRouteView() {
 
               <div className="space-y-2" role="radiogroup" aria-label="Runtime mode preference">
                 {RUNTIME_MODE_OPTIONS.map((option) => {
-                  const selected = state.runtimeMode === option.value;
+                  const selected = runtimeMode === option.value;
                   return (
                     <button
                       key={option.value}
@@ -346,10 +349,7 @@ function SettingsRouteView() {
                           : "border-border bg-background text-muted-foreground hover:bg-accent"
                       }`}
                       onClick={() => {
-                        dispatch({
-                          type: "SET_RUNTIME_MODE",
-                          mode: option.value,
-                        });
+                        setRuntimeMode(option.value);
                       }}
                     >
                       <span className="flex flex-col">

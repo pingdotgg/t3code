@@ -101,7 +101,7 @@ import { CursorIcon, Icon } from "./Icons";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { Badge } from "./ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { Command, CommandInput, CommandItem, CommandList } from "./ui/command";
+import { Command, CommandItem, CommandList } from "./ui/command";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
@@ -337,15 +337,12 @@ const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
   kind: "file" | "directory";
   theme: "light" | "dark";
 }) {
-  const [failed, setFailed] = useState(false);
+  const [failedIconUrl, setFailedIconUrl] = useState<string | null>(null);
   const iconUrl = useMemo(
     () => getVscodeIconUrlForEntry(props.pathValue, props.kind, props.theme),
     [props.kind, props.pathValue, props.theme],
   );
-
-  useEffect(() => {
-    setFailed(false);
-  }, [iconUrl]);
+  const failed = failedIconUrl === iconUrl;
 
   if (failed) {
     return props.kind === "directory" ? (
@@ -362,7 +359,7 @@ const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
       aria-hidden="true"
       className="size-4 shrink-0"
       loading="lazy"
-      onError={() => setFailed(true)}
+      onError={() => setFailedIconUrl(iconUrl)}
     />
   );
 });
@@ -411,7 +408,6 @@ const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   triggerKind: ComposerTriggerKind | null;
   onHighlightedItemChange: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
-  commandInputRef: React.RefObject<HTMLInputElement | null>;
 }) {
   return (
     <Command
@@ -423,9 +419,6 @@ const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
       }}
     >
       <div className="relative overflow-hidden rounded-xl border border-border/80 bg-popover/96 shadow-lg/8 backdrop-blur-xs">
-        <div className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0">
-          <CommandInput autoFocus={false} ref={props.commandInputRef} />
-        </div>
         <CommandList className="max-h-64">
           {props.items.map((item) => (
             <ComposerCommandMenuItem
@@ -455,7 +448,17 @@ interface ChatViewProps {
 }
 
 export default function ChatView({ threadId }: ChatViewProps) {
-  const { state, dispatch } = useStore();
+  const markThreadVisited = useStore((state) => state.markThreadVisited);
+  const setThreadTerminalOpen = useStore((state) => state.setThreadTerminalOpen);
+  const splitThreadTerminalAction = useStore((state) => state.splitThreadTerminal);
+  const newThreadTerminalAction = useStore((state) => state.newThreadTerminal);
+  const setThreadActiveTerminal = useStore((state) => state.setThreadActiveTerminal);
+  const closeThreadTerminalAction = useStore((state) => state.closeThreadTerminal);
+  const setThreadErrorAction = useStore((state) => state.setThreadError);
+  const setThreadBranchAction = useStore((state) => state.setThreadBranch);
+  const setRuntimeMode = useStore((state) => state.setRuntimeMode);
+  const setThreadTerminalHeight = useStore((state) => state.setThreadTerminalHeight);
+  const runtimeMode = useStore((state) => state.runtimeMode);
   const { settings } = useAppSettings();
   const navigate = useNavigate();
   const rawSearch = useSearch({
@@ -487,6 +490,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const clearDraftThread = useComposerDraftStore((store) => store.clearDraftThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const draftThread = useComposerDraftStore((store) => store.draftThreadsByThreadId[threadId] ?? null);
+  const serverThread = useStore(
+    useCallback((state) => state.threads.find((thread) => thread.id === threadId), [threadId]),
+  );
+  const fallbackDraftProjectId = draftThread?.projectId ?? null;
+  const fallbackDraftProject = useStore(
+    useCallback(
+      (state) =>
+        fallbackDraftProjectId
+          ? state.projects.find((project) => project.id === fallbackDraftProjectId)
+          : undefined,
+      [fallbackDraftProjectId],
+    ),
+  );
   const promptRef = useRef(prompt);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
@@ -511,6 +527,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     Record<string, string>
   >(() => readLastInvokedScriptByProjectFromStorage());
   const messagesScrollRef = useRef<HTMLDivElement>(null);
+  const [messagesScrollElement, setMessagesScrollElement] = useState<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -523,6 +540,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const sendInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
+  const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
+    messagesScrollRef.current = element;
+    setMessagesScrollElement(element);
+  }, []);
 
   const setPrompt = useCallback(
     (nextPrompt: string) => {
@@ -555,8 +576,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [removeComposerDraftImage, threadId],
   );
 
-  const serverThread = state.threads.find((t) => t.id === threadId);
-  const fallbackDraftProject = state.projects.find((project) => project.id === draftThread?.projectId);
   const localDraftError = localDraftErrorsByThreadId[threadId] ?? null;
   const localDraftThread = useMemo(
     () =>
@@ -581,7 +600,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeThreadId = activeThread?.id ?? null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
-  const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
+  const activeProjectId = activeThread?.projectId ?? null;
+  const activeProject = useStore(
+    useCallback(
+      (state) =>
+        activeProjectId ? state.projects.find((project) => project.id === activeProjectId) : undefined,
+      [activeProjectId],
+    ),
+  );
 
   useEffect(() => {
     if (!serverThread) {
@@ -605,16 +631,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const lastVisitedAt = activeThread.lastVisitedAt ? Date.parse(activeThread.lastVisitedAt) : NaN;
     if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= turnCompletedAt) return;
 
-    dispatch({
-      type: "MARK_THREAD_VISITED",
-      threadId: activeThread.id,
-    });
+    markThreadVisited(activeThread.id);
   }, [
     activeThread?.id,
     activeThread?.lastVisitedAt,
     activeLatestTurn?.completedAt,
     latestTurnSettled,
-    dispatch,
+    markThreadVisited,
   ]);
 
   const baseThreadModel = resolveModelSlug(activeThread?.model ?? activeProject?.model ?? DEFAULT_MODEL);
@@ -981,41 +1004,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [focusComposer]);
   const toggleTerminalVisibility = useCallback(() => {
     if (!activeThreadId) return;
-    dispatch({
-      type: "SET_THREAD_TERMINAL_OPEN",
-      threadId: activeThreadId,
-      open: !activeThread?.terminalOpen,
-    });
-  }, [activeThread?.terminalOpen, activeThreadId, dispatch]);
+    setThreadTerminalOpen(activeThreadId, !activeThread?.terminalOpen);
+  }, [activeThread?.terminalOpen, activeThreadId, setThreadTerminalOpen]);
   const splitTerminal = useCallback(() => {
     if (!activeThreadId || hasReachedTerminalLimit) return;
-    dispatch({
-      type: "SPLIT_THREAD_TERMINAL",
-      threadId: activeThreadId,
-      terminalId: `terminal-${crypto.randomUUID()}`,
-    });
+    splitThreadTerminalAction(activeThreadId, `terminal-${crypto.randomUUID()}`);
     setTerminalFocusRequestId((value) => value + 1);
-  }, [activeThreadId, dispatch, hasReachedTerminalLimit]);
+  }, [activeThreadId, hasReachedTerminalLimit, splitThreadTerminalAction]);
   const createNewTerminal = useCallback(() => {
     if (!activeThreadId || hasReachedTerminalLimit) return;
-    dispatch({
-      type: "NEW_THREAD_TERMINAL",
-      threadId: activeThreadId,
-      terminalId: `terminal-${crypto.randomUUID()}`,
-    });
+    newThreadTerminalAction(activeThreadId, `terminal-${crypto.randomUUID()}`);
     setTerminalFocusRequestId((value) => value + 1);
-  }, [activeThreadId, dispatch, hasReachedTerminalLimit]);
+  }, [activeThreadId, hasReachedTerminalLimit, newThreadTerminalAction]);
   const activateTerminal = useCallback(
     (terminalId: string) => {
       if (!activeThreadId) return;
-      dispatch({
-        type: "SET_THREAD_ACTIVE_TERMINAL",
-        threadId: activeThreadId,
-        terminalId,
-      });
+      setThreadActiveTerminal(activeThreadId, terminalId);
       setTerminalFocusRequestId((value) => value + 1);
     },
-    [activeThreadId, dispatch],
+    [activeThreadId, setThreadActiveTerminal],
   );
   const closeTerminal = useCallback(
     (terminalId: string) => {
@@ -1038,14 +1045,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       } else {
         void fallbackExitWrite();
       }
-      dispatch({
-        type: "CLOSE_THREAD_TERMINAL",
-        threadId: activeThreadId,
-        terminalId,
-      });
+      closeThreadTerminalAction(activeThreadId, terminalId);
       setTerminalFocusRequestId((value) => value + 1);
     },
-    [activeThread?.terminalIds.length, activeThreadId, dispatch],
+    [activeThread?.terminalIds.length, activeThreadId, closeThreadTerminalAction],
   );
   const runProjectScript = useCallback(
     async (
@@ -1079,23 +1082,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ? `terminal-${crypto.randomUUID()}`
         : baseTerminalId;
 
-      dispatch({
-        type: "SET_THREAD_TERMINAL_OPEN",
-        threadId: activeThreadId,
-        open: true,
-      });
+      setThreadTerminalOpen(activeThreadId, true);
       if (shouldCreateNewTerminal) {
-        dispatch({
-          type: "NEW_THREAD_TERMINAL",
-          threadId: activeThreadId,
-          terminalId: targetTerminalId,
-        });
+        newThreadTerminalAction(activeThreadId, targetTerminalId);
       } else {
-        dispatch({
-          type: "SET_THREAD_ACTIVE_TERMINAL",
-          threadId: activeThreadId,
-          terminalId: targetTerminalId,
-        });
+        setThreadActiveTerminal(activeThreadId, targetTerminalId);
       }
       setTerminalFocusRequestId((value) => value + 1);
 
@@ -1126,14 +1117,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
           data: `${script.command}\r`,
         });
       } catch (error) {
-        dispatch({
-          type: "SET_ERROR",
-          threadId: activeThreadId,
-          error: error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
-        });
+        setThreadErrorAction(
+          activeThreadId,
+          error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+        );
       }
     },
-    [activeProject, activeThread, activeThreadId, dispatch, gitCwd, isServerThread],
+    [
+      activeProject,
+      activeThread,
+      activeThreadId,
+      gitCwd,
+      isServerThread,
+      newThreadTerminalAction,
+      setThreadActiveTerminal,
+      setThreadErrorAction,
+      setThreadTerminalOpen,
+    ],
   );
   const persistProjectScripts = useCallback(
     async (input: {
@@ -1236,35 +1236,34 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
 
   const handleRuntimeModeChange = async (mode: "approval-required" | "full-access") => {
-    if (mode === state.runtimeMode) return;
-    dispatch({ type: "SET_RUNTIME_MODE", mode });
+    if (mode === runtimeMode) return;
+    setRuntimeMode(mode);
     scheduleComposerFocus();
     const api = readNativeApi();
     if (!api) return;
 
-    const runningThreadIds = state.threads
+    const runningThreadIds = useStore
+      .getState()
+      .threads
       .filter((thread) => thread.session !== null && thread.session.status !== "closed")
       .map((thread) => thread.id);
 
     if (runningThreadIds.length === 0) return;
 
     setIsSwitchingRuntimeMode(true);
-    try {
-      await Promise.all(
-        runningThreadIds.map((threadId) =>
-          api.orchestration
-            .dispatchCommand({
-              type: "thread.session.stop",
-              commandId: newCommandId(),
-              threadId,
-              createdAt: new Date().toISOString(),
-            })
-            .catch(() => undefined),
-        ),
-      );
-    } finally {
-      setIsSwitchingRuntimeMode(false);
-    }
+    await Promise.all(
+      runningThreadIds.map((threadId) =>
+        api.orchestration
+          .dispatchCommand({
+            type: "thread.session.stop",
+            commandId: newCommandId(),
+            threadId,
+            createdAt: new Date().toISOString(),
+          })
+          .catch(() => undefined),
+      ),
+    );
+    setIsSwitchingRuntimeMode(false);
   };
 
   useEffect(() => {
@@ -1642,11 +1641,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         if (!activeThread?.terminalOpen) {
-          dispatch({
-            type: "SET_THREAD_TERMINAL_OPEN",
-            threadId: activeThreadId,
-            open: true,
-          });
+          setThreadTerminalOpen(activeThreadId, true);
         }
         splitTerminal();
         return;
@@ -1664,11 +1659,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         if (!activeThread?.terminalOpen) {
-          dispatch({
-            type: "SET_THREAD_TERMINAL_OPEN",
-            threadId: activeThreadId,
-            open: true,
-          });
+          setThreadTerminalOpen(activeThreadId, true);
         }
         createNewTerminal();
         return;
@@ -1698,23 +1689,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeThreadId,
     closeTerminal,
     createNewTerminal,
-    dispatch,
     runProjectScript,
     splitTerminal,
     keybindings,
     onToggleDiff,
+    setThreadTerminalOpen,
     toggleTerminalVisibility,
   ]);
 
   const setThreadError = useCallback(
     (threadId: ThreadId | null, error: string | null) => {
       if (!threadId) return;
-      if (state.threads.some((thread) => thread.id === threadId)) {
-        dispatch({
-          type: "SET_ERROR",
-          threadId,
-          error,
-        });
+      if (useStore.getState().threads.some((thread) => thread.id === threadId)) {
+        setThreadErrorAction(threadId, error);
         return;
       }
       setLocalDraftErrorsByThreadId((existing) => {
@@ -1727,7 +1714,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         };
       });
     },
-    [dispatch, state.threads],
+    [setThreadErrorAction],
   );
 
   const addComposerImages = (files: File[]) => {
@@ -1868,9 +1855,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           activeThread.id,
           err instanceof Error ? err.message : "Failed to revert thread state.",
         );
-      } finally {
-        setIsRevertingCheckpoint(false);
       }
+      setIsRevertingCheckpoint(false);
     },
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
@@ -1894,11 +1880,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const shouldCreateWorktree =
       isFirstMessage && envMode === "worktree" && !activeThread.worktreePath;
     if (shouldCreateWorktree && !activeThread.branch) {
-      dispatch({
-        type: "SET_ERROR",
-        threadId: threadIdForSend,
-        error: "Select a base branch before sending in New worktree mode.",
-      });
+      setThreadErrorAction(
+        threadIdForSend,
+        "Select a base branch before sending in New worktree mode.",
+      );
       return;
     }
 
@@ -1971,12 +1956,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
           });
           // Keep local thread state in sync immediately so terminal drawer opens
           // with the worktree cwd/env instead of briefly using the project root.
-          dispatch({
-            type: "SET_THREAD_BRANCH",
-            threadId: threadIdForSend,
-            branch: result.worktree.branch,
-            worktreePath: result.worktree.path,
-          });
+          setThreadBranchAction(
+            threadIdForSend,
+            result.worktree.branch,
+            result.worktree.path,
+          );
         }
       }
 
@@ -2026,9 +2010,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       setSendPhase("sending-turn");
       const turnAttachments = await turnAttachmentsPromise;
-      const approvalPolicy = state.runtimeMode === "full-access" ? "never" : "on-request";
-      const sandboxMode =
-        state.runtimeMode === "full-access" ? "danger-full-access" : "workspace-write";
+      const approvalPolicy = runtimeMode === "full-access" ? "never" : "on-request";
+      const sandboxMode = runtimeMode === "full-access" ? "danger-full-access" : "workspace-write";
       await api.orchestration.dispatchCommand({
         type: "thread.turn.start",
         commandId: newCommandId(),
@@ -2082,10 +2065,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         threadIdForSend,
         err instanceof Error ? err.message : "Failed to send message.",
       );
-    } finally {
-      sendInFlightRef.current = false;
-      setSendPhase("idle");
     }
+    sendInFlightRef.current = false;
+    setSendPhase("idle");
   };
 
   const onInterrupt = async () => {
@@ -2117,16 +2099,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
           createdAt: new Date().toISOString(),
         });
       } catch (err) {
-        dispatch({
-          type: "SET_ERROR",
-          threadId: activeThreadId,
-          error: err instanceof Error ? err.message : "Failed to submit approval decision.",
-        });
-      } finally {
-        setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
+        setThreadErrorAction(
+          activeThreadId,
+          err instanceof Error ? err.message : "Failed to submit approval decision.",
+        );
       }
+      setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
     },
-    [activeThreadId, dispatch],
+    [activeThreadId, setThreadErrorAction],
   );
 
   const onModelSelect = useCallback(
@@ -2211,13 +2191,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const onComposerMenuItemHighlighted = useCallback((itemId: string | null) => {
     setComposerHighlightedItemId(itemId);
   }, []);
-  const nudgeComposerMenuHighlight = useCallback((key: "ArrowDown" | "ArrowUp") => {
-    const commandInput = composerCommandInputRef.current;
-    if (!commandInput) return;
-    commandInput.dispatchEvent(
-      new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
-    );
-  }, []);
+  const nudgeComposerMenuHighlight = useCallback(
+    (key: "ArrowDown" | "ArrowUp") => {
+      if (composerMenuItems.length === 0) {
+        return;
+      }
+      const highlightedIndex = composerMenuItems.findIndex(
+        (item) => item.id === composerHighlightedItemId,
+      );
+      const normalizedIndex =
+        highlightedIndex >= 0 ? highlightedIndex : key === "ArrowDown" ? -1 : 0;
+      const offset = key === "ArrowDown" ? 1 : -1;
+      const nextIndex =
+        (normalizedIndex + offset + composerMenuItems.length) % composerMenuItems.length;
+      const nextItem = composerMenuItems[nextIndex];
+      setComposerHighlightedItemId(nextItem?.id ?? null);
+    },
+    [composerHighlightedItemId, composerMenuItems],
+  );
   const isComposerMenuLoading =
     composerTriggerKind === "path" &&
     ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
@@ -2359,7 +2350,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       {/* Messages */}
       <div
-        ref={messagesScrollRef}
+        ref={setMessagesScrollContainerRef}
         className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
         onScroll={onMessagesScroll}
       >
@@ -2369,7 +2360,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           isWorking={isWorking}
           activeTurnInProgress={!latestTurnSettled}
           activeTurnStartedAt={activeLatestTurn?.startedAt ?? null}
-          scrollContainerRef={messagesScrollRef}
+          scrollContainer={messagesScrollElement}
           timelineEntries={timelineEntries}
           completionDividerBeforeEntryId={completionDividerBeforeEntryId}
           completionSummary={completionSummary}
@@ -2414,7 +2405,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     triggerKind={composerTriggerKind}
                     onHighlightedItemChange={onComposerMenuItemHighlighted}
                     onSelect={onSelectComposerItem}
-                    commandInputRef={composerCommandInputRef}
                   />
                 </div>
               )}
@@ -2427,16 +2417,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
                     >
                       {image.previewUrl ? (
-                        <img
-                          src={image.previewUrl}
-                          alt={image.name}
-                          className="h-full w-full cursor-zoom-in object-cover"
+                        <button
+                          type="button"
+                          className="h-full w-full cursor-zoom-in"
+                          aria-label={`Preview ${image.name}`}
                           onClick={() => {
                             const preview = buildExpandedImagePreview(composerImages, image.id);
                             if (!preview) return;
                             setExpandedImage(preview);
                           }}
-                        />
+                        >
+                          <img
+                            src={image.previewUrl}
+                            alt={image.name}
+                            className="h-full w-full object-cover"
+                          />
+                        </button>
                       ) : (
                         <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
                           {image.name}
@@ -2538,18 +2534,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   disabled={isSwitchingRuntimeMode}
                   onClick={() =>
                     void handleRuntimeModeChange(
-                      state.runtimeMode === "full-access" ? "approval-required" : "full-access",
+                      runtimeMode === "full-access" ? "approval-required" : "full-access",
                     )
                   }
                   title={
-                    state.runtimeMode === "full-access"
+                    runtimeMode === "full-access"
                       ? "Full access — click to require approvals"
                       : "Approval required — click for full access"
                   }
                 >
-                  {state.runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
+                  {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
                   <span className="sr-only sm:not-sr-only">
-                    {state.runtimeMode === "full-access" ? "Full access" : "Supervised"}
+                    {runtimeMode === "full-access" ? "Full access" : "Supervised"}
                   </span>
                 </Button>
               </div>
@@ -2670,13 +2666,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
             onActiveTerminalChange={activateTerminal}
             onCloseTerminal={closeTerminal}
-            onHeightChange={(height) =>
-              dispatch({
-                type: "SET_THREAD_TERMINAL_HEIGHT",
-                threadId: activeThread.id,
-                height,
-              })
-            }
+            onHeightChange={(height) => setThreadTerminalHeight(activeThread.id, height)}
           />
         );
       })()}
@@ -2687,27 +2677,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
           role="dialog"
           aria-modal="true"
           aria-label="Expanded image preview"
-          onClick={closeExpandedImage}
         >
+          <button
+            type="button"
+            className="absolute inset-0 z-0 cursor-zoom-out"
+            aria-label="Close image preview"
+            onClick={closeExpandedImage}
+          />
           {expandedImage.images.length > 1 && (
             <Button
               type="button"
               size="icon"
               variant="ghost"
-              className="absolute left-2 top-1/2 z-10 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white sm:left-6"
+              className="absolute left-2 top-1/2 z-20 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white sm:left-6"
               aria-label="Previous image"
-              onClick={(event) => {
-                event.stopPropagation();
+              onClick={() => {
                 navigateExpandedImage(-1);
               }}
             >
               <ChevronLeftIcon className="size-5" />
             </Button>
           )}
-          <div
-            className="relative isolate max-h-[92vh] max-w-[92vw]"
-            onClick={(event) => event.stopPropagation()}
-          >
+          <div className="relative isolate z-10 max-h-[92vh] max-w-[92vw]">
             <Button
               type="button"
               size="icon-xs"
@@ -2736,10 +2727,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
               type="button"
               size="icon"
               variant="ghost"
-              className="absolute right-2 top-1/2 z-10 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white sm:right-6"
+              className="absolute right-2 top-1/2 z-20 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white sm:right-6"
               aria-label="Next image"
-              onClick={(event) => {
-                event.stopPropagation();
+              onClick={() => {
                 navigateExpandedImage(1);
               }}
             >
@@ -2950,7 +2940,7 @@ interface MessagesTimelineProps {
   isWorking: boolean;
   activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
-  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
+  scrollContainer: HTMLDivElement | null;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   completionDividerBeforeEntryId: string | null;
   completionSummary: string | null;
@@ -3004,7 +2994,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   isWorking,
   activeTurnInProgress,
   activeTurnStartedAt,
-  scrollContainerRef,
+  scrollContainer,
   timelineEntries,
   completionDividerBeforeEntryId,
   completionSummary,
@@ -3114,7 +3104,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
 
   const rowVirtualizer = useVirtualizer({
     count: virtualizedRowCount,
-    getScrollElement: () => scrollContainerRef.current,
+    getScrollElement: () => scrollContainer,
     // Use stable row ids so virtual measurements do not leak across thread switches.
     getItemKey: (index: number) => rows[index]?.id ?? index,
     estimateSize: (index: number) => {
@@ -3242,18 +3232,24 @@ const MessagesTimeline = memo(function MessagesTimeline({
                           className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
                         >
                           {image.previewUrl ? (
-                            <img
-                              src={image.previewUrl}
-                              alt={image.name}
-                              className="h-full max-h-[220px] w-full cursor-zoom-in object-cover"
-                              onLoad={onTimelineImageLoad}
-                              onError={onTimelineImageLoad}
+                            <button
+                              type="button"
+                              className="h-full w-full cursor-zoom-in"
+                              aria-label={`Preview ${image.name}`}
                               onClick={() => {
                                 const preview = buildExpandedImagePreview(userImages, image.id);
                                 if (!preview) return;
                                 onImageExpand(preview);
                               }}
-                            />
+                            >
+                              <img
+                                src={image.previewUrl}
+                                alt={image.name}
+                                className="h-full max-h-[220px] w-full object-cover"
+                                onLoad={onTimelineImageLoad}
+                                onError={onTimelineImageLoad}
+                              />
+                            </button>
                           ) : (
                             <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
                               {image.name}
@@ -3545,9 +3541,21 @@ const OpenInPicker = memo(function OpenInPicker({
   ] satisfies { label: string; Icon: Icon; value: EditorId }[];
   const primaryOption = options.find(({ value }) => value === lastEditor);
 
-  const { state } = useStore();
-  const activeThread = state.threads.find((t) => t.id === activeThreadId);
-  const activeProject = state.projects.find((p) => p.id === activeThread?.projectId);
+  const activeThread = useStore(
+    useCallback(
+      (state) =>
+        activeThreadId ? state.threads.find((thread) => thread.id === activeThreadId) : undefined,
+      [activeThreadId],
+    ),
+  );
+  const activeProjectId = activeThread?.projectId ?? null;
+  const activeProject = useStore(
+    useCallback(
+      (state) =>
+        activeProjectId ? state.projects.find((project) => project.id === activeProjectId) : undefined,
+      [activeProjectId],
+    ),
+  );
 
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
