@@ -9,8 +9,6 @@
 import {
   GitRunStackedActionInput,
   GitRunStackedActionResult,
-  GitSuggestCommitAndBranchInput,
-  GitSuggestCommitAndBranchResult,
   GitStatusInput,
   GitStatusResult,
 } from "@t3tools/contracts";
@@ -31,17 +29,11 @@ export interface GitManagerShape {
 
   /**
    * Run a stacked Git action (`commit`, `commit_push`, `commit_push_pr`).
+   * When `featureBranch` is set, creates and checks out a feature branch first.
    */
   readonly runStackedAction: (
     input: GitRunStackedActionInput,
   ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
-
-  /**
-   * Suggest a semantic branch name and commit message for current staged changes.
-   */
-  readonly suggestCommitAndBranch: (
-    input: GitSuggestCommitAndBranchInput,
-  ) => Effect.Effect<GitSuggestCommitAndBranchResult, GitManagerServiceError>;
 }
 
 /**

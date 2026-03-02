@@ -823,6 +823,7 @@ describe("summarizeGitResult", () => {
   it("returns commit-focused toast for commit action", () => {
     const result = summarizeGitResult({
       action: "commit",
+      branch: { status: "skipped_not_requested" },
       commit: {
         status: "created",
         commitSha: "0123456789abcdef",
@@ -841,6 +842,7 @@ describe("summarizeGitResult", () => {
   it("returns push-focused toast for push action", () => {
     const result = summarizeGitResult({
       action: "commit_push",
+      branch: { status: "skipped_not_requested" },
       commit: {
         status: "created",
         commitSha: "abcdef0123456789",
@@ -863,6 +865,7 @@ describe("summarizeGitResult", () => {
   it("returns PR-focused toast for created PR action", () => {
     const result = summarizeGitResult({
       action: "commit_push_pr",
+      branch: { status: "skipped_not_requested" },
       commit: {
         status: "created",
         commitSha: "89abcdef01234567",
@@ -888,6 +891,7 @@ describe("summarizeGitResult", () => {
   it("truncates long description text", () => {
     const result = summarizeGitResult({
       action: "commit_push_pr",
+      branch: { status: "skipped_not_requested" },
       commit: {
         status: "created",
         commitSha: "89abcdef01234567",

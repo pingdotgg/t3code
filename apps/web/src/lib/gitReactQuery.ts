@@ -19,8 +19,6 @@ export const gitMutationKeys = {
   createBranchAndCheckout: (cwd: string | null) =>
     ["git", "mutation", "create-branch-and-checkout", cwd] as const,
   runStackedAction: (cwd: string | null) => ["git", "mutation", "run-stacked-action", cwd] as const,
-  suggestCommitAndBranch: (cwd: string | null) =>
-    ["git", "mutation", "suggest-commit-and-branch", cwd] as const,
   pull: (cwd: string | null) => ["git", "mutation", "pull", cwd] as const,
 };
 
@@ -118,9 +116,11 @@ export function gitRunStackedActionMutationOptions(input: {
     mutationFn: async ({
       action,
       commitMessage,
+      featureBranch,
     }: {
       action: GitStackedAction;
       commitMessage?: string;
+      featureBranch?: boolean;
     }) => {
       const api = ensureNativeApi();
       if (!input.cwd) throw new Error("Git action is unavailable.");
@@ -128,24 +128,11 @@ export function gitRunStackedActionMutationOptions(input: {
         cwd: input.cwd,
         action,
         ...(commitMessage ? { commitMessage } : {}),
+        ...(featureBranch ? { featureBranch } : {}),
       });
     },
     onSettled: async () => {
       await invalidateGitQueries(input.queryClient);
-    },
-  });
-}
-
-export function gitSuggestCommitAndBranchMutationOptions(input: { cwd: string | null }) {
-  return mutationOptions({
-    mutationKey: gitMutationKeys.suggestCommitAndBranch(input.cwd),
-    mutationFn: async ({ commitMessage }: { commitMessage?: string }) => {
-      const api = ensureNativeApi();
-      if (!input.cwd) throw new Error("Git action is unavailable.");
-      return api.git.suggestCommitAndBranch({
-        cwd: input.cwd,
-        ...(commitMessage ? { commitMessage } : {}),
-      });
     },
   });
 }

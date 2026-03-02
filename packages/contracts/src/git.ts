@@ -13,6 +13,7 @@ export const GitPushStepStatus = Schema.Literals([
   "skipped_not_requested",
   "skipped_up_to_date",
 ]);
+export const GitBranchStepStatus = Schema.Literals(["created", "skipped_not_requested"]);
 export const GitPrStepStatus = Schema.Literals([
   "created",
   "opened_existing",
@@ -53,14 +54,9 @@ export const GitRunStackedActionInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   action: GitStackedAction,
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
+  featureBranch: Schema.optional(Schema.Boolean),
 });
 export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
-
-export const GitSuggestCommitAndBranchInput = Schema.Struct({
-  cwd: TrimmedNonEmptyStringSchema,
-  commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
-});
-export type GitSuggestCommitAndBranchInput = typeof GitSuggestCommitAndBranchInput.Type;
 
 export const GitListBranchesInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -145,6 +141,10 @@ export type GitCreateWorktreeResult = typeof GitCreateWorktreeResult.Type;
 
 export const GitRunStackedActionResult = Schema.Struct({
   action: GitStackedAction,
+  branch: Schema.Struct({
+    status: GitBranchStepStatus,
+    name: Schema.optional(TrimmedNonEmptyStringSchema),
+  }),
   commit: Schema.Struct({
     status: GitCommitStepStatus,
     commitSha: Schema.optional(TrimmedNonEmptyStringSchema),
@@ -166,12 +166,6 @@ export const GitRunStackedActionResult = Schema.Struct({
   }),
 });
 export type GitRunStackedActionResult = typeof GitRunStackedActionResult.Type;
-
-export const GitSuggestCommitAndBranchResult = Schema.Struct({
-  commitMessage: TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000)),
-  branch: TrimmedNonEmptyStringSchema,
-});
-export type GitSuggestCommitAndBranchResult = typeof GitSuggestCommitAndBranchResult.Type;
 
 export const GitPullResult = Schema.Struct({
   status: Schema.Literals(["pulled", "skipped_up_to_date"]),

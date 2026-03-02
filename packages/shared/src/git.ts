@@ -31,3 +31,36 @@ export function sanitizeFeatureBranchName(raw: string): string {
   }
   return `feature/${sanitized}`;
 }
+
+const AUTO_FEATURE_BRANCH_FALLBACK = "feature/update";
+
+/**
+ * Resolve a unique `feature/…` branch name that doesn't collide with
+ * any existing branch. Appends a numeric suffix when needed.
+ */
+export function resolveAutoFeatureBranchName(
+  existingBranchNames: readonly string[],
+  preferredBranch?: string,
+): string {
+  const preferred = preferredBranch?.trim();
+  const normalized = sanitizeBranchFragment(
+    preferred && preferred.length > 0 ? preferred : AUTO_FEATURE_BRANCH_FALLBACK,
+  );
+  const resolvedBase = normalized.includes("/")
+    ? normalized.startsWith("feature/")
+      ? normalized
+      : `feature/${normalized}`
+    : `feature/${normalized}`;
+  const existingNames = new Set(existingBranchNames);
+
+  if (!existingNames.has(resolvedBase)) {
+    return resolvedBase;
+  }
+
+  let suffix = 2;
+  while (existingNames.has(`${resolvedBase}-${suffix}`)) {
+    suffix += 1;
+  }
+
+  return `${resolvedBase}-${suffix}`;
+}
