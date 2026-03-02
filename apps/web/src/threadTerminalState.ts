@@ -251,7 +251,7 @@ export function reduceThreadTerminalState(
   const normalized = normalizeThreadTerminalState(state);
 
   if (action.type === "set-open") {
-    if (normalized.terminalOpen === action.open) return normalized;
+    if (normalized.terminalOpen === action.open) return state;
     return { ...normalized, terminalOpen: action.open };
   }
 
@@ -261,14 +261,14 @@ export function reduceThreadTerminalState(
       action.height <= 0 ||
       normalized.terminalHeight === action.height
     ) {
-      return normalized;
+      return state;
     }
     return { ...normalized, terminalHeight: action.height };
   }
 
   if (action.type === "set-active") {
     if (!normalized.terminalIds.includes(action.terminalId)) {
-      return normalized;
+      return state;
     }
     const activeTerminalGroupId =
       normalized.terminalGroups.find((group) => group.terminalIds.includes(action.terminalId))?.id ??
@@ -286,7 +286,7 @@ export function reduceThreadTerminalState(
 
   if (action.type === "set-activity") {
     if (!normalized.terminalIds.includes(action.terminalId)) {
-      return normalized;
+      return state;
     }
     const runningTerminalIds = new Set(normalized.runningTerminalIds);
     if (action.hasRunningSubprocess) {
@@ -298,12 +298,12 @@ export function reduceThreadTerminalState(
   }
 
   if (!action.terminalId || action.terminalId.trim().length === 0) {
-    return normalized;
+    return state;
   }
 
   const isNewTerminal = !normalized.terminalIds.includes(action.terminalId);
   if (isNewTerminal && normalized.terminalIds.length >= MAX_THREAD_TERMINAL_COUNT) {
-    return normalized;
+    return state;
   }
 
   const terminalIds = isNewTerminal

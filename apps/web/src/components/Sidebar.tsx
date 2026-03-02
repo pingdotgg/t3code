@@ -237,7 +237,7 @@ export default function Sidebar() {
     (store) => store.getDraftThreadByProjectId,
   );
   const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
-  const getTerminalState = useTerminalStateStore((s) => s.getTerminalState);
+  const terminalStateByThreadId = useTerminalStateStore((s) => s.terminalStateByThreadId);
   const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const clearProjectDraftThreadId = useComposerDraftStore(
@@ -816,7 +816,7 @@ export default function Sidebar() {
                           );
                           const prStatus = prStatusIndicator(prByThreadId.get(thread.id) ?? null);
                           const terminalStatus = terminalStatusFromRunningIds(
-                            getTerminalState(thread.id).runningTerminalIds,
+                            terminalStateByThreadId[thread.id]?.runningTerminalIds ?? [],
                           );
 
                           return (

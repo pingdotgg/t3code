@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode, createElement, useEffect } from "react";
+import { Fragment, type ReactNode, createElement, useEffect, useMemo } from "react";
 import {
   DEFAULT_MODEL,
   ProviderSessionId,
@@ -416,8 +416,18 @@ export function useStore() {
     threadsHydrated: s.threadsHydrated,
     runtimeMode: s.runtimeMode,
   }));
-  return {
-    state,
-    dispatch: useAppStore.getState(),
-  };
+  const dispatch = useMemo(() => {
+    const s = useAppStore.getState();
+    return {
+      syncServerReadModel: s.syncServerReadModel,
+      markThreadVisited: s.markThreadVisited,
+      markThreadUnread: s.markThreadUnread,
+      toggleProject: s.toggleProject,
+      setProjectExpanded: s.setProjectExpanded,
+      setError: s.setError,
+      setThreadBranch: s.setThreadBranch,
+      setRuntimeMode: s.setRuntimeMode,
+    };
+  }, []);
+  return { state, dispatch };
 }
