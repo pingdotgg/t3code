@@ -1,7 +1,7 @@
 import { ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
-import { reducer, type AppState } from "./store";
+import { type AppState, useStore } from "./store";
 import { DEFAULT_THREAD_TERMINAL_HEIGHT, DEFAULT_THREAD_TERMINAL_ID, type Thread } from "./types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -54,7 +54,16 @@ function makeState(thread: Thread): AppState {
   };
 }
 
-describe("store reducer", () => {
+describe("store markThreadUnread action", () => {
+  beforeEach(() => {
+    useStore.setState({
+      projects: [],
+      threads: [],
+      threadsHydrated: false,
+      runtimeMode: "full-access",
+    });
+  });
+
   it("marks a completed thread as unread by moving lastVisitedAt before completion", () => {
     const latestTurnCompletedAt = "2026-02-25T12:30:00.000Z";
     const initialState = makeState(
@@ -71,12 +80,10 @@ describe("store reducer", () => {
       }),
     );
 
-    const next = reducer(initialState, {
-      type: "MARK_THREAD_UNREAD",
-      threadId: ThreadId.makeUnsafe("thread-1"),
-    });
+    useStore.setState(initialState);
+    useStore.getState().markThreadUnread(ThreadId.makeUnsafe("thread-1"));
 
-    const updatedThread = next.threads[0];
+    const updatedThread = useStore.getState().threads[0];
     expect(updatedThread).toBeDefined();
     expect(updatedThread?.lastVisitedAt).toBe("2026-02-25T12:29:59.999Z");
     expect(Date.parse(updatedThread?.lastVisitedAt ?? "")).toBeLessThan(
@@ -92,16 +99,23 @@ describe("store reducer", () => {
       }),
     );
 
-    const next = reducer(initialState, {
-      type: "MARK_THREAD_UNREAD",
-      threadId: ThreadId.makeUnsafe("thread-1"),
-    });
+    useStore.setState(initialState);
+    useStore.getState().markThreadUnread(ThreadId.makeUnsafe("thread-1"));
 
-    expect(next).toEqual(initialState);
+    expect(useStore.getState().threads[0]?.lastVisitedAt).toBe("2026-02-25T12:35:00.000Z");
   });
 });
 
-describe("store terminal activity reducer", () => {
+describe("store terminal activity action", () => {
+  beforeEach(() => {
+    useStore.setState({
+      projects: [],
+      threads: [],
+      threadsHydrated: false,
+      runtimeMode: "full-access",
+    });
+  });
+
   it("adds a terminal to runningTerminalIds when subprocess activity starts", () => {
     const state = makeState(
       makeThread({
@@ -114,14 +128,12 @@ describe("store terminal activity reducer", () => {
         ],
       }),
     );
-    const next = reducer(state, {
-      type: "SET_THREAD_TERMINAL_ACTIVITY",
-      threadId: ThreadId.makeUnsafe("thread-1"),
-      terminalId: "alt",
-      hasRunningSubprocess: true,
-    });
+    useStore.setState(state);
+    useStore
+      .getState()
+      .setThreadTerminalActivity(ThreadId.makeUnsafe("thread-1"), "alt", true);
 
-    expect(next.threads[0]?.runningTerminalIds).toEqual(["alt"]);
+    expect(useStore.getState().threads[0]?.runningTerminalIds).toEqual(["alt"]);
   });
 
   it("removes a terminal from runningTerminalIds when subprocess activity stops", () => {
@@ -137,25 +149,21 @@ describe("store terminal activity reducer", () => {
         runningTerminalIds: ["alt"],
       }),
     );
-    const next = reducer(state, {
-      type: "SET_THREAD_TERMINAL_ACTIVITY",
-      threadId: ThreadId.makeUnsafe("thread-1"),
-      terminalId: "alt",
-      hasRunningSubprocess: false,
-    });
+    useStore.setState(state);
+    useStore
+      .getState()
+      .setThreadTerminalActivity(ThreadId.makeUnsafe("thread-1"), "alt", false);
 
-    expect(next.threads[0]?.runningTerminalIds).toEqual([]);
+    expect(useStore.getState().threads[0]?.runningTerminalIds).toEqual([]);
   });
 
   it("ignores activity events for unknown terminal ids", () => {
     const state = makeState(makeThread());
-    const next = reducer(state, {
-      type: "SET_THREAD_TERMINAL_ACTIVITY",
-      threadId: ThreadId.makeUnsafe("thread-1"),
-      terminalId: "missing",
-      hasRunningSubprocess: true,
-    });
+    useStore.setState(state);
+    useStore
+      .getState()
+      .setThreadTerminalActivity(ThreadId.makeUnsafe("thread-1"), "missing", true);
 
-    expect(next.threads[0]?.runningTerminalIds).toEqual([]);
+    expect(useStore.getState().threads[0]?.runningTerminalIds).toEqual([]);
   });
 });
