@@ -1,10 +1,10 @@
 import {
-  DEFAULT_REASONING,
+  DEFAULT_REASONING_EFFORT_BY_PROVIDER,
   ProjectId,
-  REASONING_OPTIONS,
+  REASONING_EFFORT_OPTIONS_BY_PROVIDER,
   ThreadId,
   normalizeModelSlug,
-  type ReasoningEffort,
+  type CodexReasoningEffort,
 } from "@t3tools/contracts";
 import type { ChatImageAttachment } from "./types";
 import { create } from "zustand";
@@ -30,7 +30,7 @@ interface PersistedComposerThreadDraftState {
   prompt: string;
   attachments: PersistedComposerImageAttachment[];
   model?: string | null;
-  effort?: ReasoningEffort | null;
+  effort?: CodexReasoningEffort | null;
 }
 
 interface PersistedDraftThreadState {
@@ -53,7 +53,7 @@ interface ComposerThreadDraftState {
   nonPersistedImageIds: string[];
   persistedAttachments: PersistedComposerImageAttachment[];
   model: string | null;
-  effort: ReasoningEffort | null;
+  effort: CodexReasoningEffort | null;
 }
 
 export interface DraftThreadState {
@@ -99,7 +99,7 @@ interface ComposerDraftStoreState {
   clearDraftThread: (threadId: ThreadId) => void;
   setPrompt: (threadId: ThreadId, prompt: string) => void;
   setModel: (threadId: ThreadId, model: string | null | undefined) => void;
-  setEffort: (threadId: ThreadId, effort: ReasoningEffort | null | undefined) => void;
+  setEffort: (threadId: ThreadId, effort: CodexReasoningEffort | null | undefined) => void;
   addImage: (threadId: ThreadId, image: ComposerImageAttachment) => void;
   addImages: (threadId: ThreadId, images: ComposerImageAttachment[]) => void;
   removeImage: (threadId: ThreadId, imageId: string) => void;
@@ -133,7 +133,9 @@ const EMPTY_THREAD_DRAFT = Object.freeze({
   effort: null,
 }) as ComposerThreadDraftState;
 
-const REASONING_EFFORT_VALUES = new Set<ReasoningEffort>(REASONING_OPTIONS);
+const REASONING_EFFORT_VALUES = new Set<CodexReasoningEffort>(
+  REASONING_EFFORT_OPTIONS_BY_PROVIDER.codex,
+);
 
 function createEmptyThreadDraft(): ComposerThreadDraftState {
   return {
@@ -310,8 +312,8 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
     const effortCandidate =
       typeof draftCandidate.effort === "string" ? draftCandidate.effort : null;
     const effort =
-      effortCandidate && REASONING_EFFORT_VALUES.has(effortCandidate as ReasoningEffort)
-        ? (effortCandidate as ReasoningEffort)
+      effortCandidate && REASONING_EFFORT_VALUES.has(effortCandidate as CodexReasoningEffort)
+        ? (effortCandidate as CodexReasoningEffort)
         : null;
     if (prompt.length === 0 && attachments.length === 0 && !model && !effort) {
       continue;
@@ -706,7 +708,9 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           return;
         }
         const nextEffort =
-          effort && REASONING_EFFORT_VALUES.has(effort) && effort !== DEFAULT_REASONING
+          effort &&
+          REASONING_EFFORT_VALUES.has(effort) &&
+          effort !== DEFAULT_REASONING_EFFORT_BY_PROVIDER.codex
             ? effort
             : null;
         set((state) => {
