@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { Effect, FileSystem, Layer, Path } from "effect";
+import { sanitizeFeatureBranchName } from "@t3tools/contracts";
 
 import { GitManagerError } from "../Errors.ts";
 import { GitManager, type GitManagerShape } from "../Services/GitManager.ts";
@@ -102,32 +103,6 @@ function sanitizeCommitMessage(generated: {
     body: generated.body.trim(),
     ...(generated.branch !== undefined ? { branch: generated.branch } : {}),
   };
-}
-
-function sanitizeBranchFragment(raw: string): string {
-  const normalized = raw
-    .trim()
-    .toLowerCase()
-    .replace(/['"`]/g, "")
-    .replace(/^[./\s_-]+|[./\s_-]+$/g, "");
-
-  const branchFragment = normalized
-    .replace(/[^a-z0-9/_-]+/g, "-")
-    .replace(/\/+/g, "/")
-    .replace(/-+/g, "-")
-    .replace(/^[./_-]+|[./_-]+$/g, "")
-    .slice(0, 64)
-    .replace(/[./_-]+$/g, "");
-
-  return branchFragment.length > 0 ? branchFragment : "update";
-}
-
-function sanitizeFeatureBranchName(raw: string): string {
-  const sanitized = sanitizeBranchFragment(raw);
-  if (sanitized.includes("/")) {
-    return sanitized.startsWith("feature/") ? sanitized : `feature/${sanitized}`;
-  }
-  return `feature/${sanitized}`;
 }
 
 function formatCommitMessage(subject: string, body: string): string {
@@ -324,16 +299,14 @@ export const makeGitManager = Effect.gen(function* () {
           branch: input.branch,
           stagedSummary: limitContext(context.stagedSummary, 8_000),
           stagedPatch: limitContext(context.stagedPatch, 50_000),
-          ...(input.includeBranch !== undefined ? { includeBranch: input.includeBranch } : {}),
+          ...(input.includeBranch ? { includeBranch: true } : {}),
         })
         .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
 
       return {
         subject: generated.subject,
         body: generated.body,
-        ...(generated.branch !== undefined
-          ? { branch: sanitizeFeatureBranchName(generated.branch) }
-          : {}),
+        ...(generated.branch !== undefined ? { branch: generated.branch } : {}),
         commitMessage: formatCommitMessage(generated.subject, generated.body),
       };
     });

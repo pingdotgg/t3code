@@ -1,7 +1,8 @@
-import type {
-  GitRunStackedActionResult,
-  GitStackedAction,
-  GitStatusResult,
+import {
+  type GitRunStackedActionResult,
+  type GitStackedAction,
+  type GitStatusResult,
+  sanitizeBranchFragment,
 } from "@t3tools/contracts";
 
 export type GitActionIconName = "commit" | "push" | "pr";
@@ -319,24 +320,6 @@ export function resolveDefaultBranchActionDialogCopy(input: {
     description: `This action will push local commits and create a PR${suffix}`,
     continueLabel: "Push & create PR",
   };
-}
-
-function sanitizeBranchFragment(raw: string): string {
-  const normalized = raw
-    .trim()
-    .toLowerCase()
-    .replace(/['"`]/g, "")
-    .replace(/^[./\s_-]+|[./\s_-]+$/g, "");
-
-  const branchFragment = normalized
-    .replace(/[^a-z0-9/_-]+/g, "-")
-    .replace(/\/+/g, "/")
-    .replace(/-+/g, "-")
-    .replace(/^[./_-]+|[./_-]+$/g, "")
-    .slice(0, 64)
-    .replace(/[./_-]+$/g, "");
-
-  return branchFragment.length > 0 ? branchFragment : "update";
 }
 
 export function resolveAutoFeatureBranchName(

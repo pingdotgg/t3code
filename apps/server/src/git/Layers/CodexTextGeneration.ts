@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/contracts";
+
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "../Errors.ts";
@@ -91,32 +93,6 @@ function sanitizePrTitle(raw: string): string {
     return singleLine;
   }
   return "Update project changes";
-}
-
-function sanitizeBranchName(raw: string): string {
-  const normalized = raw
-    .trim()
-    .toLowerCase()
-    .replace(/['"`]/g, "")
-    .replace(/^[./\s_-]+|[./\s_-]+$/g, "");
-
-  const branchFragment = normalized
-    .replace(/[^a-z0-9/_-]+/g, "-")
-    .replace(/\/+/g, "/")
-    .replace(/-+/g, "-")
-    .replace(/^[./_-]+|[./_-]+$/g, "")
-    .slice(0, 64)
-    .replace(/[./_-]+$/g, "");
-
-  return branchFragment.length > 0 ? branchFragment : "update";
-}
-
-function sanitizeFeatureBranchName(raw: string): string {
-  const sanitized = sanitizeBranchName(raw);
-  if (sanitized.includes("/")) {
-    return sanitized.startsWith("feature/") ? sanitized : `feature/${sanitized}`;
-  }
-  return `feature/${sanitized}`;
 }
 
 const makeCodexTextGeneration = Effect.gen(function* () {
@@ -475,7 +451,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       });
 
       return {
-        branch: sanitizeBranchName(generated.branch),
+        branch: sanitizeBranchFragment(generated.branch),
       } satisfies BranchNameGenerationResult;
     });
   };
