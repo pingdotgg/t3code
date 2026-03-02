@@ -2471,7 +2471,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         <form
           ref={composerFormRef}
           onSubmit={onSend}
-          className="mx-auto w-full min-w-fit max-w-3xl"
+          className="mx-auto w-full min-w-0 max-w-3xl"
           data-chat-composer-form="true"
         >
           <div
