@@ -1,8 +1,5 @@
 /**
- * Shared thread terminal state and reducer. Used by both the main app store
- * (persisted threads) and the composer draft store (draft threads), so we can
- * reuse the same shape and helpers and easily copy terminal state from draft
- * to thread when reconciling server state.
+ * Shared thread terminal state utilities used by the terminal Zustand store.
  */
 
 import {
@@ -23,16 +20,7 @@ export interface ThreadTerminalState {
   activeTerminalGroupId: string;
 }
 
-export type ThreadTerminalAction =
-  | { type: "set-open"; open: boolean }
-  | { type: "set-height"; height: number }
-  | { type: "split"; terminalId: string }
-  | { type: "new"; terminalId: string }
-  | { type: "set-active"; terminalId: string }
-  | { type: "close"; terminalId: string }
-  | { type: "set-activity"; terminalId: string; hasRunningSubprocess: boolean };
-
-// ─── Helpers (exported for store reducers that need to work with Thread) ───
+// ─── Helpers shared by terminal updaters ───────────────────────────────────
 
 export function normalizeTerminalIds(terminalIds: string[]): string[] {
   const ids = [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))].slice(
@@ -129,6 +117,38 @@ export function normalizeTerminalGroups(
   return nextGroups;
 }
 
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) return false;
+  }
+  return true;
+}
+
+function terminalGroupsEqual(left: ThreadTerminalGroup[], right: ThreadTerminalGroup[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const leftGroup = left[index];
+    const rightGroup = right[index];
+    if (!leftGroup || !rightGroup) return false;
+    if (leftGroup.id !== rightGroup.id) return false;
+    if (!arraysEqual(leftGroup.terminalIds, rightGroup.terminalIds)) return false;
+  }
+  return true;
+}
+
+function threadTerminalStateEqual(left: ThreadTerminalState, right: ThreadTerminalState): boolean {
+  return (
+    left.terminalOpen === right.terminalOpen &&
+    left.terminalHeight === right.terminalHeight &&
+    left.activeTerminalId === right.activeTerminalId &&
+    left.activeTerminalGroupId === right.activeTerminalGroupId &&
+    arraysEqual(left.terminalIds, right.terminalIds) &&
+    arraysEqual(left.runningTerminalIds, right.runningTerminalIds) &&
+    terminalGroupsEqual(left.terminalGroups, right.terminalGroups)
+  );
+}
+
 // ─── Default & normalize ─────────────────────────────────────────────────
 
 const DEFAULT_THREAD_TERMINAL_STATE: ThreadTerminalState = Object.freeze({
@@ -171,7 +191,7 @@ export function normalizeThreadTerminalState(state: ThreadTerminalState): Thread
   const activeGroupIdFromTerminal =
     terminalGroups.find((group) => group.terminalIds.includes(activeTerminalId))?.id ?? null;
 
-  return {
+  const normalized: ThreadTerminalState = {
     terminalOpen: state.terminalOpen,
     terminalHeight:
       Number.isFinite(state.terminalHeight) && state.terminalHeight > 0
@@ -187,32 +207,182 @@ export function normalizeThreadTerminalState(state: ThreadTerminalState): Thread
       terminalGroups[0]?.id ??
       fallbackGroupId(DEFAULT_THREAD_TERMINAL_ID),
   };
+  return threadTerminalStateEqual(state, normalized) ? state : normalized;
 }
 
-// ─── Close terminal (shared) ─────────────────────────────────────────────
+export function isDefaultThreadTerminalState(state: ThreadTerminalState): boolean {
+  const normalized = normalizeThreadTerminalState(state);
+  return threadTerminalStateEqual(normalized, DEFAULT_THREAD_TERMINAL_STATE);
+}
 
-function closeTerminal(
+function isValidTerminalId(terminalId: string): boolean {
+  return terminalId.trim().length > 0;
+}
+
+function copyTerminalGroups(groups: ThreadTerminalGroup[]): ThreadTerminalGroup[] {
+  return groups.map((group) => ({
+    id: group.id,
+    terminalIds: [...group.terminalIds],
+  }));
+}
+
+function upsertTerminalIntoGroups(
+  state: ThreadTerminalState,
+  terminalId: string,
+  mode: "split" | "new",
+): ThreadTerminalState {
+  const normalized = normalizeThreadTerminalState(state);
+  if (!isValidTerminalId(terminalId)) {
+    return normalized;
+  }
+
+  const isNewTerminal = !normalized.terminalIds.includes(terminalId);
+  if (isNewTerminal && normalized.terminalIds.length >= MAX_THREAD_TERMINAL_COUNT) {
+    return normalized;
+  }
+
+  const terminalIds = isNewTerminal ? [...normalized.terminalIds, terminalId] : normalized.terminalIds;
+  const terminalGroups = copyTerminalGroups(normalized.terminalGroups);
+
+  const existingGroupIndex = findGroupIndexByTerminalId(terminalGroups, terminalId);
+  if (existingGroupIndex >= 0) {
+    terminalGroups[existingGroupIndex]!.terminalIds = terminalGroups[existingGroupIndex]!.terminalIds.filter(
+      (id) => id !== terminalId,
+    );
+    if (terminalGroups[existingGroupIndex]!.terminalIds.length === 0) {
+      terminalGroups.splice(existingGroupIndex, 1);
+    }
+  }
+
+  if (mode === "new") {
+    const usedGroupIds = new Set(terminalGroups.map((group) => group.id));
+    const nextGroupId = assignUniqueGroupId(fallbackGroupId(terminalId), usedGroupIds);
+    terminalGroups.push({ id: nextGroupId, terminalIds: [terminalId] });
+    return normalizeThreadTerminalState({
+      ...normalized,
+      terminalOpen: true,
+      terminalIds,
+      activeTerminalId: terminalId,
+      terminalGroups,
+      activeTerminalGroupId: nextGroupId,
+    });
+  }
+
+  let activeGroupIndex = terminalGroups.findIndex((group) => group.id === normalized.activeTerminalGroupId);
+  if (activeGroupIndex < 0) {
+    activeGroupIndex = findGroupIndexByTerminalId(terminalGroups, normalized.activeTerminalId);
+  }
+  if (activeGroupIndex < 0) {
+    const usedGroupIds = new Set(terminalGroups.map((group) => group.id));
+    const nextGroupId = assignUniqueGroupId(fallbackGroupId(normalized.activeTerminalId), usedGroupIds);
+    terminalGroups.push({ id: nextGroupId, terminalIds: [normalized.activeTerminalId] });
+    activeGroupIndex = terminalGroups.length - 1;
+  }
+
+  const destinationGroup = terminalGroups[activeGroupIndex];
+  if (!destinationGroup) {
+    return normalized;
+  }
+
+  if (!destinationGroup.terminalIds.includes(terminalId)) {
+    const anchorIndex = destinationGroup.terminalIds.indexOf(normalized.activeTerminalId);
+    if (anchorIndex >= 0) {
+      destinationGroup.terminalIds.splice(anchorIndex + 1, 0, terminalId);
+    } else {
+      destinationGroup.terminalIds.push(terminalId);
+    }
+  }
+
+  return normalizeThreadTerminalState({
+    ...normalized,
+    terminalOpen: true,
+    terminalIds,
+    activeTerminalId: terminalId,
+    terminalGroups,
+    activeTerminalGroupId: destinationGroup.id,
+  });
+}
+
+// ─── Pure terminal operations ──────────────────────────────────────────────
+
+export function setThreadTerminalOpen(state: ThreadTerminalState, open: boolean): ThreadTerminalState {
+  const normalized = normalizeThreadTerminalState(state);
+  if (normalized.terminalOpen === open) return normalized;
+  return { ...normalized, terminalOpen: open };
+}
+
+export function setThreadTerminalHeight(
+  state: ThreadTerminalState,
+  height: number,
+): ThreadTerminalState {
+  const normalized = normalizeThreadTerminalState(state);
+  if (!Number.isFinite(height) || height <= 0 || normalized.terminalHeight === height) {
+    return normalized;
+  }
+  return { ...normalized, terminalHeight: height };
+}
+
+export function splitThreadTerminal(
   state: ThreadTerminalState,
   terminalId: string,
 ): ThreadTerminalState {
-  if (!state.terminalIds.includes(terminalId)) {
-    return state;
+  return upsertTerminalIntoGroups(state, terminalId, "split");
+}
+
+export function newThreadTerminal(
+  state: ThreadTerminalState,
+  terminalId: string,
+): ThreadTerminalState {
+  return upsertTerminalIntoGroups(state, terminalId, "new");
+}
+
+export function setThreadActiveTerminal(
+  state: ThreadTerminalState,
+  terminalId: string,
+): ThreadTerminalState {
+  const normalized = normalizeThreadTerminalState(state);
+  if (!normalized.terminalIds.includes(terminalId)) {
+    return normalized;
+  }
+  const activeTerminalGroupId =
+    normalized.terminalGroups.find((group) => group.terminalIds.includes(terminalId))?.id ??
+    normalized.activeTerminalGroupId;
+  if (
+    normalized.activeTerminalId === terminalId &&
+    normalized.activeTerminalGroupId === activeTerminalGroupId
+  ) {
+    return normalized;
+  }
+  return {
+    ...normalized,
+    activeTerminalId: terminalId,
+    activeTerminalGroupId,
+  };
+}
+
+export function closeThreadTerminal(
+  state: ThreadTerminalState,
+  terminalId: string,
+): ThreadTerminalState {
+  const normalized = normalizeThreadTerminalState(state);
+  if (!normalized.terminalIds.includes(terminalId)) {
+    return normalized;
   }
 
-  const remainingTerminalIds = state.terminalIds.filter((id) => id !== terminalId);
+  const remainingTerminalIds = normalized.terminalIds.filter((id) => id !== terminalId);
   if (remainingTerminalIds.length === 0) {
     return createDefaultThreadTerminalState();
   }
 
-  const closedTerminalIndex = state.terminalIds.indexOf(terminalId);
+  const closedTerminalIndex = normalized.terminalIds.indexOf(terminalId);
   const nextActiveTerminalId =
-    state.activeTerminalId === terminalId
+    normalized.activeTerminalId === terminalId
       ? (remainingTerminalIds[Math.min(closedTerminalIndex, remainingTerminalIds.length - 1)] ??
         remainingTerminalIds[0] ??
         DEFAULT_THREAD_TERMINAL_ID)
-      : state.activeTerminalId;
+      : normalized.activeTerminalId;
 
-  const terminalGroups = state.terminalGroups
+  const terminalGroups = normalized.terminalGroups
     .map((group) => ({
       ...group,
       terminalIds: group.terminalIds.filter((id) => id !== terminalId),
@@ -225,150 +395,34 @@ function closeTerminal(
     fallbackGroupId(nextActiveTerminalId);
 
   return normalizeThreadTerminalState({
-    terminalOpen: state.terminalOpen,
-    terminalHeight: state.terminalHeight,
+    terminalOpen: normalized.terminalOpen,
+    terminalHeight: normalized.terminalHeight,
     terminalIds: remainingTerminalIds,
-    runningTerminalIds: state.runningTerminalIds.filter((id) => id !== terminalId),
+    runningTerminalIds: normalized.runningTerminalIds.filter((id) => id !== terminalId),
     activeTerminalId: nextActiveTerminalId,
     terminalGroups,
     activeTerminalGroupId: nextActiveTerminalGroupId,
   });
 }
 
-function copyTerminalGroups(groups: ThreadTerminalGroup[]): ThreadTerminalGroup[] {
-  return groups.map((group) => ({
-    id: group.id,
-    terminalIds: [...group.terminalIds],
-  }));
-}
-
-// ─── Single reducer for both draft and persisted thread ────────────────────
-
-export function reduceThreadTerminalState(
+export function setThreadTerminalActivity(
   state: ThreadTerminalState,
-  action: ThreadTerminalAction,
+  terminalId: string,
+  hasRunningSubprocess: boolean,
 ): ThreadTerminalState {
   const normalized = normalizeThreadTerminalState(state);
-
-  if (action.type === "set-open") {
-    if (normalized.terminalOpen === action.open) return normalized;
-    return { ...normalized, terminalOpen: action.open };
-  }
-
-  if (action.type === "set-height") {
-    if (
-      !Number.isFinite(action.height) ||
-      action.height <= 0 ||
-      normalized.terminalHeight === action.height
-    ) {
-      return normalized;
-    }
-    return { ...normalized, terminalHeight: action.height };
-  }
-
-  if (action.type === "set-active") {
-    if (!normalized.terminalIds.includes(action.terminalId)) {
-      return normalized;
-    }
-    const activeTerminalGroupId =
-      normalized.terminalGroups.find((group) => group.terminalIds.includes(action.terminalId))?.id ??
-      normalized.activeTerminalGroupId;
-    return {
-      ...normalized,
-      activeTerminalId: action.terminalId,
-      activeTerminalGroupId,
-    };
-  }
-
-  if (action.type === "close") {
-    return closeTerminal(normalized, action.terminalId);
-  }
-
-  if (action.type === "set-activity") {
-    if (!normalized.terminalIds.includes(action.terminalId)) {
-      return normalized;
-    }
-    const runningTerminalIds = new Set(normalized.runningTerminalIds);
-    if (action.hasRunningSubprocess) {
-      runningTerminalIds.add(action.terminalId);
-    } else {
-      runningTerminalIds.delete(action.terminalId);
-    }
-    return { ...normalized, runningTerminalIds: [...runningTerminalIds] };
-  }
-
-  if (!action.terminalId || action.terminalId.trim().length === 0) {
+  if (!normalized.terminalIds.includes(terminalId)) {
     return normalized;
   }
-
-  const isNewTerminal = !normalized.terminalIds.includes(action.terminalId);
-  if (isNewTerminal && normalized.terminalIds.length >= MAX_THREAD_TERMINAL_COUNT) {
+  const alreadyRunning = normalized.runningTerminalIds.includes(terminalId);
+  if (hasRunningSubprocess === alreadyRunning) {
     return normalized;
   }
-
-  const terminalIds = isNewTerminal
-    ? [...normalized.terminalIds, action.terminalId]
-    : normalized.terminalIds;
-  const terminalGroups = copyTerminalGroups(normalized.terminalGroups);
-  const existingGroupIndex = findGroupIndexByTerminalId(terminalGroups, action.terminalId);
-  if (existingGroupIndex >= 0) {
-    terminalGroups[existingGroupIndex]!.terminalIds = terminalGroups[
-      existingGroupIndex
-    ]!.terminalIds.filter((id) => id !== action.terminalId);
-    if (terminalGroups[existingGroupIndex]!.terminalIds.length === 0) {
-      terminalGroups.splice(existingGroupIndex, 1);
-    }
+  const runningTerminalIds = new Set(normalized.runningTerminalIds);
+  if (hasRunningSubprocess) {
+    runningTerminalIds.add(terminalId);
+  } else {
+    runningTerminalIds.delete(terminalId);
   }
-
-  if (action.type === "new") {
-    const usedGroupIds = new Set(terminalGroups.map((group) => group.id));
-    const nextGroupId = assignUniqueGroupId(fallbackGroupId(action.terminalId), usedGroupIds);
-    terminalGroups.push({ id: nextGroupId, terminalIds: [action.terminalId] });
-    return normalizeThreadTerminalState({
-      ...normalized,
-      terminalOpen: true,
-      terminalIds,
-      activeTerminalId: action.terminalId,
-      terminalGroups,
-      activeTerminalGroupId: nextGroupId,
-    });
-  }
-
-  // split
-  let activeGroupIndex = terminalGroups.findIndex((group) => group.id === normalized.activeTerminalGroupId);
-  if (activeGroupIndex < 0) {
-    activeGroupIndex = findGroupIndexByTerminalId(terminalGroups, normalized.activeTerminalId);
-  }
-  if (activeGroupIndex < 0) {
-    const usedGroupIds = new Set(terminalGroups.map((group) => group.id));
-    const nextGroupId = assignUniqueGroupId(
-      fallbackGroupId(normalized.activeTerminalId),
-      usedGroupIds,
-    );
-    terminalGroups.push({ id: nextGroupId, terminalIds: [normalized.activeTerminalId] });
-    activeGroupIndex = terminalGroups.length - 1;
-  }
-
-  const destinationGroup = terminalGroups[activeGroupIndex];
-  if (!destinationGroup) {
-    return normalized;
-  }
-
-  if (!destinationGroup.terminalIds.includes(action.terminalId)) {
-    const anchorIndex = destinationGroup.terminalIds.indexOf(normalized.activeTerminalId);
-    if (anchorIndex >= 0) {
-      destinationGroup.terminalIds.splice(anchorIndex + 1, 0, action.terminalId);
-    } else {
-      destinationGroup.terminalIds.push(action.terminalId);
-    }
-  }
-
-  return normalizeThreadTerminalState({
-    ...normalized,
-    terminalOpen: true,
-    terminalIds,
-    activeTerminalId: action.terminalId,
-    terminalGroups,
-    activeTerminalGroupId: destinationGroup.id,
-  });
+  return { ...normalized, runningTerminalIds: [...runningTerminalIds] };
 }

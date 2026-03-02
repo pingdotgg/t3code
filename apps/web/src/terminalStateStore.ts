@@ -7,34 +7,61 @@ import type { ThreadId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
-  createDefaultThreadTerminalState,
+  closeThreadTerminal,
   getDefaultThreadTerminalState,
-  reduceThreadTerminalState,
-  type ThreadTerminalAction,
+  isDefaultThreadTerminalState,
+  newThreadTerminal,
+  setThreadActiveTerminal,
+  setThreadTerminalActivity,
+  setThreadTerminalHeight,
+  setThreadTerminalOpen,
+  splitThreadTerminal,
   type ThreadTerminalState,
 } from "./threadTerminalState";
 
 export const TERMINAL_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
 
-function applyTerminalAction(
-  state: Record<ThreadId, ThreadTerminalState>,
+export function selectThreadTerminalState(
+  terminalStateByThreadId: Record<ThreadId, ThreadTerminalState>,
   threadId: ThreadId,
-  action: ThreadTerminalAction,
-): Record<ThreadId, ThreadTerminalState> {
-  const current = state[threadId] ?? createDefaultThreadTerminalState();
-  const next = reduceThreadTerminalState(current, action);
-  if (next === current) {
-    return state;
+): ThreadTerminalState {
+  if (threadId.length === 0) {
+    return getDefaultThreadTerminalState();
   }
+  return terminalStateByThreadId[threadId] ?? getDefaultThreadTerminalState();
+}
+
+function updateTerminalStateByThreadId(
+  terminalStateByThreadId: Record<ThreadId, ThreadTerminalState>,
+  threadId: ThreadId,
+  updater: (state: ThreadTerminalState) => ThreadTerminalState,
+): Record<ThreadId, ThreadTerminalState> {
+  if (threadId.length === 0) {
+    return terminalStateByThreadId;
+  }
+
+  const current = selectThreadTerminalState(terminalStateByThreadId, threadId);
+  const next = updater(current);
+  if (next === current) {
+    return terminalStateByThreadId;
+  }
+
+  if (isDefaultThreadTerminalState(next)) {
+    if (terminalStateByThreadId[threadId] === undefined) {
+      return terminalStateByThreadId;
+    }
+    const { [threadId]: _removed, ...rest } = terminalStateByThreadId;
+    return rest as Record<ThreadId, ThreadTerminalState>;
+  }
+
   return {
-    ...state,
+    ...terminalStateByThreadId,
     [threadId]: next,
   };
 }
 
 interface TerminalStateStoreState {
   terminalStateByThreadId: Record<ThreadId, ThreadTerminalState>;
-  getTerminalState: (threadId: ThreadId) => ThreadTerminalState;
   setTerminalOpen: (threadId: ThreadId, open: boolean) => void;
   setTerminalHeight: (threadId: ThreadId, height: number) => void;
   splitTerminal: (threadId: ThreadId, terminalId: string) => void;
@@ -51,51 +78,45 @@ interface TerminalStateStoreState {
 
 export const useTerminalStateStore = create<TerminalStateStoreState>()(
   persist(
-    (set, get) => {
-      const updateTerminal = (threadId: ThreadId, action: ThreadTerminalAction) => {
-        if (threadId.length === 0) return;
-        set((state) => ({
-          terminalStateByThreadId: applyTerminalAction(
+    (set) => {
+      const updateTerminal = (
+        threadId: ThreadId,
+        updater: (state: ThreadTerminalState) => ThreadTerminalState,
+      ) => {
+        set((state) => {
+          const nextTerminalStateByThreadId = updateTerminalStateByThreadId(
             state.terminalStateByThreadId,
             threadId,
-            action,
-          ),
-        }));
+            updater,
+          );
+          if (nextTerminalStateByThreadId === state.terminalStateByThreadId) {
+            return state;
+          }
+          return {
+            terminalStateByThreadId: nextTerminalStateByThreadId,
+          };
+        });
       };
       return {
         terminalStateByThreadId: {},
-        getTerminalState: (threadId) => {
-          if (threadId.length === 0) {
-            return getDefaultThreadTerminalState();
-          }
-          const state = get().terminalStateByThreadId[threadId];
-          return state ?? getDefaultThreadTerminalState();
-        },
-        setTerminalOpen: (threadId, open) => updateTerminal(threadId, { type: "set-open", open }),
+        setTerminalOpen: (threadId, open) =>
+          updateTerminal(threadId, (state) => setThreadTerminalOpen(state, open)),
         setTerminalHeight: (threadId, height) =>
-          updateTerminal(threadId, { type: "set-height", height }),
+          updateTerminal(threadId, (state) => setThreadTerminalHeight(state, height)),
         splitTerminal: (threadId, terminalId) =>
-          updateTerminal(threadId, { type: "split", terminalId }),
+          updateTerminal(threadId, (state) => splitThreadTerminal(state, terminalId)),
         newTerminal: (threadId, terminalId) =>
-          updateTerminal(threadId, { type: "new", terminalId }),
+          updateTerminal(threadId, (state) => newThreadTerminal(state, terminalId)),
         setActiveTerminal: (threadId, terminalId) =>
-          updateTerminal(threadId, { type: "set-active", terminalId }),
+          updateTerminal(threadId, (state) => setThreadActiveTerminal(state, terminalId)),
         closeTerminal: (threadId, terminalId) =>
-          updateTerminal(threadId, { type: "close", terminalId }),
+          updateTerminal(threadId, (state) => closeThreadTerminal(state, terminalId)),
         setTerminalActivity: (threadId, terminalId, hasRunningSubprocess) =>
-          updateTerminal(threadId, { type: "set-activity", terminalId, hasRunningSubprocess }),
-        clearTerminalState: (threadId) => {
-          if (threadId.length === 0) return;
-          set((state) => {
-            if (state.terminalStateByThreadId[threadId] === undefined) {
-              return state;
-            }
-            const { [threadId]: _removed, ...rest } = state.terminalStateByThreadId;
-            return {
-              terminalStateByThreadId: rest as Record<ThreadId, ThreadTerminalState>,
-            };
-          });
-        },
+          updateTerminal(threadId, (state) =>
+            setThreadTerminalActivity(state, terminalId, hasRunningSubprocess),
+          ),
+        clearTerminalState: (threadId) =>
+          updateTerminal(threadId, () => getDefaultThreadTerminalState()),
       };
     },
     {
