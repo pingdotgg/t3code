@@ -99,6 +99,7 @@ interface ResolvedBuildOptions {
 interface StagePackageJson {
   readonly name: string;
   readonly version: string;
+  readonly buildVersion: string;
   readonly private: true;
   readonly description: string;
   readonly author: string;
@@ -488,6 +489,7 @@ const buildDesktopArtifact = Effect.fn(function* (options: ResolvedBuildOptions)
   const stagePackageJson: StagePackageJson = {
     name: "t3-code-desktop",
     version: appVersion,
+    buildVersion: appVersion,
     private: true,
     description: "T3 Code desktop build",
     author: "T3 Tools",

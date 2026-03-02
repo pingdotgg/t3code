@@ -84,6 +84,18 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: bun install
 
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun run test
+
       - name: Commit and push release version + tag
         if: github.event_name == 'workflow_dispatch'
         shell: bash
@@ -116,18 +128,6 @@ jobs:
           else
             echo "value=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Lint
-        run: bun run lint
-
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Test
-        run: bun run test
 
   build:
     name: Build ${{ matrix.label }}
