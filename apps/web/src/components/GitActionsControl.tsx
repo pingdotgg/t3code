@@ -254,7 +254,8 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         !skipDefaultBranchPrompt &&
         !featureBranch &&
         requiresDefaultBranchConfirmation(action, actionIsDefaultBranch) &&
-        actionBranch
+        actionBranch &&
+        !!actionStatus?.hasWorkingTreeChanges
       ) {
         if (action !== "commit_push" && action !== "commit_push_pr") {
           return;

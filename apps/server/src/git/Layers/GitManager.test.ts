@@ -563,6 +563,14 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           Effect.map((result) => result.stdout.trim()),
         ),
       ).toBe("feature/implement-stacked-git-actions");
+
+      const mainSha = yield* runGit(repoDir, ["rev-parse", "main"]).pipe(
+        Effect.map((r) => r.stdout.trim()),
+      );
+      const mergeBase = yield* runGit(repoDir, ["merge-base", "main", "HEAD"]).pipe(
+        Effect.map((r) => r.stdout.trim()),
+      );
+      expect(mergeBase).toBe(mainSha);
     }),
   );
 
@@ -598,6 +606,14 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(result.commit.status).toBe("created");
       expect(result.commit.subject).toBe("feat: custom summary line");
       expect(generatedCount).toBe(0);
+
+      const mainSha = yield* runGit(repoDir, ["rev-parse", "main"]).pipe(
+        Effect.map((r) => r.stdout.trim()),
+      );
+      const mergeBase = yield* runGit(repoDir, ["merge-base", "main", result.branch.name!]).pipe(
+        Effect.map((r) => r.stdout.trim()),
+      );
+      expect(mergeBase).toBe(mainSha);
     }),
   );
 
