@@ -166,4 +166,43 @@ describe("store terminal activity action", () => {
 
     expect(useStore.getState().threads[0]?.runningTerminalIds).toEqual([]);
   });
+
+  it("hydrates terminal state for an existing thread", () => {
+    const state = makeState(makeThread());
+    const next = reducer(state, {
+      type: "HYDRATE_THREAD_TERMINALS",
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      terminalState: {
+        terminalOpen: true,
+        terminalHeight: 360,
+        terminalIds: ["default", "terminal-2"],
+        runningTerminalIds: ["terminal-2"],
+        activeTerminalId: "terminal-2",
+        terminalGroups: [
+          {
+            id: "group-default",
+            terminalIds: ["default"],
+          },
+          {
+            id: "group-terminal-2",
+            terminalIds: ["terminal-2"],
+          },
+        ],
+        activeTerminalGroupId: "group-terminal-2",
+      },
+    });
+
+    expect(next.threads[0]).toMatchObject({
+      terminalOpen: true,
+      terminalHeight: 360,
+      terminalIds: ["default", "terminal-2"],
+      runningTerminalIds: ["terminal-2"],
+      activeTerminalId: "terminal-2",
+      terminalGroups: [
+        { id: "group-default", terminalIds: ["default"] },
+        { id: "group-terminal-2", terminalIds: ["terminal-2"] },
+      ],
+      activeTerminalGroupId: "group-terminal-2",
+    });
+  });
 });
