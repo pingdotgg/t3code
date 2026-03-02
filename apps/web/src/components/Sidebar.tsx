@@ -20,7 +20,7 @@ import { derivePendingApprovals } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
-import { useComposerDraftStore } from "../composerDraftStore";
+import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { toastManager } from "./ui/toast";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -345,17 +345,20 @@ export default function Sidebar() {
       options?: {
         branch?: string | null;
         worktreePath?: string | null;
+        envMode?: DraftThreadEnvMode;
       },
     ): Promise<void> => {
       const hasBranchOption = options?.branch !== undefined;
       const hasWorktreePathOption = options?.worktreePath !== undefined;
+      const hasEnvModeOption = options?.envMode !== undefined;
       const storedDraftThread = getDraftThreadByProjectId(projectId);
       if (storedDraftThread) {
         return (async () => {
-          if (hasBranchOption || hasWorktreePathOption) {
+          if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
             setDraftThreadContext(storedDraftThread.threadId, {
               ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
               ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
+              ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
             });
           }
           setProjectDraftThreadId(projectId, storedDraftThread.threadId);
@@ -372,10 +375,11 @@ export default function Sidebar() {
 
       const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
       if (activeDraftThread && routeThreadId && activeDraftThread.projectId === projectId) {
-        if (hasBranchOption || hasWorktreePathOption) {
+        if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
           setDraftThreadContext(routeThreadId, {
             ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
             ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
+            ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
           });
         }
         setProjectDraftThreadId(projectId, routeThreadId);
@@ -388,6 +392,7 @@ export default function Sidebar() {
           createdAt,
           branch: options?.branch ?? null,
           worktreePath: options?.worktreePath ?? null,
+          envMode: options?.envMode ?? "local",
         });
 
         await navigate({
@@ -684,6 +689,9 @@ export default function Sidebar() {
       void handleNewThread(projectId, {
         branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,
         worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
+        envMode:
+          activeDraftThread?.envMode ??
+          (activeThread?.worktreePath ? "worktree" : "local"),
       });
     };
 
@@ -691,7 +699,7 @@ export default function Sidebar() {
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
-  }, [handleNewThread, keybindings, routeThreadId, state.projects, state.threads]);
+  }, [getDraftThread, handleNewThread, keybindings, routeThreadId, state.projects, state.threads]);
 
   const onCreateThreadClick = () => {
     if (state.projects.length === 0) {

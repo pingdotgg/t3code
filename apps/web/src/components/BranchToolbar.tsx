@@ -59,6 +59,10 @@ export default function BranchToolbar({
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const branchCwd = activeWorktreePath ?? activeProject?.cwd ?? null;
   const hasServerThread = serverThread !== undefined;
+  const effectiveEnvMode: "local" | "worktree" =
+    activeWorktreePath || (!hasServerThread && draftThread?.envMode === "worktree")
+      ? "worktree"
+      : envMode;
 
   // ── Queries ───────────────────────────────────────────────────────────
 
@@ -68,7 +72,7 @@ export default function BranchToolbar({
   const branchNames = branches.map((branch) => branch.name);
   const branchByName = new Map(branches.map((branch) => [branch.name, branch]));
   const trimmedBranchQuery = branchQuery.trim();
-  const canCreateBranch = envMode === "local" && trimmedBranchQuery.length > 0;
+  const canCreateBranch = effectiveEnvMode === "local" && trimmedBranchQuery.length > 0;
   const hasExactBranchMatch = branchByName.has(trimmedBranchQuery);
   const createBranchItemValue = canCreateBranch
     ? `__create_new_branch__:${trimmedBranchQuery}`
@@ -93,7 +97,7 @@ export default function BranchToolbar({
     const syncedBranch = deriveSyncedLocalBranch({
       activeThreadId,
       activeWorktreePath,
-      envMode,
+      envMode: effectiveEnvMode,
       activeThreadBranch,
       queryBranches,
     });
@@ -127,7 +131,7 @@ export default function BranchToolbar({
     activeWorktreePath,
     activeThreadBranch,
     queryBranches,
-    envMode,
+    effectiveEnvMode,
     dispatch,
     hasServerThread,
     setDraftThreadContext,
@@ -178,6 +182,7 @@ export default function BranchToolbar({
     setDraftThreadContext(threadId, {
       branch,
       worktreePath,
+      envMode: effectiveEnvMode,
     });
   };
 
@@ -186,7 +191,7 @@ export default function BranchToolbar({
     if (!api || !activeThreadId || !branchCwd) return;
 
     // For new worktree mode, selecting a branch picks the base branch.
-    if (envMode === "worktree" && !envLocked && !activeWorktreePath) {
+    if (effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath) {
       setThreadError(null);
       setThreadBranch(branch.name, null);
       setIsBranchMenuOpen(false);
@@ -265,9 +270,11 @@ export default function BranchToolbar({
             variant="ghost"
             className="text-muted-foreground/70 hover:text-foreground/80"
             size="xs"
-            onClick={() => onEnvModeChange(envMode === "local" ? "worktree" : "local")}
+            onClick={() =>
+              onEnvModeChange(effectiveEnvMode === "local" ? "worktree" : "local")
+            }
           >
-            {envMode === "worktree" ? "New worktree" : "Local"}
+            {effectiveEnvMode === "worktree" ? "New worktree" : "Local"}
           </Button>
         )}
       </div>
@@ -286,7 +293,7 @@ export default function BranchToolbar({
         >
           <span className="max-w-[240px] truncate">
             {activeThreadBranch
-              ? envMode === "worktree" && !activeWorktreePath
+              ? effectiveEnvMode === "worktree" && !activeWorktreePath
                 ? `From ${activeThreadBranch}`
                 : activeThreadBranch
               : "Select branch"}

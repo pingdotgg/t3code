@@ -183,12 +183,14 @@ describe("composerDraftStore project draft thread mapping", () => {
       projectId,
       branch: "feature/test",
       worktreePath: "/tmp/worktree-test",
+      envMode: "worktree",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     expect(useComposerDraftStore.getState().getDraftThread(threadId)).toEqual({
       projectId,
       branch: "feature/test",
       worktreePath: "/tmp/worktree-test",
+      envMode: "worktree",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
   });
@@ -273,6 +275,7 @@ describe("composerDraftStore project draft thread mapping", () => {
       projectId,
       branch: "feature/next",
       worktreePath: "/tmp/feature-next",
+      envMode: "worktree",
     });
   });
 
@@ -295,6 +298,33 @@ describe("composerDraftStore project draft thread mapping", () => {
       projectId,
       branch: "main",
       worktreePath: "/tmp/main-worktree",
+      envMode: "worktree",
+    });
+  });
+
+  it("preserves worktree env mode without a worktree path", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId, {
+      branch: "feature/base",
+      worktreePath: null,
+      envMode: "worktree",
+    });
+    const runtimeUndefinedOptions = {
+      branch: undefined,
+      worktreePath: undefined,
+      envMode: undefined,
+    } as unknown as {
+      branch?: string | null;
+      worktreePath?: string | null;
+      envMode?: "local" | "worktree";
+    };
+    store.setProjectDraftThreadId(projectId, threadId, runtimeUndefinedOptions);
+
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toMatchObject({
+      projectId,
+      branch: "feature/base",
+      worktreePath: null,
+      envMode: "worktree",
     });
   });
 });

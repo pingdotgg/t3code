@@ -114,6 +114,7 @@ import { readNativeApi } from "~/nativeApi";
 import { getAppModelOptions, useAppSettings } from "../appSettings";
 import {
   type ComposerImageAttachment,
+  type DraftThreadEnvMode,
   type DraftThreadState,
   type PersistedComposerImageAttachment,
   useComposerDraftStore,
@@ -465,6 +466,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const clearDraftThread = useComposerDraftStore((store) => store.clearDraftThread);
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const draftThread = useComposerDraftStore((store) => store.draftThreadsByThreadId[threadId] ?? null);
   const promptRef = useRef(prompt);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
@@ -476,7 +478,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
-  const [envMode, setEnvMode] = useState<"local" | "worktree">("local");
+  const [envMode, setEnvMode] = useState<DraftThreadEnvMode>("local");
   const [isSwitchingRuntimeMode, setIsSwitchingRuntimeMode] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
@@ -1386,8 +1388,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   useEffect(() => {
     if (!activeThread?.id) return;
-    setEnvMode(activeWorktreePath ? "worktree" : "local");
-  }, [activeThread?.id, activeWorktreePath]);
+    if (activeWorktreePath) {
+      setEnvMode("worktree");
+      return;
+    }
+    if (isLocalDraftThread) {
+      setEnvMode(draftThread?.envMode ?? "local");
+      return;
+    }
+    setEnvMode("local");
+  }, [activeThread?.id, activeWorktreePath, draftThread?.envMode, isLocalDraftThread]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -1973,11 +1983,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [scheduleComposerFocus, setComposerDraftEffort, threadId],
   );
   const onEnvModeChange = useCallback(
-    (mode: "local" | "worktree") => {
+    (mode: DraftThreadEnvMode) => {
       setEnvMode(mode);
+      if (isLocalDraftThread) {
+        setDraftThreadContext(threadId, { envMode: mode });
+      }
       scheduleComposerFocus();
     },
-    [scheduleComposerFocus],
+    [isLocalDraftThread, scheduleComposerFocus, setDraftThreadContext, threadId],
   );
 
   const applyPromptReplacement = useCallback(
