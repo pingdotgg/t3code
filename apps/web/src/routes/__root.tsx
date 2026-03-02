@@ -15,6 +15,7 @@ import { AnchoredToastProvider, ToastProvider, toastManager } from "../component
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";
+import { useTerminalStateStore } from "../terminalStateStore";
 import { preferredTerminalEditor } from "../terminal-links";
 import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
 import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
@@ -149,7 +150,7 @@ function EventRouter() {
       const snapshot = await api.orchestration.getSnapshot();
       if (disposed) return;
       latestSequence = Math.max(latestSequence, snapshot.snapshotSequence);
-      syncServerReadModel(snapshot);
+      dispatch.syncServerReadModel(snapshot);
       if (pending) {
         pending = false;
         await flushSnapshotSync();
@@ -188,7 +189,7 @@ function EventRouter() {
       if (hasRunningSubprocess === null) {
         return;
       }
-      setThreadTerminalActivity(
+      useTerminalStateStore.getState().setTerminalActivity(
         ThreadId.makeUnsafe(event.threadId),
         event.terminalId,
         hasRunningSubprocess,
@@ -204,7 +205,7 @@ function EventRouter() {
         if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
           return;
         }
-        setProjectExpanded(payload.bootstrapProjectId, true);
+        dispatch.setProjectExpanded(payload.bootstrapProjectId, true);
 
         if (pathnameRef.current !== "/") {
           return;

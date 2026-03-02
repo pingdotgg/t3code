@@ -79,13 +79,6 @@ export interface Thread {
   projectId: ProjectId;
   title: string;
   model: string;
-  terminalOpen: boolean;
-  terminalHeight: number;
-  terminalIds: string[];
-  runningTerminalIds: string[];
-  activeTerminalId: string;
-  terminalGroups: ThreadTerminalGroup[];
-  activeTerminalGroupId: string;
   session: ThreadSession | null;
   messages: ChatMessage[];
   error: string | null;

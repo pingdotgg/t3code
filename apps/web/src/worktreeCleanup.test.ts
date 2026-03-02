@@ -1,7 +1,7 @@
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_THREAD_TERMINAL_HEIGHT, DEFAULT_THREAD_TERMINAL_ID, type Thread } from "./types";
+import type { Thread } from "./types";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "./worktreeCleanup";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -11,18 +11,6 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     projectId: ProjectId.makeUnsafe("project-1"),
     title: "Thread",
     model: "gpt-5.3-codex",
-    terminalOpen: false,
-    terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
-    terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
-    runningTerminalIds: [],
-    activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
-    terminalGroups: [
-      {
-        id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
-        terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
-      },
-    ],
-    activeTerminalGroupId: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
     session: null,
     messages: [],
     turnDiffSummaries: [],

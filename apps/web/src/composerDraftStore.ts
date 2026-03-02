@@ -6,13 +6,6 @@ import {
   normalizeModelSlug,
   type ReasoningEffort,
 } from "@t3tools/contracts";
-import {
-  createDefaultThreadTerminalState,
-  getDefaultThreadTerminalState,
-  reduceThreadTerminalState,
-  type ThreadTerminalAction,
-  type ThreadTerminalState,
-} from "./threadTerminalState";
 import type { ChatImageAttachment } from "./types";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -71,8 +64,6 @@ export interface DraftThreadState {
   branch: string | null;
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
-  /** Terminal layout for draft thread; same shape as Thread terminal slice. Omitted when not set. */
-  terminalState?: ThreadTerminalState;
 }
 
 interface ProjectDraftThread extends DraftThreadState {
@@ -122,9 +113,6 @@ interface ComposerDraftStoreState {
   ) => void;
   clearComposerContent: (threadId: ThreadId) => void;
   clearThreadDraft: (threadId: ThreadId) => void;
-  getDraftThreadTerminalState: (threadId: ThreadId) => ThreadTerminalState;
-  setDraftThreadTerminalAction: (threadId: ThreadId, action: ThreadTerminalAction) => void;
-  clearDraftThreadTerminalState: (threadId: ThreadId) => void;
 }
 
 const EMPTY_PERSISTED_DRAFT_STORE_STATE: PersistedComposerDraftStoreState = {
@@ -675,53 +663,6 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           return {
             draftThreadsByThreadId: restDraftThreadsByThreadId,
             projectDraftThreadIdByProjectId: nextProjectDraftThreadIdByProjectId,
-          };
-        });
-      },
-      getDraftThreadTerminalState: (threadId) => {
-        if (threadId.length === 0) {
-          return getDefaultThreadTerminalState();
-        }
-        const draft = get().draftThreadsByThreadId[threadId];
-        return draft?.terminalState ?? getDefaultThreadTerminalState();
-      },
-      setDraftThreadTerminalAction: (threadId, action) => {
-        if (threadId.length === 0) {
-          return;
-        }
-        set((state) => {
-          const existing = state.draftThreadsByThreadId[threadId];
-          if (!existing) {
-            return state;
-          }
-          const current = existing.terminalState ?? createDefaultThreadTerminalState();
-          const next = reduceThreadTerminalState(current, action);
-          if (next === current) {
-            return state;
-          }
-          return {
-            draftThreadsByThreadId: {
-              ...state.draftThreadsByThreadId,
-              [threadId]: { ...existing, terminalState: next },
-            },
-          };
-        });
-      },
-      clearDraftThreadTerminalState: (threadId) => {
-        if (threadId.length === 0) {
-          return;
-        }
-        set((state) => {
-          const existing = state.draftThreadsByThreadId[threadId];
-          if (!existing || existing.terminalState === undefined) {
-            return state;
-          }
-          const { terminalState: _removed, ...rest } = existing;
-          return {
-            draftThreadsByThreadId: {
-              ...state.draftThreadsByThreadId,
-              [threadId]: rest,
-            },
           };
         });
       },

@@ -349,7 +349,7 @@ function SettingsRouteView() {
                           : "border-border bg-background text-muted-foreground hover:bg-accent"
                       }`}
                       onClick={() => {
-                        setRuntimeMode(option.value);
+                        dispatch.setRuntimeMode(option.value);
                       }}
                     >
                       <span className="flex flex-col">

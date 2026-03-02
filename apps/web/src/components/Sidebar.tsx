@@ -21,6 +21,7 @@ import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
+import { useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -126,8 +127,10 @@ function threadStatusPill(thread: Thread, hasPendingApprovals: boolean): ThreadS
   return null;
 }
 
-function terminalStatusIndicator(thread: Thread): TerminalStatusIndicator | null {
-  if (thread.runningTerminalIds.length === 0) {
+function terminalStatusFromRunningIds(
+  runningTerminalIds: string[],
+): TerminalStatusIndicator | null {
+  if (runningTerminalIds.length === 0) {
     return null;
   }
   return {
@@ -237,6 +240,7 @@ export default function Sidebar() {
     (store) => store.getDraftThreadByProjectId,
   );
   const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
+  const getTerminalState = useTerminalStateStore((s) => s.getTerminalState);
   const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const clearProjectDraftThreadId = useComposerDraftStore(
@@ -505,7 +509,7 @@ export default function Sidebar() {
         position,
       );
       if (clicked === "mark-unread") {
-        markThreadUnread(threadId);
+        dispatch.markThreadUnread(threadId);
         return;
       }
       if (clicked !== "delete") return;
@@ -777,7 +781,7 @@ export default function Sidebar() {
                   open={project.expanded}
                   onOpenChange={(open) => {
                     if (open === project.expanded) return;
-                    toggleProject(project.id);
+                    dispatch.toggleProject(project.id);
                   }}
                 >
                   <SidebarMenuItem>
@@ -819,7 +823,9 @@ export default function Sidebar() {
                             pendingApprovalByThreadId.get(thread.id) === true,
                           );
                           const prStatus = prStatusIndicator(prByThreadId.get(thread.id) ?? null);
-                          const terminalStatus = terminalStatusIndicator(thread);
+                          const terminalStatus = terminalStatusFromRunningIds(
+                            getTerminalState(thread.id).runningTerminalIds,
+                          );
 
                           return (
                             <SidebarMenuSubItem key={thread.id} className="w-full">
