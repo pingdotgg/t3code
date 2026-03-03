@@ -113,6 +113,7 @@ export function summarizeGitResult(result: GitRunStackedActionResult): {
 export function buildMenuItems(
   gitStatus: GitStatusResult | null,
   isBusy: boolean,
+  isDefaultBranch = false,
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
 
@@ -127,8 +128,9 @@ export function buildMenuItems(
     hasBranch &&
     !hasChanges &&
     !hasOpenPr &&
-    gitStatus.aheadCount > 0 &&
-    !isBehind;
+    !isBehind &&
+    !isDefaultBranch &&
+    (gitStatus.aheadCount > 0 || gitStatus.hasUpstream);
   const canOpenPr = !isBusy && hasOpenPr;
 
   return [
@@ -259,6 +261,15 @@ export function resolveQuickAction(
     }
     return {
       label: "Push & create PR",
+      disabled: false,
+      kind: "run_action",
+      action: "commit_push_pr",
+    };
+  }
+
+  if (!hasOpenPr && !isDefaultBranch && gitStatus.hasUpstream) {
+    return {
+      label: "Create PR",
       disabled: false,
       kind: "run_action",
       action: "commit_push_pr",

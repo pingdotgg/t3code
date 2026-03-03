@@ -180,10 +180,19 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     const current = branchList?.branches.find((branch) => branch.name === branchName);
     return current?.isDefault ?? (branchName === "main" || branchName === "master");
   }, [branchList?.branches, gitStatusForActions?.branch]);
+  const isDefaultBranchName = useCallback(
+    (branchName: string | null | undefined) => {
+      if (!branchName) return false;
+      const defaultBranchName = branchList?.branches.find((branch) => branch.isDefault)?.name;
+      if (defaultBranchName) return branchName === defaultBranchName;
+      return branchName === "main" || branchName === "master";
+    },
+    [branchList?.branches],
+  );
 
   const gitActionMenuItems = useMemo(
-    () => buildMenuItems(gitStatusForActions, isGitActionRunning),
-    [gitStatusForActions, isGitActionRunning],
+    () => buildMenuItems(gitStatusForActions, isGitActionRunning, isDefaultBranch),
+    [gitStatusForActions, isGitActionRunning, isDefaultBranch],
   );
   const quickAction = useMemo(
     () => resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultBranch),
@@ -237,6 +246,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       onConfirmed,
       skipDefaultBranchPrompt = false,
       featureBranch = false,
+      isDefaultBranchOverride,
     }: {
       action: GitStackedAction;
       commitMessage?: string;
@@ -244,10 +254,12 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       onConfirmed?: () => void;
       skipDefaultBranchPrompt?: boolean;
       featureBranch?: boolean;
+      isDefaultBranchOverride?: boolean;
     }) => {
       const actionStatus = gitStatusForActions;
-      const actionIsDefaultBranch = featureBranch ? false : isDefaultBranch;
       const actionBranch = actionStatus?.branch ?? null;
+      const actionIsDefaultBranch =
+        isDefaultBranchOverride ?? (featureBranch ? false : isDefaultBranchName(actionBranch));
       const includesCommit =
         !forcePushOnlyProgress && (action === "commit" || !!actionStatus?.hasWorkingTreeChanges);
       if (
@@ -348,6 +360,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                       forcePushOnlyProgress: true,
                       onConfirmed: closeResultToast,
                       ...(featureBranch ? { skipDefaultBranchPrompt: true } : {}),
+                      ...(featureBranch ? { isDefaultBranchOverride: false } : {}),
                     });
                   },
                 },
@@ -374,6 +387,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                           action: "commit_push_pr",
                           forcePushOnlyProgress: true,
                           ...(featureBranch ? { skipDefaultBranchPrompt: true } : {}),
+                          ...(featureBranch ? { isDefaultBranchOverride: false } : {}),
                         });
                       },
                     },
@@ -392,7 +406,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     },
 
     [
-      isDefaultBranch,
+      isDefaultBranchName,
       runImmediateGitActionMutation,
       setPendingDefaultBranchAction,
       threadToastData,
@@ -410,6 +424,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       forcePushOnlyProgress,
       ...(onConfirmed ? { onConfirmed } : {}),
       skipDefaultBranchPrompt: true,
+      isDefaultBranchOverride: true,
     });
   }, [pendingDefaultBranchAction, runGitActionWithToast]);
 
