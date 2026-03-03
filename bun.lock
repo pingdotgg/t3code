@@ -9,6 +9,7 @@
         "oxfmt": "^0.35.0",
         "oxlint": "^1.50.0",
         "turbo": "^2.3.3",
+        "vitest": "catalog:",
       },
     },
     "apps/desktop": {
