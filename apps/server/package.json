@@ -1,6 +1,6 @@
 {
   "name": "t3",
-  "version": "0.0.0-alpha.10",
+  "version": "0.0.0-alpha.11",
   "bin": {
     "t3": "./dist/index.mjs"
   },
