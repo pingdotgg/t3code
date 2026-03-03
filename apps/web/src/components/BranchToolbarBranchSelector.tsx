@@ -2,13 +2,22 @@ import type { GitBranch } from "@t3tools/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDownIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useOptimistic, useRef, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useOptimistic,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 
 import { gitBranchesQueryOptions, gitQueryKeys, invalidateGitQueries } from "../lib/gitReactQuery";
 import { readNativeApi } from "../nativeApi";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  EnvMode,
   resolveBranchToolbarValue,
 } from "./BranchToolbar.logic";
 import { Button } from "./ui/button";
@@ -28,7 +37,7 @@ interface BranchToolbarBranchSelectorProps {
   activeThreadBranch: string | null;
   activeWorktreePath: string | null;
   branchCwd: string | null;
-  effectiveEnvMode: "local" | "worktree";
+  effectiveEnvMode: EnvMode;
   envLocked: boolean;
   onSetThreadBranch: (branch: string | null, worktreePath: string | null) => void;
   onComposerFocusRequest?: () => void;
@@ -40,7 +49,7 @@ function toBranchActionErrorMessage(error: unknown): string {
 
 function getBranchTriggerLabel(input: {
   activeWorktreePath: string | null;
-  effectiveEnvMode: "local" | "worktree";
+  effectiveEnvMode: EnvMode;
   resolvedActiveBranch: string | null;
 }): string {
   const { activeWorktreePath, effectiveEnvMode, resolvedActiveBranch } = input;
@@ -215,7 +224,12 @@ export function BranchToolbarBranchSelector({
   };
 
   useEffect(() => {
-    if (effectiveEnvMode !== "worktree" || activeWorktreePath || activeThreadBranch || !currentGitBranch) {
+    if (
+      effectiveEnvMode !== "worktree" ||
+      activeWorktreePath ||
+      activeThreadBranch ||
+      !currentGitBranch
+    ) {
       return;
     }
     onSetThreadBranch(currentGitBranch, null);

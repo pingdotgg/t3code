@@ -5,14 +5,14 @@ import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
-import { resolveDraftEnvModeAfterBranchChange } from "./BranchToolbar.logic";
+import { EnvMode, resolveDraftEnvModeAfterBranchChange } from "./BranchToolbar.logic";
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { Button } from "./ui/button";
 
 interface BranchToolbarProps {
   threadId: ThreadId;
-  envMode: "local" | "worktree";
-  onEnvModeChange: (mode: "local" | "worktree") => void;
+  envMode: EnvMode;
+  onEnvModeChange: (mode: EnvMode) => void;
   envLocked: boolean;
   onComposerFocusRequest?: () => void;
 }
@@ -38,7 +38,7 @@ export default function BranchToolbar({
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const branchCwd = activeWorktreePath ?? activeProject?.cwd ?? null;
   const hasServerThread = serverThread !== undefined;
-  const effectiveEnvMode: "local" | "worktree" =
+  const effectiveEnvMode: EnvMode =
     activeWorktreePath || (!hasServerThread && draftThread?.envMode === "worktree")
       ? "worktree"
       : envMode;
