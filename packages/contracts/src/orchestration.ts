@@ -348,6 +348,7 @@ export const ClientThreadTurnStartCommand = Schema.Struct({
     text: Schema.String,
     attachments: Schema.Array(UploadChatAttachment),
   }),
+  provider: Schema.optional(ProviderKind),
   model: Schema.optional(TrimmedNonEmptyString),
   effort: Schema.optional(TrimmedNonEmptyString),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
