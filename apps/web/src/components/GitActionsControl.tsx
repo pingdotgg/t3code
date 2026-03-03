@@ -254,8 +254,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         !skipDefaultBranchPrompt &&
         !featureBranch &&
         requiresDefaultBranchConfirmation(action, actionIsDefaultBranch) &&
-        actionBranch &&
-        !!actionStatus?.hasWorkingTreeChanges
+        actionBranch
       ) {
         if (action !== "commit_push" && action !== "commit_push_pr") {
           return;
@@ -416,6 +415,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     (actionParams: {
       action: GitStackedAction;
       commitMessage?: string;
+      forcePushOnlyProgress?: boolean;
       onConfirmed?: () => void;
     }) => {
       void runGitActionWithToast({
@@ -429,11 +429,12 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
   const checkoutFeatureBranchAndContinuePendingAction = useCallback(() => {
     if (!pendingDefaultBranchAction) return;
-    const { action, commitMessage, onConfirmed } = pendingDefaultBranchAction;
+    const { action, commitMessage, forcePushOnlyProgress, onConfirmed } = pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     checkoutNewBranchAndRunAction({
       action,
       ...(commitMessage ? { commitMessage } : {}),
+      forcePushOnlyProgress,
       ...(onConfirmed ? { onConfirmed } : {}),
     });
   }, [pendingDefaultBranchAction, checkoutNewBranchAndRunAction]);

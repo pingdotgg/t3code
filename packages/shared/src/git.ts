@@ -46,7 +46,7 @@ export function resolveAutoFeatureBranchName(
   const resolvedBase = sanitizeFeatureBranchName(
     preferred && preferred.length > 0 ? preferred : AUTO_FEATURE_BRANCH_FALLBACK,
   );
-  const existingNames = new Set(existingBranchNames);
+  const existingNames = new Set(existingBranchNames.map((branch) => branch.toLowerCase()));
 
   if (!existingNames.has(resolvedBase)) {
     return resolvedBase;
