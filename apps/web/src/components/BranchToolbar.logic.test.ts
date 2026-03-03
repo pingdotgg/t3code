@@ -3,7 +3,43 @@ import { describe, expect, it } from "vitest";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  resolveBranchToolbarValue,
 } from "./BranchToolbar.logic";
+
+describe("resolveBranchToolbarValue", () => {
+  it("defaults new-worktree mode to current git branch when no explicit base branch is set", () => {
+    expect(
+      resolveBranchToolbarValue({
+        envMode: "worktree",
+        activeWorktreePath: null,
+        activeThreadBranch: null,
+        currentGitBranch: "main",
+      }),
+    ).toBe("main");
+  });
+
+  it("keeps an explicitly selected worktree base branch", () => {
+    expect(
+      resolveBranchToolbarValue({
+        envMode: "worktree",
+        activeWorktreePath: null,
+        activeThreadBranch: "feature/base",
+        currentGitBranch: "main",
+      }),
+    ).toBe("feature/base");
+  });
+
+  it("shows the actual checked-out branch when not selecting a new worktree base", () => {
+    expect(
+      resolveBranchToolbarValue({
+        envMode: "local",
+        activeWorktreePath: null,
+        activeThreadBranch: "feature/base",
+        currentGitBranch: "main",
+      }),
+    ).toBe("main");
+  });
+});
 
 describe("deriveLocalBranchNameFromRemoteRef", () => {
   it("strips the remote prefix from a remote ref", () => {

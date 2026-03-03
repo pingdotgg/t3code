@@ -1,5 +1,18 @@
 import type { GitBranch } from "@t3tools/contracts";
 
+export function resolveBranchToolbarValue(input: {
+  envMode: "local" | "worktree";
+  activeWorktreePath: string | null;
+  activeThreadBranch: string | null;
+  currentGitBranch: string | null;
+}): string | null {
+  const { envMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
+  if (envMode === "worktree" && !activeWorktreePath) {
+    return activeThreadBranch ?? currentGitBranch;
+  }
+  return currentGitBranch ?? activeThreadBranch;
+}
+
 export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
   const firstSeparatorIndex = branchName.indexOf("/");
   if (firstSeparatorIndex <= 0 || firstSeparatorIndex === branchName.length - 1) {
