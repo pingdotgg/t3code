@@ -1,6 +1,6 @@
 import type { GitBranch, ThreadId } from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useOptimistic, useState } from "react";
+import { startTransition, useOptimistic, useState } from "react";
 
 import { newCommandId } from "../lib/utils";
 import {
@@ -80,6 +80,11 @@ export default function BranchToolbar({
     canonicalActiveBranch,
     (_currentBranch: string | null, optimisticBranch: string | null) => optimisticBranch,
   );
+  const setOptimisticBranchInTransition = (branch: string | null) => {
+    startTransition(() => {
+      setOptimisticBranch(branch);
+    });
+  };
   const branchNames = branches.map((branch) => branch.name);
   const branchByName = new Map(branches.map((branch) => [branch.name, branch]));
   const trimmedBranchQuery = branchQuery.trim();
@@ -172,7 +177,7 @@ export default function BranchToolbar({
     const selectedBranchName = branch.isRemote
       ? deriveLocalBranchNameFromRemoteRef(branch.name)
       : branch.name;
-    setOptimisticBranch(selectedBranchName);
+    setOptimisticBranchInTransition(selectedBranchName);
 
     checkoutMutation.mutate(branch.name, {
       onSuccess: async () => {
@@ -184,13 +189,13 @@ export default function BranchToolbar({
             nextBranchName = status.branch;
           }
         }
-        setOptimisticBranch(nextBranchName);
+        setOptimisticBranchInTransition(nextBranchName);
         setThreadBranch(nextBranchName, activeWorktreePath);
         setIsBranchMenuOpen(false);
         onComposerFocusRequest?.();
       },
       onError: (error) => {
-        setOptimisticBranch(canonicalActiveBranch);
+        setOptimisticBranchInTransition(canonicalActiveBranch);
         setThreadError(error instanceof Error ? error.message : "Failed to checkout branch.");
         setIsBranchMenuOpen(true);
       },
@@ -201,10 +206,10 @@ export default function BranchToolbar({
     const name = rawName.trim();
     const api = readNativeApi();
     if (!api || !activeThreadId || !branchCwd || !name || createBranchMutation.isPending) return;
-    setOptimisticBranch(name);
+    setOptimisticBranchInTransition(name);
     createBranchMutation.mutate(name, {
       onSuccess: () => {
-        setOptimisticBranch(name);
+        setOptimisticBranchInTransition(name);
         setThreadError(null);
         setThreadBranch(name, activeWorktreePath);
         setBranchQuery("");
@@ -212,7 +217,7 @@ export default function BranchToolbar({
         onComposerFocusRequest?.();
       },
       onError: (error) => {
-        setOptimisticBranch(canonicalActiveBranch);
+        setOptimisticBranchInTransition(canonicalActiveBranch);
         setThreadError(error instanceof Error ? error.message : "Failed to create branch.");
       },
     });

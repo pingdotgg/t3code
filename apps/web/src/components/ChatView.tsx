@@ -100,7 +100,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./u
 import { Separator } from "./ui/separator";
 import { Group, GroupSeparator } from "./ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu";
-import { CursorIcon, Icon, VisualStudioCode } from "./Icons";
+import { CursorIcon, Icon, VisualStudioCode, Zed } from "./Icons";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { Badge } from "./ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -3692,6 +3692,11 @@ const OpenInPicker = memo(function OpenInPicker({
         label: "VS Code",
         Icon: VisualStudioCode,
         value: "vscode",
+      },
+      {
+        label: "Zed",
+        Icon: Zed,
+        value: "zed",
       },
       {
         label: isMacPlatform(navigator.platform)

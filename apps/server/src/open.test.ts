@@ -33,6 +33,15 @@ describe("resolveEditorLaunch", () => {
         command: "code",
         args: ["/tmp/workspace"],
       });
+
+      const zedLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "zed" },
+        "darwin",
+      );
+      assert.deepEqual(zedLaunch, {
+        command: "zed",
+        args: ["/tmp/workspace"],
+      });
     }),
   );
 
@@ -63,6 +72,15 @@ describe("resolveEditorLaunch", () => {
       assert.deepEqual(vscodeLineAndColumn, {
         command: "code",
         args: ["--goto", "/tmp/workspace/src/open.ts:71:5"],
+      });
+
+      const zedLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "zed" },
+        "darwin",
+      );
+      assert.deepEqual(zedLineAndColumn, {
+        command: "zed",
+        args: ["/tmp/workspace/src/open.ts:71:5"],
       });
     }),
   );
