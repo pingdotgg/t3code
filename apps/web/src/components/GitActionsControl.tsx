@@ -337,7 +337,9 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         const shouldOfferOpenPrCta =
           (action === "commit_push" || action === "commit_push_pr") &&
           !!prUrl &&
-          (result.pr.status === "created" || result.pr.status === "opened_existing");
+          (!actionIsDefaultBranch ||
+            result.pr.status === "created" ||
+            result.pr.status === "opened_existing");
         const shouldOfferCreatePrCta =
           action === "commit_push" &&
           !prUrl &&
