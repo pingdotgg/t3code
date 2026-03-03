@@ -88,6 +88,21 @@ export function isLatestTurnSettled(
   return true;
 }
 
+function requestKindFromRequestType(
+  requestType: unknown,
+): PendingApproval["requestKind"] | null {
+  switch (requestType) {
+    case "command_execution_approval":
+    case "exec_command_approval":
+      return "command";
+    case "file_change_approval":
+    case "apply_patch_approval":
+      return "file-change";
+    default:
+      return null;
+  }
+}
+
 export function derivePendingApprovals(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): PendingApproval[] {
@@ -106,6 +121,8 @@ export function derivePendingApprovals(
     const requestKind =
       payload && (payload.requestKind === "command" || payload.requestKind === "file-change")
         ? payload.requestKind
+        : payload
+          ? requestKindFromRequestType(payload.requestType)
         : null;
     const detail = payload && typeof payload.detail === "string" ? payload.detail : undefined;
 
