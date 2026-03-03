@@ -1845,6 +1845,9 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
 
     return {
       provider: PROVIDER,
+      capabilities: {
+        sessionModelSwitch: "in-session",
+      },
       startSession,
       sendTurn,
       interruptTurn,

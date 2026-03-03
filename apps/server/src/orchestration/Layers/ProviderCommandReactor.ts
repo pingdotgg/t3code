@@ -169,6 +169,7 @@ const make = Effect.gen(function* () {
     createdAt: string,
     options?: {
       readonly provider?: ProviderKind;
+      readonly model?: string;
       readonly approvalPolicy?: ProviderApprovalPolicy;
       readonly sandboxMode?: ProviderSandboxMode;
     },
@@ -190,14 +191,15 @@ const make = Effect.gen(function* () {
         ? thread.session.providerName
         : undefined;
     const preferredProvider: ProviderKind | undefined = options?.provider ?? currentProvider;
+    const desiredModel = options?.model ?? thread.model;
     const effectiveCwd = resolveThreadWorkspaceCwd({
       thread,
       projects: readModel.projects,
     });
 
-    const resolveResumeCursorForSession = (sessionId: ProviderSessionId) =>
+    const resolveActiveSession = (sessionId: ProviderSessionId) =>
       providerService.listSessions().pipe(
-        Effect.map((sessions) => sessions.find((session) => session.sessionId === sessionId)?.resumeCursor),
+        Effect.map((sessions) => sessions.find((session) => session.sessionId === sessionId)),
       );
 
     const startProviderSession = (input?: {
@@ -209,7 +211,7 @@ const make = Effect.gen(function* () {
           ? { provider: input?.provider ?? preferredProvider }
           : {}),
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
-        ...(thread.model ? { model: thread.model } : {}),
+        ...(desiredModel ? { model: desiredModel } : {}),
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         approvalPolicy: desiredApprovalPolicy,
         sandboxMode: desiredSandboxMode,
@@ -242,14 +244,29 @@ const make = Effect.gen(function* () {
       const sandboxModeChanged =
         options?.sandboxMode !== undefined && options.sandboxMode !== thread.session?.sandboxMode;
       const providerChanged = options?.provider !== undefined && options.provider !== currentProvider;
+      const activeSession = yield* resolveActiveSession(existingSessionId);
+      const sessionModelSwitch =
+        currentProvider === undefined
+          ? "in-session"
+          : (yield* providerService.getCapabilities(currentProvider)).sessionModelSwitch;
+      const modelChanged =
+        options?.model !== undefined && options.model !== activeSession?.model;
+      const shouldRestartForModelChange =
+        modelChanged && sessionModelSwitch === "restart-session";
 
-      if (!approvalPolicyChanged && !sandboxModeChanged && !providerChanged) {
+      if (
+        !approvalPolicyChanged &&
+        !sandboxModeChanged &&
+        !providerChanged &&
+        !shouldRestartForModelChange
+      ) {
         return existingSessionId;
       }
 
-      const resumeCursor = providerChanged
-        ? undefined
-        : yield* resolveResumeCursorForSession(existingSessionId);
+      const resumeCursor =
+        providerChanged || shouldRestartForModelChange
+          ? undefined
+          : (activeSession?.resumeCursor ?? undefined);
       const restartedSession = yield* startProviderSession({
         ...(resumeCursor !== undefined ? { resumeCursor } : {}),
         ...(options?.provider !== undefined ? { provider: options.provider } : {}),
@@ -267,9 +284,9 @@ const make = Effect.gen(function* () {
       return restartedSession.sessionId;
     }
 
-    const startedSession = yield* startProviderSession({
-      ...(options?.provider !== undefined ? { provider: options.provider } : {}),
-    });
+    const startedSession = yield* startProviderSession(
+      options?.provider !== undefined ? { provider: options.provider } : undefined,
+    );
     yield* bindSessionToThread(startedSession);
     return startedSession.sessionId;
   });
@@ -291,17 +308,27 @@ const make = Effect.gen(function* () {
     }
     const sessionId = yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.provider !== undefined ? { provider: input.provider } : {}),
+      ...(input.model !== undefined ? { model: input.model } : {}),
       approvalPolicy: input.approvalPolicy,
       sandboxMode: input.sandboxMode,
     });
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
+    const activeSession = yield* providerService.listSessions().pipe(
+      Effect.map((sessions) => sessions.find((session) => session.sessionId === sessionId)),
+    );
+    const sessionModelSwitch =
+      activeSession === undefined
+        ? "in-session"
+        : (yield* providerService.getCapabilities(activeSession.provider)).sessionModelSwitch;
+    const modelForTurn =
+      sessionModelSwitch === "unsupported" ? activeSession?.model : input.model;
 
     yield* providerService.sendTurn({
       sessionId,
       ...(normalizedInput ? { input: normalizedInput } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
-      ...(input.model !== undefined ? { model: input.model } : {}),
+      ...(modelForTurn !== undefined ? { model: modelForTurn } : {}),
       ...(input.effort !== undefined ? { effort: input.effort } : {}),
     });
   });

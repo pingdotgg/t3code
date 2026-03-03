@@ -14,6 +14,7 @@ class FakeCursorAcpProcess extends EventEmitter {
   readonly stdin = new PassThrough();
   readonly stdout = new PassThrough();
   readonly stderr = new PassThrough();
+  readonly requests: Array<{ method: string; params: unknown }> = [];
   killed = false;
 
   private readonly input = readline.createInterface({ input: this.stdin });
@@ -75,9 +76,29 @@ class FakeCursorAcpProcess extends EventEmitter {
     if (typeof method !== "string" || (typeof id !== "string" && typeof id !== "number")) {
       return;
     }
+    this.requests.push({ method, params: message.params });
 
     switch (method) {
-      case "initialize":
+      case "initialize": {
+        const protocolVersion = (message.params as { protocolVersion?: unknown } | undefined)
+          ?.protocolVersion;
+        if (typeof protocolVersion !== "number") {
+          this.emitServerMessage({
+            jsonrpc: "2.0",
+            id,
+            error: {
+              code: -32602,
+              message: "Invalid params",
+              data: {
+                _errors: [],
+                protocolVersion: {
+                  _errors: ["Invalid input: expected number, received undefined"],
+                },
+              },
+            },
+          });
+          return;
+        }
         this.emitServerMessage({
           jsonrpc: "2.0",
           id,
@@ -90,6 +111,7 @@ class FakeCursorAcpProcess extends EventEmitter {
           },
         });
         return;
+      }
       case "authenticate":
         this.emitServerMessage({
           jsonrpc: "2.0",
@@ -111,6 +133,13 @@ class FakeCursorAcpProcess extends EventEmitter {
         });
         return;
       case "session/load":
+        this.emitServerMessage({
+          jsonrpc: "2.0",
+          id,
+          result: {},
+        });
+        return;
+      case "session/set_model":
         this.emitServerMessage({
           jsonrpc: "2.0",
           id,
@@ -252,7 +281,7 @@ describe("CursorAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
 
-      const eventsFiber = yield* Stream.take(adapter.streamEvents, 11).pipe(
+      const eventsFiber = yield* Stream.take(adapter.streamEvents, 13).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -273,6 +302,8 @@ describe("CursorAdapterLive", () => {
         events.map((event) => event.type),
         [
           "session.configured",
+          "auth.status",
+          "auth.status",
           "session.started",
           "thread.started",
           "session.state.changed",
@@ -286,17 +317,45 @@ describe("CursorAdapterLive", () => {
         ],
       );
 
-      const turnStarted = events[4];
+      const turnStarted = events[6];
       assert.equal(turnStarted?.type, "turn.started");
       if (turnStarted?.type === "turn.started") {
         assert.equal(turnStarted.turnId, turn.turnId);
       }
 
-      const completion = events[10];
+      const completion = events[12];
       assert.equal(completion?.type, "turn.completed");
       if (completion?.type === "turn.completed") {
         assert.equal(completion.payload.state, "completed");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("passes requested model to ACP process startup", () => {
+    const fake = new FakeCursorAcpProcess();
+    let createProcessInput:
+      | {
+          readonly binaryPath: string;
+          readonly cwd: string;
+          readonly env: NodeJS.ProcessEnv;
+          readonly model?: string;
+        }
+      | undefined;
+    const layer = makeCursorAdapterLive({
+      createProcess: (input) => {
+        createProcessInput = input;
+        return fake as never;
+      },
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      yield* adapter.startSession({
+        provider: "cursor",
+        model: "composer-1.5",
+      });
+
+      assert.deepEqual(createProcessInput?.model, "composer-1.5");
     }).pipe(Effect.provide(layer));
   });
 
@@ -314,7 +373,7 @@ describe("CursorAdapterLive", () => {
       });
 
       // consume startup events
-      yield* Stream.take(adapter.streamEvents, 4).pipe(Stream.runDrain);
+      yield* Stream.take(adapter.streamEvents, 6).pipe(Stream.runDrain);
 
       fake.emitPermissionRequest();
 

@@ -161,6 +161,9 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
 
   const adapter: ProviderAdapterShape<ProviderAdapterError> = {
     provider,
+    capabilities: {
+      sessionModelSwitch: "in-session",
+    },
     startSession,
     sendTurn,
     interruptTurn,

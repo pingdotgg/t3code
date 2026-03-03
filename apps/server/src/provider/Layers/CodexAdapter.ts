@@ -1092,6 +1092,9 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
 
     return {
       provider: PROVIDER,
+      capabilities: {
+        sessionModelSwitch: "in-session",
+      },
       startSession,
       sendTurn,
       interruptTurn,

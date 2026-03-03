@@ -50,6 +50,7 @@ function createProviderServiceHarness() {
     respondToRequest: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions: () => Effect.succeed([]),
+    getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
     rollbackConversation: () => unsupported(),
     stopAll: () => Effect.void,
     streamEvents: Stream.fromPubSub(runtimeEventPubSub),
@@ -455,38 +456,48 @@ describe("ProviderRuntimeIngestion", () => {
     );
   });
 
-  it("maps message delta/completed into finalized assistant messages", async () => {
+  it("maps canonical content delta/item completed into finalized assistant messages", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
 
     harness.emit({
-      type: "message.delta",
+      type: "content.delta",
       eventId: asEventId("evt-message-delta-1"),
       provider: "codex",
       sessionId: asSessionId("sess-1"),
       createdAt: now,
       turnId: asProviderTurnId("turn-2"),
       itemId: asItemId("item-1"),
-      delta: "hello",
+      payload: {
+        streamKind: "assistant_text",
+        delta: "hello",
+      },
     });
     harness.emit({
-      type: "message.delta",
+      type: "content.delta",
       eventId: asEventId("evt-message-delta-2"),
       provider: "codex",
       sessionId: asSessionId("sess-1"),
       createdAt: now,
       turnId: asProviderTurnId("turn-2"),
       itemId: asItemId("item-1"),
-      delta: " world",
+      payload: {
+        streamKind: "assistant_text",
+        delta: " world",
+      },
     });
     harness.emit({
-      type: "message.completed",
+      type: "item.completed",
       eventId: asEventId("evt-message-completed"),
       provider: "codex",
       sessionId: asSessionId("sess-1"),
       createdAt: now,
       turnId: asProviderTurnId("turn-2"),
       itemId: asItemId("item-1"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
     });
 
     const thread = await waitForThread(harness.engine, (entry) =>
@@ -494,6 +505,33 @@ describe("ProviderRuntimeIngestion", () => {
     );
     const message = thread.messages.find((entry) => entry.id === "assistant:item-1");
     expect(message?.text).toBe("hello world");
+    expect(message?.streaming).toBe(false);
+  });
+
+  it("uses assistant item completion detail when no assistant deltas were streamed", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-assistant-item-completed-no-delta"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: now,
+      turnId: asProviderTurnId("turn-no-delta"),
+      itemId: asItemId("item-no-delta"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "assistant-only final text",
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some((message) => message.id === "assistant:item-no-delta" && !message.streaming),
+    );
+    const message = thread.messages.find((entry) => entry.id === "assistant:item-no-delta");
+    expect(message?.text).toBe("assistant-only final text");
     expect(message?.streaming).toBe(false);
   });
 

@@ -19,21 +19,10 @@ export const CURSOR_MODEL_FAMILY_OPTIONS = [
   { slug: "composer-1", name: "Composer 1" },
   { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
   { slug: "gpt-5.3-codex-spark-preview", name: "GPT-5.3 Codex Spark" },
-  { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
-  { slug: "gpt-5.2", name: "GPT-5.2" },
-  { slug: "gpt-5.2-high", name: "GPT-5.2 High" },
-  { slug: "gpt-5.1-codex-max", name: "GPT-5.1 Codex Max" },
-  { slug: "gpt-5.1-codex-mini", name: "GPT-5.1 Codex Mini" },
-  { slug: "gpt-5.1-high", name: "GPT-5.1 High" },
   { slug: "opus-4.6", name: "Claude 4.6 Opus" },
   { slug: "opus-4.5", name: "Claude 4.5 Opus" },
   { slug: "sonnet-4.6", name: "Claude 4.6 Sonnet" },
-  { slug: "sonnet-4.5", name: "Claude 4.5 Sonnet" },
   { slug: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
-  { slug: "gemini-3-pro", name: "Gemini 3 Pro" },
-  { slug: "gemini-3-flash", name: "Gemini 3 Flash" },
-  { slug: "grok", name: "Grok" },
-  { slug: "kimi-k2.5", name: "Kimi K2.5" },
 ] as const satisfies readonly CursorModelFamilyOption[];
 
 export type CursorModelFamily = (typeof CURSOR_MODEL_FAMILY_OPTIONS)[number]["slug"];
@@ -63,33 +52,13 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "gpt-5.3-codex-xhigh", name: "GPT-5.3 Codex Extra High" },
     { slug: "gpt-5.3-codex-xhigh-fast", name: "GPT-5.3 Codex Extra High Fast" },
     { slug: "gpt-5.3-codex-spark-preview", name: "GPT-5.3 Codex Spark" },
-    { slug: "gpt-5.2", name: "GPT-5.2" },
-    { slug: "gpt-5.2-codex-low", name: "GPT-5.2 Codex Low" },
-    { slug: "gpt-5.2-codex-low-fast", name: "GPT-5.2 Codex Low Fast" },
-    { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
-    { slug: "gpt-5.2-codex-fast", name: "GPT-5.2 Codex Fast" },
-    { slug: "gpt-5.2-codex-high", name: "GPT-5.2 Codex High" },
-    { slug: "gpt-5.2-codex-high-fast", name: "GPT-5.2 Codex High Fast" },
-    { slug: "gpt-5.2-codex-xhigh", name: "GPT-5.2 Codex Extra High" },
-    { slug: "gpt-5.2-codex-xhigh-fast", name: "GPT-5.2 Codex Extra High Fast" },
-    { slug: "gpt-5.1-codex-max", name: "GPT-5.1 Codex Max" },
-    { slug: "gpt-5.1-codex-max-high", name: "GPT-5.1 Codex Max High" },
-    { slug: "gpt-5.2-high", name: "GPT-5.2 High" },
-    { slug: "gpt-5.1-high", name: "GPT-5.1 High" },
-    { slug: "gpt-5.1-codex-mini", name: "GPT-5.1 Codex Mini" },
-    { slug: "opus-4.6-thinking", name: "Claude 4.6 Opus (Thinking)" },
     { slug: "opus-4.6", name: "Claude 4.6 Opus" },
+    { slug: "opus-4.6-thinking", name: "Claude 4.6 Opus (Thinking)" },
     { slug: "opus-4.5", name: "Claude 4.5 Opus" },
     { slug: "opus-4.5-thinking", name: "Claude 4.5 Opus (Thinking)" },
     { slug: "sonnet-4.6", name: "Claude 4.6 Sonnet" },
-    { slug: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
-    { slug: "gemini-3-pro", name: "Gemini 3 Pro" },
     { slug: "sonnet-4.6-thinking", name: "Claude 4.6 Sonnet (Thinking)" },
-    { slug: "sonnet-4.5", name: "Claude 4.5 Sonnet" },
-    { slug: "sonnet-4.5-thinking", name: "Claude 4.5 Sonnet (Thinking)" },
-    { slug: "gemini-3-flash", name: "Gemini 3 Flash" },
-    { slug: "grok", name: "Grok" },
-    { slug: "kimi-k2.5", name: "Kimi K2.5" },
+    { slug: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
   ],
 } as const satisfies Record<ProviderKind, readonly ModelOption[]>;
 
@@ -140,48 +109,6 @@ const CURSOR_MODEL_CAPABILITY_BY_FAMILY: Record<CursorModelFamily, CursorModelCa
     defaultReasoning: "normal",
     defaultThinking: false,
   },
-  "gpt-5.2-codex": {
-    supportsReasoning: true,
-    supportsFast: true,
-    supportsThinking: false,
-    defaultReasoning: "normal",
-    defaultThinking: false,
-  },
-  "gpt-5.2": {
-    supportsReasoning: false,
-    supportsFast: false,
-    supportsThinking: false,
-    defaultReasoning: "normal",
-    defaultThinking: false,
-  },
-  "gpt-5.2-high": {
-    supportsReasoning: false,
-    supportsFast: false,
-    supportsThinking: false,
-    defaultReasoning: "normal",
-    defaultThinking: false,
-  },
-  "gpt-5.1-codex-max": {
-    supportsReasoning: false,
-    supportsFast: false,
-    supportsThinking: false,
-    defaultReasoning: "normal",
-    defaultThinking: false,
-  },
-  "gpt-5.1-codex-mini": {
-    supportsReasoning: false,
-    supportsFast: false,
-    supportsThinking: false,
-    defaultReasoning: "normal",
-    defaultThinking: false,
-  },
-  "gpt-5.1-high": {
-    supportsReasoning: false,
-    supportsFast: false,
-    supportsThinking: false,
-    defaultReasoning: "normal",
-    defaultThinking: false,
-  },
   "opus-4.6": {
     supportsReasoning: false,
     supportsFast: false,
@@ -203,42 +130,7 @@ const CURSOR_MODEL_CAPABILITY_BY_FAMILY: Record<CursorModelFamily, CursorModelCa
     defaultReasoning: "normal",
     defaultThinking: true,
   },
-  "sonnet-4.5": {
-    supportsReasoning: false,
-    supportsFast: false,
-    supportsThinking: true,
-    defaultReasoning: "normal",
-    defaultThinking: true,
-  },
   "gemini-3.1-pro": {
-    supportsReasoning: false,
-    supportsFast: false,
-    supportsThinking: false,
-    defaultReasoning: "normal",
-    defaultThinking: false,
-  },
-  "gemini-3-pro": {
-    supportsReasoning: false,
-    supportsFast: false,
-    supportsThinking: false,
-    defaultReasoning: "normal",
-    defaultThinking: false,
-  },
-  "gemini-3-flash": {
-    supportsReasoning: false,
-    supportsFast: false,
-    supportsThinking: false,
-    defaultReasoning: "normal",
-    defaultThinking: false,
-  },
-  grok: {
-    supportsReasoning: false,
-    supportsFast: false,
-    supportsThinking: false,
-    defaultReasoning: "normal",
-    defaultThinking: false,
-  },
-  "kimi-k2.5": {
     supportsReasoning: false,
     supportsFast: false,
     supportsThinking: false,
@@ -295,18 +187,11 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "composer-1": "composer-1",
     "gpt-5.3-codex": "gpt-5.3-codex",
     "gpt-5.3-codex-spark": "gpt-5.3-codex-spark-preview",
-    "gpt-5.2-codex": "gpt-5.2-codex",
-    "gpt-5.1-codex-max-high": "gpt-5.1-codex-max-high",
-    "gpt-5.1-codex-mini": "gpt-5.1-codex-mini",
-    "gemini-3.1": "gemini-3.1-pro",
     "gemini-3.1-pro": "gemini-3.1-pro",
-    "gemini-3-pro": "gemini-3-pro",
     "claude-4.6-sonnet-thinking": "sonnet-4.6-thinking",
-    "claude-4.5-sonnet-thinking": "sonnet-4.5-thinking",
     "claude-4.6-opus-thinking": "opus-4.6-thinking",
     "claude-4.5-opus-thinking": "opus-4.5-thinking",
     "sonnet-4.6-thinking": "sonnet-4.6-thinking",
-    "sonnet-4.5-thinking": "sonnet-4.5-thinking",
     "opus-4.6-thinking": "opus-4.6-thinking",
     "opus-4.5-thinking": "opus-4.5-thinking",
   },
@@ -354,24 +239,8 @@ function resolveCursorModelFamily(model: string | null | undefined): CursorModel
     return "gpt-5.3-codex";
   }
 
-  if (
-    normalized === "gpt-5.2-codex" ||
-    normalized === "gpt-5.2-codex-fast" ||
-    normalized === "gpt-5.2-codex-low" ||
-    normalized === "gpt-5.2-codex-low-fast" ||
-    normalized === "gpt-5.2-codex-high" ||
-    normalized === "gpt-5.2-codex-high-fast" ||
-    normalized === "gpt-5.2-codex-xhigh" ||
-    normalized === "gpt-5.2-codex-xhigh-fast"
-  ) {
-    return "gpt-5.2-codex";
-  }
-
   if (normalized === "sonnet-4.6-thinking") {
     return "sonnet-4.6";
-  }
-  if (normalized === "sonnet-4.5-thinking") {
-    return "sonnet-4.5";
   }
   if (normalized === "opus-4.6-thinking") {
     return "opus-4.6";
