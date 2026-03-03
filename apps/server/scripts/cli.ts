@@ -135,11 +135,11 @@ const publishCmd = Command.make(
 
             yield* Effect.log(`[cli] Running: npm ${args.join(" ")}`);
             yield* runCommand(
-              ChildProcess.make({
+              ChildProcess.make("npm", [...args], {
                 cwd: serverDir,
                 stdout: config.verbose ? "inherit" : "ignore",
                 stderr: "inherit",
-              })`npm ${args.join(" ")}`,
+              }),
             );
           }),
         // Release: restore
