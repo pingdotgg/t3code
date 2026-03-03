@@ -546,8 +546,23 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       fs.writeFileSync(path.join(repoDir, "README.md"), "hello\nfeature-branch\n");
+      let generatedCount = 0;
 
-      const { manager } = yield* makeManager();
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: (input) =>
+            Effect.sync(() => {
+              generatedCount += 1;
+              return {
+                subject: "Implement stacked git actions",
+                body: "",
+                ...(input.includeBranch
+                  ? { branch: "feature/implement-stacked-git-actions" }
+                  : {}),
+              };
+            }),
+        },
+      });
       const result = yield* runStackedAction(manager, {
         cwd: repoDir,
         action: "commit_push",
@@ -571,6 +586,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         Effect.map((r) => r.stdout.trim()),
       );
       expect(mergeBase).toBe(mainSha);
+      expect(generatedCount).toBe(1);
     }),
   );
 

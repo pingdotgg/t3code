@@ -16,8 +16,6 @@ export const gitQueryKeys = {
 export const gitMutationKeys = {
   init: (cwd: string | null) => ["git", "mutation", "init", cwd] as const,
   checkout: (cwd: string | null) => ["git", "mutation", "checkout", cwd] as const,
-  createBranchAndCheckout: (cwd: string | null) =>
-    ["git", "mutation", "create-branch-and-checkout", cwd] as const,
   runStackedAction: (cwd: string | null) => ["git", "mutation", "run-stacked-action", cwd] as const,
   pull: (cwd: string | null) => ["git", "mutation", "pull", cwd] as const,
 };
@@ -81,24 +79,6 @@ export function gitCheckoutMutationOptions(input: {
     mutationFn: async (branch: string) => {
       const api = ensureNativeApi();
       if (!input.cwd) throw new Error("Git checkout is unavailable.");
-      return api.git.checkout({ cwd: input.cwd, branch });
-    },
-    onSuccess: async () => {
-      await invalidateGitQueries(input.queryClient);
-    },
-  });
-}
-
-export function gitCreateBranchAndCheckoutMutationOptions(input: {
-  cwd: string | null;
-  queryClient: QueryClient;
-}) {
-  return mutationOptions({
-    mutationKey: gitMutationKeys.createBranchAndCheckout(input.cwd),
-    mutationFn: async (branch: string) => {
-      const api = ensureNativeApi();
-      if (!input.cwd) throw new Error("Git branch creation is unavailable.");
-      await api.git.createBranch({ cwd: input.cwd, branch });
       return api.git.checkout({ cwd: input.cwd, branch });
     },
     onSuccess: async () => {

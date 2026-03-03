@@ -105,6 +105,13 @@ function sanitizeCommitMessage(generated: {
   };
 }
 
+interface CommitAndBranchSuggestion {
+  subject: string;
+  body: string;
+  branch?: string | undefined;
+  commitMessage: string;
+}
+
 function formatCommitMessage(subject: string, body: string): string {
   const trimmedBody = body.trim();
   if (trimmedBody.length === 0) {
@@ -311,13 +318,20 @@ export const makeGitManager = Effect.gen(function* () {
       };
     });
 
-  const runCommitStep = (cwd: string, branch: string | null, commitMessage?: string) =>
+  const runCommitStep = (
+    cwd: string,
+    branch: string | null,
+    commitMessage?: string,
+    preResolvedSuggestion?: CommitAndBranchSuggestion,
+  ) =>
     Effect.gen(function* () {
-      const suggestion = yield* resolveCommitAndBranchSuggestion({
-        cwd,
-        branch,
-        ...(commitMessage ? { commitMessage } : {}),
-      });
+      const suggestion =
+        preResolvedSuggestion ??
+        (yield* resolveCommitAndBranchSuggestion({
+          cwd,
+          branch,
+          ...(commitMessage ? { commitMessage } : {}),
+        }));
       if (!suggestion) {
         return { status: "skipped_no_changes" as const };
       }
@@ -456,6 +470,7 @@ export const makeGitManager = Effect.gen(function* () {
       return {
         branchStep: { status: "created" as const, name: resolvedBranch },
         resolvedCommitMessage: suggestion.commitMessage,
+        resolvedCommitSuggestion: suggestion,
       };
     });
 
@@ -477,6 +492,7 @@ export const makeGitManager = Effect.gen(function* () {
 
       let branchStep: { status: "created" | "skipped_not_requested"; name?: string };
       let commitMessageForStep = input.commitMessage;
+      let preResolvedCommitSuggestion: CommitAndBranchSuggestion | undefined = undefined;
 
       if (input.featureBranch) {
         const result = yield* runFeatureBranchStep(
@@ -486,13 +502,19 @@ export const makeGitManager = Effect.gen(function* () {
         );
         branchStep = result.branchStep;
         commitMessageForStep = result.resolvedCommitMessage;
+        preResolvedCommitSuggestion = result.resolvedCommitSuggestion;
       } else {
         branchStep = { status: "skipped_not_requested" as const };
       }
 
       const currentBranch = branchStep.name ?? initialStatus.branch;
 
-      const commit = yield* runCommitStep(input.cwd, currentBranch, commitMessageForStep);
+      const commit = yield* runCommitStep(
+        input.cwd,
+        currentBranch,
+        commitMessageForStep,
+        preResolvedCommitSuggestion,
+      );
 
       const push = wantsPush
         ? yield* gitCore.pushCurrentBranch(input.cwd, currentBranch)

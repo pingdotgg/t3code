@@ -943,6 +943,11 @@ describe("resolveAutoFeatureBranchName", () => {
     assert.equal(branch, "feature/fix-toast-copy-3");
   });
 
+  it("treats existing branch names as case-insensitive for collision checks", () => {
+    const branch = resolveAutoFeatureBranchName(["Feature/Ticket-1"], "feature/ticket-1");
+    assert.equal(branch, "feature/ticket-1-2");
+  });
+
   it("falls back to feature/update when no preferred name is provided", () => {
     const branch = resolveAutoFeatureBranchName(["main"]);
     assert.equal(branch, "feature/update");
