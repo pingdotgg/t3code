@@ -8,6 +8,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@effect/platform-node": "catalog:",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "effect": "catalog:"
