@@ -1,7 +1,7 @@
 import type { GitBranch, ThreadId } from "@t3tools/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useMemo, useOptimistic, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useOptimistic, useRef, useState, useTransition } from "react";
 
 import { newCommandId } from "../lib/utils";
 import { gitBranchesQueryOptions, invalidateGitQueries } from "../lib/gitReactQuery";
@@ -11,6 +11,7 @@ import { useStore } from "../store";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  resolveBranchToolbarValue,
 } from "./BranchToolbar.logic";
 import { Button } from "./ui/button";
 import {
@@ -49,7 +50,7 @@ export default function BranchToolbar({
 
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
-  const branchListRef = useRef<HTMLDivElement | null>(null);
+  const branchListScrollElementRef = useRef<HTMLDivElement | null>(null);
 
   const serverThread = threads.find((thread) => thread.id === threadId);
   const activeProjectId = serverThread?.projectId ?? draftThread?.projectId ?? null;
@@ -73,10 +74,12 @@ export default function BranchToolbar({
     [branchesQuery.data?.branches],
   );
   const currentGitBranch = branches.find((branch) => branch.current)?.name ?? null;
-  const canonicalActiveBranch =
-    effectiveEnvMode === "worktree" && !activeWorktreePath
-      ? activeThreadBranch
-      : (currentGitBranch ?? activeThreadBranch);
+  const canonicalActiveBranch = resolveBranchToolbarValue({
+    envMode: effectiveEnvMode,
+    activeWorktreePath,
+    activeThreadBranch,
+    currentGitBranch,
+  });
   const branchNames = useMemo(() => branches.map((branch) => branch.name), [branches]);
   const branchByName = useMemo(
     () => new Map(branches.map((branch) => [branch.name, branch] as const)),
@@ -121,50 +124,89 @@ export default function BranchToolbar({
     });
   };
 
+  const setThreadBranch = useCallback(
+    (branch: string | null, worktreePath: string | null) => {
+      if (!activeThreadId) return;
+      const api = readNativeApi();
+      // If the effective cwd is about to change, stop the running session so the
+      // next message creates a new one with the correct cwd.
+      const sessionId = serverThread?.session?.sessionId;
+      if (sessionId && worktreePath !== activeWorktreePath && api) {
+        void api.orchestration
+          .dispatchCommand({
+            type: "thread.session.stop",
+            commandId: newCommandId(),
+            threadId: activeThreadId,
+            createdAt: new Date().toISOString(),
+          })
+          .catch(() => undefined);
+      }
+      if (api && hasServerThread) {
+        void api.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId: activeThreadId,
+          branch,
+          worktreePath,
+        });
+      }
+      if (hasServerThread) {
+        setThreadBranchAction(activeThreadId, branch, worktreePath);
+        return;
+      }
+      setDraftThreadContext(threadId, {
+        branch,
+        worktreePath,
+        envMode: effectiveEnvMode,
+      });
+    },
+    [
+      activeThreadId,
+      serverThread?.session?.sessionId,
+      activeWorktreePath,
+      hasServerThread,
+      setThreadBranchAction,
+      setDraftThreadContext,
+      threadId,
+      effectiveEnvMode,
+    ],
+  );
+
   const branchListVirtualizer = useVirtualizer({
     count: filteredBranchPickerItems.length,
     estimateSize: () => 28,
-    getScrollElement: () => branchListRef.current?.parentElement ?? null,
+    getScrollElement: () => branchListScrollElementRef.current,
     overscan: 12,
     enabled: isBranchMenuOpen,
+    initialRect: {
+      height: 224,
+      width: 0,
+    },
   });
   const virtualBranchRows = branchListVirtualizer.getVirtualItems();
+  const setBranchListRef = useCallback(
+    (element: HTMLDivElement | null) => {
+      branchListScrollElementRef.current = (element?.parentElement as HTMLDivElement | null) ?? null;
+      if (element) {
+        branchListVirtualizer.measure();
+      }
+    },
+    [branchListVirtualizer],
+  );
 
-  const setThreadBranch = (branch: string | null, worktreePath: string | null) => {
-    if (!activeThreadId) return;
-    const api = readNativeApi();
-    // If the effective cwd is about to change, stop the running session so the
-    // next message creates a new one with the correct cwd.
-    const sessionId = serverThread?.session?.sessionId;
-    if (sessionId && worktreePath !== activeWorktreePath && api) {
-      void api.orchestration
-        .dispatchCommand({
-          type: "thread.session.stop",
-          commandId: newCommandId(),
-          threadId: activeThreadId,
-          createdAt: new Date().toISOString(),
-        })
-        .catch(() => undefined);
-    }
-    if (api && hasServerThread) {
-      void api.orchestration.dispatchCommand({
-        type: "thread.meta.update",
-        commandId: newCommandId(),
-        threadId: activeThreadId,
-        branch,
-        worktreePath,
-      });
-    }
-    if (hasServerThread) {
-      setThreadBranchAction(activeThreadId, branch, worktreePath);
+  useEffect(() => {
+    if (effectiveEnvMode !== "worktree" || activeWorktreePath || activeThreadBranch || !currentGitBranch) {
       return;
     }
-    setDraftThreadContext(threadId, {
-      branch,
-      worktreePath,
-      envMode: effectiveEnvMode,
+    setThreadBranch(currentGitBranch, null);
+  }, [activeThreadBranch, activeWorktreePath, currentGitBranch, effectiveEnvMode, setThreadBranch]);
+
+  useEffect(() => {
+    if (!isBranchMenuOpen) return;
+    queueMicrotask(() => {
+      branchListVirtualizer.measure();
     });
-  };
+  }, [branchListVirtualizer, filteredBranchPickerItems.length, isBranchMenuOpen]);
 
   const selectBranch = (branch: GitBranch) => {
     const api = readNativeApi();
@@ -296,7 +338,6 @@ export default function BranchToolbar({
         onOpenChange={(open) => {
           setIsBranchMenuOpen(open);
           if (!open) setBranchQuery("");
-          else void invalidateGitQueries(queryClient);
         }}
         open={isBranchMenuOpen}
         value={resolvedActiveBranch}
@@ -329,7 +370,7 @@ export default function BranchToolbar({
           </div>
           <ComboboxEmpty>No branches found.</ComboboxEmpty>
 
-          <ComboboxList ref={branchListRef} className="max-h-56">
+          <ComboboxList ref={setBranchListRef} className="max-h-56">
             <div
               className="relative"
               style={{
