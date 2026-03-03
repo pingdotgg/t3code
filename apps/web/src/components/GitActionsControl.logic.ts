@@ -204,7 +204,7 @@ export function resolveQuickAction(
   }
 
   if (hasChanges) {
-    if (hasOpenPr || isDefaultBranch) {
+    if (isDefaultBranch) {
       return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
     }
     return {

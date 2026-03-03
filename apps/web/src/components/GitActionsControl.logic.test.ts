@@ -365,7 +365,7 @@ describe("when: working tree has local changes", () => {
     });
   });
 
-  it("resolveQuickAction returns commit and push when open PR exists", () => {
+  it("resolveQuickAction keeps full commit/push/pr flow on non-default branches even when PR exists", () => {
     const quick = resolveQuickAction(
       status({
         hasWorkingTreeChanges: true,
@@ -382,8 +382,8 @@ describe("when: working tree has local changes", () => {
     );
     assert.deepInclude(quick, {
       kind: "run_action",
-      action: "commit_push",
-      label: "Commit & push",
+      action: "commit_push_pr",
+      label: "Commit, push & create PR",
     });
   });
 
