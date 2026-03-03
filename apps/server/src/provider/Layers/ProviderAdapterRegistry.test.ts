@@ -14,6 +14,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const fakeCodexAdapter: CodexAdapterShape = {
   provider: "codex",
+  capabilities: { sessionModelSwitch: "in-session" },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
   interruptTurn: vi.fn(),
@@ -29,6 +30,7 @@ const fakeCodexAdapter: CodexAdapterShape = {
 
 const fakeClaudeAdapter: ClaudeCodeAdapterShape = {
   provider: "claudeCode",
+  capabilities: { sessionModelSwitch: "in-session" },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
   interruptTurn: vi.fn(),
@@ -44,6 +46,7 @@ const fakeClaudeAdapter: ClaudeCodeAdapterShape = {
 
 const fakeCursorAdapter: CursorAdapterShape = {
   provider: "cursor",
+  capabilities: { sessionModelSwitch: "unsupported" },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
   interruptTurn: vi.fn(),

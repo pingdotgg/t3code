@@ -566,6 +566,9 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         Effect.map((sessionsByProvider) => sessionsByProvider.flatMap((sessions) => sessions)),
       );
 
+    const getCapabilities: ProviderServiceShape["getCapabilities"] = (provider) =>
+      registry.getByProvider(provider).pipe(Effect.map((adapter) => adapter.capabilities));
+
     const rollbackConversation: ProviderServiceShape["rollbackConversation"] = (rawInput) =>
       Effect.gen(function* () {
         const input = yield* decodeInputOrValidationError({
@@ -617,6 +620,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       respondToRequest,
       stopSession,
       listSessions,
+      getCapabilities,
       rollbackConversation,
       stopAll,
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),

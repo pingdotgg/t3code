@@ -45,6 +45,7 @@ import { makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "cursor" as const;
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+const CURSOR_ACP_PROTOCOL_VERSION = 1;
 
 interface CursorResumeState {
   readonly acpSessionId?: string;
@@ -91,6 +92,7 @@ export interface CursorAdapterLiveOptions {
     readonly binaryPath: string;
     readonly cwd: string;
     readonly env: NodeJS.ProcessEnv;
+    readonly model?: string;
   }) => ChildProcessWithoutNullStreams;
   readonly nativeEventLogPath?: string;
 }
@@ -272,11 +274,13 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
       readonly binaryPath: string;
       readonly cwd: string;
       readonly env: NodeJS.ProcessEnv;
+      readonly model?: string;
     }): ChildProcessWithoutNullStreams => {
       if (options?.createProcess) {
         return options.createProcess(input);
       }
-      return spawn(input.binaryPath, ["acp"], {
+      const args = input.model ? ["--model", input.model, "acp"] : ["acp"];
+      return spawn(input.binaryPath, args, {
         cwd: input.cwd,
         env: input.env,
         stdio: ["pipe", "pipe", "pipe"],
@@ -862,6 +866,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
               binaryPath,
               cwd,
               env: process.env,
+              ...(input.model ? { model: input.model } : {}),
             }),
           catch: (cause) =>
             new ProviderAdapterProcessError({
@@ -972,7 +977,10 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
         sessions.set(sessionId, context);
 
         const initializeResult = yield* Effect.tryPromise({
-          try: async () => sendRequest(context, "initialize", {}),
+          try: async () =>
+            sendRequest(context, "initialize", {
+              protocolVersion: CURSOR_ACP_PROTOCOL_VERSION,
+            }),
           catch: (cause) => toRequestError(sessionId, "initialize", cause),
         });
         const decodedInitialize = Schema.decodeUnknownSync(CursorAcpInitializeResult)(initializeResult);
@@ -997,10 +1005,74 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
           },
         });
 
-        yield* Effect.tryPromise({
-          try: async () => sendRequest(context, "authenticate", { methodId: "cursor_login" }),
-          catch: () => undefined,
+        const authenticateRequest = { methodId: "cursor_login" };
+        const authStartStamp = yield* makeEventStamp();
+        yield* offerRuntimeEvent({
+          type: "auth.status",
+          eventId: authStartStamp.eventId,
+          provider: PROVIDER,
+          sessionId,
+          createdAt: authStartStamp.createdAt,
+          payload: {
+            isAuthenticating: true,
+          },
+          providerRefs: {
+            providerSessionId: sessionId,
+          },
+          raw: {
+            source: "cursor.acp.request",
+            method: "authenticate",
+            payload: authenticateRequest,
+          },
         });
+
+        const authenticateResult = yield* Effect.tryPromise({
+          try: async () => sendRequest(context, "authenticate", authenticateRequest),
+          catch: (cause) => cause,
+        });
+        const authEndStamp = yield* makeEventStamp();
+        if (authenticateResult instanceof Error) {
+          yield* offerRuntimeEvent({
+            type: "auth.status",
+            eventId: authEndStamp.eventId,
+            provider: PROVIDER,
+            sessionId,
+            createdAt: authEndStamp.createdAt,
+            payload: {
+              isAuthenticating: false,
+              error: toMessage(authenticateResult, "Cursor authentication failed."),
+            },
+            providerRefs: {
+              providerSessionId: sessionId,
+            },
+            raw: {
+              source: "cursor.acp.response",
+              method: "authenticate",
+              payload: {
+                error: toMessage(authenticateResult, "Cursor authentication failed."),
+              },
+            },
+          });
+        } else {
+          yield* offerRuntimeEvent({
+            type: "auth.status",
+            eventId: authEndStamp.eventId,
+            provider: PROVIDER,
+            sessionId,
+            createdAt: authEndStamp.createdAt,
+            payload: {
+              isAuthenticating: false,
+            },
+            providerRefs: {
+              providerSessionId: sessionId,
+            },
+            raw: {
+              source: "cursor.acp.response",
+              method: "authenticate",
+              payload: authenticateResult,
+            },
+          });
+        }
 
         const acpSessionId = yield* Effect.tryPromise({
           try: async () => {
@@ -1356,6 +1428,9 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
 
     return {
       provider: PROVIDER,
+      capabilities: {
+        sessionModelSwitch: "unsupported",
+      },
       startSession,
       sendTurn,
       interruptTurn,

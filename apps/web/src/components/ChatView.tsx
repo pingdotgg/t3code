@@ -137,7 +137,16 @@ import {
   MenuShortcut,
   MenuTrigger,
 } from "./ui/menu";
-import { ClaudeAI, CursorIcon, Gemini, Icon, OpenAI, OpenCodeIcon } from "./Icons";
+import {
+  ClaudeAI,
+  CursorIcon,
+  Gemini,
+  Icon,
+  OpenAI,
+  OpenCodeIcon,
+  VisualStudioCode,
+  Zed,
+} from "./Icons";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { Badge } from "./ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -670,10 +679,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
 
   const sessionProvider = activeThread?.session?.provider ?? null;
-  const selectedProvider: ProviderKind =
-    (activeThread?.id ? selectedProviderByThread[activeThread.id] : undefined) ??
-    sessionProvider ??
-    "codex";
+  const selectedProviderByThreadId = activeThread?.id
+    ? selectedProviderByThread[activeThread.id]
+    : undefined;
+  const hasThreadStarted = Boolean(
+    activeThread &&
+      (activeThread.latestTurn !== null || activeThread.messages.length > 0 || activeThread.session !== null),
+  );
+  const lockedProvider: ProviderKind | null = hasThreadStarted
+    ? (sessionProvider ?? selectedProviderByThreadId ?? null)
+    : null;
+  const selectedProvider: ProviderKind = lockedProvider ?? selectedProviderByThreadId ?? "codex";
+  const cursorModelSelectionLockedReason =
+    hasThreadStarted && selectedProvider === "cursor"
+      ? "Cursor currently does not support changing models after the first message in a thread."
+      : null;
   const baseThreadModel = resolveModelSlugForProvider(
     selectedProvider,
     (activeThread?.id ? selectedModelByThread[activeThread.id] : undefined) ??
@@ -705,7 +725,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedProvider === "cursor" && selectedCursorModel ? selectedCursorModel.family : selectedModel;
   const searchableModelOptions = useMemo(
     () =>
-      PROVIDER_OPTIONS.filter((option) => option.available).flatMap((option) =>
+      PROVIDER_OPTIONS.filter(
+        (option) =>
+          option.available && (lockedProvider === null || option.value === lockedProvider),
+      ).flatMap((option) =>
         getProviderModelPickerOptions(option.value).map(({ slug, name }) => ({
           provider: option.value,
           providerLabel: option.label,
@@ -716,12 +739,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
           searchProvider: option.label.toLowerCase(),
         })),
       ),
-    [],
+    [lockedProvider],
   );
   useEffect(() => {
     if (!activeThread?.id || !sessionProvider) return;
     setSelectedProviderByThread((existing) => {
-      if (existing[activeThread.id]) return existing;
+      if (existing[activeThread.id] === sessionProvider) return existing;
       return { ...existing, [activeThread.id]: sessionProvider };
     });
   }, [activeThread?.id, sessionProvider]);
@@ -2311,8 +2334,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const onProviderModelSelect = useCallback(
     (provider: ProviderKind, model: ModelSlug) => {
-      const api = readNativeApi();
       if (!activeThread) return;
+      if (cursorModelSelectionLockedReason !== null && provider === "cursor") {
+        scheduleComposerFocus();
+        return;
+      }
+      if (lockedProvider !== null && provider !== lockedProvider) {
+        scheduleComposerFocus();
+        return;
+      }
+      const api = readNativeApi();
       const resolvedModel =
         provider === "cursor"
           ? resolveCursorModelFromSelection(parseCursorModelSelection(model))
@@ -2325,7 +2356,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ...existing,
         [activeThread.id]: resolvedModel,
       }));
-      if (api) {
+      if (api && isServerThread) {
         void api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
@@ -2335,7 +2366,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       scheduleComposerFocus();
     },
-    [activeThread, scheduleComposerFocus],
+    [
+      activeThread,
+      cursorModelSelectionLockedReason,
+      isServerThread,
+      lockedProvider,
+      scheduleComposerFocus,
+    ],
   );
   const onCursorReasoningSelect = useCallback(
     (reasoning: CursorReasoningOption) => {
@@ -2816,11 +2853,33 @@ export default function ChatView({ threadId }: ChatViewProps) {
             <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 pb-2.5 sm:flex-nowrap sm:gap-0 sm:px-3 sm:pb-3">
               <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible">
                 {/* Provider/model picker */}
-                <ProviderModelPicker
-                  provider={selectedProvider}
-                  model={selectedModelForPicker}
-                  onProviderModelChange={onProviderModelSelect}
-                />
+                {cursorModelSelectionLockedReason ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span className="inline-flex">
+                          <ProviderModelPicker
+                            provider={selectedProvider}
+                            model={selectedModelForPicker}
+                            lockedProvider={lockedProvider}
+                            disabled
+                            onProviderModelChange={onProviderModelSelect}
+                          />
+                        </span>
+                      }
+                    />
+                    <TooltipPopup side="top" className="max-w-72 whitespace-normal leading-tight">
+                      {cursorModelSelectionLockedReason}
+                    </TooltipPopup>
+                  </Tooltip>
+                ) : (
+                  <ProviderModelPicker
+                    provider={selectedProvider}
+                    model={selectedModelForPicker}
+                    lockedProvider={lockedProvider}
+                    onProviderModelChange={onProviderModelSelect}
+                  />
+                )}
 
                 {selectedProvider === "cursor" ? (
                   <>
@@ -4048,6 +4107,8 @@ function resolveModelForProviderPicker(
 const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   provider: ProviderKind;
   model: ModelSlug;
+  lockedProvider: ProviderKind | null;
+  disabled?: boolean;
   onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -4057,9 +4118,25 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.provider];
 
   return (
-    <Menu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
+    <Menu
+      open={isMenuOpen}
+      onOpenChange={(open) => {
+        if (props.disabled) {
+          setIsMenuOpen(false);
+          return;
+        }
+        setIsMenuOpen(open);
+      }}
+    >
       <MenuTrigger
-        render={<Button size="sm" variant="ghost" className="shrink-0 whitespace-nowrap px-2 sm:px-3" />}
+        render={
+          <Button
+            size="sm"
+            variant="ghost"
+            className="shrink-0 whitespace-nowrap px-2 sm:px-3"
+            disabled={props.disabled}
+          />
+        }
       >
         <span className="flex min-w-0 items-center gap-2">
           <ProviderIcon
@@ -4076,9 +4153,11 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       <MenuPopup align="start">
         {AVAILABLE_PROVIDER_OPTIONS.map((option) => {
           const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
+          const isDisabledByProviderLock =
+            props.lockedProvider !== null && props.lockedProvider !== option.value;
           return (
             <MenuSub key={option.value}>
-              <MenuSubTrigger>
+              <MenuSubTrigger disabled={isDisabledByProviderLock}>
                 <OptionIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/85" />
                 {option.label}
               </MenuSubTrigger>
@@ -4087,6 +4166,8 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   <MenuRadioGroup
                     value={props.provider === option.value ? props.model : ""}
                     onValueChange={(value) => {
+                      if (props.disabled) return;
+                      if (isDisabledByProviderLock) return;
                       if (!value) return;
                       const resolvedModel = resolveModelForProviderPicker(option.value, value);
                       if (!resolvedModel) return;

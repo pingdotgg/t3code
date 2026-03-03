@@ -23,6 +23,15 @@ import type {
 import type { Effect } from "effect";
 import type { Stream } from "effect";
 
+export type ProviderSessionModelSwitchMode = "in-session" | "restart-session" | "unsupported";
+
+export interface ProviderAdapterCapabilities {
+  /**
+   * Declares whether changing the model on an existing session is supported.
+   */
+  readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+}
+
 export interface ProviderThreadTurnSnapshot {
   readonly id: ProviderTurnId;
   readonly items: ReadonlyArray<unknown>;
@@ -38,6 +47,7 @@ export interface ProviderAdapterShape<TError> {
    * Provider kind implemented by this adapter.
    */
   readonly provider: ProviderKind;
+  readonly capabilities: ProviderAdapterCapabilities;
 
   /**
    * Start a provider-backed session.

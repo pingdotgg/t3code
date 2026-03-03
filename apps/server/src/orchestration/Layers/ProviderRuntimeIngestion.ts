@@ -76,12 +76,81 @@ function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
 
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function legacyRuntimeType(event: ProviderRuntimeEvent): string | undefined {
+  return asString((event as Record<string, unknown>).type);
+}
+
+function legacyRuntimeStringField(
+  event: ProviderRuntimeEvent,
+  key: string,
+): string | undefined {
+  return asString((event as Record<string, unknown>)[key]);
+}
+
+function runtimePayloadRecord(event: ProviderRuntimeEvent): Record<string, unknown> | undefined {
+  const payload = (event as { payload?: unknown }).payload;
+  if (!payload || typeof payload !== "object") {
+    return undefined;
+  }
+  return payload as Record<string, unknown>;
+}
+
+function normalizeRuntimeTurnState(
+  value: string | undefined,
+): "completed" | "failed" | "interrupted" | "cancelled" {
+  switch (value) {
+    case "failed":
+    case "interrupted":
+    case "cancelled":
+    case "completed":
+      return value;
+    default:
+      return "completed";
+  }
+}
+
+function runtimeTurnState(
+  event: ProviderRuntimeEvent,
+): "completed" | "failed" | "interrupted" | "cancelled" {
+  const payloadState = asString(runtimePayloadRecord(event)?.state);
+  const legacyStatus = legacyRuntimeStringField(event, "status");
+  return normalizeRuntimeTurnState(payloadState ?? legacyStatus);
+}
+
+function runtimeTurnErrorMessage(event: ProviderRuntimeEvent): string | undefined {
+  const payloadErrorMessage = asString(runtimePayloadRecord(event)?.errorMessage);
+  const legacyErrorMessage = legacyRuntimeStringField(event, "errorMessage");
+  return payloadErrorMessage ?? legacyErrorMessage;
+}
+
+function runtimeErrorMessageFromEvent(event: ProviderRuntimeEvent): string | undefined {
+  const payloadMessage = asString(runtimePayloadRecord(event)?.message);
+  const legacyMessage = legacyRuntimeStringField(event, "message");
+  return payloadMessage ?? legacyMessage;
+}
+
+function isToolLifecycleItemType(itemType: string): boolean {
+  return (
+    itemType === "command_execution" ||
+    itemType === "file_change" ||
+    itemType === "mcp_tool_call" ||
+    itemType === "dynamic_tool_call" ||
+    itemType === "collab_agent_tool_call" ||
+    itemType === "web_search" ||
+    itemType === "image_view"
+  );
+}
+
 function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
 ): ReadonlyArray<OrchestrationThreadActivity> {
   const maybeSequence = event.sessionSequence !== undefined ? { sequence: event.sessionSequence } : {};
   switch (event.type) {
-    case "approval.requested": {
+    case "request.opened": {
       return [
         {
           id: event.eventId,
@@ -89,13 +158,15 @@ function runtimeEventToActivities(
           tone: "approval",
           kind: "approval.requested",
           summary:
-            event.requestKind === "command"
+            event.payload.requestType === "command_execution_approval"
               ? "Command approval requested"
-              : "File-change approval requested",
+              : event.payload.requestType === "file_change_approval"
+                ? "File-change approval requested"
+                : "Approval requested",
           payload: {
             requestId: event.requestId,
-            requestKind: event.requestKind,
-            ...(event.detail ? { detail: truncateDetail(event.detail) } : {}),
+            requestType: event.payload.requestType,
+            ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -103,7 +174,7 @@ function runtimeEventToActivities(
       ];
     }
 
-    case "approval.resolved": {
+    case "request.resolved": {
       return [
         {
           id: event.eventId,
@@ -113,8 +184,8 @@ function runtimeEventToActivities(
           summary: "Approval resolved",
           payload: {
             requestId: event.requestId,
-            ...(event.requestKind ? { requestKind: event.requestKind } : {}),
-            ...(event.decision ? { decision: event.decision } : {}),
+            requestType: event.payload.requestType,
+            ...(event.payload.decision ? { decision: event.payload.decision } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -123,6 +194,10 @@ function runtimeEventToActivities(
     }
 
     case "runtime.error": {
+      const message = runtimeErrorMessageFromEvent(event);
+      if (!message) {
+        return [];
+      }
       return [
         {
           id: event.eventId,
@@ -131,7 +206,7 @@ function runtimeEventToActivities(
           kind: "runtime.error",
           summary: "Runtime error",
           payload: {
-            message: truncateDetail(event.message),
+            message: truncateDetail(message),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -139,17 +214,20 @@ function runtimeEventToActivities(
       ];
     }
 
-    case "tool.completed": {
+    case "item.completed": {
+      if (!isToolLifecycleItemType(event.payload.itemType)) {
+        return [];
+      }
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
           tone: "tool",
           kind: "tool.completed",
-          summary: `${event.title} complete`,
+          summary: `${event.payload.title ?? "Tool"} complete`,
           payload: {
-            toolKind: event.toolKind,
-            ...(event.detail ? { detail: truncateDetail(event.detail) } : {}),
+            itemType: event.payload.itemType,
+            ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -157,17 +235,95 @@ function runtimeEventToActivities(
       ];
     }
 
-    case "tool.started": {
+    case "item.started": {
+      if (!isToolLifecycleItemType(event.payload.itemType)) {
+        return [];
+      }
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
           tone: "tool",
           kind: "tool.started",
-          summary: `${event.title} started`,
+          summary: `${event.payload.title ?? "Tool"} started`,
           payload: {
-            toolKind: event.toolKind,
-            ...(event.detail ? { detail: truncateDetail(event.detail) } : {}),
+            itemType: event.payload.itemType,
+            ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    default:
+      break;
+  }
+
+  // Backward-compatibility for legacy event shapes still emitted by older tests/adapters.
+  const legacyType = legacyRuntimeType(event);
+  switch (legacyType) {
+    case "approval.requested": {
+      const detail = legacyRuntimeStringField(event, "detail");
+      const requestKind = legacyRuntimeStringField(event, "requestKind");
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "approval",
+          kind: "approval.requested",
+          summary:
+            requestKind === "command"
+              ? "Command approval requested"
+              : "File-change approval requested",
+          payload: {
+            requestId: event.requestId,
+            ...(requestKind ? { requestKind } : {}),
+            ...(detail ? { detail: truncateDetail(detail) } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "approval.resolved": {
+      const decision = legacyRuntimeStringField(event, "decision");
+      const requestKind = legacyRuntimeStringField(event, "requestKind");
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "approval",
+          kind: "approval.resolved",
+          summary: "Approval resolved",
+          payload: {
+            requestId: event.requestId,
+            ...(requestKind ? { requestKind } : {}),
+            ...(decision ? { decision } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "tool.completed":
+    case "tool.started": {
+      const title = legacyRuntimeStringField(event, "title") ?? "Tool";
+      const detail = legacyRuntimeStringField(event, "detail");
+      const toolKind = legacyRuntimeStringField(event, "toolKind");
+      const activityKind = legacyType;
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "tool",
+          kind: activityKind,
+          summary: `${title} ${legacyType === "tool.started" ? "started" : "complete"}`,
+          payload: {
+            ...(toolKind ? { toolKind } : {}),
+            ...(detail ? { detail: truncateDetail(detail) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -296,9 +452,12 @@ const make = Effect.gen(function* () {
     createdAt: string;
     commandTag: string;
     finalDeltaCommandTag: string;
+    fallbackText?: string;
   }) =>
     Effect.gen(function* () {
-      const text = yield* takeBufferedAssistantText(input.messageId);
+      const bufferedText = yield* takeBufferedAssistantText(input.messageId);
+      const text =
+        bufferedText.length > 0 ? bufferedText : (input.fallbackText?.trim().length ?? 0) > 0 ? input.fallbackText! : "";
 
       if (text.length > 0) {
         yield* orchestrationEngine.dispatch({
@@ -356,6 +515,7 @@ const make = Effect.gen(function* () {
       );
       if (!thread) return;
 
+      const legacyType = legacyRuntimeType(event);
       const now = event.createdAt;
       const sessionProviderThreadId = thread.session?.providerThreadId ?? null;
       const scopedSessionProviderThreadId = isSyntheticClaudeThreadId(
@@ -365,7 +525,7 @@ const make = Effect.gen(function* () {
         ? null
         : sessionProviderThreadId;
       const eventProviderThreadId = toProviderThreadId(event.threadId);
-      const eventTurnId = toTurnId("turnId" in event ? event.turnId : undefined);
+      const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
 
       const matchesThreadScope =
@@ -448,7 +608,7 @@ const make = Effect.gen(function* () {
             case "session.exited":
               return "stopped";
             case "turn.completed":
-              return event.status === "failed" ? "error" : "ready";
+              return runtimeTurnState(event) === "failed" ? "error" : "ready";
             case "session.started":
             case "thread.started":
               // Provider thread/session start notifications can arrive during an
@@ -457,8 +617,8 @@ const make = Effect.gen(function* () {
           }
         })();
         const lastError =
-          event.type === "turn.completed" && event.status === "failed"
-            ? (event.errorMessage ?? thread.session?.lastError ?? "Turn failed")
+          event.type === "turn.completed" && runtimeTurnState(event) === "failed"
+            ? (runtimeTurnErrorMessage(event) ?? thread.session?.lastError ?? "Turn failed")
             : status === "ready"
               ? null
               : (thread.session?.lastError ?? null);
@@ -485,7 +645,14 @@ const make = Effect.gen(function* () {
         }
       }
 
-      if (event.type === "message.delta" && event.delta.length > 0) {
+      const assistantDelta =
+        event.type === "content.delta" && event.payload.streamKind === "assistant_text"
+          ? event.payload.delta
+          : legacyType === "message.delta"
+            ? legacyRuntimeStringField(event, "delta")
+            : undefined;
+
+      if (assistantDelta && assistantDelta.length > 0) {
         const assistantMessageId = MessageId.makeUnsafe(
           `assistant:${event.itemId ?? event.turnId ?? event.sessionId}`,
         );
@@ -496,7 +663,7 @@ const make = Effect.gen(function* () {
 
         const assistantDeliveryMode = yield* Ref.get(assistantDeliveryModeRef);
         if (assistantDeliveryMode === "buffered") {
-          const spillChunk = yield* appendBufferedAssistantText(assistantMessageId, event.delta);
+          const spillChunk = yield* appendBufferedAssistantText(assistantMessageId, assistantDelta);
           if (spillChunk.length > 0) {
             yield* orchestrationEngine.dispatch({
               type: "thread.message.assistant.delta",
@@ -514,15 +681,28 @@ const make = Effect.gen(function* () {
             commandId: providerCommandId(event, "assistant-delta"),
             threadId: thread.id,
             messageId: assistantMessageId,
-            delta: event.delta,
+            delta: assistantDelta,
             ...(turnId ? { turnId } : {}),
             createdAt: now,
           });
         }
       }
 
-      if (event.type === "message.completed") {
-        const assistantMessageId = MessageId.makeUnsafe(`assistant:${event.itemId}`);
+      const assistantCompletion =
+        event.type === "item.completed" && event.payload.itemType === "assistant_message"
+          ? {
+              messageId: MessageId.makeUnsafe(`assistant:${event.itemId ?? event.turnId ?? event.sessionId}`),
+              fallbackText: event.payload.detail,
+            }
+          : legacyType === "message.completed"
+            ? {
+                messageId: MessageId.makeUnsafe(`assistant:${event.itemId ?? event.turnId ?? event.sessionId}`),
+                fallbackText: undefined,
+              }
+            : undefined;
+
+      if (assistantCompletion) {
+        const assistantMessageId = assistantCompletion.messageId;
         const turnId = toTurnId(event.turnId);
         if (turnId) {
           yield* rememberAssistantMessageId(event.sessionId, turnId, assistantMessageId);
@@ -536,6 +716,7 @@ const make = Effect.gen(function* () {
           createdAt: now,
           commandTag: "assistant-complete",
           finalDeltaCommandTag: "assistant-delta-finalize",
+          fallbackText: assistantCompletion.fallbackText,
         });
 
         if (turnId) {
@@ -570,6 +751,8 @@ const make = Effect.gen(function* () {
       }
 
       if (event.type === "runtime.error") {
+        const runtimeErrorMessage = runtimeErrorMessageFromEvent(event) ?? "Provider runtime error";
+
         const shouldApplyRuntimeError = !STRICT_PROVIDER_LIFECYCLE_GUARD
           ? true
           : matchesThreadScope &&
@@ -596,7 +779,7 @@ const make = Effect.gen(function* () {
               approvalPolicy: thread.session?.approvalPolicy ?? DEFAULT_APPROVAL_POLICY,
               sandboxMode: thread.session?.sandboxMode ?? DEFAULT_SANDBOX_MODE,
               activeTurnId: eventTurnId ?? null,
-              lastError: event.message,
+              lastError: runtimeErrorMessage,
               updatedAt: now,
             },
             createdAt: now,

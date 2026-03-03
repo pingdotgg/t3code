@@ -1,0 +1,46 @@
+{
+  "ts": "2026-03-03T07:05:34.357Z",
+  "sessionId": null,
+  "reason": "Missing sessionId from session/new",
+  "results": [
+    {
+      "timeout": true,
+      "id": 1,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {
+          "fs": {
+            "readTextFile": false,
+            "writeTextFile": false
+          },
+          "terminal": false
+        },
+        "clientInfo": {
+          "name": "t3-cursor-acp-method-probe",
+          "version": "0.1.0"
+        }
+      }
+    },
+    {
+      "timeout": true,
+      "id": 2,
+      "method": "authenticate",
+      "params": {
+        "methodId": "cursor_login"
+      }
+    },
+    {
+      "timeout": true,
+      "id": 3,
+      "method": "session/new",
+      "params": {
+        "cwd": "/Users/julius/.t3/worktrees/codething-mvp/codething-648ca884",
+        "mcpServers": [],
+        "model": "gpt-5.3-codex"
+      }
+    }
+  ],
+  "notificationMethods": [],
+  "notificationSamples": []
+}

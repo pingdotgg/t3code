@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import type { ProviderRuntimeEvent, ProviderSession } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
@@ -100,10 +104,15 @@ describe("ProviderCommandReactor", () => {
         typeof input === "object" && input !== null && "resumeCursor" in input
           ? input.resumeCursor
           : undefined;
+      const model =
+        typeof input === "object" && input !== null && "model" in input && typeof input.model === "string"
+          ? input.model
+          : undefined;
       const session: ProviderSession = {
         sessionId: asSessionId(`sess-${sessionIndex}`),
         provider,
         status: "ready" as const,
+        ...(model !== undefined ? { model } : {}),
         threadId: ProviderThreadId.makeUnsafe(`provider-thread-${sessionIndex}`),
         resumeCursor: resumeCursor ?? { opaque: `cursor-${sessionIndex}` },
         createdAt: now,
@@ -135,6 +144,25 @@ describe("ProviderCommandReactor", () => {
         }
       }),
     );
+    const renameBranch = vi.fn((input: unknown) =>
+      Effect.succeed({
+        branch:
+          typeof input === "object" &&
+          input !== null &&
+          "newBranch" in input &&
+          typeof input.newBranch === "string"
+            ? input.newBranch
+            : "renamed-branch",
+      }),
+    );
+    const generateBranchName = vi.fn(() =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateBranchName",
+          detail: "disabled in test harness",
+        }),
+      ),
+    );
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
     const service: ProviderServiceShape = {
@@ -144,6 +172,10 @@ describe("ProviderCommandReactor", () => {
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
       listSessions: () => Effect.succeed(runtimeSessions),
+      getCapabilities: (provider) =>
+        Effect.succeed({
+          sessionModelSwitch: provider === "cursor" ? "unsupported" : "in-session",
+        }),
       rollbackConversation: () => unsupported(),
       stopAll: () => Effect.void,
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
@@ -369,6 +401,111 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 2);
     expect(harness.startSession.mock.calls.length).toBe(1);
     expect(harness.stopSession.mock.calls.length).toBe(0);
+  });
+
+  it("reuses the same cursor session when requested model is unchanged", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-cursor-model-same-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-cursor-model-same-1"),
+          role: "user",
+          text: "first",
+          attachments: [],
+        },
+        provider: "cursor",
+        model: "composer-1.5",
+        approvalPolicy: "on-request",
+        sandboxMode: "workspace-write",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-cursor-model-same-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-cursor-model-same-2"),
+          role: "user",
+          text: "second",
+          attachments: [],
+        },
+        provider: "cursor",
+        model: "composer-1.5",
+        approvalPolicy: "on-request",
+        sandboxMode: "workspace-write",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.startSession.mock.calls.length).toBe(1);
+    expect(harness.stopSession.mock.calls.length).toBe(0);
+  });
+
+  it("keeps cursor session/model when model change is unsupported", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-cursor-model-change-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-cursor-model-change-1"),
+          role: "user",
+          text: "first",
+          attachments: [],
+        },
+        provider: "cursor",
+        model: "gpt-5.3-codex",
+        approvalPolicy: "on-request",
+        sandboxMode: "workspace-write",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-cursor-model-change-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-cursor-model-change-2"),
+          role: "user",
+          text: "second",
+          attachments: [],
+        },
+        provider: "cursor",
+        model: "composer-1.5",
+        approvalPolicy: "on-request",
+        sandboxMode: "workspace-write",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+
+    expect(harness.stopSession.mock.calls.length).toBe(0);
+    expect(harness.startSession.mock.calls.length).toBe(1);
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+      sessionId: asSessionId("sess-1"),
+      model: "gpt-5.3-codex",
+    });
   });
 
   it("restarts the provider session when runtime mode changes", async () => {

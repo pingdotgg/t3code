@@ -13,6 +13,7 @@
  */
 import type {
   ProviderInterruptTurnInput,
+  ProviderKind,
   ProviderRespondToRequestInput,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
@@ -27,6 +28,7 @@ import { ServiceMap } from "effect";
 import type { Effect, Stream } from "effect";
 
 import type { ProviderServiceError } from "../Errors.ts";
+import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
 
 /**
  * ProviderServiceShape - Service API for provider session and turn orchestration.
@@ -74,6 +76,13 @@ export interface ProviderServiceShape {
    * Aggregates runtime session lists from all registered adapters.
    */
   readonly listSessions: () => Effect.Effect<ReadonlyArray<ProviderSession>>;
+
+  /**
+   * Read static capabilities for a provider adapter.
+   */
+  readonly getCapabilities: (
+    provider: ProviderKind,
+  ) => Effect.Effect<ProviderAdapterCapabilities, ProviderServiceError>;
 
   /**
    * Roll back provider conversation state by a number of turns.
