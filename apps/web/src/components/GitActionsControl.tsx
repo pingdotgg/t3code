@@ -57,6 +57,8 @@ interface PendingDefaultBranchAction {
   onConfirmed?: () => void;
 }
 
+type GitActionToastId = ReturnType<typeof toastManager.add>;
+
 function getMenuActionDisabledReason(
   item: GitActionMenuItem,
   gitStatus: GitStatusResult | null,
@@ -180,19 +182,10 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     const current = branchList?.branches.find((branch) => branch.name === branchName);
     return current?.isDefault ?? (branchName === "main" || branchName === "master");
   }, [branchList?.branches, gitStatusForActions?.branch]);
-  const isDefaultBranchName = useCallback(
-    (branchName: string | null | undefined) => {
-      if (!branchName) return false;
-      const defaultBranchName = branchList?.branches.find((branch) => branch.isDefault)?.name;
-      if (defaultBranchName) return branchName === defaultBranchName;
-      return branchName === "main" || branchName === "master";
-    },
-    [branchList?.branches],
-  );
 
   const gitActionMenuItems = useMemo(
-    () => buildMenuItems(gitStatusForActions, isGitActionRunning, isDefaultBranch),
-    [gitStatusForActions, isGitActionRunning, isDefaultBranch],
+    () => buildMenuItems(gitStatusForActions, isGitActionRunning),
+    [gitStatusForActions, isGitActionRunning],
   );
   const quickAction = useMemo(
     () => resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultBranch),
@@ -245,26 +238,28 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       forcePushOnlyProgress = false,
       onConfirmed,
       skipDefaultBranchPrompt = false,
+      statusOverride,
       featureBranch = false,
       isDefaultBranchOverride,
+      progressToastId,
     }: {
       action: GitStackedAction;
       commitMessage?: string;
       forcePushOnlyProgress?: boolean;
       onConfirmed?: () => void;
       skipDefaultBranchPrompt?: boolean;
+      statusOverride?: GitStatusResult | null;
       featureBranch?: boolean;
       isDefaultBranchOverride?: boolean;
+      progressToastId?: GitActionToastId;
     }) => {
-      const actionStatus = gitStatusForActions;
+      const actionStatus = statusOverride ?? gitStatusForActions;
       const actionBranch = actionStatus?.branch ?? null;
-      const actionIsDefaultBranch =
-        isDefaultBranchOverride ?? (featureBranch ? false : isDefaultBranchName(actionBranch));
+      const actionIsDefaultBranch = isDefaultBranchOverride ?? (featureBranch ? false : isDefaultBranch);
       const includesCommit =
         !forcePushOnlyProgress && (action === "commit" || !!actionStatus?.hasWorkingTreeChanges);
       if (
         !skipDefaultBranchPrompt &&
-        !featureBranch &&
         requiresDefaultBranchConfirmation(action, actionIsDefaultBranch) &&
         actionBranch
       ) {
@@ -292,17 +287,28 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         featureBranch,
         ...(pushTarget ? { pushTarget } : {}),
       });
-      const progressToastId = toastManager.add({
-        type: "loading",
-        title: progressStages[0] ?? "Running git action...",
-        timeout: 0,
-        data: threadToastData,
-      });
+      const resolvedProgressToastId =
+        progressToastId ??
+        toastManager.add({
+          type: "loading",
+          title: progressStages[0] ?? "Running git action...",
+          timeout: 0,
+          data: threadToastData,
+        });
+
+      if (progressToastId) {
+        toastManager.update(progressToastId, {
+          type: "loading",
+          title: progressStages[0] ?? "Running git action...",
+          timeout: 0,
+          data: threadToastData,
+        });
+      }
 
       let stageIndex = 0;
       const stageInterval = setInterval(() => {
         stageIndex = Math.min(stageIndex + 1, progressStages.length - 1);
-        toastManager.update(progressToastId, {
+        toastManager.update(resolvedProgressToastId, {
           title: progressStages[stageIndex] ?? "Running git action...",
           type: "loading",
           timeout: 0,
@@ -338,10 +344,10 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
           result.push.status === "pushed" &&
           !actionIsDefaultBranch;
         const closeResultToast = () => {
-          toastManager.close(progressToastId);
+          toastManager.close(resolvedProgressToastId);
         };
 
-        toastManager.update(progressToastId, {
+        toastManager.update(resolvedProgressToastId, {
           type: "success",
           title: resultToast.title,
           description: resultToast.description,
@@ -359,8 +365,8 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                       action: "commit_push",
                       forcePushOnlyProgress: true,
                       onConfirmed: closeResultToast,
-                      ...(featureBranch ? { skipDefaultBranchPrompt: true } : {}),
-                      ...(featureBranch ? { isDefaultBranchOverride: false } : {}),
+                      statusOverride: actionStatus,
+                      isDefaultBranchOverride: actionIsDefaultBranch,
                     });
                   },
                 },
@@ -386,8 +392,8 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                         void runGitActionWithToast({
                           action: "commit_push_pr",
                           forcePushOnlyProgress: true,
-                          ...(featureBranch ? { skipDefaultBranchPrompt: true } : {}),
-                          ...(featureBranch ? { isDefaultBranchOverride: false } : {}),
+                          statusOverride: actionStatus,
+                          isDefaultBranchOverride: actionIsDefaultBranch,
                         });
                       },
                     },
@@ -396,7 +402,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         });
       } catch (err) {
         stopProgressUpdates();
-        toastManager.update(progressToastId, {
+        toastManager.update(resolvedProgressToastId, {
           type: "error",
           title: "Action failed",
           description: err instanceof Error ? err.message : "An error occurred.",
@@ -406,7 +412,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     },
 
     [
-      isDefaultBranchName,
+      isDefaultBranch,
       runImmediateGitActionMutation,
       setPendingDefaultBranchAction,
       threadToastData,
@@ -424,7 +430,6 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       forcePushOnlyProgress,
       ...(onConfirmed ? { onConfirmed } : {}),
       skipDefaultBranchPrompt: true,
-      isDefaultBranchOverride: true,
     });
   }, [pendingDefaultBranchAction, runGitActionWithToast]);
 

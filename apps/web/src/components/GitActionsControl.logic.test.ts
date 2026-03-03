@@ -250,20 +250,15 @@ describe("when: branch is clean, ahead, and has no open PR", () => {
 });
 
 describe("when: branch is clean, up to date, and has no open PR", () => {
-  it("resolveQuickAction offers create PR", () => {
+  it("resolveQuickAction returns disabled no-action state", () => {
     const quick = resolveQuickAction(
       status({ aheadCount: 0, behindCount: 0, hasWorkingTreeChanges: false, pr: null }),
       false,
     );
-    assert.deepInclude(quick, {
-      kind: "run_action",
-      action: "commit_push_pr",
-      label: "Create PR",
-      disabled: false,
-    });
+    assert.deepInclude(quick, { kind: "show_hint", label: "Commit", disabled: true });
   });
 
-  it("buildMenuItems enables create PR and keeps commit/push disabled", () => {
+  it("buildMenuItems disables commit, push, and create PR", () => {
     const items = buildMenuItems(status({ aheadCount: 0, behindCount: 0, pr: null }), false);
     assert.deepEqual(items, [
       {
@@ -285,24 +280,12 @@ describe("when: branch is clean, up to date, and has no open PR", () => {
       {
         id: "pr",
         label: "Create PR",
-        disabled: false,
+        disabled: true,
         icon: "pr",
         kind: "open_dialog",
         dialogAction: "create_pr",
       },
     ]);
-  });
-
-  it("buildMenuItems keeps create PR disabled on default branch", () => {
-    const items = buildMenuItems(status({ branch: "main", aheadCount: 0, behindCount: 0 }), false, true);
-    assert.deepEqual(items[2], {
-      id: "pr",
-      label: "Create PR",
-      disabled: true,
-      icon: "pr",
-      kind: "open_dialog",
-      dialogAction: "create_pr",
-    });
   });
 });
 
@@ -365,7 +348,7 @@ describe("when: working tree has local changes", () => {
     });
   });
 
-  it("resolveQuickAction keeps full commit/push/pr flow on non-default branches even when PR exists", () => {
+  it("resolveQuickAction returns commit and push when open PR exists", () => {
     const quick = resolveQuickAction(
       status({
         hasWorkingTreeChanges: true,
@@ -382,8 +365,8 @@ describe("when: working tree has local changes", () => {
     );
     assert.deepInclude(quick, {
       kind: "run_action",
-      action: "commit_push_pr",
-      label: "Commit, push & create PR",
+      action: "commit_push",
+      label: "Commit & push",
     });
   });
 
