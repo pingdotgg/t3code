@@ -273,7 +273,8 @@ jobs:
         run: bun run build --filter=@t3tools/web --filter=t3
 
       - name: Publish CLI package
-        run: bun --cwd apps/server publish --access public --tag alpha
+        run: bun publish --access public --tag alpha
+        working-directory: apps/server
 
   release:
     name: Publish GitHub Release
