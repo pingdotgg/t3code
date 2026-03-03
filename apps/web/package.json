@@ -44,6 +44,7 @@
     "babel-plugin-react-compiler": "^19.0.0-beta-e552027-20250112",
     "tailwindcss": "^4.0.0",
     "typescript": "catalog:",
-    "vite": "^8.0.0-beta.12"
+    "vite": "^8.0.0-beta.12",
+    "vitest": "catalog:"
   }
 }
