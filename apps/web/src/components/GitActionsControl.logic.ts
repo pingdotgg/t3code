@@ -282,7 +282,7 @@ export function requiresDefaultBranchConfirmation(
   isDefaultBranch: boolean,
 ): boolean {
   if (!isDefaultBranch) return false;
-  return action === "commit_push";
+  return action === "commit_push" || action === "commit_push_pr";
 }
 
 export function resolveDefaultBranchActionDialogCopy(input: {

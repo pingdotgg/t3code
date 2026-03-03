@@ -347,6 +347,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                       action: "commit_push",
                       forcePushOnlyProgress: true,
                       onConfirmed: closeResultToast,
+                      featureBranch,
                     });
                   },
                 },
@@ -372,6 +373,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                         void runGitActionWithToast({
                           action: "commit_push_pr",
                           forcePushOnlyProgress: true,
+                          featureBranch,
                         });
                       },
                     },
