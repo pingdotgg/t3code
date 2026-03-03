@@ -1,13 +1,12 @@
 /**
- * ServerConfig and NetService - Runtime configuration services.
+ * ServerConfig - Runtime configuration services.
  *
  * Defines process-level server configuration and networking helpers used by
  * startup and runtime layers.
  *
  * @module ServerConfig
  */
-import * as Net from "node:net";
-import { Data, Effect, FileSystem, Layer, Path, ServiceMap } from "effect";
+import { Effect, FileSystem, Layer, Path, ServiceMap } from "effect";
 
 export const DEFAULT_PORT = 3773;
 
@@ -58,68 +57,6 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
         };
       }),
     );
-}
-
-// Helpers
-
-export class NetError extends Data.TaggedError("NetError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
-
-/**
- * NetServiceShape - Networking helper operations used during startup.
- */
-export interface NetServiceShape {
-  /**
-   * Resolve an available listening port, preferring the provided port first.
-   *
-   * Falls back to an ephemeral OS-assigned port when the preferred port is in use.
-   */
-  readonly findAvailablePort: (preferred: number) => Effect.Effect<number, NetError>;
-}
-
-/**
- * NetService - Service tag for startup networking helpers.
- */
-export class NetService extends ServiceMap.Service<NetService, NetServiceShape>()(
-  "t3/config/NetService",
-) {
-  static readonly layer = Layer.succeed(NetService, {
-    findAvailablePort: (preferred) =>
-      Effect.callback<number, NetError>((resume) => {
-        let fallbackServer: Net.Server | null = null;
-        const server = Net.createServer();
-        server.listen(preferred, () => {
-          server.close(() => resume(Effect.succeed(preferred)));
-        });
-        server.on("error", () => {
-          const fallback = Net.createServer();
-          fallback.listen(0, () => {
-            const addr = fallback.address();
-            const port = typeof addr === "object" && addr !== null ? addr.port : 0;
-            fallback.close(() => {
-              resume(
-                port > 0
-                  ? Effect.succeed(port)
-                  : Effect.fail(new NetError({ message: "Could not find an available port." })),
-              );
-            });
-          });
-          fallback.on("error", (cause) => {
-            resume(
-              Effect.fail(new NetError({ message: "Failed to find an available port", cause })),
-            );
-          });
-          fallbackServer = fallback;
-        });
-
-        return Effect.sync(() => {
-          server.close();
-          fallbackServer?.close();
-        });
-      }),
-  });
 }
 
 export const resolveStaticDir = Effect.fn(function* () {

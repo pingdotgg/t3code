@@ -10,7 +10,7 @@ import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Config, Data, Effect, FileSystem, Logger, Option, Path, Schema } from "effect";
+import { Config, Data, Effect, FileSystem, Layer, Logger, Option, Path, Schema } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -23,6 +23,7 @@ const RepoRoot = Effect.service(Path.Path).pipe(
 const IconSource = Effect.zipWith(RepoRoot, Effect.service(Path.Path), (repoRoot, path) =>
   path.join(repoRoot, "assets/macos-icon-1024.png"),
 );
+const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
 
 interface PlatformConfig {
   readonly cliFlag: "--mac" | "--linux" | "--win";
@@ -290,9 +291,9 @@ function validateBundledClientAssets(clientDir: string) {
     const path = yield* Path.Path;
     const indexPath = path.join(clientDir, "index.html");
     const indexHtml = yield* fs.readFileString(indexPath);
-    const refs = [...indexHtml.matchAll(/\b(?:src|href)=["']([^"']+)["']/g)].map(
-      (match) => match[1],
-    );
+    const refs = [...indexHtml.matchAll(/\b(?:src|href)=["']([^"']+)["']/g)]
+      .map((match) => match[1])
+      .filter((value): value is string => value !== undefined);
     const missing: string[] = [];
 
     for (const ref of refs) {
@@ -505,10 +506,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     },
   };
 
-  yield* fs.writeFileString(
-    path.join(stageAppDir, "package.json"),
-    `${JSON.stringify(stagePackageJson, null, 2)}\n`,
-  );
+  const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
+  yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
 
   yield* Effect.log("[desktop-artifact] Installing staged production dependencies...");
   yield* runCommand(
@@ -626,9 +625,10 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   Command.withHandler((input) => Effect.flatMap(resolveBuildOptions(input), buildDesktopArtifact)),
 );
 
+const cliRuntimeLayer = Layer.mergeAll(Logger.layer([Logger.consolePretty()]), NodeServices.layer);
+
 Command.run(buildDesktopArtifactCli, { version: "0.0.0" }).pipe(
   Effect.scoped,
-  Effect.provide(Logger.layer([Logger.consolePretty()])),
-  Effect.provide(NodeServices.layer),
+  Effect.provide(cliRuntimeLayer),
   NodeRuntime.runMain,
 );

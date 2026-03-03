@@ -27,9 +27,9 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@effect/language-service": "0.75.1",
+    "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
-    "tsdown": "^0.20.3",
-    "typescript": "^5.7.3"
+    "tsdown": "catalog:",
+    "typescript": "catalog:"
   }
 }

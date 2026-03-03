@@ -1,14 +1,15 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
+import { Effect } from "effect";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
+import { NetService } from "@t3tools/shared/Net";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { fixPath } from "./fixPath";
 
@@ -347,24 +348,6 @@ function configureAppIdentity(): void {
   }
 }
 
-async function reserveLoopbackPort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const probe = net.createServer();
-    probe.listen(0, "127.0.0.1", () => {
-      const address = probe.address();
-      const port = typeof address === "object" && address !== null ? address.port : 0;
-      probe.close(() => {
-        if (port > 0) {
-          resolve(port);
-          return;
-        }
-        reject(new Error("Failed to reserve backend port"));
-      });
-    });
-    probe.on("error", reject);
-  });
-}
-
 function backendEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
@@ -621,7 +604,12 @@ function createWindow(): BrowserWindow {
 configureAppIdentity();
 
 async function bootstrap(): Promise<void> {
-  backendPort = await reserveLoopbackPort();
+  backendPort = await Effect.service(NetService).pipe(
+    Effect.flatMap((net) => net.reserveLoopbackPort()),
+    Effect.flatMap((port) => Effect.succeed(port)),
+    Effect.provide(NetService.layer),
+    Effect.runPromise,
+  );
   backendAuthToken = randomBytes(24).toString("hex");
   backendWsUrl = `ws://127.0.0.1:${backendPort}/?token=${encodeURIComponent(backendAuthToken)}`;
   process.env.T3CODE_DESKTOP_WS_URL = backendWsUrl;

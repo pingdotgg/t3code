@@ -1,30 +1,21 @@
 {
-  "name": "@t3tools/shared",
-  "version": "0.0.0-alpha.1",
+  "name": "@t3tools/scripts",
   "private": true,
   "type": "module",
-  "exports": {
-    "./git": {
-      "types": "./src/git.ts",
-      "import": "./src/git.ts"
-    },
-    "./Net": {
-      "types": "./src/Net.ts",
-      "import": "./src/Net.ts"
-    }
-  },
   "scripts": {
     "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
-    "@types/node": "catalog:",
+    "@types/bun": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

@@ -6,9 +6,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Command from "effect/unstable/cli/Command";
 import { beforeEach } from "vitest";
+import { NetService } from "@t3tools/shared/Net";
 
 import { CliConfig, t3Cli, type CliConfigShape } from "./main";
-import { NetService, ServerConfig, type ServerConfigShape } from "./config";
+import { ServerConfig, type ServerConfigShape } from "./config";
 import { Open, type OpenShape } from "./open";
 import { Server, type ServerShape } from "./wsServer";
 
@@ -33,6 +34,9 @@ const testLayer = Layer.mergeAll(
     resolveStaticDir: Effect.undefined,
   } satisfies CliConfigShape),
   Layer.succeed(NetService, {
+    canListenOnHost: () => Effect.succeed(true),
+    isPortAvailableOnLoopback: () => Effect.succeed(true),
+    reserveLoopbackPort: () => Effect.succeed(0),
     findAvailablePort,
   }),
   Layer.succeed(Server, {
