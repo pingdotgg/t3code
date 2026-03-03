@@ -260,20 +260,23 @@ function ComboboxValue({ ...props }: ComboboxPrimitive.Value.Props) {
   return <ComboboxPrimitive.Value data-slot="combobox-value" {...props} />;
 }
 
-function ComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {
-  return (
-    <ScrollArea scrollbarGutter scrollFade>
-      <ComboboxPrimitive.List
-        className={cn(
-          "not-empty:scroll-py-1 not-empty:px-1 not-empty:py-1 in-data-has-overflow-y:pe-3",
-          className,
-        )}
-        data-slot="combobox-list"
-        {...props}
-      />
-    </ScrollArea>
-  );
-}
+const ComboboxList = React.forwardRef<HTMLDivElement, ComboboxPrimitive.List.Props>(
+  function ComboboxList({ className, ...props }, ref) {
+    return (
+      <ScrollArea scrollbarGutter scrollFade>
+        <ComboboxPrimitive.List
+          className={cn(
+            "not-empty:scroll-py-1 not-empty:px-1 not-empty:py-1 in-data-has-overflow-y:pe-3",
+            className,
+          )}
+          data-slot="combobox-list"
+          ref={ref}
+          {...props}
+        />
+      </ScrollArea>
+    );
+  },
+);
 
 function ComboboxClear({ className, ...props }: ComboboxPrimitive.Clear.Props) {
   return <ComboboxPrimitive.Clear className={className} data-slot="combobox-clear" {...props} />;

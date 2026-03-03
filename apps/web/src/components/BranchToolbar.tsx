@@ -1,6 +1,7 @@
 import type { GitBranch, ThreadId } from "@t3tools/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useOptimistic, useState, useTransition } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useMemo, useOptimistic, useRef, useState, useTransition } from "react";
 
 import { newCommandId } from "../lib/utils";
 import { gitBranchesQueryOptions, invalidateGitQueries } from "../lib/gitReactQuery";
@@ -42,13 +43,13 @@ export default function BranchToolbar({
   const threads = useStore((store) => store.threads);
   const projects = useStore((store) => store.projects);
   const setThreadBranchAction = useStore((store) => store.setThreadBranch);
-  const setThreadErrorAction = useStore((store) => store.setError);
   const draftThread = useComposerDraftStore((store) => store.getDraftThread(threadId));
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const queryClient = useQueryClient();
 
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
+  const branchListRef = useRef<HTMLDivElement | null>(null);
 
   const serverThread = threads.find((thread) => thread.id === threadId);
   const activeProjectId = serverThread?.projectId ?? draftThread?.projectId ?? null;
@@ -67,24 +68,44 @@ export default function BranchToolbar({
 
   const branchesQuery = useQuery(gitBranchesQueryOptions(branchCwd));
 
-  const branches = dedupeRemoteBranchesWithLocalMatches(branchesQuery.data?.branches ?? []);
+  const branches = useMemo(
+    () => dedupeRemoteBranchesWithLocalMatches(branchesQuery.data?.branches ?? []),
+    [branchesQuery.data?.branches],
+  );
   const currentGitBranch = branches.find((branch) => branch.current)?.name ?? null;
   const canonicalActiveBranch =
     effectiveEnvMode === "worktree" && !activeWorktreePath
       ? activeThreadBranch
       : (currentGitBranch ?? activeThreadBranch);
-  const branchNames = branches.map((branch) => branch.name);
-  const branchByName = new Map(branches.map((branch) => [branch.name, branch]));
+  const branchNames = useMemo(() => branches.map((branch) => branch.name), [branches]);
+  const branchByName = useMemo(
+    () => new Map(branches.map((branch) => [branch.name, branch] as const)),
+    [branches],
+  );
   const trimmedBranchQuery = branchQuery.trim();
+  const normalizedBranchQuery = trimmedBranchQuery.toLowerCase();
   const canCreateBranch = effectiveEnvMode === "local" && trimmedBranchQuery.length > 0;
   const hasExactBranchMatch = branchByName.has(trimmedBranchQuery);
   const createBranchItemValue = canCreateBranch
     ? `__create_new_branch__:${trimmedBranchQuery}`
     : null;
-  const branchPickerItems =
-    createBranchItemValue && !hasExactBranchMatch
-      ? [...branchNames, createBranchItemValue]
-      : branchNames;
+  const branchPickerItems = useMemo(
+    () =>
+      createBranchItemValue && !hasExactBranchMatch
+        ? [...branchNames, createBranchItemValue]
+        : branchNames,
+    [branchNames, createBranchItemValue, hasExactBranchMatch],
+  );
+  const filteredBranchPickerItems = useMemo(
+    () =>
+      normalizedBranchQuery.length === 0
+        ? branchPickerItems
+        : branchPickerItems.filter((itemValue) => {
+            if (createBranchItemValue && itemValue === createBranchItemValue) return true;
+            return itemValue.toLowerCase().includes(normalizedBranchQuery);
+          }),
+    [branchPickerItems, createBranchItemValue, normalizedBranchQuery],
+  );
 
   // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -100,10 +121,14 @@ export default function BranchToolbar({
     });
   };
 
-  const setThreadError = (error: string | null) => {
-    if (!activeThreadId) return;
-    setThreadErrorAction(activeThreadId, error);
-  };
+  const branchListVirtualizer = useVirtualizer({
+    count: filteredBranchPickerItems.length,
+    estimateSize: () => 28,
+    getScrollElement: () => branchListRef.current?.parentElement ?? null,
+    overscan: 12,
+    enabled: isBranchMenuOpen,
+  });
+  const virtualBranchRows = branchListVirtualizer.getVirtualItems();
 
   const setThreadBranch = (branch: string | null, worktreePath: string | null) => {
     if (!activeThreadId) return;
@@ -261,7 +286,13 @@ export default function BranchToolbar({
 
       <Combobox
         items={branchPickerItems}
+        filteredItems={filteredBranchPickerItems}
         autoHighlight
+        virtualized
+        onItemHighlighted={(_value, eventDetails) => {
+          if (!isBranchMenuOpen || eventDetails.index < 0) return;
+          branchListVirtualizer.scrollToIndex(eventDetails.index, { align: "auto" });
+        }}
         onOpenChange={(open) => {
           setIsBranchMenuOpen(open);
           if (!open) setBranchQuery("");
@@ -298,54 +329,81 @@ export default function BranchToolbar({
           </div>
           <ComboboxEmpty>No branches found.</ComboboxEmpty>
 
-          <ComboboxList className="max-h-56">
-            {(itemValue) => {
-              if (createBranchItemValue && itemValue === createBranchItemValue) {
+          <ComboboxList ref={branchListRef} className="max-h-56">
+            <div
+              className="relative"
+              style={{
+                height: `${branchListVirtualizer.getTotalSize()}px`,
+              }}
+            >
+              {virtualBranchRows.map((virtualRow) => {
+                const itemValue = filteredBranchPickerItems[virtualRow.index];
+                if (!itemValue) return null;
+                if (createBranchItemValue && itemValue === createBranchItemValue) {
+                  return (
+                    <ComboboxItem
+                      hideIndicator
+                      key={itemValue}
+                      index={virtualRow.index}
+                      value={itemValue}
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        transform: `translateY(${virtualRow.start}px)`,
+                      }}
+                      onClick={() => createBranch(trimmedBranchQuery)}
+                    >
+                      <span className="truncate">Create new branch "{trimmedBranchQuery}"</span>
+                    </ComboboxItem>
+                  );
+                }
+
+                const branch = branchByName.get(itemValue);
+                if (!branch) return null;
+
+                const hasSecondaryWorktree =
+                  branch.worktreePath && branch.worktreePath !== activeProject.cwd;
+                const badge = branch.current
+                  ? "current"
+                  : hasSecondaryWorktree
+                    ? "worktree"
+                    : branch.isRemote
+                      ? "remote"
+                      : branch.isDefault
+                        ? "default"
+                        : null;
                 return (
                   <ComboboxItem
                     hideIndicator
                     key={itemValue}
+                    index={virtualRow.index}
                     value={itemValue}
-                    onClick={() => createBranch(trimmedBranchQuery)}
+                    className={
+                      itemValue === resolvedActiveBranch ? "bg-accent text-foreground" : undefined
+                    }
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                    onClick={() => selectBranch(branch)}
                   >
-                    <span className="truncate">Create new branch "{trimmedBranchQuery}"</span>
+                    <div className="flex w-full items-center justify-between gap-2">
+                      <span className="truncate">{itemValue}</span>
+                      {badge && (
+                        <span className="shrink-0 text-[10px] text-muted-foreground/45">
+                          {badge}
+                        </span>
+                      )}
+                    </div>
                   </ComboboxItem>
                 );
-              }
-
-              const branch = branchByName.get(itemValue);
-              if (!branch) return null;
-
-              const hasSecondaryWorktree =
-                branch.worktreePath && branch.worktreePath !== activeProject.cwd;
-              const badge = branch.current
-                ? "current"
-                : hasSecondaryWorktree
-                  ? "worktree"
-                  : branch.isRemote
-                    ? "remote"
-                    : branch.isDefault
-                      ? "default"
-                      : null;
-              return (
-                <ComboboxItem
-                  hideIndicator
-                  key={itemValue}
-                  value={itemValue}
-                  className={
-                    itemValue === resolvedActiveBranch ? "bg-accent text-foreground" : undefined
-                  }
-                  onClick={() => selectBranch(branch)}
-                >
-                  <div className="flex w-full items-center justify-between gap-2">
-                    <span className="truncate">{itemValue}</span>
-                    {badge && (
-                      <span className="shrink-0 text-[10px] text-muted-foreground/45">{badge}</span>
-                    )}
-                  </div>
-                </ComboboxItem>
-              );
-            }}
+              })}
+            </div>
           </ComboboxList>
         </ComboboxPopup>
       </Combobox>
