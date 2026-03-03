@@ -1,13 +1,9 @@
 import type { GitBranch, ThreadId } from "@t3tools/contracts";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { startTransition, useOptimistic, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useOptimistic, useState, useTransition } from "react";
 
 import { newCommandId } from "../lib/utils";
-import {
-  gitBranchesQueryOptions,
-  gitCheckoutMutationOptions,
-  gitCreateBranchAndCheckoutMutationOptions,
-} from "../lib/gitReactQuery";
+import { gitBranchesQueryOptions, invalidateGitQueries } from "../lib/gitReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
@@ -26,6 +22,7 @@ import {
   ComboboxTrigger,
 } from "./ui/combobox";
 import { ChevronDownIcon } from "lucide-react";
+import { toastManager } from "./ui/toast";
 
 interface BranchToolbarProps {
   threadId: ThreadId;
@@ -76,15 +73,6 @@ export default function BranchToolbar({
     effectiveEnvMode === "worktree" && !activeWorktreePath
       ? activeThreadBranch
       : (currentGitBranch ?? activeThreadBranch);
-  const [resolvedActiveBranch, setOptimisticBranch] = useOptimistic(
-    canonicalActiveBranch,
-    (_currentBranch: string | null, optimisticBranch: string | null) => optimisticBranch,
-  );
-  const setOptimisticBranchInTransition = (branch: string | null) => {
-    startTransition(() => {
-      setOptimisticBranch(branch);
-    });
-  };
   const branchNames = branches.map((branch) => branch.name);
   const branchByName = new Map(branches.map((branch) => [branch.name, branch]));
   const trimmedBranchQuery = branchQuery.trim();
@@ -97,15 +85,20 @@ export default function BranchToolbar({
     createBranchItemValue && !hasExactBranchMatch
       ? [...branchNames, createBranchItemValue]
       : branchNames;
-  // ── Mutations ─────────────────────────────────────────────────────────
-
-  const checkoutMutation = useMutation(gitCheckoutMutationOptions({ cwd: branchCwd, queryClient }));
-
-  const createBranchMutation = useMutation(
-    gitCreateBranchAndCheckoutMutationOptions({ cwd: branchCwd, queryClient }),
-  );
 
   // ── Helpers ───────────────────────────────────────────────────────────
+
+  const [resolvedActiveBranch, setOptimisticBranch] = useOptimistic(
+    canonicalActiveBranch,
+    (_currentBranch: string | null, optimisticBranch: string | null) => optimisticBranch,
+  );
+  const [isBranchActionPending, startBranchActionTransition] = useTransition();
+  const runBranchAction = (action: () => Promise<void>) => {
+    startBranchActionTransition(async () => {
+      await action().catch(() => undefined);
+      await invalidateGitQueries(queryClient).catch(() => undefined);
+    });
+  };
 
   const setThreadError = (error: string | null) => {
     if (!activeThreadId) return;
@@ -150,11 +143,10 @@ export default function BranchToolbar({
 
   const selectBranch = (branch: GitBranch) => {
     const api = readNativeApi();
-    if (!api || !activeThreadId || !branchCwd) return;
+    if (!api || !activeThreadId || !branchCwd || isBranchActionPending) return;
 
     // For new worktree mode, selecting a branch picks the base branch.
     if (effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath) {
-      setThreadError(null);
       setThreadBranch(branch.name, null);
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
@@ -165,7 +157,6 @@ export default function BranchToolbar({
     // trying to checkout (which git would reject with "already used by worktree").
     if (branch.worktreePath) {
       const isMainWorktree = branch.worktreePath === activeProject?.cwd;
-      setThreadError(null);
       // Main worktree → switch back to local (project cwd, worktreePath=null).
       // Secondary worktree → point the thread at that worktree path.
       setThreadBranch(branch.name, isMainWorktree ? null : branch.worktreePath);
@@ -177,49 +168,69 @@ export default function BranchToolbar({
     const selectedBranchName = branch.isRemote
       ? deriveLocalBranchNameFromRemoteRef(branch.name)
       : branch.name;
-    setOptimisticBranchInTransition(selectedBranchName);
 
-    checkoutMutation.mutate(branch.name, {
-      onSuccess: async () => {
-        setThreadError(null);
-        let nextBranchName = selectedBranchName;
-        if (branch.isRemote) {
-          const status = await api.git.status({ cwd: branchCwd }).catch(() => null);
-          if (status?.branch) {
-            nextBranchName = status.branch;
-          }
+    setIsBranchMenuOpen(false);
+    onComposerFocusRequest?.();
+
+    runBranchAction(async () => {
+      setOptimisticBranch(selectedBranchName);
+      try {
+        await api.git.checkout({ cwd: branchCwd, branch: branch.name });
+        await invalidateGitQueries(queryClient);
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to checkout branch.",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      }
+
+      let nextBranchName = selectedBranchName;
+      if (branch.isRemote) {
+        const status = await api.git.status({ cwd: branchCwd }).catch(() => null);
+        if (status?.branch) {
+          nextBranchName = status.branch;
         }
-        setOptimisticBranchInTransition(nextBranchName);
-        setThreadBranch(nextBranchName, activeWorktreePath);
-        setIsBranchMenuOpen(false);
-        onComposerFocusRequest?.();
-      },
-      onError: (error) => {
-        setOptimisticBranchInTransition(canonicalActiveBranch);
-        setThreadError(error instanceof Error ? error.message : "Failed to checkout branch.");
-        setIsBranchMenuOpen(true);
-      },
+      }
+
+      setOptimisticBranch(nextBranchName);
+      setThreadBranch(nextBranchName, activeWorktreePath);
     });
   };
 
   const createBranch = (rawName: string) => {
     const name = rawName.trim();
     const api = readNativeApi();
-    if (!api || !activeThreadId || !branchCwd || !name || createBranchMutation.isPending) return;
-    setOptimisticBranchInTransition(name);
-    createBranchMutation.mutate(name, {
-      onSuccess: () => {
-        setOptimisticBranchInTransition(name);
-        setThreadError(null);
-        setThreadBranch(name, activeWorktreePath);
-        setBranchQuery("");
-        setIsBranchMenuOpen(false);
-        onComposerFocusRequest?.();
-      },
-      onError: (error) => {
-        setOptimisticBranchInTransition(canonicalActiveBranch);
-        setThreadError(error instanceof Error ? error.message : "Failed to create branch.");
-      },
+    if (!api || !activeThreadId || !branchCwd || !name || isBranchActionPending) return;
+
+    setIsBranchMenuOpen(false);
+    onComposerFocusRequest?.();
+
+    runBranchAction(async () => {
+      setOptimisticBranch(name);
+
+      try {
+        await api.git.createBranch({ cwd: branchCwd, branch: name });
+        try {
+          await api.git.checkout({ cwd: branchCwd, branch: name });
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Failed to checkout branch.",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        }
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to create branch.",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      }
+
+      setOptimisticBranch(name);
+      setThreadBranch(name, activeWorktreePath);
+      setBranchQuery("");
     });
   };
 
@@ -250,9 +261,8 @@ export default function BranchToolbar({
         autoHighlight
         onOpenChange={(open) => {
           setIsBranchMenuOpen(open);
-          if (!open) {
-            setBranchQuery("");
-          }
+          if (!open) setBranchQuery("");
+          else void invalidateGitQueries(queryClient);
         }}
         open={isBranchMenuOpen}
         value={resolvedActiveBranch}
@@ -260,7 +270,7 @@ export default function BranchToolbar({
         <ComboboxTrigger
           render={<Button variant="ghost" size="xs" />}
           className="text-muted-foreground/70 hover:text-foreground/80"
-          disabled={branchesQuery.isLoading}
+          disabled={branchesQuery.isLoading || isBranchActionPending}
         >
           <span className="max-w-[240px] truncate">
             {resolvedActiveBranch
