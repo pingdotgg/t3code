@@ -16,6 +16,7 @@
       "version": "0.0.0-alpha.12",
       "dependencies": {
         "@t3tools/shared": "workspace:*",
+        "effect": "catalog:",
         "electron": "40.6.0",
       },
       "devDependencies": {
