@@ -372,6 +372,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                         closeResultToast();
                         void runGitActionWithToast({
                           action: "commit_push_pr",
+                          forcePushOnlyProgress: true,
                         });
                       },
                     },
