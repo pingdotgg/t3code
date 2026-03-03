@@ -606,7 +606,6 @@ configureAppIdentity();
 async function bootstrap(): Promise<void> {
   backendPort = await Effect.service(NetService).pipe(
     Effect.flatMap((net) => net.reserveLoopbackPort()),
-    Effect.flatMap((port) => Effect.succeed(port)),
     Effect.provide(NetService.layer),
     Effect.runPromise,
   );
