@@ -359,6 +359,68 @@ describe("CursorAdapterLive", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("resumes ACP session using resumeCursor.acpSessionId", () => {
+    const fake = new FakeCursorAcpProcess();
+    const layer = makeCursorAdapterLive({
+      createProcess: () => fake as never,
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const session = yield* adapter.startSession({
+        provider: "cursor",
+        cwd: "/tmp/project",
+        resumeCursor: {
+          acpSessionId: "acp-session-resume",
+        },
+      });
+
+      const methods = new Set(fake.requests.map((request) => request.method));
+      assert.equal(methods.has("session/load"), true);
+      assert.equal(methods.has("session/new"), false);
+
+      const loadRequest = fake.requests.find((request) => request.method === "session/load");
+      assert.deepEqual(loadRequest?.params, {
+        sessionId: "acp-session-resume",
+        cwd: "/tmp/project",
+        mcpServers: [],
+      });
+      assert.equal(session.threadId, "acp-session-resume");
+      assert.deepEqual(session.resumeCursor, {
+        acpSessionId: "acp-session-resume",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("accepts legacy resumeCursor.sessionId for ACP session resume", () => {
+    const fake = new FakeCursorAcpProcess();
+    const layer = makeCursorAdapterLive({
+      createProcess: () => fake as never,
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const session = yield* adapter.startSession({
+        provider: "cursor",
+        cwd: "/tmp/project",
+        resumeCursor: {
+          sessionId: "acp-session-legacy",
+        },
+      });
+
+      const loadRequest = fake.requests.find((request) => request.method === "session/load");
+      assert.deepEqual(loadRequest?.params, {
+        sessionId: "acp-session-legacy",
+        cwd: "/tmp/project",
+        mcpServers: [],
+      });
+      assert.equal(session.threadId, "acp-session-legacy");
+      assert.deepEqual(session.resumeCursor, {
+        acpSessionId: "acp-session-legacy",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("bridges permission requests to request.opened/request.resolved", () => {
     const fake = new FakeCursorAcpProcess();
     const layer = makeCursorAdapterLive({
