@@ -524,7 +524,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const pendingUserScrollUpIntentRef = useRef(false);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
-  const composerCommandInputRef = useRef<HTMLInputElement>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerFormHeightRef = useRef(0);
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
@@ -633,7 +632,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [selectedModel, settings.customCodexModels],
   );
   const slashModelOptions = useMemo(
-    () => getSlashModelOptions(settings.customCodexModels, composerTrigger?.query ?? "", selectedModel),
+    () =>
+      getSlashModelOptions(settings.customCodexModels, composerTrigger?.query ?? "", selectedModel),
     [composerTrigger?.query, selectedModel, settings.customCodexModels],
   );
   const phase = derivePhase(activeThread?.session ?? null);
@@ -912,12 +912,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     return slashModelOptions.map(({ slug, name }) => ({
-        id: `model:${slug}`,
-        type: "model" as const,
-        model: slug,
-        label: name,
-        description: slug,
-      }));
+      id: `model:${slug}`,
+      type: "model" as const,
+      model: slug,
+      label: name,
+      description: slug,
+    }));
   }, [composerTrigger, slashModelOptions, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
@@ -2312,12 +2312,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
       if (item.type === "slash-command") {
-        const applied = applyPromptReplacement(
-          trigger.rangeStart,
-          trigger.rangeEnd,
-          "/model ",
-          { expectedText: expectedToken },
-        );
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "/model ", {
+          expectedText: expectedToken,
+        });
         if (applied) {
           setComposerHighlightedItemId(null);
         }
@@ -2360,18 +2357,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
       workspaceEntriesQuery.isLoading ||
       workspaceEntriesQuery.isFetching);
 
-  const onPromptChange = useCallback((nextPrompt: string, nextCursor: number, cursorAdjacentToMention: boolean) => {
-    promptRef.current = nextPrompt;
-    setPrompt(nextPrompt);
-    setComposerCursor(nextCursor);
-    setComposerTrigger(
-      cursorAdjacentToMention
-        ? null
-        : detectComposerTrigger(nextPrompt, expandCollapsedComposerCursor(nextPrompt, nextCursor)),
-    );
-  }, [setPrompt]);
+  const onPromptChange = useCallback(
+    (nextPrompt: string, nextCursor: number, cursorAdjacentToMention: boolean) => {
+      promptRef.current = nextPrompt;
+      setPrompt(nextPrompt);
+      setComposerCursor(nextCursor);
+      setComposerTrigger(
+        cursorAdjacentToMention
+          ? null
+          : detectComposerTrigger(
+              nextPrompt,
+              expandCollapsedComposerCursor(nextPrompt, nextCursor),
+            ),
+      );
+    },
+    [setPrompt],
+  );
 
-  const onComposerCommandKey = (key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab", event: KeyboardEvent) => {
+  const onComposerCommandKey = (
+    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
+    event: KeyboardEvent,
+  ) => {
     const { trigger } = resolveActiveComposerTrigger();
     const menuIsActive = composerMenuOpenRef.current || trigger !== null;
 
@@ -2778,7 +2784,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {isGitRepo && (
         <BranchToolbar
           threadId={activeThread.id}
-          envMode={envMode}
           onEnvModeChange={onEnvModeChange}
           envLocked={envLocked}
           onComposerFocusRequest={scheduleComposerFocus}

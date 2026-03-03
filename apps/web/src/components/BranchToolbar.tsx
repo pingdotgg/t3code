@@ -15,7 +15,6 @@ import { Button } from "./ui/button";
 
 interface BranchToolbarProps {
   threadId: ThreadId;
-  envMode: EnvMode;
   onEnvModeChange: (mode: EnvMode) => void;
   envLocked: boolean;
   onComposerFocusRequest?: () => void;
@@ -23,7 +22,6 @@ interface BranchToolbarProps {
 
 export default function BranchToolbar({
   threadId,
-  envMode,
   onEnvModeChange,
   envLocked,
   onComposerFocusRequest,
