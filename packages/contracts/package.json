@@ -30,6 +30,7 @@
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
     "tsdown": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }
