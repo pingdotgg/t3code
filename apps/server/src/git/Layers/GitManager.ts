@@ -451,7 +451,7 @@ export const makeGitManager = Effect.gen(function* () {
       const resolvedBranch = resolveAutoFeatureBranchName(existingBranchNames, preferredBranch);
 
       yield* gitCore.createBranch({ cwd, branch: resolvedBranch });
-      yield* gitCore.checkoutBranch({ cwd, branch: resolvedBranch });
+      yield* Effect.scoped(gitCore.checkoutBranch({ cwd, branch: resolvedBranch }));
 
       return {
         branchStep: { status: "created" as const, name: resolvedBranch },
