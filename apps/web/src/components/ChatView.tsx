@@ -118,7 +118,7 @@ import { Toggle } from "./ui/toggle";
 import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
-import { getAppModelOptions, useAppSettings } from "../appSettings";
+import { getAppModelOptions, getSlashModelOptions, useAppSettings } from "../appSettings";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -632,6 +632,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => getAppModelOptions(settings.customCodexModels, selectedModel),
     [selectedModel, settings.customCodexModels],
   );
+  const slashModelOptions = useMemo(
+    () => getSlashModelOptions(settings.customCodexModels, composerTrigger?.query ?? "", selectedModel),
+    [composerTrigger?.query, selectedModel, settings.customCodexModels],
+  );
   const phase = derivePhase(activeThread?.session ?? null);
   const isSendBusy = sendPhase !== "idle";
   const isPreparingWorktree = sendPhase === "preparing-worktree";
@@ -907,26 +911,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       ];
     }
 
-    return modelOptions
-      .map(({ slug, name }) => ({
-        slug,
-        name,
-        searchSlug: slug.toLowerCase(),
-        searchName: name.toLowerCase(),
-      }))
-      .filter(({ searchSlug, searchName }) => {
-        const query = composerTrigger.query.trim().toLowerCase();
-        if (!query) return true;
-        return searchSlug.includes(query) || searchName.includes(query);
-      })
-      .map(({ slug, name }) => ({
+    return slashModelOptions.map(({ slug, name }) => ({
         id: `model:${slug}`,
         type: "model" as const,
         model: slug,
         label: name,
         description: slug,
       }));
-  }, [composerTrigger, modelOptions, workspaceEntries]);
+  }, [composerTrigger, slashModelOptions, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
