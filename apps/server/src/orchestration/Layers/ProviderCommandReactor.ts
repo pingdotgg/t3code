@@ -16,6 +16,7 @@ import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Stream } from "ef
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
+import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../git/Services/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -70,6 +71,32 @@ const DEFAULT_APPROVAL_POLICY: ProviderApprovalPolicy = "never";
 const DEFAULT_SANDBOX_MODE: ProviderSandboxMode = "workspace-write";
 const WORKTREE_BRANCH_PREFIX = "t3code";
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function isUnknownPendingApprovalRequestError(error: unknown): boolean {
+  if (error instanceof ProviderAdapterRequestError) {
+    const detail = error.detail.toLowerCase();
+    return (
+      detail.includes("unknown pending approval request") ||
+      detail.includes("unknown pending permission request")
+    );
+  }
+  const message = toErrorMessage(error).toLowerCase();
+  return (
+    message.includes("unknown pending approval request") ||
+    message.includes("unknown pending permission request")
+  );
+}
 
 function isTemporaryWorktreeBranch(branch: string): boolean {
   return TEMP_WORKTREE_BRANCH_PATTERN.test(branch.trim().toLowerCase());
@@ -127,6 +154,7 @@ const make = Effect.gen(function* () {
     readonly detail: string;
     readonly turnId: TurnId | null;
     readonly createdAt: string;
+    readonly requestId?: string;
   }) =>
     orchestrationEngine.dispatch({
       type: "thread.activity.append",
@@ -139,8 +167,36 @@ const make = Effect.gen(function* () {
         summary: input.summary,
         payload: {
           detail: input.detail,
+          ...(input.requestId ? { requestId: input.requestId } : {}),
         },
         turnId: input.turnId,
+        createdAt: input.createdAt,
+      },
+      createdAt: input.createdAt,
+    });
+
+  const appendApprovalResolvedActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly requestId: string;
+    readonly decision: "accept" | "acceptForSession" | "decline" | "cancel";
+    readonly detail: string;
+    readonly createdAt: string;
+  }) =>
+    orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: serverCommandId("approval-resolved"),
+      threadId: input.threadId,
+      activity: {
+        id: EventId.makeUnsafe(crypto.randomUUID()),
+        tone: "approval",
+        kind: "approval.resolved",
+        summary: "Approval resolved",
+        payload: {
+          requestId: input.requestId,
+          decision: input.decision,
+          detail: input.detail,
+        },
+        turnId: null,
         createdAt: input.createdAt,
       },
       createdAt: input.createdAt,
@@ -488,14 +544,45 @@ const make = Effect.gen(function* () {
         detail: "No active provider session is bound to this thread.",
         turnId: null,
         createdAt: event.payload.createdAt,
+        requestId: event.payload.requestId,
       });
     }
 
-    yield* providerService.respondToRequest({
-      sessionId,
-      requestId: event.payload.requestId,
-      decision: event.payload.decision,
-    });
+    yield* providerService
+      .respondToRequest({
+        sessionId,
+        requestId: event.payload.requestId,
+        decision: event.payload.decision,
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            const error = Cause.squash(cause);
+            const detail = toErrorMessage(error);
+            yield* appendProviderFailureActivity({
+              threadId: event.payload.threadId,
+              kind: "provider.approval.respond.failed",
+              summary: "Provider approval response failed",
+              detail,
+              turnId: null,
+              createdAt: event.payload.createdAt,
+              requestId: event.payload.requestId,
+            });
+
+            if (!isUnknownPendingApprovalRequestError(error)) {
+              return;
+            }
+
+            yield* appendApprovalResolvedActivity({
+              threadId: event.payload.threadId,
+              requestId: event.payload.requestId,
+              decision: event.payload.decision,
+              detail: "Approval request is no longer pending in the provider session.",
+              createdAt: event.payload.createdAt,
+            });
+          }),
+        ),
+      );
   });
 
   const processSessionStopRequested = Effect.fnUntraced(function* (
