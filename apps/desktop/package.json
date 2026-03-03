@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@t3tools/shared": "workspace:*",
+    "effect": "catalog:",
     "electron": "40.6.0"
   },
   "devDependencies": {
