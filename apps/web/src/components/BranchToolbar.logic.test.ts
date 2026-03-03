@@ -3,8 +3,41 @@ import { describe, expect, it } from "vitest";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  resolveDraftEnvModeAfterBranchChange,
   resolveBranchToolbarValue,
 } from "./BranchToolbar.logic";
+
+describe("resolveDraftEnvModeAfterBranchChange", () => {
+  it("switches to local mode when returning from an existing worktree to the main worktree", () => {
+    expect(
+      resolveDraftEnvModeAfterBranchChange({
+        nextWorktreePath: null,
+        currentWorktreePath: "/repo/.t3/worktrees/feature-a",
+        effectiveEnvMode: "worktree",
+      }),
+    ).toBe("local");
+  });
+
+  it("keeps new-worktree mode when selecting a base branch before worktree creation", () => {
+    expect(
+      resolveDraftEnvModeAfterBranchChange({
+        nextWorktreePath: null,
+        currentWorktreePath: null,
+        effectiveEnvMode: "worktree",
+      }),
+    ).toBe("worktree");
+  });
+
+  it("uses worktree mode when selecting a branch already attached to a worktree", () => {
+    expect(
+      resolveDraftEnvModeAfterBranchChange({
+        nextWorktreePath: "/repo/.t3/worktrees/feature-a",
+        currentWorktreePath: null,
+        effectiveEnvMode: "local",
+      }),
+    ).toBe("worktree");
+  });
+});
 
 describe("resolveBranchToolbarValue", () => {
   it("defaults new-worktree mode to current git branch when no explicit base branch is set", () => {
