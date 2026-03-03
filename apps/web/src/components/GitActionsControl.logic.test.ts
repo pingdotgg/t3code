@@ -804,6 +804,17 @@ describe("buildGitActionProgressStages", () => {
     assert.deepEqual(stages, ["Pushing to origin/feature/test..."]);
   });
 
+  it("skips commit stages for create-pr flow when push-only is forced", () => {
+    const stages = buildGitActionProgressStages({
+      action: "commit_push_pr",
+      hasCustomCommitMessage: false,
+      hasWorkingTreeChanges: true,
+      forcePushOnly: true,
+      pushTarget: "origin/feature/test",
+    });
+    assert.deepEqual(stages, ["Pushing to origin/feature/test...", "Creating PR..."]);
+  });
+
   it("includes commit stages for commit+push when working tree is dirty", () => {
     const stages = buildGitActionProgressStages({
       action: "commit_push",
