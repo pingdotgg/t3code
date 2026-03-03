@@ -105,6 +105,24 @@ export function getAppModelOptions(
   return options;
 }
 
+export function getSlashModelOptions(
+  customModels: readonly string[],
+  query: string,
+  selectedModel?: string | null,
+): AppModelOption[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  const options = getAppModelOptions(customModels, selectedModel);
+  if (!normalizedQuery) {
+    return options;
+  }
+
+  return options.filter((option) => {
+    const searchSlug = option.slug.toLowerCase();
+    const searchName = option.name.toLowerCase();
+    return searchSlug.includes(normalizedQuery) || searchName.includes(normalizedQuery);
+  });
+}
+
 function emitChange(): void {
   for (const listener of listeners) {
     listener();
