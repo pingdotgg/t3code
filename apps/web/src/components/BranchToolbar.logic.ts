@@ -2,6 +2,17 @@ import type { GitBranch } from "@t3tools/contracts";
 
 export type EnvMode = "local" | "worktree";
 
+export function resolveEffectiveEnvMode(input: {
+  activeWorktreePath: string | null;
+  hasServerThread: boolean;
+  draftThreadEnvMode: EnvMode | undefined;
+}): EnvMode {
+  const { activeWorktreePath, hasServerThread, draftThreadEnvMode } = input;
+  return activeWorktreePath || (!hasServerThread && draftThreadEnvMode === "worktree")
+    ? "worktree"
+    : "local";
+}
+
 export function resolveDraftEnvModeAfterBranchChange(input: {
   nextWorktreePath: string | null;
   currentWorktreePath: string | null;

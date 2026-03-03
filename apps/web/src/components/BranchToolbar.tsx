@@ -5,7 +5,11 @@ import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
-import { EnvMode, resolveDraftEnvModeAfterBranchChange } from "./BranchToolbar.logic";
+import {
+  EnvMode,
+  resolveDraftEnvModeAfterBranchChange,
+  resolveEffectiveEnvMode,
+} from "./BranchToolbar.logic";
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { Button } from "./ui/button";
 
@@ -38,10 +42,11 @@ export default function BranchToolbar({
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const branchCwd = activeWorktreePath ?? activeProject?.cwd ?? null;
   const hasServerThread = serverThread !== undefined;
-  const effectiveEnvMode: EnvMode =
-    activeWorktreePath || (!hasServerThread && draftThread?.envMode === "worktree")
-      ? "worktree"
-      : envMode;
+  const effectiveEnvMode = resolveEffectiveEnvMode({
+    activeWorktreePath,
+    hasServerThread,
+    draftThreadEnvMode: draftThread?.envMode,
+  });
 
   const setThreadBranch = useCallback(
     (branch: string | null, worktreePath: string | null) => {
