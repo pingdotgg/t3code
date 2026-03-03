@@ -15,6 +15,7 @@ import {
   EventId,
   type CanonicalItemType,
   type CanonicalRequestType,
+  type ProviderApprovalPolicy,
   ProviderSessionId,
   type ProviderRuntimeEvent,
   type ProviderSession,
@@ -73,6 +74,7 @@ interface CursorTurnState {
 
 interface CursorSessionContext {
   session: ProviderSession;
+  approvalPolicy: ProviderApprovalPolicy;
   readonly child: ChildProcessWithoutNullStreams;
   readonly output: readline.Interface;
   readonly pending: Map<string, PendingRequest>;
@@ -183,6 +185,43 @@ function normalizeRequestType(toolCall: unknown): CanonicalRequestType {
     return "file_change_approval";
   }
   return "unknown";
+}
+
+function selectCursorPermissionOption(
+  options: ReadonlyArray<{ optionId: string }>,
+  decision: "acceptForSession" | "accept" | "decline" | "cancel",
+): string | undefined {
+  const allowAlways = options.find((option) => option.optionId === "allow-always");
+  const allowOnce = options.find((option) => option.optionId === "allow-once");
+  const rejectOnce = options.find((option) => option.optionId === "reject-once");
+
+  if (decision === "acceptForSession") {
+    return allowAlways?.optionId ?? allowOnce?.optionId;
+  }
+  if (decision === "accept") {
+    return allowOnce?.optionId ?? allowAlways?.optionId;
+  }
+  return rejectOnce?.optionId ?? options[0]?.optionId;
+}
+
+function selectCursorAutoApprovalOption(
+  options: ReadonlyArray<{ optionId: string }>,
+): { optionId: string; decision: "acceptForSession" | "accept" } | undefined {
+  const allowAlways = options.find((option) => option.optionId === "allow-always");
+  if (allowAlways) {
+    return {
+      optionId: allowAlways.optionId,
+      decision: "acceptForSession",
+    };
+  }
+  const allowOnce = options.find((option) => option.optionId === "allow-once");
+  if (allowOnce) {
+    return {
+      optionId: allowOnce.optionId,
+      decision: "accept",
+    };
+  }
+  return undefined;
 }
 
 function titleForItemType(itemType: CanonicalItemType): string {
@@ -459,14 +498,79 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
       return Effect.gen(function* () {
         const requestId = ApprovalRequestId.makeUnsafe(randomUUID());
         const requestType = normalizeRequestType(decoded.params.toolCall);
+        const options = decoded.params.options.map((entry) => ({ optionId: entry.optionId }));
+        const detail = asString(asObject(decoded.params.toolCall)?.title);
+
+        if (context.approvalPolicy === "never") {
+          const selection =
+            selectCursorAutoApprovalOption(options) ??
+            (options[0]
+              ? {
+                  optionId: options[0].optionId,
+                  decision: "accept",
+                }
+              : undefined);
+          if (!selection) {
+            return yield* emitRuntimeWarning(
+              context,
+              "Cursor ACP permission request contained no selectable options.",
+              decoded.params,
+            );
+          }
+
+          writeCursorMessage(context, {
+            jsonrpc: "2.0",
+            id: decoded.id,
+            result: {
+              outcome: {
+                outcome: "selected",
+                optionId: selection.optionId,
+              },
+            },
+          });
+
+          const stamp = yield* makeEventStamp();
+          yield* offerRuntimeEvent({
+            type: "request.resolved",
+            eventId: stamp.eventId,
+            provider: PROVIDER,
+            sessionId: context.session.sessionId,
+            createdAt: stamp.createdAt,
+            ...(context.session.threadId ? { threadId: context.session.threadId } : {}),
+            ...(context.turnState ? { turnId: context.turnState.turnId } : {}),
+            requestId,
+            payload: {
+              requestType,
+              decision: selection.decision,
+              resolution: {
+                optionId: selection.optionId,
+                autoApproved: true,
+              },
+            },
+            providerRefs: {
+              providerSessionId: context.session.sessionId,
+              ...(context.session.threadId ? { providerThreadId: context.session.threadId } : {}),
+              ...(context.turnState ? { providerTurnId: context.turnState.turnId } : {}),
+              providerRequestId: String(decoded.id),
+            },
+            raw: {
+              source: "cursor.acp.response",
+              method: "session/request_permission",
+              payload: {
+                optionId: selection.optionId,
+                autoApproved: true,
+              },
+            },
+          });
+          return;
+        }
 
         context.pendingPermissions.set(requestId, {
           jsonRpcId: decoded.id,
           requestType,
-          options: decoded.params.options.map((entry) => ({ optionId: entry.optionId })),
+          options,
         });
 
-        const detail = asString(asObject(decoded.params.toolCall)?.title);
         const stamp = yield* makeEventStamp();
         yield* offerRuntimeEvent({
           type: "request.opened",
@@ -891,6 +995,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
 
         const context: CursorSessionContext = {
           session,
+          approvalPolicy: input.approvalPolicy ?? "on-request",
           child,
           output,
           pending: new Map(),
@@ -1323,16 +1428,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
           });
         }
 
-        const allowAlways = pending.options.find((option) => option.optionId === "allow-always");
-        const allowOnce = pending.options.find((option) => option.optionId === "allow-once");
-        const rejectOnce = pending.options.find((option) => option.optionId === "reject-once");
-
-        const optionId =
-          decision === "acceptForSession"
-            ? allowAlways?.optionId ?? allowOnce?.optionId
-            : decision === "accept"
-              ? allowOnce?.optionId ?? allowAlways?.optionId
-              : rejectOnce?.optionId ?? pending.options[0]?.optionId;
+        const optionId = selectCursorPermissionOption(pending.options, decision);
 
         if (!optionId) {
           return yield* new ProviderAdapterRequestError({
@@ -1376,7 +1472,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
             providerSessionId: context.session.sessionId,
             ...(context.session.threadId ? { providerThreadId: context.session.threadId } : {}),
             ...(context.turnState ? { providerTurnId: context.turnState.turnId } : {}),
-            providerRequestId: requestId,
+            providerRequestId: String(pending.jsonRpcId),
           },
           raw: {
             source: "cursor.acp.response",

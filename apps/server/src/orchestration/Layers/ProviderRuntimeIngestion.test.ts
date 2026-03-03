@@ -1,5 +1,6 @@
 import type { ProviderRuntimeEvent } from "@t3tools/contracts";
 import {
+  ApprovalRequestId,
   CommandId,
   EventId,
   MessageId,
@@ -802,6 +803,64 @@ describe("ProviderRuntimeIngestion", () => {
       );
     });
     expect(completionEvents).toHaveLength(1);
+  });
+
+  it("maps canonical request events into approval activities with requestKind", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "request.opened",
+      eventId: asEventId("evt-request-opened"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: now,
+      requestId: ApprovalRequestId.makeUnsafe("req-open"),
+      payload: {
+        requestType: "command_execution_approval",
+        detail: "pwd",
+      },
+    });
+
+    harness.emit({
+      type: "request.resolved",
+      eventId: asEventId("evt-request-resolved"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: now,
+      requestId: ApprovalRequestId.makeUnsafe("req-open"),
+      payload: {
+        requestType: "command_execution_approval",
+        decision: "accept",
+      },
+    });
+
+    await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.activities.some((activity) => activity.kind === "approval.requested") &&
+        entry.activities.some((activity) => activity.kind === "approval.resolved"),
+    );
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(thread).toBeDefined();
+
+    const requested = thread?.activities.find((activity) => activity.id === "evt-request-opened");
+    const requestedPayload =
+      requested?.payload && typeof requested.payload === "object"
+        ? (requested.payload as Record<string, unknown>)
+        : undefined;
+    expect(requestedPayload?.requestKind).toBe("command");
+    expect(requestedPayload?.requestType).toBe("command_execution_approval");
+
+    const resolved = thread?.activities.find((activity) => activity.id === "evt-request-resolved");
+    const resolvedPayload =
+      resolved?.payload && typeof resolved.payload === "object"
+        ? (resolved.payload as Record<string, unknown>)
+        : undefined;
+    expect(resolvedPayload?.requestKind).toBe("command");
+    expect(resolvedPayload?.requestType).toBe("command_execution_approval");
   });
 
   it("maps runtime.error into errored session state", async () => {

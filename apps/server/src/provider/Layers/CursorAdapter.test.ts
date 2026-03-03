@@ -406,4 +406,39 @@ describe("CursorAdapterLive", () => {
       assert.equal(fake.lastPermissionSelection, "allow-always");
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("auto-approves cursor permission requests when approval policy is never", () => {
+    const fake = new FakeCursorAcpProcess();
+    const layer = makeCursorAdapterLive({
+      createProcess: () => fake as never,
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+
+      yield* adapter.startSession({
+        provider: "cursor",
+        approvalPolicy: "never",
+      });
+
+      // consume startup events
+      yield* Stream.take(adapter.streamEvents, 6).pipe(Stream.runDrain);
+
+      fake.emitPermissionRequest();
+
+      const resolved = yield* Stream.runHead(adapter.streamEvents);
+      assert.equal(resolved._tag, "Some");
+      if (resolved._tag !== "Some") {
+        return;
+      }
+
+      assert.equal(resolved.value.type, "request.resolved");
+      if (resolved.value.type !== "request.resolved") {
+        return;
+      }
+
+      assert.equal(resolved.value.payload.decision, "acceptForSession");
+      assert.equal(fake.lastPermissionSelection, "allow-always");
+    }).pipe(Effect.provide(layer));
+  });
 });

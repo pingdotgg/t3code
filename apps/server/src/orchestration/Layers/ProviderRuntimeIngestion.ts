@@ -133,6 +133,21 @@ function runtimeErrorMessageFromEvent(event: ProviderRuntimeEvent): string | und
   return payloadMessage ?? legacyMessage;
 }
 
+function requestKindFromCanonicalRequestType(
+  requestType: string | undefined,
+): "command" | "file-change" | undefined {
+  switch (requestType) {
+    case "command_execution_approval":
+    case "exec_command_approval":
+      return "command";
+    case "file_change_approval":
+    case "apply_patch_approval":
+      return "file-change";
+    default:
+      return undefined;
+  }
+}
+
 function isToolLifecycleItemType(itemType: string): boolean {
   return (
     itemType === "command_execution" ||
@@ -151,6 +166,7 @@ function runtimeEventToActivities(
   const maybeSequence = event.sessionSequence !== undefined ? { sequence: event.sessionSequence } : {};
   switch (event.type) {
     case "request.opened": {
+      const requestKind = requestKindFromCanonicalRequestType(event.payload.requestType);
       return [
         {
           id: event.eventId,
@@ -158,13 +174,14 @@ function runtimeEventToActivities(
           tone: "approval",
           kind: "approval.requested",
           summary:
-            event.payload.requestType === "command_execution_approval"
+            requestKind === "command"
               ? "Command approval requested"
-              : event.payload.requestType === "file_change_approval"
+              : requestKind === "file-change"
                 ? "File-change approval requested"
                 : "Approval requested",
           payload: {
             requestId: event.requestId,
+            ...(requestKind ? { requestKind } : {}),
             requestType: event.payload.requestType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
           },
@@ -175,6 +192,7 @@ function runtimeEventToActivities(
     }
 
     case "request.resolved": {
+      const requestKind = requestKindFromCanonicalRequestType(event.payload.requestType);
       return [
         {
           id: event.eventId,
@@ -184,6 +202,7 @@ function runtimeEventToActivities(
           summary: "Approval resolved",
           payload: {
             requestId: event.requestId,
+            ...(requestKind ? { requestKind } : {}),
             requestType: event.payload.requestType,
             ...(event.payload.decision ? { decision: event.payload.decision } : {}),
           },

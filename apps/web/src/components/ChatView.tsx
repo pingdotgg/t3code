@@ -520,6 +520,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const composerImages = composerDraft.images;
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const setComposerDraftProvider = useComposerDraftStore((store) => store.setProvider);
   const setComposerDraftModel = useComposerDraftStore((store) => store.setModel);
   const setComposerDraftEffort = useComposerDraftStore((store) => store.setEffort);
   const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
@@ -549,12 +550,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
-  const [selectedProviderByThread, setSelectedProviderByThread] = useState<
-    Partial<Record<ThreadId, ProviderKind>>
-  >({});
-  const [selectedModelByThread, setSelectedModelByThread] = useState<
-    Partial<Record<ThreadId, ModelSlug>>
-  >({});
   const [isSwitchingRuntimeMode, setIsSwitchingRuntimeMode] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
@@ -679,9 +674,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
 
   const sessionProvider = activeThread?.session?.provider ?? null;
-  const selectedProviderByThreadId = activeThread?.id
-    ? selectedProviderByThread[activeThread.id]
-    : undefined;
+  const selectedProviderByThreadId = composerDraft.provider;
   const hasThreadStarted = Boolean(
     activeThread &&
       (activeThread.latestTurn !== null || activeThread.messages.length > 0 || activeThread.session !== null),
@@ -696,11 +689,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       : null;
   const baseThreadModel = resolveModelSlugForProvider(
     selectedProvider,
-    (activeThread?.id ? selectedModelByThread[activeThread.id] : undefined) ??
-      activeThread?.model ??
-      activeProject?.model ??
-      getDefaultModel(selectedProvider) ??
-      DEFAULT_MODEL,
+    activeThread?.model ?? activeProject?.model ?? getDefaultModel(selectedProvider) ?? DEFAULT_MODEL,
   );
   const selectedModel = resolveModelSlugForProvider(selectedProvider, composerDraft.model ?? baseThreadModel);
   const selectedEffort = composerDraft.effort ?? getDefaultReasoningEffort(selectedProvider);
@@ -741,29 +730,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       ),
     [lockedProvider],
   );
-  useEffect(() => {
-    if (!activeThread?.id || !sessionProvider) return;
-    setSelectedProviderByThread((existing) => {
-      if (existing[activeThread.id] === sessionProvider) return existing;
-      return { ...existing, [activeThread.id]: sessionProvider };
-    });
-  }, [activeThread?.id, sessionProvider]);
-  useEffect(() => {
-    if (!activeThread?.id) return;
-    setSelectedModelByThread((existing) => {
-      if (existing[activeThread.id]) return existing;
-      return {
-        ...existing,
-        [activeThread.id]: resolveModelSlugForProvider(
-          selectedProvider,
-          activeThread.model ??
-            activeProject?.model ??
-            getDefaultModel(selectedProvider) ??
-            DEFAULT_MODEL,
-        ),
-      };
-    });
-  }, [activeProject?.model, activeThread?.id, activeThread?.model, selectedProvider]);
   const phase = derivePhase(activeThread?.session ?? null);
   const isSendBusy = sendPhase !== "idle";
   const isPreparingWorktree = sendPhase === "preparing-worktree";
@@ -2348,14 +2314,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         provider === "cursor"
           ? resolveCursorModelFromSelection(parseCursorModelSelection(model))
           : resolveModelSlugForProvider(provider, model);
-      setSelectedProviderByThread((existing) => ({
-        ...existing,
-        [activeThread.id]: provider,
-      }));
-      setSelectedModelByThread((existing) => ({
-        ...existing,
-        [activeThread.id]: resolvedModel,
-      }));
+      setComposerDraftProvider(activeThread.id, provider);
+      setComposerDraftModel(activeThread.id, resolvedModel);
       if (api && isServerThread) {
         void api.orchestration.dispatchCommand({
           type: "thread.meta.update",
@@ -2372,6 +2332,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       isServerThread,
       lockedProvider,
       scheduleComposerFocus,
+      setComposerDraftModel,
+      setComposerDraftProvider,
     ],
   );
   const onCursorReasoningSelect = useCallback(
@@ -2888,13 +2850,37 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     )}
 
                     {selectedCursorModel && selectedCursorModelCapabilities && hasSelectedCursorTraits && (
-                      <CursorTraitsPicker
-                        selection={selectedCursorModel}
-                        capabilities={selectedCursorModelCapabilities}
-                        onReasoningChange={onCursorReasoningSelect}
-                        onFastModeChange={onCursorFastModeChange}
-                        onThinkingModeChange={onCursorThinkingModeChange}
-                      />
+                      <>
+                        {cursorModelSelectionLockedReason ? (
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <span className="inline-flex">
+                                  <CursorTraitsPicker
+                                    selection={selectedCursorModel}
+                                    capabilities={selectedCursorModelCapabilities}
+                                    disabled
+                                    onReasoningChange={onCursorReasoningSelect}
+                                    onFastModeChange={onCursorFastModeChange}
+                                    onThinkingModeChange={onCursorThinkingModeChange}
+                                  />
+                                </span>
+                              }
+                            />
+                            <TooltipPopup side="top" className="max-w-72 whitespace-normal leading-tight">
+                              {cursorModelSelectionLockedReason}
+                            </TooltipPopup>
+                          </Tooltip>
+                        ) : (
+                          <CursorTraitsPicker
+                            selection={selectedCursorModel}
+                            capabilities={selectedCursorModelCapabilities}
+                            onReasoningChange={onCursorReasoningSelect}
+                            onFastModeChange={onCursorFastModeChange}
+                            onThinkingModeChange={onCursorThinkingModeChange}
+                          />
+                        )}
+                      </>
                     )}
                   </>
                 ) : supportsReasoningEffort ? (
@@ -4238,10 +4224,12 @@ const ReasoningEffortPicker = memo(function ReasoningEffortPicker(props: {
 const CursorTraitsPicker = memo(function CursorTraitsPicker(props: {
   selection: ReturnType<typeof parseCursorModelSelection>;
   capabilities: ReturnType<typeof getCursorModelCapabilities>;
+  disabled?: boolean;
   onReasoningChange: (reasoning: CursorReasoningOption) => void;
   onFastModeChange: (enabled: boolean) => void;
   onThinkingModeChange: (enabled: boolean) => void;
 }) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const reasoningLabelByOption: Record<CursorReasoningOption, string> = {
     low: "Low",
     normal: "Normal",
@@ -4258,9 +4246,25 @@ const CursorTraitsPicker = memo(function CursorTraitsPicker(props: {
   const triggerLabel = traitSummary.length > 0 ? traitSummary.join(" · ") : "Traits";
 
   return (
-    <Menu>
+    <Menu
+      open={isMenuOpen}
+      onOpenChange={(open) => {
+        if (props.disabled) {
+          setIsMenuOpen(false);
+          return;
+        }
+        setIsMenuOpen(open);
+      }}
+    >
       <MenuTrigger
-        render={<Button size="sm" variant="ghost" className="shrink-0 whitespace-nowrap px-2 sm:px-3" />}
+        render={
+          <Button
+            size="sm"
+            variant="ghost"
+            className="shrink-0 whitespace-nowrap px-2 sm:px-3"
+            disabled={props.disabled}
+          />
+        }
       >
         <span>{triggerLabel}</span>
         <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
@@ -4272,6 +4276,7 @@ const CursorTraitsPicker = memo(function CursorTraitsPicker(props: {
             <MenuRadioGroup
               value={props.selection.reasoning}
               onValueChange={(value) => {
+                if (props.disabled) return;
                 if (!value) return;
                 const nextReasoning = CURSOR_REASONING_OPTIONS.find((option) => option === value);
                 if (!nextReasoning) return;
@@ -4294,7 +4299,10 @@ const CursorTraitsPicker = memo(function CursorTraitsPicker(props: {
             <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Fast Mode</div>
             <MenuRadioGroup
               value={props.selection.fast ? "on" : "off"}
-              onValueChange={(value) => props.onFastModeChange(value === "on")}
+              onValueChange={(value) => {
+                if (props.disabled) return;
+                props.onFastModeChange(value === "on");
+              }}
             >
               <MenuRadioItem value="off">off</MenuRadioItem>
               <MenuRadioItem value="on">on</MenuRadioItem>
@@ -4307,7 +4315,10 @@ const CursorTraitsPicker = memo(function CursorTraitsPicker(props: {
             <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Thinking</div>
             <MenuRadioGroup
               value={props.selection.thinking ? "on" : "off"}
-              onValueChange={(value) => props.onThinkingModeChange(value === "on")}
+              onValueChange={(value) => {
+                if (props.disabled) return;
+                props.onThinkingModeChange(value === "on");
+              }}
             >
               <MenuRadioItem value="off">off</MenuRadioItem>
               <MenuRadioItem value="on">on</MenuRadioItem>

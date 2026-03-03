@@ -348,3 +348,32 @@ describe("composerDraftStore setModel", () => {
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.model).toBe("gpt-5.3-codex");
   });
 });
+
+describe("composerDraftStore setProvider", () => {
+  const threadId = ThreadId.makeUnsafe("thread-provider");
+
+  beforeEach(() => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+  });
+
+  it("persists provider-only selection even when prompt/model are empty", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "cursor");
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.provider).toBe("cursor");
+  });
+
+  it("removes empty provider-only draft when provider is reset", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "cursor");
+    store.setProvider(threadId, null);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+});
