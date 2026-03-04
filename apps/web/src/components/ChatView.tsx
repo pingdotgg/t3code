@@ -3362,7 +3362,12 @@ const MessagesTimeline = memo(function MessagesTimeline({
   const nonVirtualizedRows = rows.slice(virtualizedRowCount);
 
   const renderRowContent = (row: TimelineRow) => (
-    <div className="pb-4">
+    <div
+      className="pb-4"
+      data-timeline-row-kind={row.kind}
+      data-message-id={row.kind === "message" ? row.message.id : undefined}
+      data-message-role={row.kind === "message" ? row.message.role : undefined}
+    >
       {row.kind === "work" &&
         (() => {
           const groupId = row.id;
