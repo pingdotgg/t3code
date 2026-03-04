@@ -15,7 +15,17 @@ export function shouldBroadcastDownloadProgress(
 
   const previousStep = Math.floor(currentPercent / 10);
   const nextStep = Math.floor(nextPercent / 10);
-  return nextStep > previousStep || nextPercent === 100;
+  return nextStep !== previousStep || nextPercent === 100;
+}
+
+export function nextStatusAfterDownloadFailure(
+  currentState: DesktopUpdateState,
+): DesktopUpdateState["status"] {
+  return currentState.availableVersion ? "available" : "error";
+}
+
+export function getCanRetryAfterDownloadFailure(currentState: DesktopUpdateState): boolean {
+  return currentState.availableVersion !== null;
 }
 
 export function getAutoUpdateDisabledReason(args: {

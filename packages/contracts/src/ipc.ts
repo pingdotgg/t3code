@@ -62,6 +62,14 @@ export interface DesktopUpdateState {
   downloadPercent: number | null;
   checkedAt: string | null;
   message: string | null;
+  errorContext: "check" | "download" | "install" | null;
+  canRetry: boolean;
+}
+
+export interface DesktopUpdateActionResult {
+  accepted: boolean;
+  completed: boolean;
+  state: DesktopUpdateState;
 }
 
 export interface DesktopBridge {
@@ -75,8 +83,8 @@ export interface DesktopBridge {
   openExternal: (url: string) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
-  downloadUpdate: () => Promise<void>;
-  installUpdate: () => Promise<void>;
+  downloadUpdate: () => Promise<DesktopUpdateActionResult>;
+  installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
 }
 

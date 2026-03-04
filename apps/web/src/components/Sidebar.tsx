@@ -30,6 +30,15 @@ import { readNativeApi } from "../nativeApi";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
+import {
+  getDesktopUpdateActionError,
+  getDesktopUpdateButtonTooltip,
+  isDesktopUpdateButtonDisabled,
+  resolveDesktopUpdateButtonAction,
+  shouldHighlightDesktopUpdateError,
+  shouldShowDesktopUpdateButton,
+  shouldToastDesktopUpdateActionResult,
+} from "./desktopUpdate.logic";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
@@ -82,21 +91,6 @@ interface PrStatusIndicator {
 }
 
 type ThreadPr = GitStatusResult["pr"];
-
-function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string {
-  if (state.status === "available") {
-    return `Update ${state.availableVersion ?? "available"} ready to download`;
-  }
-  if (state.status === "downloading") {
-    const progress =
-      typeof state.downloadPercent === "number" ? ` (${Math.floor(state.downloadPercent)}%)` : "";
-    return `Downloading update${progress}`;
-  }
-  if (state.status === "downloaded") {
-    return `Update ${state.downloadedVersion ?? state.availableVersion ?? "ready"} downloaded. Click to restart and install.`;
-  }
-  return "Update available";
-}
 
 function hasUnseenCompletion(thread: Thread): boolean {
   if (!thread.latestTurn?.completedAt) return false;
@@ -847,18 +841,16 @@ export default function Sidebar() {
     if (firstProject) void handleNewThread(firstProject.id);
   };
 
-  const showDesktopUpdateButton =
-    isElectron &&
-    desktopUpdateState?.enabled === true &&
-    (desktopUpdateState.status === "available" ||
-      desktopUpdateState.status === "downloading" ||
-      desktopUpdateState.status === "downloaded");
+  const showDesktopUpdateButton = isElectron && shouldShowDesktopUpdateButton(desktopUpdateState);
 
   const desktopUpdateTooltip = desktopUpdateState
     ? getDesktopUpdateButtonTooltip(desktopUpdateState)
     : "Update available";
 
-  const desktopUpdateButtonDisabled = desktopUpdateState?.status === "downloading";
+  const desktopUpdateButtonDisabled = isDesktopUpdateButtonDisabled(desktopUpdateState);
+  const desktopUpdateButtonAction = desktopUpdateState
+    ? resolveDesktopUpdateButtonAction(desktopUpdateState)
+    : "none";
   const desktopUpdateButtonInteractivityClasses = desktopUpdateButtonDisabled
     ? "cursor-not-allowed opacity-60"
     : "hover:bg-accent hover:text-foreground";
@@ -867,34 +859,67 @@ export default function Sidebar() {
       ? "text-emerald-500"
       : desktopUpdateState?.status === "downloading"
         ? "text-sky-400"
+        : shouldHighlightDesktopUpdateError(desktopUpdateState)
+          ? "text-rose-500 animate-pulse"
         : "text-amber-500 animate-pulse";
 
   const handleDesktopUpdateButtonClick = useCallback(() => {
     const bridge = window.desktopBridge;
     if (!bridge || !desktopUpdateState) return;
-    if (desktopUpdateState.status === "downloading") return;
+    if (desktopUpdateButtonDisabled || desktopUpdateButtonAction === "none") return;
 
-    if (desktopUpdateState.status === "available") {
-      void bridge.downloadUpdate().catch((error) => {
-        toastManager.add({
-          type: "error",
-          title: "Could not start update download",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+    if (desktopUpdateButtonAction === "download") {
+      void bridge
+        .downloadUpdate()
+        .then((result) => {
+          if (result.completed) {
+            toastManager.add({
+              type: "success",
+              title: "Update downloaded",
+              description: "Restart the app from the update button to install it.",
+            });
+          }
+          if (!shouldToastDesktopUpdateActionResult(result)) return;
+          const actionError = getDesktopUpdateActionError(result);
+          if (!actionError) return;
+          toastManager.add({
+            type: "error",
+            title: "Could not download update",
+            description: actionError,
+          });
+        })
+        .catch((error) => {
+          toastManager.add({
+            type: "error",
+            title: "Could not start update download",
+            description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          });
         });
-      });
       return;
     }
 
-    if (desktopUpdateState.status === "downloaded") {
-      void bridge.installUpdate().catch((error) => {
-        toastManager.add({
-          type: "error",
-          title: "Could not install update",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+    if (desktopUpdateButtonAction === "install") {
+      void bridge
+        .installUpdate()
+        .then((result) => {
+          if (!shouldToastDesktopUpdateActionResult(result)) return;
+          const actionError = getDesktopUpdateActionError(result);
+          if (!actionError) return;
+          toastManager.add({
+            type: "error",
+            title: "Could not install update",
+            description: actionError,
+          });
+        })
+        .catch((error) => {
+          toastManager.add({
+            type: "error",
+            title: "Could not install update",
+            description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          });
         });
-      });
     }
-  }, [desktopUpdateState]);
+  }, [desktopUpdateButtonAction, desktopUpdateButtonDisabled, desktopUpdateState]);
 
   const wordmark = (
     <div className="flex items-center gap-2">
@@ -936,6 +961,7 @@ export default function Sidebar() {
                       type="button"
                       aria-label={desktopUpdateTooltip}
                       aria-disabled={desktopUpdateButtonDisabled || undefined}
+                      disabled={desktopUpdateButtonDisabled}
                       className={`inline-flex size-7 ml-auto mt-2 items-center justify-center rounded-md text-muted-foreground transition-colors ${desktopUpdateButtonInteractivityClasses} ${desktopUpdateButtonClasses}`}
                       onClick={handleDesktopUpdateButtonClick}
                     >

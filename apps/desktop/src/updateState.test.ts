@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { DesktopUpdateState } from "@t3tools/contracts";
 
-import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
+import {
+  getCanRetryAfterDownloadFailure,
+  getAutoUpdateDisabledReason,
+  nextStatusAfterDownloadFailure,
+  shouldBroadcastDownloadProgress,
+} from "./updateState";
 
 const baseState: DesktopUpdateState = {
   enabled: true,
@@ -12,6 +17,8 @@ const baseState: DesktopUpdateState = {
   downloadPercent: null,
   checkedAt: null,
   message: null,
+  errorContext: null,
+  canRetry: false,
 };
 
 describe("shouldBroadcastDownloadProgress", () => {
@@ -38,6 +45,15 @@ describe("shouldBroadcastDownloadProgress", () => {
       shouldBroadcastDownloadProgress(
         { ...baseState, status: "downloading", downloadPercent: 19.9 },
         20.1,
+      ),
+    ).toBe(true);
+  });
+
+  it("broadcasts progress updates when a retry resets the download percentage", () => {
+    expect(
+      shouldBroadcastDownloadProgress(
+        { ...baseState, status: "downloading", downloadPercent: 50.4 },
+        0.2,
       ),
     ).toBe(true);
   });
@@ -78,5 +94,49 @@ describe("getAutoUpdateDisabledReason", () => {
         disabledByEnv: false,
       }),
     ).toContain("AppImage");
+  });
+});
+
+describe("nextStatusAfterDownloadFailure", () => {
+  it("returns available when an update version is still known", () => {
+    expect(
+      nextStatusAfterDownloadFailure({
+        ...baseState,
+        status: "downloading",
+        availableVersion: "1.1.0",
+      }),
+    ).toBe("available");
+  });
+
+  it("returns error when no update version can be retried", () => {
+    expect(
+      nextStatusAfterDownloadFailure({
+        ...baseState,
+        status: "downloading",
+        availableVersion: null,
+      }),
+    ).toBe("error");
+  });
+});
+
+describe("getCanRetryAfterDownloadFailure", () => {
+  it("returns true when an available version is still present", () => {
+    expect(
+      getCanRetryAfterDownloadFailure({
+        ...baseState,
+        status: "downloading",
+        availableVersion: "1.1.0",
+      }),
+    ).toBe(true);
+  });
+
+  it("returns false when no version is available to retry", () => {
+    expect(
+      getCanRetryAfterDownloadFailure({
+        ...baseState,
+        status: "downloading",
+        availableVersion: null,
+      }),
+    ).toBe(false);
   });
 });

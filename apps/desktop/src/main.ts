@@ -7,7 +7,7 @@ import * as Path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
@@ -15,7 +15,22 @@ import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { fixPath } from "./fixPath";
-import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
+import {
+  getAutoUpdateDisabledReason,
+  shouldBroadcastDownloadProgress,
+} from "./updateState";
+import {
+  createInitialDesktopUpdateState,
+  reduceDesktopUpdateStateOnCheckFailure,
+  reduceDesktopUpdateStateOnCheckStart,
+  reduceDesktopUpdateStateOnDownloadComplete,
+  reduceDesktopUpdateStateOnDownloadFailure,
+  reduceDesktopUpdateStateOnDownloadProgress,
+  reduceDesktopUpdateStateOnDownloadStart,
+  reduceDesktopUpdateStateOnInstallFailure,
+  reduceDesktopUpdateStateOnNoUpdate,
+  reduceDesktopUpdateStateOnUpdateAvailable,
+} from "./updateMachine";
 
 fixPath();
 
@@ -44,6 +59,8 @@ const APP_RUN_ID = Crypto.randomBytes(6).toString("hex");
 const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
+type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
+
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess.ChildProcess | null = null;
 let backendPort = 0;
@@ -59,6 +76,7 @@ let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
+const initialUpdateState = (): DesktopUpdateState => createInitialDesktopUpdateState(app.getVersion());
 
 function logTimestamp(): string {
   return new Date().toISOString();
@@ -208,16 +226,13 @@ let updateStartupTimer: ReturnType<typeof setTimeout> | null = null;
 let updateCheckInFlight = false;
 let updateDownloadInFlight = false;
 let updaterConfigured = false;
-let updateState: DesktopUpdateState = {
-  enabled: false,
-  status: "disabled",
-  currentVersion: app.getVersion(),
-  availableVersion: null,
-  downloadedVersion: null,
-  downloadPercent: null,
-  checkedAt: null,
-  message: null,
-};
+let updateState: DesktopUpdateState = initialUpdateState();
+
+function resolveUpdaterErrorContext(): DesktopUpdateErrorContext {
+  if (updateDownloadInFlight) return "download";
+  if (updateCheckInFlight) return "check";
+  return updateState.errorContext;
+}
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -600,78 +615,67 @@ async function checkForUpdates(reason: string): Promise<void> {
     return;
   }
   updateCheckInFlight = true;
-  setUpdateState({
-    status: "checking",
-    checkedAt: new Date().toISOString(),
-    message: null,
-    downloadPercent: null,
-  });
+  setUpdateState(reduceDesktopUpdateStateOnCheckStart(updateState, new Date().toISOString()));
   console.info(`[desktop-updater] Checking for updates (${reason})...`);
 
   try {
     await autoUpdater.checkForUpdates();
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    setUpdateState({
-      status: "error",
-      message,
-      checkedAt: new Date().toISOString(),
-      downloadPercent: null,
-    });
+    setUpdateState(reduceDesktopUpdateStateOnCheckFailure(updateState, message, new Date().toISOString()));
     console.error(`[desktop-updater] Failed to check for updates: ${message}`);
   } finally {
     updateCheckInFlight = false;
   }
 }
 
-async function downloadAvailableUpdate(): Promise<void> {
+async function downloadAvailableUpdate(): Promise<{ accepted: boolean; completed: boolean }> {
   if (!updaterConfigured || updateDownloadInFlight || updateState.status !== "available") {
-    return;
+    return { accepted: false, completed: false };
   }
   updateDownloadInFlight = true;
-  setUpdateState({
-    status: "downloading",
-    downloadPercent: 0,
-    message: null,
-  });
+  setUpdateState(reduceDesktopUpdateStateOnDownloadStart(updateState));
   console.info("[desktop-updater] Downloading update...");
 
   try {
     await autoUpdater.downloadUpdate();
+    return { accepted: true, completed: true };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    setUpdateState({
-      status: "error",
-      message,
-      downloadPercent: null,
-    });
+    setUpdateState(reduceDesktopUpdateStateOnDownloadFailure(updateState, message));
     console.error(`[desktop-updater] Failed to download update: ${message}`);
+    return { accepted: true, completed: false };
   } finally {
     updateDownloadInFlight = false;
   }
 }
 
-function installDownloadedUpdate(): void {
-  if (isQuitting || !updaterConfigured || updateState.status !== "downloaded") return;
+async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed: boolean }> {
+  if (isQuitting || !updaterConfigured || updateState.status !== "downloaded") {
+    return { accepted: false, completed: false };
+  }
 
   isQuitting = true;
   clearUpdatePollTimer();
-  void stopBackendAndWaitForExit().finally(() => {
+  try {
+    await stopBackendAndWaitForExit();
     autoUpdater.quitAndInstall();
-  });
+    return { accepted: true, completed: true };
+  } catch (error: unknown) {
+    const message = formatErrorMessage(error);
+    isQuitting = false;
+    setUpdateState(reduceDesktopUpdateStateOnInstallFailure(updateState, message));
+    console.error(`[desktop-updater] Failed to install update: ${message}`);
+    return { accepted: true, completed: false };
+  }
 }
 
 function configureAutoUpdater(): void {
   const enabled = shouldEnableAutoUpdates();
   setUpdateState({
+    ...createInitialDesktopUpdateState(app.getVersion()),
     enabled,
     status: enabled ? "idle" : "disabled",
-    currentVersion: app.getVersion(),
-    availableVersion: null,
-    downloadedVersion: null,
-    downloadPercent: null,
-    checkedAt: null,
-    message: null,
   });
   if (!enabled) {
     return;
@@ -698,26 +702,12 @@ function configureAutoUpdater(): void {
     console.info("[desktop-updater] Looking for updates...");
   });
   autoUpdater.on("update-available", (info) => {
-    setUpdateState({
-      status: "available",
-      availableVersion: info.version,
-      downloadedVersion: null,
-      downloadPercent: null,
-      checkedAt: new Date().toISOString(),
-      message: null,
-    });
+    setUpdateState(reduceDesktopUpdateStateOnUpdateAvailable(updateState, info.version, new Date().toISOString()));
     lastLoggedDownloadMilestone = -1;
     console.info(`[desktop-updater] Update available: ${info.version}`);
   });
   autoUpdater.on("update-not-available", () => {
-    setUpdateState({
-      status: "up-to-date",
-      availableVersion: null,
-      downloadedVersion: null,
-      downloadPercent: null,
-      checkedAt: new Date().toISOString(),
-      message: null,
-    });
+    setUpdateState(reduceDesktopUpdateStateOnNoUpdate(updateState, new Date().toISOString()));
     lastLoggedDownloadMilestone = -1;
     console.info("[desktop-updater] No updates available.");
   });
@@ -729,6 +719,8 @@ function configureAutoUpdater(): void {
         message,
         checkedAt: new Date().toISOString(),
         downloadPercent: null,
+        errorContext: resolveUpdaterErrorContext(),
+        canRetry: updateState.availableVersion !== null || updateState.downloadedVersion !== null,
       });
     }
     console.error(`[desktop-updater] Updater error: ${message}`);
@@ -739,11 +731,7 @@ function configureAutoUpdater(): void {
       shouldBroadcastDownloadProgress(updateState, progress.percent) ||
       updateState.message !== null
     ) {
-      setUpdateState({
-        status: "downloading",
-        downloadPercent: progress.percent,
-        message: null,
-      });
+      setUpdateState(reduceDesktopUpdateStateOnDownloadProgress(updateState, progress.percent));
     }
     const milestone = percent - (percent % 10);
     if (milestone > lastLoggedDownloadMilestone) {
@@ -752,13 +740,7 @@ function configureAutoUpdater(): void {
     }
   });
   autoUpdater.on("update-downloaded", (info) => {
-    setUpdateState({
-      status: "downloaded",
-      availableVersion: info.version,
-      downloadedVersion: info.version,
-      downloadPercent: 100,
-      message: null,
-    });
+    setUpdateState(reduceDesktopUpdateStateOnDownloadComplete(updateState, info.version));
     console.info(`[desktop-updater] Update downloaded: ${info.version}`);
   });
 
@@ -1044,13 +1026,29 @@ function registerIpcHandlers(): void {
 
   ipcMain.removeHandler(UPDATE_DOWNLOAD_CHANNEL);
   ipcMain.handle(UPDATE_DOWNLOAD_CHANNEL, async () => {
-    await downloadAvailableUpdate();
+    const result = await downloadAvailableUpdate();
+    return {
+      accepted: result.accepted,
+      completed: result.completed,
+      state: updateState,
+    } satisfies DesktopUpdateActionResult;
   });
 
   ipcMain.removeHandler(UPDATE_INSTALL_CHANNEL);
   ipcMain.handle(UPDATE_INSTALL_CHANNEL, async () => {
-    if (isQuitting) return;
-    installDownloadedUpdate();
+    if (isQuitting) {
+      return {
+        accepted: false,
+        completed: false,
+        state: updateState,
+      } satisfies DesktopUpdateActionResult;
+    }
+    const result = await installDownloadedUpdate();
+    return {
+      accepted: result.accepted,
+      completed: result.completed,
+      state: updateState,
+    } satisfies DesktopUpdateActionResult;
   });
 }
 
