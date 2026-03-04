@@ -12,6 +12,7 @@
 import {
   NonNegativeInt,
   ProviderSessionId,
+  RuntimeSessionId,
   ThreadId,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
@@ -123,7 +124,8 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
     const routedSessionAliasesRef = yield* Ref.make<Map<ProviderSessionId, ProviderSessionId>>(
       new Map(),
     );
-    const sessionRuntimeSequenceRef = yield* Ref.make<Map<ProviderSessionId, number>>(new Map());
+    const asRuntimeSessionId = (sessionId: ProviderSessionId): RuntimeSessionId =>
+      RuntimeSessionId.makeUnsafe(sessionId);
 
     const canonicalizeRuntimeEventSession = (
       event: ProviderRuntimeEvent,
@@ -131,10 +133,10 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       Ref.get(routedSessionAliasesRef).pipe(
         Effect.map((aliases) => {
           for (const [staleSessionId, liveSessionId] of aliases) {
-            if (liveSessionId === event.sessionId) {
+            if (asRuntimeSessionId(liveSessionId) === event.sessionId) {
               return {
                 ...event,
-                sessionId: staleSessionId,
+                sessionId: asRuntimeSessionId(staleSessionId),
               } satisfies ProviderRuntimeEvent;
             }
           }
@@ -144,21 +146,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
 
     const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
       canonicalizeRuntimeEventSession(event).pipe(
-        Effect.flatMap((canonicalEvent) =>
-          Ref.modify(sessionRuntimeSequenceRef, (current) => {
-            const next = new Map(current);
-            const currentSequence = next.get(canonicalEvent.sessionId) ?? 0;
-            const sessionSequence = currentSequence + 1;
-            next.set(canonicalEvent.sessionId, sessionSequence);
-            return [
-              {
-                ...canonicalEvent,
-                sessionSequence,
-              } satisfies ProviderRuntimeEvent,
-              next,
-            ] as const;
-          }),
-        ),
         Effect.tap((canonicalEvent) =>
           canonicalEventLogger
             ? Effect.flatMap(
@@ -221,16 +208,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           next.set(key, value);
         }
         return changed ? next : current;
-      });
-
-    const clearSessionSequence = (sessionId: ProviderSessionId) =>
-      Ref.update(sessionRuntimeSequenceRef, (current) => {
-        if (!current.has(sessionId)) {
-          return current;
-        }
-        const next = new Map(current);
-        next.delete(sessionId);
-        return next;
       });
 
     const setAlias = (staleSessionId: ProviderSessionId, liveSessionId: ProviderSessionId) =>
@@ -554,11 +531,9 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         if (routed.sessionId !== input.sessionId) {
           yield* directory.remove(routed.sessionId);
           yield* clearAliasesReferencing(routed.sessionId);
-          yield* clearSessionSequence(routed.sessionId);
         }
         yield* directory.remove(input.sessionId);
         yield* clearAliasesReferencing(input.sessionId);
-        yield* clearSessionSequence(input.sessionId);
       });
 
     const listSessions: ProviderServiceShape["listSessions"] = () =>
@@ -610,7 +585,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         // Keep persisted session bindings so stale sessions can be resumed after
         // process restart via providerThreadId.
         yield* Ref.set(routedSessionAliasesRef, new Map());
-        yield* Ref.set(sessionRuntimeSequenceRef, new Map());
       });
 
     return {
