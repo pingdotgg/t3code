@@ -6,6 +6,7 @@ import {
   ProjectId,
   ThreadId,
   WS_CHANNELS,
+  type ServerProviderStatus,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -61,6 +62,16 @@ function getWindowForTest(): Window & typeof globalThis & { desktopBridge?: unkn
   }
   return testGlobal.window;
 }
+
+const defaultProviders: ReadonlyArray<ServerProviderStatus> = [
+  {
+    provider: "codex",
+    status: "ready",
+    available: true,
+    authStatus: "authenticated",
+    checkedAt: "2026-01-01T00:00:00.000Z",
+  },
+];
 
 beforeEach(() => {
   vi.resetModules();
@@ -162,6 +173,7 @@ describe("wsNativeApi", () => {
           message: "Entry at index 1 is invalid.",
         },
       ],
+      providers: defaultProviders,
     } as const;
     emitPush(WS_CHANNELS.serverConfigUpdated, payload);
 
@@ -185,14 +197,17 @@ describe("wsNativeApi", () => {
 
     emitPush(WS_CHANNELS.serverConfigUpdated, {
       issues: [{ kind: "keybindings.invalid-entry", message: "missing index" }],
+      providers: defaultProviders,
     });
     emitPush(WS_CHANNELS.serverConfigUpdated, {
       issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
+      providers: defaultProviders,
     });
 
     expect(listener).toHaveBeenCalledTimes(1);
     expect(listener).toHaveBeenCalledWith({
       issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
+      providers: defaultProviders,
     });
     expect(warnSpy).toHaveBeenCalledTimes(1);
   });
