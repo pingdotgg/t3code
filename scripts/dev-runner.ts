@@ -406,14 +406,17 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       return;
     }
 
-    const command = process.platform === "win32" ? "turbo.cmd" : "turbo";
-    const child = yield* ChildProcess.make(command, [...MODE_ARGS[input.mode], ...input.turboArgs], {
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-      env,
-      extendEnv: false,
-    });
+    const child = yield* ChildProcess.make(
+      "turbo",
+      [...MODE_ARGS[input.mode], ...input.turboArgs],
+      {
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+        env,
+        extendEnv: false,
+      },
+    );
 
     const exitCode = yield* child.exitCode;
     if (exitCode !== 0) {
