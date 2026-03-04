@@ -203,6 +203,7 @@ function getDestructiveMenuIcon(): Electron.NativeImage | undefined {
   }
 }
 let updatePollTimer: ReturnType<typeof setInterval> | null = null;
+let updateStartupTimer: ReturnType<typeof setTimeout> | null = null;
 let updateCheckInFlight = false;
 let updateDownloadInFlight = false;
 let updaterConfigured = false;
@@ -538,9 +539,14 @@ function configureAppIdentity(): void {
 }
 
 function clearUpdatePollTimer(): void {
-  if (!updatePollTimer) return;
-  clearInterval(updatePollTimer);
-  updatePollTimer = null;
+  if (updateStartupTimer) {
+    clearTimeout(updateStartupTimer);
+    updateStartupTimer = null;
+  }
+  if (updatePollTimer) {
+    clearInterval(updatePollTimer);
+    updatePollTimer = null;
+  }
 }
 
 function emitUpdateState(): void {
@@ -570,7 +576,7 @@ function shouldEnableAutoUpdates(): boolean {
 }
 
 async function checkForUpdates(reason: string): Promise<void> {
-  if (!updaterConfigured || updateCheckInFlight) return;
+  if (isQuitting || !updaterConfigured || updateCheckInFlight) return;
   if (
     updateState.status === "downloading" ||
     updateState.status === "downloaded" ||
@@ -739,10 +745,13 @@ function configureAutoUpdater(): void {
     console.info(`[desktop-updater] Update downloaded: ${info.version}`);
   });
 
-  const startupTimer = setTimeout(() => {
+  clearUpdatePollTimer();
+
+  updateStartupTimer = setTimeout(() => {
+    updateStartupTimer = null;
     void checkForUpdates("startup");
   }, AUTO_UPDATE_STARTUP_DELAY_MS);
-  startupTimer.unref();
+  updateStartupTimer.unref();
 
   updatePollTimer = setInterval(() => {
     void checkForUpdates("poll");
