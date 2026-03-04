@@ -2,7 +2,6 @@ import { assert, it } from "@effect/vitest";
 import { Effect, Layer, Sink, Stream } from "effect";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { expect } from "vitest";
 
 import { checkCodexProviderStatus, parseAuthStatusFromOutput } from "./ProviderHealth";
 
@@ -56,17 +55,13 @@ function failingSpawnerLayer(description: string) {
 // ── Tests ───────────────────────────────────────────────────────────
 
 it.effect("returns ready when codex is installed and authenticated", () =>
-  checkCodexProviderStatus.pipe(
-    Effect.map((status) => {
-      expect(status).toEqual(
-        expect.objectContaining({
-          provider: "codex",
-          status: "ready",
-          available: true,
-          authStatus: "authenticated",
-        }),
-      );
-    }),
+  Effect.gen(function* () {
+    const status = yield* checkCodexProviderStatus;
+    assert.strictEqual(status.provider, "codex");
+    assert.strictEqual(status.status, "ready");
+    assert.strictEqual(status.available, true);
+    assert.strictEqual(status.authStatus, "authenticated");
+  }).pipe(
     Effect.provide(
       mockSpawnerLayer((args) => {
         const joined = args.join(" ");
@@ -79,35 +74,28 @@ it.effect("returns ready when codex is installed and authenticated", () =>
 );
 
 it.effect("returns unavailable when codex is missing", () =>
-  checkCodexProviderStatus.pipe(
-    Effect.map((status) => {
-      expect(status).toEqual(
-        expect.objectContaining({
-          provider: "codex",
-          status: "error",
-          available: false,
-          authStatus: "unknown",
-          message: "Codex CLI (`codex`) is not installed or not on PATH.",
-        }),
-      );
-    }),
-    Effect.provide(failingSpawnerLayer("spawn codex ENOENT")),
-  ),
+  Effect.gen(function* () {
+    const status = yield* checkCodexProviderStatus;
+    assert.strictEqual(status.provider, "codex");
+    assert.strictEqual(status.status, "error");
+    assert.strictEqual(status.available, false);
+    assert.strictEqual(status.authStatus, "unknown");
+    assert.strictEqual(status.message, "Codex CLI (`codex`) is not installed or not on PATH.");
+  }).pipe(Effect.provide(failingSpawnerLayer("spawn codex ENOENT"))),
 );
 
 it.effect("returns unauthenticated when auth probe reports login required", () =>
-  checkCodexProviderStatus.pipe(
-    Effect.map((status) => {
-      expect(status).toEqual(
-        expect.objectContaining({
-          provider: "codex",
-          status: "error",
-          available: true,
-          authStatus: "unauthenticated",
-          message: "Codex CLI is not authenticated. Run `codex login` and try again.",
-        }),
-      );
-    }),
+  Effect.gen(function* () {
+    const status = yield* checkCodexProviderStatus;
+    assert.strictEqual(status.provider, "codex");
+    assert.strictEqual(status.status, "error");
+    assert.strictEqual(status.available, true);
+    assert.strictEqual(status.authStatus, "unauthenticated");
+    assert.strictEqual(
+      status.message,
+      "Codex CLI is not authenticated. Run `codex login` and try again.",
+    );
+  }).pipe(
     Effect.provide(
       mockSpawnerLayer((args) => {
         const joined = args.join(" ");
@@ -121,43 +109,44 @@ it.effect("returns unauthenticated when auth probe reports login required", () =
   ),
 );
 
-it.effect("returns unauthenticated when login status output includes 'not logged in'", () =>
-  checkCodexProviderStatus.pipe(
-    Effect.map((status) => {
-      expect(status).toEqual(
-        expect.objectContaining({
-          provider: "codex",
-          status: "error",
-          available: true,
-          authStatus: "unauthenticated",
-          message: "Codex CLI is not authenticated. Run `codex login` and try again.",
-        }),
+it.effect(
+  "returns unauthenticated when login status output includes 'not logged in'",
+  () =>
+    Effect.gen(function* () {
+      const status = yield* checkCodexProviderStatus;
+      assert.strictEqual(status.provider, "codex");
+      assert.strictEqual(status.status, "error");
+      assert.strictEqual(status.available, true);
+      assert.strictEqual(status.authStatus, "unauthenticated");
+      assert.strictEqual(
+        status.message,
+        "Codex CLI is not authenticated. Run `codex login` and try again.",
       );
-    }),
-    Effect.provide(
-      mockSpawnerLayer((args) => {
-        const joined = args.join(" ");
-        if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-        if (joined === "login status") return { stdout: "Not logged in\n", stderr: "", code: 1 };
-        throw new Error(`Unexpected args: ${joined}`);
-      }),
+    }).pipe(
+      Effect.provide(
+        mockSpawnerLayer((args) => {
+          const joined = args.join(" ");
+          if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+          if (joined === "login status")
+            return { stdout: "Not logged in\n", stderr: "", code: 1 };
+          throw new Error(`Unexpected args: ${joined}`);
+        }),
+      ),
     ),
-  ),
 );
 
 it.effect("returns warning when login status command is unsupported", () =>
-  checkCodexProviderStatus.pipe(
-    Effect.map((status) => {
-      expect(status).toEqual(
-        expect.objectContaining({
-          provider: "codex",
-          status: "warning",
-          available: true,
-          authStatus: "unknown",
-          message: "Codex CLI authentication status command is unavailable in this Codex version.",
-        }),
-      );
-    }),
+  Effect.gen(function* () {
+    const status = yield* checkCodexProviderStatus;
+    assert.strictEqual(status.provider, "codex");
+    assert.strictEqual(status.status, "warning");
+    assert.strictEqual(status.available, true);
+    assert.strictEqual(status.authStatus, "unknown");
+    assert.strictEqual(
+      status.message,
+      "Codex CLI authentication status command is unavailable in this Codex version.",
+    );
+  }).pipe(
     Effect.provide(
       mockSpawnerLayer((args) => {
         const joined = args.join(" ");
