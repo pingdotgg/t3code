@@ -12,3 +12,5 @@ build/
 .logs/
 release/
 .t3
+apps/web/.playwright
+apps/web/playwright-report

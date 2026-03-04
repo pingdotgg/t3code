@@ -8,7 +8,7 @@ on:
 
 jobs:
   quality:
-    name: Lint, Typecheck, Test, Build
+    name: Lint, Typecheck, Test, Browser Test, Build
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
@@ -34,6 +34,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}-
 
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -45,6 +53,14 @@ jobs:
 
       - name: Test
         run: bun run test
+
+      - name: Install browser test runtime
+        run: |
+          cd apps/web
+          bunx playwright install --with-deps chromium
+
+      - name: Browser test
+        run: bun run --cwd apps/web test:browser
 
       - name: Build desktop pipeline
         run: bun run build:desktop
