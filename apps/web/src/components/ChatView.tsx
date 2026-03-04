@@ -131,6 +131,7 @@ import {
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { clamp } from "effect/Number";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
+import { estimateTimelineMessageHeight } from "./timelineHeight";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
   if (!duration) return formatTimestamp(createdAt);
@@ -3166,20 +3167,6 @@ type TimelineRow =
     }
   | { kind: "working"; id: string; createdAt: string | null };
 
-function estimateTimelineMessageHeight(message: TimelineMessage): number {
-  const textLength = message.text.length;
-  if (message.role === "assistant") {
-    const estimatedLines = Math.max(1, Math.ceil(textLength / 72));
-    return 78 + Math.min(estimatedLines * 22, 820);
-  }
-
-  const estimatedLines = Math.max(1, Math.ceil(textLength / 56));
-  const attachmentCount = message.attachments?.length ?? 0;
-  const attachmentRows = Math.ceil(attachmentCount / 2);
-  const attachmentHeight = attachmentRows * 124;
-  return 96 + Math.min(estimatedLines * 22, 620) + attachmentHeight;
-}
-
 const MessagesTimeline = memo(function MessagesTimeline({
   hasMessages,
   isWorking,
@@ -3200,6 +3187,36 @@ const MessagesTimeline = memo(function MessagesTimeline({
   onImageExpand,
   markdownCwd,
 }: MessagesTimelineProps) {
+  const timelineRootRef = useRef<HTMLDivElement | null>(null);
+  const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    const timelineRoot = timelineRootRef.current;
+    if (!timelineRoot) return;
+
+    const updateWidth = (nextWidth: number) => {
+      setTimelineWidthPx((previousWidth) => {
+        if (previousWidth !== null && Math.abs(previousWidth - nextWidth) < 0.5) {
+          return previousWidth;
+        }
+        return nextWidth;
+      });
+    };
+
+    updateWidth(timelineRoot.getBoundingClientRect().width);
+
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const [entry] = entries;
+      if (!entry) return;
+      updateWidth(entry.contentRect.width);
+    });
+    observer.observe(timelineRoot);
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
   const rows = useMemo<TimelineRow[]>(() => {
     const nextRows: TimelineRow[] = [];
 
@@ -3303,12 +3320,16 @@ const MessagesTimeline = memo(function MessagesTimeline({
       if (!row) return 96;
       if (row.kind === "work") return 112;
       if (row.kind === "working") return 40;
-      return estimateTimelineMessageHeight(row.message);
+      return estimateTimelineMessageHeight(row.message, { timelineWidthPx });
     },
     measureElement: measureVirtualElement,
     useAnimationFrameWithResizeObserver: true,
     overscan: 8,
   });
+  useEffect(() => {
+    if (timelineWidthPx === null) return;
+    rowVirtualizer.measure();
+  }, [rowVirtualizer, timelineWidthPx]);
   useEffect(() => {
     rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (_item, _delta, instance) => {
       const viewportHeight = instance.scrollRect?.height ?? 0;
@@ -3624,7 +3645,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden">
+    <div ref={timelineRootRef} className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden">
       {virtualizedRowCount > 0 && (
         <div className="relative" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
           {virtualRows.map((virtualRow: VirtualItem) => {
