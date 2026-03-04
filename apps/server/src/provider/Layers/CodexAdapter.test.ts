@@ -284,6 +284,42 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       assert.equal(firstEvent.value.payload.reason, "Session stopped");
     }),
   );
+
+  it.effect("preserves request type when mapping serverRequest/resolved", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      const event: ProviderEvent = {
+        id: asEventId("evt-request-resolved"),
+        kind: "notification",
+        provider: "codex",
+        sessionId: asSessionId("sess-1"),
+        createdAt: new Date().toISOString(),
+        method: "serverRequest/resolved",
+        requestId: ApprovalRequestId.makeUnsafe("req-1"),
+        payload: {
+          request: {
+            method: "item/commandExecution/requestApproval",
+          },
+          decision: "accept",
+        },
+      };
+
+      lifecycleManager.emit("event", event);
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(firstEvent.value.type, "request.resolved");
+      if (firstEvent.value.type !== "request.resolved") {
+        return;
+      }
+      assert.equal(firstEvent.value.payload.requestType, "command_execution_approval");
+    }),
+  );
 });
 
 afterAll(() => {

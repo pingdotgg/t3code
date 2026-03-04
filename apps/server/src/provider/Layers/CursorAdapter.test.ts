@@ -543,4 +543,86 @@ describe("CursorAdapterLive", () => {
       assert.equal(fake.lastPermissionSelection, "allow-always");
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("rejects empty prompt input before starting a turn", () => {
+    const fake = new FakeCursorAcpProcess();
+    const layer = makeCursorAdapterLive({
+      createProcess: () => fake as never,
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const session = yield* adapter.startSession({
+        provider: "cursor",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 6).pipe(Stream.runDrain);
+
+      const result = yield* adapter
+        .sendTurn({
+          sessionId: session.sessionId,
+          input: "   ",
+          attachments: [],
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag !== "Failure") {
+        return;
+      }
+      assert.deepEqual(
+        result.failure,
+        new ProviderAdapterValidationError({
+          provider: "cursor",
+          operation: "sendTurn",
+          issue: "Turn input must be non-empty.",
+        }),
+      );
+
+      assert.equal(fake.requests.some((request) => request.method === "session/prompt"), false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps tool_call item types consistent through tool_call_update", () => {
+    const fake = new FakeCursorAcpProcess();
+    const layer = makeCursorAdapterLive({
+      createProcess: () => fake as never,
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+
+      const eventsFiber = yield* Stream.take(adapter.streamEvents, 13).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        provider: "cursor",
+      });
+
+      yield* adapter.sendTurn({
+        sessionId: session.sessionId,
+        input: "hello",
+        attachments: [],
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const started = events.find(
+        (event) => event.type === "item.started" && String(event.itemId) === "tool-1",
+      );
+      const completed = events.find(
+        (event) => event.type === "item.completed" && String(event.itemId) === "tool-1",
+      );
+
+      assert.equal(started?.type, "item.started");
+      assert.equal(completed?.type, "item.completed");
+      if (started?.type !== "item.started" || completed?.type !== "item.completed") {
+        return;
+      }
+
+      assert.equal(started.payload.itemType, "command_execution");
+      assert.equal(completed.payload.itemType, "command_execution");
+    }).pipe(Effect.provide(layer));
+  });
 });

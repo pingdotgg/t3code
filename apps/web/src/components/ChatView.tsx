@@ -12,7 +12,6 @@ import {
   getDefaultReasoningEffort,
   getCursorModelCapabilities,
   getCursorModelFamilyOptions,
-  getModelOptions,
   getReasoningEffortOptions,
   type ProjectId,
   type ProjectEntry,
@@ -158,7 +157,7 @@ import { Toggle } from "./ui/toggle";
 import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
-import { getAppModelOptions, getSlashModelOptions, useAppSettings } from "../appSettings";
+import { getAppModelOptions, useAppSettings } from "../appSettings";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -683,7 +682,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedProvider,
     activeThread?.model ?? activeProject?.model ?? getDefaultModel(selectedProvider) ?? DEFAULT_MODEL,
   );
-  const selectedModel = resolveModelSlugForProvider(selectedProvider, composerDraft.model ?? baseThreadModel);
+  const selectedModel = useMemo(() => {
+    const draftModel = composerDraft.model;
+    if (!draftModel) {
+      return baseThreadModel;
+    }
+
+    const providerOptions = getCustomModelOptionsByProvider(settings)[selectedProvider];
+    const directMatch = providerOptions.find((option) => option.slug === draftModel);
+    if (directMatch) {
+      return directMatch.slug as ModelSlug;
+    }
+
+    const normalizedDraftModel = normalizeModelSlug(draftModel, selectedProvider);
+    if (normalizedDraftModel) {
+      const normalizedMatch = providerOptions.find((option) => option.slug === normalizedDraftModel);
+      if (normalizedMatch) {
+        return normalizedMatch.slug as ModelSlug;
+      }
+    }
+
+    return resolveModelSlugForProvider(selectedProvider, draftModel);
+  }, [baseThreadModel, composerDraft.model, selectedProvider, settings]);
   const selectedEffort = composerDraft.effort ?? getDefaultReasoningEffort(selectedProvider);
   const reasoningOptions = getReasoningEffortOptions(selectedProvider);
   const supportsReasoningEffort = reasoningOptions.length > 0;
@@ -704,13 +724,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const selectedModelForPicker =
     selectedProvider === "cursor" && selectedCursorModel ? selectedCursorModel.family : selectedModel;
+  const modelOptionsByProvider = useMemo(() => getCustomModelOptionsByProvider(settings), [settings]);
+  const selectedModelForPickerWithCustomFallback = useMemo(() => {
+    if (selectedProvider !== "cursor") {
+      const currentOptions = modelOptionsByProvider[selectedProvider];
+      return currentOptions.some((option) => option.slug === selectedModelForPicker)
+        ? selectedModelForPicker
+        : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
+    }
+
+    const currentOptions = modelOptionsByProvider.cursor;
+    return currentOptions.some((option) => option.slug === selectedModelForPicker)
+      ? selectedModelForPicker
+      : selectedModelForPicker;
+  }, [modelOptionsByProvider, selectedModelForPicker, selectedProvider]);
   const searchableModelOptions = useMemo(
     () =>
       PROVIDER_OPTIONS.filter(
         (option) =>
           option.available && (lockedProvider === null || option.value === lockedProvider),
       ).flatMap((option) =>
-        getProviderModelPickerOptions(option.value).map(({ slug, name }) => ({
+        modelOptionsByProvider[option.value].map(({ slug, name }) => ({
           provider: option.value,
           providerLabel: option.label,
           slug,
@@ -720,7 +754,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           searchProvider: option.label.toLowerCase(),
         })),
       ),
-    [lockedProvider],
+    [lockedProvider, modelOptionsByProvider],
   );
   const phase = derivePhase(activeThread?.session ?? null);
   const isSendBusy = sendPhase !== "idle";
@@ -2813,8 +2847,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         <span className="inline-flex">
                           <ProviderModelPicker
                             provider={selectedProvider}
-                            model={selectedModelForPicker}
+                            model={selectedModelForPickerWithCustomFallback}
                             lockedProvider={lockedProvider}
+                            modelOptionsByProvider={modelOptionsByProvider}
                             disabled
                             onProviderModelChange={onProviderModelSelect}
                           />
@@ -2828,8 +2863,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 ) : (
                   <ProviderModelPicker
                     provider={selectedProvider}
-                    model={selectedModelForPicker}
+                    model={selectedModelForPickerWithCustomFallback}
                     lockedProvider={lockedProvider}
+                    modelOptionsByProvider={modelOptionsByProvider}
                     onProviderModelChange={onProviderModelSelect}
                   />
                 )}
@@ -3870,11 +3906,22 @@ const COMING_SOON_PROVIDER_OPTIONS = [
   { id: "gemini", label: "Gemini", icon: Gemini },
 ] as const;
 
-function getProviderModelPickerOptions(provider: ProviderKind) {
-  if (provider === "cursor") {
-    return getCursorModelFamilyOptions();
-  }
-  return getModelOptions(provider);
+function getCustomModelOptionsByProvider(settings: {
+  customCodexModels: readonly string[];
+  customClaudeModels: readonly string[];
+  customCursorModels: readonly string[];
+}): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
+  const cursorFamilyOptions = getCursorModelFamilyOptions();
+  return {
+    codex: getAppModelOptions("codex", settings.customCodexModels),
+    claudeCode: getAppModelOptions("claudeCode", settings.customClaudeModels),
+    cursor: [
+      ...cursorFamilyOptions,
+      ...getAppModelOptions("cursor", settings.customCursorModels).filter(
+        (option) => !cursorFamilyOptions.some((family) => family.slug === option.slug),
+      ),
+    ],
+  };
 }
 
 const PROVIDER_ICON_BY_PROVIDER: Record<ProviderKind, Icon> = {
@@ -3886,13 +3933,13 @@ const PROVIDER_ICON_BY_PROVIDER: Record<ProviderKind, Icon> = {
 function resolveModelForProviderPicker(
   provider: ProviderKind,
   value: string,
+  options: ReadonlyArray<{ slug: string; name: string }>,
 ): ModelSlug | null {
   const trimmedValue = value.trim();
   if (!trimmedValue) {
     return null;
   }
 
-  const options = getProviderModelPickerOptions(provider);
   const direct = options.find((option) => option.slug === trimmedValue);
   if (direct) {
     return direct.slug;
@@ -3924,11 +3971,12 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   provider: ProviderKind;
   model: ModelSlug;
   lockedProvider: ProviderKind | null;
+  modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
   disabled?: boolean;
   onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const selectedProviderOptions = getProviderModelPickerOptions(props.provider);
+  const selectedProviderOptions = props.modelOptionsByProvider[props.provider];
   const selectedModelLabel =
     selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.provider];
@@ -3985,13 +4033,17 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                       if (props.disabled) return;
                       if (isDisabledByProviderLock) return;
                       if (!value) return;
-                      const resolvedModel = resolveModelForProviderPicker(option.value, value);
+                      const resolvedModel = resolveModelForProviderPicker(
+                        option.value,
+                        value,
+                        props.modelOptionsByProvider[option.value],
+                      );
                       if (!resolvedModel) return;
                       props.onProviderModelChange(option.value, resolvedModel);
                       setIsMenuOpen(false);
                     }}
                   >
-                    {getProviderModelPickerOptions(option.value).map((modelOption) => (
+                    {props.modelOptionsByProvider[option.value].map((modelOption) => (
                       <MenuRadioItem
                         key={`${option.value}:${modelOption.slug}`}
                         value={modelOption.slug}

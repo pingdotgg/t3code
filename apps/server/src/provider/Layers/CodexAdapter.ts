@@ -239,6 +239,19 @@ function toRequestTypeFromKind(kind: unknown): CanonicalRequestType {
   }
 }
 
+function toRequestTypeFromResolvedPayload(payload: Record<string, unknown> | undefined): CanonicalRequestType {
+  const request = asObject(payload?.request);
+  const method = asString(request?.method) ?? asString(payload?.method);
+  if (method) {
+    return toRequestTypeFromMethod(method);
+  }
+  const requestKind = asString(request?.kind) ?? asString(payload?.requestKind);
+  if (requestKind) {
+    return toRequestTypeFromKind(requestKind);
+  }
+  return "unknown";
+}
+
 function toThreadState(value: unknown):
   | "active"
   | "idle"
@@ -714,12 +727,18 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   }
 
   if (event.method === "serverRequest/resolved") {
+    const requestType =
+      toRequestTypeFromResolvedPayload(payload) !== "unknown"
+        ? toRequestTypeFromResolvedPayload(payload)
+        : event.requestId && event.requestKind !== undefined
+          ? toRequestTypeFromKind(event.requestKind)
+          : "unknown";
     return [
       {
         ...runtimeEventBase(event),
         type: "request.resolved",
         payload: {
-          requestType: "unknown",
+          requestType,
           ...(event.payload !== undefined ? { resolution: event.payload } : {}),
         },
       },

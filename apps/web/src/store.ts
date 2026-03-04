@@ -164,9 +164,9 @@ function toLegacyProvider(providerName: string | null): ProviderKind {
   return "codex";
 }
 
-const CODEX_MODEL_SLUGS = new Set(getModelOptions("codex").map((option) => option.slug));
-const CLAUDE_MODEL_SLUGS = new Set(getModelOptions("claudeCode").map((option) => option.slug));
-const CURSOR_MODEL_SLUGS = new Set(getModelOptions("cursor").map((option) => option.slug));
+const CODEX_MODEL_SLUGS = new Set<string>(getModelOptions("codex").map((option) => option.slug));
+const CLAUDE_MODEL_SLUGS = new Set<string>(getModelOptions("claudeCode").map((option) => option.slug));
+const CURSOR_MODEL_SLUGS = new Set<string>(getModelOptions("cursor").map((option) => option.slug));
 const CURSOR_DISTINCT_MODEL_SLUGS = new Set(
   [...CURSOR_MODEL_SLUGS].filter(
     (slug) => !CODEX_MODEL_SLUGS.has(slug) && !CLAUDE_MODEL_SLUGS.has(slug),

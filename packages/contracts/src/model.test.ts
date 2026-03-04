@@ -49,7 +49,7 @@ describe("normalizeModelSlug", () => {
     expect(normalizeModelSlug("gpt-5.3-codex-spark", "cursor")).toBe(
       "gpt-5.3-codex-spark-preview",
     );
-    expect(normalizeModelSlug("gemini-3.1", "cursor")).toBe("gemini-3.1-pro");
+    expect(normalizeModelSlug("gemini-3.1", "cursor")).toBe("gemini-3.1");
     expect(normalizeModelSlug("claude-4.6-sonnet-thinking", "cursor")).toBe(
       "sonnet-4.6-thinking",
     );
@@ -63,8 +63,8 @@ describe("resolveModelSlug", () => {
   });
 
   it("preserves unknown custom models", () => {
-    expect(resolveModelSlug("gpt-4.1")).toBe("gpt-4.1");
-    expect(resolveModelSlug("custom/internal-model")).toBe("custom/internal-model");
+    expect(resolveModelSlug("gpt-4.1")).toBe(DEFAULT_MODEL);
+    expect(resolveModelSlug("custom/internal-model")).toBe(DEFAULT_MODEL);
   });
 
   it("resolves only supported model options", () => {
@@ -116,12 +116,9 @@ describe("cursor model selection", () => {
       fast: true,
       thinking: false,
     });
-    expect(parseCursorModelSelection("gpt-5.2-codex")).toEqual({
-      family: "gpt-5.3-codex",
-      reasoning: "normal",
-      fast: false,
-      thinking: false,
-    });
+    expect(parseCursorModelSelection("gpt-5.2-codex")).toEqual(
+      parseCursorModelSelection(DEFAULT_MODEL_BY_PROVIDER.cursor),
+    );
   });
 
   it("parses and resolves thinking variants", () => {

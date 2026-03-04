@@ -62,7 +62,8 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
   ],
 } as const satisfies Record<ProviderKind, readonly ModelOption[]>;
 
-export type ModelSlug = (typeof MODEL_OPTIONS_BY_PROVIDER)[ProviderKind][number]["slug"];
+type BuiltInModelSlug = (typeof MODEL_OPTIONS_BY_PROVIDER)[ProviderKind][number]["slug"];
+export type ModelSlug = BuiltInModelSlug | (string & {});
 export type CursorModelSlug = (typeof MODEL_OPTIONS_BY_PROVIDER)["cursor"][number]["slug"];
 
 type CursorModelCapability = {

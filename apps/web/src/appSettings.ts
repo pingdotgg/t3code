@@ -1,11 +1,15 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { Option, Schema } from "effect";
-import { MODEL_OPTIONS, normalizeModelSlug } from "@t3tools/contracts";
+import { getModelOptions, normalizeModelSlug, type ProviderKind } from "@t3tools/contracts";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
-const BUILT_IN_MODEL_SLUGS = new Set<string>(MODEL_OPTIONS.map((option) => option.slug));
+const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
+  codex: new Set(getModelOptions("codex").map((option) => option.slug)),
+  claudeCode: new Set(getModelOptions("claudeCode").map((option) => option.slug)),
+  cursor: new Set(getModelOptions("cursor").map((option) => option.slug)),
+};
 
 const AppSettingsSchema = Schema.Struct({
   codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
@@ -19,6 +23,12 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
   customCodexModels: Schema.Array(Schema.String).pipe(
+    Schema.withConstructorDefault(() => Option.some([])),
+  ),
+  customClaudeModels: Schema.Array(Schema.String).pipe(
+    Schema.withConstructorDefault(() => Option.some([])),
+  ),
+  customCursorModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
 });
@@ -37,16 +47,18 @@ let cachedSnapshot: AppSettings = DEFAULT_APP_SETTINGS;
 
 export function normalizeCustomModelSlugs(
   models: Iterable<string | null | undefined>,
-): AppSettings["customCodexModels"] {
+  provider: ProviderKind = "codex",
+): string[] {
   const normalizedModels: string[] = [];
   const seen = new Set<string>();
+  const builtInModelSlugs = BUILT_IN_MODEL_SLUGS_BY_PROVIDER[provider];
 
   for (const candidate of models) {
-    const normalized = normalizeModelSlug(candidate);
+    const normalized = normalizeModelSlug(candidate, provider);
     if (
       !normalized ||
       normalized.length > MAX_CUSTOM_MODEL_LENGTH ||
-      BUILT_IN_MODEL_SLUGS.has(normalized) ||
+      builtInModelSlugs.has(normalized) ||
       seen.has(normalized)
     ) {
       continue;
@@ -65,22 +77,25 @@ export function normalizeCustomModelSlugs(
 function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
-    customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels),
+    customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
+    customClaudeModels: normalizeCustomModelSlugs(settings.customClaudeModels, "claudeCode"),
+    customCursorModels: normalizeCustomModelSlugs(settings.customCursorModels, "cursor"),
   };
 }
 
 export function getAppModelOptions(
+  provider: ProviderKind,
   customModels: readonly string[],
   selectedModel?: string | null,
 ): AppModelOption[] {
-  const options: AppModelOption[] = MODEL_OPTIONS.map(({ slug, name }) => ({
+  const options: AppModelOption[] = getModelOptions(provider).map(({ slug, name }) => ({
     slug,
     name,
     isCustom: false,
   }));
   const seen = new Set(options.map((option) => option.slug));
 
-  for (const slug of normalizeCustomModelSlugs(customModels)) {
+  for (const slug of normalizeCustomModelSlugs(customModels, provider)) {
     if (seen.has(slug)) {
       continue;
     }
@@ -93,7 +108,7 @@ export function getAppModelOptions(
     });
   }
 
-  const normalizedSelectedModel = normalizeModelSlug(selectedModel);
+  const normalizedSelectedModel = normalizeModelSlug(selectedModel, provider);
   if (normalizedSelectedModel && !seen.has(normalizedSelectedModel)) {
     options.push({
       slug: normalizedSelectedModel,
@@ -106,12 +121,13 @@ export function getAppModelOptions(
 }
 
 export function getSlashModelOptions(
+  provider: ProviderKind,
   customModels: readonly string[],
   query: string,
   selectedModel?: string | null,
 ): AppModelOption[] {
   const normalizedQuery = query.trim().toLowerCase();
-  const options = getAppModelOptions(customModels, selectedModel);
+  const options = getAppModelOptions(provider, customModels, selectedModel);
   if (!normalizedQuery) {
     return options;
   }

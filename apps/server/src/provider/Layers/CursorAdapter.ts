@@ -75,6 +75,7 @@ interface CursorTurnState {
   readonly turnId: ReturnType<typeof ProviderTurnId.makeUnsafe>;
   readonly assistantItemId: ReturnType<typeof ProviderItemId.makeUnsafe>;
   readonly startedToolCalls: Set<string>;
+  readonly toolCalls: Map<string, { itemType: CanonicalItemType; title: string }>;
   readonly items: Array<unknown>;
 }
 
@@ -734,6 +735,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
             const seen = context.turnState.startedToolCalls.has(update.toolCallId);
             const itemType = normalizeToolItemType(update.kind, update.title);
             const title = update.title ?? titleForItemType(itemType);
+            context.turnState.toolCalls.set(update.toolCallId, { itemType, title });
             const detail = asString(asObject(update.rawInput)?.command);
 
             if (!seen) {
@@ -779,6 +781,9 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
           case "tool_call_update": {
             if (!context.turnState) return;
             const status = update.status === "completed" ? "completed" : "inProgress";
+            const trackedTool = context.turnState.toolCalls.get(update.toolCallId);
+            const itemType = trackedTool?.itemType ?? "dynamic_tool_call";
+            const title = trackedTool?.title ?? titleForItemType(itemType);
             const stamp = yield* makeEventStamp();
             const eventType = update.status === "completed" ? "item.completed" : "item.updated";
             yield* offerRuntimeEvent({
@@ -789,15 +794,18 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
               turnId: asRuntimeTurnId(context.turnState.turnId),
               itemId: asRuntimeItemId(update.toolCallId),
               payload: {
-                itemType: "command_execution",
+                itemType,
                 status,
-                title: "Tool call",
+                title,
                 ...(summarizeToolOutput(update.rawOutput)
                   ? { detail: summarizeToolOutput(update.rawOutput) }
                   : {}),
                 ...(update.rawOutput !== undefined ? { data: update.rawOutput } : {}),
               },
             });
+            if (update.status === "completed") {
+              context.turnState.toolCalls.delete(update.toolCallId);
+            }
             return;
           }
         }
@@ -1345,11 +1353,21 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
           });
         }
 
+        const promptText = input.input?.trim();
+        if (!promptText || promptText.length === 0) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "sendTurn",
+            issue: "Turn input must be non-empty.",
+          });
+        }
+
         const turnId = ProviderTurnId.makeUnsafe(yield* Random.nextUUIDv4);
         const turnState: CursorTurnState = {
           turnId,
           assistantItemId: asProviderItemId(yield* Random.nextUUIDv4),
           startedToolCalls: new Set(),
+          toolCalls: new Map(),
           items: [],
         };
 
@@ -1380,15 +1398,6 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
             providerTurnId: turnId,
           },
         });
-
-        const promptText = input.input?.trim();
-        if (!promptText || promptText.length === 0) {
-          return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "sendTurn",
-            issue: "Turn input must be non-empty.",
-          });
-        }
 
         const promptResultRaw = yield* Effect.tryPromise({
           try: async () =>
