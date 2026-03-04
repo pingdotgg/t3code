@@ -1461,8 +1461,8 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
                 } satisfies PermissionResult;
               }
 
-              const approvalPolicy = input.approvalPolicy ?? "never";
-              if (approvalPolicy === "never") {
+              const runtimeMode = input.runtimeMode ?? "full-access";
+              if (runtimeMode === "full-access") {
                 return {
                   behavior: "allow",
                   updatedInput: toolInput,
@@ -1590,7 +1590,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         const providerOptions = input.providerOptions?.claudeCode;
         const permissionMode =
           toPermissionMode(providerOptions?.permissionMode) ??
-          (input.approvalPolicy === "never" ? "bypassPermissions" : undefined);
+          (input.runtimeMode === "full-access" ? "bypassPermissions" : undefined);
 
         const queryOptions: ClaudeQueryOptions = {
           ...(input.cwd ? { cwd: input.cwd } : {}),

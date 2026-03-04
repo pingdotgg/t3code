@@ -140,6 +140,15 @@ export function derivePendingApprovals(
       openByRequestId.delete(requestId);
       continue;
     }
+
+    if (
+      activity.kind === "provider.approval.respond.failed" &&
+      requestId &&
+      detail?.includes("Unknown pending permission request")
+    ) {
+      openByRequestId.delete(requestId);
+      continue;
+    }
   }
 
   return [...openByRequestId.values()].toSorted((left, right) =>

@@ -255,8 +255,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.model !== undefined ? { model: command.model } : {}),
           ...(command.effort !== undefined ? { effort: command.effort } : {}),
           assistantDeliveryMode: command.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
-          approvalPolicy: command.approvalPolicy,
-          sandboxMode: command.sandboxMode,
+          runtimeMode: command.runtimeMode,
           createdAt: command.createdAt,
         },
       };

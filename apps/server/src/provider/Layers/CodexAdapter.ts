@@ -917,28 +917,37 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   }
 
   if (event.method === "windowsSandbox/setupCompleted") {
+    const payloadRecord = asObject(event.payload);
+    const success = payloadRecord?.success;
+    const successMessage = event.message ?? "Windows sandbox setup completed";
+    const failureMessage = event.message ?? "Windows sandbox setup failed";
+
     return [
       {
         ...runtimeEventBase(event),
-        type: "runtime.warning",
+        type: "session.state.changed",
         payload: {
-          message: event.message ?? "Windows sandbox setup completed",
+          state: success === false ? "error" : "ready",
+          reason: success === false ? failureMessage : successMessage,
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },
+      ...(success === false
+        ? [
+            {
+              ...runtimeEventBase(event),
+              type: "runtime.warning" as const,
+              payload: {
+                message: failureMessage,
+                ...(event.payload !== undefined ? { detail: event.payload } : {}),
+              },
+            },
+          ]
+        : []),
     ];
   }
 
-  return [
-    {
-      ...runtimeEventBase(event),
-      type: "runtime.warning",
-      payload: {
-        message: `Unhandled Codex provider event method: ${event.method}`,
-        ...(event.payload !== undefined ? { detail: event.payload } : {}),
-      },
-    },
-  ];
+  return [];
 }
 
 const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
@@ -1121,7 +1130,18 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         const listener = (event: ProviderEvent) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            yield* Queue.offerAll(runtimeEventQueue, mapToRuntimeEvents(event));
+          const runtimeEvents = mapToRuntimeEvents(event);
+          if (runtimeEvents.length === 0) {
+            yield* Effect.logDebug("ignoring unhandled Codex provider event", {
+              method: event.method,
+              sessionId: event.sessionId,
+              threadId: event.threadId,
+              turnId: event.turnId,
+              itemId: event.itemId,
+            });
+            return;
+          }
+          yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
           }).pipe(Effect.runPromiseWith(services));
         manager.on("event", listener);
         return listener;

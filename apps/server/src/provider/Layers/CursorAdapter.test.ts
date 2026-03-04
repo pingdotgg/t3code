@@ -467,6 +467,7 @@ describe("CursorAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         provider: "cursor",
+        runtimeMode: "approval-required",
       });
 
       // consume startup events
@@ -520,7 +521,7 @@ describe("CursorAdapterLive", () => {
 
       yield* adapter.startSession({
         provider: "cursor",
-        approvalPolicy: "never",
+        runtimeMode: "full-access",
       });
 
       // consume startup events

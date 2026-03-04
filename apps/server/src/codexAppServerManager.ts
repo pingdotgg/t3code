@@ -104,6 +104,23 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "does not exist",
 ];
 
+function mapCodexRuntimeMode(runtimeMode: "approval-required" | "full-access"): {
+  readonly approvalPolicy: "on-request" | "never";
+  readonly sandbox: "workspace-write" | "danger-full-access";
+} {
+  if (runtimeMode === "approval-required") {
+    return {
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+    };
+  }
+
+  return {
+    approvalPolicy: "never",
+    sandbox: "danger-full-access",
+  };
+}
+
 /**
  * On Windows with `shell: true`, `child.kill()` only terminates the `cmd.exe`
  * wrapper, leaving the actual command running. Use `taskkill /T` to kill the
@@ -239,8 +256,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const sessionOverrides = {
         model: normalizedModel ?? null,
         cwd: input.cwd ?? null,
-        approvalPolicy: input.approvalPolicy,
-        sandbox: input.sandboxMode,
+        ...mapCodexRuntimeMode(input.runtimeMode ?? "full-access"),
       };
 
       const threadStartParams = {

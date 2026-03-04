@@ -153,8 +153,7 @@ describe("decider project scripts", () => {
           provider: "claudeCode",
           model: "gpt-5",
           effort: "high",
-          approvalPolicy: "on-request",
-          sandboxMode: "workspace-write",
+          runtimeMode: "approval-required",
           createdAt: now,
         },
         readModel,
@@ -178,8 +177,7 @@ describe("decider project scripts", () => {
       provider: "claudeCode",
       model: "gpt-5",
       effort: "high",
-      approvalPolicy: "on-request",
-      sandboxMode: "workspace-write",
+      runtimeMode: "approval-required",
     });
   });
 });

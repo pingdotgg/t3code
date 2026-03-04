@@ -18,8 +18,7 @@ describe("ProviderSessionStartInput", () => {
         },
       },
     });
-    expect(parsed.approvalPolicy).toBeUndefined();
-    expect(parsed.sandboxMode).toBeUndefined();
+    expect(parsed.runtimeMode).toBeUndefined();
     expect(parsed.providerOptions?.codex?.binaryPath).toBe("/usr/local/bin/codex");
     expect(parsed.providerOptions?.codex?.homePath).toBe("/tmp/.codex");
   });
@@ -36,15 +35,13 @@ describe("ProviderSessionStartInput", () => {
           maxThinkingTokens: 12_000,
         },
       },
-      approvalPolicy: "never",
-      sandboxMode: "danger-full-access",
+      runtimeMode: "full-access",
     });
     expect(parsed.provider).toBe("claudeCode");
     expect(parsed.providerOptions?.claudeCode?.binaryPath).toBe("/usr/local/bin/claude");
     expect(parsed.providerOptions?.claudeCode?.permissionMode).toBe("plan");
     expect(parsed.providerOptions?.claudeCode?.maxThinkingTokens).toBe(12_000);
-    expect(parsed.approvalPolicy).toBe("never");
-    expect(parsed.sandboxMode).toBe("danger-full-access");
+    expect(parsed.runtimeMode).toBe("full-access");
   });
 
   it("accepts cursor provider payloads", () => {
@@ -57,13 +54,11 @@ describe("ProviderSessionStartInput", () => {
           binaryPath: "/usr/local/bin/agent",
         },
       },
-      approvalPolicy: "on-request",
-      sandboxMode: "workspace-write",
+      runtimeMode: "approval-required",
     });
     expect(parsed.provider).toBe("cursor");
     expect(parsed.model).toBe("composer-1.5");
     expect(parsed.providerOptions?.cursor?.binaryPath).toBe("/usr/local/bin/agent");
-    expect(parsed.approvalPolicy).toBe("on-request");
-    expect(parsed.sandboxMode).toBe("workspace-write");
+    expect(parsed.runtimeMode).toBe("approval-required");
   });
 });

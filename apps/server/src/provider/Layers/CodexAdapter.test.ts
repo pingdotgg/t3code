@@ -320,6 +320,48 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       assert.equal(firstEvent.value.payload.requestType, "command_execution_approval");
     }),
   );
+
+  it.effect("maps windowsSandbox/setupCompleted to session state and warning on failure", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      const event: ProviderEvent = {
+        id: asEventId("evt-windows-sandbox-failed"),
+        kind: "notification",
+        provider: "codex",
+        sessionId: asSessionId("sess-1"),
+        createdAt: new Date().toISOString(),
+        method: "windowsSandbox/setupCompleted",
+        message: "Sandbox setup failed",
+        payload: {
+          success: false,
+          detail: "unsupported environment",
+        },
+      };
+
+      lifecycleManager.emit("event", event);
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+
+      assert.equal(events.length, 2);
+
+      const firstEvent = events[0];
+      const secondEvent = events[1];
+
+      assert.equal(firstEvent?.type, "session.state.changed");
+      if (firstEvent?.type === "session.state.changed") {
+        assert.equal(firstEvent.payload.state, "error");
+        assert.equal(firstEvent.payload.reason, "Sandbox setup failed");
+      }
+
+      assert.equal(secondEvent?.type, "runtime.warning");
+      if (secondEvent?.type === "runtime.warning") {
+        assert.equal(secondEvent.payload.message, "Sandbox setup failed");
+      }
+    }),
+  );
 });
 
 afterAll(() => {

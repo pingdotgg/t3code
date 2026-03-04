@@ -415,8 +415,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         const input = {
           ...parsed,
           provider: parsed.provider ?? "codex",
-          approvalPolicy: parsed.approvalPolicy ?? "never",
-          sandboxMode: parsed.sandboxMode ?? "workspace-write",
+          runtimeMode: parsed.runtimeMode ?? "full-access",
         };
         const adapter = yield* registry.getByProvider(input.provider);
         const session = yield* adapter.startSession(input);

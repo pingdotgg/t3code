@@ -260,8 +260,7 @@ describe("ProviderCommandReactor", () => {
           text: "hello reactor",
           attachments: [],
         },
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
+        runtimeMode: "approval-required",
         createdAt: now,
       }),
     );
@@ -272,15 +271,13 @@ describe("ProviderCommandReactor", () => {
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
       cwd: "/tmp/provider-project",
       model: "gpt-5-codex",
-      approvalPolicy: "on-request",
-      sandboxMode: "workspace-write",
+      runtimeMode: "approval-required",
     });
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.providerSessionId).toBe("sess-1");
-    expect(thread?.session?.approvalPolicy).toBe("on-request");
-    expect(thread?.session?.sandboxMode).toBe("workspace-write");
+    expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
   it("starts first turn with requested provider when provider is specified", async () => {
@@ -299,8 +296,7 @@ describe("ProviderCommandReactor", () => {
           attachments: [],
         },
         provider: "claudeCode",
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
+        runtimeMode: "approval-required",
         createdAt: now,
       }),
     );
@@ -311,8 +307,7 @@ describe("ProviderCommandReactor", () => {
       provider: "claudeCode",
       cwd: "/tmp/provider-project",
       model: "gpt-5-codex",
-      approvalPolicy: "on-request",
-      sandboxMode: "workspace-write",
+      runtimeMode: "approval-required",
     });
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
@@ -337,8 +332,7 @@ describe("ProviderCommandReactor", () => {
           attachments: [],
         },
         provider: "cursor",
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
+        runtimeMode: "approval-required",
         createdAt: now,
       }),
     );
@@ -349,8 +343,7 @@ describe("ProviderCommandReactor", () => {
       provider: "cursor",
       cwd: "/tmp/provider-project",
       model: "gpt-5-codex",
-      approvalPolicy: "on-request",
-      sandboxMode: "workspace-write",
+      runtimeMode: "approval-required",
     });
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
@@ -374,8 +367,7 @@ describe("ProviderCommandReactor", () => {
           text: "first",
           attachments: [],
         },
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
+        runtimeMode: "approval-required",
         createdAt: now,
       }),
     );
@@ -394,8 +386,7 @@ describe("ProviderCommandReactor", () => {
           text: "second",
           attachments: [],
         },
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
+        runtimeMode: "approval-required",
         createdAt: now,
       }),
     );
@@ -422,8 +413,7 @@ describe("ProviderCommandReactor", () => {
         },
         provider: "cursor",
         model: "composer-1.5",
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
+        runtimeMode: "approval-required",
         createdAt: now,
       }),
     );
@@ -444,8 +434,7 @@ describe("ProviderCommandReactor", () => {
         },
         provider: "cursor",
         model: "composer-1.5",
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
+        runtimeMode: "approval-required",
         createdAt: now,
       }),
     );
@@ -472,8 +461,7 @@ describe("ProviderCommandReactor", () => {
         },
         provider: "cursor",
         model: "gpt-5.3-codex",
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
+        runtimeMode: "approval-required",
         createdAt: now,
       }),
     );
@@ -494,8 +482,7 @@ describe("ProviderCommandReactor", () => {
         },
         provider: "cursor",
         model: "composer-1.5",
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
+        runtimeMode: "approval-required",
         createdAt: now,
       }),
     );
@@ -525,8 +512,7 @@ describe("ProviderCommandReactor", () => {
           text: "first",
           attachments: [],
         },
-        approvalPolicy: "never",
-        sandboxMode: "danger-full-access",
+        runtimeMode: "full-access",
         createdAt: now,
       }),
     );
@@ -545,8 +531,7 @@ describe("ProviderCommandReactor", () => {
           text: "second",
           attachments: [],
         },
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
+        runtimeMode: "approval-required",
         createdAt: now,
       }),
     );
@@ -558,8 +543,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ sessionId: asSessionId("sess-1") });
     expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
       resumeCursor: { opaque: "cursor-1" },
-      approvalPolicy: "on-request",
-      sandboxMode: "workspace-write",
+      runtimeMode: "approval-required",
     });
     expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
       sessionId: asSessionId("sess-2"),
@@ -568,8 +552,7 @@ describe("ProviderCommandReactor", () => {
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.providerSessionId).toBe("sess-2");
-    expect(thread?.session?.approvalPolicy).toBe("on-request");
-    expect(thread?.session?.sandboxMode).toBe("workspace-write");
+    expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
   it("switches provider by restarting the session when turn request provider changes", async () => {
@@ -587,8 +570,7 @@ describe("ProviderCommandReactor", () => {
           text: "first",
           attachments: [],
         },
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
+        runtimeMode: "approval-required",
         createdAt: now,
       }),
     );
@@ -608,8 +590,7 @@ describe("ProviderCommandReactor", () => {
           attachments: [],
         },
         provider: "claudeCode",
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
+        runtimeMode: "approval-required",
         createdAt: now,
       }),
     );
@@ -621,8 +602,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ sessionId: asSessionId("sess-1") });
     expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
       provider: "claudeCode",
-      approvalPolicy: "on-request",
-      sandboxMode: "workspace-write",
+      runtimeMode: "approval-required",
     });
     expect(harness.startSession.mock.calls[1]?.[1]).not.toHaveProperty("resumeCursor");
 
@@ -630,8 +610,7 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.providerSessionId).toBe("sess-2");
     expect(thread?.session?.providerName).toBe("claudeCode");
-    expect(thread?.session?.approvalPolicy).toBe("on-request");
-    expect(thread?.session?.sandboxMode).toBe("workspace-write");
+    expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
   it("does not stop the active session when restart fails before rebind", async () => {
@@ -649,8 +628,7 @@ describe("ProviderCommandReactor", () => {
           text: "first",
           attachments: [],
         },
-        approvalPolicy: "never",
-        sandboxMode: "danger-full-access",
+        runtimeMode: "full-access",
         createdAt: now,
       }),
     );
@@ -673,8 +651,7 @@ describe("ProviderCommandReactor", () => {
           text: "second",
           attachments: [],
         },
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
+        runtimeMode: "approval-required",
         createdAt: now,
       }),
     );
@@ -688,8 +665,7 @@ describe("ProviderCommandReactor", () => {
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.providerSessionId).toBe("sess-1");
-    expect(thread?.session?.approvalPolicy).toBe("never");
-    expect(thread?.session?.sandboxMode).toBe("danger-full-access");
+    expect(thread?.session?.runtimeMode).toBe("full-access");
   });
 
   it("reacts to thread.turn.interrupt-requested by calling provider interrupt", async () => {
@@ -707,8 +683,7 @@ describe("ProviderCommandReactor", () => {
           providerName: "codex",
           providerSessionId: asSessionId("sess-1"),
           providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-          approvalPolicy: "on-request",
-          sandboxMode: "workspace-write",
+          runtimeMode: "approval-required",
           activeTurnId: asTurnId("turn-1"),
           lastError: null,
           updatedAt: now,
@@ -748,8 +723,7 @@ describe("ProviderCommandReactor", () => {
           providerName: "codex",
           providerSessionId: asSessionId("sess-1"),
           providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-          approvalPolicy: "on-request",
-          sandboxMode: "workspace-write",
+          runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
           updatedAt: now,
@@ -801,8 +775,7 @@ describe("ProviderCommandReactor", () => {
           providerName: "cursor",
           providerSessionId: asSessionId("sess-1"),
           providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-          approvalPolicy: "on-request",
-          sandboxMode: "workspace-write",
+          runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
           updatedAt: now,
@@ -887,8 +860,7 @@ describe("ProviderCommandReactor", () => {
           providerName: "codex",
           providerSessionId: asSessionId("sess-1"),
           providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-          approvalPolicy: "on-request",
-          sandboxMode: "workspace-write",
+          runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
           updatedAt: now,

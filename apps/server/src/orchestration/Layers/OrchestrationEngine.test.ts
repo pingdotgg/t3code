@@ -96,8 +96,7 @@ describe("OrchestrationEngine", () => {
           text: "hello",
           attachments: [],
         },
-        approvalPolicy: "on-request",
-        sandboxMode: "workspace-write",
+        runtimeMode: "approval-required",
         createdAt,
       }),
     );
@@ -436,8 +435,7 @@ describe("OrchestrationEngine", () => {
         text: "hello",
         attachments: [],
       },
-      approvalPolicy: "on-request" as const,
-      sandboxMode: "workspace-write" as const,
+      runtimeMode: "approval-required" as const,
       createdAt,
     };
 
@@ -596,8 +594,7 @@ describe("OrchestrationEngine", () => {
             text: "hello",
             attachments: [],
           },
-          approvalPolicy: "on-request",
-          sandboxMode: "workspace-write",
+          runtimeMode: "approval-required",
           createdAt: now(),
         }),
       ),

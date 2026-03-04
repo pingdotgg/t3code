@@ -90,8 +90,7 @@ const messageSendCommand: OrchestrationCommand = {
     text: "hello",
     attachments: [],
   },
-  approvalPolicy: "on-request",
-  sandboxMode: "workspace-write",
+  runtimeMode: "approval-required",
   createdAt: now,
 };
 
