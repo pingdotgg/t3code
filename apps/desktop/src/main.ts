@@ -424,13 +424,6 @@ function dispatchMenuAction(action: string): void {
 }
 
 function handleCheckForUpdatesMenuClick(): void {
-  if (updateState.status === "downloaded") {
-    console.info(
-      "[desktop-updater] Check for updates clicked while an update is already downloaded; skipping automatic install.",
-    );
-    return;
-  }
-
   if (!shouldEnableAutoUpdates()) {
     console.info("[desktop-updater] Manual update check requested, but updates are disabled.");
     return;
