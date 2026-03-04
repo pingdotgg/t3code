@@ -126,6 +126,8 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
     );
     const asRuntimeSessionId = (sessionId: ProviderSessionId): RuntimeSessionId =>
       RuntimeSessionId.makeUnsafe(sessionId);
+    const asProviderSessionId = (sessionId: RuntimeSessionId): ProviderSessionId =>
+      ProviderSessionId.makeUnsafe(sessionId);
 
     const canonicalizeRuntimeEventSession = (
       event: ProviderRuntimeEvent,
@@ -150,7 +152,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           canonicalEventLogger
             ? Effect.flatMap(
                 Effect.catch(
-                  directory.getThreadId(canonicalEvent.sessionId).pipe(
+                  directory.getThreadId(asProviderSessionId(canonicalEvent.sessionId)).pipe(
                     Effect.map((threadIdOption) =>
                       Option.isSome(threadIdOption) ? threadIdOption.value : null,
                     ),

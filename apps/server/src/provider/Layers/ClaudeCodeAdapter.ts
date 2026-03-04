@@ -48,7 +48,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { ClaudeCodeAdapter, type ClaudeCodeAdapterShape } from "../Services/ClaudeCodeAdapter.ts";
-import { makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "claudeCode" as const;
 
@@ -125,6 +125,7 @@ export interface ClaudeCodeAdapterLiveOptions {
     readonly options: ClaudeQueryOptions;
   }) => ClaudeQueryRuntime;
   readonly nativeEventLogPath?: string;
+  readonly nativeEventLogger?: EventNdjsonLogger;
 }
 
 function isUuid(value: string): boolean {
@@ -453,9 +454,12 @@ function sdkNativeItemId(message: SDKMessage): string | undefined {
 function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
   return Effect.gen(function* () {
     const nativeEventLogger =
-      options?.nativeEventLogPath !== undefined
-        ? makeEventNdjsonLogger(options.nativeEventLogPath)
-        : undefined;
+      options?.nativeEventLogger ??
+      (options?.nativeEventLogPath !== undefined
+        ? yield* makeEventNdjsonLogger(options.nativeEventLogPath, {
+            stream: "native",
+          })
+        : undefined);
 
     const createQuery =
       options?.createQuery ??
@@ -478,7 +482,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
       context: ClaudeSessionContext,
       message: SDKMessage,
     ): Effect.Effect<void> =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         if (!nativeEventLogger) {
           return;
         }
@@ -486,24 +490,28 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         const observedAt = new Date().toISOString();
         const itemId = sdkNativeItemId(message);
 
-        nativeEventLogger.write({
-          observedAt,
-          event: {
-            id:
-              "uuid" in message && typeof message.uuid === "string"
-                ? message.uuid
-                : crypto.randomUUID(),
-            kind: "notification",
-            provider: PROVIDER,
-            sessionId: asRuntimeSessionId(context.session.sessionId),
-            createdAt: observedAt,
-            method: sdkNativeMethod(message),
-            ...(typeof message.session_id === "string" ? { threadId: message.session_id } : {}),
-            ...((context.turnState ? { turnId: asRuntimeTurnId(context.turnState.turnId) } : {})),
-            ...(itemId ? { itemId: ProviderItemId.makeUnsafe(itemId) } : {}),
-            payload: message,
-          },
-        });
+        yield* nativeEventLogger
+          .write(
+            {
+              observedAt,
+              event: {
+                id:
+                  "uuid" in message && typeof message.uuid === "string"
+                    ? message.uuid
+                    : crypto.randomUUID(),
+                kind: "notification",
+                provider: PROVIDER,
+                sessionId: asRuntimeSessionId(context.session.sessionId),
+                createdAt: observedAt,
+                method: sdkNativeMethod(message),
+                ...(typeof message.session_id === "string" ? { threadId: message.session_id } : {}),
+                ...((context.turnState ? { turnId: asRuntimeTurnId(context.turnState.turnId) } : {})),
+                ...(itemId ? { itemId: ProviderItemId.makeUnsafe(itemId) } : {}),
+                payload: message,
+              },
+            },
+            null,
+          );
       });
 
     const snapshotThread = (
