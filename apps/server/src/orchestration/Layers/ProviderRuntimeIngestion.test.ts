@@ -241,6 +241,98 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it("applies provider session.state.changed transitions directly", async () => {
+    const harness = await createHarness();
+    const waitingAt = new Date().toISOString();
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-state-waiting"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: waitingAt,
+      threadId: asProviderThreadId("provider-thread-1"),
+      payload: {
+        state: "waiting",
+        reason: "awaiting approval",
+      },
+    });
+
+    let thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.status === "running" && entry.session?.activeTurnId === null,
+    );
+    expect(thread.session?.status).toBe("running");
+    expect(thread.session?.lastError).toBeNull();
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-state-error"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: new Date().toISOString(),
+      threadId: asProviderThreadId("provider-thread-1"),
+      payload: {
+        state: "error",
+        reason: "provider crashed",
+      },
+    });
+
+    thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "error" &&
+        entry.session?.activeTurnId === null &&
+        entry.session?.lastError === "provider crashed",
+    );
+    expect(thread.session?.status).toBe("error");
+    expect(thread.session?.lastError).toBe("provider crashed");
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-state-stopped"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: new Date().toISOString(),
+      threadId: asProviderThreadId("provider-thread-1"),
+      payload: {
+        state: "stopped",
+      },
+    });
+
+    thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "stopped" &&
+        entry.session?.activeTurnId === null &&
+        entry.session?.lastError === "provider crashed",
+    );
+    expect(thread.session?.status).toBe("stopped");
+    expect(thread.session?.lastError).toBe("provider crashed");
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-state-ready"),
+      provider: "codex",
+      sessionId: asSessionId("sess-1"),
+      createdAt: new Date().toISOString(),
+      threadId: asProviderThreadId("provider-thread-1"),
+      payload: {
+        state: "ready",
+      },
+    });
+
+    thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        entry.session?.activeTurnId === null &&
+        entry.session?.lastError === null,
+    );
+    expect(thread.session?.status).toBe("ready");
+    expect(thread.session?.lastError).toBeNull();
+  });
+
   it("does not clear active turn when session/thread started arrives mid-turn", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
