@@ -62,10 +62,15 @@ Cursor protocol decisions should be based on:
 - ACP docs
 - current local ACP probe output
 
-Confirmed from probe:
+Confirmed from current docs + probe:
 
 - ACP session modes include `agent`, `plan`, and `ask`
-- currently observed ACP updates do not include native structured plan updates or native structured question prompts comparable to Codex or Claude
+- for product semantics, treat ACP mode as binary: `operatingMode: default | plan`
+- Cursor ACP extension methods include:
+  - `cursor/ask_question` (multiple-choice question prompt)
+  - `cursor/create_plan` (explicit plan approval request)
+  - `cursor/update_todos` (todo-state updates that can drive plan-step UI)
+- probe streams still show standard chunk/update events and may not always emit extension methods in every run
 
 ---
 
@@ -77,13 +82,10 @@ The implementation should separate three concepts that are currently easy to con
 
 This is the agent runtime mode.
 
-Canonical operating modes:
+Canonical operating mode:
 
 - `default`
 - `plan`
-- `ask`
-- `execute`
-- `unknown`
 
 This should be represented at runtime independently of plan content or prompt cards.
 
@@ -188,7 +190,6 @@ Required additions:
 ```ts
 interface ProviderInteractiveCapabilities {
   supportsPlanMode: boolean;
-  supportsAskMode: boolean;
   supportsStructuredPlanUpdates: boolean;
   supportsPlanTextStreaming: boolean;
   supportsStructuredUserInput: boolean;
@@ -329,7 +330,6 @@ Implementation requirements:
 
 5. Publish capabilities:
 - `supportsPlanMode = true`
-- `supportsAskMode = false` unless Codex exposes a distinct ask mode separately
 - `supportsStructuredPlanUpdates = true`
 - `supportsPlanTextStreaming = true`
 - `supportsStructuredUserInput = true`
@@ -384,7 +384,7 @@ Implementation requirements:
 
 1. Publish native operating mode:
 - `permissionMode: 'plan'` -> canonical mode `plan`
-- if future values map cleanly, publish `ask` or `default` accordingly
+- all other values -> canonical mode `default`
 
 2. Detect `AskUserQuestion` tool uses:
 - inspect `tool_use` blocks in assistant messages / stream events
@@ -418,7 +418,6 @@ Implementation requirements:
 
 7. Publish capabilities:
 - `supportsPlanMode = true`
-- `supportsAskMode = false` unless explicit Claude mode is observed
 - `supportsStructuredPlanUpdates = partial/false initially`
 - `supportsPlanTextStreaming = partial`
 - `supportsStructuredUserInput = true`
@@ -448,13 +447,17 @@ Implementation default:
 
 ### Summary
 
-Cursor should initially ship with degraded plan-mode support: native mode awareness, but no claim of structured prompt cards or structured plan steps until protocol evidence exists.
+Cursor should ship with binary plan-mode semantics (`default | plan`) and implement documented ACP extension methods when present. If extension methods are absent in a given session, it should degrade cleanly to mode + streamed assistant text.
 
 ### Real native evidence
 
-From the ACP probe:
+From the Cursor ACP docs + current probe:
 
 - available modes include `agent`, `plan`, and `ask`
+- Cursor ACP docs define extension methods:
+  - `cursor/ask_question`
+  - `cursor/create_plan`
+  - `cursor/update_todos`
 - observed updates include:
   - `available_commands_update`
   - `agent_thought_chunk`
@@ -464,11 +467,11 @@ From the ACP probe:
 - observed request type:
   - `session/request_permission`
 
-Not observed:
+Current caveats:
 
-- native structured plan update events
-- native plan text delta event distinct from normal message chunks
-- native structured ask-user-question event
+- no standard ACP event equivalent to Codex `turn/plan/updated`
+- no standard ACP event equivalent to Codex `item/plan/delta`
+- extension-method payload shapes should be fixture-captured from live sessions before locking parser assumptions
 
 ### Adapter implementation
 
@@ -482,18 +485,18 @@ Implementation requirements:
 
 1. Publish native operating mode:
 - map ACP `plan` mode -> canonical `plan`
-- map ACP `ask` mode -> canonical `ask`
-- map ACP `agent` mode -> canonical `default` or `execute` depending product semantics
+- map ACP `agent` and `ask` modes -> canonical `default`
+- preserve raw ACP mode in native metadata for debugging
 
-2. Do not claim unsupported structured capabilities:
-- no native `turn.plan.updated`
-- no native `user-input.requested`
-- no native `ExitPlanMode` equivalent confirmed
+2. Implement documented Cursor extension methods:
+- `cursor/ask_question` -> canonical `user-input.requested`
+- `cursor/update_todos` -> canonical `turn.plan.updated` when payload is parseable into stable step ids/text/status
+- `cursor/create_plan` -> canonical final-plan handoff / approval-request surface
 
 3. Use graceful fallback behavior:
 - render plan mode as mode state + assistant text stream
-- render ask mode as conversational mode + normal user composer
-- do not render structured question cards for Cursor initially
+- if no `cursor/ask_question` event is emitted, fall back to normal conversational input
+- if no parseable `cursor/update_todos` event is emitted, fall back to text-only plan rendering
 
 4. Preserve room for future enrichment:
 - keep raw ACP notifications available in native event logs
@@ -501,18 +504,19 @@ Implementation requirements:
 
 5. Publish capabilities:
 - `supportsPlanMode = true`
-- `supportsAskMode = true`
-- `supportsStructuredPlanUpdates = false`
-- `supportsPlanTextStreaming = false` initially
-- `supportsStructuredUserInput = false`
+- `supportsStructuredPlanUpdates = true` when `cursor/update_todos` is available, otherwise false
+- `supportsPlanTextStreaming = false` initially (no distinct plan-text channel)
+- `supportsStructuredUserInput = true` when `cursor/ask_question` is available, otherwise false
 - `supportsFreeformUserInput = false` via structured prompt path
 - `supportsExitPlanMode = false`
 
 ### Cursor-specific tests
 
-- ACP mode metadata maps correctly into canonical mode
+- ACP mode metadata maps to `plan` vs `default` correctly
+- `cursor/ask_question` maps into canonical structured prompt schema
+- `cursor/update_todos` maps into canonical structured plan state when parseable
+- `cursor/create_plan` maps into final-plan handoff / approval surface
 - `agent_thought_chunk` and `agent_message_chunk` still render normally in plan mode
-- UI does not try to open structured prompt cards for Cursor
 - fallback conversational flow remains functional
 
 ### Cursor-specific follow-up probe work
@@ -520,9 +524,9 @@ Implementation requirements:
 Add dedicated probes for:
 
 - mode-switching during an active session
-- ask-mode prompt behavior
+- real payload shapes for `cursor/ask_question`, `cursor/create_plan`, and `cursor/update_todos`
 - any request types besides `session/request_permission`
-- whether specific built-in skills or prompt styles trigger structured question surfaces
+- whether extension methods are always emitted or only for specific prompt styles
 
 ---
 
@@ -543,7 +547,7 @@ Render plan mode through a single UI model driven by canonical events and provid
 
 ### Rendering rules
 
-1. Show operating mode indicator whenever current mode is `plan` or `ask`
+1. Show operating mode indicator whenever current mode is `plan`
 2. Show structured question card only when a pending `user-input.requested` exists
 3. Show structured plan step list when a current `turn.plan.updated` snapshot exists
 4. Append `plan_text` streaming content beneath or alongside structured steps when both exist
@@ -631,7 +635,8 @@ Add coverage for:
 
 - Codex is the reference provider for full structured plan/question UX.
 - Claude supports structured prompts via tool adaptation, but incremental structured plan updates are not assumed initially.
-- Cursor supports plan and ask modes, but not structured prompt cards or structured plan step updates initially.
+- Cursor transport exposes `agent|plan|ask`, but product semantics collapse this to `operatingMode: default | plan`.
+- Cursor structured prompts/plan steps are driven by ACP extension methods when present, with fallback when absent.
 - Product/UI should degrade gracefully rather than invent unsupported provider behavior.
 - Raw provider payloads should always be retained where feasible to support future adapter refinement.
 
@@ -643,6 +648,6 @@ Add coverage for:
 2. Wire capabilities/mode through orchestration and web socket projections
 3. Finish Codex end-to-end plan mode implementation first
 4. Implement Claude `AskUserQuestion` and `ExitPlanMode` adapter mapping
-5. Add Cursor degraded plan/ask mode support
+5. Add Cursor binary (`default|plan`) mode support + ACP extension-method mapping
 6. Build capability-driven frontend rendering and answer submission
 7. Add reconnect/history coverage and transcript/protocol fixtures
