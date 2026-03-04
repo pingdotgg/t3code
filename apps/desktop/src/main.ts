@@ -15,6 +15,7 @@ import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { fixPath } from "./fixPath";
+import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
 
 fixPath();
 
@@ -425,11 +426,28 @@ function dispatchMenuAction(action: string): void {
 }
 
 function handleCheckForUpdatesMenuClick(): void {
-  if (!shouldEnableAutoUpdates()) {
+  const disabledReason = getAutoUpdateDisabledReason({
+    isDevelopment,
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    appImage: process.env.APPIMAGE,
+    disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
+  });
+  if (disabledReason) {
     console.info("[desktop-updater] Manual update check requested, but updates are disabled.");
+    void dialog.showMessageBox({
+      type: "info",
+      title: "Updates unavailable",
+      message: "Automatic updates are not available right now.",
+      detail: disabledReason,
+      buttons: ["OK"],
+    });
     return;
   }
 
+  if (!BrowserWindow.getAllWindows().length) {
+    mainWindow = createWindow();
+  }
   void checkForUpdates("menu");
 }
 
@@ -562,17 +580,15 @@ function setUpdateState(patch: Partial<DesktopUpdateState>): void {
 }
 
 function shouldEnableAutoUpdates(): boolean {
-  if (isDevelopment || !app.isPackaged) {
-    return false;
-  }
-  if (process.env.T3CODE_DISABLE_AUTO_UPDATE === "1") {
-    return false;
-  }
-  if (process.platform === "linux" && !process.env.APPIMAGE) {
-    // electron-updater only supports Linux auto-updates when running from AppImage.
-    return false;
-  }
-  return true;
+  return (
+    getAutoUpdateDisabledReason({
+      isDevelopment,
+      isPackaged: app.isPackaged,
+      platform: process.platform,
+      appImage: process.env.APPIMAGE,
+      disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
+    }) === null
+  );
 }
 
 async function checkForUpdates(reason: string): Promise<void> {
@@ -719,11 +735,16 @@ function configureAutoUpdater(): void {
   });
   autoUpdater.on("download-progress", (progress) => {
     const percent = Math.floor(progress.percent);
-    setUpdateState({
-      status: "downloading",
-      downloadPercent: progress.percent,
-      message: null,
-    });
+    if (
+      shouldBroadcastDownloadProgress(updateState, progress.percent) ||
+      updateState.message !== null
+    ) {
+      setUpdateState({
+        status: "downloading",
+        downloadPercent: progress.percent,
+        message: null,
+      });
+    }
     const milestone = percent - (percent % 10);
     if (milestone > lastLoggedDownloadMilestone) {
       lastLoggedDownloadMilestone = milestone;
