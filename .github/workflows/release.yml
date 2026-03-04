@@ -273,7 +273,7 @@ jobs:
         run: bun run build --filter=@t3tools/web --filter=t3
 
       - name: Publish CLI package
-        run: node apps/server/scripts/cli.ts publish --tag alpha --provenance --verbose
+        run: node apps/server/scripts/cli.ts publish --tag alpha --verbose
 
   release:
     name: Publish GitHub Release
