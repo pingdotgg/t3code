@@ -436,7 +436,9 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
     const nativeEventLogger =
       options?.nativeEventLogger ??
       (options?.nativeEventLogPath !== undefined
-        ? makeEventNdjsonLogger(options.nativeEventLogPath)
+        ? yield* makeEventNdjsonLogger(options.nativeEventLogPath, {
+            stream: "native",
+          })
         : undefined);
 
     const manager = yield* Effect.acquireRelease(
@@ -499,9 +501,11 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
                   new Error(`Invalid attachment id '${attachment.id}'.`),
                 );
               }
-              const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
-                Effect.mapError((cause) => toRequestError(input.sessionId, "turn/start", cause)),
-              );
+              const bytes = yield* fileSystem
+                .readFile(attachmentPath)
+                .pipe(
+                  Effect.mapError((cause) => toRequestError(input.sessionId, "turn/start", cause)),
+                );
               return {
                 type: "image" as const,
                 url: `data:${attachment.mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
@@ -583,33 +587,29 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
     const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
 
     yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        const writeNativeEvent = (event: ProviderEvent) => {
-          if (!nativeEventLogger) {
-            return;
-          }
-          const loggedAt = new Date().toISOString();
-          const resolveOrchestrationThreadId = Effect.catch(
-            directory.getThreadId(event.sessionId).pipe(Effect.map(Option.getOrUndefined)),
-            () => Effect.void,
-          );
-          const writeLogEffect = Effect.tap(resolveOrchestrationThreadId, (orchestrationThreadId) =>
-            Effect.sync(() => {
-              nativeEventLogger.write({
-                observedAt: loggedAt,
-                stream: "native",
-                orchestrationThreadId: orchestrationThreadId ?? null,
-                event,
-              });
-            }),
-          );
-          void Effect.runPromise(writeLogEffect);
-        };
+      Effect.gen(function* () {
+        const writeNativeEvent = (event: ProviderEvent) =>
+          Effect.gen(function* () {
+            if (!nativeEventLogger) {
+              return;
+            }
+            const orchestrationThreadId = yield* Effect.catch(
+              directory.getThreadId(event.sessionId).pipe(
+                Effect.map((threadIdOption) =>
+                  Option.isSome(threadIdOption) ? threadIdOption.value : null,
+                ),
+              ),
+              () => Effect.succeed(null),
+            );
+            yield* nativeEventLogger.write(event, orchestrationThreadId);
+          });
 
-        const listener = (event: ProviderEvent) => {
-          writeNativeEvent(event);
-          Queue.offerAllUnsafe(runtimeEventQueue, mapToRuntimeEvents(event));
-        };
+        const services = yield* Effect.services<never>();
+        const listener = (event: ProviderEvent) =>
+          Effect.gen(function* () {
+            yield* writeNativeEvent(event);
+            yield* Queue.offerAll(runtimeEventQueue, mapToRuntimeEvents(event));
+          }).pipe(Effect.runPromiseWith(services));
         manager.on("event", listener);
         return listener;
       }),
