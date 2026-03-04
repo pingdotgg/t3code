@@ -138,6 +138,7 @@ export function derivePendingApprovals(
 
     if (activity.kind === "approval.resolved" && requestId) {
       openByRequestId.delete(requestId);
+      continue;
     }
   }
 

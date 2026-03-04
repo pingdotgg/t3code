@@ -331,14 +331,14 @@ describe("ClaudeCodeAdapterLive", () => {
       const turnStarted = runtimeEvents[3];
       assert.equal(turnStarted?.type, "turn.started");
       if (turnStarted?.type === "turn.started") {
-        assert.equal(turnStarted.turnId, turn.turnId);
+        assert.equal(String(turnStarted.turnId), String(turn.turnId));
       }
 
       const deltaEvent = runtimeEvents.find((event) => event.type === "content.delta");
       assert.equal(deltaEvent?.type, "content.delta");
       if (deltaEvent?.type === "content.delta") {
         assert.equal(deltaEvent.payload.delta, "Hi");
-        assert.equal(deltaEvent.turnId, turn.turnId);
+        assert.equal(String(deltaEvent.turnId), String(turn.turnId));
       }
 
       const toolStarted = runtimeEvents.find((event) => event.type === "item.started");
@@ -350,7 +350,7 @@ describe("ClaudeCodeAdapterLive", () => {
       const turnCompleted = runtimeEvents[runtimeEvents.length - 1];
       assert.equal(turnCompleted?.type, "turn.completed");
       if (turnCompleted?.type === "turn.completed") {
-        assert.equal(turnCompleted.turnId, turn.turnId);
+        assert.equal(String(turnCompleted.turnId), String(turn.turnId));
         assert.equal(turnCompleted.payload.state, "completed");
       }
     }).pipe(
@@ -438,7 +438,7 @@ describe("ClaudeCodeAdapterLive", () => {
       assert.equal(deltaEvent?.type, "content.delta");
       if (deltaEvent?.type === "content.delta") {
         assert.equal(deltaEvent.payload.delta, "Late text");
-        assert.equal(deltaEvent.turnId, turn.turnId);
+        assert.equal(String(deltaEvent.turnId), String(turn.turnId));
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -506,7 +506,7 @@ describe("ClaudeCodeAdapterLive", () => {
       assert.equal(deltaEvent?.type, "content.delta");
       if (deltaEvent?.type === "content.delta") {
         assert.equal(deltaEvent.payload.delta, "Fallback hello");
-        assert.equal(deltaEvent.turnId, turn.turnId);
+        assert.equal(String(deltaEvent.turnId), String(turn.turnId));
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -631,10 +631,15 @@ describe("ClaudeCodeAdapterLive", () => {
       if (requested.value.type !== "request.opened") {
         return;
       }
+      const runtimeRequestId = requested.value.requestId;
+      assert.equal(typeof runtimeRequestId, "string");
+      if (runtimeRequestId === undefined) {
+        return;
+      }
 
       yield* adapter.respondToRequest(
         session.sessionId,
-        ApprovalRequestId.makeUnsafe(requested.value.requestId),
+        ApprovalRequestId.makeUnsafe(runtimeRequestId),
         "accept",
       );
 
@@ -744,7 +749,7 @@ describe("ClaudeCodeAdapterLive", () => {
       const firstCompleted = yield* Fiber.join(firstCompletedFiber);
       assert.equal(firstCompleted._tag, "Some");
       if (firstCompleted._tag === "Some" && firstCompleted.value.type === "turn.completed") {
-        assert.equal(firstCompleted.value.turnId, firstTurn.turnId);
+        assert.equal(String(firstCompleted.value.turnId), String(firstTurn.turnId));
       }
 
       const secondTurn = yield* adapter.sendTurn({
@@ -770,7 +775,7 @@ describe("ClaudeCodeAdapterLive", () => {
       const secondCompleted = yield* Fiber.join(secondCompletedFiber);
       assert.equal(secondCompleted._tag, "Some");
       if (secondCompleted._tag === "Some" && secondCompleted.value.type === "turn.completed") {
-        assert.equal(secondCompleted.value.turnId, secondTurn.turnId);
+        assert.equal(String(secondCompleted.value.turnId), String(secondTurn.turnId));
       }
 
       const threadBeforeRollback = yield* adapter.readThread(session.sessionId);
@@ -875,7 +880,7 @@ describe("ClaudeCodeAdapterLive", () => {
 
       assert.equal(records.some((record) => record.event?.provider === "claudeCode"), true);
       assert.equal(records.some((record) => record.event?.sessionId === session.sessionId), true);
-      assert.equal(records.some((record) => record.event?.turnId === turn.turnId), true);
+      assert.equal(records.some((record) => String(record.event?.turnId) === String(turn.turnId)), true);
       assert.equal(
         records.some(
           (record) => record.event?.method === "claude/stream_event/content_block_delta/text_delta",

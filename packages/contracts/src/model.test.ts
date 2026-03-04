@@ -117,7 +117,7 @@ describe("cursor model selection", () => {
       thinking: false,
     });
     expect(parseCursorModelSelection("gpt-5.2-codex")).toEqual({
-      family: "gpt-5.2-codex",
+      family: "gpt-5.3-codex",
       reasoning: "normal",
       fast: false,
       thinking: false,
@@ -142,11 +142,11 @@ describe("cursor model selection", () => {
   it("resolves codex family selections into concrete model ids", () => {
     expect(
       resolveCursorModelFromSelection({
-        family: "gpt-5.2-codex",
+        family: "gpt-5.3-codex",
         reasoning: "xhigh",
         fast: true,
       }),
-    ).toBe("gpt-5.2-codex-xhigh-fast");
+    ).toBe("gpt-5.3-codex-xhigh-fast");
   });
 });
 

@@ -5,11 +5,14 @@ import {
   EventId,
   ProviderApprovalDecision,
   ProviderRuntimeEvent,
+  RuntimeSessionId,
   ProviderSession,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
   ProviderTurnStartResult,
+  ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { Effect, Queue, Stream } from "effect";
 
@@ -25,12 +28,29 @@ import type {
 } from "../src/provider/Services/ProviderAdapter.ts";
 
 export interface TestTurnResponse {
-  readonly events: ReadonlyArray<ProviderRuntimeEvent>;
+  readonly events: ReadonlyArray<FixtureProviderRuntimeEvent>;
   readonly mutateWorkspace?: (input: {
     readonly cwd: string;
     readonly turnCount: number;
   }) => Effect.Effect<void, never>;
 }
+
+export type FixtureProviderRuntimeEvent = {
+  readonly type: string;
+  readonly eventId: EventId;
+  readonly provider: "codex" | "claudeCode" | "cursor";
+  readonly sessionId: string;
+  readonly createdAt: string;
+  readonly threadId?: string | undefined;
+  readonly turnId?: string | undefined;
+  readonly itemId?: string | undefined;
+  readonly requestId?: string | undefined;
+  readonly payload?: unknown | undefined;
+  readonly [key: string]: unknown;
+};
+
+// Temporary alias while fixtures migrate to the new name.
+export type LegacyProviderRuntimeEvent = FixtureProviderRuntimeEvent;
 
 interface SessionState {
   readonly session: ProviderSession;
@@ -38,6 +58,126 @@ interface SessionState {
   turnCount: number;
   readonly queuedResponses: Array<TestTurnResponse>;
   readonly rollbackCalls: Array<number>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function normalizeTurnState(value: unknown): "completed" | "failed" | "interrupted" | "cancelled" {
+  if (
+    value === "completed" ||
+    value === "failed" ||
+    value === "interrupted" ||
+    value === "cancelled"
+  ) {
+    return value;
+  }
+  return "completed";
+}
+
+function mapRequestType(requestKind: unknown):
+  | "command_execution_approval"
+  | "file_change_approval"
+  | "unknown" {
+  if (requestKind === "command") {
+    return "command_execution_approval";
+  }
+  if (requestKind === "file-change") {
+    return "file_change_approval";
+  }
+  return "unknown";
+}
+
+function mapItemType(toolKind: unknown): "command_execution" | "file_change" | "unknown" {
+  if (toolKind === "command") {
+    return "command_execution";
+  }
+  if (toolKind === "file-change") {
+    return "file_change";
+  }
+  return "unknown";
+}
+
+function normalizeFixtureEvent(rawEvent: Record<string, unknown>): ProviderRuntimeEvent {
+  const type = typeof rawEvent.type === "string" ? rawEvent.type : "";
+  switch (type) {
+    case "turn.started":
+      return {
+        ...rawEvent,
+        type: "turn.started",
+        payload: isRecord(rawEvent.payload) ? rawEvent.payload : {},
+      } as ProviderRuntimeEvent;
+    case "turn.completed":
+      return {
+        ...rawEvent,
+        type: "turn.completed",
+        payload: isRecord(rawEvent.payload)
+          ? rawEvent.payload
+          : {
+              state: normalizeTurnState(rawEvent.status),
+            },
+      } as ProviderRuntimeEvent;
+    case "message.delta":
+      return {
+        ...rawEvent,
+        type: "content.delta",
+        payload: {
+          streamKind: "assistant_text",
+          delta: typeof rawEvent.delta === "string" ? rawEvent.delta : "",
+        },
+      } as ProviderRuntimeEvent;
+    case "message.completed":
+      return {
+        ...rawEvent,
+        type: "item.completed",
+        payload: {
+          itemType: "assistant_message",
+          ...(typeof rawEvent.detail === "string" ? { detail: rawEvent.detail } : {}),
+        },
+      } as ProviderRuntimeEvent;
+    case "tool.started":
+      return {
+        ...rawEvent,
+        type: "item.started",
+        payload: {
+          itemType: mapItemType(rawEvent.toolKind),
+          ...(typeof rawEvent.title === "string" ? { title: rawEvent.title } : {}),
+          ...(typeof rawEvent.detail === "string" ? { detail: rawEvent.detail } : {}),
+        },
+      } as ProviderRuntimeEvent;
+    case "tool.completed":
+      return {
+        ...rawEvent,
+        type: "item.completed",
+        payload: {
+          itemType: mapItemType(rawEvent.toolKind),
+          status: "completed",
+          ...(typeof rawEvent.title === "string" ? { title: rawEvent.title } : {}),
+          ...(typeof rawEvent.detail === "string" ? { detail: rawEvent.detail } : {}),
+        },
+      } as ProviderRuntimeEvent;
+    case "approval.requested":
+      return {
+        ...rawEvent,
+        type: "request.opened",
+        payload: {
+          requestType: mapRequestType(rawEvent.requestKind),
+          ...(typeof rawEvent.detail === "string" ? { detail: rawEvent.detail } : {}),
+        },
+      } as ProviderRuntimeEvent;
+    case "approval.resolved":
+      return {
+        ...rawEvent,
+        type: "request.resolved",
+        payload: {
+          requestType: mapRequestType(rawEvent.requestKind),
+          ...(typeof rawEvent.decision === "string" ? { decision: rawEvent.decision } : {}),
+        },
+      } as ProviderRuntimeEvent;
+    default:
+      return rawEvent as ProviderRuntimeEvent;
+  }
 }
 
 export interface TestProviderAdapterHarness {
@@ -172,19 +312,28 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
           ...(fixtureEvent as Record<string, unknown>),
           eventId: randomUUID(),
           provider,
-          sessionId: input.sessionId,
+          sessionId: RuntimeSessionId.makeUnsafe(input.sessionId),
           createdAt: nowIso(),
         };
         if (Object.hasOwn(rawEvent, "threadId")) {
-          rawEvent.threadId = state.snapshot.threadId;
+          rawEvent.threadId = ThreadId.makeUnsafe(state.snapshot.threadId);
         }
         if (Object.hasOwn(rawEvent, "turnId")) {
-          rawEvent.turnId = turnId;
+          rawEvent.turnId = TurnId.makeUnsafe(turnId);
         }
 
-        const runtimeEvent = rawEvent as ProviderRuntimeEvent;
-        if (runtimeEvent.type === "message.delta") {
-          assistantDeltas.push(runtimeEvent.delta);
+        const runtimeEvent = normalizeFixtureEvent(rawEvent);
+        const runtimeType = (runtimeEvent as { type: string }).type;
+        if (runtimeType === "content.delta") {
+          const payload = runtimeEvent.payload as { delta?: unknown } | undefined;
+          if (typeof payload?.delta === "string") {
+            assistantDeltas.push(payload.delta);
+          }
+        } else if (runtimeType === "message.delta") {
+          const legacyDelta = (runtimeEvent as { delta?: unknown }).delta;
+          if (typeof legacyDelta === "string") {
+            assistantDeltas.push(legacyDelta);
+          }
         }
         if (runtimeEvent.type === "turn.completed") {
           deferredTurnCompletedEvents.push(runtimeEvent);
@@ -223,11 +372,13 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
           type: "turn.completed",
           eventId: EventId.makeUnsafe(randomUUID()),
           provider,
-          sessionId: input.sessionId,
+          sessionId: RuntimeSessionId.makeUnsafe(input.sessionId),
           createdAt: nowIso(),
-          threadId: state.snapshot.threadId,
-          turnId,
-          status: "completed",
+          threadId: ThreadId.makeUnsafe(state.snapshot.threadId),
+          turnId: TurnId.makeUnsafe(turnId),
+          payload: {
+            state: "completed",
+          },
         });
       } else {
         for (const completedEvent of deferredTurnCompletedEvents) {
@@ -325,6 +476,9 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
 
   const adapter: ProviderAdapterShape<ProviderAdapterError> = {
     provider,
+    capabilities: {
+      sessionModelSwitch: "in-session",
+    },
     startSession,
     sendTurn,
     interruptTurn,

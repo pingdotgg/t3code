@@ -1,22 +1,16 @@
-import {
-  ApprovalRequestId,
-  EventId,
-  ProviderSessionId,
-  ProviderThreadId,
-  ProviderTurnId,
-  type ProviderRuntimeEvent,
-} from "@t3tools/contracts";
+import { EventId, RuntimeRequestId } from "@t3tools/contracts";
+import type { LegacyProviderRuntimeEvent } from "../TestProviderAdapter.integration.ts";
 
 const PROVIDER = "codex" as const;
-const SESSION_ID = ProviderSessionId.makeUnsafe("fixture-session");
-const THREAD_ID = ProviderThreadId.makeUnsafe("fixture-thread");
-const TURN_ID = ProviderTurnId.makeUnsafe("fixture-turn");
-const REQUEST_ID = ApprovalRequestId.makeUnsafe("req-1");
+const SESSION_ID = "fixture-session";
+const THREAD_ID = "fixture-thread";
+const TURN_ID = "fixture-turn";
+const REQUEST_ID = RuntimeRequestId.makeUnsafe("req-1");
 
 function baseEvent(
   eventId: string,
   createdAt: string,
-): Pick<ProviderRuntimeEvent, "eventId" | "provider" | "sessionId" | "createdAt"> {
+): Pick<LegacyProviderRuntimeEvent, "eventId" | "provider" | "sessionId" | "createdAt"> {
   return {
     eventId: EventId.makeUnsafe(eventId),
     provider: PROVIDER,
@@ -31,29 +25,38 @@ export const codexTurnTextFixture = [
     ...baseEvent("evt-1", "2026-02-23T00:00:00.000Z"),
     threadId: THREAD_ID,
     turnId: TURN_ID,
+    payload: {},
   },
   {
-    type: "message.delta",
+    type: "content.delta",
     ...baseEvent("evt-2", "2026-02-23T00:00:00.100Z"),
     threadId: THREAD_ID,
     turnId: TURN_ID,
-    delta: "I will make a small update.\n",
+    payload: {
+      streamKind: "assistant_text",
+      delta: "I will make a small update.\n",
+    },
   },
   {
-    type: "message.delta",
+    type: "content.delta",
     ...baseEvent("evt-3", "2026-02-23T00:00:00.200Z"),
     threadId: THREAD_ID,
     turnId: TURN_ID,
-    delta: "Done.\n",
+    payload: {
+      streamKind: "assistant_text",
+      delta: "Done.\n",
+    },
   },
   {
     type: "turn.completed",
     ...baseEvent("evt-4", "2026-02-23T00:00:00.300Z"),
     threadId: THREAD_ID,
     turnId: TURN_ID,
-    status: "completed",
+    payload: {
+      state: "completed",
+    },
   },
-] satisfies ReadonlyArray<ProviderRuntimeEvent>;
+] satisfies ReadonlyArray<LegacyProviderRuntimeEvent>;
 
 export const codexTurnToolFixture = [
   {
@@ -61,40 +64,51 @@ export const codexTurnToolFixture = [
     ...baseEvent("evt-11", "2026-02-23T00:01:00.000Z"),
     threadId: THREAD_ID,
     turnId: TURN_ID,
+    payload: {},
   },
   {
-    type: "tool.started",
+    type: "item.started",
     ...baseEvent("evt-12", "2026-02-23T00:01:00.100Z"),
     threadId: THREAD_ID,
     turnId: TURN_ID,
-    toolKind: "command",
-    title: "Command run",
-    detail: "echo integration",
+    payload: {
+      itemType: "command_execution",
+      title: "Command run",
+      detail: "echo integration",
+    },
   },
   {
-    type: "tool.completed",
+    type: "item.completed",
     ...baseEvent("evt-13", "2026-02-23T00:01:00.200Z"),
     threadId: THREAD_ID,
     turnId: TURN_ID,
-    toolKind: "command",
-    title: "Command run",
-    detail: "echo integration",
+    payload: {
+      itemType: "command_execution",
+      status: "completed",
+      title: "Command run",
+      detail: "echo integration",
+    },
   },
   {
-    type: "message.delta",
+    type: "content.delta",
     ...baseEvent("evt-14", "2026-02-23T00:01:00.300Z"),
     threadId: THREAD_ID,
     turnId: TURN_ID,
-    delta: "Applied the requested edit.\n",
+    payload: {
+      streamKind: "assistant_text",
+      delta: "Applied the requested edit.\n",
+    },
   },
   {
     type: "turn.completed",
     ...baseEvent("evt-15", "2026-02-23T00:01:00.400Z"),
     threadId: THREAD_ID,
     turnId: TURN_ID,
-    status: "completed",
+    payload: {
+      state: "completed",
+    },
   },
-] satisfies ReadonlyArray<ProviderRuntimeEvent>;
+] satisfies ReadonlyArray<LegacyProviderRuntimeEvent>;
 
 export const codexTurnApprovalFixture = [
   {
@@ -102,37 +116,47 @@ export const codexTurnApprovalFixture = [
     ...baseEvent("evt-21", "2026-02-23T00:02:00.000Z"),
     threadId: THREAD_ID,
     turnId: TURN_ID,
+    payload: {},
   },
   {
-    type: "approval.requested",
+    type: "request.opened",
     ...baseEvent("evt-22", "2026-02-23T00:02:00.100Z"),
     threadId: THREAD_ID,
     turnId: TURN_ID,
     requestId: REQUEST_ID,
-    requestKind: "command",
-    detail: "Please approve command",
+    payload: {
+      requestType: "command_execution_approval",
+      detail: "Please approve command",
+    },
   },
   {
-    type: "approval.resolved",
+    type: "request.resolved",
     ...baseEvent("evt-23", "2026-02-23T00:02:00.200Z"),
     threadId: THREAD_ID,
     turnId: TURN_ID,
     requestId: REQUEST_ID,
-    requestKind: "command",
-    decision: "accept",
+    payload: {
+      requestType: "command_execution_approval",
+      decision: "accept",
+    },
   },
   {
-    type: "message.delta",
+    type: "content.delta",
     ...baseEvent("evt-24", "2026-02-23T00:02:00.300Z"),
     threadId: THREAD_ID,
     turnId: TURN_ID,
-    delta: "Approval received and command executed.\n",
+    payload: {
+      streamKind: "assistant_text",
+      delta: "Approval received and command executed.\n",
+    },
   },
   {
     type: "turn.completed",
     ...baseEvent("evt-25", "2026-02-23T00:02:00.400Z"),
     threadId: THREAD_ID,
     turnId: TURN_ID,
-    status: "completed",
+    payload: {
+      state: "completed",
+    },
   },
-] satisfies ReadonlyArray<ProviderRuntimeEvent>;
+] satisfies ReadonlyArray<LegacyProviderRuntimeEvent>;

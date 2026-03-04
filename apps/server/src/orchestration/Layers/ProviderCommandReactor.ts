@@ -12,7 +12,7 @@ import {
   type ProviderSession,
   type TurnId,
 } from "@t3tools/contracts";
-import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Stream } from "effect";
+import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Schema, Stream } from "effect";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
@@ -84,7 +84,7 @@ function toErrorMessage(error: unknown): string {
 }
 
 function isUnknownPendingApprovalRequestError(error: unknown): boolean {
-  if (error instanceof ProviderAdapterRequestError) {
+  if (Schema.is(ProviderAdapterRequestError)(error)) {
     const detail = error.detail.toLowerCase();
     return (
       detail.includes("unknown pending approval request") ||
@@ -170,33 +170,6 @@ const make = Effect.gen(function* () {
           ...(input.requestId ? { requestId: input.requestId } : {}),
         },
         turnId: input.turnId,
-        createdAt: input.createdAt,
-      },
-      createdAt: input.createdAt,
-    });
-
-  const appendApprovalResolvedActivity = (input: {
-    readonly threadId: ThreadId;
-    readonly requestId: string;
-    readonly decision: "accept" | "acceptForSession" | "decline" | "cancel";
-    readonly detail: string;
-    readonly createdAt: string;
-  }) =>
-    orchestrationEngine.dispatch({
-      type: "thread.activity.append",
-      commandId: serverCommandId("approval-resolved"),
-      threadId: input.threadId,
-      activity: {
-        id: EventId.makeUnsafe(crypto.randomUUID()),
-        tone: "approval",
-        kind: "approval.resolved",
-        summary: "Approval resolved",
-        payload: {
-          requestId: input.requestId,
-          decision: input.decision,
-          detail: input.detail,
-        },
-        turnId: null,
         createdAt: input.createdAt,
       },
       createdAt: input.createdAt,
@@ -569,17 +542,7 @@ const make = Effect.gen(function* () {
               requestId: event.payload.requestId,
             });
 
-            if (!isUnknownPendingApprovalRequestError(error)) {
-              return;
-            }
-
-            yield* appendApprovalResolvedActivity({
-              threadId: event.payload.threadId,
-              requestId: event.payload.requestId,
-              decision: event.payload.decision,
-              detail: "Approval request is no longer pending in the provider session.",
-              createdAt: event.payload.createdAt,
-            });
+            if (!isUnknownPendingApprovalRequestError(error)) return;
           }),
         ),
       );

@@ -320,7 +320,7 @@ describe("CursorAdapterLive", () => {
       const turnStarted = events[6];
       assert.equal(turnStarted?.type, "turn.started");
       if (turnStarted?.type === "turn.started") {
-        assert.equal(turnStarted.turnId, turn.turnId);
+        assert.equal(String(turnStarted.turnId), String(turn.turnId));
       }
 
       const completion = events[12];
@@ -448,10 +448,15 @@ describe("CursorAdapterLive", () => {
       if (opened.value.type !== "request.opened") {
         return;
       }
+      const runtimeRequestId = opened.value.requestId;
+      assert.equal(typeof runtimeRequestId, "string");
+      if (runtimeRequestId === undefined) {
+        return;
+      }
 
       yield* adapter.respondToRequest(
         session.sessionId,
-        ApprovalRequestId.makeUnsafe(opened.value.requestId),
+        ApprovalRequestId.makeUnsafe(runtimeRequestId),
         "acceptForSession",
       );
 

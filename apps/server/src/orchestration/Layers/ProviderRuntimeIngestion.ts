@@ -1,4 +1,5 @@
 import {
+  ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
   MessageId,
@@ -10,7 +11,8 @@ import {
   TurnId,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
-  type ProviderSessionId,
+  ProviderSessionId,
+  RuntimeSessionId,
 } from "@t3tools/contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Ref, Stream } from "effect";
 
@@ -50,12 +52,20 @@ type RuntimeIngestionInput =
       event: TurnStartRequestedDomainEvent;
     };
 
-function toTurnId(value: string | undefined): TurnId | undefined {
-  return value === undefined ? undefined : TurnId.makeUnsafe(value);
+function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
+  return value === undefined ? undefined : TurnId.makeUnsafe(String(value));
 }
 
 function toProviderThreadId(value: string | undefined): ProviderThreadId | null {
-  return value === undefined ? null : ProviderThreadId.makeUnsafe(value);
+  return value === undefined ? null : ProviderThreadId.makeUnsafe(String(value));
+}
+
+function toProviderSessionId(value: RuntimeSessionId): ProviderSessionId {
+  return ProviderSessionId.makeUnsafe(String(value));
+}
+
+function toApprovalRequestId(value: string | undefined): ApprovalRequestId | undefined {
+  return value === undefined ? undefined : ApprovalRequestId.makeUnsafe(value);
 }
 
 function sameId(left: string | null | undefined, right: string | null | undefined): boolean {
@@ -163,7 +173,12 @@ function isToolLifecycleItemType(itemType: string): boolean {
 function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
 ): ReadonlyArray<OrchestrationThreadActivity> {
-  const maybeSequence = event.sessionSequence !== undefined ? { sequence: event.sessionSequence } : {};
+  const maybeSequence = (() => {
+    const eventWithSequence = event as ProviderRuntimeEvent & { sessionSequence?: number };
+    return eventWithSequence.sessionSequence !== undefined
+      ? { sequence: eventWithSequence.sessionSequence }
+      : {};
+  })();
   switch (event.type) {
     case "request.opened": {
       const requestKind = requestKindFromCanonicalRequestType(event.payload.requestType);
@@ -180,7 +195,7 @@ function runtimeEventToActivities(
                 ? "File-change approval requested"
                 : "Approval requested",
           payload: {
-            requestId: event.requestId,
+            requestId: toApprovalRequestId(event.requestId),
             ...(requestKind ? { requestKind } : {}),
             requestType: event.payload.requestType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
@@ -201,7 +216,7 @@ function runtimeEventToActivities(
           kind: "approval.resolved",
           summary: "Approval resolved",
           payload: {
-            requestId: event.requestId,
+            requestId: toApprovalRequestId(event.requestId),
             ...(requestKind ? { requestKind } : {}),
             requestType: event.payload.requestType,
             ...(event.payload.decision ? { decision: event.payload.decision } : {}),
@@ -296,7 +311,7 @@ function runtimeEventToActivities(
               ? "Command approval requested"
               : "File-change approval requested",
           payload: {
-            requestId: event.requestId,
+            requestId: toApprovalRequestId(event.requestId),
             ...(requestKind ? { requestKind } : {}),
             ...(detail ? { detail: truncateDetail(detail) } : {}),
           },
@@ -317,7 +332,7 @@ function runtimeEventToActivities(
           kind: "approval.resolved",
           summary: "Approval resolved",
           payload: {
-            requestId: event.requestId,
+            requestId: toApprovalRequestId(event.requestId),
             ...(requestKind ? { requestKind } : {}),
             ...(decision ? { decision } : {}),
           },
@@ -528,9 +543,10 @@ const make = Effect.gen(function* () {
 
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
+      const providerSessionId = toProviderSessionId(event.sessionId);
       const readModel = yield* orchestrationEngine.getReadModel();
       const thread = readModel.threads.find(
-        (entry) => entry.session?.providerSessionId === event.sessionId,
+        (entry) => entry.session?.providerSessionId === providerSessionId,
       );
       if (!thread) return;
 
@@ -614,10 +630,8 @@ const make = Effect.gen(function* () {
               : activeTurnId;
         const providerThreadIdFromEvent =
           event.type === "thread.started"
-            ? ProviderThreadId.makeUnsafe(event.threadId)
-            : event.threadId !== undefined
-              ? ProviderThreadId.makeUnsafe(event.threadId)
-              : null;
+            ? toProviderThreadId(event.threadId)
+            : toProviderThreadId(event.threadId);
         const providerThreadId =
           providerThreadIdFromEvent ?? scopedSessionProviderThreadId ?? null;
         const status = (() => {
@@ -651,7 +665,7 @@ const make = Effect.gen(function* () {
               threadId: thread.id,
               status,
               providerName: event.provider,
-              providerSessionId: event.sessionId,
+              providerSessionId,
               providerThreadId,
               approvalPolicy: thread.session?.approvalPolicy ?? DEFAULT_APPROVAL_POLICY,
               sandboxMode: thread.session?.sandboxMode ?? DEFAULT_SANDBOX_MODE,
@@ -677,7 +691,7 @@ const make = Effect.gen(function* () {
         );
         const turnId = toTurnId(event.turnId);
         if (turnId) {
-          yield* rememberAssistantMessageId(event.sessionId, turnId, assistantMessageId);
+          yield* rememberAssistantMessageId(providerSessionId, turnId, assistantMessageId);
         }
 
         const assistantDeliveryMode = yield* Ref.get(assistantDeliveryModeRef);
@@ -724,7 +738,7 @@ const make = Effect.gen(function* () {
         const assistantMessageId = assistantCompletion.messageId;
         const turnId = toTurnId(event.turnId);
         if (turnId) {
-          yield* rememberAssistantMessageId(event.sessionId, turnId, assistantMessageId);
+          yield* rememberAssistantMessageId(providerSessionId, turnId, assistantMessageId);
         }
 
         yield* finalizeAssistantMessage({
@@ -735,18 +749,20 @@ const make = Effect.gen(function* () {
           createdAt: now,
           commandTag: "assistant-complete",
           finalDeltaCommandTag: "assistant-delta-finalize",
-          fallbackText: assistantCompletion.fallbackText,
+          ...(assistantCompletion.fallbackText !== undefined
+            ? { fallbackText: assistantCompletion.fallbackText }
+            : {}),
         });
 
         if (turnId) {
-          yield* forgetAssistantMessageId(event.sessionId, turnId, assistantMessageId);
+          yield* forgetAssistantMessageId(providerSessionId, turnId, assistantMessageId);
         }
       }
 
       if (event.type === "turn.completed") {
         const turnId = toTurnId(event.turnId);
         if (turnId) {
-          const assistantMessageIds = yield* getAssistantMessageIdsForTurn(event.sessionId, turnId);
+          const assistantMessageIds = yield* getAssistantMessageIdsForTurn(providerSessionId, turnId);
           yield* Effect.forEach(
             assistantMessageIds,
             (assistantMessageId) =>
@@ -761,12 +777,12 @@ const make = Effect.gen(function* () {
               }),
             { concurrency: 1 },
           ).pipe(Effect.asVoid);
-          yield* clearAssistantMessageIdsForTurn(event.sessionId, turnId);
+          yield* clearAssistantMessageIdsForTurn(providerSessionId, turnId);
         }
       }
 
       if (event.type === "session.exited") {
-        yield* clearTurnStateForSession(event.sessionId);
+        yield* clearTurnStateForSession(providerSessionId);
       }
 
       if (event.type === "runtime.error") {
@@ -793,7 +809,7 @@ const make = Effect.gen(function* () {
               threadId: thread.id,
               status: "error",
               providerName: event.provider,
-              providerSessionId: event.sessionId,
+              providerSessionId,
               providerThreadId,
               approvalPolicy: thread.session?.approvalPolicy ?? DEFAULT_APPROVAL_POLICY,
               sandboxMode: thread.session?.sandboxMode ?? DEFAULT_SANDBOX_MODE,
