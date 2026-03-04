@@ -1,4 +1,10 @@
-import { ChevronRightIcon, FolderIcon, GitPullRequestIcon, RocketIcon, TerminalIcon } from "lucide-react";
+import {
+  ChevronRightIcon,
+  FolderIcon,
+  GitPullRequestIcon,
+  RocketIcon,
+  TerminalIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_MODEL,
@@ -783,8 +789,7 @@ export default function Sidebar() {
       }
 
       if (!isChatNewShortcut(event, keybindings)) return;
-      const projectId =
-        activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
+      const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
       if (!projectId) return;
       event.preventDefault();
       void handleNewThread(projectId, {
@@ -927,7 +932,7 @@ export default function Sidebar() {
                       type="button"
                       aria-label={desktopUpdateTooltip}
                       disabled={desktopUpdateButtonDisabled}
-                      className={`inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60 ${desktopUpdateButtonClasses}`}
+                      className={`inline-flex size-7 ml-auto mt-2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60 ${desktopUpdateButtonClasses}`}
                       onClick={handleDesktopUpdateButtonClick}
                     >
                       <RocketIcon className="size-3.5" />
