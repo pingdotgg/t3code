@@ -52,6 +52,7 @@ import { OrchestrationEngineService } from "./orchestration/Services/Orchestrati
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
 import { ProviderService } from "./provider/Services/ProviderService";
+import { ProviderHealth } from "./provider/Services/ProviderHealth";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { clamp } from "effect/Number";
 import { Open, resolveAvailableEditors } from "./open";
@@ -154,7 +155,8 @@ export type ServerCoreRuntimeServices =
   | ProjectionSnapshotQuery
   | CheckpointDiffQuery
   | OrchestrationReactor
-  | ProviderService;
+  | ProviderService
+  | ProviderHealth;
 
 export type ServerRuntimeServices =
   | ServerCoreRuntimeServices
@@ -198,6 +200,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const gitManager = yield* GitManager;
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
+  const providerHealth = yield* ProviderHealth;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -211,6 +214,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       }),
     ),
   );
+
+  const providerStatuses = yield* providerHealth.getStatuses;
 
   const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
@@ -537,7 +542,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     broadcastPush({
       type: "push",
       channel: WS_CHANNELS.serverConfigUpdated,
-      data: event,
+      data: {
+        issues: event.issues,
+        providers: providerStatuses,
+      },
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
@@ -735,6 +743,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
+          providers: providerStatuses,
           availableEditors,
         };
 

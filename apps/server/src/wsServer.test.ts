@@ -25,6 +25,7 @@ import {
   WS_METHODS,
   type WebSocketResponse,
   type ProviderRuntimeEvent,
+  type ServerProviderStatus,
   type KeybindingsConfig,
   type ResolvedKeybindingsConfig,
   type WsPush,
@@ -43,6 +44,7 @@ import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/
 import { makeSqlitePersistenceLive, SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
 import { SqlClient, SqlError } from "effect/unstable/sql";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
+import { ProviderHealth, type ProviderHealthShape } from "./provider/Services/ProviderHealth";
 import { Open, type OpenShape } from "./open";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import type { GitCoreShape } from "./git/Services/GitCore.ts";
@@ -67,6 +69,20 @@ const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeU
 const defaultOpenService: OpenShape = {
   openBrowser: () => Effect.void,
   openInEditor: () => Effect.void,
+};
+
+const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
+  {
+    provider: "codex",
+    status: "ready",
+    available: true,
+    authStatus: "authenticated",
+    checkedAt: "2026-01-01T00:00:00.000Z",
+  },
+];
+
+const defaultProviderHealthService: ProviderHealthShape = {
+  getStatuses: Effect.succeed(defaultProviderStatuses),
 };
 
 class MockTerminalManager implements TerminalManagerShape {
@@ -377,6 +393,7 @@ describe("WebSocket Server", () => {
       stateDir?: string;
       staticDir?: string;
       providerLayer?: Layer.Layer<ProviderService, never>;
+      providerHealth?: ProviderHealthShape;
       open?: OpenShape;
       gitManager?: GitManagerShape;
       gitCore?: Pick<
@@ -394,6 +411,10 @@ describe("WebSocket Server", () => {
     const scope = await Effect.runPromise(Scope.make("sequential"));
     const persistenceLayer = options.persistenceLayer ?? SqlitePersistenceMemory;
     const providerLayer = options.providerLayer ?? makeServerProviderLayer();
+    const providerHealthLayer = Layer.succeed(
+      ProviderHealth,
+      options.providerHealth ?? defaultProviderHealthService,
+    );
     const openLayer = Layer.succeed(Open, options.open ?? defaultOpenService);
     const serverConfigLayer = Layer.succeed(ServerConfig, {
       mode: "web",
@@ -428,6 +449,7 @@ describe("WebSocket Server", () => {
     );
     const dependenciesLayer = Layer.empty.pipe(
       Layer.provideMerge(runtimeLayer),
+      Layer.provideMerge(providerHealthLayer),
       Layer.provideMerge(openLayer),
       Layer.provideMerge(serverConfigLayer),
       Layer.provideMerge(NodeServices.layer),
@@ -736,6 +758,7 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [],
+      providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -761,6 +784,7 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [],
+      providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -796,6 +820,7 @@ describe("WebSocket Server", () => {
           message: expect.stringContaining("expected JSON array"),
         },
       ],
+      providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -830,6 +855,7 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: string;
       keybindings: ResolvedKeybindingsConfig;
       issues: Array<{ kind: string; index?: number; message: string }>;
+      providers: ReadonlyArray<ServerProviderStatus>;
       availableEditors: unknown;
     };
     expect(result.cwd).toBe("/my/workspace");
@@ -849,6 +875,7 @@ describe("WebSocket Server", () => {
     expect(result.keybindings).toHaveLength(DEFAULT_RESOLVED_KEYBINDINGS.length);
     expect(result.keybindings.some((entry) => entry.command === "terminal.toggle")).toBe(true);
     expect(result.keybindings.some((entry) => entry.command === "terminal.new")).toBe(true);
+    expect(result.providers).toEqual(defaultProviderStatuses);
     expectAvailableEditors(result.availableEditors);
   });
 
@@ -877,6 +904,7 @@ describe("WebSocket Server", () => {
     );
     expect(malformedPush.data).toEqual({
       issues: [{ kind: "keybindings.malformed-config", message: expect.any(String) }],
+      providers: defaultProviderStatuses,
     });
 
     fs.writeFileSync(keybindingsPath, "[]", "utf8");
@@ -887,7 +915,7 @@ describe("WebSocket Server", () => {
         Array.isArray((push.data as { issues?: unknown[] }).issues) &&
         (push.data as { issues: unknown[] }).issues.length === 0,
     );
-    expect(successPush.data).toEqual({ issues: [] });
+    expect(successPush.data).toEqual({ issues: [], providers: defaultProviderStatuses });
   });
 
   it("routes shell.openInEditor through the injected open service", async () => {
@@ -947,6 +975,7 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: keybindingsPath,
       keybindings: compileKeybindings(persistedConfig),
       issues: [],
+      providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
@@ -994,6 +1023,7 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: keybindingsPath,
       keybindings: compileKeybindings(persistedConfig),
       issues: [],
+      providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
     });
     expectAvailableEditors(

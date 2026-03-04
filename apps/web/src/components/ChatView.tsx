@@ -15,6 +15,7 @@ import {
   type ReasoningEffort,
   type ResolvedKeybindingsConfig,
   type ProviderApprovalDecision,
+  type ServerProviderStatus,
   type ThreadId,
   type TurnId,
   normalizeModelSlug,
@@ -148,6 +149,7 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
+const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
@@ -936,6 +938,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
   const availableEditors = serverConfigQuery.data?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
+  const providerStatuses = serverConfigQuery.data?.providers ?? EMPTY_PROVIDER_STATUSES;
+  const activeProvider = activeThread?.session?.provider ?? "codex";
+  const activeProviderStatus = useMemo(
+    () => providerStatuses.find((status) => status.provider === activeProvider) ?? null,
+    [activeProvider, providerStatuses],
+  );
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const threadTerminalRuntimeEnv = useMemo(() => {
@@ -2497,6 +2505,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       </header>
 
       {/* Error banner */}
+      <ProviderHealthBanner status={activeProviderStatus} />
       <ThreadErrorBanner error={activeThread.error} />
       <PendingApprovalsPanel
         pendingApprovals={pendingApprovals}
@@ -2991,6 +3000,35 @@ const ThreadErrorBanner = memo(function ThreadErrorBanner({ error }: { error: st
         <CircleAlertIcon />
         <AlertDescription className="line-clamp-3" title={error}>
           {error}
+        </AlertDescription>
+      </Alert>
+    </div>
+  );
+});
+
+const ProviderHealthBanner = memo(function ProviderHealthBanner({
+  status,
+}: {
+  status: ServerProviderStatus | null;
+}) {
+  if (!status || status.status === "ready") {
+    return null;
+  }
+
+  const defaultMessage =
+    status.status === "error"
+      ? `${status.provider} provider is unavailable.`
+      : `${status.provider} provider has limited availability.`;
+
+  return (
+    <div className="pt-3 mx-auto max-w-3xl">
+      <Alert variant={status.status === "error" ? "error" : "warning"}>
+        <CircleAlertIcon />
+        <AlertTitle>
+          {status.provider === "codex" ? "Codex provider status" : `${status.provider} status`}
+        </AlertTitle>
+        <AlertDescription className="line-clamp-3" title={status.message ?? defaultMessage}>
+          {status.message ?? defaultMessage}
         </AlertDescription>
       </Alert>
     </div>

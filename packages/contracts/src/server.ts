@@ -1,7 +1,8 @@
 import { Schema } from "effect";
-import { TrimmedNonEmptyString } from "./baseSchemas";
+import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas";
 import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 import { EditorId } from "./editor";
+import { ProviderKind } from "./orchestration";
 
 export const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -25,11 +26,35 @@ export type ServerConfigIssue = typeof ServerConfigIssue.Type;
 export const ServerConfigIssues = Schema.Array(ServerConfigIssue);
 export type ServerConfigIssues = typeof ServerConfigIssues.Type;
 
+export const ServerProviderStatusState = Schema.Literals(["ready", "warning", "error"]);
+export type ServerProviderStatusState = typeof ServerProviderStatusState.Type;
+
+export const ServerProviderAuthStatus = Schema.Literals([
+  "authenticated",
+  "unauthenticated",
+  "unknown",
+]);
+export type ServerProviderAuthStatus = typeof ServerProviderAuthStatus.Type;
+
+export const ServerProviderStatus = Schema.Struct({
+  provider: ProviderKind,
+  status: ServerProviderStatusState,
+  available: Schema.Boolean,
+  authStatus: ServerProviderAuthStatus,
+  checkedAt: IsoDateTime,
+  message: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderStatus = typeof ServerProviderStatus.Type;
+
+export const ServerProviderStatuses = Schema.Array(ServerProviderStatus);
+export type ServerProviderStatuses = typeof ServerProviderStatuses.Type;
+
 export const ServerConfig = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   keybindingsConfigPath: TrimmedNonEmptyString,
   keybindings: ResolvedKeybindingsConfig,
   issues: ServerConfigIssues,
+  providers: ServerProviderStatuses,
   availableEditors: Schema.Array(EditorId),
 });
 export type ServerConfig = typeof ServerConfig.Type;
@@ -45,5 +70,6 @@ export type ServerUpsertKeybindingResult = typeof ServerUpsertKeybindingResult.T
 
 export const ServerConfigUpdatedPayload = Schema.Struct({
   issues: ServerConfigIssues,
+  providers: ServerProviderStatuses,
 });
 export type ServerConfigUpdatedPayload = typeof ServerConfigUpdatedPayload.Type;
