@@ -43,19 +43,25 @@ export function makeServerProviderLayer(): Layer.Layer<
   return Effect.gen(function* () {
     const { stateDir } = yield* ServerConfig;
     const providerLogsDir = path.join(stateDir, "logs", "provider");
-    const providerEventLogger = makeEventNdjsonLogger(path.join(providerLogsDir, "events.log"));
+    const providerEventLogPath = path.join(providerLogsDir, "events.log");
+    const nativeEventLogger = yield* makeEventNdjsonLogger(providerEventLogPath, {
+      stream: "native",
+    });
+    const canonicalEventLogger = yield* makeEventNdjsonLogger(providerEventLogPath, {
+      stream: "canonical",
+    });
     const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
       Layer.provide(ProviderSessionRuntimeRepositoryLive),
     );
     const codexAdapterLayer = makeCodexAdapterLive(
-      providerEventLogger ? { nativeEventLogger: providerEventLogger } : undefined,
+      nativeEventLogger ? { nativeEventLogger } : undefined,
     );
     const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
       Layer.provide(codexAdapterLayer),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
     return makeProviderServiceLive(
-      providerEventLogger ? { canonicalEventLogger: providerEventLogger } : undefined,
+      canonicalEventLogger ? { canonicalEventLogger } : undefined,
     ).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer));
   }).pipe(Layer.unwrap);
 }

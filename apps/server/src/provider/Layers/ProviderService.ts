@@ -111,7 +111,9 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
     const canonicalEventLogger =
       options?.canonicalEventLogger ??
       (options?.canonicalEventLogPath !== undefined
-        ? makeEventNdjsonLogger(options.canonicalEventLogPath)
+        ? yield* makeEventNdjsonLogger(options.canonicalEventLogPath, {
+            stream: "canonical",
+          })
         : undefined);
 
     const registry = yield* ProviderAdapterRegistry;
@@ -143,22 +145,17 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       canonicalizeRuntimeEventSession(event).pipe(
         Effect.tap((canonicalEvent) =>
           canonicalEventLogger
-            ? Effect.tap(
+            ? Effect.flatMap(
                 Effect.catch(
                   directory.getThreadId(canonicalEvent.sessionId).pipe(
-                    Effect.map(Option.getOrUndefined),
+                    Effect.map((threadIdOption) =>
+                      Option.isSome(threadIdOption) ? threadIdOption.value : null,
+                    ),
                   ),
-                  () => Effect.void,
+                  () => Effect.succeed<ThreadId | null>(null),
                 ),
                 (orchestrationThreadId) =>
-                  Effect.sync(() => {
-                    canonicalEventLogger.write({
-                      observedAt: new Date().toISOString(),
-                      stream: "canonical",
-                      orchestrationThreadId: orchestrationThreadId ?? null,
-                      event: canonicalEvent,
-                    });
-                  }),
+                  canonicalEventLogger.write(canonicalEvent, orchestrationThreadId),
               )
             : Effect.void,
         ),

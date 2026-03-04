@@ -8,178 +8,250 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import type { ThreadId } from "@t3tools/contracts";
 import { RotatingFileSink } from "@t3tools/shared/logging";
-import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
-import { createLogger } from "../../logger.ts";
+import { Effect, Exit, Logger, Scope } from "effect";
 
-const logger = createLogger("provider-observability");
+import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
+
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_FILES = 10;
+const DEFAULT_BATCH_WINDOW_MS = 200;
+const GLOBAL_THREAD_SEGMENT = "_global";
+const LOG_SCOPE = "provider-observability";
+
+export type EventNdjsonStream = "native" | "canonical" | "orchestration";
 
 export interface EventNdjsonLogger {
   readonly filePath: string;
-  write: (record: unknown) => void;
-  close: () => void;
+  write: (event: unknown, threadId: ThreadId | null) => Effect.Effect<void>;
+  close: () => Effect.Effect<void>;
 }
 
 export interface EventNdjsonLoggerOptions {
+  readonly stream: EventNdjsonStream;
   readonly maxBytes?: number;
   readonly maxFiles?: number;
+  readonly batchWindowMs?: number;
 }
 
-function stringifyRecord(record: unknown): string | undefined {
-  try {
-    return JSON.stringify(record);
-  } catch (error) {
-    logger.warn("failed to serialize provider event log record", { error });
-    return undefined;
+interface ThreadWriter {
+  writeMessage: (message: string) => Effect.Effect<void>;
+  close: () => Effect.Effect<void>;
+}
+
+function logWarning(message: string, context: Record<string, unknown>): Effect.Effect<void> {
+  return Effect.logWarning(message, context).pipe(Effect.annotateLogs({ scope: LOG_SCOPE }));
+}
+
+function resolveThreadSegment(raw: string | null | undefined): string {
+  const normalized = typeof raw === "string" ? toSafeThreadAttachmentSegment(raw) : null;
+  return normalized ?? GLOBAL_THREAD_SEGMENT;
+}
+
+function formatLoggerMessage(message: unknown): string {
+  if (Array.isArray(message)) {
+    return message.map((part) => (typeof part === "string" ? part : String(part))).join(" ");
+  }
+  return typeof message === "string" ? message : String(message);
+}
+
+function makeLineLogger(streamLabel: string): Logger.Logger<unknown, string> {
+  return Logger.make(
+    ({ date, message }) =>
+      `[${date.toISOString()}] ${streamLabel}: ${formatLoggerMessage(message)}\n`,
+  );
+}
+
+function resolveStreamLabel(stream: EventNdjsonStream): string {
+  switch (stream) {
+    case "native":
+      return "NTIVE";
+    case "canonical":
+    case "orchestration":
+    default:
+      return "CANON";
   }
 }
 
-function normalizeThreadSegment(raw: unknown): string | null {
-  if (typeof raw !== "string") {
-    return null;
-  }
-  return toSafeThreadAttachmentSegment(raw);
+function toLogMessage(event: unknown): Effect.Effect<string | undefined> {
+  return Effect.gen(function* () {
+    const serialized = yield* Effect.sync(() => {
+      try {
+        return { ok: true as const, value: JSON.stringify(event) };
+      } catch (error) {
+        return { ok: false as const, error };
+      }
+    });
+
+    if (!serialized.ok) {
+      yield* logWarning("failed to serialize provider event log record", {
+        error: serialized.error,
+      });
+      return undefined;
+    }
+
+    if (typeof serialized.value !== "string") {
+      return undefined;
+    }
+
+    return serialized.value;
+  });
 }
 
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  return value as Record<string, unknown>;
-}
+function makeThreadWriter(input: {
+  readonly filePath: string;
+  readonly maxBytes: number;
+  readonly maxFiles: number;
+  readonly batchWindowMs: number;
+  readonly streamLabel: string;
+}): Effect.Effect<ThreadWriter | undefined> {
+  return Effect.gen(function* () {
+    const sinkResult = yield* Effect.sync(() => {
+      try {
+        return {
+          ok: true as const,
+          sink: new RotatingFileSink({
+            filePath: input.filePath,
+            maxBytes: input.maxBytes,
+            maxFiles: input.maxFiles,
+            throwOnError: true,
+          }),
+        };
+      } catch (error) {
+        return { ok: false as const, error };
+      }
+    });
 
-function resolveThreadSegment(record: unknown): string | null {
-  const root = asObject(record);
-  return normalizeThreadSegment(root?.orchestrationThreadId);
-}
+    if (!sinkResult.ok) {
+      yield* logWarning("failed to initialize provider thread log file", {
+        filePath: input.filePath,
+        error: sinkResult.error,
+      });
+      return undefined;
+    }
 
-function resolveThreadFilePath(baseFilePath: string, threadSegment: string): string {
-  const dir = path.dirname(baseFilePath);
-  return path.join(dir, `${threadSegment}.log`);
-}
+    const sink = sinkResult.sink;
+    const scope = yield* Scope.make();
+    const lineLogger = makeLineLogger(input.streamLabel);
+    const batchedLogger = yield* Logger.batched(lineLogger, {
+      window: input.batchWindowMs,
+      flush: (messages) =>
+        Effect.gen(function* () {
+          const flushResult = yield* Effect.sync(() => {
+            try {
+              for (const message of messages) {
+                sink.write(message);
+              }
+              return { ok: true as const };
+            } catch (error) {
+              return { ok: false as const, error };
+            }
+          });
 
-function resolveObservedAt(raw: unknown): string {
-  if (typeof raw !== "string") {
-    return new Date().toISOString();
-  }
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    return new Date().toISOString();
-  }
-  return trimmed;
-}
+          if (!flushResult.ok) {
+            yield* logWarning("provider event log batch flush failed", {
+              filePath: input.filePath,
+              error: flushResult.error,
+            });
+          }
+        }),
+    }).pipe(Effect.provideService(Scope.Scope, scope));
 
-function resolveStreamLabel(raw: unknown): string {
-  if (typeof raw !== "string") {
-    return "ORCHESTRATION";
-  }
-  const normalized = raw.trim().toLowerCase();
-  if (normalized === "native") {
-    return "NATIVE";
-  }
-  if (normalized === "canonical" || normalized === "orchestration") {
-    return "ORCHESTRATION";
-  }
-  if (normalized.length === 0) {
-    return "ORCHESTRATION";
-  }
-  return normalized.toUpperCase();
-}
+    const loggerLayer = Logger.layer([batchedLogger], { mergeWithExisting: false });
 
-function toLogLine(record: unknown): string | undefined {
-  const root = asObject(record);
-  const payload = root && "event" in root ? root.event : record;
-  const serializedPayload = stringifyRecord(payload);
-  if (!serializedPayload) {
-    return undefined;
-  }
-  const observedAt = resolveObservedAt(root?.observedAt);
-  const streamLabel = resolveStreamLabel(root?.stream);
-  return `[${observedAt}] ${streamLabel}: ${serializedPayload}\n`;
+    return {
+      writeMessage(message: string) {
+        return Effect.log(message).pipe(Effect.provide(loggerLayer));
+      },
+      close() {
+        return Scope.close(scope, Exit.void);
+      },
+    } satisfies ThreadWriter;
+  });
 }
 
 export function makeEventNdjsonLogger(
   filePath: string,
-  options?: EventNdjsonLoggerOptions,
-): EventNdjsonLogger | undefined {
-  const maxBytes = options?.maxBytes ?? DEFAULT_MAX_BYTES;
-  const maxFiles = options?.maxFiles ?? DEFAULT_MAX_FILES;
+  options: EventNdjsonLoggerOptions,
+): Effect.Effect<EventNdjsonLogger | undefined> {
+  return Effect.gen(function* () {
+    const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+    const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
+    const batchWindowMs = options.batchWindowMs ?? DEFAULT_BATCH_WINDOW_MS;
+    const streamLabel = resolveStreamLabel(options.stream);
 
-  try {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  } catch (error) {
-    logger.warn("failed to create provider event log directory", { filePath, error });
-    return undefined;
-  }
+    const directoryReady = yield* Effect.sync(() => {
+      try {
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        return true;
+      } catch (error) {
+        return { ok: false as const, error };
+      }
+    });
+    if (directoryReady !== true) {
+      yield* logWarning("failed to create provider event log directory", {
+        filePath,
+        error: directoryReady.error,
+      });
+      return undefined;
+    }
 
-  try {
-    let broken = false;
-    const sinks = new Map<string, RotatingFileSink>();
+    const threadWriters = new Map<string, ThreadWriter>();
     const failedSegments = new Set<string>();
 
-    const resolveSink = (threadSegment: string): RotatingFileSink | undefined => {
-      if (failedSegments.has(threadSegment)) {
-        return undefined;
-      }
-      const existingSink = sinks.get(threadSegment);
-      if (existingSink) {
-        return existingSink;
-      }
+    const resolveThreadWriter = (threadSegment: string): Effect.Effect<ThreadWriter | undefined> =>
+      Effect.gen(function* () {
+        if (failedSegments.has(threadSegment)) {
+          return undefined;
+        }
+        const existing = threadWriters.get(threadSegment);
+        if (existing) {
+          return existing;
+        }
 
-      const threadFilePath = resolveThreadFilePath(filePath, threadSegment);
-      try {
-        const sink = new RotatingFileSink({
-          filePath: threadFilePath,
+        const writer = yield* makeThreadWriter({
+          filePath: path.join(path.dirname(filePath), `${threadSegment}.log`),
           maxBytes,
           maxFiles,
-          throwOnError: true,
+          batchWindowMs,
+          streamLabel,
         });
-        sinks.set(threadSegment, sink);
-        return sink;
-      } catch (error) {
-        failedSegments.add(threadSegment);
-        logger.warn("failed to initialize provider thread log file", {
-          filePath: threadFilePath,
-          threadSegment,
-          error,
-        });
-        return undefined;
-      }
-    };
+        if (!writer) {
+          failedSegments.add(threadSegment);
+          return undefined;
+        }
+
+        threadWriters.set(threadSegment, writer);
+        return writer;
+      });
 
     return {
       filePath,
-      write(record: unknown) {
-        if (broken) {
-          return;
-        }
-        const threadSegment = resolveThreadSegment(record);
-        if (!threadSegment) {
-          return;
-        }
-        const line = toLogLine(record);
-        if (!line) {
-          return;
-        }
-        const sink = resolveSink(threadSegment);
-        if (!sink) {
-          return;
-        }
-        try {
-          sink.write(line);
-        } catch (error) {
-          broken = true;
-          logger.warn("provider event log write failed", { filePath, threadSegment, error });
-        }
+      write(event: unknown, threadId: ThreadId | null) {
+        return Effect.gen(function* () {
+          const threadSegment = resolveThreadSegment(threadId);
+          const message = yield* toLogMessage(event);
+          if (!message) {
+            return;
+          }
+
+          const writer = yield* resolveThreadWriter(threadSegment);
+          if (!writer) {
+            return;
+          }
+
+          yield* writer.writeMessage(message);
+        });
       },
       close() {
-        sinks.clear();
+        return Effect.gen(function* () {
+          for (const writer of threadWriters.values()) {
+            yield* writer.close();
+          }
+          threadWriters.clear();
+        });
       },
-    };
-  } catch (error) {
-    logger.warn("failed to create provider event log file", { filePath, error });
-    return undefined;
-  }
+    } satisfies EventNdjsonLogger;
+  });
 }

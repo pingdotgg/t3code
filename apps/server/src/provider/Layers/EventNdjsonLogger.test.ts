@@ -2,116 +2,157 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { ThreadId } from "@t3tools/contracts";
+import { assert, describe, it } from "@effect/vitest";
+import { Effect } from "effect";
 
 import { makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
+function parseLogLine(line: string) {
+  const match = /^\[([^\]]+)\] ([A-Z]+): (.+)$/.exec(line);
+  assert.notEqual(match, null);
+  if (!match) {
+    throw new Error(`invalid log line: ${line}`);
+  }
+  const observedAt = match[1];
+  const stream = match[2];
+  const payload = match[3];
+  if (!observedAt || !stream || payload === undefined) {
+    throw new Error(`invalid log line: ${line}`);
+  }
+  return {
+    observedAt,
+    stream,
+    payload,
+  };
+}
+
 describe("EventNdjsonLogger", () => {
-  it("writes effect-style lines to thread-scoped files", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-log-"));
-    const basePath = path.join(tempDir, "provider-native.ndjson");
+  it.effect("writes effect-style lines to thread-scoped files", () =>
+    Effect.gen(function* () {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-log-"));
+      const basePath = path.join(tempDir, "provider-native.ndjson");
 
-    try {
-      const logger = makeEventNdjsonLogger(basePath);
-      expect(logger).toBeDefined();
-      if (!logger) {
-        return;
+      try {
+        const logger = yield* makeEventNdjsonLogger(basePath, { stream: "native" });
+        assert.notEqual(logger, undefined);
+        if (!logger) {
+          return;
+        }
+
+        yield* logger.write(
+          { threadId: "provider-thread-1", id: "evt-1" },
+          ThreadId.makeUnsafe("thread-1"),
+        );
+        yield* logger.write(
+          { type: "turn.completed", threadId: "provider-thread-2", id: "evt-2" },
+          ThreadId.makeUnsafe("thread-2"),
+        );
+        yield* logger.close();
+
+        const threadOnePath = path.join(tempDir, "thread-1.log");
+        const threadTwoPath = path.join(tempDir, "thread-2.log");
+        assert.equal(fs.existsSync(threadOnePath), true);
+        assert.equal(fs.existsSync(threadTwoPath), true);
+
+        const first = parseLogLine(fs.readFileSync(threadOnePath, "utf8").trim());
+        const second = parseLogLine(fs.readFileSync(threadTwoPath, "utf8").trim());
+
+        assert.equal(Number.isNaN(Date.parse(first.observedAt)), false);
+        assert.equal(first.stream, "NATIVE");
+        assert.equal(first.payload, '{"threadId":"provider-thread-1","id":"evt-1"}');
+
+        assert.equal(Number.isNaN(Date.parse(second.observedAt)), false);
+        assert.equal(second.stream, "NATIVE");
+        assert.equal(
+          second.payload,
+          '{"type":"turn.completed","threadId":"provider-thread-2","id":"evt-2"}',
+        );
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
       }
+    }),
+  );
 
-      logger.write({
-        observedAt: "2026-03-03T12:00:00.000Z",
-        stream: "native",
-        orchestrationThreadId: "thread-1",
-        event: { threadId: "provider-thread-1", id: "evt-1" },
-      });
-      logger.write({
-        observedAt: "2026-03-03T12:00:01.000Z",
-        stream: "canonical",
-        orchestrationThreadId: "thread-2",
-        event: { type: "turn.completed", threadId: "provider-thread-2", id: "evt-2" },
-      });
-      logger.close();
+  it.effect("falls back to a global segment when orchestration thread id is missing or invalid", () =>
+    Effect.gen(function* () {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-log-"));
+      const basePath = path.join(tempDir, "provider-canonical.ndjson");
 
-      const threadOnePath = path.join(tempDir, "thread-1.log");
-      const threadTwoPath = path.join(tempDir, "thread-2.log");
-      expect(fs.existsSync(threadOnePath)).toBe(true);
-      expect(fs.existsSync(threadTwoPath)).toBe(true);
+      try {
+        const logger = yield* makeEventNdjsonLogger(basePath, { stream: "orchestration" });
+        assert.notEqual(logger, undefined);
+        if (!logger) {
+          return;
+        }
 
-      const first = fs.readFileSync(threadOnePath, "utf8").trim();
-      const second = fs.readFileSync(threadTwoPath, "utf8").trim();
-      expect(first).toBe(
-        '[2026-03-03T12:00:00.000Z] NATIVE: {"threadId":"provider-thread-1","id":"evt-1"}',
-      );
-      expect(second).toBe(
-        '[2026-03-03T12:00:01.000Z] ORCHESTRATION: {"type":"turn.completed","threadId":"provider-thread-2","id":"evt-2"}',
-      );
-    } finally {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
+        yield* logger.write({ id: "evt-no-thread" }, null);
+        yield* logger.write({ id: "evt-invalid-thread" }, "!!!" as unknown as ThreadId);
+        yield* logger.close();
 
-  it("drops records without orchestration thread ids", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-log-"));
-    const basePath = path.join(tempDir, "provider-canonical.ndjson");
-
-    try {
-      const logger = makeEventNdjsonLogger(basePath);
-      expect(logger).toBeDefined();
-      if (!logger) {
-        return;
+        const globalPath = path.join(tempDir, "_global.log");
+        assert.equal(fs.existsSync(globalPath), true);
+        const lines = fs
+          .readFileSync(globalPath, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => parseLogLine(line));
+        assert.equal(lines.length, 2);
+        assert.equal(Number.isNaN(Date.parse(lines[0]?.observedAt ?? "")), false);
+        assert.equal(Number.isNaN(Date.parse(lines[1]?.observedAt ?? "")), false);
+        assert.equal(lines[0]?.stream, "ORCHESTRATION");
+        assert.equal(lines[0]?.payload, '{"id":"evt-no-thread"}');
+        assert.equal(lines[1]?.stream, "ORCHESTRATION");
+        assert.equal(lines[1]?.payload, '{"id":"evt-invalid-thread"}');
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
       }
+    }),
+  );
 
-      logger.write({ stream: "orchestration", event: { id: "evt-no-thread" } });
-      logger.close();
+  it.effect("rotates per-thread files when max size is exceeded", () =>
+    Effect.gen(function* () {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-log-"));
+      const basePath = path.join(tempDir, "provider-native.ndjson");
 
-      const logFiles = fs.readdirSync(tempDir).filter((entry) => entry.endsWith(".log"));
-      expect(logFiles).toEqual([]);
-    } finally {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it("rotates per-thread files when max size is exceeded", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-log-"));
-    const basePath = path.join(tempDir, "provider-native.ndjson");
-
-    try {
-      const logger = makeEventNdjsonLogger(basePath, {
-        maxBytes: 120,
-        maxFiles: 2,
-      });
-      expect(logger).toBeDefined();
-      if (!logger) {
-        return;
-      }
-
-      for (let index = 0; index < 10; index += 1) {
-        logger.write({
+      try {
+        const logger = yield* makeEventNdjsonLogger(basePath, {
           stream: "native",
-          orchestrationThreadId: "thread-rotate",
-          event: {
-            threadId: "provider-thread-rotate",
-            id: `evt-${index}`,
-            payload: "x".repeat(40),
-          },
+          maxBytes: 120,
+          maxFiles: 2,
         });
+        assert.notEqual(logger, undefined);
+        if (!logger) {
+          return;
+        }
+
+        for (let index = 0; index < 10; index += 1) {
+          yield* logger.write(
+            {
+              threadId: "provider-thread-rotate",
+              id: `evt-${index}`,
+              payload: "x".repeat(40),
+            },
+            ThreadId.makeUnsafe("thread-rotate"),
+          );
+        }
+        yield* logger.close();
+
+        const fileStem = "thread-rotate.log";
+        const matchingFiles = fs
+          .readdirSync(tempDir)
+          .filter((entry) => entry === fileStem || entry.startsWith(`${fileStem}.`))
+          .toSorted();
+
+        assert.equal(matchingFiles.some((entry) => entry === `${fileStem}.1`), true);
+        assert.equal(
+          matchingFiles.some((entry) => entry === fileStem || entry === `${fileStem}.2`),
+          true,
+        );
+        assert.equal(matchingFiles.some((entry) => entry === `${fileStem}.3`), false);
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
       }
-      logger.close();
-
-      const fileStem = "thread-rotate.log";
-      const matchingFiles = fs
-        .readdirSync(tempDir)
-        .filter((entry) => entry === fileStem || entry.startsWith(`${fileStem}.`))
-        .toSorted();
-
-      expect(matchingFiles.some((entry) => entry === `${fileStem}.1`)).toBe(true);
-      expect(matchingFiles.some((entry) => entry === fileStem || entry === `${fileStem}.2`)).toBe(
-        true,
-      );
-      expect(matchingFiles.some((entry) => entry === `${fileStem}.3`)).toBe(false);
-    } finally {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
+    }),
+  );
 });
