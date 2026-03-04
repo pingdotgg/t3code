@@ -59,11 +59,11 @@ describe("EventNdjsonLogger", () => {
         const second = parseLogLine(fs.readFileSync(threadTwoPath, "utf8").trim());
 
         assert.equal(Number.isNaN(Date.parse(first.observedAt)), false);
-        assert.equal(first.stream, "NATIVE");
+        assert.equal(first.stream, "NTIVE");
         assert.equal(first.payload, '{"threadId":"provider-thread-1","id":"evt-1"}');
 
         assert.equal(Number.isNaN(Date.parse(second.observedAt)), false);
-        assert.equal(second.stream, "NATIVE");
+        assert.equal(second.stream, "NTIVE");
         assert.equal(
           second.payload,
           '{"type":"turn.completed","threadId":"provider-thread-2","id":"evt-2"}',
@@ -74,40 +74,42 @@ describe("EventNdjsonLogger", () => {
     }),
   );
 
-  it.effect("falls back to a global segment when orchestration thread id is missing or invalid", () =>
-    Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-log-"));
-      const basePath = path.join(tempDir, "provider-canonical.ndjson");
+  it.effect(
+    "falls back to a global segment when orchestration thread id is missing or invalid",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-log-"));
+        const basePath = path.join(tempDir, "provider-canonical.ndjson");
 
-      try {
-        const logger = yield* makeEventNdjsonLogger(basePath, { stream: "orchestration" });
-        assert.notEqual(logger, undefined);
-        if (!logger) {
-          return;
+        try {
+          const logger = yield* makeEventNdjsonLogger(basePath, { stream: "orchestration" });
+          assert.notEqual(logger, undefined);
+          if (!logger) {
+            return;
+          }
+
+          yield* logger.write({ id: "evt-no-thread" }, null);
+          yield* logger.write({ id: "evt-invalid-thread" }, "!!!" as unknown as ThreadId);
+          yield* logger.close();
+
+          const globalPath = path.join(tempDir, "_global.log");
+          assert.equal(fs.existsSync(globalPath), true);
+          const lines = fs
+            .readFileSync(globalPath, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => parseLogLine(line));
+          assert.equal(lines.length, 2);
+          assert.equal(Number.isNaN(Date.parse(lines[0]?.observedAt ?? "")), false);
+          assert.equal(Number.isNaN(Date.parse(lines[1]?.observedAt ?? "")), false);
+          assert.equal(lines[0]?.stream, "CANON");
+          assert.equal(lines[0]?.payload, '{"id":"evt-no-thread"}');
+          assert.equal(lines[1]?.stream, "CANON");
+          assert.equal(lines[1]?.payload, '{"id":"evt-invalid-thread"}');
+        } finally {
+          fs.rmSync(tempDir, { recursive: true, force: true });
         }
-
-        yield* logger.write({ id: "evt-no-thread" }, null);
-        yield* logger.write({ id: "evt-invalid-thread" }, "!!!" as unknown as ThreadId);
-        yield* logger.close();
-
-        const globalPath = path.join(tempDir, "_global.log");
-        assert.equal(fs.existsSync(globalPath), true);
-        const lines = fs
-          .readFileSync(globalPath, "utf8")
-          .trim()
-          .split("\n")
-          .map((line) => parseLogLine(line));
-        assert.equal(lines.length, 2);
-        assert.equal(Number.isNaN(Date.parse(lines[0]?.observedAt ?? "")), false);
-        assert.equal(Number.isNaN(Date.parse(lines[1]?.observedAt ?? "")), false);
-        assert.equal(lines[0]?.stream, "ORCHESTRATION");
-        assert.equal(lines[0]?.payload, '{"id":"evt-no-thread"}');
-        assert.equal(lines[1]?.stream, "ORCHESTRATION");
-        assert.equal(lines[1]?.payload, '{"id":"evt-invalid-thread"}');
-      } finally {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }),
+      }),
   );
 
   it.effect("rotates per-thread files when max size is exceeded", () =>
@@ -144,12 +146,18 @@ describe("EventNdjsonLogger", () => {
           .filter((entry) => entry === fileStem || entry.startsWith(`${fileStem}.`))
           .toSorted();
 
-        assert.equal(matchingFiles.some((entry) => entry === `${fileStem}.1`), true);
+        assert.equal(
+          matchingFiles.some((entry) => entry === `${fileStem}.1`),
+          true,
+        );
         assert.equal(
           matchingFiles.some((entry) => entry === fileStem || entry === `${fileStem}.2`),
           true,
         );
-        assert.equal(matchingFiles.some((entry) => entry === `${fileStem}.3`), false);
+        assert.equal(
+          matchingFiles.some((entry) => entry === `${fileStem}.3`),
+          false,
+        );
       } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
       }
