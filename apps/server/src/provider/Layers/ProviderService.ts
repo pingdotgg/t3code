@@ -30,10 +30,11 @@ import {
   ProviderSessionDirectory,
   type ProviderSessionBinding,
 } from "../Services/ProviderSessionDirectory.ts";
-import { makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogPath?: string;
+  readonly canonicalEventLogger?: EventNdjsonLogger;
 }
 
 const ProviderRollbackConversationInput = Schema.Struct({
@@ -108,9 +109,10 @@ function readPersistedCwd(
 const makeProviderService = (options?: ProviderServiceLiveOptions) =>
   Effect.gen(function* () {
     const canonicalEventLogger =
-      options?.canonicalEventLogPath !== undefined
+      options?.canonicalEventLogger ??
+      (options?.canonicalEventLogPath !== undefined
         ? makeEventNdjsonLogger(options.canonicalEventLogPath)
-        : undefined;
+        : undefined);
 
     const registry = yield* ProviderAdapterRegistry;
     const directory = yield* ProviderSessionDirectory;
@@ -140,12 +142,25 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
     const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
       canonicalizeRuntimeEventSession(event).pipe(
         Effect.tap((canonicalEvent) =>
-          Effect.sync(() => {
-            canonicalEventLogger?.write({
-              observedAt: new Date().toISOString(),
-              event: canonicalEvent,
-            });
-          }),
+          canonicalEventLogger
+            ? Effect.tap(
+                Effect.catch(
+                  directory.getThreadId(canonicalEvent.sessionId).pipe(
+                    Effect.map(Option.getOrUndefined),
+                  ),
+                  () => Effect.void,
+                ),
+                (orchestrationThreadId) =>
+                  Effect.sync(() => {
+                    canonicalEventLogger.write({
+                      observedAt: new Date().toISOString(),
+                      stream: "canonical",
+                      orchestrationThreadId: orchestrationThreadId ?? null,
+                      event: canonicalEvent,
+                    });
+                  }),
+              )
+            : Effect.void,
         ),
         Effect.flatMap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
         Effect.asVoid,

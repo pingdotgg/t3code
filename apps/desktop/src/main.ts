@@ -1,15 +1,16 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import * as ChildProcess from "node:child_process";
+import * as Crypto from "node:crypto";
+import * as FS from "node:fs";
+import * as OS from "node:os";
+import * as Path from "node:path";
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
 import { NetService } from "@t3tools/shared/Net";
+import { RotatingFileSink } from "@t3tools/shared/logging";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { fixPath } from "./fixPath";
 
@@ -21,17 +22,21 @@ const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
 const STATE_DIR =
-  process.env.T3CODE_STATE_DIR?.trim() || path.join(os.homedir(), ".t3", "userdata");
+  process.env.T3CODE_STATE_DIR?.trim() || Path.join(OS.homedir(), ".t3", "userdata");
 const DESKTOP_SCHEME = "t3";
-const ROOT_DIR = path.resolve(__dirname, "../../..");
+const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const APP_USER_MODEL_ID = "com.t3tools.t3code";
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
+const LOG_DIR = Path.join(STATE_DIR, "logs");
+const LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
+const LOG_FILE_MAX_FILES = 10;
+const APP_RUN_ID = Crypto.randomBytes(6).toString("hex");
 
 let mainWindow: BrowserWindow | null = null;
-let backendProcess: ChildProcess | null = null;
+let backendProcess: ChildProcess.ChildProcess | null = null;
 let backendPort = 0;
 let backendAuthToken = "";
 let backendWsUrl = "";
@@ -40,8 +45,132 @@ let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
 let desktopProtocolRegistered = false;
 let aboutCommitHashCache: string | null | undefined;
+let desktopLogSink: RotatingFileSink | null = null;
+let backendLogSink: RotatingFileSink | null = null;
+let restoreStdIoCapture: (() => void) | null = null;
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
+
+function logTimestamp(): string {
+  return new Date().toISOString();
+}
+
+function logScope(scope: string): string {
+  return `${scope} run=${APP_RUN_ID}`;
+}
+
+function sanitizeLogValue(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function writeDesktopLogHeader(message: string): void {
+  if (!desktopLogSink) return;
+  desktopLogSink.write(`[${logTimestamp()}] [${logScope("desktop")}] ${message}\n`);
+}
+
+function writeBackendSessionBoundary(phase: "START" | "END", details: string): void {
+  if (!backendLogSink) return;
+  const normalizedDetails = sanitizeLogValue(details);
+  backendLogSink.write(
+    `[${logTimestamp()}] ---- APP SESSION ${phase} run=${APP_RUN_ID} ${normalizedDetails} ----\n`,
+  );
+}
+
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function writeDesktopStreamChunk(
+  streamName: "stdout" | "stderr",
+  chunk: unknown,
+  encoding: BufferEncoding | undefined,
+): void {
+  if (!desktopLogSink) return;
+  const buffer = Buffer.isBuffer(chunk)
+    ? chunk
+    : Buffer.from(String(chunk), typeof chunk === "string" ? encoding : undefined);
+  desktopLogSink.write(`[${logTimestamp()}] [${logScope(streamName)}] `);
+  desktopLogSink.write(buffer);
+  if (buffer.length === 0 || buffer[buffer.length - 1] !== 0x0a) {
+    desktopLogSink.write("\n");
+  }
+}
+
+function installStdIoCapture(): void {
+  if (!app.isPackaged || desktopLogSink === null || restoreStdIoCapture !== null) {
+    return;
+  }
+
+  const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+  const originalStderrWrite = process.stderr.write.bind(process.stderr);
+
+  const patchWrite =
+    (streamName: "stdout" | "stderr", originalWrite: typeof process.stdout.write) =>
+    (
+      chunk: string | Uint8Array,
+      encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+      callback?: (error?: Error | null) => void,
+    ): boolean => {
+      const encoding = typeof encodingOrCallback === "string" ? encodingOrCallback : undefined;
+      writeDesktopStreamChunk(streamName, chunk, encoding);
+      if (typeof encodingOrCallback === "function") {
+        return originalWrite(chunk, encodingOrCallback);
+      }
+      if (callback !== undefined) {
+        return originalWrite(chunk, encoding, callback);
+      }
+      if (encoding !== undefined) {
+        return originalWrite(chunk, encoding);
+      }
+      return originalWrite(chunk);
+    };
+
+  process.stdout.write = patchWrite("stdout", originalStdoutWrite);
+  process.stderr.write = patchWrite("stderr", originalStderrWrite);
+
+  restoreStdIoCapture = () => {
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+    restoreStdIoCapture = null;
+  };
+}
+
+function initializePackagedLogging(): void {
+  if (!app.isPackaged) return;
+  try {
+    desktopLogSink = new RotatingFileSink({
+      filePath: Path.join(LOG_DIR, "desktop-main.log"),
+      maxBytes: LOG_FILE_MAX_BYTES,
+      maxFiles: LOG_FILE_MAX_FILES,
+    });
+    backendLogSink = new RotatingFileSink({
+      filePath: Path.join(LOG_DIR, "server-child.log"),
+      maxBytes: LOG_FILE_MAX_BYTES,
+      maxFiles: LOG_FILE_MAX_FILES,
+    });
+    installStdIoCapture();
+    writeDesktopLogHeader(`runtime log capture enabled logDir=${LOG_DIR}`);
+  } catch (error) {
+    // Logging setup should never block app startup.
+    console.error("[desktop] failed to initialize packaged logging", error);
+  }
+}
+
+function captureBackendOutput(child: ChildProcess.ChildProcess): void {
+  if (!app.isPackaged || backendLogSink === null) return;
+  const writeChunk = (chunk: unknown): void => {
+    if (!backendLogSink) return;
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), "utf8");
+    backendLogSink.write(buffer);
+  };
+  child.stdout?.on("data", writeChunk);
+  child.stderr?.on("data", writeChunk);
+}
+
+initializePackagedLogging();
 
 function getDestructiveMenuIcon(): Electron.NativeImage | undefined {
   if (process.platform !== "darwin") return undefined;
@@ -97,13 +226,13 @@ function normalizeCommitHash(value: unknown): string | null {
 }
 
 function resolveEmbeddedCommitHash(): string | null {
-  const packageJsonPath = path.join(resolveAppRoot(), "package.json");
-  if (!fs.existsSync(packageJsonPath)) {
+  const packageJsonPath = Path.join(resolveAppRoot(), "package.json");
+  if (!FS.existsSync(packageJsonPath)) {
     return null;
   }
 
   try {
-    const raw = fs.readFileSync(packageJsonPath, "utf8");
+    const raw = FS.readFileSync(packageJsonPath, "utf8");
     const parsed = JSON.parse(raw) as { t3codeCommitHash?: unknown };
     return normalizeCommitHash(parsed.t3codeCommitHash);
   } catch {
@@ -134,25 +263,25 @@ function resolveAboutCommitHash(): string | null {
 }
 
 function resolveBackendEntry(): string {
-  return path.join(resolveAppRoot(), "apps/server/dist/index.mjs");
+  return Path.join(resolveAppRoot(), "apps/server/dist/index.mjs");
 }
 
 function resolveBackendCwd(): string {
   if (!app.isPackaged) {
     return resolveAppRoot();
   }
-  return os.homedir();
+  return OS.homedir();
 }
 
 function resolveDesktopStaticDir(): string | null {
   const appRoot = resolveAppRoot();
   const candidates = [
-    path.join(appRoot, "apps/server/dist/client"),
-    path.join(appRoot, "apps/web/dist"),
+    Path.join(appRoot, "apps/server/dist/client"),
+    Path.join(appRoot, "apps/web/dist"),
   ];
 
   for (const candidate of candidates) {
-    if (fs.existsSync(path.join(candidate, "index.html"))) {
+    if (FS.existsSync(Path.join(candidate, "index.html"))) {
       return candidate;
     }
   }
@@ -163,33 +292,48 @@ function resolveDesktopStaticDir(): string | null {
 function resolveDesktopStaticPath(staticRoot: string, requestUrl: string): string {
   const url = new URL(requestUrl);
   const rawPath = decodeURIComponent(url.pathname);
-  const normalizedPath = path.posix.normalize(rawPath).replace(/^\/+/, "");
+  const normalizedPath = Path.posix.normalize(rawPath).replace(/^\/+/, "");
   if (normalizedPath.includes("..")) {
-    return path.join(staticRoot, "index.html");
+    return Path.join(staticRoot, "index.html");
   }
 
   const requestedPath = normalizedPath.length > 0 ? normalizedPath : "index.html";
-  const resolvedPath = path.join(staticRoot, requestedPath);
+  const resolvedPath = Path.join(staticRoot, requestedPath);
 
-  if (path.extname(resolvedPath)) {
+  if (Path.extname(resolvedPath)) {
     return resolvedPath;
   }
 
-  const nestedIndex = path.join(resolvedPath, "index.html");
-  if (fs.existsSync(nestedIndex)) {
+  const nestedIndex = Path.join(resolvedPath, "index.html");
+  if (FS.existsSync(nestedIndex)) {
     return nestedIndex;
   }
 
-  return path.join(staticRoot, "index.html");
+  return Path.join(staticRoot, "index.html");
 }
 
 function isStaticAssetRequest(requestUrl: string): boolean {
   try {
     const url = new URL(requestUrl);
-    return path.extname(url.pathname).length > 0;
+    return Path.extname(url.pathname).length > 0;
   } catch {
     return false;
   }
+}
+
+function handleFatalStartupError(stage: string, error: unknown): void {
+  const message = formatErrorMessage(error);
+  const detail =
+    error instanceof Error && typeof error.stack === "string" ? `\n${error.stack}` : "";
+  writeDesktopLogHeader(`fatal startup error stage=${stage} message=${message}`);
+  console.error(`[desktop] fatal startup error (${stage})`, error);
+  if (!isQuitting) {
+    isQuitting = true;
+    dialog.showErrorBox("T3 Code failed to start", `Stage: ${stage}\n${message}${detail}`);
+  }
+  stopBackend();
+  restoreStdIoCapture?.();
+  app.quit();
 }
 
 function registerDesktopProtocol(): void {
@@ -202,19 +346,19 @@ function registerDesktopProtocol(): void {
     );
   }
 
-  const staticRootResolved = path.resolve(staticRoot);
-  const staticRootPrefix = `${staticRootResolved}${path.sep}`;
-  const fallbackIndex = path.join(staticRootResolved, "index.html");
+  const staticRootResolved = Path.resolve(staticRoot);
+  const staticRootPrefix = `${staticRootResolved}${Path.sep}`;
+  const fallbackIndex = Path.join(staticRootResolved, "index.html");
 
   protocol.registerFileProtocol(DESKTOP_SCHEME, (request, callback) => {
     try {
       const candidate = resolveDesktopStaticPath(staticRootResolved, request.url);
-      const resolvedCandidate = path.resolve(candidate);
+      const resolvedCandidate = Path.resolve(candidate);
       const isInRoot =
         resolvedCandidate === fallbackIndex || resolvedCandidate.startsWith(staticRootPrefix);
       const isAssetRequest = isStaticAssetRequest(request.url);
 
-      if (!isInRoot || !fs.existsSync(resolvedCandidate)) {
+      if (!isInRoot || !FS.existsSync(resolvedCandidate)) {
         if (isAssetRequest) {
           callback({ error: -6 });
           return;
@@ -309,13 +453,13 @@ function configureApplicationMenu(): void {
 
 function resolveResourcePath(fileName: string): string | null {
   const candidates = [
-    path.join(__dirname, "../resources", fileName),
-    path.join(process.resourcesPath, "resources", fileName),
-    path.join(process.resourcesPath, fileName),
+    Path.join(__dirname, "../resources", fileName),
+    Path.join(process.resourcesPath, "resources", fileName),
+    Path.join(process.resourcesPath, fileName),
   ];
 
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
+    if (FS.existsSync(candidate)) {
       return candidate;
     }
   }
@@ -376,12 +520,13 @@ function startBackend(): void {
   if (isQuitting || backendProcess) return;
 
   const backendEntry = resolveBackendEntry();
-  if (!fs.existsSync(backendEntry)) {
+  if (!FS.existsSync(backendEntry)) {
     scheduleBackendRestart(`missing server entry at ${backendEntry}`);
     return;
   }
 
-  const child = spawn(process.execPath, [backendEntry], {
+  const captureBackendLogs = app.isPackaged && backendLogSink !== null;
+  const child = ChildProcess.spawn(process.execPath, [backendEntry], {
     cwd: resolveBackendCwd(),
     // In Electron main, process.execPath points to the Electron binary.
     // Run the child in Node mode so this backend process does not become a GUI app instance.
@@ -389,9 +534,20 @@ function startBackend(): void {
       ...backendEnv(),
       ELECTRON_RUN_AS_NODE: "1",
     },
-    stdio: "inherit",
+    stdio: captureBackendLogs ? ["ignore", "pipe", "pipe"] : "inherit",
   });
   backendProcess = child;
+  let backendSessionClosed = false;
+  const closeBackendSession = (details: string) => {
+    if (backendSessionClosed) return;
+    backendSessionClosed = true;
+    writeBackendSessionBoundary("END", details);
+  };
+  writeBackendSessionBoundary(
+    "START",
+    `pid=${child.pid ?? "unknown"} port=${backendPort} cwd=${resolveBackendCwd()}`,
+  );
+  captureBackendOutput(child);
 
   child.once("spawn", () => {
     restartAttempt = 0;
@@ -401,6 +557,7 @@ function startBackend(): void {
     if (backendProcess === child) {
       backendProcess = null;
     }
+    closeBackendSession(`pid=${child.pid ?? "unknown"} error=${error.message}`);
     scheduleBackendRestart(error.message);
   });
 
@@ -408,6 +565,9 @@ function startBackend(): void {
     if (backendProcess === child) {
       backendProcess = null;
     }
+    closeBackendSession(
+      `pid=${child.pid ?? "unknown"} code=${code ?? "null"} signal=${signal ?? "null"}`,
+    );
     if (isQuitting) return;
     const reason = `code=${code ?? "null"} signal=${signal ?? "null"}`;
     scheduleBackendRestart(reason);
@@ -566,7 +726,7 @@ function createWindow(): BrowserWindow {
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 16, y: 18 },
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      preload: Path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -604,37 +764,53 @@ function createWindow(): BrowserWindow {
 configureAppIdentity();
 
 async function bootstrap(): Promise<void> {
+  writeDesktopLogHeader("bootstrap start");
   backendPort = await Effect.service(NetService).pipe(
     Effect.flatMap((net) => net.reserveLoopbackPort()),
     Effect.provide(NetService.layer),
     Effect.runPromise,
   );
-  backendAuthToken = randomBytes(24).toString("hex");
+  writeDesktopLogHeader(`reserved backend port via NetService port=${backendPort}`);
+  backendAuthToken = Crypto.randomBytes(24).toString("hex");
   backendWsUrl = `ws://127.0.0.1:${backendPort}/?token=${encodeURIComponent(backendAuthToken)}`;
   process.env.T3CODE_DESKTOP_WS_URL = backendWsUrl;
+  writeDesktopLogHeader(`bootstrap resolved websocket url=${backendWsUrl}`);
 
   registerIpcHandlers();
+  writeDesktopLogHeader("bootstrap ipc handlers registered");
   startBackend();
+  writeDesktopLogHeader("bootstrap backend start requested");
   mainWindow = createWindow();
+  writeDesktopLogHeader("bootstrap main window created");
 }
 
 app.on("before-quit", () => {
   isQuitting = true;
+  writeDesktopLogHeader("before-quit received");
   stopBackend();
+  restoreStdIoCapture?.();
 });
 
-app.whenReady().then(() => {
-  configureAppIdentity();
-  configureApplicationMenu();
-  registerDesktopProtocol();
-  void bootstrap();
+app
+  .whenReady()
+  .then(() => {
+    writeDesktopLogHeader("app ready");
+    configureAppIdentity();
+    configureApplicationMenu();
+    registerDesktopProtocol();
+    void bootstrap().catch((error) => {
+      handleFatalStartupError("bootstrap", error);
+    });
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      mainWindow = createWindow();
-    }
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        mainWindow = createWindow();
+      }
+    });
+  })
+  .catch((error) => {
+    handleFatalStartupError("whenReady", error);
   });
-});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
@@ -646,14 +822,18 @@ if (process.platform !== "win32") {
   process.on("SIGINT", () => {
     if (isQuitting) return;
     isQuitting = true;
+    writeDesktopLogHeader("SIGINT received");
     stopBackend();
+    restoreStdIoCapture?.();
     app.quit();
   });
 
   process.on("SIGTERM", () => {
     if (isQuitting) return;
     isQuitting = true;
+    writeDesktopLogHeader("SIGTERM received");
     stopBackend();
+    restoreStdIoCapture?.();
     app.quit();
   });
 }

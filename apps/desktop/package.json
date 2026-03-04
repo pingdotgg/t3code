@@ -14,12 +14,12 @@
     "smoke-test": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
-    "@t3tools/shared": "workspace:*",
     "effect": "catalog:",
     "electron": "40.6.0"
   },
   "devDependencies": {
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
     "@types/node": "catalog:",
     "electronmon": "^2.0.2",
     "tsdown": "catalog:",

@@ -9,7 +9,7 @@ export default defineConfig({
   outDir: "dist",
   sourcemap: true,
   clean: true,
-  noExternal: ["@t3tools/contracts"],
+  noExternal: (id) => id.startsWith("@t3tools/"),
   inlineOnly: false,
   banner: {
     js: "#!/usr/bin/env node\n",
