@@ -319,6 +319,9 @@ jobs:
             }
           '
 
+      - name: Format package.json files
+        run: bunx oxfmt apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
+
       - name: Refresh lockfile
         run: bun install
 
