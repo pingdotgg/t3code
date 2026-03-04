@@ -641,7 +641,7 @@ async function downloadAvailableUpdate(): Promise<void> {
 }
 
 function installDownloadedUpdate(): void {
-  if (!updaterConfigured || updateState.status !== "downloaded") return;
+  if (isQuitting || !updaterConfigured || updateState.status !== "downloaded") return;
 
   isQuitting = true;
   clearUpdatePollTimer();
@@ -1030,6 +1030,7 @@ function registerIpcHandlers(): void {
 
   ipcMain.removeHandler(UPDATE_INSTALL_CHANNEL);
   ipcMain.handle(UPDATE_INSTALL_CHANNEL, async () => {
+    if (isQuitting) return;
     installDownloadedUpdate();
   });
 }
