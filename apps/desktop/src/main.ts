@@ -425,7 +425,9 @@ function dispatchMenuAction(action: string): void {
 
 function handleCheckForUpdatesMenuClick(): void {
   if (updateState.status === "downloaded") {
-    installDownloadedUpdate();
+    console.info(
+      "[desktop-updater] Check for updates clicked while an update is already downloaded; skipping automatic install.",
+    );
     return;
   }
 
@@ -576,7 +578,11 @@ function shouldEnableAutoUpdates(): boolean {
 
 async function checkForUpdates(reason: string): Promise<void> {
   if (!updaterConfigured || updateCheckInFlight) return;
-  if (updateState.status === "downloading" || updateState.status === "downloaded") {
+  if (
+    updateState.status === "downloading" ||
+    updateState.status === "downloaded" ||
+    updateState.status === "available"
+  ) {
     console.info(
       `[desktop-updater] Skipping update check (${reason}) while status=${updateState.status}.`,
     );
@@ -639,8 +645,9 @@ function installDownloadedUpdate(): void {
 
   isQuitting = true;
   clearUpdatePollTimer();
-  stopBackend();
-  autoUpdater.quitAndInstall();
+  void stopBackendAndWaitForExit().finally(() => {
+    autoUpdater.quitAndInstall();
+  });
 }
 
 function configureAutoUpdater(): void {
@@ -674,6 +681,7 @@ function configureAutoUpdater(): void {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowPrerelease = app.getVersion().includes("-");
+  let lastLoggedDownloadMilestone = -1;
 
   autoUpdater.on("checking-for-update", () => {
     console.info("[desktop-updater] Looking for updates...");
@@ -687,6 +695,7 @@ function configureAutoUpdater(): void {
       checkedAt: new Date().toISOString(),
       message: null,
     });
+    lastLoggedDownloadMilestone = -1;
     console.info(`[desktop-updater] Update available: ${info.version}`);
   });
   autoUpdater.on("update-not-available", () => {
@@ -698,14 +707,19 @@ function configureAutoUpdater(): void {
       checkedAt: new Date().toISOString(),
       message: null,
     });
+    lastLoggedDownloadMilestone = -1;
     console.info("[desktop-updater] No updates available.");
   });
   autoUpdater.on("error", (error) => {
-    const message = error instanceof Error ? error.message : String(error);
-    setUpdateState({
-      status: "error",
-      message,
-    });
+    const message = formatErrorMessage(error);
+    if (!updateCheckInFlight && !updateDownloadInFlight) {
+      setUpdateState({
+        status: "error",
+        message,
+        checkedAt: new Date().toISOString(),
+        downloadPercent: null,
+      });
+    }
     console.error(`[desktop-updater] Updater error: ${message}`);
   });
   autoUpdater.on("download-progress", (progress) => {
@@ -715,7 +729,9 @@ function configureAutoUpdater(): void {
       downloadPercent: progress.percent,
       message: null,
     });
-    if (percent % 10 === 0) {
+    const milestone = percent - (percent % 10);
+    if (milestone > lastLoggedDownloadMilestone) {
+      lastLoggedDownloadMilestone = milestone;
       console.info(`[desktop-updater] Download progress: ${percent}%`);
     }
   });
@@ -840,6 +856,57 @@ function stopBackend(): void {
       }
     }, 2_000).unref();
   }
+}
+
+async function stopBackendAndWaitForExit(timeoutMs = 5_000): Promise<void> {
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+    restartTimer = null;
+  }
+
+  const child = backendProcess;
+  backendProcess = null;
+  if (!child) return;
+  const backendChild = child;
+  if (backendChild.exitCode !== null || backendChild.signalCode !== null) return;
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
+    let exitTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function settle(): void {
+      if (settled) return;
+      settled = true;
+      backendChild.off("exit", onExit);
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer);
+      }
+      if (exitTimeoutTimer) {
+        clearTimeout(exitTimeoutTimer);
+      }
+      resolve();
+    }
+
+    function onExit(): void {
+      settle();
+    }
+
+    backendChild.once("exit", onExit);
+    backendChild.kill("SIGTERM");
+
+    forceKillTimer = setTimeout(() => {
+      if (backendChild.exitCode === null && backendChild.signalCode === null) {
+        backendChild.kill("SIGKILL");
+      }
+    }, 2_000);
+    forceKillTimer.unref();
+
+    exitTimeoutTimer = setTimeout(() => {
+      settle();
+    }, timeoutMs);
+    exitTimeoutTimer.unref();
+  });
 }
 
 function registerIpcHandlers(): void {
