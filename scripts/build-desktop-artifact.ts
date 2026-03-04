@@ -605,7 +605,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       cwd: stageAppDir,
       env: buildEnv,
       ...commandOutputOptions(options.verbose),
-    })`bunx electron-builder ${platformConfig.cliFlag} ${options.target} --${options.arch} --publish never`,
+    })`bunx electron-builder ${platformConfig.cliFlag} --${options.arch} --publish never`,
   );
 
   const stageDistDir = path.join(stageAppDir, "dist");
