@@ -1,0 +1,88 @@
+import { describe, expect, it } from "vitest";
+
+import { estimateTimelineMessageHeight } from "./timelineHeight";
+
+describe("estimateTimelineMessageHeight", () => {
+  it("uses assistant sizing rules for assistant messages", () => {
+    expect(
+      estimateTimelineMessageHeight({
+        role: "assistant",
+        text: "a".repeat(144),
+      }),
+    ).toBe(122);
+  });
+
+  it("adds one attachment row for one or two user attachments", () => {
+    expect(
+      estimateTimelineMessageHeight({
+        role: "user",
+        text: "hello",
+        attachments: [{ id: "1" }],
+      }),
+    ).toBe(346);
+
+    expect(
+      estimateTimelineMessageHeight({
+        role: "user",
+        text: "hello",
+        attachments: [{ id: "1" }, { id: "2" }],
+      }),
+    ).toBe(346);
+  });
+
+  it("adds a second attachment row for three or four user attachments", () => {
+    expect(
+      estimateTimelineMessageHeight({
+        role: "user",
+        text: "hello",
+        attachments: [{ id: "1" }, { id: "2" }, { id: "3" }],
+      }),
+    ).toBe(574);
+
+    expect(
+      estimateTimelineMessageHeight({
+        role: "user",
+        text: "hello",
+        attachments: [{ id: "1" }, { id: "2" }, { id: "3" }, { id: "4" }],
+      }),
+    ).toBe(574);
+  });
+
+  it("does not cap long user message estimates", () => {
+    expect(
+      estimateTimelineMessageHeight({
+        role: "user",
+        text: "a".repeat(56 * 120),
+      }),
+    ).toBe(2736);
+  });
+
+  it("counts explicit newlines for user message estimates", () => {
+    expect(
+      estimateTimelineMessageHeight({
+        role: "user",
+        text: "first\nsecond\nthird",
+      }),
+    ).toBe(162);
+  });
+
+  it("uses narrower width to increase user line wrapping", () => {
+    const message = {
+      role: "user" as const,
+      text: "a".repeat(52),
+    };
+
+    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 320 })).toBe(140);
+    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 768 })).toBe(118);
+  });
+
+  it("uses narrower width to increase assistant line wrapping", () => {
+    const message = {
+      role: "assistant" as const,
+      text: "a".repeat(200),
+    };
+
+    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 320 })).toBe(188);
+    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 768 })).toBe(122);
+  });
+});
