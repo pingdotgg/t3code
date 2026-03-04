@@ -359,6 +359,41 @@ describe("CursorAdapterLive", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("writes provider-native observability records when enabled", () => {
+    const nativeEvents: Array<{
+      event?: {
+        provider?: string;
+        method?: string;
+        sessionId?: string;
+      };
+    }> = [];
+    const fake = new FakeCursorAcpProcess();
+    const layer = makeCursorAdapterLive({
+      createProcess: () => fake as never,
+      nativeEventLogger: {
+        filePath: "memory://cursor-native-events",
+        write: (event) => {
+          nativeEvents.push(event as (typeof nativeEvents)[number]);
+          return Effect.void;
+        },
+        close: () => Effect.void,
+      },
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const session = yield* adapter.startSession({
+        provider: "cursor",
+        cwd: "/tmp/project",
+      });
+
+      assert.equal(nativeEvents.length > 0, true);
+      assert.equal(nativeEvents.some((record) => record.event?.provider === "cursor"), true);
+      assert.equal(nativeEvents.some((record) => record.event?.sessionId === session.sessionId), true);
+      assert.equal(nativeEvents.some((record) => record.event?.method === "cursor/acp/response"), true);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("resumes ACP session using resumeCursor.acpSessionId", () => {
     const fake = new FakeCursorAcpProcess();
     const layer = makeCursorAdapterLive({

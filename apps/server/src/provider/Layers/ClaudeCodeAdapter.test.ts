@@ -1,7 +1,3 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
 import type {
   Options as ClaudeQueryOptions,
   PermissionMode,
@@ -113,7 +109,10 @@ interface Harness {
     | undefined;
 }
 
-function makeHarness(config?: { readonly nativeEventLogPath?: string }): Harness {
+function makeHarness(config?: {
+  readonly nativeEventLogPath?: string;
+  readonly nativeEventLogger?: ClaudeCodeAdapterLiveOptions["nativeEventLogger"];
+}): Harness {
   const query = new FakeClaudeQuery();
   let createInput:
     | {
@@ -127,6 +126,11 @@ function makeHarness(config?: { readonly nativeEventLogPath?: string }): Harness
       createInput = input;
       return query;
     },
+    ...(config?.nativeEventLogger
+      ? {
+          nativeEventLogger: config.nativeEventLogger,
+        }
+      : {}),
     ...(config?.nativeEventLogPath
       ? {
           nativeEventLogPath: config.nativeEventLogPath,
@@ -815,9 +819,24 @@ describe("ClaudeCodeAdapterLive", () => {
   });
 
   it.effect("writes provider-native observability records when enabled", () => {
-    const nativeLogDir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-native-events-"));
-    const nativeEventLogPath = path.join(nativeLogDir, "provider-native.ndjson");
-    const harness = makeHarness({ nativeEventLogPath });
+    const nativeEvents: Array<{
+      event?: {
+        provider?: string;
+        method?: string;
+        sessionId?: string;
+        turnId?: string;
+      };
+    }> = [];
+    const harness = makeHarness({
+      nativeEventLogger: {
+        filePath: "memory://claude-native-events",
+        write: (event) => {
+          nativeEvents.push(event as (typeof nativeEvents)[number]);
+          return Effect.void;
+        },
+        close: () => Effect.void,
+      },
+    });
     return Effect.gen(function* () {
       const adapter = yield* ClaudeCodeAdapter;
 
@@ -862,40 +881,20 @@ describe("ClaudeCodeAdapterLive", () => {
       const turnCompleted = yield* Fiber.join(turnCompletedFiber);
       assert.equal(turnCompleted._tag, "Some");
 
-      const lines = fs
-        .readFileSync(nativeEventLogPath, "utf8")
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0);
-      assert.equal(lines.length > 0, true);
-
-      const records = lines.map((line) => JSON.parse(line) as {
-        event?: {
-          provider?: string;
-          method?: string;
-          sessionId?: string;
-          turnId?: string;
-        };
-      });
-
-      assert.equal(records.some((record) => record.event?.provider === "claudeCode"), true);
-      assert.equal(records.some((record) => record.event?.sessionId === session.sessionId), true);
-      assert.equal(records.some((record) => String(record.event?.turnId) === String(turn.turnId)), true);
+      assert.equal(nativeEvents.length > 0, true);
+      assert.equal(nativeEvents.some((record) => record.event?.provider === "claudeCode"), true);
+      assert.equal(nativeEvents.some((record) => record.event?.sessionId === session.sessionId), true);
       assert.equal(
-        records.some(
+        nativeEvents.some((record) => String(record.event?.turnId) === String(turn.turnId)),
+        true,
+      );
+      assert.equal(
+        nativeEvents.some(
           (record) => record.event?.method === "claude/stream_event/content_block_delta/text_delta",
         ),
         true,
       );
     }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          fs.rmSync(nativeLogDir, {
-            recursive: true,
-            force: true,
-          });
-        }),
-      ),
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );

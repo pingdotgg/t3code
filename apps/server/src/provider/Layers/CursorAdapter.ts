@@ -48,7 +48,7 @@ import {
   CursorAcpSessionPromptResult,
   CursorAcpSessionUpdateNotification,
 } from "../Services/CursorAdapter.ts";
-import { makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "cursor" as const;
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
@@ -103,6 +103,7 @@ export interface CursorAdapterLiveOptions {
     readonly model?: string;
   }) => ChildProcessWithoutNullStreams;
   readonly nativeEventLogPath?: string;
+  readonly nativeEventLogger?: EventNdjsonLogger;
 }
 
 function toMessage(cause: unknown, fallback: string): string {
@@ -323,9 +324,12 @@ function writeCursorMessage(context: CursorSessionContext, message: unknown): vo
 function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
   return Effect.gen(function* () {
     const nativeEventLogger =
-      options?.nativeEventLogPath !== undefined
-        ? makeEventNdjsonLogger(options.nativeEventLogPath)
-        : undefined;
+      options?.nativeEventLogger ??
+      (options?.nativeEventLogPath !== undefined
+        ? yield* makeEventNdjsonLogger(options.nativeEventLogPath, {
+            stream: "native",
+          })
+        : undefined);
 
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const nextEventId = Effect.map(Random.nextUUIDv4, (id) => EventId.makeUnsafe(id));
@@ -822,33 +826,43 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
       }
 
       if (nativeEventLogger) {
-        const nativeMethod =
-          typeof message.method === "string"
-            ? message.method
-            : typeof message.id === "string" || typeof message.id === "number"
-              ? "cursor/acp/response"
-              : "cursor/acp/message";
-        const nativeKind =
-          typeof message.method === "string" &&
-          (typeof message.id === "string" || typeof message.id === "number")
-            ? "request"
-            : typeof message.method === "string"
-              ? "notification"
-              : "session";
-        nativeEventLogger.write({
-          observedAt: new Date().toISOString(),
-          event: {
-            id: EventId.makeUnsafe(randomUUID()),
-            kind: nativeKind,
-            provider: PROVIDER,
-            sessionId: asRuntimeSessionId(context.session.sessionId),
-            createdAt: new Date().toISOString(),
-            method: nativeMethod,
-            ...((context.session.threadId ? { threadId: asRuntimeThreadId(context.session.threadId) } : {})),
-            ...((context.turnState ? { turnId: asRuntimeTurnId(context.turnState.turnId) } : {})),
-            payload: message,
-          },
-        });
+        try {
+          const nativeMethod =
+            typeof message.method === "string"
+              ? message.method
+              : typeof message.id === "string" || typeof message.id === "number"
+                ? "cursor/acp/response"
+                : "cursor/acp/message";
+          const nativeKind =
+            typeof message.method === "string" &&
+            (typeof message.id === "string" || typeof message.id === "number")
+              ? "request"
+              : typeof message.method === "string"
+                ? "notification"
+                : "session";
+          Effect.runFork(
+            nativeEventLogger
+              .write(
+                {
+                  observedAt: new Date().toISOString(),
+                  event: {
+                    id: EventId.makeUnsafe(randomUUID()),
+                    kind: nativeKind,
+                    provider: PROVIDER,
+                    sessionId: asRuntimeSessionId(context.session.sessionId),
+                    createdAt: new Date().toISOString(),
+                    method: nativeMethod,
+                    ...(context.session.threadId ? { threadId: context.session.threadId } : {}),
+                    ...(context.turnState ? { turnId: String(context.turnState.turnId) } : {}),
+                    payload: message,
+                  },
+                },
+                null,
+              ),
+          );
+        } catch {
+          // Native logging must never block or break protocol handling.
+        }
       }
 
       if (
