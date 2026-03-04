@@ -223,7 +223,7 @@ async function checkCodexProviderStatus(run: CommandRunner): Promise<ServerProvi
   }
 
   try {
-    const auth = await run("codex", ["auth", "status", "--json"], {
+    const auth = await run("codex", ["login", "status"], {
       timeoutMs: DEFAULT_TIMEOUT_MS,
       allowNonZeroExit: true,
       outputMode: "truncate",

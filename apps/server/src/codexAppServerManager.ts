@@ -185,6 +185,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
         },
         stdio: ["pipe", "pipe", "pipe"],
+        shell: process.platform === "win32",
       });
       const output = readline.createInterface({ input: child.stdout });
 
