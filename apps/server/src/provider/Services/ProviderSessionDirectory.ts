@@ -12,6 +12,7 @@ import type {
   ProviderSessionId,
   ProviderSessionRuntimeStatus,
   ProviderThreadId,
+  RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
 import { Option, ServiceMap } from "effect";
@@ -32,6 +33,7 @@ export interface ProviderSessionBinding {
   readonly status?: ProviderSessionRuntimeStatus;
   readonly resumeCursor?: unknown | null;
   readonly runtimePayload?: unknown | null;
+  readonly runtimeMode?: RuntimeMode;
 }
 
 export type ProviderSessionDirectoryReadError =

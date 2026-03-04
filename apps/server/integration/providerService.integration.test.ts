@@ -122,6 +122,7 @@ it.effect("replays typed runtime fixture events", () =>
         {
           provider: "codex",
           cwd: fixture.cwd,
+          runtimeMode: "full-access",
         },
       );
       assert.equal((session.threadId ?? "").length > 0, true);
@@ -155,6 +156,7 @@ it.effect("replays file-changing fixture turn events", () =>
         {
           provider: "codex",
           cwd: fixture.cwd,
+          runtimeMode: "full-access",
         },
       );
       assert.equal((session.threadId ?? "").length > 0, true);
@@ -192,6 +194,7 @@ it.effect("runs multi-turn tool/approval flow", () =>
         {
           provider: "codex",
           cwd: fixture.cwd,
+          runtimeMode: "full-access",
         },
       );
       assert.equal((session.threadId ?? "").length > 0, true);
@@ -244,6 +247,7 @@ it.effect("rolls back provider conversation state only", () =>
         {
           provider: "codex",
           cwd: fixture.cwd,
+          runtimeMode: "full-access",
         },
       );
       assert.equal((session.threadId ?? "").length > 0, true);

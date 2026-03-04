@@ -167,6 +167,7 @@ describe("ProviderRuntimeIngestion", () => {
         projectId: asProjectId("project-1"),
         title: "Thread",
         model: "gpt-5-codex",
+        runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
         createdAt,

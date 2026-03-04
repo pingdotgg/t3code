@@ -6,8 +6,9 @@ import {
   normalizeModelSlug,
   type CodexReasoningEffort,
   type ProviderKind,
+  type RuntimeMode,
 } from "@t3tools/contracts";
-import type { ChatImageAttachment } from "./types";
+import { DEFAULT_RUNTIME_MODE, type ChatImageAttachment } from "./types";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -38,6 +39,7 @@ interface PersistedComposerThreadDraftState {
 interface PersistedDraftThreadState {
   projectId: ProjectId;
   createdAt: string;
+  runtimeMode: RuntimeMode;
   branch: string | null;
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
@@ -62,6 +64,7 @@ interface ComposerThreadDraftState {
 export interface DraftThreadState {
   projectId: ProjectId;
   createdAt: string;
+  runtimeMode: RuntimeMode;
   branch: string | null;
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
@@ -85,6 +88,7 @@ interface ComposerDraftStoreState {
       worktreePath?: string | null;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
+      runtimeMode?: RuntimeMode;
     },
   ) => void;
   setDraftThreadContext: (
@@ -95,6 +99,7 @@ interface ComposerDraftStoreState {
       projectId?: ProjectId;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
+      runtimeMode?: RuntimeMode;
     },
   ) => void;
   clearProjectDraftThreadId: (projectId: ProjectId) => void;
@@ -260,6 +265,11 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
           typeof createdAt === "string" && createdAt.length > 0
             ? createdAt
             : new Date().toISOString(),
+        runtimeMode:
+          candidateDraftThread.runtimeMode === "approval-required" ||
+          candidateDraftThread.runtimeMode === "full-access"
+            ? candidateDraftThread.runtimeMode
+            : DEFAULT_RUNTIME_MODE,
         branch: typeof branch === "string" ? branch : null,
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
@@ -286,6 +296,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
           draftThreadsByThreadId[threadId as ThreadId] = {
             projectId: projectId as ProjectId,
             createdAt: new Date().toISOString(),
+            runtimeMode: DEFAULT_RUNTIME_MODE,
             branch: null,
             worktreePath: null,
             envMode: "local",
@@ -488,6 +499,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           const nextDraftThread: DraftThreadState = {
             projectId,
             createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
+            runtimeMode: options?.runtimeMode ?? existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
             branch:
               options?.branch === undefined
                 ? (existingThread?.branch ?? null)
@@ -502,6 +514,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             existingThread &&
             existingThread.projectId === nextDraftThread.projectId &&
             existingThread.createdAt === nextDraftThread.createdAt &&
+            existingThread.runtimeMode === nextDraftThread.runtimeMode &&
             existingThread.branch === nextDraftThread.branch &&
             existingThread.worktreePath === nextDraftThread.worktreePath &&
             existingThread.envMode === nextDraftThread.envMode;
@@ -556,6 +569,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
               options.createdAt === undefined
                 ? existing.createdAt
                 : options.createdAt || existing.createdAt,
+            runtimeMode: options.runtimeMode ?? existing.runtimeMode,
             branch: options.branch === undefined ? existing.branch : (options.branch ?? null),
             worktreePath: nextWorktreePath,
             envMode:
@@ -565,6 +579,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           const isUnchanged =
             nextDraftThread.projectId === existing.projectId &&
             nextDraftThread.createdAt === existing.createdAt &&
+            nextDraftThread.runtimeMode === existing.runtimeMode &&
             nextDraftThread.branch === existing.branch &&
             nextDraftThread.worktreePath === existing.worktreePath &&
             nextDraftThread.envMode === existing.envMode;

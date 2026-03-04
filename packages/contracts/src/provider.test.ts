@@ -11,6 +11,7 @@ describe("ProviderSessionStartInput", () => {
       provider: "codex",
       cwd: "/tmp/workspace",
       model: "gpt-5.3-codex",
+      runtimeMode: "full-access",
       providerOptions: {
         codex: {
           binaryPath: "/usr/local/bin/codex",
@@ -18,9 +19,17 @@ describe("ProviderSessionStartInput", () => {
         },
       },
     });
-    expect(parsed.runtimeMode).toBeUndefined();
+    expect(parsed.runtimeMode).toBe("full-access");
     expect(parsed.providerOptions?.codex?.binaryPath).toBe("/usr/local/bin/codex");
     expect(parsed.providerOptions?.codex?.homePath).toBe("/tmp/.codex");
+  });
+
+  it("rejects payloads without runtime mode", () => {
+    expect(() =>
+      decodeProviderSessionStartInput({
+        provider: "codex",
+      }),
+    ).toThrow();
   });
 
   it("accepts claude runtime knobs", () => {

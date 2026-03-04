@@ -43,6 +43,7 @@ function makeSnapshot(input: {
         projectId: input.projectId,
         title: "Thread",
         model: "gpt-5-codex",
+        runtimeMode: "full-access",
         branch: null,
         worktreePath: input.worktreePath,
         latestTurn: {

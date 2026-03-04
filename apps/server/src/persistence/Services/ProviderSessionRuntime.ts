@@ -10,6 +10,7 @@ import {
   ProviderSessionId,
   ProviderSessionRuntimeStatus,
   ProviderThreadId,
+  RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
 import { Option, Schema, ServiceMap } from "effect";
@@ -23,6 +24,7 @@ export const ProviderSessionRuntime = Schema.Struct({
   providerName: Schema.String,
   adapterKey: Schema.String,
   providerThreadId: Schema.NullOr(ProviderThreadId),
+  runtimeMode: RuntimeMode,
   status: ProviderSessionRuntimeStatus,
   lastSeenAt: IsoDateTime,
   resumeCursor: Schema.NullOr(Schema.Unknown),

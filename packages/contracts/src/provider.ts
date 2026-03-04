@@ -37,6 +37,7 @@ export const ProviderSession = Schema.Struct({
   sessionId: ProviderSessionId,
   provider: ProviderKind,
   status: ProviderSessionStatus,
+  runtimeMode: RuntimeMode,
   cwd: Schema.optional(TrimmedNonEmptyStringSchema),
   model: Schema.optional(TrimmedNonEmptyStringSchema),
   threadId: Schema.optional(ProviderThreadId),
@@ -79,7 +80,7 @@ export const ProviderSessionStartInput = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyStringSchema),
   resumeCursor: Schema.optional(Schema.Unknown),
   providerOptions: Schema.optional(ProviderStartOptions),
-  runtimeMode: Schema.optional(RuntimeMode),
+  runtimeMode: RuntimeMode,
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 

@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { ProviderSessionId } from "@t3tools/contracts";
 
 import {
@@ -165,6 +169,7 @@ describe("startSession", () => {
       await expect(
         manager.startSession({
           provider: "codex",
+          runtimeMode: "full-access",
         }),
       ).rejects.toThrow("cwd missing");
       expect(events).toHaveLength(1);
@@ -346,4 +351,85 @@ describe("thread checkpoint control", () => {
       turns: [],
     });
   });
+});
+
+describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume", () => {
+  it(
+    "keeps prior thread history when resuming with a changed runtime mode",
+    async () => {
+      const workspaceDir = mkdtempSync(path.join(os.tmpdir(), "codex-live-resume-"));
+      writeFileSync(path.join(workspaceDir, "README.md"), "hello\n", "utf8");
+
+      const manager = new CodexAppServerManager();
+
+      try {
+        const firstSession = await manager.startSession({
+          provider: "codex",
+          cwd: workspaceDir,
+          runtimeMode: "full-access",
+          providerOptions: {
+            codex: {
+              binaryPath: process.env.CODEX_BINARY_PATH,
+              ...(process.env.CODEX_HOME_PATH
+                ? { homePath: process.env.CODEX_HOME_PATH }
+                : {}),
+            },
+          },
+        });
+
+        const firstTurn = await manager.sendTurn({
+          sessionId: firstSession.sessionId,
+          input: `Reply with exactly the word ALPHA ${randomUUID()}`,
+        });
+
+        expect(firstTurn.threadId).toBe(firstSession.threadId);
+
+        await vi.waitFor(async () => {
+          const snapshot = await manager.readThread(firstSession.sessionId);
+          expect(snapshot.turns.length).toBeGreaterThan(0);
+        }, { timeout: 120_000, interval: 1_000 });
+
+        const firstSnapshot = await manager.readThread(firstSession.sessionId);
+        const originalThreadId = firstSnapshot.threadId;
+        const originalTurnCount = firstSnapshot.turns.length;
+
+        manager.stopSession(firstSession.sessionId);
+
+        const resumedSession = await manager.startSession({
+          provider: "codex",
+          cwd: workspaceDir,
+          runtimeMode: "approval-required",
+          resumeCursor: firstSession.resumeCursor,
+          providerOptions: {
+            codex: {
+              binaryPath: process.env.CODEX_BINARY_PATH,
+              ...(process.env.CODEX_HOME_PATH
+                ? { homePath: process.env.CODEX_HOME_PATH }
+                : {}),
+            },
+          },
+        });
+
+        expect(resumedSession.threadId).toBe(originalThreadId);
+
+        const resumedSnapshotBeforeTurn = await manager.readThread(resumedSession.sessionId);
+        expect(resumedSnapshotBeforeTurn.threadId).toBe(originalThreadId);
+        expect(resumedSnapshotBeforeTurn.turns.length).toBeGreaterThanOrEqual(originalTurnCount);
+
+        await manager.sendTurn({
+          sessionId: resumedSession.sessionId,
+          input: `Reply with exactly the word BETA ${randomUUID()}`,
+        });
+
+        await vi.waitFor(async () => {
+          const snapshot = await manager.readThread(resumedSession.sessionId);
+          expect(snapshot.turns.length).toBeGreaterThan(originalTurnCount);
+        }, { timeout: 120_000, interval: 1_000 });
+      } finally {
+        manager.stopAll();
+        rmSync(workspaceDir, { recursive: true, force: true });
+      }
+    },
+    180_000,
+  );
 });

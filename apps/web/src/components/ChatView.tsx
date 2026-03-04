@@ -31,7 +31,17 @@ import {
   resolveModelSlugForProvider,
   OrchestrationThreadActivity,
 } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useOptimistic,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
@@ -69,6 +79,7 @@ import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX, isScrollContainerNearBottom } from "..
 import { useStore } from "../store";
 import { truncateTitle } from "../truncateTitle";
 import {
+  DEFAULT_RUNTIME_MODE,
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_THREAD_TERMINAL_COUNT,
   type ChatMessage,
@@ -267,6 +278,7 @@ function buildLocalDraftThread(
     projectId: draftThread.projectId,
     title: "New thread",
     model: fallbackModel,
+    runtimeMode: draftThread.runtimeMode,
     session: null,
     messages: [],
     error,
@@ -500,10 +512,8 @@ interface ChatViewProps {
 export default function ChatView({ threadId }: ChatViewProps) {
   const threads = useStore((store) => store.threads);
   const projects = useStore((store) => store.projects);
-  const runtimeMode = useStore((store) => store.runtimeMode);
   const markThreadVisited = useStore((store) => store.markThreadVisited);
   const setStoreThreadError = useStore((store) => store.setError);
-  const setStoreRuntimeMode = useStore((store) => store.setRuntimeMode);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const { settings } = useAppSettings();
   const navigate = useNavigate();
@@ -549,7 +559,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
-  const [isSwitchingRuntimeMode, setIsSwitchingRuntimeMode] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -642,6 +651,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [draftThread, fallbackDraftProject?.model, localDraftError, threadId],
   );
   const activeThread = serverThread ?? localDraftThread;
+  const runtimeMode = activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+  const [optimisticRuntimeMode, setOptimisticRuntimeMode] = useOptimistic(runtimeMode);
+  const [isRuntimeModePending, startRuntimeModeTransition] = useTransition();
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const diffSearch = useMemo(
@@ -1410,31 +1422,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const handleRuntimeModeChange = async (mode: "approval-required" | "full-access") => {
     if (mode === runtimeMode) return;
-    setStoreRuntimeMode(mode);
-    scheduleComposerFocus();
+    if (isLocalDraftThread) {
+      setDraftThreadContext(threadId, { runtimeMode: mode });
+      scheduleComposerFocus();
+      return;
+    }
     const api = readNativeApi();
-    if (!api) return;
-
-    const runningThreadIds = threads
-      .filter((thread) => thread.session !== null && thread.session.status !== "closed")
-      .map((thread) => thread.id);
-
-    if (runningThreadIds.length === 0) return;
-
-    setIsSwitchingRuntimeMode(true);
-    await Promise.all(
-      runningThreadIds.map((threadId) =>
-        api.orchestration
-          .dispatchCommand({
-            type: "thread.session.stop",
-            commandId: newCommandId(),
-            threadId,
-            createdAt: new Date().toISOString(),
-          })
-          .catch(() => undefined),
-      ),
-    );
-    setIsSwitchingRuntimeMode(false);
+    if (!api || !isServerThread) return;
+    scheduleComposerFocus();
+    startRuntimeModeTransition(() => {
+      setOptimisticRuntimeMode(mode);
+      void api.orchestration
+        .dispatchCommand({
+          type: "thread.runtime-mode.set",
+          commandId: newCommandId(),
+          threadId,
+          runtimeMode: mode,
+          createdAt: new Date().toISOString(),
+        })
+        .catch(() => undefined);
+    });
   };
 
   useEffect(() => {
@@ -2186,6 +2193,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           projectId: activeProject.id,
           title,
           model: threadCreateModel,
+          runtimeMode,
           branch: nextThreadBranch,
           worktreePath: nextThreadWorktreePath,
           createdAt: activeThread.createdAt,
@@ -2941,21 +2949,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
                   size="sm"
                   type="button"
-                  disabled={isSwitchingRuntimeMode}
+                  disabled={isRuntimeModePending}
                   onClick={() =>
                     void handleRuntimeModeChange(
-                      runtimeMode === "full-access" ? "approval-required" : "full-access",
+                      optimisticRuntimeMode === "full-access"
+                        ? "approval-required"
+                        : "full-access",
                     )
                   }
                   title={
-                    runtimeMode === "full-access"
+                    optimisticRuntimeMode === "full-access"
                       ? "Full access — click to require approvals"
                       : "Approval required — click for full access"
                   }
                 >
-                  {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
+                  {optimisticRuntimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
                   <span className="sr-only sm:not-sr-only">
-                    {runtimeMode === "full-access" ? "Full access" : "Supervised"}
+                    {optimisticRuntimeMode === "full-access" ? "Full access" : "Supervised"}
                   </span>
                 </Button>
               </div>

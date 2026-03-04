@@ -79,6 +79,7 @@ export interface Thread {
   projectId: ProjectId;
   title: string;
   model: string;
+  runtimeMode: RuntimeMode;
   session: ThreadSession | null;
   messages: ChatMessage[];
   error: string | null;

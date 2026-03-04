@@ -255,7 +255,9 @@ describe("CursorAdapterLive", () => {
 
     return Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
-      const result = yield* adapter.startSession({ provider: "codex" }).pipe(Effect.result);
+      const result = yield* adapter
+        .startSession({ provider: "codex", runtimeMode: "full-access" })
+        .pipe(Effect.result);
 
       assert.equal(result._tag, "Failure");
       if (result._tag !== "Failure") {
@@ -289,6 +291,7 @@ describe("CursorAdapterLive", () => {
       const session = yield* adapter.startSession({
         provider: "cursor",
         cwd: "/tmp/project",
+        runtimeMode: "full-access",
       });
 
       const turn = yield* adapter.sendTurn({
@@ -353,6 +356,7 @@ describe("CursorAdapterLive", () => {
       yield* adapter.startSession({
         provider: "cursor",
         model: "composer-1.5",
+        runtimeMode: "full-access",
       });
 
       assert.deepEqual(createProcessInput?.model, "composer-1.5");
@@ -385,6 +389,7 @@ describe("CursorAdapterLive", () => {
       const session = yield* adapter.startSession({
         provider: "cursor",
         cwd: "/tmp/project",
+        runtimeMode: "full-access",
       });
 
       assert.equal(nativeEvents.length > 0, true);
@@ -408,6 +413,7 @@ describe("CursorAdapterLive", () => {
         resumeCursor: {
           acpSessionId: "acp-session-resume",
         },
+        runtimeMode: "full-access",
       });
 
       const methods = new Set(fake.requests.map((request) => request.method));
@@ -441,6 +447,7 @@ describe("CursorAdapterLive", () => {
         resumeCursor: {
           sessionId: "acp-session-legacy",
         },
+        runtimeMode: "full-access",
       });
 
       const loadRequest = fake.requests.find((request) => request.method === "session/load");
@@ -555,6 +562,7 @@ describe("CursorAdapterLive", () => {
       const adapter = yield* CursorAdapter;
       const session = yield* adapter.startSession({
         provider: "cursor",
+        runtimeMode: "full-access",
       });
 
       yield* Stream.take(adapter.streamEvents, 6).pipe(Stream.runDrain);
@@ -600,6 +608,7 @@ describe("CursorAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         provider: "cursor",
+        runtimeMode: "full-access",
       });
 
       yield* adapter.sendTurn({

@@ -1040,6 +1040,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
           sessionId,
           provider: PROVIDER,
           status: "connecting",
+          runtimeMode: input.runtimeMode,
           ...(input.cwd ? { cwd: input.cwd } : {}),
           ...(input.model ? { model: input.model } : {}),
           createdAt: startedAt,
@@ -1048,7 +1049,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
 
         const context: CursorSessionContext = {
           session,
-          runtimeMode: input.runtimeMode ?? "full-access",
+          runtimeMode: input.runtimeMode,
           child,
           output,
           pending: new Map(),

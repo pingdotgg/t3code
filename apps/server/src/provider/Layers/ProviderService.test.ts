@@ -80,6 +80,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
         sessionId: ProviderSessionId.makeUnsafe(`sess-${next}`),
         provider,
         status: "ready",
+        runtimeMode: input.runtimeMode,
         threadId,
         resumeCursor: input.resumeCursor ?? { opaque: `cursor-${next}` },
         cwd: input.cwd ?? process.cwd(),
@@ -350,6 +351,7 @@ it.effect(
         return yield* provider.startSession(asThreadId("thread-1"), {
           provider: "codex",
           cwd: "/tmp/project",
+          runtimeMode: "full-access",
         });
       }).pipe(Effect.provide(firstProviderLayer));
 
@@ -429,6 +431,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const session = yield* provider.startSession(asThreadId("thread-1"), {
         provider: "codex",
         cwd: "/tmp/project",
+        runtimeMode: "full-access",
       });
       assert.equal(session.provider, "codex");
 
@@ -481,6 +484,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const session = yield* provider.startSession(asThreadId("thread-claude"), {
         provider: "claudeCode",
         cwd: "/tmp/project-claude",
+        runtimeMode: "full-access",
       });
 
       assert.equal(session.provider, "claudeCode");
@@ -502,6 +506,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const initial = yield* provider.startSession(asThreadId("thread-1"), {
         provider: "codex",
         cwd: "/tmp/project",
+        runtimeMode: "full-access",
       });
       yield* routing.codex.stopSession(initial.sessionId);
       routing.codex.startSession.mockClear();
@@ -540,6 +545,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const initial = yield* provider.startSession(asThreadId("thread-1"), {
         provider: "codex",
         cwd: "/tmp/project-send-turn",
+        runtimeMode: "full-access",
       });
 
       yield* provider.stopAll();
@@ -577,9 +583,11 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
       yield* provider.startSession(asThreadId("thread-1"), {
         provider: "codex",
+        runtimeMode: "full-access",
       });
       yield* provider.startSession(asThreadId("thread-2"), {
         provider: "codex",
+        runtimeMode: "full-access",
       });
 
       yield* provider.stopAll();
@@ -596,6 +604,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
       const session = yield* provider.startSession(asThreadId("thread-1"), {
         provider: "codex",
+        runtimeMode: "full-access",
       });
       yield* provider.sendTurn({
         sessionId: session.sessionId,
@@ -647,6 +656,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       const provider = yield* ProviderService;
       const session = yield* provider.startSession(asThreadId("thread-1"), {
         provider: "codex",
+        runtimeMode: "full-access",
       });
 
       const eventsRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
@@ -684,6 +694,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       const provider = yield* ProviderService;
       const session = yield* provider.startSession(asThreadId("thread-seq"), {
         provider: "codex",
+        runtimeMode: "full-access",
       });
 
       const receivedRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
@@ -740,6 +751,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       const provider = yield* ProviderService;
       const session = yield* provider.startSession(asThreadId("thread-1"), {
         provider: "codex",
+        runtimeMode: "full-access",
       });
 
       const receivedByHealthy: string[] = [];
@@ -845,6 +857,7 @@ validation.layer("ProviderServiceLive validation", (it) => {
             sessionId: asSessionId("sess-missing-thread"),
             provider: "codex",
             status: "ready",
+            runtimeMode: input.runtimeMode,
           cwd: input.cwd ?? process.cwd(),
           createdAt: now,
           updatedAt: now,
@@ -855,6 +868,7 @@ validation.layer("ProviderServiceLive validation", (it) => {
       const session = yield* provider.startSession(asThreadId("thread-missing"), {
         provider: "codex",
         cwd: "/tmp/project",
+        runtimeMode: "full-access",
       });
 
       assert.equal(session.sessionId, asSessionId("sess-missing-thread"));

@@ -595,6 +595,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           projectId: bootstrapProjectId,
           title: "New thread",
           model: bootstrapProjectDefaultModel,
+          runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
           createdAt,

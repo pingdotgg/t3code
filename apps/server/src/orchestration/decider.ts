@@ -157,6 +157,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           title: command.title,
           model: command.model,
+          runtimeMode: command.runtimeMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
           createdAt: command.createdAt,
@@ -213,6 +214,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.runtime-mode.set": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.runtime-mode-set",
+        payload: {
+          threadId: command.threadId,
+          runtimeMode: command.runtimeMode,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
     case "thread.turn.start": {
       yield* requireThread({
         readModel,
@@ -255,7 +279,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.model !== undefined ? { model: command.model } : {}),
           ...(command.effort !== undefined ? { effort: command.effort } : {}),
           assistantDeliveryMode: command.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
-          runtimeMode: command.runtimeMode,
+          runtimeMode:
+            readModel.threads.find((entry) => entry.id === command.threadId)?.runtimeMode ??
+            command.runtimeMode,
           createdAt: command.createdAt,
         },
       };

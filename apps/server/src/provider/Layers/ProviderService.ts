@@ -180,6 +180,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           provider: session.provider,
           threadId,
           ...(providerThreadId !== undefined ? { providerThreadId } : {}),
+          runtimeMode: session.runtimeMode,
           status: toRuntimeStatus(session),
           ...(session.resumeCursor !== undefined ? { resumeCursor: session.resumeCursor } : {}),
           runtimePayload: toRuntimePayloadFromSession(session),
@@ -296,6 +297,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           ...(persistedCwd ? { cwd: persistedCwd } : {}),
           ...(resumeThreadId ? { resumeThreadId } : {}),
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
+          runtimeMode: input.binding.runtimeMode ?? "full-access",
         });
         if (resumed.provider !== adapter.provider) {
           return yield* toValidationError(
@@ -415,7 +417,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         const input = {
           ...parsed,
           provider: parsed.provider ?? "codex",
-          runtimeMode: parsed.runtimeMode ?? "full-access",
         };
         const adapter = yield* registry.getByProvider(input.provider);
         const session = yield* adapter.startSession(input);

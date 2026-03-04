@@ -1632,6 +1632,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           sessionId,
           provider: PROVIDER,
           status: "ready",
+          runtimeMode: input.runtimeMode,
           ...(input.cwd ? { cwd: input.cwd } : {}),
           ...(input.model ? { model: input.model } : {}),
           ...(threadId ? { threadId } : {}),

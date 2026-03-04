@@ -13,10 +13,8 @@ import {
 } from "@t3tools/contracts";
 import { create } from "zustand";
 import {
-  DEFAULT_RUNTIME_MODE,
   type ChatMessage,
   type Project,
-  type RuntimeMode,
   type Thread,
 } from "./types";
 
@@ -26,10 +24,9 @@ export interface AppState {
   projects: Project[];
   threads: Thread[];
   threadsHydrated: boolean;
-  runtimeMode: RuntimeMode;
 }
 
-const PERSISTED_STATE_KEY = "t3code:renderer-state:v7";
+const PERSISTED_STATE_KEY = "t3code:renderer-state:v8";
 const LEGACY_PERSISTED_STATE_KEYS = [
   "t3code:renderer-state:v6",
   "t3code:renderer-state:v5",
@@ -45,7 +42,6 @@ const initialState: AppState = {
   projects: [],
   threads: [],
   threadsHydrated: false,
-  runtimeMode: DEFAULT_RUNTIME_MODE,
 };
 const persistedExpandedProjectCwds = new Set<string>();
 
@@ -56,23 +52,14 @@ function readPersistedState(): AppState {
   try {
     const raw = window.localStorage.getItem(PERSISTED_STATE_KEY);
     if (!raw) return initialState;
-    const parsed = JSON.parse(raw) as {
-      runtimeMode?: RuntimeMode;
-      expandedProjectCwds?: string[];
-    };
+    const parsed = JSON.parse(raw) as { expandedProjectCwds?: string[] };
     persistedExpandedProjectCwds.clear();
     for (const cwd of parsed.expandedProjectCwds ?? []) {
       if (typeof cwd === "string" && cwd.length > 0) {
         persistedExpandedProjectCwds.add(cwd);
       }
     }
-    return {
-      ...initialState,
-      runtimeMode:
-        parsed.runtimeMode === "approval-required" || parsed.runtimeMode === "full-access"
-          ? parsed.runtimeMode
-          : DEFAULT_RUNTIME_MODE,
-    };
+    return { ...initialState };
   } catch {
     return initialState;
   }
@@ -84,7 +71,6 @@ function persistState(state: AppState): void {
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
-        runtimeMode: state.runtimeMode,
         expandedProjectCwds: state.projects
           .filter((project) => project.expanded)
           .map((project) => project.cwd),
@@ -265,12 +251,13 @@ export function syncServerReadModel(
         projectId: thread.projectId,
         title: thread.title,
         model: resolveModelSlugForProvider(
-        inferProviderForThreadModel({
-          model: thread.model,
-          sessionProviderName: thread.session?.providerName ?? null,
-        }),
-        thread.model,
-      ),
+          inferProviderForThreadModel({
+            model: thread.model,
+            sessionProviderName: thread.session?.providerName ?? null,
+          }),
+          thread.model,
+        ),
+        runtimeMode: thread.runtimeMode,
         session: thread.session
           ? {
               sessionId:
@@ -415,11 +402,6 @@ export function setThreadBranch(
   return threads === state.threads ? state : { ...state, threads };
 }
 
-export function setRuntimeMode(state: AppState, mode: RuntimeMode): AppState {
-  if (state.runtimeMode === mode) return state;
-  return { ...state, runtimeMode: mode };
-}
-
 // ── Zustand store ────────────────────────────────────────────────────
 
 interface AppStore extends AppState {
@@ -434,7 +416,6 @@ interface AppStore extends AppState {
     branch: string | null,
     worktreePath: string | null,
   ) => void;
-  setRuntimeMode: (mode: RuntimeMode) => void;
 }
 
 export const useStore = create<AppStore>((set) => ({
@@ -453,11 +434,9 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => setError(state, threadId, error)),
   setThreadBranch: (threadId, branch, worktreePath) =>
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
-  setRuntimeMode: (mode) =>
-    set((state) => setRuntimeMode(state, mode)),
 }));
 
-// Persist on every state change (only runtimeMode + expandedProjectCwds)
+// Persist on every state change
 useStore.subscribe((state) => persistState(state));
 
 export function StoreProvider({ children }: { children: ReactNode }) {

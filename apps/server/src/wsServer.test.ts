@@ -1157,6 +1157,7 @@ describe("WebSocket Server", () => {
           sessionId,
           provider: "codex",
           status: "ready",
+          runtimeMode: "full-access",
           threadId: asProviderThreadId("provider-thread-1"),
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),

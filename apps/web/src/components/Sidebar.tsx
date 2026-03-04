@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  DEFAULT_RUNTIME_MODE,
   DEFAULT_MODEL,
   type DesktopUpdateState,
   ProjectId,
@@ -435,6 +436,7 @@ export default function Sidebar() {
           branch: options?.branch ?? null,
           worktreePath: options?.worktreePath ?? null,
           envMode: options?.envMode ?? "local",
+          runtimeMode: DEFAULT_RUNTIME_MODE,
         });
 
         await navigate({

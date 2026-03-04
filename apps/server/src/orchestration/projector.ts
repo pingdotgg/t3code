@@ -17,6 +17,7 @@ import {
   ThreadCreatedPayload,
   ThreadDeletedPayload,
   ThreadMetaUpdatedPayload,
+  ThreadRuntimeModeSetPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
@@ -241,6 +242,7 @@ export function projectEvent(
             projectId: payload.projectId,
             title: payload.title,
             model: payload.model,
+            runtimeMode: payload.runtimeMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
             latestTurn: null,
@@ -284,6 +286,22 @@ export function projectEvent(
             ...(payload.model !== undefined ? { model: payload.model } : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.runtime-mode-set":
+      return decodeForEvent(
+        ThreadRuntimeModeSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            runtimeMode: payload.runtimeMode,
             updatedAt: payload.updatedAt,
           }),
         })),

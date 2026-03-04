@@ -37,6 +37,8 @@ import { ProviderUnsupportedError } from "../src/provider/Errors.ts";
 import { ProviderAdapterRegistry } from "../src/provider/Services/ProviderAdapterRegistry.ts";
 import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
 import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
+import { makeCodexAdapterLive } from "../src/provider/Layers/CodexAdapter.ts";
+import { CodexAdapter } from "../src/provider/Services/CodexAdapter.ts";
 import { ProviderService } from "../src/provider/Services/ProviderService.ts";
 import { CheckpointReactorLive } from "../src/orchestration/Layers/CheckpointReactor.ts";
 import { OrchestrationEngineLive } from "../src/orchestration/Layers/OrchestrationEngine.ts";
@@ -187,6 +189,7 @@ export interface OrchestrationIntegrationHarness {
 
 interface MakeOrchestrationIntegrationHarnessOptions {
   readonly provider?: "codex" | "claudeCode";
+  readonly realCodex?: boolean;
 }
 
 export const makeOrchestrationIntegrationHarness = (
@@ -195,10 +198,21 @@ export const makeOrchestrationIntegrationHarness = (
   Effect.gen(function* () {
   const sleep = (ms: number) => Effect.sleep(ms);
   const provider = options?.provider ?? "codex";
-  const adapterHarness = yield* makeTestProviderAdapterHarness({
-    provider,
-  });
-
+  const useRealCodex = options?.realCodex === true;
+  const adapterHarness = useRealCodex
+    ? null
+    : yield* makeTestProviderAdapterHarness({
+        provider,
+      });
+  const fakeRegistry = adapterHarness
+    ? Layer.succeed(ProviderAdapterRegistry, {
+        getByProvider: (resolvedProvider) =>
+          resolvedProvider === adapterHarness.provider
+            ? Effect.succeed(adapterHarness.adapter)
+            : Effect.fail(new ProviderUnsupportedError({ provider: resolvedProvider })),
+        listProviders: () => Effect.succeed([adapterHarness.provider]),
+      } as typeof ProviderAdapterRegistry.Service)
+    : null;
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-orchestration-integration-"));
   const workspaceDir = path.join(rootDir, "workspace");
   const stateDir = path.join(rootDir, "state");
@@ -206,14 +220,6 @@ export const makeOrchestrationIntegrationHarness = (
   fs.mkdirSync(workspaceDir, { recursive: true });
   fs.mkdirSync(stateDir, { recursive: true });
   initializeGitWorkspace(workspaceDir);
-
-  const registry: typeof ProviderAdapterRegistry.Service = {
-    getByProvider: (provider) =>
-      provider === adapterHarness.provider
-        ? Effect.succeed(adapterHarness.adapter)
-        : Effect.fail(new ProviderUnsupportedError({ provider })),
-    listProviders: () => Effect.succeed([adapterHarness.provider]),
-  };
 
   const persistenceLayer = makeSqlitePersistenceLive(dbPath);
   const orchestrationLayer = OrchestrationEngineLive.pipe(
@@ -224,10 +230,33 @@ export const makeOrchestrationIntegrationHarness = (
   const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
     Layer.provide(ProviderSessionRuntimeRepositoryLive),
   );
-  const providerLayer = makeProviderServiceLive().pipe(
-    Layer.provide(providerSessionDirectoryLayer),
-    Layer.provide(Layer.succeed(ProviderAdapterRegistry, registry)),
+  const realCodexRegistry = Layer.effect(
+    ProviderAdapterRegistry,
+    Effect.gen(function* () {
+      const codexAdapter = yield* CodexAdapter;
+      return {
+        getByProvider: (resolvedProvider) =>
+          resolvedProvider === "codex"
+            ? Effect.succeed(codexAdapter)
+            : Effect.fail(new ProviderUnsupportedError({ provider: resolvedProvider })),
+        listProviders: () => Effect.succeed(["codex"] as const),
+      } as typeof ProviderAdapterRegistry.Service;
+    }),
+  ).pipe(
+    Layer.provide(makeCodexAdapterLive()),
+    Layer.provideMerge(ServerConfig.layerTest(workspaceDir, stateDir)),
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(providerSessionDirectoryLayer),
   );
+  const providerLayer = useRealCodex
+    ? makeProviderServiceLive().pipe(
+        Layer.provide(providerSessionDirectoryLayer),
+        Layer.provide(realCodexRegistry),
+      )
+    : makeProviderServiceLive().pipe(
+        Layer.provide(providerSessionDirectoryLayer),
+        Layer.provide(fakeRegistry!),
+      );
 
   const runtimeServicesLayer = Layer.mergeAll(
     orchestrationLayer,
@@ -407,8 +436,8 @@ export const makeOrchestrationIntegrationHarness = (
   return {
     rootDir,
     workspaceDir,
-    dbPath,
-    adapterHarness,
+      dbPath,
+      adapterHarness: adapterHarness as TestProviderAdapterHarness,
     engine,
     snapshotQuery,
     providerService,

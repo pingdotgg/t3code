@@ -57,6 +57,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             model: "gpt-5-codex",
+            runtimeMode: "full-access",
             branch: null,
             worktreePath: null,
             createdAt: now,
@@ -73,6 +74,7 @@ describe("orchestration projector", () => {
         projectId: "project-1",
         title: "demo",
         model: "gpt-5-codex",
+        runtimeMode: "full-access",
         branch: null,
         worktreePath: null,
         latestTurn: null,
@@ -167,6 +169,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             model: "gpt-5.3-codex",
+            runtimeMode: "full-access",
             branch: null,
             worktreePath: null,
             createdAt,
@@ -209,6 +212,59 @@ describe("orchestration projector", () => {
     expect(thread?.session?.status).toBe("running");
   });
 
+  it("updates canonical thread runtime mode from thread.runtime-mode-set", async () => {
+    const createdAt = "2026-02-23T08:00:00.000Z";
+    const updatedAt = "2026-02-23T08:00:05.000Z";
+    const model = createEmptyReadModel(createdAt);
+
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: createdAt,
+          commandId: "cmd-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            model: "gpt-5.3-codex",
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    const afterUpdate = await Effect.runPromise(
+      projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.runtime-mode-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: updatedAt,
+          commandId: "cmd-runtime-mode-set",
+          payload: {
+            threadId: "thread-1",
+            runtimeMode: "approval-required",
+            updatedAt,
+          },
+        }),
+      ),
+    );
+
+    expect(afterUpdate.threads[0]?.runtimeMode).toBe("approval-required");
+    expect(afterUpdate.threads[0]?.updatedAt).toBe(updatedAt);
+  });
+
   it("marks assistant messages completed with non-streaming updates", async () => {
     const createdAt = "2026-02-23T09:00:00.000Z";
     const deltaAt = "2026-02-23T09:00:01.000Z";
@@ -230,6 +286,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             model: "gpt-5.3-codex",
+            runtimeMode: "full-access",
             branch: null,
             worktreePath: null,
             createdAt,
@@ -313,6 +370,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             model: "gpt-5.3-codex",
+            runtimeMode: "full-access",
             branch: null,
             worktreePath: null,
             createdAt,
@@ -524,6 +582,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             model: "gpt-5.3-codex",
+            runtimeMode: "full-access",
             branch: null,
             worktreePath: null,
             createdAt,
@@ -673,6 +732,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "capped",
             model: "gpt-5-codex",
+            runtimeMode: "full-access",
             branch: null,
             worktreePath: null,
             createdAt,

@@ -40,6 +40,7 @@ class FakeCodexManager extends CodexAppServerManager {
         sessionId: asSessionId("sess-1"),
         provider: "codex",
         status: "ready",
+        runtimeMode: input.runtimeMode,
         threadId: ProviderThreadId.makeUnsafe("thread-1"),
         cwd: input.cwd,
         createdAt: now,
@@ -148,6 +149,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
       const result = yield* adapter
         .startSession({
           provider: "claudeCode",
+          runtimeMode: "full-access",
         })
         .pipe(Effect.result);
 

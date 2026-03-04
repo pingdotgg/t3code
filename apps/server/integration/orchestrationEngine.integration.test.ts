@@ -97,6 +97,16 @@ function withHarness<A, E>(
   );
 }
 
+function withRealCodexHarness<A, E>(
+  use: (harness: OrchestrationIntegrationHarness) => Effect.Effect<A, E>,
+) {
+  return Effect.acquireUseRelease(
+    makeOrchestrationIntegrationHarness({ provider: "codex", realCodex: true }),
+    use,
+    (harness) => harness.dispose,
+  );
+}
+
 const seedProjectAndThread = (harness: OrchestrationIntegrationHarness) =>
   Effect.gen(function* () {
     const createdAt = nowIso();
@@ -118,6 +128,7 @@ const seedProjectAndThread = (harness: OrchestrationIntegrationHarness) =>
       projectId: PROJECT_ID,
       title: "Integration Thread",
       model: "gpt-5-codex",
+      runtimeMode: "approval-required",
       branch: null,
       worktreePath: harness.workspaceDir,
       createdAt,
@@ -214,6 +225,97 @@ it.live("runs a single turn end-to-end and persists checkpoint state in sqlite +
       assert.equal(gitShowFileAtRef(harness.workspaceDir, ref1, "README.md"), "v1\n");
     }),
   ),
+);
+
+it.live.skipIf(!process.env.CODEX_BINARY_PATH)(
+  "keeps the same Codex provider thread across runtime mode switches",
+  () =>
+    withRealCodexHarness((harness) =>
+      Effect.gen(function* () {
+        const createdAt = nowIso();
+
+        yield* harness.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe("cmd-project-create-real-codex"),
+          projectId: PROJECT_ID,
+          title: "Integration Project",
+          workspaceRoot: harness.workspaceDir,
+          defaultModel: "gpt-5.3-codex",
+          createdAt,
+        });
+
+        yield* harness.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("cmd-thread-create-real-codex"),
+          threadId: THREAD_ID,
+          projectId: PROJECT_ID,
+          title: "Integration Thread",
+          model: "gpt-5.3-codex",
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: harness.workspaceDir,
+          createdAt,
+        });
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.makeUnsafe("cmd-turn-start-real-codex-1"),
+          threadId: THREAD_ID,
+          message: {
+            messageId: asMessageId("msg-real-codex-1"),
+            role: "user",
+            text: "Reply with exactly ALPHA.",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          createdAt: nowIso(),
+        });
+
+        const firstThread = yield* harness.waitForThread(
+          THREAD_ID,
+          (entry) =>
+            entry.session?.status === "ready" &&
+            entry.session.providerName === "codex" &&
+            entry.session.providerThreadId !== null &&
+            entry.messages.some(
+              (message) => message.role === "assistant" && message.streaming === false,
+            ),
+          180_000,
+        );
+
+        const originalProviderThreadId = firstThread.session?.providerThreadId;
+        assert.isNotNull(originalProviderThreadId);
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.makeUnsafe("cmd-turn-start-real-codex-2"),
+          threadId: THREAD_ID,
+          message: {
+            messageId: asMessageId("msg-real-codex-2"),
+            role: "user",
+            text: "Reply with exactly BETA.",
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          createdAt: nowIso(),
+        });
+
+        const secondThread = yield* harness.waitForThread(
+          THREAD_ID,
+          (entry) =>
+            entry.session?.status === "ready" &&
+            entry.session.providerName === "codex" &&
+            entry.session.providerThreadId !== null &&
+            entry.session.runtimeMode === "approval-required" &&
+            entry.messages.some(
+              (message) => message.role === "assistant" && message.text.includes("BETA"),
+            ),
+          180_000,
+        );
+
+        assert.equal(secondThread.session?.providerThreadId, originalProviderThreadId);
+      }),
+    ),
 );
 
 it.live("runs multi-turn file edits and persists checkpoint diffs", () =>

@@ -6,7 +6,7 @@
  *
  * @module ProjectionThreadRepository
  */
-import { IsoDateTime, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
+import { IsoDateTime, ProjectId, RuntimeMode, ThreadId, TurnId } from "@t3tools/contracts";
 import { Option, Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
 
@@ -17,6 +17,7 @@ export const ProjectionThread = Schema.Struct({
   projectId: ProjectId,
   title: Schema.String,
   model: Schema.String,
+  runtimeMode: RuntimeMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   latestTurnId: Schema.NullOr(TurnId),

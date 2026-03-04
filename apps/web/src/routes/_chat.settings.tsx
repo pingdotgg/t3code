@@ -8,7 +8,6 @@ import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
-import { useStore } from "../store";
 import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -30,19 +29,6 @@ const THEME_OPTIONS = [
     value: "dark",
     label: "Dark",
     description: "Always use the dark theme.",
-  },
-] as const;
-
-const RUNTIME_MODE_OPTIONS = [
-  {
-    value: "full-access",
-    label: "Full access",
-    description: "Allow commands to run without confirmation prompts.",
-  },
-  {
-    value: "approval-required",
-    label: "Supervised",
-    description: "Require approval prompts before command execution.",
   },
 ] as const;
 
@@ -120,8 +106,6 @@ function patchCustomModels(provider: ProviderKind, models: string[]) {
 
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
-  const runtimeMode = useStore((store) => store.runtimeMode);
-  const setRuntimeMode = useStore((store) => store.setRuntimeMode);
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
@@ -464,47 +448,6 @@ function SettingsRouteView() {
                         </div>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Runtime Mode</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Select the default execution policy for this client.
-                </p>
-              </div>
-
-              <div className="space-y-2" role="radiogroup" aria-label="Runtime mode preference">
-                {RUNTIME_MODE_OPTIONS.map((option) => {
-                  const selected = runtimeMode === option.value;
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
-                        selected
-                          ? "border-primary/60 bg-primary/8 text-foreground"
-                          : "border-border bg-background text-muted-foreground hover:bg-accent"
-                      }`}
-                      onClick={() => {
-                        setRuntimeMode(option.value);
-                      }}
-                    >
-                      <span className="flex flex-col">
-                        <span className="text-sm font-medium">{option.label}</span>
-                        <span className="text-xs">{option.description}</span>
-                      </span>
-                      {selected ? (
-                        <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
-                          Selected
-                        </span>
-                      ) : null}
-                    </button>
                   );
                 })}
               </div>

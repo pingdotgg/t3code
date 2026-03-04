@@ -114,6 +114,13 @@ describe("ProviderCommandReactor", () => {
         sessionId: asSessionId(`sess-${sessionIndex}`),
         provider,
         status: "ready" as const,
+        runtimeMode:
+          typeof input === "object" &&
+          input !== null &&
+          "runtimeMode" in input &&
+          (input.runtimeMode === "approval-required" || input.runtimeMode === "full-access")
+            ? input.runtimeMode
+            : "full-access",
         ...(model !== undefined ? { model } : {}),
         threadId: ProviderThreadId.makeUnsafe(`provider-thread-${sessionIndex}`),
         resumeCursor: resumeCursor ?? { opaque: `cursor-${sessionIndex}` },
@@ -226,6 +233,7 @@ describe("ProviderCommandReactor", () => {
         projectId: asProjectId("project-1"),
         title: "Thread",
         model: "gpt-5-codex",
+        runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
         createdAt: now,
@@ -497,7 +505,7 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
-  it("restarts the provider session when runtime mode changes", async () => {
+  it("restarts the provider session when runtime mode is updated on the thread", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
 
@@ -522,6 +530,19 @@ describe("ProviderCommandReactor", () => {
 
     await Effect.runPromise(
       harness.engine.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.makeUnsafe("cmd-runtime-mode-set-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 2);
+    await waitFor(() => harness.stopSession.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.makeUnsafe("cmd-turn-start-runtime-mode-2"),
         threadId: ThreadId.makeUnsafe("thread-1"),
@@ -531,13 +552,11 @@ describe("ProviderCommandReactor", () => {
           text: "second",
           attachments: [],
         },
-        runtimeMode: "approval-required",
+        runtimeMode: "full-access",
         createdAt: now,
       }),
     );
 
-    await waitFor(() => harness.stopSession.mock.calls.length === 1);
-    await waitFor(() => harness.startSession.mock.calls.length === 2);
     await waitFor(() => harness.sendTurn.mock.calls.length === 2);
 
     expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ sessionId: asSessionId("sess-1") });
@@ -642,15 +661,9 @@ describe("ProviderCommandReactor", () => {
 
     await Effect.runPromise(
       harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.makeUnsafe("cmd-turn-start-restart-failure-2"),
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.makeUnsafe("cmd-runtime-mode-set-restart-failure"),
         threadId: ThreadId.makeUnsafe("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-restart-failure-2"),
-          role: "user",
-          text: "second",
-          attachments: [],
-        },
         runtimeMode: "approval-required",
         createdAt: now,
       }),

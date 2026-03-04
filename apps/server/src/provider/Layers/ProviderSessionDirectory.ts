@@ -75,6 +75,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
                   threadId: value.threadId,
                   adapterKey: value.adapterKey,
                   providerThreadId: value.providerThreadId,
+                  runtimeMode: value.runtimeMode,
                   status: value.status,
                   resumeCursor: value.resumeCursor,
                   runtimePayload: value.runtimePayload,
@@ -112,6 +113,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
           binding.providerThreadId !== undefined
             ? binding.providerThreadId
             : (existingRuntime?.providerThreadId ?? null),
+        runtimeMode: binding.runtimeMode ?? existingRuntime?.runtimeMode ?? "full-access",
         status: binding.status ?? existingRuntime?.status ?? "running",
         lastSeenAt: now,
         resumeCursor:

@@ -204,6 +204,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         sessionId,
         provider: "codex",
         status: "connecting",
+        runtimeMode: input.runtimeMode,
         model: normalizeCodexModelSlug(input.model),
         cwd: resolvedCwd,
         createdAt: now,

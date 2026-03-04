@@ -166,7 +166,9 @@ describe("ClaudeCodeAdapterLive", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeCodeAdapter;
-      const result = yield* adapter.startSession({ provider: "codex" }).pipe(Effect.result);
+      const result = yield* adapter
+        .startSession({ provider: "codex", runtimeMode: "full-access" })
+        .pipe(Effect.result);
 
       assert.equal(result._tag, "Failure");
       if (result._tag !== "Failure") {
@@ -240,6 +242,7 @@ describe("ClaudeCodeAdapterLive", () => {
       const session = yield* adapter.startSession({
         provider: "claudeCode",
         model: "claude-sonnet-4-5",
+        runtimeMode: "full-access",
       });
 
       const turn = yield* adapter.sendTurn({
@@ -374,6 +377,7 @@ describe("ClaudeCodeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         provider: "claudeCode",
+        runtimeMode: "full-access",
       });
 
       const turn = yield* adapter.sendTurn({
@@ -461,6 +465,7 @@ describe("ClaudeCodeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         provider: "claudeCode",
+        runtimeMode: "full-access",
       });
 
       const turn = yield* adapter.sendTurn({
@@ -529,6 +534,7 @@ describe("ClaudeCodeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         provider: "claudeCode",
+        runtimeMode: "full-access",
       });
       assert.equal(session.threadId, undefined);
 
@@ -679,6 +685,7 @@ describe("ClaudeCodeAdapterLive", () => {
           resumeSessionAt: "assistant-99",
           turnCount: 3,
         },
+        runtimeMode: "full-access",
       });
 
       assert.equal(session.threadId, "resume-thread-1");
@@ -705,6 +712,7 @@ describe("ClaudeCodeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         provider: "claudeCode",
+        runtimeMode: "full-access",
       });
 
       assert.equal(
@@ -727,6 +735,7 @@ describe("ClaudeCodeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         provider: "claudeCode",
+        runtimeMode: "full-access",
       });
 
       const firstTurn = yield* adapter.sendTurn({
@@ -802,7 +811,10 @@ describe("ClaudeCodeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeCodeAdapter;
 
-      const session = yield* adapter.startSession({ provider: "claudeCode" });
+      const session = yield* adapter.startSession({
+        provider: "claudeCode",
+        runtimeMode: "full-access",
+      });
       yield* adapter.sendTurn({
         sessionId: session.sessionId,
         input: "hello",
@@ -841,6 +853,7 @@ describe("ClaudeCodeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         provider: "claudeCode",
+        runtimeMode: "full-access",
       });
       const turn = yield* adapter.sendTurn({
         sessionId: session.sessionId,

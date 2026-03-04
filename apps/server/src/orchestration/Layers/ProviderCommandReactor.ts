@@ -28,6 +28,7 @@ type ProviderIntentEvent = Extract<
   OrchestrationEvent,
   {
     type:
+      | "thread.runtime-mode-set"
       | "thread.turn-start-requested"
       | "thread.turn-interrupt-requested"
       | "thread.approval-response-requested"
@@ -197,7 +198,6 @@ const make = Effect.gen(function* () {
     options?: {
       readonly provider?: ProviderKind;
       readonly model?: string;
-      readonly runtimeMode?: RuntimeMode;
     },
   ) {
     const readModel = yield* orchestrationEngine.getReadModel();
@@ -206,8 +206,7 @@ const make = Effect.gen(function* () {
       return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
     }
 
-    const desiredRuntimeMode =
-      options?.runtimeMode ?? thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+    const desiredRuntimeMode = thread.runtimeMode;
     const currentProvider: ProviderKind | undefined =
       thread.session?.providerName === "codex" ||
       thread.session?.providerName === "claudeCode" ||
@@ -260,8 +259,7 @@ const make = Effect.gen(function* () {
 
     const existingSessionId = thread.session?.providerSessionId;
     if (existingSessionId) {
-      const runtimeModeChanged =
-        options?.runtimeMode !== undefined && options.runtimeMode !== thread.session?.runtimeMode;
+      const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
       const providerChanged = options?.provider !== undefined && options.provider !== currentProvider;
       const activeSession = yield* resolveActiveSession(existingSessionId);
       const sessionModelSwitch =
@@ -316,7 +314,6 @@ const make = Effect.gen(function* () {
     readonly provider?: ProviderKind;
     readonly model?: string;
     readonly effort?: string;
-    readonly runtimeMode: RuntimeMode;
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
@@ -326,7 +323,6 @@ const make = Effect.gen(function* () {
     const sessionId = yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.provider !== undefined ? { provider: input.provider } : {}),
       ...(input.model !== undefined ? { model: input.model } : {}),
-      runtimeMode: input.runtimeMode,
     });
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
@@ -459,7 +455,6 @@ const make = Effect.gen(function* () {
       ...(event.payload.provider !== undefined ? { provider: event.payload.provider } : {}),
       ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
       ...(event.payload.effort !== undefined ? { effort: event.payload.effort } : {}),
-      runtimeMode: event.payload.runtimeMode,
       createdAt: event.payload.createdAt,
     });
   });
@@ -569,6 +564,14 @@ const make = Effect.gen(function* () {
   const processDomainEvent = (event: ProviderIntentEvent) =>
     Effect.gen(function* () {
       switch (event.type) {
+        case "thread.runtime-mode-set": {
+          const thread = yield* resolveThread(event.payload.threadId);
+          if (!thread?.session || thread.session.status === "stopped") {
+            return;
+          }
+          yield* ensureSessionForThread(event.payload.threadId, event.occurredAt);
+          return;
+        }
         case "thread.turn-start-requested":
           yield* processTurnStartRequested(event);
           return;
@@ -608,6 +611,7 @@ const make = Effect.gen(function* () {
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
         if (
+          event.type !== "thread.runtime-mode-set" &&
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.turn-interrupt-requested" &&
           event.type !== "thread.approval-response-requested" &&

@@ -2,7 +2,7 @@ import { ProjectId, ThreadId, TurnId, type OrchestrationReadModel } from "@t3too
 import { describe, expect, it } from "vitest";
 
 import { markThreadUnread, syncServerReadModel, type AppState } from "./store";
-import type { Thread } from "./types";
+import { DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -11,6 +11,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     projectId: ProjectId.makeUnsafe("project-1"),
     title: "Thread",
     model: "gpt-5-codex",
+    runtimeMode: DEFAULT_RUNTIME_MODE,
     session: null,
     messages: [],
     turnDiffSummaries: [],
@@ -38,7 +39,6 @@ function makeState(thread: Thread): AppState {
     ],
     threads: [thread],
     threadsHydrated: true,
-    runtimeMode: "full-access",
   };
 }
 
@@ -48,6 +48,7 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
     projectId: ProjectId.makeUnsafe("project-1"),
     title: "Thread",
     model: "gpt-5.3-codex",
+    runtimeMode: DEFAULT_RUNTIME_MODE,
     branch: null,
     worktreePath: null,
     latestTurn: null,
