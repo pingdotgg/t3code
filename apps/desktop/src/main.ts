@@ -577,11 +577,7 @@ function shouldEnableAutoUpdates(): boolean {
 
 async function checkForUpdates(reason: string): Promise<void> {
   if (isQuitting || !updaterConfigured || updateCheckInFlight) return;
-  if (
-    updateState.status === "downloading" ||
-    updateState.status === "downloaded" ||
-    updateState.status === "available"
-  ) {
+  if (updateState.status === "downloading" || updateState.status === "downloaded") {
     console.info(
       `[desktop-updater] Skipping update check (${reason}) while status=${updateState.status}.`,
     );
