@@ -1,11 +1,11 @@
-import { execFileSync } from "node:child_process";
+import * as ChildProcess from "node:child_process";
 
 export function fixPath(): void {
   if (process.platform !== "darwin") return;
 
   try {
     const shell = process.env.SHELL ?? "/bin/zsh";
-    const result = execFileSync(shell, ["-ilc", "echo -n $PATH"], {
+    const result = ChildProcess.execFileSync(shell, ["-ilc", "echo -n $PATH"], {
       encoding: "utf8",
       timeout: 5000,
     });

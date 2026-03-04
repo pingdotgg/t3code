@@ -23,6 +23,7 @@ import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRe
 import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
 import { ProviderService } from "./provider/Services/ProviderService";
+import { makeEventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
 
 import { TerminalManagerLive } from "./terminal/Layers/Manager";
 import { KeybindingsLive } from "./keybindings";
@@ -41,17 +42,21 @@ export function makeServerProviderLayer(): Layer.Layer<
 > {
   return Effect.gen(function* () {
     const { stateDir } = yield* ServerConfig;
-    const providerLogsDir = path.join(stateDir, "logs", "providers");
-    const codexAdapterLayer = makeCodexAdapterLive({
-      nativeEventLogPath: path.join(providerLogsDir, "provider-native.ndjson"),
-    });
-    const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(Layer.provide(codexAdapterLayer));
+    const providerLogsDir = path.join(stateDir, "logs", "provider");
+    const providerEventLogger = makeEventNdjsonLogger(path.join(providerLogsDir, "events.log"));
     const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
       Layer.provide(ProviderSessionRuntimeRepositoryLive),
     );
-    return makeProviderServiceLive({
-      canonicalEventLogPath: path.join(providerLogsDir, "provider-canonical.ndjson"),
-    }).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer));
+    const codexAdapterLayer = makeCodexAdapterLive(
+      providerEventLogger ? { nativeEventLogger: providerEventLogger } : undefined,
+    );
+    const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
+      Layer.provide(codexAdapterLayer),
+      Layer.provideMerge(providerSessionDirectoryLayer),
+    );
+    return makeProviderServiceLive(
+      providerEventLogger ? { canonicalEventLogger: providerEventLogger } : undefined,
+    ).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer));
   }).pipe(Layer.unwrap);
 }
 

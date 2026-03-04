@@ -12,7 +12,7 @@ export default defineConfig([
     ...shared,
     entry: ["src/main.ts"],
     clean: true,
-    noExternal: ["@t3tools/contracts"],
+    noExternal: (id) => id.startsWith("@t3tools/"),
   },
   {
     ...shared,

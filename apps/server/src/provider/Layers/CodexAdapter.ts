@@ -17,7 +17,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
 } from "@t3tools/contracts";
-import { Effect, FileSystem, Layer, Queue, Schema, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Queue, Schema, Stream } from "effect";
 
 import {
   ProviderAdapterProcessError,
@@ -28,10 +28,11 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { CodexAdapter, type CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import { CodexAppServerManager } from "../../codexAppServerManager.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "codex" as const;
 
@@ -39,6 +40,7 @@ export interface CodexAdapterLiveOptions {
   readonly manager?: CodexAppServerManager;
   readonly makeManager?: () => CodexAppServerManager;
   readonly nativeEventLogPath?: string;
+  readonly nativeEventLogger?: EventNdjsonLogger;
 }
 
 function toMessage(cause: unknown, fallback: string): string {
@@ -430,10 +432,12 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const serverConfig = yield* Effect.service(ServerConfig);
+    const directory = yield* ProviderSessionDirectory;
     const nativeEventLogger =
-      options?.nativeEventLogPath !== undefined
+      options?.nativeEventLogger ??
+      (options?.nativeEventLogPath !== undefined
         ? makeEventNdjsonLogger(options.nativeEventLogPath)
-        : undefined;
+        : undefined);
 
     const manager = yield* Effect.acquireRelease(
       Effect.sync(() => {
@@ -580,11 +584,30 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
 
     yield* Effect.acquireRelease(
       Effect.sync(() => {
+        const writeNativeEvent = (event: ProviderEvent) => {
+          if (!nativeEventLogger) {
+            return;
+          }
+          const loggedAt = new Date().toISOString();
+          const resolveOrchestrationThreadId = Effect.catch(
+            directory.getThreadId(event.sessionId).pipe(Effect.map(Option.getOrUndefined)),
+            () => Effect.void,
+          );
+          const writeLogEffect = Effect.tap(resolveOrchestrationThreadId, (orchestrationThreadId) =>
+            Effect.sync(() => {
+              nativeEventLogger.write({
+                observedAt: loggedAt,
+                stream: "native",
+                orchestrationThreadId: orchestrationThreadId ?? null,
+                event,
+              });
+            }),
+          );
+          void Effect.runPromise(writeLogEffect);
+        };
+
         const listener = (event: ProviderEvent) => {
-          nativeEventLogger?.write({
-            observedAt: new Date().toISOString(),
-            event,
-          });
+          writeNativeEvent(event);
           Queue.offerAllUnsafe(runtimeEventQueue, mapToRuntimeEvents(event));
         };
         manager.on("event", listener);

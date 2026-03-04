@@ -8,6 +8,10 @@
       "types": "./src/git.ts",
       "import": "./src/git.ts"
     },
+    "./logging": {
+      "types": "./src/logging.ts",
+      "import": "./src/logging.ts"
+    },
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"

@@ -15,7 +15,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterAll, assert, it, vi } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
 
-import { Effect, Fiber, Layer, Stream } from "effect";
+import { Effect, Fiber, Layer, Option, Stream } from "effect";
 
 import {
   CodexAppServerManager,
@@ -24,6 +24,7 @@ import {
 import { ServerConfig } from "../../config.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import { CodexAdapter } from "../Services/CodexAdapter.ts";
+import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import { makeCodexAdapterLive } from "./CodexAdapter.ts";
 
 const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
@@ -121,10 +122,21 @@ class FakeCodexManager extends CodexAppServerManager {
   }
 }
 
+const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory, {
+  upsert: () => Effect.void,
+  getProvider: () =>
+    Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in test")),
+  getBinding: () => Effect.succeed(Option.none()),
+  getThreadId: () => Effect.succeed(Option.none()),
+  remove: () => Effect.void,
+  listSessionIds: () => Effect.succeed([]),
+});
+
 const validationManager = new FakeCodexManager();
 const validationLayer = it.layer(
   makeCodexAdapterLive({ manager: validationManager }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
 );
@@ -159,6 +171,7 @@ sessionErrorManager.sendTurnImpl.mockImplementation(async () => {
 const sessionErrorLayer = it.layer(
   makeCodexAdapterLive({ manager: sessionErrorManager }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
 );
@@ -195,6 +208,7 @@ const lifecycleManager = new FakeCodexManager();
 const lifecycleLayer = it.layer(
   makeCodexAdapterLive({ manager: lifecycleManager }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
 );
