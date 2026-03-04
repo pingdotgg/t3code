@@ -143,6 +143,26 @@ function runtimeErrorMessageFromEvent(event: ProviderRuntimeEvent): string | und
   return payloadMessage ?? legacyMessage;
 }
 
+function orchestrationSessionStatusFromRuntimeState(
+  state: ProviderRuntimeEvent extends { payload: { state: infer T } } ? T : never,
+): "starting" | "running" | "ready" | "interrupted" | "stopped" | "error" {
+  switch (state) {
+    case "starting":
+      return "starting";
+    case "running":
+    case "waiting":
+      return "running";
+    case "ready":
+      return "ready";
+    case "interrupted":
+      return "interrupted";
+    case "stopped":
+      return "stopped";
+    case "error":
+      return "error";
+  }
+}
+
 function requestKindFromCanonicalRequestType(
   requestType: string | undefined,
 ): "command" | "file-change" | undefined {
@@ -617,6 +637,7 @@ const make = Effect.gen(function* () {
 
       if (
         event.type === "session.started" ||
+        event.type === "session.state.changed" ||
         event.type === "session.exited" ||
         event.type === "thread.started" ||
         event.type === "turn.started" ||
@@ -636,6 +657,8 @@ const make = Effect.gen(function* () {
           providerThreadIdFromEvent ?? scopedSessionProviderThreadId ?? null;
         const status = (() => {
           switch (event.type) {
+            case "session.state.changed":
+              return orchestrationSessionStatusFromRuntimeState(event.payload.state);
             case "turn.started":
               return "running";
             case "session.exited":
@@ -650,9 +673,11 @@ const make = Effect.gen(function* () {
           }
         })();
         const lastError =
-          event.type === "turn.completed" && runtimeTurnState(event) === "failed"
-            ? (runtimeTurnErrorMessage(event) ?? thread.session?.lastError ?? "Turn failed")
-            : status === "ready"
+          event.type === "session.state.changed" && event.payload.state === "error"
+            ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")
+            : event.type === "turn.completed" && runtimeTurnState(event) === "failed"
+              ? (runtimeTurnErrorMessage(event) ?? thread.session?.lastError ?? "Turn failed")
+              : status === "ready"
               ? null
               : (thread.session?.lastError ?? null);
 
