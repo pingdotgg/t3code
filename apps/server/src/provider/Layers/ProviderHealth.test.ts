@@ -79,6 +79,56 @@ describe("checkProviderStatusesOnStartup", () => {
     ]);
   });
 
+  it("returns unauthenticated when auth probe JSON array includes authenticated=false", async () => {
+    const status = await checkProviderStatusesOnStartup(async (_command, args) => {
+      if (args.join(" ") === "--version") {
+        return result({ stdout: "codex 1.0.0\n" });
+      }
+      if (args.join(" ") === "auth status --json") {
+        return result({
+          stdout: '[{"authenticated":false}]\n',
+        });
+      }
+      throw new Error(`Unexpected command: ${args.join(" ")}`);
+    });
+
+    expect(status).toEqual([
+      expect.objectContaining({
+        provider: "codex",
+        status: "error",
+        available: true,
+        authStatus: "unauthenticated",
+        message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+      }),
+    ]);
+  });
+
+  it("returns warning when auth probe JSON array has no auth marker", async () => {
+    const status = await checkProviderStatusesOnStartup(async (_command, args) => {
+      if (args.join(" ") === "--version") {
+        return result({ stdout: "codex 1.0.0\n" });
+      }
+      if (args.join(" ") === "auth status --json") {
+        return result({
+          code: 0,
+          stdout: '[{"ok":true}]\n',
+        });
+      }
+      throw new Error(`Unexpected command: ${args.join(" ")}`);
+    });
+
+    expect(status).toEqual([
+      expect.objectContaining({
+        provider: "codex",
+        status: "warning",
+        available: true,
+        authStatus: "unknown",
+        message:
+          "Could not verify Codex authentication status from JSON output (missing auth marker).",
+      }),
+    ]);
+  });
+
   it("returns warning when auth status command is unsupported", async () => {
     const status = await checkProviderStatusesOnStartup(async (_command, args) => {
       if (args.join(" ") === "--version") {

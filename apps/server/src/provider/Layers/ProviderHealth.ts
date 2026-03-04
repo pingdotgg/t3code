@@ -54,7 +54,17 @@ function detailFromResult(result: ProcessRunResult): string | undefined {
 }
 
 function extractAuthBoolean(value: unknown): boolean | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const nested = extractAuthBoolean(entry);
+      if (nested !== undefined) {
+        return nested;
+      }
+    }
+    return undefined;
+  }
+
+  if (!value || typeof value !== "object") {
     return undefined;
   }
 
@@ -122,23 +132,41 @@ function parseAuthStatusFromOutput(
     (() => {
       const trimmed = result.stdout.trim();
       if (!trimmed || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) {
-        return undefined;
+        return {
+          attemptedJsonParse: false as const,
+          auth: undefined as boolean | undefined,
+        };
       }
       try {
-        return extractAuthBoolean(JSON.parse(trimmed));
+        return {
+          attemptedJsonParse: true as const,
+          auth: extractAuthBoolean(JSON.parse(trimmed)),
+        };
       } catch {
-        return undefined;
+        return {
+          attemptedJsonParse: false as const,
+          auth: undefined as boolean | undefined,
+        };
       }
-    })() ?? undefined;
+    })();
 
-  if (parsedAuth === true) {
+  if (parsedAuth.auth === true) {
     return { status: "ready", authStatus: "authenticated" };
   }
-  if (parsedAuth === false) {
+  if (parsedAuth.auth === false) {
     return {
       status: "error",
       authStatus: "unauthenticated",
       message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+    };
+  }
+
+  if (parsedAuth.attemptedJsonParse) {
+    return {
+      status: "warning",
+      authStatus: "unknown",
+      message:
+        "Could not verify Codex authentication status from JSON output (missing auth marker).",
     };
   }
 
@@ -240,7 +268,3 @@ const makeProviderHealth = (run: CommandRunner = runProcess) =>
   });
 
 export const ProviderHealthLive = Layer.effect(ProviderHealth, makeProviderHealth());
-
-export function makeProviderHealthLive(run?: CommandRunner) {
-  return Layer.effect(ProviderHealth, makeProviderHealth(run));
-}
