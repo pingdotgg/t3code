@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess as ChildProcessHandle, spawn, spawnSync } from "node:child_process";
 
 export interface ProcessRunOptions {
   cwd?: string | undefined;
@@ -37,11 +37,21 @@ function normalizeSpawnError(command: string, args: readonly string[], error: un
   return new Error(`Failed to run ${commandLabel(command, args)}: ${error.message}`);
 }
 
+function isWindowsCommandNotFound(code: number | null, stderr: string): boolean {
+  if (process.platform !== "win32") return false;
+  if (code === 9009) return true;
+  return /is not recognized as an internal or external command/i.test(stderr);
+}
+
 function normalizeExitError(
   command: string,
   args: readonly string[],
   result: ProcessRunResult,
 ): Error {
+  if (isWindowsCommandNotFound(result.code, result.stderr)) {
+    return new Error(`Command not found: ${command}`);
+  }
+
   const reason = result.timedOut
     ? "timed out"
     : `failed (code=${result.code ?? "null"}, signal=${result.signal ?? "null"})`;
@@ -69,6 +79,23 @@ function normalizeBufferError(
 }
 
 const DEFAULT_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
+
+/**
+ * On Windows with `shell: true`, `child.kill()` only terminates the `cmd.exe`
+ * wrapper, leaving the actual command running. Use `taskkill /T` to kill the
+ * entire process tree instead.
+ */
+function killChild(child: ChildProcessHandle, signal: NodeJS.Signals = "SIGTERM"): void {
+  if (process.platform === "win32" && child.pid !== undefined) {
+    try {
+      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+      return;
+    } catch {
+      // fallback to direct kill
+    }
+  }
+  child.kill(signal);
+}
 
 function appendChunkWithinLimit(
   target: string,
@@ -127,9 +154,9 @@ export async function runProcess(
 
     const timeoutTimer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
+      killChild(child, "SIGTERM");
       forceKillTimer = setTimeout(() => {
-        child.kill("SIGKILL");
+        killChild(child, "SIGKILL");
       }, 1_000);
     }, timeoutMs);
 
@@ -144,7 +171,7 @@ export async function runProcess(
     };
 
     const fail = (error: Error): void => {
-      child.kill("SIGTERM");
+      killChild(child, "SIGTERM");
       finalize(() => {
         reject(error);
       });

@@ -1,4 +1,5 @@
-import { assert, it } from "@effect/vitest";
+import assert from "node:assert/strict";
+import { it } from "@effect/vitest";
 import { Effect, Layer, Sink, Stream } from "effect";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";

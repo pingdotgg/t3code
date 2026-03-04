@@ -1,4 +1,4 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import readline from "node:readline";
@@ -103,6 +103,23 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "unknown thread",
   "does not exist",
 ];
+
+/**
+ * On Windows with `shell: true`, `child.kill()` only terminates the `cmd.exe`
+ * wrapper, leaving the actual command running. Use `taskkill /T` to kill the
+ * entire process tree instead.
+ */
+function killChildTree(child: ChildProcessWithoutNullStreams): void {
+  if (process.platform === "win32" && child.pid !== undefined) {
+    try {
+      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+      return;
+    } catch {
+      // fallback to direct kill
+    }
+  }
+  child.kill();
+}
 
 export function normalizeCodexModelSlug(
   model: string | undefined | null,
@@ -476,7 +493,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     context.output.close();
 
     if (!context.child.killed) {
-      context.child.kill();
+      killChildTree(context.child);
     }
 
     this.updateSession(context, {
