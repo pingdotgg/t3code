@@ -45,6 +45,20 @@ const asProviderThreadId = (value: string): ProviderThreadId => ProviderThreadId
 const asProviderTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
+type LegacyProviderRuntimeEvent = {
+  readonly type: string;
+  readonly eventId: EventId;
+  readonly provider: "codex" | "claudeCode" | "cursor";
+  readonly sessionId: string;
+  readonly createdAt: string;
+  readonly threadId?: string | undefined;
+  readonly turnId?: string | undefined;
+  readonly itemId?: string | undefined;
+  readonly requestId?: string | undefined;
+  readonly payload?: unknown | undefined;
+  readonly [key: string]: unknown;
+};
+
 function createProviderServiceHarness(
   cwd: string,
   hasSession = true,
@@ -86,8 +100,8 @@ function createProviderServiceHarness(
     streamEvents: Stream.fromPubSub(runtimeEventPubSub),
   };
 
-  const emit = (event: ProviderRuntimeEvent): void => {
-    Effect.runSync(PubSub.publish(runtimeEventPubSub, event));
+  const emit = (event: LegacyProviderRuntimeEvent): void => {
+    Effect.runSync(PubSub.publish(runtimeEventPubSub, event as unknown as ProviderRuntimeEvent));
   };
 
   return {
@@ -363,7 +377,7 @@ describe("CheckpointReactor", () => {
       createdAt: new Date().toISOString(),
       threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
       turnId: asProviderTurnId("turn-1"),
-      status: "completed",
+      payload: { state: "completed" },
     });
 
     await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
@@ -443,7 +457,7 @@ describe("CheckpointReactor", () => {
       createdAt: new Date().toISOString(),
       threadId: ProviderThreadId.makeUnsafe("provider-thread-aux"),
       turnId: asProviderTurnId("turn-aux"),
-      status: "completed",
+      payload: { state: "completed" },
     });
 
     await Effect.runPromise(Effect.sleep("40 millis"));
@@ -461,7 +475,7 @@ describe("CheckpointReactor", () => {
       createdAt: new Date().toISOString(),
       threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
       turnId: asProviderTurnId("turn-main"),
-      status: "completed",
+      payload: { state: "completed" },
     });
 
     const thread = await waitForThread(
@@ -522,7 +536,7 @@ describe("CheckpointReactor", () => {
       createdAt: new Date().toISOString(),
       threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
       turnId: asProviderTurnId("turn-claude-1"),
-      status: "completed",
+      payload: { state: "completed" },
     });
 
     await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
@@ -570,7 +584,7 @@ describe("CheckpointReactor", () => {
       createdAt: new Date().toISOString(),
       threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
       turnId: asProviderTurnId("turn-missing-baseline"),
-      status: "completed",
+      payload: { state: "completed" },
     });
 
     await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
@@ -662,7 +676,7 @@ describe("CheckpointReactor", () => {
       createdAt: new Date().toISOString(),
       threadId: ProviderThreadId.makeUnsafe("provider-thread-missing"),
       turnId: asProviderTurnId("turn-missing-cwd"),
-      status: "completed",
+      payload: { state: "completed" },
     });
 
     await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
@@ -678,7 +692,7 @@ describe("CheckpointReactor", () => {
     ).toBe("v2\n");
   });
 
-  it("maps runtime checkpoint.captured into thread.turn.diff.complete when missing in read model", async () => {
+  it("ignores non-v2 checkpoint.captured runtime events", async () => {
     const harness = await createHarness();
     const createdAt = new Date().toISOString();
 
@@ -715,11 +729,11 @@ describe("CheckpointReactor", () => {
       status: "completed",
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
-      entry.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 3),
-    );
-    expect(thread.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 3)).toBe(
-      true,
+    await Effect.runPromise(Effect.sleep("40 millis"));
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(thread?.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 3)).toBe(
+      false,
     );
   });
 
@@ -757,15 +771,14 @@ describe("CheckpointReactor", () => {
     );
 
     harness.provider.emit({
-      type: "checkpoint.captured",
+      type: "turn.completed",
       eventId: EventId.makeUnsafe("evt-runtime-capture-failure"),
       provider: "codex",
       sessionId: asSessionId("sess-1"),
       createdAt: new Date().toISOString(),
       threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
       turnId: asProviderTurnId("turn-runtime-failure"),
-      turnCount: 1,
-      status: "completed",
+      payload: { state: "completed" },
     });
 
     harness.provider.emit({

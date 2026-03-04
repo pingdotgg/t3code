@@ -130,7 +130,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
-    const respondToRequest = vi.fn((_: unknown) => Effect.void);
+    const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const stopSession = vi.fn((input: unknown) =>
       Effect.sync(() => {
         const sessionId =
@@ -777,7 +777,7 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
-  it("surfaces stale provider approval request failures and resolves stale pending approvals", async () => {
+  it("surfaces stale provider approval request failures without faking approval resolution", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
     harness.respondToRequest.mockImplementation(() =>
@@ -869,7 +869,7 @@ describe("ProviderCommandReactor", () => {
         activity.payload !== null &&
         (activity.payload as Record<string, unknown>).requestId === "approval-request-1",
     );
-    expect(resolvedActivity).toBeDefined();
+    expect(resolvedActivity).toBeUndefined();
   });
 
   it("reacts to thread.session.stop by stopping provider session and clearing thread session state", async () => {

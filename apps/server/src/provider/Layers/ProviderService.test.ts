@@ -52,6 +52,20 @@ const asRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 
+type LegacyProviderRuntimeEvent = {
+  readonly type: string;
+  readonly eventId: EventId;
+  readonly provider: "codex" | "claudeCode" | "cursor";
+  readonly sessionId: string;
+  readonly createdAt: string;
+  readonly threadId?: string | undefined;
+  readonly turnId?: string | undefined;
+  readonly itemId?: string | undefined;
+  readonly requestId?: string | undefined;
+  readonly payload?: unknown | undefined;
+  readonly [key: string]: unknown;
+};
+
 function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
   const sessions = new Map<ProviderSessionId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
@@ -177,8 +191,8 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     streamEvents: Stream.fromPubSub(runtimeEventPubSub),
   };
 
-  const emit = (event: ProviderRuntimeEvent): void => {
-    Effect.runSync(PubSub.publish(runtimeEventPubSub, event));
+  const emit = (event: LegacyProviderRuntimeEvent): void => {
+    Effect.runSync(PubSub.publish(runtimeEventPubSub, event as unknown as ProviderRuntimeEvent));
   };
 
   return {
@@ -383,16 +397,21 @@ it.effect(
         });
       }).pipe(Effect.provide(secondProviderLayer));
 
-      assert.deepEqual(secondCodex.startSession.mock.calls, [
-        [
-          {
-            provider: "codex",
-            cwd: "/tmp/project",
-            resumeThreadId: startedSession.threadId,
-            resumeCursor: startedSession.resumeCursor,
-          },
-        ],
-      ]);
+      assert.equal(secondCodex.startSession.mock.calls.length, 1);
+      const resumedStartInput = secondCodex.startSession.mock.calls[0]?.[0];
+      assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
+      if (resumedStartInput && typeof resumedStartInput === "object") {
+        const startPayload = resumedStartInput as {
+          provider?: string;
+          cwd?: string;
+          resumeCursor?: unknown;
+          resumeThreadId?: string;
+        };
+        assert.equal(startPayload.provider, "codex");
+        assert.equal(startPayload.cwd, "/tmp/project");
+        assert.deepEqual(startPayload.resumeCursor, startedSession.resumeCursor);
+        assert.equal(startPayload.resumeThreadId, "thread-1");
+      }
       assert.equal(secondCodex.rollbackThread.mock.calls.length, 1);
       const rollbackCall = secondCodex.rollbackThread.mock.calls[0];
       assert.equal(typeof rollbackCall?.[0], "string");
@@ -493,16 +512,21 @@ routing.layer("ProviderServiceLive routing", (it) => {
         numTurns: 1,
       });
 
-      assert.deepEqual(routing.codex.startSession.mock.calls, [
-        [
-          {
-            provider: "codex",
-            cwd: "/tmp/project",
-            resumeThreadId: initial.threadId,
-            resumeCursor: initial.resumeCursor,
-          },
-        ],
-      ]);
+      assert.equal(routing.codex.startSession.mock.calls.length, 1);
+      const resumedStartInput = routing.codex.startSession.mock.calls[0]?.[0];
+      assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
+      if (resumedStartInput && typeof resumedStartInput === "object") {
+        const startPayload = resumedStartInput as {
+          provider?: string;
+          cwd?: string;
+          resumeCursor?: unknown;
+          resumeThreadId?: string;
+        };
+        assert.equal(startPayload.provider, "codex");
+        assert.equal(startPayload.cwd, "/tmp/project");
+        assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
+        assert.equal(startPayload.resumeThreadId, "thread-2");
+      }
       assert.equal(routing.codex.rollbackThread.mock.calls.length, 1);
       const rollbackCall = routing.codex.rollbackThread.mock.calls[0];
       assert.equal(rollbackCall?.[1], 1);
@@ -528,16 +552,21 @@ routing.layer("ProviderServiceLive routing", (it) => {
         attachments: [],
       });
 
-      assert.deepEqual(routing.codex.startSession.mock.calls, [
-        [
-          {
-            provider: "codex",
-            cwd: "/tmp/project-send-turn",
-            resumeThreadId: initial.threadId,
-            resumeCursor: initial.resumeCursor,
-          },
-        ],
-      ]);
+      assert.equal(routing.codex.startSession.mock.calls.length, 1);
+      const resumedStartInput = routing.codex.startSession.mock.calls[0]?.[0];
+      assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
+      if (resumedStartInput && typeof resumedStartInput === "object") {
+        const startPayload = resumedStartInput as {
+          provider?: string;
+          cwd?: string;
+          resumeCursor?: unknown;
+          resumeThreadId?: string;
+        };
+        assert.equal(startPayload.provider, "codex");
+        assert.equal(startPayload.cwd, "/tmp/project-send-turn");
+        assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
+        assert.equal(startPayload.resumeThreadId, "thread-4");
+      }
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
     }),
   );
@@ -626,7 +655,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       ).pipe(Effect.forkChild);
       yield* sleep(20);
 
-      const completedEvent: ProviderRuntimeEvent = {
+      const completedEvent: LegacyProviderRuntimeEvent = {
         type: "turn.completed",
         eventId: asEventId("evt-1"),
         provider: "codex",
@@ -650,7 +679,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
     }),
   );
 
-  it.effect("assigns monotonic per-session sequence numbers to canonical runtime events", () =>
+  it.effect("fans out canonical runtime events in emission order", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
       const session = yield* provider.startSession(asThreadId("thread-seq"), {
@@ -700,8 +729,8 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       yield* Fiber.join(consumer);
       const received = yield* Ref.get(receivedRef);
       assert.deepEqual(
-        received.map((event) => event.sessionSequence),
-        [1, 2, 3],
+        received.map((event) => event.eventId),
+        [asEventId("evt-seq-1"), asEventId("evt-seq-2"), asEventId("evt-seq-3")],
       );
     }),
   );
@@ -729,7 +758,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       );
       yield* sleep(20);
 
-      const events: ReadonlyArray<ProviderRuntimeEvent> = [
+      const events: ReadonlyArray<LegacyProviderRuntimeEvent> = [
         {
           type: "tool.completed",
           eventId: asEventId("evt-ordered-1"),

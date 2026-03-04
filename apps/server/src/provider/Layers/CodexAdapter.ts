@@ -11,10 +11,16 @@ import {
   type CanonicalRequestType,
   type ProviderEvent,
   type ProviderRuntimeEvent,
+  RuntimeItemId,
+  RuntimeRequestId,
+  RuntimeSessionId,
   ProviderApprovalDecision,
+  ProviderItemId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { Effect, FileSystem, Layer, Option, Queue, Schema, Stream } from "effect";
 
@@ -278,7 +284,27 @@ function contentStreamKindFromMethod(
   }
 }
 
-function eventRawSource(event: ProviderEvent): ProviderRuntimeEvent["raw"]["source"] {
+function asRuntimeSessionId(sessionId: ProviderSessionId): RuntimeSessionId {
+  return RuntimeSessionId.makeUnsafe(sessionId);
+}
+
+function asRuntimeThreadId(threadId: ProviderThreadId): ThreadId {
+  return ThreadId.makeUnsafe(threadId);
+}
+
+function asRuntimeTurnId(turnId: ProviderTurnId): TurnId {
+  return TurnId.makeUnsafe(turnId);
+}
+
+function asRuntimeItemId(itemId: ProviderItemId): RuntimeItemId {
+  return RuntimeItemId.makeUnsafe(itemId);
+}
+
+function asRuntimeRequestId(requestId: string): RuntimeRequestId {
+  return RuntimeRequestId.makeUnsafe(requestId);
+}
+
+function eventRawSource(event: ProviderEvent): NonNullable<ProviderRuntimeEvent["raw"]>["source"] {
   return event.kind === "request" ? "codex.app-server.request" : "codex.app-server.notification";
 }
 
@@ -301,12 +327,12 @@ function runtimeEventBase(event: ProviderEvent): Omit<ProviderRuntimeEvent, "typ
   return {
     eventId: event.id,
     provider: event.provider,
-    sessionId: event.sessionId,
+    sessionId: asRuntimeSessionId(event.sessionId),
     createdAt: event.createdAt,
-    ...(event.threadId ? { threadId: event.threadId } : {}),
-    ...(event.turnId ? { turnId: event.turnId } : {}),
-    ...(event.itemId ? { itemId: event.itemId } : {}),
-    ...(event.requestId ? { requestId: event.requestId } : {}),
+    ...(event.threadId ? { threadId: asRuntimeThreadId(event.threadId) } : {}),
+    ...(event.turnId ? { turnId: asRuntimeTurnId(event.turnId) } : {}),
+    ...(event.itemId ? { itemId: asRuntimeItemId(event.itemId) } : {}),
+    ...(event.requestId ? { requestId: asRuntimeRequestId(event.requestId) } : {}),
     ...(refs ? { providerRefs: refs } : {}),
     raw: {
       source: eventRawSource(event),
@@ -541,7 +567,7 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
     return [
       {
         ...runtimeEventBase(event),
-        turnId,
+        turnId: asRuntimeTurnId(turnId),
         type: "turn.started",
         payload: {
           ...(asString(turn?.model) ? { model: asString(turn?.model) } : {}),

@@ -1234,16 +1234,18 @@ describe("WebSocket Server", () => {
       return event.type === "thread.session-set";
     });
 
-    emitRuntimeEvent({
-      type: "message.delta",
-      eventId: asEventId("evt-ws-runtime-message-delta"),
-      provider: "codex",
-      sessionId,
-      createdAt: new Date().toISOString(),
-      turnId: asProviderTurnId("turn-1"),
-      itemId: asProviderItemId("item-1"),
-      delta: "hello from runtime",
-    });
+    emitRuntimeEvent(
+      {
+        type: "message.delta",
+        eventId: asEventId("evt-ws-runtime-message-delta"),
+        provider: "codex",
+        sessionId,
+        createdAt: new Date().toISOString(),
+        turnId: asProviderTurnId("turn-1"),
+        itemId: asProviderItemId("item-1"),
+        delta: "hello from runtime",
+      } as unknown as ProviderRuntimeEvent,
+    );
 
     const domainPush = await waitForPush(ws, ORCHESTRATION_WS_CHANNELS.domainEvent, (push) => {
       const event = push.data as { type?: string; payload?: { messageId?: string; text?: string } };
