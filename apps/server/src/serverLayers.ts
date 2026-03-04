@@ -105,7 +105,11 @@ export function makeServerRuntimeServicesLayer() {
   );
 
   const terminalLayer = TerminalManagerLive.pipe(
-    Layer.provide(typeof Bun !== "undefined" ? BunPtyAdapterLive : NodePtyAdapterLive),
+    Layer.provide(
+      typeof Bun !== "undefined" && process.platform !== "win32"
+        ? BunPtyAdapterLive
+        : NodePtyAdapterLive,
+    ),
   );
 
   const gitManagerLayer = GitManagerLive.pipe(

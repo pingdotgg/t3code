@@ -22,8 +22,8 @@ describe("checkProviderStatusesOnStartup", () => {
       if (args.join(" ") === "--version") {
         return result({ stdout: "codex 1.0.0\n" });
       }
-      if (args.join(" ") === "auth status --json") {
-        return result({ stdout: '{"authenticated":true}\n' });
+      if (args.join(" ") === "login status") {
+        return result({ stdout: "Logged in\n" });
       }
       throw new Error(`Unexpected command: ${args.join(" ")}`);
     });
@@ -59,7 +59,7 @@ describe("checkProviderStatusesOnStartup", () => {
       if (args.join(" ") === "--version") {
         return result({ stdout: "codex 1.0.0\n" });
       }
-      if (args.join(" ") === "auth status --json") {
+      if (args.join(" ") === "login status") {
         return result({
           code: 1,
           stderr: "Not logged in. Run codex login.",
@@ -79,14 +79,15 @@ describe("checkProviderStatusesOnStartup", () => {
     ]);
   });
 
-  it("returns unauthenticated when auth probe JSON array includes authenticated=false", async () => {
+  it("returns unauthenticated when login status output includes 'not logged in'", async () => {
     const status = await checkProviderStatusesOnStartup(async (_command, args) => {
       if (args.join(" ") === "--version") {
         return result({ stdout: "codex 1.0.0\n" });
       }
-      if (args.join(" ") === "auth status --json") {
+      if (args.join(" ") === "login status") {
         return result({
-          stdout: '[{"authenticated":false}]\n',
+          code: 1,
+          stdout: "Not logged in\n",
         });
       }
       throw new Error(`Unexpected command: ${args.join(" ")}`);
@@ -103,41 +104,15 @@ describe("checkProviderStatusesOnStartup", () => {
     ]);
   });
 
-  it("returns warning when auth probe JSON array has no auth marker", async () => {
+  it("returns warning when login status command is unsupported", async () => {
     const status = await checkProviderStatusesOnStartup(async (_command, args) => {
       if (args.join(" ") === "--version") {
         return result({ stdout: "codex 1.0.0\n" });
       }
-      if (args.join(" ") === "auth status --json") {
-        return result({
-          code: 0,
-          stdout: '[{"ok":true}]\n',
-        });
-      }
-      throw new Error(`Unexpected command: ${args.join(" ")}`);
-    });
-
-    expect(status).toEqual([
-      expect.objectContaining({
-        provider: "codex",
-        status: "warning",
-        available: true,
-        authStatus: "unknown",
-        message:
-          "Could not verify Codex authentication status from JSON output (missing auth marker).",
-      }),
-    ]);
-  });
-
-  it("returns warning when auth status command is unsupported", async () => {
-    const status = await checkProviderStatusesOnStartup(async (_command, args) => {
-      if (args.join(" ") === "--version") {
-        return result({ stdout: "codex 1.0.0\n" });
-      }
-      if (args.join(" ") === "auth status --json") {
+      if (args.join(" ") === "login status") {
         return result({
           code: 2,
-          stderr: "error: unknown command 'auth'",
+          stderr: "error: unknown command 'login'",
         });
       }
       throw new Error(`Unexpected command: ${args.join(" ")}`);
