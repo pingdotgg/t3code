@@ -812,17 +812,20 @@ export default function Sidebar() {
     }
 
     let disposed = false;
+    let receivedSubscriptionUpdate = false;
+    const unsubscribe = bridge.onUpdateState((nextState) => {
+      if (disposed) return;
+      receivedSubscriptionUpdate = true;
+      setDesktopUpdateState(nextState);
+    });
+
     void bridge
       .getUpdateState()
       .then((nextState) => {
-        if (disposed) return;
+        if (disposed || receivedSubscriptionUpdate) return;
         setDesktopUpdateState(nextState);
       })
       .catch(() => undefined);
-
-    const unsubscribe = bridge.onUpdateState((nextState) => {
-      setDesktopUpdateState(nextState);
-    });
 
     return () => {
       disposed = true;
