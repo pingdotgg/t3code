@@ -10,8 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:browser": "playwright test -c playwright.config.ts",
-    "test:browser:install": "playwright install chromium"
+    "test:browser": "vitest run --config vitest.browser.config.ts",
+    "test:browser:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",
@@ -38,13 +38,14 @@
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",
-    "@playwright/test": "^1.58.2",
     "@tailwindcss/vite": "^4.0.0",
     "@tanstack/router-plugin": "^1.161.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.1.4",
+    "@vitest/browser-playwright": "^4.0.18",
     "babel-plugin-react-compiler": "^19.0.0-beta-e552027-20250112",
+    "playwright": "^1.58.2",
     "tailwindcss": "^4.0.0",
     "typescript": "catalog:",
     "vite": "^8.0.0-beta.12",

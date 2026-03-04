@@ -14,3 +14,4 @@ release/
 .t3
 apps/web/.playwright
 apps/web/playwright-report
+apps/web/src/components/__screenshots__
