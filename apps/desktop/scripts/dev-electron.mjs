@@ -14,6 +14,7 @@ const watchedDirectories = [
 ];
 const forcedShutdownTimeoutMs = 1_500;
 const restartDebounceMs = 120;
+const childTreeGracePeriodMs = 1_200;
 
 await waitOn({
   resources: [`tcp:${port}`, ...requiredFiles.map((filePath) => `file:${filePath}`)],
@@ -183,9 +184,10 @@ async function shutdown(exitCode) {
 
   await stopApp();
   killChildTree("TERM");
-  setTimeout(() => {
-    killChildTree("KILL");
-  }, 1_200).unref();
+  await new Promise((resolve) => {
+    setTimeout(resolve, childTreeGracePeriodMs);
+  });
+  killChildTree("KILL");
 
   process.exit(exitCode);
 }
