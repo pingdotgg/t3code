@@ -16,10 +16,9 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderApprovalDecision,
-  ProviderApprovalPolicy,
   ProviderKind,
   ProviderRequestKind,
-  ProviderSandboxMode,
+  RuntimeMode,
   TurnCountRange,
 } from "./orchestration";
 
@@ -80,8 +79,7 @@ export const ProviderSessionStartInput = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyStringSchema),
   resumeCursor: Schema.optional(Schema.Unknown),
   providerOptions: Schema.optional(ProviderStartOptions),
-  approvalPolicy: Schema.optional(ProviderApprovalPolicy),
-  sandboxMode: Schema.optional(ProviderSandboxMode),
+  runtimeMode: Schema.optional(RuntimeMode),
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 

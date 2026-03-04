@@ -192,8 +192,7 @@ describe("ClaudeCodeAdapterLive", () => {
       const adapter = yield* ClaudeCodeAdapter;
       yield* adapter.startSession({
         provider: "claudeCode",
-        approvalPolicy: "never",
-        sandboxMode: "danger-full-access",
+        runtimeMode: "full-access",
       });
 
       const createInput = harness.getLastCreateQueryInput();
@@ -211,7 +210,7 @@ describe("ClaudeCodeAdapterLive", () => {
       const adapter = yield* ClaudeCodeAdapter;
       yield* adapter.startSession({
         provider: "claudeCode",
-        approvalPolicy: "never",
+        runtimeMode: "full-access",
         providerOptions: {
           claudeCode: {
             permissionMode: "plan",
@@ -598,7 +597,7 @@ describe("ClaudeCodeAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         provider: "claudeCode",
-        approvalPolicy: "on-request",
+        runtimeMode: "approval-required",
       });
 
       yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);

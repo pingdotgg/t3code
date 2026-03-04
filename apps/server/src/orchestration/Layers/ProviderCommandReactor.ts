@@ -3,13 +3,12 @@ import {
   CommandId,
   EventId,
   type OrchestrationEvent,
-  type ProviderApprovalPolicy,
   type ProviderKind,
-  type ProviderSandboxMode,
   type ProviderSessionId,
   type OrchestrationSession,
   type ThreadId,
   type ProviderSession,
+  type RuntimeMode,
   type TurnId,
 } from "@t3tools/contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Schema, Stream } from "effect";
@@ -67,8 +66,7 @@ const serverCommandId = (tag: string): CommandId =>
 
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
-const DEFAULT_APPROVAL_POLICY: ProviderApprovalPolicy = "never";
-const DEFAULT_SANDBOX_MODE: ProviderSandboxMode = "workspace-write";
+const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const WORKTREE_BRANCH_PREFIX = "t3code";
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
 
@@ -199,8 +197,7 @@ const make = Effect.gen(function* () {
     options?: {
       readonly provider?: ProviderKind;
       readonly model?: string;
-      readonly approvalPolicy?: ProviderApprovalPolicy;
-      readonly sandboxMode?: ProviderSandboxMode;
+      readonly runtimeMode?: RuntimeMode;
     },
   ) {
     const readModel = yield* orchestrationEngine.getReadModel();
@@ -209,10 +206,8 @@ const make = Effect.gen(function* () {
       return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
     }
 
-    const desiredApprovalPolicy =
-      options?.approvalPolicy ?? thread.session?.approvalPolicy ?? DEFAULT_APPROVAL_POLICY;
-    const desiredSandboxMode =
-      options?.sandboxMode ?? thread.session?.sandboxMode ?? DEFAULT_SANDBOX_MODE;
+    const desiredRuntimeMode =
+      options?.runtimeMode ?? thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
     const currentProvider: ProviderKind | undefined =
       thread.session?.providerName === "codex" ||
       thread.session?.providerName === "claudeCode" ||
@@ -242,8 +237,7 @@ const make = Effect.gen(function* () {
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
         ...(desiredModel ? { model: desiredModel } : {}),
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
-        approvalPolicy: desiredApprovalPolicy,
-        sandboxMode: desiredSandboxMode,
+        runtimeMode: desiredRuntimeMode,
       });
 
     const bindSessionToThread = (session: ProviderSession) =>
@@ -255,8 +249,7 @@ const make = Effect.gen(function* () {
           providerName: session.provider,
           providerSessionId: session.sessionId,
           providerThreadId: session.threadId ?? null,
-          approvalPolicy: desiredApprovalPolicy,
-          sandboxMode: desiredSandboxMode,
+          runtimeMode: desiredRuntimeMode,
           // Provider turn ids are not orchestration turn ids.
           activeTurnId: null,
           lastError: session.lastError ?? null,
@@ -267,11 +260,8 @@ const make = Effect.gen(function* () {
 
     const existingSessionId = thread.session?.providerSessionId;
     if (existingSessionId) {
-      const approvalPolicyChanged =
-        options?.approvalPolicy !== undefined &&
-        options.approvalPolicy !== thread.session?.approvalPolicy;
-      const sandboxModeChanged =
-        options?.sandboxMode !== undefined && options.sandboxMode !== thread.session?.sandboxMode;
+      const runtimeModeChanged =
+        options?.runtimeMode !== undefined && options.runtimeMode !== thread.session?.runtimeMode;
       const providerChanged = options?.provider !== undefined && options.provider !== currentProvider;
       const activeSession = yield* resolveActiveSession(existingSessionId);
       const sessionModelSwitch =
@@ -284,8 +274,7 @@ const make = Effect.gen(function* () {
         modelChanged && sessionModelSwitch === "restart-session";
 
       if (
-        !approvalPolicyChanged &&
-        !sandboxModeChanged &&
+        !runtimeModeChanged &&
         !providerChanged &&
         !shouldRestartForModelChange
       ) {
@@ -327,8 +316,7 @@ const make = Effect.gen(function* () {
     readonly provider?: ProviderKind;
     readonly model?: string;
     readonly effort?: string;
-    readonly approvalPolicy: ProviderApprovalPolicy;
-    readonly sandboxMode: ProviderSandboxMode;
+    readonly runtimeMode: RuntimeMode;
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
@@ -338,8 +326,7 @@ const make = Effect.gen(function* () {
     const sessionId = yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.provider !== undefined ? { provider: input.provider } : {}),
       ...(input.model !== undefined ? { model: input.model } : {}),
-      approvalPolicy: input.approvalPolicy,
-      sandboxMode: input.sandboxMode,
+      runtimeMode: input.runtimeMode,
     });
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
@@ -472,8 +459,7 @@ const make = Effect.gen(function* () {
       ...(event.payload.provider !== undefined ? { provider: event.payload.provider } : {}),
       ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
       ...(event.payload.effort !== undefined ? { effort: event.payload.effort } : {}),
-      approvalPolicy: event.payload.approvalPolicy,
-      sandboxMode: event.payload.sandboxMode,
+      runtimeMode: event.payload.runtimeMode,
       createdAt: event.payload.createdAt,
     });
   });
@@ -571,8 +557,7 @@ const make = Effect.gen(function* () {
         providerName: thread.session?.providerName ?? null,
         providerSessionId: null,
         providerThreadId: null,
-        approvalPolicy: thread.session?.approvalPolicy ?? DEFAULT_APPROVAL_POLICY,
-        sandboxMode: thread.session?.sandboxMode ?? DEFAULT_SANDBOX_MODE,
+        runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
         activeTurnId: null,
         lastError: thread.session?.lastError ?? null,
         updatedAt: now,

@@ -15,7 +15,6 @@ import {
   EventId,
   type CanonicalItemType,
   type CanonicalRequestType,
-  type ProviderApprovalPolicy,
   ProviderItemId,
   ProviderSessionId,
   type ProviderRuntimeEvent,
@@ -23,6 +22,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   type ProviderTurnStartResult,
+  type RuntimeMode,
   RuntimeItemId,
   RuntimeRequestId,
   RuntimeSessionId,
@@ -81,7 +81,7 @@ interface CursorTurnState {
 
 interface CursorSessionContext {
   session: ProviderSession;
-  approvalPolicy: ProviderApprovalPolicy;
+  runtimeMode: RuntimeMode;
   readonly child: ChildProcessWithoutNullStreams;
   readonly output: readline.Interface;
   readonly pending: Map<string, PendingRequest>;
@@ -539,7 +539,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
         const options = decoded.params.options.map((entry) => ({ optionId: entry.optionId }));
         const detail = asString(asObject(decoded.params.toolCall)?.title);
 
-        if (context.approvalPolicy === "never") {
+        if (context.runtimeMode === "full-access") {
           const selection =
             selectCursorAutoApprovalOption(options) ??
             (options[0]
@@ -1048,7 +1048,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
 
         const context: CursorSessionContext = {
           session,
-          approvalPolicy: input.approvalPolicy ?? "on-request",
+          runtimeMode: input.runtimeMode ?? "full-access",
           child,
           output,
           pending: new Map(),

@@ -1223,8 +1223,7 @@ describe("WebSocket Server", () => {
         attachments: [],
       },
       assistantDeliveryMode: "streaming",
-      approvalPolicy: "on-request",
-      sandboxMode: "workspace-write",
+      runtimeMode: "approval-required",
       createdAt,
     });
     expect(startTurnResponse.error).toBeUndefined();
@@ -1236,14 +1235,17 @@ describe("WebSocket Server", () => {
 
     emitRuntimeEvent(
       {
-        type: "message.delta",
+        type: "content.delta",
         eventId: asEventId("evt-ws-runtime-message-delta"),
         provider: "codex",
         sessionId,
         createdAt: new Date().toISOString(),
         turnId: asProviderTurnId("turn-1"),
         itemId: asProviderItemId("item-1"),
-        delta: "hello from runtime",
+        payload: {
+          streamKind: "assistant_text",
+          delta: "hello from runtime",
+        },
       } as unknown as ProviderRuntimeEvent,
     );
 

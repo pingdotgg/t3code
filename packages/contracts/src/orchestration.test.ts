@@ -2,8 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 
 import {
-  DEFAULT_PROVIDER_APPROVAL_POLICY,
-  DEFAULT_PROVIDER_SANDBOX_MODE,
+  DEFAULT_RUNTIME_MODE,
   OrchestrationGetTurnDiffInput,
   OrchestrationSession,
   ProjectCreateCommand,
@@ -110,8 +109,7 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.provider, undefined);
-    assert.strictEqual(parsed.approvalPolicy, DEFAULT_PROVIDER_APPROVAL_POLICY);
-    assert.strictEqual(parsed.sandboxMode, DEFAULT_PROVIDER_SANDBOX_MODE);
+    assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
   }),
 );
 
@@ -128,13 +126,11 @@ it.effect("preserves explicit provider and runtime mode in thread.turn.start", (
         attachments: [],
       },
       provider: "claudeCode",
-      approvalPolicy: "never",
-      sandboxMode: "danger-full-access",
+      runtimeMode: "full-access",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.provider, "claudeCode");
-    assert.strictEqual(parsed.approvalPolicy, "never");
-    assert.strictEqual(parsed.sandboxMode, "danger-full-access");
+    assert.strictEqual(parsed.runtimeMode, "full-access");
   }),
 );
 
@@ -165,8 +161,7 @@ it.effect("decodes thread.turn-start-requested defaults for provider and runtime
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.provider, undefined);
-    assert.strictEqual(parsed.approvalPolicy, DEFAULT_PROVIDER_APPROVAL_POLICY);
-    assert.strictEqual(parsed.sandboxMode, DEFAULT_PROVIDER_SANDBOX_MODE);
+    assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
   }),
 );
 
@@ -182,7 +177,6 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       lastError: null,
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
-    assert.strictEqual(parsed.approvalPolicy, DEFAULT_PROVIDER_APPROVAL_POLICY);
-    assert.strictEqual(parsed.sandboxMode, DEFAULT_PROVIDER_SANDBOX_MODE);
+    assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
   }),
 );

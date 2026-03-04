@@ -2231,8 +2231,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       setSendPhase("sending-turn");
       const turnAttachments = await turnAttachmentsPromise;
-      const approvalPolicy = runtimeMode === "full-access" ? "never" : "on-request";
-      const sandboxMode = runtimeMode === "full-access" ? "danger-full-access" : "workspace-write";
       await api.orchestration.dispatchCommand({
         type: "thread.turn.start",
         commandId: newCommandId(),
@@ -2247,8 +2245,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         provider: selectedProvider,
         ...(supportsReasoningEffort && selectedEffort ? { effort: selectedEffort } : {}),
         assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
-        approvalPolicy,
-        sandboxMode,
+        runtimeMode,
         createdAt: messageCreatedAt,
       });
       turnStartSucceeded = true;

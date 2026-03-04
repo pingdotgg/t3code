@@ -142,8 +142,7 @@ const startTurn = (input: {
       attachments: [],
     },
     ...(input.provider !== undefined ? { provider: input.provider } : {}),
-    approvalPolicy: "on-request",
-    sandboxMode: "workspace-write",
+    runtimeMode: "approval-required",
     createdAt: nowIso(),
   });
 
@@ -477,26 +476,33 @@ it.live("records failed turn runtime state and checkpoint status as error", () =
             turnId: FIXTURE_TURN_ID,
           },
           {
-            type: "message.delta",
+            type: "content.delta",
             ...runtimeBase("evt-failure-2", "2026-02-24T10:04:00.100Z"),
             threadId: FIXTURE_THREAD_ID,
             turnId: FIXTURE_TURN_ID,
-            delta: "Partial output before failure.\n",
+            payload: {
+              streamKind: "assistant_text",
+              delta: "Partial output before failure.\n",
+            },
           },
           {
             type: "runtime.error",
             ...runtimeBase("evt-failure-3", "2026-02-24T10:04:00.200Z"),
             threadId: FIXTURE_THREAD_ID,
             turnId: FIXTURE_TURN_ID,
-            message: "Sandbox command failed.",
+            payload: {
+              message: "Sandbox command failed.",
+            },
           },
           {
             type: "turn.completed",
             ...runtimeBase("evt-failure-4", "2026-02-24T10:04:00.300Z"),
             threadId: FIXTURE_THREAD_ID,
             turnId: FIXTURE_TURN_ID,
-            status: "failed",
-            errorMessage: "Sandbox command failed.",
+            payload: {
+              state: "failed",
+              errorMessage: "Sandbox command failed.",
+            },
           },
         ],
       });
