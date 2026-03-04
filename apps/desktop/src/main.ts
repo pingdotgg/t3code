@@ -253,6 +253,28 @@ function resolveAppRoot(): string {
   return app.getAppPath();
 }
 
+/** Read the baked-in app-update.yml config (if applicable). */
+function readAppUpdateYml(): Record<string, string> | null {
+  try {
+    // electron-updater reads from process.resourcesPath in packaged builds,
+    // or dev-app-update.yml via app.getAppPath() in dev.
+    const ymlPath = app.isPackaged
+      ? Path.join(process.resourcesPath, "app-update.yml")
+      : Path.join(app.getAppPath(), "dev-app-update.yml");
+    const raw = FS.readFileSync(ymlPath, "utf-8");
+    // The YAML is simple key-value pairs — avoid pulling in a YAML parser by
+    // doing a line-based parse (fields: provider, owner, repo, releaseType, …).
+    const entries: Record<string, string> = {};
+    for (const line of raw.split("\n")) {
+      const match = line.match(/^(\w+):\s*(.+)$/);
+      if (match?.[1] && match[2]) entries[match[1]] = match[2].trim();
+    }
+    return entries.provider ? entries : null;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeCommitHash(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -687,10 +709,18 @@ function configureAutoUpdater(): void {
     process.env.GH_TOKEN?.trim() ||
     "";
   if (githubToken) {
-    autoUpdater.requestHeaders = {
-      ...autoUpdater.requestHeaders,
-      Authorization: `Bearer ${githubToken}`,
-    };
+    // When a token is provided, re-configure the feed with `private: true` so
+    // electron-updater uses the GitHub API (api.github.com) instead of the
+    // public Atom feed (github.com/…/releases.atom) which rejects Bearer auth.
+    const appUpdateYml = readAppUpdateYml();
+    if (appUpdateYml?.provider === "github") {
+      autoUpdater.setFeedURL({
+        ...appUpdateYml,
+        provider: "github" as const,
+        private: true,
+        token: githubToken,
+      });
+    }
   }
 
   autoUpdater.autoDownload = false;
