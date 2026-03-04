@@ -22,12 +22,10 @@ jobs:
     outputs:
       version: ${{ steps.release_meta.outputs.version }}
       tag: ${{ steps.release_meta.outputs.tag }}
-      ref: ${{ steps.release_ref.outputs.value }}
+      ref: ${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - id: release_meta
         name: Resolve release version
@@ -58,32 +56,6 @@ jobs:
         with:
           node-version-file: package.json
 
-      - name: Update version strings
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          RELEASE_VERSION: ${{ steps.release_meta.outputs.version }}
-        run: |
-          node --input-type=module -e '
-            import { readFileSync, writeFileSync } from "node:fs";
-
-            const files = [
-              "apps/server/package.json",
-              "apps/desktop/package.json",
-              "apps/web/package.json",
-              "packages/contracts/package.json",
-            ];
-
-            for (const file of files) {
-              const packageJson = JSON.parse(readFileSync(file, "utf8"));
-              packageJson.version = process.env.RELEASE_VERSION;
-              writeFileSync(file, `${JSON.stringify(packageJson, null, 2)}\n`);
-            }
-          '
-
-      - name: Refresh lockfile
-        if: github.event_name == 'workflow_dispatch'
-        run: bun install
-
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -95,39 +67,6 @@ jobs:
 
       - name: Test
         run: bun run test
-
-      - name: Commit and push release version + tag
-        if: github.event_name == 'workflow_dispatch'
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ steps.release_meta.outputs.tag }}
-        run: |
-          if git ls-remote --exit-code --tags origin "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "Tag $RELEASE_TAG already exists on origin." >&2
-            exit 1
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          if ! git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json bun.lock; then
-            git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json bun.lock
-            git commit -m "chore(release): prepare $RELEASE_TAG" -m "Co-authored-by: codex <codex@users.noreply.github.com>"
-          fi
-
-          git tag "$RELEASE_TAG"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
-          git push origin "refs/tags/$RELEASE_TAG"
-
-      - id: release_ref
-        name: Resolve source ref
-        shell: bash
-        run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            echo "value=refs/tags/${{ steps.release_meta.outputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          fi
 
   build:
     name: Build ${{ matrix.label }}
@@ -320,6 +259,7 @@ jobs:
           tag_name: ${{ needs.preflight.outputs.tag }}
           name: T3 Code v${{ needs.preflight.outputs.version }}
           generate_release_notes: true
+          make_latest: true
           files: |
             release-assets/*.dmg
             release-assets/*.zip
@@ -328,3 +268,73 @@ jobs:
             release-assets/*.blockmap
             release-assets/latest*.yml
           fail_on_unmatched_files: true
+
+  finalize:
+    name: Finalize release
+    needs: [preflight, release]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+
+      - name: Update version strings
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+
+            const files = [
+              "apps/server/package.json",
+              "apps/desktop/package.json",
+              "apps/web/package.json",
+              "packages/contracts/package.json",
+            ];
+
+            let changed = false;
+            for (const file of files) {
+              const packageJson = JSON.parse(readFileSync(file, "utf8"));
+              if (packageJson.version !== process.env.RELEASE_VERSION) {
+                packageJson.version = process.env.RELEASE_VERSION;
+                writeFileSync(file, `${JSON.stringify(packageJson, null, 2)}\n`);
+                changed = true;
+              }
+            }
+
+            if (!changed) {
+              console.log("All package.json versions already match release version.");
+            }
+          '
+
+      - name: Refresh lockfile
+        run: bun install
+
+      - name: Commit and push version bump
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json bun.lock; then
+            echo "No version changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json bun.lock
+          git commit -m "chore(release): prepare $RELEASE_TAG"
+          git push origin HEAD:main
