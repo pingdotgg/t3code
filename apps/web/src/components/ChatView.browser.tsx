@@ -1,6 +1,14 @@
 import "../index.css";
 
 import { type MessageId, type ThreadId } from "@t3tools/contracts";
+import {
+  Outlet,
+  RouterProvider,
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+} from "@tanstack/react-router";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,7 +18,6 @@ import { estimateTimelineMessageHeight } from "./timelineHeight";
 
 const mocks = vi.hoisted(() => {
   return {
-    navigate: vi.fn(),
     markThreadVisited: vi.fn(),
     setThreadError: vi.fn(),
     setRuntimeMode: vi.fn(),
@@ -66,12 +73,6 @@ const mocks = vi.hoisted(() => {
     },
   };
 });
-
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => mocks.navigate,
-  useSearch: (options?: { select?: (params: Record<string, unknown>) => unknown }) =>
-    options?.select ? options.select({}) : {},
-}));
 
 vi.mock("@tanstack/react-query", async () => {
   const actual = await vi.importActual<typeof import("@tanstack/react-query")>(
@@ -161,6 +162,24 @@ interface RenderMeasureOptions {
   timelineWidthPx: number;
   messages: ChatMessage[];
   targetMessageId: MessageId;
+}
+
+function createTestRouter(threadId: ThreadId) {
+  const rootRoute = createRootRoute({
+    component: () => <Outlet />,
+  });
+  const threadRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/$threadId",
+    component: () => <ChatView threadId={threadId} />,
+  });
+  return createRouter({
+    routeTree: rootRoute.addChildren([threadRoute]),
+    history: createMemoryHistory({
+      initialEntries: [`/${threadId}`],
+    }),
+    context: {},
+  });
 }
 
 function createThread(messages: ChatMessage[]): Thread {
@@ -315,9 +334,10 @@ async function renderAndMeasureUserRow({
   document.body.append(host);
 
   mocks.storeState.threads = [createThread(messages)];
+  const router = createTestRouter(THREAD_ID);
 
   const root: Root = createRoot(host);
-  root.render(<ChatView threadId={THREAD_ID} />);
+  root.render(<RouterProvider router={router} />);
   await waitForLayout();
 
   const scrollContainer = host.querySelector("div.overflow-y-auto.overscroll-y-contain");
