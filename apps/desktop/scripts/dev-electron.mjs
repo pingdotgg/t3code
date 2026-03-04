@@ -14,7 +14,6 @@ const watchedDirectories = [
 ];
 const forcedShutdownTimeoutMs = 1_500;
 const restartDebounceMs = 120;
-const workspaceDir = join(desktopDir, "..", "..");
 
 await waitOn({
   resources: [`tcp:${port}`, ...requiredFiles.map((filePath) => `file:${filePath}`)],
@@ -41,14 +40,6 @@ function killChildTreeByPid(pid, signal) {
 function cleanupStaleDevApps() {
   if (process.platform === "win32") {
     return;
-  }
-
-  const patterns = [
-    `${workspaceDir}/node_modules/.bun/electronmon@.+/node_modules/electronmon/src/hook.js dist-electron/main.js`,
-  ];
-
-  for (const pattern of patterns) {
-    spawnSync("pkill", ["-f", pattern], { stdio: "ignore" });
   }
 
   spawnSync("pkill", ["-f", "--", `--t3code-dev-root=${desktopDir}`], { stdio: "ignore" });

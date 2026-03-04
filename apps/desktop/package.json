@@ -22,7 +22,6 @@
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@types/node": "catalog:",
-    "electronmon": "^2.0.2",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
