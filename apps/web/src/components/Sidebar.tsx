@@ -859,6 +859,9 @@ export default function Sidebar() {
     : "Update available";
 
   const desktopUpdateButtonDisabled = desktopUpdateState?.status === "downloading";
+  const desktopUpdateButtonInteractivityClasses = desktopUpdateButtonDisabled
+    ? "cursor-not-allowed opacity-60"
+    : "hover:bg-accent hover:text-foreground";
   const desktopUpdateButtonClasses =
     desktopUpdateState?.status === "downloaded"
       ? "text-emerald-500"
@@ -869,6 +872,7 @@ export default function Sidebar() {
   const handleDesktopUpdateButtonClick = useCallback(() => {
     const bridge = window.desktopBridge;
     if (!bridge || !desktopUpdateState) return;
+    if (desktopUpdateState.status === "downloading") return;
 
     if (desktopUpdateState.status === "available") {
       void bridge.downloadUpdate().catch((error) => {
@@ -931,8 +935,8 @@ export default function Sidebar() {
                     <button
                       type="button"
                       aria-label={desktopUpdateTooltip}
-                      disabled={desktopUpdateButtonDisabled}
-                      className={`inline-flex size-7 ml-auto mt-2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60 ${desktopUpdateButtonClasses}`}
+                      aria-disabled={desktopUpdateButtonDisabled || undefined}
+                      className={`inline-flex size-7 ml-auto mt-2 items-center justify-center rounded-md text-muted-foreground transition-colors ${desktopUpdateButtonInteractivityClasses} ${desktopUpdateButtonClasses}`}
                       onClick={handleDesktopUpdateButtonClick}
                     >
                       <RocketIcon className="size-3.5" />
