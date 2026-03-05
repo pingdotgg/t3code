@@ -9,9 +9,6 @@ import {
   EventId,
   MessageId,
   ProjectId,
-  ProviderSessionId,
-  ProviderThreadId,
-  ProviderTurnId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -38,8 +35,6 @@ import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
-const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
-const asProviderTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId =>
   ApprovalRequestId.makeUnsafe(value);
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
@@ -110,8 +105,14 @@ describe("ProviderCommandReactor", () => {
         typeof input === "object" && input !== null && "model" in input && typeof input.model === "string"
           ? input.model
           : undefined;
+      const threadId =
+        typeof input === "object" &&
+        input !== null &&
+        "threadId" in input &&
+        typeof input.threadId === "string"
+          ? ThreadId.makeUnsafe(input.threadId)
+          : ThreadId.makeUnsafe(`thread-${sessionIndex}`);
       const session: ProviderSession = {
-        sessionId: asSessionId(`sess-${sessionIndex}`),
         provider,
         status: "ready" as const,
         runtimeMode:
@@ -122,7 +123,7 @@ describe("ProviderCommandReactor", () => {
             ? input.runtimeMode
             : "full-access",
         ...(model !== undefined ? { model } : {}),
-        threadId: ProviderThreadId.makeUnsafe(`provider-thread-${sessionIndex}`),
+        threadId,
         resumeCursor: resumeCursor ?? { opaque: `cursor-${sessionIndex}` },
         createdAt: now,
         updatedAt: now,
@@ -132,22 +133,22 @@ describe("ProviderCommandReactor", () => {
     });
     const sendTurn = vi.fn((_: unknown) =>
       Effect.succeed({
-        threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-        turnId: asProviderTurnId("provider-turn-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        turnId: asTurnId("turn-1"),
       }),
     );
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const stopSession = vi.fn((input: unknown) =>
       Effect.sync(() => {
-        const sessionId =
-          typeof input === "object" && input !== null && "sessionId" in input
-            ? (input as { sessionId?: ProviderSessionId }).sessionId
+        const threadId =
+          typeof input === "object" && input !== null && "threadId" in input
+            ? (input as { threadId?: ThreadId }).threadId
             : undefined;
-        if (!sessionId) {
+        if (!threadId) {
           return;
         }
-        const index = runtimeSessions.findIndex((session) => session.sessionId === sessionId);
+        const index = runtimeSessions.findIndex((session) => session.threadId === threadId);
         if (index >= 0) {
           runtimeSessions.splice(index, 1);
         }
@@ -284,7 +285,7 @@ describe("ProviderCommandReactor", () => {
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
-    expect(thread?.session?.providerSessionId).toBe("sess-1");
+    expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
@@ -321,7 +322,7 @@ describe("ProviderCommandReactor", () => {
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.providerName).toBe("claudeCode");
-    expect(thread?.session?.providerSessionId).toBe("sess-1");
+    expect(thread?.session?.threadId).toBe("thread-1");
   });
 
   it("starts first turn with cursor provider when provider is specified", async () => {
@@ -357,7 +358,7 @@ describe("ProviderCommandReactor", () => {
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.providerName).toBe("cursor");
-    expect(thread?.session?.providerSessionId).toBe("sess-1");
+    expect(thread?.session?.threadId).toBe("thread-1");
   });
 
   it("reuses the same provider session when runtime mode is unchanged", async () => {
@@ -500,7 +501,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.stopSession.mock.calls.length).toBe(0);
     expect(harness.startSession.mock.calls.length).toBe(1);
     expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
-      sessionId: asSessionId("sess-1"),
+      threadId: ThreadId.makeUnsafe("thread-1"),
       model: "gpt-5.3-codex",
     });
   });
@@ -554,8 +555,6 @@ describe("ProviderCommandReactor", () => {
       return thread?.runtimeMode === "approval-required";
     });
     await waitFor(() => harness.startSession.mock.calls.length === 2);
-    await waitFor(() => harness.stopSession.mock.calls.length === 1);
-
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.turn.start",
@@ -574,18 +573,19 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.sendTurn.mock.calls.length === 2);
 
-    expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ sessionId: asSessionId("sess-1") });
+    expect(harness.stopSession.mock.calls.length).toBe(0);
     expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-1"),
       resumeCursor: { opaque: "cursor-1" },
       runtimeMode: "approval-required",
     });
     expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
-      sessionId: asSessionId("sess-2"),
+      threadId: ThreadId.makeUnsafe("thread-1"),
     });
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
-    expect(thread?.session?.providerSessionId).toBe("sess-2");
+    expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
@@ -629,12 +629,12 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.stopSession.mock.calls.length === 1);
     await waitFor(() => harness.startSession.mock.calls.length === 2);
     await waitFor(() => harness.sendTurn.mock.calls.length === 2);
 
-    expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ sessionId: asSessionId("sess-1") });
+    expect(harness.stopSession.mock.calls.length).toBe(0);
     expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-1"),
       provider: "claudeCode",
       runtimeMode: "approval-required",
     });
@@ -642,7 +642,7 @@ describe("ProviderCommandReactor", () => {
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
-    expect(thread?.session?.providerSessionId).toBe("sess-2");
+    expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.providerName).toBe("claudeCode");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
@@ -707,7 +707,7 @@ describe("ProviderCommandReactor", () => {
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
-    expect(thread?.session?.providerSessionId).toBe("sess-1");
+    expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("full-access");
   });
 
@@ -724,8 +724,6 @@ describe("ProviderCommandReactor", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "running",
           providerName: "codex",
-          providerSessionId: asSessionId("sess-1"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
           runtimeMode: "approval-required",
           activeTurnId: asTurnId("turn-1"),
           lastError: null,
@@ -747,7 +745,8 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.interruptTurn.mock.calls.length === 1);
     expect(harness.interruptTurn.mock.calls[0]?.[0]).toEqual({
-      sessionId: "sess-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
     });
   });
 
@@ -764,8 +763,6 @@ describe("ProviderCommandReactor", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "running",
           providerName: "codex",
-          providerSessionId: asSessionId("sess-1"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
@@ -788,7 +785,7 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.respondToRequest.mock.calls.length === 1);
     expect(harness.respondToRequest.mock.calls[0]?.[0]).toEqual({
-      sessionId: "sess-1",
+      threadId: "thread-1",
       requestId: "approval-request-1",
       decision: "accept",
     });
@@ -816,8 +813,6 @@ describe("ProviderCommandReactor", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "running",
           providerName: "cursor",
-          providerSessionId: asSessionId("sess-1"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
@@ -901,8 +896,6 @@ describe("ProviderCommandReactor", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "ready",
           providerName: "codex",
-          providerSessionId: asSessionId("sess-1"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
@@ -926,8 +919,7 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session).not.toBeNull();
     expect(thread?.session?.status).toBe("stopped");
-    expect(thread?.session?.providerSessionId).toBeNull();
-    expect(thread?.session?.providerThreadId).toBeNull();
+    expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.activeTurnId).toBeNull();
   });
 });

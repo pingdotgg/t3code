@@ -6,10 +6,8 @@ import {
   IsoDateTime,
   NonNegativeInt,
   ProviderItemId,
-  ProviderSessionId,
-  ProviderThreadId,
-  ProviderTurnId,
   ThreadId,
+  TurnId,
 } from "./baseSchemas";
 import {
   ChatAttachment,
@@ -34,15 +32,14 @@ export const ProviderSessionStatus = Schema.Literals([
 export type ProviderSessionStatus = typeof ProviderSessionStatus.Type;
 
 export const ProviderSession = Schema.Struct({
-  sessionId: ProviderSessionId,
   provider: ProviderKind,
   status: ProviderSessionStatus,
   runtimeMode: RuntimeMode,
   cwd: Schema.optional(TrimmedNonEmptyStringSchema),
   model: Schema.optional(TrimmedNonEmptyStringSchema),
-  threadId: Schema.optional(ProviderThreadId),
+  threadId: ThreadId,
   resumeCursor: Schema.optional(Schema.Unknown),
-  activeTurnId: Schema.optional(ProviderTurnId),
+  activeTurnId: Schema.optional(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   lastError: Schema.optional(TrimmedNonEmptyStringSchema),
@@ -75,6 +72,7 @@ export const ProviderStartOptions = Schema.Struct({
 export type ProviderStartOptions = typeof ProviderStartOptions.Type;
 
 export const ProviderSessionStartInput = Schema.Struct({
+  threadId: ThreadId,
   provider: Schema.optional(ProviderKind),
   cwd: Schema.optional(TrimmedNonEmptyStringSchema),
   model: Schema.optional(TrimmedNonEmptyStringSchema),
@@ -85,7 +83,7 @@ export const ProviderSessionStartInput = Schema.Struct({
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
 export const ProviderSendTurnInput = Schema.Struct({
-  sessionId: ProviderSessionId,
+  threadId: ThreadId,
   input: Schema.optional(
     TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
   ),
@@ -98,25 +96,25 @@ export const ProviderSendTurnInput = Schema.Struct({
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 
 export const ProviderTurnStartResult = Schema.Struct({
-  threadId: Schema.optional(ProviderThreadId),
-  turnId: ProviderTurnId,
+  threadId: ThreadId,
+  turnId: TurnId,
   resumeCursor: Schema.optional(Schema.Unknown),
 });
 export type ProviderTurnStartResult = typeof ProviderTurnStartResult.Type;
 
 export const ProviderInterruptTurnInput = Schema.Struct({
-  sessionId: ProviderSessionId,
-  turnId: Schema.optional(ProviderTurnId),
+  threadId: ThreadId,
+  turnId: Schema.optional(TurnId),
 });
 export type ProviderInterruptTurnInput = typeof ProviderInterruptTurnInput.Type;
 
 export const ProviderStopSessionInput = Schema.Struct({
-  sessionId: ProviderSessionId,
+  threadId: ThreadId,
 });
 export type ProviderStopSessionInput = typeof ProviderStopSessionInput.Type;
 
 export const ProviderListCheckpointsInput = Schema.Struct({
-  sessionId: ProviderSessionId,
+  threadId: ThreadId,
 });
 export type ProviderListCheckpointsInput = typeof ProviderListCheckpointsInput.Type;
 
@@ -137,7 +135,7 @@ export const ProviderListCheckpointsResult = Schema.Struct({
 export type ProviderListCheckpointsResult = typeof ProviderListCheckpointsResult.Type;
 
 export const ProviderRevertToCheckpointInput = Schema.Struct({
-  sessionId: ProviderSessionId,
+  threadId: ThreadId,
   turnCount: NonNegativeInt,
 });
 export type ProviderRevertToCheckpointInput = typeof ProviderRevertToCheckpointInput.Type;
@@ -152,7 +150,7 @@ export const ProviderRevertToCheckpointResult = Schema.Struct({
 export type ProviderRevertToCheckpointResult = typeof ProviderRevertToCheckpointResult.Type;
 
 export const ProviderGetCheckpointDiffInput = Schema.Struct({
-  sessionId: ProviderSessionId,
+  threadId: ThreadId,
   ...TurnCountRange.fields,
 });
 export type ProviderGetCheckpointDiffInput = typeof ProviderGetCheckpointDiffInput.Type;
@@ -165,7 +163,7 @@ export const ProviderGetCheckpointDiffResult = Schema.Struct({
 export type ProviderGetCheckpointDiffResult = typeof ProviderGetCheckpointDiffResult.Type;
 
 export const ProviderRespondToRequestInput = Schema.Struct({
-  sessionId: ProviderSessionId,
+  threadId: ThreadId,
   requestId: ApprovalRequestId,
   decision: ProviderApprovalDecision,
 });
@@ -178,12 +176,11 @@ export const ProviderEvent = Schema.Struct({
   id: EventId,
   kind: ProviderEventKind,
   provider: ProviderKind,
-  sessionId: ProviderSessionId,
+  threadId: ThreadId,
   createdAt: IsoDateTime,
   method: TrimmedNonEmptyStringSchema,
   message: Schema.optional(TrimmedNonEmptyStringSchema),
-  threadId: Schema.optional(ProviderThreadId),
-  turnId: Schema.optional(ProviderTurnId),
+  turnId: Schema.optional(TurnId),
   itemId: Schema.optional(ProviderItemId),
   requestId: Schema.optional(ApprovalRequestId),
   requestKind: Schema.optional(ProviderRequestKind),

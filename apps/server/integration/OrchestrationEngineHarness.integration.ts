@@ -196,257 +196,255 @@ export const makeOrchestrationIntegrationHarness = (
   options?: MakeOrchestrationIntegrationHarnessOptions,
 ) =>
   Effect.gen(function* () {
-  const sleep = (ms: number) => Effect.sleep(ms);
-  const provider = options?.provider ?? "codex";
-  const useRealCodex = options?.realCodex === true;
-  const adapterHarness = useRealCodex
-    ? null
-    : yield* makeTestProviderAdapterHarness({
-        provider,
-      });
-  const fakeRegistry = adapterHarness
-    ? Layer.succeed(ProviderAdapterRegistry, {
-        getByProvider: (resolvedProvider) =>
-          resolvedProvider === adapterHarness.provider
-            ? Effect.succeed(adapterHarness.adapter)
-            : Effect.fail(new ProviderUnsupportedError({ provider: resolvedProvider })),
-        listProviders: () => Effect.succeed([adapterHarness.provider]),
-      } as typeof ProviderAdapterRegistry.Service)
-    : null;
-  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-orchestration-integration-"));
-  const workspaceDir = path.join(rootDir, "workspace");
-  const stateDir = path.join(rootDir, "state");
-  const dbPath = path.join(stateDir, "state.sqlite");
-  fs.mkdirSync(workspaceDir, { recursive: true });
-  fs.mkdirSync(stateDir, { recursive: true });
-  initializeGitWorkspace(workspaceDir);
+    const sleep = (ms: number) => Effect.sleep(ms);
+    const provider = options?.provider ?? "codex";
+    const useRealCodex = options?.realCodex === true;
+    const adapterHarness = useRealCodex
+      ? null
+      : yield* makeTestProviderAdapterHarness({
+          provider,
+        });
+    const fakeRegistry = adapterHarness
+      ? Layer.succeed(ProviderAdapterRegistry, {
+          getByProvider: (resolvedProvider) =>
+            resolvedProvider === adapterHarness.provider
+              ? Effect.succeed(adapterHarness.adapter)
+              : Effect.fail(new ProviderUnsupportedError({ provider: resolvedProvider })),
+          listProviders: () => Effect.succeed([adapterHarness.provider]),
+        } as typeof ProviderAdapterRegistry.Service)
+      : null;
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-orchestration-integration-"));
+    const workspaceDir = path.join(rootDir, "workspace");
+    const stateDir = path.join(rootDir, "state");
+    const dbPath = path.join(stateDir, "state.sqlite");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.mkdirSync(stateDir, { recursive: true });
+    initializeGitWorkspace(workspaceDir);
 
-  const persistenceLayer = makeSqlitePersistenceLive(dbPath);
-  const orchestrationLayer = OrchestrationEngineLive.pipe(
-    Layer.provide(OrchestrationProjectionPipelineLive),
-    Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-  );
-  const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
-    Layer.provide(ProviderSessionRuntimeRepositoryLive),
-  );
-  const realCodexRegistry = Layer.effect(
-    ProviderAdapterRegistry,
-    Effect.gen(function* () {
-      const codexAdapter = yield* CodexAdapter;
-      return {
-        getByProvider: (resolvedProvider) =>
-          resolvedProvider === "codex"
-            ? Effect.succeed(codexAdapter)
-            : Effect.fail(new ProviderUnsupportedError({ provider: resolvedProvider })),
-        listProviders: () => Effect.succeed(["codex"] as const),
-      } as typeof ProviderAdapterRegistry.Service;
-    }),
-  ).pipe(
-    Layer.provide(makeCodexAdapterLive()),
-    Layer.provideMerge(ServerConfig.layerTest(workspaceDir, stateDir)),
-    Layer.provideMerge(NodeServices.layer),
-    Layer.provideMerge(providerSessionDirectoryLayer),
-  );
-  const providerLayer = useRealCodex
-    ? makeProviderServiceLive().pipe(
-        Layer.provide(providerSessionDirectoryLayer),
-        Layer.provide(realCodexRegistry),
-      )
-    : makeProviderServiceLive().pipe(
-        Layer.provide(providerSessionDirectoryLayer),
-        Layer.provide(fakeRegistry!),
-      );
+    const persistenceLayer = makeSqlitePersistenceLive(dbPath);
+    const orchestrationLayer = OrchestrationEngineLive.pipe(
+      Layer.provide(OrchestrationProjectionPipelineLive),
+      Layer.provide(OrchestrationEventStoreLive),
+      Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+    );
+    const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+      Layer.provide(ProviderSessionRuntimeRepositoryLive),
+    );
+    const realCodexRegistry = Layer.effect(
+      ProviderAdapterRegistry,
+      Effect.gen(function* () {
+        const codexAdapter = yield* CodexAdapter;
+        return {
+          getByProvider: (resolvedProvider) =>
+            resolvedProvider === "codex"
+              ? Effect.succeed(codexAdapter)
+              : Effect.fail(new ProviderUnsupportedError({ provider: resolvedProvider })),
+          listProviders: () => Effect.succeed(["codex"] as const),
+        } as typeof ProviderAdapterRegistry.Service;
+      }),
+    ).pipe(
+      Layer.provide(makeCodexAdapterLive()),
+      Layer.provideMerge(ServerConfig.layerTest(workspaceDir, stateDir)),
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(providerSessionDirectoryLayer),
+    );
+    const providerLayer = useRealCodex
+      ? makeProviderServiceLive().pipe(
+          Layer.provide(providerSessionDirectoryLayer),
+          Layer.provide(realCodexRegistry),
+        )
+      : makeProviderServiceLive().pipe(
+          Layer.provide(providerSessionDirectoryLayer),
+          Layer.provide(fakeRegistry!),
+        );
 
-  const runtimeServicesLayer = Layer.mergeAll(
-    orchestrationLayer,
-    OrchestrationProjectionSnapshotQueryLive,
-    ProjectionCheckpointRepositoryLive,
-    ProjectionPendingApprovalRepositoryLive,
-    CheckpointStoreLive,
-    providerLayer,
-  );
-  const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
-    Layer.provideMerge(runtimeServicesLayer),
-  );
-  const gitCoreLayer = Layer.succeed(GitCore, {
-    renameBranch: (input: Parameters<GitCoreShape["renameBranch"]>[0]) =>
-      Effect.succeed({ branch: input.newBranch }),
-  } as unknown as GitCoreShape);
-  const textGenerationLayer = Layer.succeed(TextGeneration, {
-    generateBranchName: () => Effect.succeed({ branch: null }),
-  } as unknown as TextGenerationShape);
-  const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
-    Layer.provideMerge(runtimeServicesLayer),
-    Layer.provideMerge(gitCoreLayer),
-    Layer.provideMerge(textGenerationLayer),
-  );
-  const checkpointReactorLayer = CheckpointReactorLive.pipe(
-    Layer.provideMerge(runtimeServicesLayer),
-  );
-  const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
-    Layer.provideMerge(runtimeIngestionLayer),
-    Layer.provideMerge(providerCommandReactorLayer),
-    Layer.provideMerge(checkpointReactorLayer),
-  );
-  const layer = orchestrationReactorLayer.pipe(
-    Layer.provide(persistenceLayer),
-    Layer.provideMerge(ServerConfig.layerTest(workspaceDir, stateDir)),
-    Layer.provideMerge(NodeServices.layer),
-  );
-
-  const runtime = ManagedRuntime.make(layer);
-  const engine = yield* tryRuntimePromise("load OrchestrationEngine service", () =>
-    runtime.runPromise(Effect.service(OrchestrationEngineService)),
-  ).pipe(Effect.orDie);
-  const reactor = yield* tryRuntimePromise("load OrchestrationReactor service", () =>
-    runtime.runPromise(Effect.service(OrchestrationReactor)),
-  ).pipe(Effect.orDie);
-  const snapshotQuery = yield* tryRuntimePromise("load ProjectionSnapshotQuery service", () =>
-    runtime.runPromise(Effect.service(ProjectionSnapshotQuery)),
-  ).pipe(Effect.orDie);
-  const providerService = yield* tryRuntimePromise("load ProviderService service", () =>
-    runtime.runPromise(Effect.service(ProviderService)),
-  ).pipe(Effect.orDie);
-  const checkpointStore = yield* tryRuntimePromise("load CheckpointStore service", () =>
-    runtime.runPromise(Effect.service(CheckpointStore)),
-  ).pipe(Effect.orDie);
-  const checkpointRepository = yield* tryRuntimePromise(
-    "load ProjectionCheckpointRepository service",
-    () => runtime.runPromise(Effect.service(ProjectionCheckpointRepository)),
-  ).pipe(Effect.orDie);
-  const pendingApprovalRepository = yield* tryRuntimePromise(
-    "load ProjectionPendingApprovalRepository service",
-    () => runtime.runPromise(Effect.service(ProjectionPendingApprovalRepository)),
-  ).pipe(Effect.orDie);
-
-  const scope = yield* Scope.make("sequential");
-  yield* tryRuntimePromise("start OrchestrationReactor", () =>
-    runtime.runPromise(reactor.start.pipe(Scope.provide(scope))),
-  ).pipe(Effect.orDie);
-  yield* sleep(10);
-
-  const waitForThread: OrchestrationIntegrationHarness["waitForThread"] = (
-    threadId,
-    predicate,
-    timeoutMs,
-  ) =>
-    waitFor(
-      snapshotQuery
-        .getSnapshot()
-        .pipe(
-          Effect.map(
-            (snapshot) => snapshot.threads.find((thread) => thread.id === threadId) ?? null,
-          ),
-        ),
-      (thread): thread is OrchestrationThread => thread !== null && predicate(thread),
-      `projected thread '${threadId}'`,
-      timeoutMs,
-    ) as Effect.Effect<OrchestrationThread, never>;
-
-  const waitForDomainEvent: OrchestrationIntegrationHarness["waitForDomainEvent"] = (
-    predicate,
-    timeoutMs,
-  ) =>
-    waitFor(
-      Stream.runCollect(engine.readEvents(0)).pipe(
-        Effect.map((chunk): ReadonlyArray<OrchestrationEvent> => Array.from(chunk)),
-      ),
-      (events) => events.some(predicate),
-      "domain event",
-      timeoutMs,
+    const runtimeServicesLayer = Layer.mergeAll(
+      orchestrationLayer,
+      OrchestrationProjectionSnapshotQueryLive,
+      ProjectionCheckpointRepositoryLive,
+      ProjectionPendingApprovalRepositoryLive,
+      CheckpointStoreLive,
+      providerLayer,
+    );
+    const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
+      Layer.provideMerge(runtimeServicesLayer),
+    );
+    const gitCoreLayer = Layer.succeed(GitCore, {
+      renameBranch: (input: Parameters<GitCoreShape["renameBranch"]>[0]) =>
+        Effect.succeed({ branch: input.newBranch }),
+    } as unknown as GitCoreShape);
+    const textGenerationLayer = Layer.succeed(TextGeneration, {
+      generateBranchName: () => Effect.succeed({ branch: null }),
+    } as unknown as TextGenerationShape);
+    const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
+      Layer.provideMerge(runtimeServicesLayer),
+      Layer.provideMerge(gitCoreLayer),
+      Layer.provideMerge(textGenerationLayer),
+    );
+    const checkpointReactorLayer = CheckpointReactorLive.pipe(
+      Layer.provideMerge(runtimeServicesLayer),
+    );
+    const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
+      Layer.provideMerge(runtimeIngestionLayer),
+      Layer.provideMerge(providerCommandReactorLayer),
+      Layer.provideMerge(checkpointReactorLayer),
+    );
+    const layer = orchestrationReactorLayer.pipe(
+      Layer.provide(persistenceLayer),
+      Layer.provideMerge(ServerConfig.layerTest(workspaceDir, stateDir)),
+      Layer.provideMerge(NodeServices.layer),
     );
 
-  const waitForPendingApproval: OrchestrationIntegrationHarness["waitForPendingApproval"] = (
-    requestId,
-    predicate,
-    timeoutMs,
-  ) =>
-    waitFor(
-      pendingApprovalRepository
-        .getByRequestId({ requestId: ApprovalRequestId.makeUnsafe(requestId) })
-        .pipe(
-          Effect.map((row) =>
-            Option.match(row, {
-              onNone: () => null,
-              onSome: (value) => ({
-                status: value.status,
-                decision: value.decision,
-                resolvedAt: value.resolvedAt,
-              }),
-            }),
-          ),
-        ),
-      (
-        row,
-      ): row is {
-        readonly status: "pending" | "resolved";
-        readonly decision: "accept" | "acceptForSession" | "decline" | "cancel" | null;
-        readonly resolvedAt: string | null;
-      } => row !== null && predicate(row),
-      `pending approval '${requestId}'`,
+    const runtime = ManagedRuntime.make(layer);
+    const engine = yield* tryRuntimePromise("load OrchestrationEngine service", () =>
+      runtime.runPromise(Effect.service(OrchestrationEngineService)),
+    ).pipe(Effect.orDie);
+    const reactor = yield* tryRuntimePromise("load OrchestrationReactor service", () =>
+      runtime.runPromise(Effect.service(OrchestrationReactor)),
+    ).pipe(Effect.orDie);
+    const snapshotQuery = yield* tryRuntimePromise("load ProjectionSnapshotQuery service", () =>
+      runtime.runPromise(Effect.service(ProjectionSnapshotQuery)),
+    ).pipe(Effect.orDie);
+    const providerService = yield* tryRuntimePromise("load ProviderService service", () =>
+      runtime.runPromise(Effect.service(ProviderService)),
+    ).pipe(Effect.orDie);
+    const checkpointStore = yield* tryRuntimePromise("load CheckpointStore service", () =>
+      runtime.runPromise(Effect.service(CheckpointStore)),
+    ).pipe(Effect.orDie);
+    const checkpointRepository = yield* tryRuntimePromise(
+      "load ProjectionCheckpointRepository service",
+      () => runtime.runPromise(Effect.service(ProjectionCheckpointRepository)),
+    ).pipe(Effect.orDie);
+    const pendingApprovalRepository = yield* tryRuntimePromise(
+      "load ProjectionPendingApprovalRepository service",
+      () => runtime.runPromise(Effect.service(ProjectionPendingApprovalRepository)),
+    ).pipe(Effect.orDie);
+
+    const scope = yield* Scope.make("sequential");
+    yield* tryRuntimePromise("start OrchestrationReactor", () =>
+      runtime.runPromise(reactor.start.pipe(Scope.provide(scope))),
+    ).pipe(Effect.orDie);
+    yield* sleep(10);
+
+    const waitForThread: OrchestrationIntegrationHarness["waitForThread"] = (
+      threadId,
+      predicate,
       timeoutMs,
-    ) as Effect.Effect<
-      {
-        readonly status: "pending" | "resolved";
-        readonly decision: "accept" | "acceptForSession" | "decline" | "cancel" | null;
-        readonly resolvedAt: string | null;
-      },
-      never
-    >;
+    ) =>
+      waitFor(
+        snapshotQuery
+          .getSnapshot()
+          .pipe(
+            Effect.map(
+              (snapshot) => snapshot.threads.find((thread) => thread.id === threadId) ?? null,
+            ),
+          ),
+        (thread): thread is OrchestrationThread => thread !== null && predicate(thread),
+        `projected thread '${threadId}'`,
+        timeoutMs,
+      ) as Effect.Effect<OrchestrationThread, never>;
 
-  let disposed = false;
-  const dispose = Effect.gen(function* () {
-    if (disposed) {
-      return;
-    }
-    disposed = true;
-
-    const shutdown = Effect.gen(function* () {
-      const stopAllExit = yield* Effect.exit(
-        Effect.promise(() => runtime.runPromise(providerService.stopAll())),
+    const waitForDomainEvent: OrchestrationIntegrationHarness["waitForDomainEvent"] = (
+      predicate,
+      timeoutMs,
+    ) =>
+      waitFor(
+        Stream.runCollect(engine.readEvents(0)).pipe(
+          Effect.map((chunk): ReadonlyArray<OrchestrationEvent> => Array.from(chunk)),
+        ),
+        (events) => events.some(predicate),
+        "domain event",
+        timeoutMs,
       );
-      const closeScopeExit = yield* Effect.exit(
-        Effect.promise(() => Effect.runPromise(Scope.close(scope, Exit.void))),
-      );
-      const disposeRuntimeExit = yield* Effect.exit(Effect.promise(() => runtime.dispose()));
 
-      const failureCause = Exit.isFailure(stopAllExit)
-        ? stopAllExit.cause
-        : Exit.isFailure(closeScopeExit)
-          ? closeScopeExit.cause
-          : Exit.isFailure(disposeRuntimeExit)
-            ? disposeRuntimeExit.cause
-            : null;
+    const waitForPendingApproval: OrchestrationIntegrationHarness["waitForPendingApproval"] = (
+      requestId,
+      predicate,
+      timeoutMs,
+    ) =>
+      waitFor(
+        pendingApprovalRepository
+          .getByRequestId({ requestId: ApprovalRequestId.makeUnsafe(requestId) })
+          .pipe(
+            Effect.map((row) =>
+              Option.match(row, {
+                onNone: () => null,
+                onSome: (value) => ({
+                  status: value.status,
+                  decision: value.decision,
+                  resolvedAt: value.resolvedAt,
+                }),
+              }),
+            ),
+          ),
+        (
+          row,
+        ): row is {
+          readonly status: "pending" | "resolved";
+          readonly decision: "accept" | "acceptForSession" | "decline" | "cancel" | null;
+          readonly resolvedAt: string | null;
+        } => row !== null && predicate(row),
+        `pending approval '${requestId}'`,
+        timeoutMs,
+      ) as Effect.Effect<
+        {
+          readonly status: "pending" | "resolved";
+          readonly decision: "accept" | "acceptForSession" | "decline" | "cancel" | null;
+          readonly resolvedAt: string | null;
+        },
+        never
+      >;
 
-      if (failureCause) {
-        return yield* Effect.failCause(failureCause);
+    let disposed = false;
+    const dispose = Effect.gen(function* () {
+      if (disposed) {
+        return;
       }
+      disposed = true;
+
+      const shutdown = Effect.gen(function* () {
+        const stopAllExit = yield* Effect.exit(
+          Effect.promise(() => runtime.runPromise(providerService.stopAll())),
+        );
+        const closeScopeExit = yield* Effect.exit(Scope.close(scope, Exit.void));
+        const disposeRuntimeExit = yield* Effect.exit(Effect.promise(() => runtime.dispose()));
+
+        const failureCause = Exit.isFailure(stopAllExit)
+          ? stopAllExit.cause
+          : Exit.isFailure(closeScopeExit)
+            ? closeScopeExit.cause
+            : Exit.isFailure(disposeRuntimeExit)
+              ? disposeRuntimeExit.cause
+              : null;
+
+        if (failureCause) {
+          return yield* Effect.failCause(failureCause);
+        }
+      });
+
+      yield* shutdown.pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            fs.rmSync(rootDir, { recursive: true, force: true });
+          }),
+        ),
+      );
     });
 
-    yield* shutdown.pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          fs.rmSync(rootDir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  return {
-    rootDir,
-    workspaceDir,
+    return {
+      rootDir,
+      workspaceDir,
       dbPath,
       adapterHarness: adapterHarness as TestProviderAdapterHarness,
-    engine,
-    snapshotQuery,
-    providerService,
-    checkpointStore,
-    checkpointRepository,
-    pendingApprovalRepository,
-    waitForThread,
-    waitForDomainEvent,
-    waitForPendingApproval,
-    dispose,
-  } satisfies OrchestrationIntegrationHarness;
-});
+      engine,
+      snapshotQuery,
+      providerService,
+      checkpointStore,
+      checkpointRepository,
+      pendingApprovalRepository,
+      waitForThread,
+      waitForDomainEvent,
+      waitForPendingApproval,
+      dispose,
+    } satisfies OrchestrationIntegrationHarness;
+  });

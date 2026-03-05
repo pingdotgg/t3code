@@ -26,12 +26,12 @@ export class ProviderAdapterSessionNotFoundError extends Schema.TaggedErrorClass
   "ProviderAdapterSessionNotFoundError",
   {
     provider: Schema.String,
-    sessionId: Schema.String,
+    threadId: Schema.String,
     cause: Schema.optional(Schema.Defect),
   },
 ) {
   override get message(): string {
-    return `Unknown ${this.provider} adapter session: ${this.sessionId}`;
+    return `Unknown ${this.provider} adapter thread: ${this.threadId}`;
   }
 }
 
@@ -42,12 +42,12 @@ export class ProviderAdapterSessionClosedError extends Schema.TaggedErrorClass<P
   "ProviderAdapterSessionClosedError",
   {
     provider: Schema.String,
-    sessionId: Schema.String,
+    threadId: Schema.String,
     cause: Schema.optional(Schema.Defect),
   },
 ) {
   override get message(): string {
-    return `${this.provider} adapter session is closed: ${this.sessionId}`;
+    return `${this.provider} adapter thread is closed: ${this.threadId}`;
   }
 }
 
@@ -75,13 +75,13 @@ export class ProviderAdapterProcessError extends Schema.TaggedErrorClass<Provide
   "ProviderAdapterProcessError",
   {
     provider: Schema.String,
-    sessionId: Schema.String,
+    threadId: Schema.String,
     detail: Schema.String,
     cause: Schema.optional(Schema.Defect),
   },
 ) {
   override get message(): string {
-    return `Provider adapter process error (${this.provider}) for session ${this.sessionId}: ${this.detail}`;
+    return `Provider adapter process error (${this.provider}) for thread ${this.threadId}: ${this.detail}`;
   }
 }
 
@@ -122,12 +122,12 @@ export class ProviderUnsupportedError extends Schema.TaggedErrorClass<ProviderUn
 export class ProviderSessionNotFoundError extends Schema.TaggedErrorClass<ProviderSessionNotFoundError>()(
   "ProviderSessionNotFoundError",
   {
-    sessionId: Schema.String,
+    threadId: Schema.String,
     cause: Schema.optional(Schema.Defect),
   },
 ) {
   override get message(): string {
-    return `Unknown provider session: ${this.sessionId}`;
+    return `Unknown provider thread: ${this.threadId}`;
   }
 }
 

@@ -8,8 +8,6 @@ import type {
   TurnId,
   MessageId,
   CheckpointRef,
-  ProviderThreadId,
-  ProviderSessionId,
   ProviderKind,
 } from "@t3tools/contracts";
 
@@ -75,7 +73,7 @@ export interface Project {
 
 export interface Thread {
   id: ThreadId;
-  codexThreadId: ProviderThreadId | null;
+  codexThreadId: string | null;
   projectId: ProjectId;
   title: string;
   model: string;
@@ -93,10 +91,8 @@ export interface Thread {
 }
 
 export interface ThreadSession {
-  sessionId: ProviderSessionId;
   provider: ProviderKind;
   status: SessionPhase | "error" | "closed";
-  threadId: ProviderThreadId | null;
   activeTurnId?: TurnId | undefined;
   createdAt: string;
   updatedAt: string;

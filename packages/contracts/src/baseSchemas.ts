@@ -28,12 +28,6 @@ export type MessageId = typeof MessageId.Type;
 export const TurnId = makeEntityId("TurnId");
 export type TurnId = typeof TurnId.Type;
 
-export const ProviderSessionId = makeEntityId("ProviderSessionId");
-export type ProviderSessionId = typeof ProviderSessionId.Type;
-export const ProviderThreadId = makeEntityId("ProviderThreadId");
-export type ProviderThreadId = typeof ProviderThreadId.Type;
-export const ProviderTurnId = makeEntityId("ProviderTurnId");
-export type ProviderTurnId = typeof ProviderTurnId.Type;
 export const ProviderItemId = makeEntityId("ProviderItemId");
 export type ProviderItemId = typeof ProviderItemId.Type;
 export const RuntimeSessionId = makeEntityId("RuntimeSessionId");

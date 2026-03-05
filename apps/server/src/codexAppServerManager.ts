@@ -8,9 +8,8 @@ import {
   EventId,
   ProviderItemId,
   ProviderRequestKind,
-  ProviderSessionId,
-  ProviderThreadId,
-  ProviderTurnId,
+  ThreadId,
+  TurnId,
   normalizeModelSlug,
   type ProviderApprovalDecision,
   type ProviderEvent,
@@ -18,7 +17,7 @@ import {
   type ProviderSessionStartInput,
   type ProviderTurnStartResult,
 } from "@t3tools/contracts";
-import { Effect } from "effect";
+import { Effect, ServiceMap } from "effect";
 
 type PendingRequestKey = string;
 
@@ -34,8 +33,8 @@ interface PendingApprovalRequest {
   jsonRpcId: string | number;
   method: "item/commandExecution/requestApproval" | "item/fileChange/requestApproval";
   requestKind: ProviderRequestKind;
-  threadId?: ProviderThreadId;
-  turnId?: ProviderTurnId;
+  threadId: ThreadId;
+  turnId?: TurnId;
   itemId?: ProviderItemId;
 }
 
@@ -72,7 +71,7 @@ interface JsonRpcNotification {
 }
 
 export interface CodexAppServerSendTurnInput {
-  readonly sessionId: ProviderSessionId;
+  readonly threadId: ThreadId;
   readonly input?: string;
   readonly attachments?: ReadonlyArray<{ type: "image"; url: string }>;
   readonly model?: string;
@@ -80,12 +79,12 @@ export interface CodexAppServerSendTurnInput {
 }
 
 export interface CodexThreadTurnSnapshot {
-  id: ProviderTurnId;
+  id: TurnId;
   items: unknown[];
 }
 
 export interface CodexThreadSnapshot {
-  threadId: ProviderThreadId;
+  threadId: string;
   turns: CodexThreadTurnSnapshot[];
 }
 
@@ -191,10 +190,16 @@ export interface CodexAppServerManagerEvents {
 }
 
 export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEvents> {
-  private readonly sessions = new Map<ProviderSessionId, CodexSessionContext>();
+  private readonly sessions = new Map<ThreadId, CodexSessionContext>();
+
+  private runPromise: (effect: Effect.Effect<unknown, never>) => Promise<unknown>;
+  constructor(services?: ServiceMap.ServiceMap<never>) {
+    super();
+    this.runPromise = services ? Effect.runPromiseWith(services) : Effect.runPromise;
+  }
 
   async startSession(input: ProviderSessionStartInput): Promise<ProviderSession> {
-    const sessionId = ProviderSessionId.makeUnsafe(randomUUID());
+    const threadId = input.threadId;
     const now = new Date().toISOString();
     let context: CodexSessionContext | undefined;
 
@@ -202,12 +207,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const resolvedCwd = input.cwd ?? process.cwd();
 
       const session: ProviderSession = {
-        sessionId,
         provider: "codex",
         status: "connecting",
         runtimeMode: input.runtimeMode,
         model: normalizeCodexModelSlug(input.model),
         cwd: resolvedCwd,
+        threadId,
         createdAt: now,
         updatedAt: now,
       };
@@ -236,7 +241,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         stopping: false,
       };
 
-      this.sessions.set(sessionId, context);
+      this.sessions.set(threadId, context);
       this.attachProcessListeners(context);
 
       this.emitLifecycleEvent(context, "session/connecting", "Starting codex app-server");
@@ -274,12 +279,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           : "Starting a new Codex thread.",
       );
       await Effect.logInfo("codex app-server opening thread", {
-        sessionId,
+        threadId,
         requestedRuntimeMode: input.runtimeMode,
         requestedModel: normalizedModel ?? null,
         requestedCwd: resolvedCwd,
         resumeThreadId: resumeThreadId ?? null,
-      }).pipe(Effect.runPromise);
+      }).pipe(this.runPromise);
 
       let threadOpenMethod: "thread/start" | "thread/resume" = "thread/start";
       let threadOpenResponse: unknown;
@@ -298,12 +303,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
               error instanceof Error ? error.message : "Codex thread resume failed.",
             );
             await Effect.logWarning("codex app-server thread resume failed", {
-              sessionId,
+              threadId,
               requestedRuntimeMode: input.runtimeMode,
               resumeThreadId,
               recoverable: false,
               cause: error instanceof Error ? error.message : String(error),
-            }).pipe(Effect.runPromise);
+            }).pipe(this.runPromise);
             throw error;
           }
 
@@ -314,12 +319,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
             `Could not resume thread ${resumeThreadId}; started a new thread instead.`,
           );
           await Effect.logWarning("codex app-server thread resume fell back to fresh start", {
-            sessionId,
+            threadId,
             requestedRuntimeMode: input.runtimeMode,
             resumeThreadId,
             recoverable: true,
             cause: error instanceof Error ? error.message : String(error),
-          }).pipe(Effect.runPromise);
+          }).pipe(this.runPromise);
           threadOpenResponse = await this.sendRequest(context, "thread/start", threadStartParams);
         }
       } else {
@@ -334,22 +339,25 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       if (!threadIdRaw) {
         throw new Error(`${threadOpenMethod} response did not include a thread id.`);
       }
-      const threadId = ProviderThreadId.makeUnsafe(threadIdRaw);
+      const providerThreadId = threadIdRaw;
 
       this.updateSession(context, {
         status: "ready",
-        threadId,
-        resumeCursor: { threadId },
+        resumeCursor: { threadId: providerThreadId },
       });
-      this.emitLifecycleEvent(context, "session/threadOpenResolved", `Codex ${threadOpenMethod} resolved.`);
+      this.emitLifecycleEvent(
+        context,
+        "session/threadOpenResolved",
+        `Codex ${threadOpenMethod} resolved.`,
+      );
       await Effect.logInfo("codex app-server thread open resolved", {
-        sessionId,
+        threadId,
         threadOpenMethod,
         requestedResumeThreadId: resumeThreadId ?? null,
-        resolvedThreadId: threadId,
+        resolvedThreadId: providerThreadId,
         requestedRuntimeMode: input.runtimeMode,
-      }).pipe(Effect.runPromise);
-      this.emitLifecycleEvent(context, "session/ready", `Connected to thread ${threadId}`);
+      }).pipe(this.runPromise);
+      this.emitLifecycleEvent(context, "session/ready", `Connected to thread ${providerThreadId}`);
       return { ...context.session };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start Codex session.";
@@ -359,13 +367,13 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           lastError: message,
         });
         this.emitErrorEvent(context, "session/startFailed", message);
-        this.stopSession(sessionId);
+        this.stopSession(threadId);
       } else {
         this.emitEvent({
           id: EventId.makeUnsafe(randomUUID()),
           kind: "error",
           provider: "codex",
-          sessionId,
+          threadId,
           createdAt: new Date().toISOString(),
           method: "session/startFailed",
           message,
@@ -376,10 +384,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   async sendTurn(input: CodexAppServerSendTurnInput): Promise<ProviderTurnStartResult> {
-    const context = this.requireSession(input.sessionId);
-    if (!context.session.threadId) {
-      throw new Error("Session is missing a thread id.");
-    }
+    const context = this.requireSession(input.threadId);
 
     const turnInput: Array<
       { type: "text"; text: string; text_elements: [] } | { type: "image"; url: string }
@@ -403,15 +408,23 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       throw new Error("Turn input must include text or attachments.");
     }
 
+    const providerThreadId = readResumeThreadId({
+      threadId: context.session.threadId,
+      runtimeMode: context.session.runtimeMode,
+      resumeCursor: context.session.resumeCursor,
+    });
+    if (!providerThreadId) {
+      throw new Error("Session is missing provider resume thread id.");
+    }
     const turnStartParams: {
-      threadId: ProviderThreadId;
+      threadId: string;
       input: Array<
         { type: "text"; text: string; text_elements: [] } | { type: "image"; url: string }
       >;
       model?: string;
       effort?: string;
     } = {
-      threadId: context.session.threadId,
+      threadId: providerThreadId,
       input: turnInput,
     };
     const normalizedModel = normalizeCodexModelSlug(input.model);
@@ -429,7 +442,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     if (!turnIdRaw) {
       throw new Error("turn/start response did not include a turn id.");
     }
-    const turnId = ProviderTurnId.makeUnsafe(turnIdRaw);
+    const turnId = TurnId.makeUnsafe(turnIdRaw);
 
     this.updateSession(context, {
       status: "running",
@@ -448,49 +461,59 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     };
   }
 
-  async interruptTurn(sessionId: ProviderSessionId, turnId?: ProviderTurnId): Promise<void> {
-    const context = this.requireSession(sessionId);
+  async interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void> {
+    const context = this.requireSession(threadId);
     const effectiveTurnId = turnId ?? context.session.activeTurnId;
 
-    if (!effectiveTurnId || !context.session.threadId) {
+    const providerThreadId = readResumeThreadId({
+      threadId: context.session.threadId,
+      runtimeMode: context.session.runtimeMode,
+      resumeCursor: context.session.resumeCursor,
+    });
+    if (!effectiveTurnId || !providerThreadId) {
       return;
     }
 
     await this.sendRequest(context, "turn/interrupt", {
-      threadId: context.session.threadId,
+      threadId: providerThreadId,
       turnId: effectiveTurnId,
     });
   }
 
-  async readThread(sessionId: ProviderSessionId): Promise<CodexThreadSnapshot> {
-    const context = this.requireSession(sessionId);
-    const threadId = context.session.threadId;
-    if (!threadId) {
-      throw new Error("Session is missing a thread id.");
+  async readThread(threadId: ThreadId): Promise<CodexThreadSnapshot> {
+    const context = this.requireSession(threadId);
+    const providerThreadId = readResumeThreadId({
+      threadId: context.session.threadId,
+      runtimeMode: context.session.runtimeMode,
+      resumeCursor: context.session.resumeCursor,
+    });
+    if (!providerThreadId) {
+      throw new Error("Session is missing a provider resume thread id.");
     }
 
     const response = await this.sendRequest(context, "thread/read", {
-      threadId,
+      threadId: providerThreadId,
       includeTurns: true,
     });
     return this.parseThreadSnapshot("thread/read", response);
   }
 
-  async rollbackThread(
-    sessionId: ProviderSessionId,
-    numTurns: number,
-  ): Promise<CodexThreadSnapshot> {
-    const context = this.requireSession(sessionId);
-    const threadId = context.session.threadId;
-    if (!threadId) {
-      throw new Error("Session is missing a thread id.");
+  async rollbackThread(threadId: ThreadId, numTurns: number): Promise<CodexThreadSnapshot> {
+    const context = this.requireSession(threadId);
+    const providerThreadId = readResumeThreadId({
+      threadId: context.session.threadId,
+      runtimeMode: context.session.runtimeMode,
+      resumeCursor: context.session.resumeCursor,
+    });
+    if (!providerThreadId) {
+      throw new Error("Session is missing a provider resume thread id.");
     }
     if (!Number.isInteger(numTurns) || numTurns < 1) {
       throw new Error("numTurns must be an integer >= 1.");
     }
 
     const response = await this.sendRequest(context, "thread/rollback", {
-      threadId,
+      threadId: providerThreadId,
       numTurns,
     });
     this.updateSession(context, {
@@ -501,11 +524,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   async respondToRequest(
-    sessionId: ProviderSessionId,
+    threadId: ThreadId,
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
   ): Promise<void> {
-    const context = this.requireSession(sessionId);
+    const context = this.requireSession(threadId);
     const pendingRequest = context.pendingApprovals.get(requestId);
     if (!pendingRequest) {
       throw new Error(`Unknown pending approval request: ${requestId}`);
@@ -523,10 +546,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       id: EventId.makeUnsafe(randomUUID()),
       kind: "notification",
       provider: "codex",
-      sessionId: context.session.sessionId,
+      threadId: context.session.threadId,
       createdAt: new Date().toISOString(),
       method: "item/requestApproval/decision",
-      threadId: pendingRequest.threadId,
       turnId: pendingRequest.turnId,
       itemId: pendingRequest.itemId,
       requestId: pendingRequest.requestId,
@@ -539,8 +561,8 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     });
   }
 
-  stopSession(sessionId: ProviderSessionId): void {
-    const context = this.sessions.get(sessionId);
+  stopSession(threadId: ThreadId): void {
+    const context = this.sessions.get(threadId);
     if (!context) {
       return;
     }
@@ -565,7 +587,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       activeTurnId: undefined,
     });
     this.emitLifecycleEvent(context, "session/closed", "Session stopped");
-    this.sessions.delete(sessionId);
+    this.sessions.delete(threadId);
   }
 
   listSessions(): ProviderSession[] {
@@ -574,24 +596,24 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }));
   }
 
-  hasSession(sessionId: ProviderSessionId): boolean {
-    return this.sessions.has(sessionId);
+  hasSession(threadId: ThreadId): boolean {
+    return this.sessions.has(threadId);
   }
 
   stopAll(): void {
-    for (const sessionId of this.sessions.keys()) {
-      this.stopSession(sessionId);
+    for (const threadId of this.sessions.keys()) {
+      this.stopSession(threadId);
     }
   }
 
-  private requireSession(sessionId: ProviderSessionId): CodexSessionContext {
-    const context = this.sessions.get(sessionId);
+  private requireSession(threadId: ThreadId): CodexSessionContext {
+    const context = this.sessions.get(threadId);
     if (!context) {
-      throw new Error(`Unknown session: ${sessionId}`);
+      throw new Error(`Unknown session for thread: ${threadId}`);
     }
 
     if (context.session.status === "closed") {
-      throw new Error(`Session is closed: ${sessionId}`);
+      throw new Error(`Session is closed for thread: ${threadId}`);
     }
 
     return context;
@@ -636,7 +658,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         lastError: code === 0 ? context.session.lastError : message,
       });
       this.emitLifecycleEvent(context, "session/exited", message);
-      this.sessions.delete(context.session.sessionId);
+      this.sessions.delete(context.session.threadId);
     });
   }
 
@@ -698,10 +720,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       id: EventId.makeUnsafe(randomUUID()),
       kind: "notification",
       provider: "codex",
-      sessionId: context.session.sessionId,
+      threadId: context.session.threadId,
       createdAt: new Date().toISOString(),
       method: notification.method,
-      threadId: route.threadId,
       turnId: route.turnId,
       itemId: route.itemId,
       textDelta,
@@ -709,19 +730,17 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     });
 
     if (notification.method === "thread/started") {
-      const threadId = toProviderThreadId(
+      const providerThreadId = normalizeProviderThreadId(
         this.readString(this.readObject(notification.params)?.thread, "id"),
       );
-      if (threadId) {
-        this.updateSession(context, { threadId });
+      if (providerThreadId) {
+        this.updateSession(context, { resumeCursor: { threadId: providerThreadId } });
       }
       return;
     }
 
     if (notification.method === "turn/started") {
-      const turnId = toProviderTurnId(
-        this.readString(this.readObject(notification.params)?.turn, "id"),
-      );
+      const turnId = toTurnId(this.readString(this.readObject(notification.params)?.turn, "id"));
       this.updateSession(context, {
         status: "running",
         activeTurnId: turnId,
@@ -766,7 +785,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
             ? "item/commandExecution/requestApproval"
             : "item/fileChange/requestApproval",
         requestKind,
-        ...(route.threadId ? { threadId: route.threadId } : {}),
+        threadId: context.session.threadId,
         ...(route.turnId ? { turnId: route.turnId } : {}),
         ...(route.itemId ? { itemId: route.itemId } : {}),
       };
@@ -777,10 +796,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       id: EventId.makeUnsafe(randomUUID()),
       kind: "request",
       provider: "codex",
-      sessionId: context.session.sessionId,
+      threadId: context.session.threadId,
       createdAt: new Date().toISOString(),
       method: request.method,
-      threadId: route.threadId,
       turnId: route.turnId,
       itemId: route.itemId,
       requestId,
@@ -872,7 +890,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       id: EventId.makeUnsafe(randomUUID()),
       kind: "session",
       provider: "codex",
-      sessionId: context.session.sessionId,
+      threadId: context.session.threadId,
       createdAt: new Date().toISOString(),
       method,
       message,
@@ -884,7 +902,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       id: EventId.makeUnsafe(randomUUID()),
       kind: "error",
       provider: "codex",
-      sessionId: context.session.sessionId,
+      threadId: context.session.threadId,
       createdAt: new Date().toISOString(),
       method,
       message,
@@ -908,6 +926,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       return "command";
     }
 
+    if (method === "item/fileRead/requestApproval") {
+      return "file-read";
+    }
+
     if (method === "item/fileChange/requestApproval") {
       return "file-change";
     }
@@ -923,14 +945,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     if (!threadIdRaw) {
       throw new Error(`${method} response did not include a thread id.`);
     }
-    const threadId = ProviderThreadId.makeUnsafe(threadIdRaw);
-
     const turnsRaw =
       this.readArray(thread, "turns") ?? this.readArray(responseRecord, "turns") ?? [];
     const turns = turnsRaw.map((turnValue, index) => {
       const turn = this.readObject(turnValue);
       const turnIdRaw = this.readString(turn, "id") ?? `${threadIdRaw}:turn:${index + 1}`;
-      const turnId = ProviderTurnId.makeUnsafe(turnIdRaw);
+      const turnId = TurnId.makeUnsafe(turnIdRaw);
       const items = this.readArray(turn, "items") ?? [];
       return {
         id: turnId,
@@ -939,7 +959,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     });
 
     return {
-      threadId,
+      threadId: threadIdRaw,
       turns,
     };
   }
@@ -977,30 +997,20 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   private readRouteFields(params: unknown): {
-    threadId?: ProviderThreadId;
-    turnId?: ProviderTurnId;
+    turnId?: TurnId;
     itemId?: ProviderItemId;
   } {
     const route: {
-      threadId?: ProviderThreadId;
-      turnId?: ProviderTurnId;
+      turnId?: TurnId;
       itemId?: ProviderItemId;
     } = {};
 
-    const threadId = toProviderThreadId(
-      this.readString(params, "threadId") ??
-        this.readString(this.readObject(params, "thread"), "id"),
-    );
-    const turnId = toProviderTurnId(
+    const turnId = toTurnId(
       this.readString(params, "turnId") ?? this.readString(this.readObject(params, "turn"), "id"),
     );
     const itemId = toProviderItemId(
       this.readString(params, "itemId") ?? this.readString(this.readObject(params, "item"), "id"),
     );
-
-    if (threadId) {
-      route.threadId = threadId;
-    }
 
     if (turnId) {
       route.turnId = turnId;
@@ -1065,8 +1075,8 @@ function brandIfNonEmpty<T extends string>(
   return normalized?.length ? maker(normalized) : undefined;
 }
 
-function toProviderThreadId(value: string | undefined): ProviderThreadId | undefined {
-  return brandIfNonEmpty(value, ProviderThreadId.makeUnsafe);
+function normalizeProviderThreadId(value: string | undefined): string | undefined {
+  return brandIfNonEmpty(value, (normalized) => normalized);
 }
 
 function readCodexProviderOptions(input: ProviderSessionStartInput): {
@@ -1083,20 +1093,20 @@ function readCodexProviderOptions(input: ProviderSessionStartInput): {
   };
 }
 
-function readResumeCursorThreadId(resumeCursor: unknown): ProviderThreadId | undefined {
+function readResumeCursorThreadId(resumeCursor: unknown): string | undefined {
   if (!resumeCursor || typeof resumeCursor !== "object" || Array.isArray(resumeCursor)) {
     return undefined;
   }
   const rawThreadId = (resumeCursor as Record<string, unknown>).threadId;
-  return typeof rawThreadId === "string" ? toProviderThreadId(rawThreadId) : undefined;
+  return typeof rawThreadId === "string" ? normalizeProviderThreadId(rawThreadId) : undefined;
 }
 
-function readResumeThreadId(input: ProviderSessionStartInput): ProviderThreadId | undefined {
+function readResumeThreadId(input: ProviderSessionStartInput): string | undefined {
   return readResumeCursorThreadId(input.resumeCursor);
 }
 
-function toProviderTurnId(value: string | undefined): ProviderTurnId | undefined {
-  return brandIfNonEmpty(value, ProviderTurnId.makeUnsafe);
+function toTurnId(value: string | undefined): TurnId | undefined {
+  return brandIfNonEmpty(value, TurnId.makeUnsafe);
 }
 
 function toProviderItemId(value: string | undefined): ProviderItemId | undefined {

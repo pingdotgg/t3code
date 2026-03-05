@@ -4,9 +4,8 @@ import {
   EventId,
   type OrchestrationEvent,
   type ProviderKind,
-  type ProviderSessionId,
   type OrchestrationSession,
-  type ThreadId,
+  ThreadId,
   type ProviderSession,
   type RuntimeMode,
   type TurnId,
@@ -220,9 +219,9 @@ const make = Effect.gen(function* () {
       projects: readModel.projects,
     });
 
-    const resolveActiveSession = (sessionId: ProviderSessionId) =>
+    const resolveActiveSession = (threadId: ThreadId) =>
       providerService.listSessions().pipe(
-        Effect.map((sessions) => sessions.find((session) => session.sessionId === sessionId)),
+        Effect.map((sessions) => sessions.find((session) => session.threadId === threadId)),
       );
 
     const startProviderSession = (input?: {
@@ -230,6 +229,7 @@ const make = Effect.gen(function* () {
       readonly provider?: ProviderKind;
     }) =>
       providerService.startSession(threadId, {
+        threadId,
         ...(input?.provider ?? preferredProvider
           ? { provider: input?.provider ?? preferredProvider }
           : {}),
@@ -246,8 +246,6 @@ const make = Effect.gen(function* () {
           threadId,
           status: mapProviderSessionStatusToOrchestrationStatus(session.status),
           providerName: session.provider,
-          providerSessionId: session.sessionId,
-          providerThreadId: session.threadId ?? null,
           runtimeMode: desiredRuntimeMode,
           // Provider turn ids are not orchestration turn ids.
           activeTurnId: null,
@@ -257,11 +255,12 @@ const make = Effect.gen(function* () {
         createdAt,
       });
 
-    const existingSessionId = thread.session?.providerSessionId;
-    if (existingSessionId) {
+    const existingSessionThreadId =
+      thread.session && thread.session.status !== "stopped" ? thread.id : null;
+    if (existingSessionThreadId) {
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
       const providerChanged = options?.provider !== undefined && options.provider !== currentProvider;
-      const activeSession = yield* resolveActiveSession(existingSessionId);
+      const activeSession = yield* resolveActiveSession(existingSessionThreadId);
       const sessionModelSwitch =
         currentProvider === undefined
           ? "in-session"
@@ -271,12 +270,8 @@ const make = Effect.gen(function* () {
       const shouldRestartForModelChange =
         modelChanged && sessionModelSwitch === "restart-session";
 
-      if (
-        !runtimeModeChanged &&
-        !providerChanged &&
-        !shouldRestartForModelChange
-      ) {
-        return existingSessionId;
+      if (!runtimeModeChanged && !providerChanged && !shouldRestartForModelChange) {
+        return existingSessionThreadId;
       }
 
       const resumeCursor =
@@ -285,7 +280,7 @@ const make = Effect.gen(function* () {
           : (activeSession?.resumeCursor ?? undefined);
       yield* Effect.logInfo("provider command reactor restarting provider session", {
         threadId,
-        existingSessionId,
+        existingSessionThreadId,
         currentProvider,
         desiredProvider: options?.provider ?? currentProvider,
         currentRuntimeMode: thread.session?.runtimeMode,
@@ -302,30 +297,20 @@ const make = Effect.gen(function* () {
       });
       yield* Effect.logInfo("provider command reactor restarted provider session", {
         threadId,
-        previousSessionId: existingSessionId,
-        restartedSessionId: restartedSession.sessionId,
+        previousSessionId: existingSessionThreadId,
+        restartedSessionThreadId: restartedSession.threadId,
         provider: restartedSession.provider,
-        providerThreadId: restartedSession.threadId,
         runtimeMode: restartedSession.runtimeMode,
       });
       yield* bindSessionToThread(restartedSession);
-      yield* providerService.stopSession({ sessionId: existingSessionId }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("provider command reactor failed to stop superseded provider session", {
-            threadId,
-            sessionId: existingSessionId,
-            cause: Cause.pretty(cause),
-          }),
-        ),
-      );
-      return restartedSession.sessionId;
+      return restartedSession.threadId;
     }
 
     const startedSession = yield* startProviderSession(
       options?.provider !== undefined ? { provider: options.provider } : undefined,
     );
     yield* bindSessionToThread(startedSession);
-    return startedSession.sessionId;
+    return startedSession.threadId;
   });
 
   const sendTurnForThread = Effect.fnUntraced(function* (input: {
@@ -341,14 +326,14 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
-    const sessionId = yield* ensureSessionForThread(input.threadId, input.createdAt, {
+    yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.provider !== undefined ? { provider: input.provider } : {}),
       ...(input.model !== undefined ? { model: input.model } : {}),
     });
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService.listSessions().pipe(
-      Effect.map((sessions) => sessions.find((session) => session.sessionId === sessionId)),
+      Effect.map((sessions) => sessions.find((session) => session.threadId === input.threadId)),
     );
     const sessionModelSwitch =
       activeSession === undefined
@@ -358,7 +343,7 @@ const make = Effect.gen(function* () {
       sessionModelSwitch === "unsupported" ? activeSession?.model : input.model;
 
     yield* providerService.sendTurn({
-      sessionId,
+      threadId: input.threadId,
       ...(normalizedInput ? { input: normalizedInput } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { model: modelForTurn } : {}),
@@ -487,8 +472,8 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
-    const sessionId = thread.session?.providerSessionId;
-    if (!sessionId) {
+    const hasSession = thread.session && thread.session.status !== "stopped";
+    if (!hasSession) {
       return yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.turn.interrupt.failed",
@@ -500,7 +485,7 @@ const make = Effect.gen(function* () {
     }
 
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ sessionId });
+    yield* providerService.interruptTurn({ threadId: event.payload.threadId });
   });
 
   const processApprovalResponseRequested = Effect.fnUntraced(function* (
@@ -510,8 +495,8 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
-    const sessionId = thread.session?.providerSessionId;
-    if (!sessionId) {
+    const hasSession = thread.session && thread.session.status !== "stopped";
+    if (!hasSession) {
       return yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.approval.respond.failed",
@@ -525,7 +510,7 @@ const make = Effect.gen(function* () {
 
     yield* providerService
       .respondToRequest({
-        sessionId,
+        threadId: event.payload.threadId,
         requestId: event.payload.requestId,
         decision: event.payload.decision,
       })
@@ -559,10 +544,8 @@ const make = Effect.gen(function* () {
     }
 
     const now = event.payload.createdAt;
-    const sessionId = thread.session?.providerSessionId;
-
-    if (sessionId) {
-      yield* providerService.stopSession({ sessionId });
+    if (thread.session && thread.session.status !== "stopped") {
+      yield* providerService.stopSession({ threadId: thread.id });
     }
 
     yield* setThreadSession({
@@ -571,8 +554,6 @@ const make = Effect.gen(function* () {
         threadId: thread.id,
         status: "stopped",
         providerName: thread.session?.providerName ?? null,
-        providerSessionId: null,
-        providerThreadId: null,
         runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
         activeTurnId: null,
         lastError: thread.session?.lastError ?? null,

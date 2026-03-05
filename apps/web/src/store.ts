@@ -4,7 +4,6 @@ import {
   getModelOptions,
   normalizeModelSlug,
   type ProviderKind,
-  ProviderSessionId,
   ThreadId,
   type OrchestrationReadModel,
   type OrchestrationSessionStatus,
@@ -247,7 +246,7 @@ export function syncServerReadModel(
       const existing = existingThreadById.get(thread.id);
       return {
         id: thread.id,
-        codexThreadId: thread.session?.providerThreadId ?? null,
+        codexThreadId: null,
         projectId: thread.projectId,
         title: thread.title,
         model: resolveModelSlugForProvider(
@@ -260,13 +259,9 @@ export function syncServerReadModel(
         runtimeMode: thread.runtimeMode,
         session: thread.session
           ? {
-              sessionId:
-                thread.session.providerSessionId ??
-                ProviderSessionId.makeUnsafe(`thread:${thread.id}`),
               provider: toLegacyProvider(thread.session.providerName),
               status: toLegacySessionStatus(thread.session.status),
               orchestrationStatus: thread.session.status,
-              threadId: thread.session.providerThreadId,
               activeTurnId: thread.session.activeTurnId ?? undefined,
               createdAt: thread.session.updatedAt,
               updatedAt: thread.session.updatedAt,

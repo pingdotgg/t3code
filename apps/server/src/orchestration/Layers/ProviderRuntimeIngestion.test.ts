@@ -6,10 +6,8 @@ import {
   MessageId,
   ProjectId,
   ProviderItemId,
-  ProviderSessionId,
-  ProviderThreadId,
-  ProviderTurnId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
@@ -33,20 +31,18 @@ import { ServerConfig } from "../../config.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
-const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
-const asProviderThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
-const asProviderTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
 const asItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
+const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
+const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
   readonly eventId: EventId;
   readonly provider: "codex" | "claudeCode" | "cursor";
-  readonly sessionId: string;
   readonly createdAt: string;
-  readonly threadId?: string | undefined;
+  readonly threadId: ThreadId;
   readonly turnId?: string | undefined;
   readonly itemId?: string | undefined;
   readonly requestId?: string | undefined;
@@ -182,8 +178,6 @@ describe("ProviderRuntimeIngestion", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "ready",
           providerName: "codex",
-          providerSessionId: asSessionId("sess-1"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
           runtimeMode: "approval-required",
           activeTurnId: null,
           updatedAt: createdAt,
@@ -207,9 +201,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.started",
       eventId: asEventId("evt-turn-started"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
+      threadId: asThreadId("thread-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-1"),
+      turnId: asTurnId("turn-1"),
     });
 
     await waitForThread(
@@ -221,9 +215,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
+      threadId: asThreadId("thread-1"),
       createdAt: new Date().toISOString(),
-      turnId: asProviderTurnId("turn-1"),
+      turnId: asTurnId("turn-1"),
       payload: {
         state: "failed",
         errorMessage: "turn failed",
@@ -249,9 +243,8 @@ describe("ProviderRuntimeIngestion", () => {
       type: "session.state.changed",
       eventId: asEventId("evt-session-state-waiting"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
+      threadId: asThreadId("thread-1"),
       createdAt: waitingAt,
-      threadId: asProviderThreadId("provider-thread-1"),
       payload: {
         state: "waiting",
         reason: "awaiting approval",
@@ -269,9 +262,8 @@ describe("ProviderRuntimeIngestion", () => {
       type: "session.state.changed",
       eventId: asEventId("evt-session-state-error"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
+      threadId: asThreadId("thread-1"),
       createdAt: new Date().toISOString(),
-      threadId: asProviderThreadId("provider-thread-1"),
       payload: {
         state: "error",
         reason: "provider crashed",
@@ -292,9 +284,8 @@ describe("ProviderRuntimeIngestion", () => {
       type: "session.state.changed",
       eventId: asEventId("evt-session-state-stopped"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
+      threadId: asThreadId("thread-1"),
       createdAt: new Date().toISOString(),
-      threadId: asProviderThreadId("provider-thread-1"),
       payload: {
         state: "stopped",
       },
@@ -314,9 +305,8 @@ describe("ProviderRuntimeIngestion", () => {
       type: "session.state.changed",
       eventId: asEventId("evt-session-state-ready"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
+      threadId: asThreadId("thread-1"),
       createdAt: new Date().toISOString(),
-      threadId: asProviderThreadId("provider-thread-1"),
       payload: {
         state: "ready",
       },
@@ -341,10 +331,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.started",
       eventId: asEventId("evt-turn-started-midturn-lifecycle"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      threadId: asProviderThreadId("provider-thread-1"),
-      turnId: asProviderTurnId("turn-midturn-lifecycle"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-midturn-lifecycle"),
     });
 
     await waitForThread(
@@ -358,17 +347,15 @@ describe("ProviderRuntimeIngestion", () => {
       type: "thread.started",
       eventId: asEventId("evt-thread-started-midturn-lifecycle"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: new Date().toISOString(),
-      threadId: asProviderThreadId("provider-thread-1"),
+      threadId: asThreadId("thread-1"),
     });
     harness.emit({
       type: "session.started",
       eventId: asEventId("evt-session-started-midturn-lifecycle"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: new Date().toISOString(),
-      threadId: asProviderThreadId("provider-thread-1"),
+      threadId: asThreadId("thread-1"),
     });
 
     await Effect.runPromise(Effect.sleep("40 millis"));
@@ -381,10 +368,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-midturn-lifecycle"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: new Date().toISOString(),
-      threadId: asProviderThreadId("provider-thread-1"),
-      turnId: asProviderTurnId("turn-midturn-lifecycle"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-midturn-lifecycle"),
       status: "completed",
     });
 
@@ -402,10 +388,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.started",
       eventId: asEventId("evt-turn-started-primary"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      threadId: asProviderThreadId("provider-thread-1"),
-      turnId: asProviderTurnId("turn-primary"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-primary"),
     });
 
     await waitForThread(
@@ -418,10 +403,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-aux"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: new Date().toISOString(),
-      threadId: asProviderThreadId("provider-thread-aux"),
-      turnId: asProviderTurnId("turn-aux"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-aux"),
       status: "completed",
     });
 
@@ -437,10 +421,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-primary"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: new Date().toISOString(),
-      threadId: asProviderThreadId("provider-thread-1"),
-      turnId: asProviderTurnId("turn-primary"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-primary"),
       status: "completed",
     });
 
@@ -463,8 +446,6 @@ describe("ProviderRuntimeIngestion", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "ready",
           providerName: "claudeCode",
-          providerSessionId: asSessionId("sess-1"),
-          providerThreadId: asProviderThreadId("claude-thread-placeholder"),
           runtimeMode: "approval-required",
           activeTurnId: null,
           updatedAt: seededAt,
@@ -478,10 +459,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.started",
       eventId: asEventId("evt-turn-started-claude-placeholder"),
       provider: "claudeCode",
-      sessionId: asSessionId("sess-1"),
       createdAt: new Date().toISOString(),
-      threadId: asProviderThreadId("provider-thread-real"),
-      turnId: asProviderTurnId("turn-claude-placeholder"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-claude-placeholder"),
     });
 
     await waitForThread(
@@ -495,10 +475,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-claude-placeholder"),
       provider: "claudeCode",
-      sessionId: asSessionId("sess-1"),
       createdAt: new Date().toISOString(),
-      threadId: asProviderThreadId("provider-thread-real"),
-      turnId: asProviderTurnId("turn-claude-placeholder"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-claude-placeholder"),
       status: "completed",
     });
 
@@ -516,9 +495,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.started",
       eventId: asEventId("evt-turn-started-guarded"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-guarded-main"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-guarded-main"),
     });
 
     await waitForThread(
@@ -532,9 +511,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-guarded-other"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: new Date().toISOString(),
-      turnId: asProviderTurnId("turn-guarded-other"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-guarded-other"),
       status: "completed",
     });
 
@@ -550,9 +529,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-guarded-main"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: new Date().toISOString(),
-      turnId: asProviderTurnId("turn-guarded-main"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-guarded-main"),
       status: "completed",
     });
 
@@ -570,9 +549,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "content.delta",
       eventId: asEventId("evt-message-delta-1"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-2"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-2"),
       itemId: asItemId("item-1"),
       payload: {
         streamKind: "assistant_text",
@@ -583,9 +562,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "content.delta",
       eventId: asEventId("evt-message-delta-2"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-2"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-2"),
       itemId: asItemId("item-1"),
       payload: {
         streamKind: "assistant_text",
@@ -596,9 +575,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "item.completed",
       eventId: asEventId("evt-message-completed"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-2"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-2"),
       itemId: asItemId("item-1"),
       payload: {
         itemType: "assistant_message",
@@ -627,9 +606,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "item.completed",
       eventId: asEventId("evt-assistant-item-completed-no-delta"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-no-delta"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-no-delta"),
       itemId: asItemId("item-no-delta"),
       payload: {
         itemType: "assistant_message",
@@ -659,9 +638,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.started",
       eventId: asEventId("evt-turn-started-buffered"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-buffered"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-buffered"),
     });
     await waitForThread(
       harness.engine,
@@ -673,9 +652,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "content.delta",
       eventId: asEventId("evt-message-delta-buffered"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-buffered"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-buffered"),
       itemId: asItemId("item-buffered"),
       payload: {
         streamKind: "assistant_text",
@@ -698,9 +677,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "item.completed",
       eventId: asEventId("evt-message-completed-buffered"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-buffered"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-buffered"),
       itemId: asItemId("item-buffered"),
       payload: {
         itemType: "assistant_message",
@@ -747,9 +726,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.started",
       eventId: asEventId("evt-turn-started-streaming-mode"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-streaming-mode"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-streaming-mode"),
     });
     await waitForThread(
       harness.engine,
@@ -762,9 +741,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "content.delta",
       eventId: asEventId("evt-message-delta-streaming-mode"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-streaming-mode"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-streaming-mode"),
       itemId: asItemId("item-streaming-mode"),
       payload: {
         streamKind: "assistant_text",
@@ -789,9 +768,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "item.completed",
       eventId: asEventId("evt-message-completed-streaming-mode"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-streaming-mode"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-streaming-mode"),
       itemId: asItemId("item-streaming-mode"),
       payload: {
         itemType: "assistant_message",
@@ -821,9 +800,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.started",
       eventId: asEventId("evt-turn-started-buffer-spill"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-buffer-spill"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-buffer-spill"),
     });
     await waitForThread(
       harness.engine,
@@ -836,9 +815,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "content.delta",
       eventId: asEventId("evt-message-delta-buffer-spill"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-buffer-spill"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-buffer-spill"),
       itemId: asItemId("item-buffer-spill"),
       payload: {
         streamKind: "assistant_text",
@@ -849,9 +828,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "item.completed",
       eventId: asEventId("evt-message-completed-buffer-spill"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-buffer-spill"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-buffer-spill"),
       itemId: asItemId("item-buffer-spill"),
       payload: {
         itemType: "assistant_message",
@@ -881,9 +860,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.started",
       eventId: asEventId("evt-turn-started-for-complete-dedup"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-complete-dedup"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-complete-dedup"),
     });
 
     await waitForThread(
@@ -897,9 +876,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "content.delta",
       eventId: asEventId("evt-message-delta-for-complete-dedup"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-complete-dedup"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-complete-dedup"),
       itemId: asItemId("item-complete-dedup"),
       payload: {
         streamKind: "assistant_text",
@@ -910,9 +889,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "item.completed",
       eventId: asEventId("evt-message-completed-for-complete-dedup"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-complete-dedup"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-complete-dedup"),
       itemId: asItemId("item-complete-dedup"),
       payload: {
         itemType: "assistant_message",
@@ -923,9 +902,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-for-complete-dedup"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-complete-dedup"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-complete-dedup"),
       payload: {
         state: "completed",
       },
@@ -967,8 +946,8 @@ describe("ProviderRuntimeIngestion", () => {
       type: "request.opened",
       eventId: asEventId("evt-request-opened"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
+      threadId: asThreadId("thread-1"),
       requestId: ApprovalRequestId.makeUnsafe("req-open"),
       payload: {
         requestType: "command_execution_approval",
@@ -980,8 +959,8 @@ describe("ProviderRuntimeIngestion", () => {
       type: "request.resolved",
       eventId: asEventId("evt-request-resolved"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
+      threadId: asThreadId("thread-1"),
       requestId: ApprovalRequestId.makeUnsafe("req-open"),
       payload: {
         requestType: "command_execution_approval",
@@ -1033,9 +1012,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "runtime.error",
       eventId: asEventId("evt-runtime-error"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-3"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-3"),
       payload: {
         message: "runtime exploded",
       },
@@ -1060,26 +1039,24 @@ describe("ProviderRuntimeIngestion", () => {
       type: "session.started",
       eventId: asEventId("evt-session-started"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
+      threadId: asThreadId("thread-1"),
       message: "session started",
     });
     harness.emit({
       type: "thread.started",
       eventId: asEventId("evt-thread-started"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      threadId: ProviderThreadId.makeUnsafe("provider-thread-2"),
+      threadId: asThreadId("thread-1"),
     });
     harness.emit({
       type: "item.started",
       eventId: asEventId("evt-tool-started"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-9"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-9"),
       payload: {
         itemType: "command_execution",
         status: "in_progress",
@@ -1114,9 +1091,8 @@ describe("ProviderRuntimeIngestion", () => {
       type: "thread.metadata.updated",
       eventId: asEventId("evt-thread-metadata-updated"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      threadId: asProviderThreadId("provider-thread-1"),
+      threadId: asThreadId("thread-1"),
       payload: {
         name: "Renamed by provider",
         metadata: { source: "provider" },
@@ -1127,9 +1103,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.plan.updated",
       eventId: asEventId("evt-turn-plan-updated"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-p1"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-p1"),
       payload: {
         explanation: "Working through the plan",
         plan: [
@@ -1143,9 +1119,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "item.updated",
       eventId: asEventId("evt-item-updated"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-p1"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-p1"),
       itemId: asItemId("item-p1-tool"),
       payload: {
         itemType: "command_execution",
@@ -1160,9 +1136,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "runtime.warning",
       eventId: asEventId("evt-runtime-warning"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-p1"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-p1"),
       payload: {
         message: "Provider got slow",
         detail: { latencyMs: 1500 },
@@ -1173,9 +1149,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.diff.updated",
       eventId: asEventId("evt-turn-diff-updated"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-p1"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-p1"),
       itemId: asItemId("item-p1-assistant"),
       payload: {
         unifiedDiff: "diff --git a/file.txt b/file.txt\n+hello\n",
@@ -1249,9 +1225,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "content.delta",
       eventId: asEventId("evt-invalid-delta"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: now,
-      turnId: asProviderTurnId("turn-invalid"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-invalid"),
       itemId: asItemId("item-invalid"),
       payload: {
         streamKind: "assistant_text",
@@ -1263,9 +1239,9 @@ describe("ProviderRuntimeIngestion", () => {
       type: "runtime.error",
       eventId: asEventId("evt-runtime-error-after-failure"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
       createdAt: new Date().toISOString(),
-      turnId: asProviderTurnId("turn-after-failure"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-after-failure"),
       payload: {
         message: "runtime still processed",
       },

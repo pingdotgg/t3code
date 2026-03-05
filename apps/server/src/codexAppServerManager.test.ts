@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ProviderSessionId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 
 import {
   CodexAppServerManager,
@@ -12,7 +12,7 @@ import {
   normalizeCodexModelSlug,
 } from "./codexAppServerManager";
 
-const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
+const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 
 function createSendTurnHarness() {
   const manager = new CodexAppServerManager();
@@ -168,6 +168,7 @@ describe("startSession", () => {
     try {
       await expect(
         manager.startSession({
+          threadId: asThreadId("thread-1"),
           provider: "codex",
           runtimeMode: "full-access",
         }),
@@ -191,7 +192,7 @@ describe("sendTurn", () => {
       createSendTurnHarness();
 
     const result = await manager.sendTurn({
-      sessionId: asSessionId("sess_1"),
+      threadId: asThreadId("thread_1"),
       input: "Inspect this image",
       attachments: [
         {
@@ -207,7 +208,7 @@ describe("sendTurn", () => {
       threadId: "thread_1",
       turnId: "turn_1",
     });
-    expect(requireSession).toHaveBeenCalledWith("sess_1");
+    expect(requireSession).toHaveBeenCalledWith("thread_1");
     expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
       threadId: "thread_1",
       input: [
@@ -234,7 +235,7 @@ describe("sendTurn", () => {
     const { manager, context, sendRequest } = createSendTurnHarness();
 
     await manager.sendTurn({
-      sessionId: asSessionId("sess_1"),
+      threadId: asThreadId("thread_1"),
       attachments: [
         {
           type: "image",
@@ -259,7 +260,7 @@ describe("sendTurn", () => {
 
     await expect(
       manager.sendTurn({
-        sessionId: asSessionId("sess_1"),
+        threadId: asThreadId("thread_1"),
       }),
     ).rejects.toThrow("Turn input must include text or attachments.");
   });
@@ -280,9 +281,9 @@ describe("thread checkpoint control", () => {
       },
     });
 
-    const result = await manager.readThread(asSessionId("sess_1"));
+    const result = await manager.readThread(asThreadId("thread_1"));
 
-    expect(requireSession).toHaveBeenCalledWith("sess_1");
+    expect(requireSession).toHaveBeenCalledWith("thread_1");
     expect(sendRequest).toHaveBeenCalledWith(context, "thread/read", {
       threadId: "thread_1",
       includeTurns: true,
@@ -310,7 +311,7 @@ describe("thread checkpoint control", () => {
       ],
     });
 
-    const result = await manager.readThread(asSessionId("sess_1"));
+    const result = await manager.readThread(asThreadId("thread_1"));
 
     expect(sendRequest).toHaveBeenCalledWith(context, "thread/read", {
       threadId: "thread_1",
@@ -336,7 +337,7 @@ describe("thread checkpoint control", () => {
       },
     });
 
-    const result = await manager.rollbackThread(asSessionId("sess_1"), 2);
+    const result = await manager.rollbackThread(asThreadId("thread_1"), 2);
 
     expect(sendRequest).toHaveBeenCalledWith(context, "thread/rollback", {
       threadId: "thread_1",
@@ -364,6 +365,7 @@ describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume"
 
       try {
         const firstSession = await manager.startSession({
+          threadId: asThreadId("thread-live"),
           provider: "codex",
           cwd: workspaceDir,
           runtimeMode: "full-access",
@@ -378,24 +380,25 @@ describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume"
         });
 
         const firstTurn = await manager.sendTurn({
-          sessionId: firstSession.sessionId,
+          threadId: firstSession.threadId,
           input: `Reply with exactly the word ALPHA ${randomUUID()}`,
         });
 
         expect(firstTurn.threadId).toBe(firstSession.threadId);
 
         await vi.waitFor(async () => {
-          const snapshot = await manager.readThread(firstSession.sessionId);
+          const snapshot = await manager.readThread(firstSession.threadId);
           expect(snapshot.turns.length).toBeGreaterThan(0);
         }, { timeout: 120_000, interval: 1_000 });
 
-        const firstSnapshot = await manager.readThread(firstSession.sessionId);
+        const firstSnapshot = await manager.readThread(firstSession.threadId);
         const originalThreadId = firstSnapshot.threadId;
         const originalTurnCount = firstSnapshot.turns.length;
 
-        manager.stopSession(firstSession.sessionId);
+        manager.stopSession(firstSession.threadId);
 
         const resumedSession = await manager.startSession({
+          threadId: firstSession.threadId,
           provider: "codex",
           cwd: workspaceDir,
           runtimeMode: "approval-required",
@@ -412,17 +415,17 @@ describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume"
 
         expect(resumedSession.threadId).toBe(originalThreadId);
 
-        const resumedSnapshotBeforeTurn = await manager.readThread(resumedSession.sessionId);
+        const resumedSnapshotBeforeTurn = await manager.readThread(resumedSession.threadId);
         expect(resumedSnapshotBeforeTurn.threadId).toBe(originalThreadId);
         expect(resumedSnapshotBeforeTurn.turns.length).toBeGreaterThanOrEqual(originalTurnCount);
 
         await manager.sendTurn({
-          sessionId: resumedSession.sessionId,
+          threadId: resumedSession.threadId,
           input: `Reply with exactly the word BETA ${randomUUID()}`,
         });
 
         await vi.waitFor(async () => {
-          const snapshot = await manager.readThread(resumedSession.sessionId);
+          const snapshot = await manager.readThread(resumedSession.threadId);
           expect(snapshot.turns.length).toBeGreaterThan(originalTurnCount);
         }, { timeout: 120_000, interval: 1_000 });
       } finally {

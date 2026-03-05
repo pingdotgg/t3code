@@ -391,14 +391,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           aggregateId: command.threadId,
           occurredAt: command.createdAt,
           commandId: command.commandId,
-          metadata: {
-            ...(command.session.providerSessionId !== null
-              ? { providerSessionId: command.session.providerSessionId }
-              : {}),
-            ...(command.session.providerThreadId !== null
-              ? { providerThreadId: command.session.providerThreadId }
-              : {}),
-          },
+          metadata: {},
         }),
         type: "thread.session-set",
         payload: {

@@ -1,4 +1,4 @@
-import { ProviderSessionId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { Effect, Layer, Option, Schema, Struct } from "effect";
@@ -24,7 +24,7 @@ const ProviderSessionRuntimeDbRowSchema = ProviderSessionRuntime.mapFields(
 const decodeRuntime = Schema.decodeUnknownEffect(ProviderSessionRuntime);
 
 const GetRuntimeRequestSchema = Schema.Struct({
-  providerSessionId: ProviderSessionId,
+  threadId: ThreadId,
 });
 
 const DeleteRuntimeRequestSchema = GetRuntimeRequestSchema;
@@ -44,11 +44,9 @@ const makeProviderSessionRuntimeRepository = Effect.gen(function* () {
     execute: (runtime) =>
       sql`
         INSERT INTO provider_session_runtime (
-          provider_session_id,
           thread_id,
           provider_name,
           adapter_key,
-          provider_thread_id,
           runtime_mode,
           status,
           last_seen_at,
@@ -56,23 +54,19 @@ const makeProviderSessionRuntimeRepository = Effect.gen(function* () {
           runtime_payload_json
         )
         VALUES (
-          ${runtime.providerSessionId},
           ${runtime.threadId},
           ${runtime.providerName},
           ${runtime.adapterKey},
-          ${runtime.providerThreadId},
           ${runtime.runtimeMode},
           ${runtime.status},
           ${runtime.lastSeenAt},
           ${runtime.resumeCursor},
           ${runtime.runtimePayload}
         )
-        ON CONFLICT (provider_session_id)
+        ON CONFLICT (thread_id)
         DO UPDATE SET
-          thread_id = excluded.thread_id,
           provider_name = excluded.provider_name,
           adapter_key = excluded.adapter_key,
-          provider_thread_id = excluded.provider_thread_id,
           runtime_mode = excluded.runtime_mode,
           status = excluded.status,
           last_seen_at = excluded.last_seen_at,
@@ -81,24 +75,22 @@ const makeProviderSessionRuntimeRepository = Effect.gen(function* () {
       `,
   });
 
-  const getRuntimeRowBySessionId = SqlSchema.findOneOption({
+  const getRuntimeRowByThreadId = SqlSchema.findOneOption({
     Request: GetRuntimeRequestSchema,
     Result: ProviderSessionRuntimeDbRowSchema,
-    execute: ({ providerSessionId }) =>
+    execute: ({ threadId }) =>
       sql`
         SELECT
-          provider_session_id AS "providerSessionId",
           thread_id AS "threadId",
           provider_name AS "providerName",
           adapter_key AS "adapterKey",
-          provider_thread_id AS "providerThreadId",
           runtime_mode AS "runtimeMode",
           status,
           last_seen_at AS "lastSeenAt",
           resume_cursor_json AS "resumeCursor",
           runtime_payload_json AS "runtimePayload"
         FROM provider_session_runtime
-        WHERE provider_session_id = ${providerSessionId}
+        WHERE thread_id = ${threadId}
       `,
   });
 
@@ -108,27 +100,25 @@ const makeProviderSessionRuntimeRepository = Effect.gen(function* () {
     execute: () =>
       sql`
         SELECT
-          provider_session_id AS "providerSessionId",
           thread_id AS "threadId",
           provider_name AS "providerName",
           adapter_key AS "adapterKey",
-          provider_thread_id AS "providerThreadId",
           runtime_mode AS "runtimeMode",
           status,
           last_seen_at AS "lastSeenAt",
           resume_cursor_json AS "resumeCursor",
           runtime_payload_json AS "runtimePayload"
         FROM provider_session_runtime
-        ORDER BY last_seen_at ASC, provider_session_id ASC
+        ORDER BY last_seen_at ASC, thread_id ASC
       `,
   });
 
-  const deleteRuntimeBySessionId = SqlSchema.void({
+  const deleteRuntimeByThreadId = SqlSchema.void({
     Request: DeleteRuntimeRequestSchema,
-    execute: ({ providerSessionId }) =>
+    execute: ({ threadId }) =>
       sql`
         DELETE FROM provider_session_runtime
-        WHERE provider_session_id = ${providerSessionId}
+        WHERE thread_id = ${threadId}
       `,
   });
 
@@ -142,12 +132,12 @@ const makeProviderSessionRuntimeRepository = Effect.gen(function* () {
       ),
     );
 
-  const getBySessionId: ProviderSessionRuntimeRepositoryShape["getBySessionId"] = (input) =>
-    getRuntimeRowBySessionId(input).pipe(
+  const getByThreadId: ProviderSessionRuntimeRepositoryShape["getByThreadId"] = (input) =>
+    getRuntimeRowByThreadId(input).pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
-          "ProviderSessionRuntimeRepository.getBySessionId:query",
-          "ProviderSessionRuntimeRepository.getBySessionId:decodeRow",
+          "ProviderSessionRuntimeRepository.getByThreadId:query",
+          "ProviderSessionRuntimeRepository.getByThreadId:decodeRow",
         ),
       ),
       Effect.flatMap((runtimeRowOption) =>
@@ -157,7 +147,7 @@ const makeProviderSessionRuntimeRepository = Effect.gen(function* () {
             decodeRuntime(row).pipe(
               Effect.mapError(
                 toPersistenceDecodeError(
-                  "ProviderSessionRuntimeRepository.getBySessionId:rowToRuntime",
+                  "ProviderSessionRuntimeRepository.getByThreadId:rowToRuntime",
                 ),
               ),
               Effect.map((runtime) => Option.some(runtime)),
@@ -188,18 +178,18 @@ const makeProviderSessionRuntimeRepository = Effect.gen(function* () {
       ),
     );
 
-  const deleteBySessionId: ProviderSessionRuntimeRepositoryShape["deleteBySessionId"] = (input) =>
-    deleteRuntimeBySessionId(input).pipe(
+  const deleteByThreadId: ProviderSessionRuntimeRepositoryShape["deleteByThreadId"] = (input) =>
+    deleteRuntimeByThreadId(input).pipe(
       Effect.mapError(
-        toPersistenceSqlError("ProviderSessionRuntimeRepository.deleteBySessionId:query"),
+        toPersistenceSqlError("ProviderSessionRuntimeRepository.deleteByThreadId:query"),
       ),
     );
 
   return {
     upsert,
-    getBySessionId,
+    getByThreadId,
     list,
-    deleteBySessionId,
+    deleteByThreadId,
   } satisfies ProviderSessionRuntimeRepositoryShape;
 });
 

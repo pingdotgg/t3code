@@ -3,12 +3,8 @@ import {
   EventId,
   IsoDateTime,
   ProviderItemId,
-  ProviderSessionId,
-  ProviderThreadId,
-  ProviderTurnId,
   RuntimeItemId,
   RuntimeRequestId,
-  RuntimeSessionId,
   RuntimeTaskId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -44,9 +40,7 @@ export const ProviderRequestId = TrimmedNonEmptyStringSchema;
 export type ProviderRequestId = typeof ProviderRequestId.Type;
 
 export const ProviderRefs = Schema.Struct({
-  providerSessionId: Schema.optional(ProviderSessionId),
-  providerThreadId: Schema.optional(ProviderThreadId),
-  providerTurnId: Schema.optional(ProviderTurnId),
+  providerTurnId: Schema.optional(TrimmedNonEmptyStringSchema),
   providerItemId: Schema.optional(ProviderItemId),
   providerRequestId: Schema.optional(ProviderRequestId),
 });
@@ -131,6 +125,7 @@ export type CanonicalItemType = typeof CanonicalItemType.Type;
 
 export const CanonicalRequestType = Schema.Literals([
   "command_execution_approval",
+  "file_read_approval",
   "file_change_approval",
   "apply_patch_approval",
   "exec_command_approval",
@@ -239,9 +234,8 @@ export const RuntimeErrorType = Schema.Literal("runtime.error");
 export const ProviderRuntimeEventBase = Schema.Struct({
   eventId: EventId,
   provider: ProviderKind,
-  sessionId: RuntimeSessionId,
+  threadId: ThreadId,
   createdAt: IsoDateTime,
-  threadId: Schema.optional(ThreadId),
   turnId: Schema.optional(TurnId),
   itemId: Schema.optional(RuntimeItemId),
   requestId: Schema.optional(RuntimeRequestId),
@@ -276,7 +270,7 @@ export const SessionExitedPayload = Schema.Struct({
 export type SessionExitedPayload = typeof SessionExitedPayload.Type;
 
 export const ThreadStartedPayload = Schema.Struct({
-  providerThreadId: Schema.optional(ProviderThreadId),
+  providerThreadId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ThreadStartedPayload = typeof ThreadStartedPayload.Type;
 
@@ -948,7 +942,12 @@ export const ProviderRuntimeApprovalResolvedEvent = ProviderRuntimeRequestResolv
 export type ProviderRuntimeApprovalResolvedEvent = ProviderRuntimeRequestResolvedEvent;
 
 // Legacy helper aliases retained for adapters/tests.
-export const ProviderRuntimeToolKind = Schema.Literals(["command", "file-change", "other"]);
+export const ProviderRuntimeToolKind = Schema.Literals([
+  "command",
+  "file-read",
+  "file-change",
+  "other",
+]);
 export type ProviderRuntimeToolKind = typeof ProviderRuntimeToolKind.Type;
 
 export const ProviderRuntimeTurnStatus = RuntimeTurnState;

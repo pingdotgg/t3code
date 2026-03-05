@@ -9,9 +9,6 @@ import {
   EventId,
   MessageId,
   ProjectId,
-  ProviderSessionId,
-  ProviderThreadId,
-  ProviderTurnId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -40,18 +37,14 @@ import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { ServerConfig } from "../../config.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
-const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
-const asProviderThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
-const asProviderTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
   readonly eventId: EventId;
   readonly provider: "codex" | "claudeCode" | "cursor";
-  readonly sessionId: string;
   readonly createdAt: string;
-  readonly threadId?: string | undefined;
+  readonly threadId: ThreadId;
   readonly turnId?: string | undefined;
   readonly itemId?: string | undefined;
   readonly requestId?: string | undefined;
@@ -68,7 +61,7 @@ function createProviderServiceHarness(
   const now = new Date().toISOString();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
   const rollbackConversation = vi.fn(
-    (_input: { readonly sessionId: ProviderSessionId; readonly numTurns: number }) => Effect.void,
+    (_input: { readonly threadId: ThreadId; readonly numTurns: number }) => Effect.void,
   );
 
   const unsupported = <A>() =>
@@ -77,11 +70,10 @@ function createProviderServiceHarness(
     hasSession
         ? Effect.succeed([
           {
-            sessionId: asSessionId("sess-1"),
             provider: providerName,
             status: "ready",
             runtimeMode: "full-access",
-            threadId: asProviderThreadId("provider-thread-1"),
+            threadId: ThreadId.makeUnsafe("thread-1"),
             cwd: sessionCwd,
             createdAt: now,
             updatedAt: now,
@@ -344,8 +336,6 @@ describe("CheckpointReactor", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "ready",
           providerName: "codex",
-          providerSessionId: asSessionId("sess-1"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
@@ -359,10 +349,10 @@ describe("CheckpointReactor", () => {
       type: "turn.started",
       eventId: EventId.makeUnsafe("evt-turn-started-1"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
+      
       createdAt: new Date().toISOString(),
-      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-      turnId: asProviderTurnId("turn-1"),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      turnId: asTurnId("turn-1"),
     });
     await waitForGitRefExists(
       harness.cwd,
@@ -374,10 +364,10 @@ describe("CheckpointReactor", () => {
       type: "turn.completed",
       eventId: EventId.makeUnsafe("evt-turn-completed-1"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
+      
       createdAt: new Date().toISOString(),
-      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-      turnId: asProviderTurnId("turn-1"),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      turnId: asTurnId("turn-1"),
       payload: { state: "completed" },
     });
 
@@ -422,8 +412,6 @@ describe("CheckpointReactor", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "running",
           providerName: "codex",
-          providerSessionId: asSessionId("sess-1"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
           runtimeMode: "approval-required",
           activeTurnId: asTurnId("turn-main"),
           lastError: null,
@@ -437,10 +425,10 @@ describe("CheckpointReactor", () => {
       type: "turn.started",
       eventId: EventId.makeUnsafe("evt-turn-started-main"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
+      
       createdAt: new Date().toISOString(),
-      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-      turnId: asProviderTurnId("turn-main"),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      turnId: asTurnId("turn-main"),
     });
     await waitForGitRefExists(
       harness.cwd,
@@ -453,10 +441,10 @@ describe("CheckpointReactor", () => {
       type: "turn.completed",
       eventId: EventId.makeUnsafe("evt-turn-completed-aux"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
+      
       createdAt: new Date().toISOString(),
-      threadId: ProviderThreadId.makeUnsafe("provider-thread-aux"),
-      turnId: asProviderTurnId("turn-aux"),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      turnId: asTurnId("turn-aux"),
       payload: { state: "completed" },
     });
 
@@ -471,10 +459,10 @@ describe("CheckpointReactor", () => {
       type: "turn.completed",
       eventId: EventId.makeUnsafe("evt-turn-completed-main"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
+      
       createdAt: new Date().toISOString(),
-      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-      turnId: asProviderTurnId("turn-main"),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      turnId: asTurnId("turn-main"),
       payload: { state: "completed" },
     });
 
@@ -501,8 +489,6 @@ describe("CheckpointReactor", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "ready",
           providerName: "claudeCode",
-          providerSessionId: asSessionId("sess-1"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
@@ -516,10 +502,10 @@ describe("CheckpointReactor", () => {
       type: "turn.started",
       eventId: EventId.makeUnsafe("evt-turn-started-claude-1"),
       provider: "claudeCode",
-      sessionId: asSessionId("sess-1"),
+      
       createdAt: new Date().toISOString(),
-      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-      turnId: asProviderTurnId("turn-claude-1"),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      turnId: asTurnId("turn-claude-1"),
     });
     await waitForGitRefExists(
       harness.cwd,
@@ -531,10 +517,10 @@ describe("CheckpointReactor", () => {
       type: "turn.completed",
       eventId: EventId.makeUnsafe("evt-turn-completed-claude-1"),
       provider: "claudeCode",
-      sessionId: asSessionId("sess-1"),
+      
       createdAt: new Date().toISOString(),
-      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-      turnId: asProviderTurnId("turn-claude-1"),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      turnId: asTurnId("turn-claude-1"),
       payload: { state: "completed" },
     });
 
@@ -563,8 +549,6 @@ describe("CheckpointReactor", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "ready",
           providerName: "codex",
-          providerSessionId: asSessionId("sess-1"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
@@ -578,10 +562,10 @@ describe("CheckpointReactor", () => {
       type: "turn.completed",
       eventId: EventId.makeUnsafe("evt-turn-completed-missing-baseline"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
+      
       createdAt: new Date().toISOString(),
-      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-      turnId: asProviderTurnId("turn-missing-baseline"),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      turnId: asTurnId("turn-missing-baseline"),
       payload: { state: "completed" },
     });
 
@@ -652,8 +636,6 @@ describe("CheckpointReactor", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "running",
           providerName: "codex",
-          providerSessionId: asSessionId("sess-missing"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-missing"),
           runtimeMode: "approval-required",
           activeTurnId: asTurnId("turn-missing-cwd"),
           lastError: null,
@@ -668,10 +650,10 @@ describe("CheckpointReactor", () => {
       type: "turn.completed",
       eventId: EventId.makeUnsafe("evt-turn-completed-missing-provider-cwd"),
       provider: "codex",
-      sessionId: asSessionId("sess-missing"),
+      
       createdAt: new Date().toISOString(),
-      threadId: ProviderThreadId.makeUnsafe("provider-thread-missing"),
-      turnId: asProviderTurnId("turn-missing-cwd"),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      turnId: asTurnId("turn-missing-cwd"),
       payload: { state: "completed" },
     });
 
@@ -701,8 +683,6 @@ describe("CheckpointReactor", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "ready",
           providerName: "codex",
-          providerSessionId: asSessionId("sess-1"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
@@ -716,10 +696,10 @@ describe("CheckpointReactor", () => {
       type: "checkpoint.captured",
       eventId: EventId.makeUnsafe("evt-checkpoint-captured-3"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
+      
       createdAt: new Date().toISOString(),
-      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-      turnId: asProviderTurnId("turn-3"),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      turnId: asTurnId("turn-3"),
       turnCount: 3,
       status: "completed",
     });
@@ -753,8 +733,6 @@ describe("CheckpointReactor", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "ready",
           providerName: "codex",
-          providerSessionId: asSessionId("sess-1"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
@@ -768,10 +746,10 @@ describe("CheckpointReactor", () => {
       type: "turn.completed",
       eventId: EventId.makeUnsafe("evt-runtime-capture-failure"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
+      
       createdAt: new Date().toISOString(),
-      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-      turnId: asProviderTurnId("turn-runtime-failure"),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      turnId: asTurnId("turn-runtime-failure"),
       payload: { state: "completed" },
     });
 
@@ -779,10 +757,10 @@ describe("CheckpointReactor", () => {
       type: "turn.started",
       eventId: EventId.makeUnsafe("evt-turn-started-after-runtime-failure"),
       provider: "codex",
-      sessionId: asSessionId("sess-1"),
+      
       createdAt: new Date().toISOString(),
-      threadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
-      turnId: asProviderTurnId("turn-after-runtime-failure"),
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      turnId: asTurnId("turn-after-runtime-failure"),
     });
 
     await waitForGitRefExists(
@@ -807,8 +785,6 @@ describe("CheckpointReactor", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "ready",
           providerName: "codex",
-          providerSessionId: asSessionId("sess-1"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
@@ -865,7 +841,7 @@ describe("CheckpointReactor", () => {
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
     expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);
     expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
-      sessionId: asSessionId("sess-1"),
+      
       numTurns: 1,
     });
     expect(fs.readFileSync(path.join(harness.cwd, "README.md"), "utf8")).toBe("v2\n");
@@ -887,8 +863,6 @@ describe("CheckpointReactor", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "ready",
           providerName: "claudeCode",
-          providerSessionId: asSessionId("sess-1"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
@@ -940,7 +914,7 @@ describe("CheckpointReactor", () => {
     await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
     expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);
     expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
-      sessionId: asSessionId("sess-1"),
+      
       numTurns: 1,
     });
   });
@@ -958,8 +932,6 @@ describe("CheckpointReactor", () => {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "ready",
           providerName: "codex",
-          providerSessionId: asSessionId("sess-1"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-1"),
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
@@ -1032,11 +1004,11 @@ describe("CheckpointReactor", () => {
 
     expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(2);
     expect(harness.provider.rollbackConversation.mock.calls[0]?.[0]).toEqual({
-      sessionId: asSessionId("sess-1"),
+      
       numTurns: 1,
     });
     expect(harness.provider.rollbackConversation.mock.calls[1]?.[0]).toEqual({
-      sessionId: asSessionId("sess-1"),
+      
       numTurns: 1,
     });
   });

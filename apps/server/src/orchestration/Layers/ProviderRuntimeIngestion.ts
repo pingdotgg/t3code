@@ -5,13 +5,10 @@ import {
   MessageId,
   type OrchestrationEvent,
   CheckpointRef,
-  ProviderThreadId,
-  type ThreadId,
+  ThreadId,
   TurnId,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
-  ProviderSessionId,
-  RuntimeSessionId,
 } from "@t3tools/contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Ref, Stream } from "effect";
 
@@ -22,7 +19,7 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 
-const providerTurnKey = (sessionId: ProviderSessionId, turnId: TurnId) => `${sessionId}:${turnId}`;
+const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
   CommandId.makeUnsafe(`provider:${event.eventId}:${tag}:${crypto.randomUUID()}`);
 
@@ -53,14 +50,6 @@ function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
   return value === undefined ? undefined : TurnId.makeUnsafe(String(value));
 }
 
-function toProviderThreadId(value: string | undefined): ProviderThreadId | null {
-  return value === undefined ? null : ProviderThreadId.makeUnsafe(String(value));
-}
-
-function toProviderSessionId(value: RuntimeSessionId): ProviderSessionId {
-  return ProviderSessionId.makeUnsafe(String(value));
-}
-
 function toApprovalRequestId(value: string | undefined): ApprovalRequestId | undefined {
   return value === undefined ? undefined : ApprovalRequestId.makeUnsafe(value);
 }
@@ -70,13 +59,6 @@ function sameId(left: string | null | undefined, right: string | null | undefine
     return false;
   }
   return left === right;
-}
-
-function isSyntheticClaudeThreadId(
-  provider: ProviderRuntimeEvent["provider"],
-  threadId: ProviderThreadId | null,
-): boolean {
-  return provider === "claudeCode" && threadId !== null && threadId.startsWith("claude-thread-");
 }
 
 function truncateDetail(value: string, limit = 180): string {
@@ -148,11 +130,13 @@ function orchestrationSessionStatusFromRuntimeState(
 
 function requestKindFromCanonicalRequestType(
   requestType: string | undefined,
-): "command" | "file-change" | undefined {
+): "command" | "file-read" | "file-change" | undefined {
   switch (requestType) {
     case "command_execution_approval":
     case "exec_command_approval":
       return "command";
+    case "file_read_approval":
+      return "file-read";
     case "file_change_approval":
     case "apply_patch_approval":
       return "file-change";
@@ -194,6 +178,8 @@ function runtimeEventToActivities(
           summary:
             requestKind === "command"
               ? "Command approval requested"
+              : requestKind === "file-read"
+                ? "File-read approval requested"
               : requestKind === "file-change"
                 ? "File-change approval requested"
                 : "Approval requested",
@@ -380,15 +366,15 @@ const make = Effect.gen(function* () {
   });
 
   const rememberAssistantMessageId = (
-    sessionId: ProviderSessionId,
+    threadId: ThreadId,
     turnId: TurnId,
     messageId: MessageId,
   ) =>
-    Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(sessionId, turnId)).pipe(
+    Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId)).pipe(
       Effect.flatMap((existingIds) =>
         Cache.set(
           turnMessageIdsByTurnKey,
-          providerTurnKey(sessionId, turnId),
+          providerTurnKey(threadId, turnId),
           Option.match(existingIds, {
             onNone: () => new Set([messageId]),
             onSome: (ids) => {
@@ -402,11 +388,11 @@ const make = Effect.gen(function* () {
     );
 
   const forgetAssistantMessageId = (
-    sessionId: ProviderSessionId,
+    threadId: ThreadId,
     turnId: TurnId,
     messageId: MessageId,
   ) =>
-    Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(sessionId, turnId)).pipe(
+    Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId)).pipe(
       Effect.flatMap((existingIds) =>
         Option.match(existingIds, {
           onNone: () => Effect.void,
@@ -414,23 +400,23 @@ const make = Effect.gen(function* () {
             const nextIds = new Set(ids);
             nextIds.delete(messageId);
             if (nextIds.size === 0) {
-              return Cache.invalidate(turnMessageIdsByTurnKey, providerTurnKey(sessionId, turnId));
+              return Cache.invalidate(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId));
             }
-            return Cache.set(turnMessageIdsByTurnKey, providerTurnKey(sessionId, turnId), nextIds);
+            return Cache.set(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId), nextIds);
           },
         }),
       ),
     );
 
-  const getAssistantMessageIdsForTurn = (sessionId: ProviderSessionId, turnId: TurnId) =>
-    Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(sessionId, turnId)).pipe(
+  const getAssistantMessageIdsForTurn = (threadId: ThreadId, turnId: TurnId) =>
+    Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId)).pipe(
       Effect.map((existingIds) =>
         Option.getOrElse(existingIds, (): Set<MessageId> => new Set<MessageId>()),
       ),
     );
 
-  const clearAssistantMessageIdsForTurn = (sessionId: ProviderSessionId, turnId: TurnId) =>
-    Cache.invalidate(turnMessageIdsByTurnKey, providerTurnKey(sessionId, turnId));
+  const clearAssistantMessageIdsForTurn = (threadId: ThreadId, turnId: TurnId) =>
+    Cache.invalidate(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId));
 
   const appendBufferedAssistantText = (messageId: MessageId, delta: string) =>
     Cache.getOption(bufferedAssistantTextByMessageId, messageId).pipe(
@@ -505,9 +491,9 @@ const make = Effect.gen(function* () {
       yield* clearAssistantMessageState(input.messageId);
     });
 
-  const clearTurnStateForSession = (sessionId: ProviderSessionId) =>
+  const clearTurnStateForSession = (threadId: ThreadId) =>
     Effect.gen(function* () {
-      const prefix = `${sessionId}:`;
+      const prefix = `${threadId}:`;
       const turnKeys = Array.from(yield* Cache.keys(turnMessageIdsByTurnKey));
       yield* Effect.forEach(
         turnKeys,
@@ -532,29 +518,14 @@ const make = Effect.gen(function* () {
 
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
-      const providerSessionId = toProviderSessionId(event.sessionId);
       const readModel = yield* orchestrationEngine.getReadModel();
-      const thread = readModel.threads.find(
-        (entry) => entry.session?.providerSessionId === providerSessionId,
-      );
+      const thread = readModel.threads.find((entry) => entry.id === event.threadId);
       if (!thread) return;
 
       const now = event.createdAt;
-      const sessionProviderThreadId = thread.session?.providerThreadId ?? null;
-      const scopedSessionProviderThreadId = isSyntheticClaudeThreadId(
-        event.provider,
-        sessionProviderThreadId,
-      )
-        ? null
-        : sessionProviderThreadId;
-      const eventProviderThreadId = toProviderThreadId(event.threadId);
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
 
-      const matchesThreadScope =
-        eventProviderThreadId === null ||
-        scopedSessionProviderThreadId === null ||
-        sameId(eventProviderThreadId, scopedSessionProviderThreadId);
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
       const missingTurnForActiveTurn = activeTurnId !== null && eventTurnId === undefined;
@@ -568,27 +539,10 @@ const make = Effect.gen(function* () {
             return true;
           case "session.started":
           case "thread.started":
-            if (!matchesThreadScope) {
-              return false;
-            }
-            // Never let auxiliary/provider-side spawned threads replace the primary thread binding.
-            if (
-              eventProviderThreadId !== null &&
-              scopedSessionProviderThreadId !== null &&
-              !sameId(eventProviderThreadId, scopedSessionProviderThreadId)
-            ) {
-              return false;
-            }
             return true;
           case "turn.started":
-            if (!matchesThreadScope) {
-              return false;
-            }
             return !conflictsWithActiveTurn;
           case "turn.completed":
-            if (!matchesThreadScope) {
-              return false;
-            }
             if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
               return false;
             }
@@ -617,12 +571,6 @@ const make = Effect.gen(function* () {
             : event.type === "turn.completed" || event.type === "session.exited"
               ? null
               : activeTurnId;
-        const providerThreadIdFromEvent =
-          event.type === "thread.started"
-            ? toProviderThreadId(event.threadId)
-            : toProviderThreadId(event.threadId);
-        const providerThreadId =
-          providerThreadIdFromEvent ?? scopedSessionProviderThreadId ?? null;
         const status = (() => {
           switch (event.type) {
             case "session.state.changed":
@@ -658,8 +606,6 @@ const make = Effect.gen(function* () {
               threadId: thread.id,
               status,
               providerName: event.provider,
-              providerSessionId,
-              providerThreadId,
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               lastError,
@@ -677,11 +623,11 @@ const make = Effect.gen(function* () {
 
       if (assistantDelta && assistantDelta.length > 0) {
         const assistantMessageId = MessageId.makeUnsafe(
-          `assistant:${event.itemId ?? event.turnId ?? event.sessionId}`,
+          `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
         );
         const turnId = toTurnId(event.turnId);
         if (turnId) {
-          yield* rememberAssistantMessageId(providerSessionId, turnId, assistantMessageId);
+          yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
         }
 
         const assistantDeliveryMode = yield* Ref.get(assistantDeliveryModeRef);
@@ -714,7 +660,7 @@ const make = Effect.gen(function* () {
       const assistantCompletion =
         event.type === "item.completed" && event.payload.itemType === "assistant_message"
           ? {
-              messageId: MessageId.makeUnsafe(`assistant:${event.itemId ?? event.turnId ?? event.sessionId}`),
+              messageId: MessageId.makeUnsafe(`assistant:${event.itemId ?? event.turnId ?? event.eventId}`),
               fallbackText: event.payload.detail,
             }
             : undefined;
@@ -723,7 +669,7 @@ const make = Effect.gen(function* () {
         const assistantMessageId = assistantCompletion.messageId;
         const turnId = toTurnId(event.turnId);
         if (turnId) {
-          yield* rememberAssistantMessageId(providerSessionId, turnId, assistantMessageId);
+          yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
         }
 
         yield* finalizeAssistantMessage({
@@ -740,14 +686,14 @@ const make = Effect.gen(function* () {
         });
 
         if (turnId) {
-          yield* forgetAssistantMessageId(providerSessionId, turnId, assistantMessageId);
+          yield* forgetAssistantMessageId(thread.id, turnId, assistantMessageId);
         }
       }
 
       if (event.type === "turn.completed") {
         const turnId = toTurnId(event.turnId);
         if (turnId) {
-          const assistantMessageIds = yield* getAssistantMessageIdsForTurn(providerSessionId, turnId);
+          const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(
             assistantMessageIds,
             (assistantMessageId) =>
@@ -762,12 +708,12 @@ const make = Effect.gen(function* () {
               }),
             { concurrency: 1 },
           ).pipe(Effect.asVoid);
-          yield* clearAssistantMessageIdsForTurn(providerSessionId, turnId);
+          yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
         }
       }
 
       if (event.type === "session.exited") {
-        yield* clearTurnStateForSession(providerSessionId);
+        yield* clearTurnStateForSession(thread.id);
       }
 
       if (event.type === "runtime.error") {
@@ -775,15 +721,9 @@ const make = Effect.gen(function* () {
 
         const shouldApplyRuntimeError = !STRICT_PROVIDER_LIFECYCLE_GUARD
           ? true
-          : matchesThreadScope &&
-            (activeTurnId === null ||
-              eventTurnId === undefined ||
-              sameId(activeTurnId, eventTurnId));
-
-        const providerThreadId =
-          event.threadId !== undefined
-            ? ProviderThreadId.makeUnsafe(event.threadId)
-            : (thread.session?.providerThreadId ?? null);
+          : activeTurnId === null ||
+            eventTurnId === undefined ||
+            sameId(activeTurnId, eventTurnId);
 
         if (shouldApplyRuntimeError) {
           yield* orchestrationEngine.dispatch({
@@ -794,8 +734,6 @@ const make = Effect.gen(function* () {
               threadId: thread.id,
               status: "error",
               providerName: event.provider,
-              providerSessionId,
-              providerThreadId,
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: eventTurnId ?? null,
               lastError: runtimeErrorMessage,
@@ -819,7 +757,7 @@ const make = Effect.gen(function* () {
         const turnId = toTurnId(event.turnId);
         if (turnId) {
           const assistantMessageId = MessageId.makeUnsafe(
-            `assistant:${event.itemId ?? event.turnId ?? event.sessionId}`,
+            `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
           );
           yield* orchestrationEngine.dispatch({
             type: "thread.turn.diff.complete",

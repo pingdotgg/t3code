@@ -1,15 +1,14 @@
-import { ProviderSessionId, type ProviderKind } from "@t3tools/contracts";
+import { type ProviderKind, type ThreadId } from "@t3tools/contracts";
 import { Effect, Layer, Option } from "effect";
 
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import {
   ProviderSessionDirectoryPersistenceError,
-  ProviderSessionNotFoundError,
   ProviderValidationError,
 } from "../Errors.ts";
 import {
   ProviderSessionDirectory,
-  type ProviderSessionBinding,
+  type ProviderRuntimeBinding,
   type ProviderSessionDirectoryShape,
 } from "../Services/ProviderSessionDirectory.ts";
 
@@ -49,10 +48,7 @@ function mergeRuntimePayload(
     return existing ?? null;
   }
   if (isRecord(existing) && isRecord(next)) {
-    return {
-      ...existing,
-      ...next,
-    };
+    return { ...existing, ...next };
   }
   return next;
 }
@@ -60,21 +56,19 @@ function mergeRuntimePayload(
 const makeProviderSessionDirectory = Effect.gen(function* () {
   const repository = yield* ProviderSessionRuntimeRepository;
 
-  const getBinding = (sessionId: ProviderSessionId) =>
-    repository.getBySessionId({ providerSessionId: sessionId }).pipe(
-      Effect.mapError(toPersistenceError("ProviderSessionDirectory.getBinding:getBySessionId")),
+  const getBinding = (threadId: ThreadId) =>
+    repository.getByThreadId({ threadId }).pipe(
+      Effect.mapError(toPersistenceError("ProviderSessionDirectory.getBinding:getByThreadId")),
       Effect.flatMap((runtime) =>
         Option.match(runtime, {
-          onNone: () => Effect.succeed(Option.none<ProviderSessionBinding>()),
+          onNone: () => Effect.succeed(Option.none<ProviderRuntimeBinding>()),
           onSome: (value) =>
             decodeProviderKind(value.providerName, "ProviderSessionDirectory.getBinding").pipe(
               Effect.map((provider) =>
                 Option.some({
-                  sessionId: value.providerSessionId,
-                  provider,
                   threadId: value.threadId,
+                  provider,
                   adapterKey: value.adapterKey,
-                  providerThreadId: value.providerThreadId,
                   runtimeMode: value.runtimeMode,
                   status: value.status,
                   resumeCursor: value.resumeCursor,
@@ -88,10 +82,8 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
 
   const upsert: ProviderSessionDirectoryShape["upsert"] = Effect.fn(function* (binding) {
     const existing = yield* repository
-      .getBySessionId({
-        providerSessionId: binding.sessionId,
-      })
-      .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:getBySessionId")));
+      .getByThreadId({ threadId: binding.threadId })
+      .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:getByThreadId")));
 
     const existingRuntime = Option.getOrUndefined(existing);
     const resolvedThreadId = binding.threadId ?? existingRuntime?.threadId;
@@ -105,14 +97,9 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
     const now = new Date().toISOString();
     yield* repository
       .upsert({
-        providerSessionId: binding.sessionId,
         threadId: resolvedThreadId,
         providerName: binding.provider,
         adapterKey: binding.adapterKey ?? existingRuntime?.adapterKey ?? binding.provider,
-        providerThreadId:
-          binding.providerThreadId !== undefined
-            ? binding.providerThreadId
-            : (existingRuntime?.providerThreadId ?? null),
         runtimeMode: binding.runtimeMode ?? existingRuntime?.runtimeMode ?? "full-access",
         status: binding.status ?? existingRuntime?.status ?? "running",
         lastSeenAt: now,
@@ -128,63 +115,39 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:upsert")));
   });
 
-  const getProvider: ProviderSessionDirectoryShape["getProvider"] = (sessionId) =>
-    getBinding(sessionId).pipe(
+  const getProvider: ProviderSessionDirectoryShape["getProvider"] = (threadId) =>
+    getBinding(threadId).pipe(
       Effect.flatMap((binding) =>
         Option.match(binding, {
           onSome: (value) => Effect.succeed(value.provider),
-          onNone: () => Effect.fail(new ProviderSessionNotFoundError({ sessionId })),
-        }),
-      ),
-    );
-
-  const getBindingBySessionId: ProviderSessionDirectoryShape["getBinding"] = (sessionId) =>
-    getBinding(sessionId);
-
-  const getThreadId: ProviderSessionDirectoryShape["getThreadId"] = (sessionId) =>
-    getBinding(sessionId).pipe(
-      Effect.flatMap((binding) =>
-        Option.match(binding, {
-          onSome: (value) => Effect.succeed(Option.fromNullishOr(value.threadId)),
-          onNone: () => Effect.fail(new ProviderSessionNotFoundError({ sessionId })),
-        }),
-      ),
-    );
-
-  const remove: ProviderSessionDirectoryShape["remove"] = (sessionId) =>
-    repository
-      .deleteBySessionId({ providerSessionId: sessionId })
-      .pipe(
-        Effect.mapError(toPersistenceError("ProviderSessionDirectory.remove:deleteBySessionId")),
-      );
-
-  const listSessionIds: ProviderSessionDirectoryShape["listSessionIds"] = () =>
-    repository.list().pipe(
-      Effect.mapError(toPersistenceError("ProviderSessionDirectory.listSessionIds:list")),
-      Effect.flatMap((rows) =>
-        Effect.forEach(
-          rows,
-          (row) =>
-            decodeProviderKind(row.providerName, "ProviderSessionDirectory.listSessionIds").pipe(
-              Effect.map((provider) => ({
-                sessionId: row.providerSessionId,
-                provider,
-                threadId: row.threadId,
-              })),
+          onNone: () =>
+            Effect.fail(
+              new ProviderSessionDirectoryPersistenceError({
+                operation: "ProviderSessionDirectory.getProvider",
+                detail: `No persisted provider binding found for thread '${threadId}'.`,
+              }),
             ),
-          { concurrency: "unbounded" },
-        ),
+        }),
       ),
-      Effect.map((bindings) => bindings.map((binding) => binding.sessionId)),
+    );
+
+  const remove: ProviderSessionDirectoryShape["remove"] = (threadId) =>
+    repository
+      .deleteByThreadId({ threadId })
+      .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.remove:deleteByThreadId")));
+
+  const listThreadIds: ProviderSessionDirectoryShape["listThreadIds"] = () =>
+    repository.list().pipe(
+      Effect.mapError(toPersistenceError("ProviderSessionDirectory.listThreadIds:list")),
+      Effect.map((rows) => rows.map((row) => row.threadId)),
     );
 
   return {
     upsert,
     getProvider,
-    getBinding: getBindingBySessionId,
-    getThreadId,
+    getBinding,
     remove,
-    listSessionIds,
+    listThreadIds,
   } satisfies ProviderSessionDirectoryShape;
 });
 

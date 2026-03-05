@@ -4,8 +4,6 @@ import {
   CorrelationId,
   EventId,
   MessageId,
-  ProviderSessionId,
-  ProviderThreadId,
   ProjectId,
   ThreadId,
   TurnId,
@@ -1771,18 +1769,13 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
         commandId: CommandId.makeUnsafe("cmd-restart-2"),
         causationEventId: null,
         correlationId: CorrelationId.makeUnsafe("cmd-restart-2"),
-        metadata: {
-          providerSessionId: ProviderSessionId.makeUnsafe("provider-session-restart"),
-          providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-restart"),
-        },
+        metadata: {},
         payload: {
           threadId,
           session: {
             threadId,
             status: "running",
             providerName: "codex",
-            providerSessionId: ProviderSessionId.makeUnsafe("provider-session-restart"),
-            providerThreadId: ProviderThreadId.makeUnsafe("provider-thread-restart"),
             runtimeMode: "approval-required",
             activeTurnId: turnId,
             lastError: null,

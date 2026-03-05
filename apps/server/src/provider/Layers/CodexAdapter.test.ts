@@ -4,12 +4,11 @@ import {
   ProviderItemId,
   type ProviderApprovalDecision,
   type ProviderEvent,
-  ProviderSessionId,
   type ProviderSession,
   type ProviderSessionStartInput,
-  ProviderThreadId,
-  ProviderTurnId,
   type ProviderTurnStartResult,
+  ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterAll, assert, it, vi } from "@effect/vitest";
@@ -27,8 +26,8 @@ import { CodexAdapter } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import { makeCodexAdapterLive } from "./CodexAdapter.ts";
 
-const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
-const asTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
+const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
+const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
 
@@ -37,11 +36,10 @@ class FakeCodexManager extends CodexAppServerManager {
     async (input: ProviderSessionStartInput): Promise<ProviderSession> => {
       const now = new Date().toISOString();
       return {
-        sessionId: asSessionId("sess-1"),
         provider: "codex",
         status: "ready",
         runtimeMode: input.runtimeMode,
-        threadId: ProviderThreadId.makeUnsafe("thread-1"),
+        threadId: input.threadId,
         cwd: input.cwd,
         createdAt: now,
         updatedAt: now,
@@ -51,28 +49,28 @@ class FakeCodexManager extends CodexAppServerManager {
 
   public sendTurnImpl = vi.fn(
     async (_input: CodexAppServerSendTurnInput): Promise<ProviderTurnStartResult> => ({
-      threadId: ProviderThreadId.makeUnsafe("thread-1"),
+      threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-1"),
     }),
   );
 
   public interruptTurnImpl = vi.fn(
-    async (_sessionId: ProviderSessionId, _turnId?: ProviderTurnId): Promise<void> => undefined,
+    async (_threadId: ThreadId, _turnId?: TurnId): Promise<void> => undefined,
   );
 
-  public readThreadImpl = vi.fn(async (_sessionId: ProviderSessionId) => ({
-    threadId: ProviderThreadId.makeUnsafe("thread-1"),
+  public readThreadImpl = vi.fn(async (_threadId: ThreadId) => ({
+    threadId: asThreadId("thread-1"),
     turns: [],
   }));
 
-  public rollbackThreadImpl = vi.fn(async (_sessionId: ProviderSessionId, _numTurns: number) => ({
-    threadId: ProviderThreadId.makeUnsafe("thread-1"),
+  public rollbackThreadImpl = vi.fn(async (_threadId: ThreadId, _numTurns: number) => ({
+    threadId: asThreadId("thread-1"),
     turns: [],
   }));
 
   public respondToRequestImpl = vi.fn(
     async (
-      _sessionId: ProviderSessionId,
+      _threadId: ThreadId,
       _requestId: ApprovalRequestId,
       _decision: ProviderApprovalDecision,
     ): Promise<void> => undefined,
@@ -88,33 +86,33 @@ class FakeCodexManager extends CodexAppServerManager {
     return this.sendTurnImpl(input);
   }
 
-  override interruptTurn(sessionId: ProviderSessionId, turnId?: ProviderTurnId): Promise<void> {
-    return this.interruptTurnImpl(sessionId, turnId);
+  override interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void> {
+    return this.interruptTurnImpl(threadId, turnId);
   }
 
-  override readThread(sessionId: ProviderSessionId) {
-    return this.readThreadImpl(sessionId);
+  override readThread(threadId: ThreadId) {
+    return this.readThreadImpl(threadId);
   }
 
-  override rollbackThread(sessionId: ProviderSessionId, numTurns: number) {
-    return this.rollbackThreadImpl(sessionId, numTurns);
+  override rollbackThread(threadId: ThreadId, numTurns: number) {
+    return this.rollbackThreadImpl(threadId, numTurns);
   }
 
   override respondToRequest(
-    sessionId: ProviderSessionId,
+    threadId: ThreadId,
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
   ): Promise<void> {
-    return this.respondToRequestImpl(sessionId, requestId, decision);
+    return this.respondToRequestImpl(threadId, requestId, decision);
   }
 
-  override stopSession(_sessionId: ProviderSessionId): void {}
+  override stopSession(_threadId: ThreadId): void {}
 
   override listSessions(): ProviderSession[] {
     return [];
   }
 
-  override hasSession(_sessionId: ProviderSessionId): boolean {
+  override hasSession(_threadId: ThreadId): boolean {
     return false;
   }
 
@@ -128,9 +126,8 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
   getProvider: () =>
     Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in test")),
   getBinding: () => Effect.succeed(Option.none()),
-  getThreadId: () => Effect.succeed(Option.none()),
   remove: () => Effect.void,
-  listSessionIds: () => Effect.succeed([]),
+  listThreadIds: () => Effect.succeed([]),
 });
 
 const validationManager = new FakeCodexManager();
@@ -149,6 +146,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
       const result = yield* adapter
         .startSession({
           provider: "claudeCode",
+          threadId: asThreadId("thread-1"),
           runtimeMode: "full-access",
         })
         .pipe(Effect.result);
@@ -184,7 +182,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       const adapter = yield* CodexAdapter;
       const result = yield* adapter
         .sendTurn({
-          sessionId: asSessionId("sess-missing"),
+          threadId: asThreadId("sess-missing"),
           input: "hello",
           attachments: [],
         })
@@ -200,7 +198,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         return;
       }
       assert.equal(result.failure.provider, "codex");
-      assert.equal(result.failure.sessionId, "sess-missing");
+      assert.equal(result.failure.threadId, "sess-missing");
       assert.instanceOf(result.failure.cause, Error);
     }),
   );
@@ -225,10 +223,9 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         id: asEventId("evt-msg-complete"),
         kind: "notification",
         provider: "codex",
-        sessionId: asSessionId("sess-1"),
         createdAt: new Date().toISOString(),
         method: "item/completed",
-        threadId: ProviderThreadId.makeUnsafe("thread-1"),
+        threadId: asThreadId("thread-1"),
         turnId: asTurnId("turn-1"),
         itemId: asItemId("msg_1"),
         payload: {
@@ -265,7 +262,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         id: asEventId("evt-session-closed"),
         kind: "session",
         provider: "codex",
-        sessionId: asSessionId("sess-1"),
+        threadId: asThreadId("thread-1"),
         createdAt: new Date().toISOString(),
         method: "session/closed",
         message: "Session stopped",
@@ -282,7 +279,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       if (firstEvent.value.type !== "session.exited") {
         return;
       }
-      assert.equal(firstEvent.value.sessionId, "sess-1");
+      assert.equal(firstEvent.value.threadId, "thread-1");
       assert.equal(firstEvent.value.payload.reason, "Session stopped");
     }),
   );
@@ -296,7 +293,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         id: asEventId("evt-request-resolved"),
         kind: "notification",
         provider: "codex",
-        sessionId: asSessionId("sess-1"),
+        threadId: asThreadId("thread-1"),
         createdAt: new Date().toISOString(),
         method: "serverRequest/resolved",
         requestId: ApprovalRequestId.makeUnsafe("req-1"),
@@ -334,7 +331,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         id: asEventId("evt-windows-sandbox-failed"),
         kind: "notification",
         provider: "codex",
-        sessionId: asSessionId("sess-1"),
+        threadId: asThreadId("thread-1"),
         createdAt: new Date().toISOString(),
         method: "windowsSandbox/setupCompleted",
         message: "Sandbox setup failed",

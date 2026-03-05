@@ -5,7 +5,7 @@ import type {
   SDKMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { ApprovalRequestId, type ProviderTurnId } from "@t3tools/contracts";
+import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Fiber, Random, Stream } from "effect";
 
@@ -161,13 +161,17 @@ function makeDeterministicRandomService(seed = 0x1234_5678): {
   };
 }
 
+
+const THREAD_ID = ThreadId.makeUnsafe("thread-claude-1");
+const RESUME_THREAD_ID = ThreadId.makeUnsafe("thread-claude-resume");
+
 describe("ClaudeCodeAdapterLive", () => {
   it.effect("returns validation error for non-claudeCode provider on startSession", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeCodeAdapter;
       const result = yield* adapter
-        .startSession({ provider: "codex", runtimeMode: "full-access" })
+        .startSession({ threadId: THREAD_ID, provider: "codex", runtimeMode: "full-access" })
         .pipe(Effect.result);
 
       assert.equal(result._tag, "Failure");
@@ -193,6 +197,7 @@ describe("ClaudeCodeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeCodeAdapter;
       yield* adapter.startSession({
+        threadId: THREAD_ID,
         provider: "claudeCode",
         runtimeMode: "full-access",
       });
@@ -211,6 +216,7 @@ describe("ClaudeCodeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeCodeAdapter;
       yield* adapter.startSession({
+        threadId: THREAD_ID,
         provider: "claudeCode",
         runtimeMode: "full-access",
         providerOptions: {
@@ -240,13 +246,14 @@ describe("ClaudeCodeAdapterLive", () => {
       );
 
       const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
         provider: "claudeCode",
         model: "claude-sonnet-4-5",
         runtimeMode: "full-access",
       });
 
       const turn = yield* adapter.sendTurn({
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         input: "hello",
         attachments: [],
       });
@@ -376,12 +383,13 @@ describe("ClaudeCodeAdapterLive", () => {
       );
 
       const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
         provider: "claudeCode",
         runtimeMode: "full-access",
       });
 
       const turn = yield* adapter.sendTurn({
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         input: "hello",
         attachments: [],
       });
@@ -464,12 +472,13 @@ describe("ClaudeCodeAdapterLive", () => {
       );
 
       const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
         provider: "claudeCode",
         runtimeMode: "full-access",
       });
 
       const turn = yield* adapter.sendTurn({
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         input: "hello",
         attachments: [],
       });
@@ -533,13 +542,14 @@ describe("ClaudeCodeAdapterLive", () => {
       );
 
       const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
         provider: "claudeCode",
         runtimeMode: "full-access",
       });
       assert.equal(session.threadId, undefined);
 
       const turn = yield* adapter.sendTurn({
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         input: "hello",
         attachments: [],
       });
@@ -602,6 +612,7 @@ describe("ClaudeCodeAdapterLive", () => {
       const adapter = yield* ClaudeCodeAdapter;
 
       const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
         provider: "claudeCode",
         runtimeMode: "approval-required",
       });
@@ -647,7 +658,7 @@ describe("ClaudeCodeAdapterLive", () => {
       }
 
       yield* adapter.respondToRequest(
-        session.sessionId,
+        session.threadId,
         ApprovalRequestId.makeUnsafe(runtimeRequestId),
         "accept",
       );
@@ -678,6 +689,7 @@ describe("ClaudeCodeAdapterLive", () => {
       const adapter = yield* ClaudeCodeAdapter;
 
       const session = yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
         provider: "claudeCode",
         resumeCursor: {
           threadId: "resume-thread-1",
@@ -711,6 +723,7 @@ describe("ClaudeCodeAdapterLive", () => {
       const adapter = yield* ClaudeCodeAdapter;
 
       const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
         provider: "claudeCode",
         runtimeMode: "full-access",
       });
@@ -734,12 +747,13 @@ describe("ClaudeCodeAdapterLive", () => {
       const adapter = yield* ClaudeCodeAdapter;
 
       const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
         provider: "claudeCode",
         runtimeMode: "full-access",
       });
 
       const firstTurn = yield* adapter.sendTurn({
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         input: "first",
         attachments: [],
       });
@@ -765,7 +779,7 @@ describe("ClaudeCodeAdapterLive", () => {
       }
 
       const secondTurn = yield* adapter.sendTurn({
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         input: "second",
         attachments: [],
       });
@@ -790,16 +804,16 @@ describe("ClaudeCodeAdapterLive", () => {
         assert.equal(String(secondCompleted.value.turnId), String(secondTurn.turnId));
       }
 
-      const threadBeforeRollback = yield* adapter.readThread(session.sessionId);
+      const threadBeforeRollback = yield* adapter.readThread(session.threadId);
       assert.equal(threadBeforeRollback.turns.length, 2);
 
-      const rolledBack = yield* adapter.rollbackThread(session.sessionId, 1);
+      const rolledBack = yield* adapter.rollbackThread(session.threadId, 1);
       assert.equal(rolledBack.turns.length, 1);
-      assert.equal(rolledBack.turns[0]?.id, firstTurn.turnId as ProviderTurnId);
+      assert.equal(rolledBack.turns[0]?.id, firstTurn.turnId);
 
-      const threadAfterRollback = yield* adapter.readThread(session.sessionId);
+      const threadAfterRollback = yield* adapter.readThread(session.threadId);
       assert.equal(threadAfterRollback.turns.length, 1);
-      assert.equal(threadAfterRollback.turns[0]?.id, firstTurn.turnId as ProviderTurnId);
+      assert.equal(threadAfterRollback.turns[0]?.id, firstTurn.turnId);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -812,11 +826,12 @@ describe("ClaudeCodeAdapterLive", () => {
       const adapter = yield* ClaudeCodeAdapter;
 
       const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
         provider: "claudeCode",
         runtimeMode: "full-access",
       });
       yield* adapter.sendTurn({
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         input: "hello",
         model: "claude-opus-4-6",
         attachments: [],
@@ -834,7 +849,7 @@ describe("ClaudeCodeAdapterLive", () => {
       event?: {
         provider?: string;
         method?: string;
-        sessionId?: string;
+        threadId?: string;
         turnId?: string;
       };
     }> = [];
@@ -852,11 +867,12 @@ describe("ClaudeCodeAdapterLive", () => {
       const adapter = yield* ClaudeCodeAdapter;
 
       const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
         provider: "claudeCode",
         runtimeMode: "full-access",
       });
       const turn = yield* adapter.sendTurn({
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         input: "hello",
         attachments: [],
       });
@@ -895,7 +911,7 @@ describe("ClaudeCodeAdapterLive", () => {
 
       assert.equal(nativeEvents.length > 0, true);
       assert.equal(nativeEvents.some((record) => record.event?.provider === "claudeCode"), true);
-      assert.equal(nativeEvents.some((record) => record.event?.sessionId === session.sessionId), true);
+      assert.equal(nativeEvents.some((record) => String(record.event?.threadId) === String(session.threadId)), true);
       assert.equal(
         nativeEvents.some((record) => String(record.event?.turnId) === String(turn.turnId)),
         true,

@@ -1,4 +1,4 @@
-import type { ProviderRuntimeEvent, ProviderSessionId } from "@t3tools/contracts";
+import type { ProviderRuntimeEvent } from "@t3tools/contracts";
 import { ThreadId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, assert } from "@effect/vitest";
@@ -93,18 +93,18 @@ const collectEventsDuring = <A, E, R>(
 const runTurn = (input: {
   readonly provider: ProviderServiceShape;
   readonly harness: TestProviderAdapterHarness;
-  readonly sessionId: ProviderSessionId;
+  readonly threadId: ThreadId;
   readonly userText: string;
   readonly response: TestTurnResponse;
 }) =>
   Effect.gen(function* () {
-    yield* input.harness.queueTurnResponse(input.sessionId, input.response);
+    yield* input.harness.queueTurnResponse(input.threadId, input.response);
 
     return yield* collectEventsDuring(
       input.provider.streamEvents,
       input.response.events.length,
       input.provider.sendTurn({
-        sessionId: input.sessionId,
+        threadId: input.threadId,
         input: input.userText,
         attachments: [],
       }),
@@ -120,6 +120,7 @@ it.effect("replays typed runtime fixture events", () =>
       const session = yield* provider.startSession(
         ThreadId.makeUnsafe("thread-integration-typed"),
         {
+          threadId: ThreadId.makeUnsafe("thread-integration-typed"),
           provider: "codex",
           cwd: fixture.cwd,
           runtimeMode: "full-access",
@@ -130,7 +131,7 @@ it.effect("replays typed runtime fixture events", () =>
       const observedEvents = yield* runTurn({
         provider,
         harness: fixture.harness,
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         userText: "hello",
         response: { events: codexTurnTextFixture },
       });
@@ -154,6 +155,7 @@ it.effect("replays file-changing fixture turn events", () =>
       const session = yield* provider.startSession(
         ThreadId.makeUnsafe("thread-integration-tools"),
         {
+          threadId: ThreadId.makeUnsafe("thread-integration-tools"),
           provider: "codex",
           cwd: fixture.cwd,
           runtimeMode: "full-access",
@@ -164,7 +166,7 @@ it.effect("replays file-changing fixture turn events", () =>
       const observedEvents = yield* runTurn({
         provider,
         harness: fixture.harness,
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         userText: "make a small change",
         response: {
           events: codexTurnToolFixture,
@@ -192,6 +194,7 @@ it.effect("runs multi-turn tool/approval flow", () =>
       const session = yield* provider.startSession(
         ThreadId.makeUnsafe("thread-integration-multi"),
         {
+          threadId: ThreadId.makeUnsafe("thread-integration-multi"),
           provider: "codex",
           cwd: fixture.cwd,
           runtimeMode: "full-access",
@@ -202,7 +205,7 @@ it.effect("runs multi-turn tool/approval flow", () =>
       const firstTurnEvents = yield* runTurn({
         provider,
         harness: fixture.harness,
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         userText: "turn 1",
         response: {
           events: codexTurnToolFixture,
@@ -218,7 +221,7 @@ it.effect("runs multi-turn tool/approval flow", () =>
       const secondTurnEvents = yield* runTurn({
         provider,
         harness: fixture.harness,
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         userText: "turn 2 approval",
         response: {
           events: codexTurnApprovalFixture,
@@ -245,6 +248,7 @@ it.effect("rolls back provider conversation state only", () =>
       const session = yield* provider.startSession(
         ThreadId.makeUnsafe("thread-integration-rollback"),
         {
+          threadId: ThreadId.makeUnsafe("thread-integration-rollback"),
           provider: "codex",
           cwd: fixture.cwd,
           runtimeMode: "full-access",
@@ -255,7 +259,7 @@ it.effect("rolls back provider conversation state only", () =>
       yield* runTurn({
         provider,
         harness: fixture.harness,
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         userText: "turn 1",
         response: {
           events: codexTurnToolFixture,
@@ -267,7 +271,7 @@ it.effect("rolls back provider conversation state only", () =>
       yield* runTurn({
         provider,
         harness: fixture.harness,
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         userText: "turn 2 approval",
         response: {
           events: codexTurnApprovalFixture,
@@ -277,11 +281,11 @@ it.effect("rolls back provider conversation state only", () =>
       });
 
       yield* provider.rollbackConversation({
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         numTurns: 1,
       });
 
-      const rollbackCalls = fixture.harness.getRollbackCalls(session.sessionId);
+      const rollbackCalls = fixture.harness.getRollbackCalls(session.threadId);
       assert.deepEqual(rollbackCalls, [1]);
 
       const readme = yield* readFileString(join(fixture.cwd, "README.md"));

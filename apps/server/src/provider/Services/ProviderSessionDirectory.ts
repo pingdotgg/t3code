@@ -1,17 +1,6 @@
-/**
- * ProviderSessionDirectory - Session ownership index across provider adapters.
- *
- * Tracks which provider owns each `sessionId` so `ProviderService` can route
- * session-scoped calls to the correct adapter. It is metadata only and does not
- * perform provider RPC or checkpoint operations.
- *
- * @module ProviderSessionDirectory
- */
 import type {
   ProviderKind,
-  ProviderSessionId,
   ProviderSessionRuntimeStatus,
-  ProviderThreadId,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
@@ -20,84 +9,48 @@ import type { Effect } from "effect";
 
 import type {
   ProviderSessionDirectoryPersistenceError,
-  ProviderSessionNotFoundError,
   ProviderValidationError,
 } from "../Errors.ts";
 
-export interface ProviderSessionBinding {
-  readonly sessionId: ProviderSessionId;
+export interface ProviderRuntimeBinding {
+  readonly threadId: ThreadId;
   readonly provider: ProviderKind;
-  readonly threadId?: ThreadId;
   readonly adapterKey?: string;
-  readonly providerThreadId?: ProviderThreadId | null;
   readonly status?: ProviderSessionRuntimeStatus;
   readonly resumeCursor?: unknown | null;
   readonly runtimePayload?: unknown | null;
   readonly runtimeMode?: RuntimeMode;
 }
 
-export type ProviderSessionDirectoryReadError =
-  | ProviderSessionNotFoundError
-  | ProviderSessionDirectoryPersistenceError;
+export type ProviderSessionDirectoryReadError = ProviderSessionDirectoryPersistenceError;
 
 export type ProviderSessionDirectoryWriteError =
   | ProviderValidationError
   | ProviderSessionDirectoryPersistenceError;
 
-/**
- * ProviderSessionDirectoryShape - Service API for provider session ownership metadata.
- */
 export interface ProviderSessionDirectoryShape {
-  /**
-   * Record or update ownership for one provider session.
-   *
-   * Preserves existing persisted fields when omitted and shallow-merges
-   * runtime payload objects.
-   */
   readonly upsert: (
-    binding: ProviderSessionBinding,
+    binding: ProviderRuntimeBinding,
   ) => Effect.Effect<void, ProviderSessionDirectoryWriteError>;
 
-  /**
-   * Resolve the provider owner for a session id.
-   */
   readonly getProvider: (
-    sessionId: ProviderSessionId,
+    threadId: ThreadId,
   ) => Effect.Effect<ProviderKind, ProviderSessionDirectoryReadError>;
 
-  /**
-   * Resolve the full tracked binding for a session id.
-   */
   readonly getBinding: (
-    sessionId: ProviderSessionId,
-  ) => Effect.Effect<Option.Option<ProviderSessionBinding>, ProviderSessionDirectoryReadError>;
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<ProviderRuntimeBinding>, ProviderSessionDirectoryReadError>;
 
-  /**
-   * Resolve the tracked thread id for a session, if known.
-   */
-  readonly getThreadId: (
-    sessionId: ProviderSessionId,
-  ) => Effect.Effect<Option.Option<ThreadId>, ProviderSessionDirectoryReadError>;
-
-  /**
-   * Remove a session binding.
-   */
   readonly remove: (
-    sessionId: ProviderSessionId,
+    threadId: ThreadId,
   ) => Effect.Effect<void, ProviderSessionDirectoryPersistenceError>;
 
-  /**
-   * List tracked session ids.
-   */
-  readonly listSessionIds: () => Effect.Effect<
-    ReadonlyArray<ProviderSessionId>,
+  readonly listThreadIds: () => Effect.Effect<
+    ReadonlyArray<ThreadId>,
     ProviderSessionDirectoryPersistenceError
   >;
 }
 
-/**
- * ProviderSessionDirectory - Service tag for session ownership lookup.
- */
 export class ProviderSessionDirectory extends ServiceMap.Service<
   ProviderSessionDirectory,
   ProviderSessionDirectoryShape

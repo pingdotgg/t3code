@@ -13,16 +13,11 @@ import {
   type ProviderRuntimeEvent,
   RuntimeItemId,
   RuntimeRequestId,
-  RuntimeSessionId,
   ProviderApprovalDecision,
   ProviderItemId,
-  ProviderSessionId,
-  ProviderThreadId,
-  ProviderTurnId,
   ThreadId,
-  TurnId,
 } from "@t3tools/contracts";
-import { Effect, FileSystem, Layer, Option, Queue, Schema, Stream } from "effect";
+import { Effect, FileSystem, Layer, Queue, Schema, ServiceMap, Stream } from "effect";
 
 import {
   ProviderAdapterProcessError,
@@ -33,7 +28,6 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { CodexAdapter, type CodexAdapterShape } from "../Services/CodexAdapter.ts";
-import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import { CodexAppServerManager } from "../../codexAppServerManager.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -43,7 +37,7 @@ const PROVIDER = "codex" as const;
 
 export interface CodexAdapterLiveOptions {
   readonly manager?: CodexAppServerManager;
-  readonly makeManager?: () => CodexAppServerManager;
+  readonly makeManager?: (services?: ServiceMap.ServiceMap<never>) => CodexAppServerManager;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
@@ -56,33 +50,29 @@ function toMessage(cause: unknown, fallback: string): string {
 }
 
 function toSessionError(
-  sessionId: ProviderSessionId,
+  threadId: ThreadId,
   cause: unknown,
 ): ProviderAdapterSessionNotFoundError | ProviderAdapterSessionClosedError | undefined {
   const normalized = toMessage(cause, "").toLowerCase();
   if (normalized.includes("unknown session") || normalized.includes("unknown provider session")) {
     return new ProviderAdapterSessionNotFoundError({
       provider: PROVIDER,
-      sessionId,
+      threadId,
       cause,
     });
   }
   if (normalized.includes("session is closed")) {
     return new ProviderAdapterSessionClosedError({
       provider: PROVIDER,
-      sessionId,
+      threadId,
       cause,
     });
   }
   return undefined;
 }
 
-function toRequestError(
-  sessionId: ProviderSessionId,
-  method: string,
-  cause: unknown,
-): ProviderAdapterError {
-  const sessionError = toSessionError(sessionId, cause);
+function toRequestError(threadId: ThreadId, method: string, cause: unknown): ProviderAdapterError {
+  const sessionError = toSessionError(threadId, cause);
   if (sessionError) {
     return sessionError;
   }
@@ -139,7 +129,8 @@ function toCanonicalItemType(raw: unknown): CanonicalItemType {
   if (type.includes("reasoning") || type.includes("thought")) return "reasoning";
   if (type.includes("plan") || type.includes("todo")) return "plan";
   if (type.includes("command")) return "command_execution";
-  if (type.includes("file change") || type.includes("patch") || type.includes("edit")) return "file_change";
+  if (type.includes("file change") || type.includes("patch") || type.includes("edit"))
+    return "file_change";
   if (type.includes("mcp")) return "mcp_tool_call";
   if (type.includes("dynamic tool")) return "dynamic_tool_call";
   if (type.includes("collab")) return "collab_agent_tool_call";
@@ -211,6 +202,8 @@ function toRequestTypeFromMethod(method: string): CanonicalRequestType {
   switch (method) {
     case "item/commandExecution/requestApproval":
       return "command_execution_approval";
+    case "item/fileRead/requestApproval":
+      return "file_read_approval";
     case "item/fileChange/requestApproval":
       return "file_change_approval";
     case "applyPatchApproval":
@@ -232,6 +225,8 @@ function toRequestTypeFromKind(kind: unknown): CanonicalRequestType {
   switch (kind) {
     case "command":
       return "command_execution_approval";
+    case "file-read":
+      return "file_read_approval";
     case "file-change":
       return "file_change_approval";
     default:
@@ -239,7 +234,9 @@ function toRequestTypeFromKind(kind: unknown): CanonicalRequestType {
   }
 }
 
-function toRequestTypeFromResolvedPayload(payload: Record<string, unknown> | undefined): CanonicalRequestType {
+function toRequestTypeFromResolvedPayload(
+  payload: Record<string, unknown> | undefined,
+): CanonicalRequestType {
   const request = asObject(payload?.request);
   const method = asString(request?.method) ?? asString(payload?.method);
   if (method) {
@@ -252,13 +249,9 @@ function toRequestTypeFromResolvedPayload(payload: Record<string, unknown> | und
   return "unknown";
 }
 
-function toThreadState(value: unknown):
-  | "active"
-  | "idle"
-  | "archived"
-  | "closed"
-  | "compacted"
-  | "error" {
+function toThreadState(
+  value: unknown,
+): "active" | "idle" | "archived" | "closed" | "compacted" | "error" {
   switch (value) {
     case "idle":
       return "idle";
@@ -278,7 +271,13 @@ function toThreadState(value: unknown):
 
 function contentStreamKindFromMethod(
   method: string,
-): "assistant_text" | "reasoning_text" | "reasoning_summary_text" | "plan_text" | "command_output" | "file_change_output" {
+):
+  | "assistant_text"
+  | "reasoning_text"
+  | "reasoning_summary_text"
+  | "plan_text"
+  | "command_output"
+  | "file_change_output" {
   switch (method) {
     case "item/agentMessage/delta":
       return "assistant_text";
@@ -297,18 +296,6 @@ function contentStreamKindFromMethod(
   }
 }
 
-function asRuntimeSessionId(sessionId: ProviderSessionId): RuntimeSessionId {
-  return RuntimeSessionId.makeUnsafe(sessionId);
-}
-
-function asRuntimeThreadId(threadId: ProviderThreadId): ThreadId {
-  return ThreadId.makeUnsafe(threadId);
-}
-
-function asRuntimeTurnId(turnId: ProviderTurnId): TurnId {
-  return TurnId.makeUnsafe(turnId);
-}
-
 function asRuntimeItemId(itemId: ProviderItemId): RuntimeItemId {
   return RuntimeItemId.makeUnsafe(itemId);
 }
@@ -321,29 +308,28 @@ function eventRawSource(event: ProviderEvent): NonNullable<ProviderRuntimeEvent[
   return event.kind === "request" ? "codex.app-server.request" : "codex.app-server.notification";
 }
 
-function providerRefsFromEvent(event: ProviderEvent): ProviderRuntimeEvent["providerRefs"] | undefined {
-  const refs: Record<string, string> = {
-    providerSessionId: event.sessionId,
-  };
-  if (event.threadId) refs.providerThreadId = event.threadId;
+function providerRefsFromEvent(
+  event: ProviderEvent,
+): ProviderRuntimeEvent["providerRefs"] | undefined {
+  const refs: Record<string, string> = {};
   if (event.turnId) refs.providerTurnId = event.turnId;
   if (event.itemId) refs.providerItemId = event.itemId;
   if (event.requestId) refs.providerRequestId = event.requestId;
 
-  return Object.keys(refs).length > 0
-    ? (refs as ProviderRuntimeEvent["providerRefs"])
-    : undefined;
+  return Object.keys(refs).length > 0 ? (refs as ProviderRuntimeEvent["providerRefs"]) : undefined;
 }
 
-function runtimeEventBase(event: ProviderEvent): Omit<ProviderRuntimeEvent, "type" | "payload"> {
+function runtimeEventBase(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+): Omit<ProviderRuntimeEvent, "type" | "payload"> {
   const refs = providerRefsFromEvent(event);
   return {
     eventId: event.id,
     provider: event.provider,
-    sessionId: asRuntimeSessionId(event.sessionId),
+    threadId: canonicalThreadId,
     createdAt: event.createdAt,
-    ...(event.threadId ? { threadId: asRuntimeThreadId(event.threadId) } : {}),
-    ...(event.turnId ? { turnId: asRuntimeTurnId(event.turnId) } : {}),
+    ...(event.turnId ? { turnId: event.turnId } : {}),
     ...(event.itemId ? { itemId: asRuntimeItemId(event.itemId) } : {}),
     ...(event.requestId ? { requestId: asRuntimeRequestId(event.requestId) } : {}),
     ...(refs ? { providerRefs: refs } : {}),
@@ -357,6 +343,7 @@ function runtimeEventBase(event: ProviderEvent): Omit<ProviderRuntimeEvent, "typ
 
 function mapItemLifecycle(
   event: ProviderEvent,
+  canonicalThreadId: ThreadId,
   lifecycle: "item.started" | "item.updated" | "item.completed",
 ): ProviderRuntimeEvent | undefined {
   const payload = asObject(event.payload);
@@ -380,7 +367,7 @@ function mapItemLifecycle(
         : undefined;
 
   return {
-    ...runtimeEventBase(event),
+    ...runtimeEventBase(event, canonicalThreadId),
     type: lifecycle,
     payload: {
       itemType,
@@ -392,7 +379,10 @@ function mapItemLifecycle(
   };
 }
 
-function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntimeEvent> {
+function mapToRuntimeEvents(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+): ReadonlyArray<ProviderRuntimeEvent> {
   const payload = asObject(event.payload);
   const turn = asObject(payload?.turn);
 
@@ -402,7 +392,7 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
     }
     return [
       {
-        ...runtimeEventBase(event),
+        ...runtimeEventBase(event, canonicalThreadId),
         type: "runtime.error",
         payload: {
           message: event.message,
@@ -418,7 +408,7 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
       asString(payload?.command) ?? asString(payload?.reason) ?? asString(payload?.prompt);
     return [
       {
-        ...runtimeEventBase(event),
+        ...runtimeEventBase(event, canonicalThreadId),
         type: "request.opened",
         payload: {
           requestType: toRequestTypeFromMethod(event.method),
@@ -437,7 +427,7 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
         : toRequestTypeFromMethod(event.method);
     return [
       {
-        ...runtimeEventBase(event),
+        ...runtimeEventBase(event, canonicalThreadId),
         type: "request.resolved",
         payload: {
           requestType,
@@ -451,7 +441,7 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "session/connecting") {
     return [
       {
-        ...runtimeEventBase(event),
+        ...runtimeEventBase(event, canonicalThreadId),
         type: "session.state.changed",
         payload: {
           state: "starting",
@@ -464,7 +454,7 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "session/ready") {
     return [
       {
-        ...runtimeEventBase(event),
+        ...runtimeEventBase(event, canonicalThreadId),
         type: "session.state.changed",
         payload: {
           state: "ready",
@@ -477,7 +467,7 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "session/started") {
     return [
       {
-        ...runtimeEventBase(event),
+        ...runtimeEventBase(event, canonicalThreadId),
         type: "session.started",
         payload: {
           ...(event.message ? { message: event.message } : {}),
@@ -490,7 +480,7 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "session/exited" || event.method === "session/closed") {
     return [
       {
-        ...runtimeEventBase(event),
+        ...runtimeEventBase(event, canonicalThreadId),
         type: "session.exited",
         payload: {
           ...(event.message ? { reason: event.message } : {}),
@@ -502,15 +492,13 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
 
   if (event.method === "thread/started") {
     const payloadThreadId = asString(asObject(payload?.thread)?.id);
-    const providerThreadId =
-      event.threadId ??
-      (payloadThreadId ? ProviderThreadId.makeUnsafe(payloadThreadId) : undefined);
+    const providerThreadId = payloadThreadId ?? asString(payload?.threadId);
     if (!providerThreadId) {
       return [];
     }
     return [
       {
-        ...runtimeEventBase(event),
+        ...runtimeEventBase(event, canonicalThreadId),
         type: "thread.started",
         payload: {
           providerThreadId,
@@ -528,8 +516,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   ) {
     return [
       {
-        ...runtimeEventBase(event),
         type: "thread.state.changed",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           state:
             event.method === "thread/archived"
@@ -548,8 +536,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "thread/name/updated") {
     return [
       {
-        ...runtimeEventBase(event),
         type: "thread.metadata.updated",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           ...(asString(payload?.threadName) ? { name: asString(payload?.threadName) } : {}),
           ...(event.payload !== undefined ? { metadata: asObject(event.payload) } : {}),
@@ -561,8 +549,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "thread/tokenUsage/updated") {
     return [
       {
-        ...runtimeEventBase(event),
         type: "thread.token-usage.updated",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           usage: event.payload ?? {},
         },
@@ -571,16 +559,14 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   }
 
   if (event.method === "turn/started") {
-    const payloadTurnId = asString(turn?.id);
-    const turnId =
-      event.turnId ?? (payloadTurnId ? ProviderTurnId.makeUnsafe(payloadTurnId) : undefined);
+    const turnId = event.turnId;
     if (!turnId) {
       return [];
     }
     return [
       {
-        ...runtimeEventBase(event),
-        turnId: asRuntimeTurnId(turnId),
+        ...runtimeEventBase(event, canonicalThreadId),
+        turnId,
         type: "turn.started",
         payload: {
           ...(asString(turn?.model) ? { model: asString(turn?.model) } : {}),
@@ -594,7 +580,7 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
     const errorMessage = asString(asObject(turn?.error)?.message);
     return [
       {
-        ...runtimeEventBase(event),
+        ...runtimeEventBase(event, canonicalThreadId),
         type: "turn.completed",
         payload: {
           state: toTurnStatus(turn?.status),
@@ -613,7 +599,7 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "turn/aborted") {
     return [
       {
-        ...runtimeEventBase(event),
+        ...runtimeEventBase(event, canonicalThreadId),
         type: "turn.aborted",
         payload: {
           reason: event.message ?? "Turn aborted",
@@ -626,10 +612,12 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
     const steps = Array.isArray(payload?.plan) ? payload.plan : [];
     return [
       {
-        ...runtimeEventBase(event),
+        ...runtimeEventBase(event, canonicalThreadId),
         type: "turn.plan.updated",
         payload: {
-          ...(asString(payload?.explanation) ? { explanation: asString(payload?.explanation) } : {}),
+          ...(asString(payload?.explanation)
+            ? { explanation: asString(payload?.explanation) }
+            : {}),
           plan: steps
             .map((entry) => asObject(entry))
             .filter((entry): entry is Record<string, unknown> => entry !== undefined)
@@ -648,7 +636,7 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "turn/diff/updated") {
     return [
       {
-        ...runtimeEventBase(event),
+        ...runtimeEventBase(event, canonicalThreadId),
         type: "turn.diff.updated",
         payload: {
           unifiedDiff:
@@ -662,12 +650,12 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   }
 
   if (event.method === "item/started") {
-    const started = mapItemLifecycle(event, "item.started");
+    const started = mapItemLifecycle(event, canonicalThreadId, "item.started");
     return started ? [started] : [];
   }
 
   if (event.method === "item/completed") {
-    const completed = mapItemLifecycle(event, "item.completed");
+    const completed = mapItemLifecycle(event, canonicalThreadId, "item.completed");
     return completed ? [completed] : [];
   }
 
@@ -675,7 +663,7 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
     event.method === "item/reasoning/summaryPartAdded" ||
     event.method === "item/commandExecution/terminalInteraction"
   ) {
-    const updated = mapItemLifecycle(event, "item.updated");
+    const updated = mapItemLifecycle(event, canonicalThreadId, "item.updated");
     return updated ? [updated] : [];
   }
 
@@ -697,13 +685,17 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
     }
     return [
       {
-        ...runtimeEventBase(event),
+        ...runtimeEventBase(event, canonicalThreadId),
         type: "content.delta",
         payload: {
           streamKind: contentStreamKindFromMethod(event.method),
           delta,
-          ...(typeof payload?.contentIndex === "number" ? { contentIndex: payload.contentIndex } : {}),
-          ...(typeof payload?.summaryIndex === "number" ? { summaryIndex: payload.summaryIndex } : {}),
+          ...(typeof payload?.contentIndex === "number"
+            ? { contentIndex: payload.contentIndex }
+            : {}),
+          ...(typeof payload?.summaryIndex === "number"
+            ? { summaryIndex: payload.summaryIndex }
+            : {}),
         },
       },
     ];
@@ -712,7 +704,7 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "item/mcpToolCall/progress") {
     return [
       {
-        ...runtimeEventBase(event),
+        ...runtimeEventBase(event, canonicalThreadId),
         type: "tool.progress",
         payload: {
           ...(asString(payload?.toolUseId) ? { toolUseId: asString(payload?.toolUseId) } : {}),
@@ -735,7 +727,7 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
           : "unknown";
     return [
       {
-        ...runtimeEventBase(event),
+        ...runtimeEventBase(event, canonicalThreadId),
         type: "request.resolved",
         payload: {
           requestType,
@@ -748,8 +740,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "model/rerouted") {
     return [
       {
-        ...runtimeEventBase(event),
         type: "model.rerouted",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           fromModel: asString(payload?.fromModel) ?? "unknown",
           toModel: asString(payload?.toModel) ?? "unknown",
@@ -762,8 +754,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "deprecationNotice") {
     return [
       {
-        ...runtimeEventBase(event),
         type: "deprecation.notice",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           summary: asString(payload?.summary) ?? "Deprecation notice",
           ...(asString(payload?.details) ? { details: asString(payload?.details) } : {}),
@@ -775,8 +767,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "configWarning") {
     return [
       {
-        ...runtimeEventBase(event),
         type: "config.warning",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           summary: asString(payload?.summary) ?? "Configuration warning",
           ...(asString(payload?.details) ? { details: asString(payload?.details) } : {}),
@@ -790,8 +782,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "account/updated") {
     return [
       {
-        ...runtimeEventBase(event),
         type: "account.updated",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           account: event.payload ?? {},
         },
@@ -802,8 +794,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "account/rateLimits/updated") {
     return [
       {
-        ...runtimeEventBase(event),
         type: "account.rate-limits.updated",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           rateLimits: event.payload ?? {},
         },
@@ -814,8 +806,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "mcpServer/oauthLogin/completed") {
     return [
       {
-        ...runtimeEventBase(event),
         type: "mcp.oauth.completed",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           success: payload?.success === true,
           ...(asString(payload?.name) ? { name: asString(payload?.name) } : {}),
@@ -829,8 +821,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
     const realtimeSessionId = asString(payload?.realtimeSessionId);
     return [
       {
-        ...runtimeEventBase(event),
         type: "thread.realtime.started",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           realtimeSessionId,
         },
@@ -841,8 +833,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "thread/realtime/itemAdded") {
     return [
       {
-        ...runtimeEventBase(event),
         type: "thread.realtime.item-added",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           item: event.payload ?? {},
         },
@@ -853,8 +845,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "thread/realtime/outputAudio/delta") {
     return [
       {
-        ...runtimeEventBase(event),
         type: "thread.realtime.audio.delta",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           audio: event.payload ?? {},
         },
@@ -866,8 +858,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
     const message = asString(payload?.message) ?? event.message ?? "Realtime error";
     return [
       {
-        ...runtimeEventBase(event),
         type: "thread.realtime.error",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           message,
         },
@@ -878,8 +870,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "thread/realtime/closed") {
     return [
       {
-        ...runtimeEventBase(event),
         type: "thread.realtime.closed",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           reason: event.message,
         },
@@ -892,8 +884,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
       asString(asObject(payload?.error)?.message) ?? event.message ?? "Provider runtime error";
     return [
       {
-        ...runtimeEventBase(event),
         type: "runtime.error",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           message,
           class: "provider_error",
@@ -906,8 +898,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
   if (event.method === "windows/worldWritableWarning") {
     return [
       {
-        ...runtimeEventBase(event),
         type: "runtime.warning",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           message: event.message ?? "Windows world-writable warning",
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
@@ -924,8 +916,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
 
     return [
       {
-        ...runtimeEventBase(event),
         type: "session.state.changed",
+        ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           state: success === false ? "error" : "ready",
           reason: success === false ? failureMessage : successMessage,
@@ -935,8 +927,8 @@ function mapToRuntimeEvents(event: ProviderEvent): ReadonlyArray<ProviderRuntime
       ...(success === false
         ? [
             {
-              ...runtimeEventBase(event),
               type: "runtime.warning" as const,
+              ...runtimeEventBase(event, canonicalThreadId),
               payload: {
                 message: failureMessage,
                 ...(event.payload !== undefined ? { detail: event.payload } : {}),
@@ -954,7 +946,6 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const serverConfig = yield* Effect.service(ServerConfig);
-    const directory = yield* ProviderSessionDirectory;
     const nativeEventLogger =
       options?.nativeEventLogger ??
       (options?.nativeEventLogPath !== undefined
@@ -964,14 +955,12 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         : undefined);
 
     const manager = yield* Effect.acquireRelease(
-      Effect.sync(() => {
+      Effect.gen(function* () {
         if (options?.manager) {
           return options.manager;
         }
-        if (options?.makeManager) {
-          return options.makeManager();
-        }
-        return new CodexAppServerManager();
+        const services = yield* Effect.services<never>();
+        return options?.makeManager?.(services) ?? new CodexAppServerManager(services);
       }),
       (manager) =>
         Effect.sync(() => {
@@ -999,11 +988,13 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         catch: (cause) =>
           new ProviderAdapterProcessError({
             provider: PROVIDER,
-            sessionId: "pending",
+            threadId: input.threadId,
             detail: toMessage(cause, "Failed to start Codex adapter session."),
             cause,
           }),
-      });
+      }).pipe(
+        Effect.map((session) => session),
+      );
     };
 
     const sendTurn: CodexAdapterShape["sendTurn"] = (input) =>
@@ -1018,7 +1009,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
               });
               if (!attachmentPath) {
                 return yield* toRequestError(
-                  input.sessionId,
+                  input.threadId,
                   "turn/start",
                   new Error(`Invalid attachment id '${attachment.id}'.`),
                 );
@@ -1026,7 +1017,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
               const bytes = yield* fileSystem
                 .readFile(attachmentPath)
                 .pipe(
-                  Effect.mapError((cause) => toRequestError(input.sessionId, "turn/start", cause)),
+                  Effect.mapError((cause) => toRequestError(input.threadId, "turn/start", cause)),
                 );
               return {
                 type: "image" as const,
@@ -1039,7 +1030,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         return yield* Effect.tryPromise({
           try: () => {
             const managerInput = {
-              sessionId: input.sessionId,
+              threadId: input.threadId,
               ...(input.input !== undefined ? { input: input.input } : {}),
               ...(input.model !== undefined ? { model: input.model } : {}),
               ...(input.effort !== undefined ? { effort: input.effort } : {}),
@@ -1047,23 +1038,33 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
             };
             return manager.sendTurn(managerInput);
           },
-          catch: (cause) => toRequestError(input.sessionId, "turn/start", cause),
-        });
+          catch: (cause) => toRequestError(input.threadId, "turn/start", cause),
+        }).pipe(
+          Effect.map((result) => ({
+            ...result,
+            threadId: input.threadId,
+          })),
+        );
       });
 
-    const interruptTurn: CodexAdapterShape["interruptTurn"] = (sessionId, turnId) =>
+    const interruptTurn: CodexAdapterShape["interruptTurn"] = (threadId, turnId) =>
       Effect.tryPromise({
-        try: () => manager.interruptTurn(sessionId, turnId),
-        catch: (cause) => toRequestError(sessionId, "turn/interrupt", cause),
+        try: () => manager.interruptTurn(threadId, turnId),
+        catch: (cause) => toRequestError(threadId, "turn/interrupt", cause),
       });
 
-    const readThread: CodexAdapterShape["readThread"] = (sessionId) =>
+    const readThread: CodexAdapterShape["readThread"] = (threadId) =>
       Effect.tryPromise({
-        try: () => manager.readThread(sessionId),
-        catch: (cause) => toRequestError(sessionId, "thread/read", cause),
-      });
+        try: () => manager.readThread(threadId),
+        catch: (cause) => toRequestError(threadId, "thread/read", cause),
+      }).pipe(
+        Effect.map((snapshot) => ({
+          threadId,
+          turns: snapshot.turns,
+        })),
+      );
 
-    const rollbackThread: CodexAdapterShape["rollbackThread"] = (sessionId, numTurns) => {
+    const rollbackThread: CodexAdapterShape["rollbackThread"] = (threadId, numTurns) => {
       if (!Number.isInteger(numTurns) || numTurns < 1) {
         return Effect.fail(
           new ProviderAdapterValidationError({
@@ -1075,31 +1076,36 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
       }
 
       return Effect.tryPromise({
-        try: () => manager.rollbackThread(sessionId, numTurns),
-        catch: (cause) => toRequestError(sessionId, "thread/rollback", cause),
-      });
+        try: () => manager.rollbackThread(threadId, numTurns),
+        catch: (cause) => toRequestError(threadId, "thread/rollback", cause),
+      }).pipe(
+        Effect.map((snapshot) => ({
+          threadId,
+          turns: snapshot.turns,
+        })),
+      );
     };
 
     const respondToRequest: CodexAdapterShape["respondToRequest"] = (
-      sessionId,
+      threadId,
       requestId,
       decision,
     ) =>
       Effect.tryPromise({
-        try: () => manager.respondToRequest(sessionId, requestId, decision),
-        catch: (cause) => toRequestError(sessionId, "item/requestApproval/decision", cause),
+        try: () => manager.respondToRequest(threadId, requestId, decision),
+        catch: (cause) => toRequestError(threadId, "item/requestApproval/decision", cause),
       });
 
-    const stopSession: CodexAdapterShape["stopSession"] = (sessionId) =>
+    const stopSession: CodexAdapterShape["stopSession"] = (threadId) =>
       Effect.sync(() => {
-        manager.stopSession(sessionId);
+        manager.stopSession(threadId);
       });
 
     const listSessions: CodexAdapterShape["listSessions"] = () =>
       Effect.sync(() => manager.listSessions());
 
-    const hasSession: CodexAdapterShape["hasSession"] = (sessionId) =>
-      Effect.sync(() => manager.hasSession(sessionId));
+    const hasSession: CodexAdapterShape["hasSession"] = (threadId) =>
+      Effect.sync(() => manager.hasSession(threadId));
 
     const stopAll: CodexAdapterShape["stopAll"] = () =>
       Effect.sync(() => {
@@ -1115,33 +1121,24 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
             if (!nativeEventLogger) {
               return;
             }
-            const orchestrationThreadId = yield* Effect.catch(
-              directory.getThreadId(event.sessionId).pipe(
-                Effect.map((threadIdOption) =>
-                  Option.isSome(threadIdOption) ? threadIdOption.value : null,
-                ),
-              ),
-              () => Effect.succeed(null),
-            );
-            yield* nativeEventLogger.write(event, orchestrationThreadId);
+            yield* nativeEventLogger.write(event, event.threadId);
           });
 
         const services = yield* Effect.services<never>();
         const listener = (event: ProviderEvent) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-          const runtimeEvents = mapToRuntimeEvents(event);
-          if (runtimeEvents.length === 0) {
-            yield* Effect.logDebug("ignoring unhandled Codex provider event", {
-              method: event.method,
-              sessionId: event.sessionId,
-              threadId: event.threadId,
-              turnId: event.turnId,
-              itemId: event.itemId,
-            });
-            return;
-          }
-          yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
+            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            if (runtimeEvents.length === 0) {
+              yield* Effect.logDebug("ignoring unhandled Codex provider event", {
+                method: event.method,
+                threadId: event.threadId,
+                turnId: event.turnId,
+                itemId: event.itemId,
+              });
+              return;
+            }
+            yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
           }).pipe(Effect.runPromiseWith(services));
         manager.on("event", listener);
         return listener;

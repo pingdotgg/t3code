@@ -58,14 +58,16 @@ export function makeServerProviderLayer(): Layer.Layer<
     const codexAdapterLayer = makeCodexAdapterLive(
       nativeEventLogger ? { nativeEventLogger } : undefined,
     );
-    const claudeAdapterLayer = makeClaudeCodeAdapterLive({
-      nativeEventLogPath: path.join(providerLogsDir, "provider-native.ndjson"),
-    });
-    const cursorAdapterLayer = makeCursorAdapterLive({
-      nativeEventLogPath: path.join(providerLogsDir, "provider-native.ndjson"),
-    });
+    const claudeAdapterLayer = makeClaudeCodeAdapterLive(
+      nativeEventLogger ? { nativeEventLogger } : undefined,
+    );
+    const cursorAdapterLayer = makeCursorAdapterLive(
+      nativeEventLogger ? { nativeEventLogger } : undefined,
+    );
     const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
-      Layer.provide(Layer.mergeAll(codexAdapterLayer, claudeAdapterLayer, cursorAdapterLayer)),
+      Layer.provide(codexAdapterLayer),
+      Layer.provide(claudeAdapterLayer),
+      Layer.provide(cursorAdapterLayer),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
     return makeProviderServiceLive(

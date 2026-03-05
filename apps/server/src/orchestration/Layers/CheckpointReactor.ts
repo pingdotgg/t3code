@@ -2,13 +2,10 @@ import {
   CommandId,
   EventId,
   MessageId,
-  ProviderSessionId,
-  ProviderThreadId,
   ThreadId,
   TurnId,
   type OrchestrationEvent,
   type ProviderRuntimeEvent,
-  RuntimeSessionId,
 } from "@t3tools/contracts";
 import { Cause, Effect, Layer, Option, Queue, Stream } from "effect";
 
@@ -36,14 +33,6 @@ type ReactorInput =
 
 function toTurnId(value: string | undefined): TurnId | null {
   return value === undefined ? null : TurnId.makeUnsafe(String(value));
-}
-
-function toProviderThreadId(value: string | undefined): ProviderThreadId | null {
-  return value === undefined ? null : ProviderThreadId.makeUnsafe(String(value));
-}
-
-function toProviderSessionId(value: RuntimeSessionId): ProviderSessionId {
-  return ProviderSessionId.makeUnsafe(String(value));
 }
 
 function sameId(left: string | null | undefined, right: string | null | undefined): boolean {
@@ -100,74 +89,55 @@ const make = Effect.gen(function* () {
     });
 
   const appendCaptureFailureActivity = (input: {
-    readonly sessionId: ProviderSessionId;
+    readonly threadId: ThreadId;
     readonly turnId: TurnId | null;
     readonly detail: string;
     readonly createdAt: string;
   }) =>
-    Effect.gen(function* () {
-      const readModel = yield* orchestrationEngine.getReadModel();
-      const thread = readModel.threads.find(
-        (entry) => entry.session?.providerSessionId === input.sessionId,
-      );
-      if (!thread) {
-        return;
-      }
-      yield* orchestrationEngine.dispatch({
-        type: "thread.activity.append",
-        commandId: serverCommandId("checkpoint-capture-failure"),
-        threadId: thread.id,
-        activity: {
-          id: EventId.makeUnsafe(crypto.randomUUID()),
-          tone: "error",
-          kind: "checkpoint.capture.failed",
-          summary: "Checkpoint capture failed",
-          payload: {
-            detail: input.detail,
-          },
-          turnId: input.turnId,
-          createdAt: input.createdAt,
+    orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: serverCommandId("checkpoint-capture-failure"),
+      threadId: input.threadId,
+      activity: {
+        id: EventId.makeUnsafe(crypto.randomUUID()),
+        tone: "error",
+        kind: "checkpoint.capture.failed",
+        summary: "Checkpoint capture failed",
+        payload: {
+          detail: input.detail,
         },
+        turnId: input.turnId,
         createdAt: input.createdAt,
-      });
+      },
+      createdAt: input.createdAt,
     });
 
   const resolveSessionRuntimeForThread = Effect.fnUntraced(function* (
     threadId: ThreadId,
   ): Effect.fn.Return<
-    Option.Option<{ readonly sessionId: ProviderSessionId; readonly cwd: string }>
+    Option.Option<{ readonly threadId: ThreadId; readonly cwd: string }>
   > {
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === threadId);
-    const projectedSessionId = thread?.session?.providerSessionId ?? null;
-    const projectedProviderThreadId = thread?.session?.providerThreadId ?? undefined;
 
     const sessions = yield* providerService.listSessions();
 
     const findSessionWithCwd = (
       session: (typeof sessions)[number] | undefined,
-    ): Option.Option<{ readonly sessionId: ProviderSessionId; readonly cwd: string }> => {
+    ): Option.Option<{ readonly threadId: ThreadId; readonly cwd: string }> => {
       if (!session?.cwd) {
         return Option.none();
       }
-      return Option.some({ sessionId: session.sessionId, cwd: session.cwd });
+      return Option.some({ threadId: session.threadId, cwd: session.cwd });
     };
 
-    if (projectedSessionId !== null) {
-      const projectedSession = sessions.find((session) => session.sessionId === projectedSessionId);
+    if (thread) {
+      const projectedSession = sessions.find(
+        (session) => session.threadId === thread.id,
+      );
       const fromProjected = findSessionWithCwd(projectedSession);
       if (Option.isSome(fromProjected)) {
         return fromProjected;
-      }
-    }
-
-    if (projectedProviderThreadId) {
-      const matchedSession = sessions.find(
-        (session) => session.threadId === projectedProviderThreadId,
-      );
-      const fromProviderThread = findSessionWithCwd(matchedSession);
-      if (Option.isSome(fromProviderThread)) {
-        return fromProviderThread;
       }
     }
 
@@ -177,27 +147,14 @@ const make = Effect.gen(function* () {
   const captureCheckpointFromTurnCompletion = Effect.fnUntraced(function* (
     event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>,
   ) {
-    const providerSessionId = toProviderSessionId(event.sessionId);
     const turnId = toTurnId(event.turnId);
     if (!turnId) {
       return;
     }
 
     const readModel = yield* orchestrationEngine.getReadModel();
-    const thread = readModel.threads.find(
-      (entry) => entry.session?.providerSessionId === providerSessionId,
-    );
+    const thread = readModel.threads.find((entry) => entry.id === event.threadId);
     if (!thread) {
-      return;
-    }
-
-    const projectedProviderThreadId = thread.session?.providerThreadId ?? null;
-    const eventProviderThreadId = toProviderThreadId(event.threadId);
-    if (
-      projectedProviderThreadId !== null &&
-      eventProviderThreadId !== null &&
-      !sameId(projectedProviderThreadId, eventProviderThreadId)
-    ) {
       return;
     }
 
@@ -272,7 +229,7 @@ const make = Effect.gen(function* () {
         ),
         Effect.tapError((error) =>
           appendCaptureFailureActivity({
-            sessionId: providerSessionId,
+            threadId: thread.id,
             turnId,
             detail: `Checkpoint captured, but turn diff summary is unavailable: ${error.message}`,
             createdAt: event.createdAt,
@@ -332,7 +289,6 @@ const make = Effect.gen(function* () {
   const ensurePreTurnBaselineFromTurnStart = Effect.fnUntraced(function* (
     event: Extract<ProviderRuntimeEvent, { type: "turn.started" }>,
   ) {
-    const providerSessionId = toProviderSessionId(event.sessionId);
     const turnId = toTurnId(event.turnId);
     if (!turnId) {
       return;
@@ -340,7 +296,7 @@ const make = Effect.gen(function* () {
 
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find(
-      (entry) => entry.session?.providerSessionId === providerSessionId,
+      (entry) => entry.id === event.threadId,
     );
     if (!thread) {
       return;
@@ -520,7 +476,7 @@ const make = Effect.gen(function* () {
     const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
     if (rolledBackTurns > 0) {
       yield* providerService.rollbackConversation({
-        sessionId: sessionRuntime.value.sessionId,
+        threadId: sessionRuntime.value.threadId,
         numTurns: rolledBackTurns,
       });
     }
@@ -588,7 +544,7 @@ const make = Effect.gen(function* () {
       yield* captureCheckpointFromTurnCompletion(event).pipe(
         Effect.catch((error) =>
           appendCaptureFailureActivity({
-            sessionId: toProviderSessionId(event.sessionId),
+            threadId: event.threadId,
             turnId,
             detail: error.message,
             createdAt: new Date().toISOString(),

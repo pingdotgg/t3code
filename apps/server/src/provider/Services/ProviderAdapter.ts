@@ -14,11 +14,10 @@ import type {
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
-  ProviderSessionId,
   ProviderSessionStartInput,
-  ProviderThreadId,
-  ProviderTurnId,
+  ThreadId,
   ProviderTurnStartResult,
+  TurnId,
 } from "@t3tools/contracts";
 import type { Effect } from "effect";
 import type { Stream } from "effect";
@@ -33,12 +32,12 @@ export interface ProviderAdapterCapabilities {
 }
 
 export interface ProviderThreadTurnSnapshot {
-  readonly id: ProviderTurnId;
+  readonly id: TurnId;
   readonly items: ReadonlyArray<unknown>;
 }
 
 export interface ProviderThreadSnapshot {
-  readonly threadId: ProviderThreadId;
+  readonly threadId: ThreadId;
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
 }
 
@@ -67,15 +66,15 @@ export interface ProviderAdapterShape<TError> {
    * Interrupt an active turn.
    */
   readonly interruptTurn: (
-    sessionId: ProviderSessionId,
-    turnId?: ProviderTurnId,
+    threadId: ThreadId,
+    turnId?: TurnId,
   ) => Effect.Effect<void, TError>;
 
   /**
    * Respond to an interactive approval request.
    */
   readonly respondToRequest: (
-    sessionId: ProviderSessionId,
+    threadId: ThreadId,
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
   ) => Effect.Effect<void, TError>;
@@ -83,7 +82,7 @@ export interface ProviderAdapterShape<TError> {
   /**
    * Stop one provider session.
    */
-  readonly stopSession: (sessionId: ProviderSessionId) => Effect.Effect<void, TError>;
+  readonly stopSession: (threadId: ThreadId) => Effect.Effect<void, TError>;
 
   /**
    * List currently active provider sessions for this adapter.
@@ -93,20 +92,20 @@ export interface ProviderAdapterShape<TError> {
   /**
    * Check whether this adapter owns an active session id.
    */
-  readonly hasSession: (sessionId: ProviderSessionId) => Effect.Effect<boolean>;
+  readonly hasSession: (threadId: ThreadId) => Effect.Effect<boolean>;
 
   /**
    * Read a provider thread snapshot.
    */
   readonly readThread: (
-    sessionId: ProviderSessionId,
+    threadId: ThreadId,
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
 
   /**
    * Roll back a provider thread by N turns.
    */
   readonly rollbackThread: (
-    sessionId: ProviderSessionId,
+    threadId: ThreadId,
     numTurns: number,
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
 

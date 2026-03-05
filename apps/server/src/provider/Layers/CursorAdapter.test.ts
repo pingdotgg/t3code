@@ -2,13 +2,17 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import readline from "node:readline";
 
-import { ApprovalRequestId } from "@t3tools/contracts";
+import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Fiber, Stream } from "effect";
 
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import { CursorAdapter } from "../Services/CursorAdapter.ts";
 import { makeCursorAdapterLive } from "./CursorAdapter.ts";
+
+const THREAD_ID = ThreadId.makeUnsafe("thread-cursor-1");
+const RESUME_THREAD_ID = ThreadId.makeUnsafe("thread-cursor-resume");
+const LEGACY_RESUME_THREAD_ID = ThreadId.makeUnsafe("thread-cursor-legacy");
 
 class FakeCursorAcpProcess extends EventEmitter {
   readonly stdin = new PassThrough();
@@ -256,7 +260,11 @@ describe("CursorAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
       const result = yield* adapter
-        .startSession({ provider: "codex", runtimeMode: "full-access" })
+        .startSession({
+          provider: "codex",
+          threadId: THREAD_ID,
+          runtimeMode: "full-access",
+        })
         .pipe(Effect.result);
 
       assert.equal(result._tag, "Failure");
@@ -290,12 +298,13 @@ describe("CursorAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         provider: "cursor",
+        threadId: THREAD_ID,
         cwd: "/tmp/project",
         runtimeMode: "full-access",
       });
 
       const turn = yield* adapter.sendTurn({
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         input: "hello",
         attachments: [],
       });
@@ -355,6 +364,7 @@ describe("CursorAdapterLive", () => {
       const adapter = yield* CursorAdapter;
       yield* adapter.startSession({
         provider: "cursor",
+        threadId: THREAD_ID,
         model: "composer-1.5",
         runtimeMode: "full-access",
       });
@@ -364,13 +374,13 @@ describe("CursorAdapterLive", () => {
   });
 
   it.effect("writes provider-native observability records when enabled", () => {
-    const nativeEvents: Array<{
-      event?: {
-        provider?: string;
-        method?: string;
-        sessionId?: string;
-      };
-    }> = [];
+      const nativeEvents: Array<{
+        event?: {
+          provider?: string;
+          method?: string;
+          threadId?: string;
+        };
+      }> = [];
     const fake = new FakeCursorAcpProcess();
     const layer = makeCursorAdapterLive({
       createProcess: () => fake as never,
@@ -388,13 +398,14 @@ describe("CursorAdapterLive", () => {
       const adapter = yield* CursorAdapter;
       const session = yield* adapter.startSession({
         provider: "cursor",
+        threadId: THREAD_ID,
         cwd: "/tmp/project",
         runtimeMode: "full-access",
       });
 
       assert.equal(nativeEvents.length > 0, true);
       assert.equal(nativeEvents.some((record) => record.event?.provider === "cursor"), true);
-      assert.equal(nativeEvents.some((record) => record.event?.sessionId === session.sessionId), true);
+      assert.equal(nativeEvents.some((record) => record.event?.threadId === session.threadId), true);
       assert.equal(nativeEvents.some((record) => record.event?.method === "cursor/acp/response"), true);
     }).pipe(Effect.provide(layer));
   });
@@ -409,6 +420,7 @@ describe("CursorAdapterLive", () => {
       const adapter = yield* CursorAdapter;
       const session = yield* adapter.startSession({
         provider: "cursor",
+        threadId: RESUME_THREAD_ID,
         cwd: "/tmp/project",
         resumeCursor: {
           acpSessionId: "acp-session-resume",
@@ -426,7 +438,7 @@ describe("CursorAdapterLive", () => {
         cwd: "/tmp/project",
         mcpServers: [],
       });
-      assert.equal(session.threadId, "acp-session-resume");
+      assert.equal(session.threadId, RESUME_THREAD_ID);
       assert.deepEqual(session.resumeCursor, {
         acpSessionId: "acp-session-resume",
       });
@@ -443,6 +455,7 @@ describe("CursorAdapterLive", () => {
       const adapter = yield* CursorAdapter;
       const session = yield* adapter.startSession({
         provider: "cursor",
+        threadId: LEGACY_RESUME_THREAD_ID,
         cwd: "/tmp/project",
         resumeCursor: {
           sessionId: "acp-session-legacy",
@@ -456,7 +469,7 @@ describe("CursorAdapterLive", () => {
         cwd: "/tmp/project",
         mcpServers: [],
       });
-      assert.equal(session.threadId, "acp-session-legacy");
+      assert.equal(session.threadId, LEGACY_RESUME_THREAD_ID);
       assert.deepEqual(session.resumeCursor, {
         acpSessionId: "acp-session-legacy",
       });
@@ -474,6 +487,7 @@ describe("CursorAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         provider: "cursor",
+        threadId: THREAD_ID,
         runtimeMode: "approval-required",
       });
 
@@ -498,7 +512,7 @@ describe("CursorAdapterLive", () => {
       }
 
       yield* adapter.respondToRequest(
-        session.sessionId,
+        session.threadId,
         ApprovalRequestId.makeUnsafe(runtimeRequestId),
         "acceptForSession",
       );
@@ -528,6 +542,7 @@ describe("CursorAdapterLive", () => {
 
       yield* adapter.startSession({
         provider: "cursor",
+        threadId: THREAD_ID,
         runtimeMode: "full-access",
       });
 
@@ -562,6 +577,7 @@ describe("CursorAdapterLive", () => {
       const adapter = yield* CursorAdapter;
       const session = yield* adapter.startSession({
         provider: "cursor",
+        threadId: THREAD_ID,
         runtimeMode: "full-access",
       });
 
@@ -569,7 +585,7 @@ describe("CursorAdapterLive", () => {
 
       const result = yield* adapter
         .sendTurn({
-          sessionId: session.sessionId,
+          threadId: session.threadId,
           input: "   ",
           attachments: [],
         })
@@ -608,11 +624,12 @@ describe("CursorAdapterLive", () => {
 
       const session = yield* adapter.startSession({
         provider: "cursor",
+        threadId: THREAD_ID,
         runtimeMode: "full-access",
       });
 
       yield* adapter.sendTurn({
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         input: "hello",
         attachments: [],
       });

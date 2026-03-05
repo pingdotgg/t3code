@@ -18,9 +18,8 @@ import {
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   ProviderItemId,
-  ProviderSessionId,
-  ProviderThreadId,
-  ProviderTurnId,
+  ThreadId,
+  TurnId,
   WS_CHANNELS,
   WS_METHODS,
   type WebSocketResponse,
@@ -60,11 +59,9 @@ interface PendingMessages {
 const pendingBySocket = new WeakMap<WebSocket, PendingMessages>();
 
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
-const asProviderSessionId = (value: string): ProviderSessionId =>
-  ProviderSessionId.makeUnsafe(value);
-const asProviderThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
-const asProviderTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
 const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
+const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
+const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
 const defaultOpenService: OpenShape = {
   openBrowser: () => Effect.void,
@@ -1146,26 +1143,24 @@ describe("WebSocket Server", () => {
 
   it("keeps orchestration domain push behavior for provider runtime events", async () => {
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
-    const sessionId = asProviderSessionId("sess-test");
     const emitRuntimeEvent = (event: ProviderRuntimeEvent) => {
       Effect.runSync(PubSub.publish(runtimeEventPubSub, event));
     };
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
     const providerService: ProviderServiceShape = {
-      startSession: () =>
+      startSession: (threadId) =>
         Effect.succeed({
-          sessionId,
           provider: "codex",
           status: "ready",
           runtimeMode: "full-access",
-          threadId: asProviderThreadId("provider-thread-1"),
+          threadId,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         }),
-      sendTurn: () =>
+      sendTurn: ({ threadId }) =>
         Effect.succeed({
-          threadId: asProviderThreadId("provider-thread-1"),
-          turnId: asProviderTurnId("provider-turn-1"),
+          threadId,
+          turnId: asTurnId("provider-turn-1"),
         }),
       interruptTurn: () => unsupported(),
       respondToRequest: () => unsupported(),
@@ -1239,9 +1234,9 @@ describe("WebSocket Server", () => {
         type: "content.delta",
         eventId: asEventId("evt-ws-runtime-message-delta"),
         provider: "codex",
-        sessionId,
+        threadId: asThreadId("thread-1"),
         createdAt: new Date().toISOString(),
-        turnId: asProviderTurnId("turn-1"),
+        turnId: asTurnId("turn-1"),
         itemId: asProviderItemId("item-1"),
         payload: {
           streamKind: "assistant_text",

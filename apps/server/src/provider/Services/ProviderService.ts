@@ -18,7 +18,6 @@ import type {
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
-  ProviderSessionId,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
   ThreadId,
@@ -88,7 +87,7 @@ export interface ProviderServiceShape {
    * Roll back provider conversation state by a number of turns.
    */
   readonly rollbackConversation: (input: {
-    readonly sessionId: ProviderSessionId;
+    readonly threadId: ThreadId;
     readonly numTurns: number;
   }) => Effect.Effect<void, ProviderServiceError>;
 

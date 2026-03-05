@@ -3,8 +3,6 @@ import {
   EventId,
   MessageId,
   ProjectId,
-  ProviderSessionId,
-  ProviderThreadId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -22,9 +20,6 @@ const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.makeUnsafe(value);
-const asProviderSessionId = (value: string): ProviderSessionId =>
-  ProviderSessionId.makeUnsafe(value);
-const asProviderThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
 
 const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
@@ -290,8 +285,6 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             threadId: ThreadId.makeUnsafe("thread-1"),
             status: "running",
             providerName: "codex",
-            providerSessionId: asProviderSessionId("provider-session-1"),
-            providerThreadId: asProviderThreadId("provider-thread-1"),
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,

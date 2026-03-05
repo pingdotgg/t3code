@@ -14,10 +14,8 @@ import {
   EventId,
   type ProviderKind,
   ProviderSessionStartInput,
-  ProviderSessionId,
-  ProviderThreadId,
-  ProviderTurnId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { it, assert, vi } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
@@ -27,8 +25,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
   ProviderAdapterSessionNotFoundError,
-  ProviderSessionNotFoundError,
   ProviderUnsupportedError,
+  ProviderValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
@@ -45,20 +43,17 @@ import {
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 
-const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
-const asTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
-const asProviderThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
 const asRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
+const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
   readonly eventId: EventId;
   readonly provider: "codex" | "claudeCode" | "cursor";
-  readonly sessionId: string;
   readonly createdAt: string;
-  readonly threadId?: string | undefined;
+  readonly threadId: ThreadId;
   readonly turnId?: string | undefined;
   readonly itemId?: string | undefined;
   readonly requestId?: string | undefined;
@@ -67,28 +62,23 @@ type LegacyProviderRuntimeEvent = {
 };
 
 function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
-  const sessions = new Map<ProviderSessionId, ProviderSession>();
+  const sessions = new Map<ThreadId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
-  let nextSession = 1;
 
   const startSession = vi.fn((input: ProviderSessionStartInput) =>
     Effect.sync(() => {
       const now = new Date().toISOString();
-      const next = nextSession;
-      const threadId = ProviderThreadId.makeUnsafe(`thread-${next}`);
       const session: ProviderSession = {
-        sessionId: ProviderSessionId.makeUnsafe(`sess-${next}`),
         provider,
         status: "ready",
         runtimeMode: input.runtimeMode,
-        threadId,
-        resumeCursor: input.resumeCursor ?? { opaque: `cursor-${next}` },
+        threadId: input.threadId,
+        resumeCursor: input.resumeCursor ?? { opaque: `cursor-${String(input.threadId)}` },
         cwd: input.cwd ?? process.cwd(),
         createdAt: now,
         updatedAt: now,
       };
-      nextSession += 1;
-      sessions.set(session.sessionId, session);
+      sessions.set(session.threadId, session);
       return session;
     }),
   );
@@ -97,39 +87,39 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     (
       input: ProviderSendTurnInput,
     ): Effect.Effect<ProviderTurnStartResult, ProviderAdapterError> => {
-      if (!sessions.has(input.sessionId)) {
+      if (!sessions.has(input.threadId)) {
         return Effect.fail(
           new ProviderAdapterSessionNotFoundError({
             provider,
-            sessionId: input.sessionId,
+            threadId: input.threadId,
           }),
         );
       }
 
       return Effect.succeed({
-        threadId: ProviderThreadId.makeUnsafe("thread-1"),
-        turnId: ProviderTurnId.makeUnsafe("turn-1"),
+        threadId: input.threadId,
+        turnId: TurnId.makeUnsafe(`turn-${String(input.threadId)}`),
       });
     },
   );
 
   const interruptTurn = vi.fn(
-    (_sessionId: string, _turnId?: string): Effect.Effect<void, ProviderAdapterError> =>
+    (_threadId: ThreadId, _turnId?: TurnId): Effect.Effect<void, ProviderAdapterError> =>
       Effect.void,
   );
 
   const respondToRequest = vi.fn(
     (
-      _sessionId: string,
+      _threadId: ThreadId,
       _requestId: string,
       _decision: ProviderApprovalDecision,
     ): Effect.Effect<void, ProviderAdapterError> => Effect.void,
   );
 
   const stopSession = vi.fn(
-    (sessionId: string): Effect.Effect<void, ProviderAdapterError> =>
+    (threadId: ThreadId): Effect.Effect<void, ProviderAdapterError> =>
       Effect.sync(() => {
-        sessions.delete(ProviderSessionId.makeUnsafe(sessionId));
+        sessions.delete(threadId);
       }),
   );
 
@@ -139,32 +129,31 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
   );
 
   const hasSession = vi.fn(
-    (sessionId: string): Effect.Effect<boolean> =>
-      Effect.succeed(sessions.has(ProviderSessionId.makeUnsafe(sessionId))),
+    (threadId: ThreadId): Effect.Effect<boolean> => Effect.succeed(sessions.has(threadId)),
   );
 
   const readThread = vi.fn(
     (
-      _sessionId: ProviderSessionId,
+      threadId: ThreadId,
     ): Effect.Effect<
       {
-        threadId: ProviderThreadId;
-        turns: ReadonlyArray<{ id: ProviderTurnId; items: readonly [] }>;
+        threadId: ThreadId;
+        turns: ReadonlyArray<{ id: TurnId; items: readonly [] }>;
       },
       ProviderAdapterError
     > =>
       Effect.succeed({
-        threadId: ProviderThreadId.makeUnsafe("thread-1"),
+        threadId,
         turns: [{ id: asTurnId("turn-1"), items: [] }],
       }),
   );
 
   const rollbackThread = vi.fn(
     (
-      _sessionId: ProviderSessionId,
+      threadId: ThreadId,
       _numTurns: number,
-    ): Effect.Effect<{ threadId: ProviderThreadId; turns: readonly [] }, ProviderAdapterError> =>
-      Effect.succeed({ threadId: ProviderThreadId.makeUnsafe("thread-1"), turns: [] }),
+    ): Effect.Effect<{ threadId: ThreadId; turns: readonly [] }, ProviderAdapterError> =>
+      Effect.succeed({ threadId, turns: [] }),
   );
 
   const stopAll = vi.fn(
@@ -277,7 +266,6 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
     yield* Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;
       yield* directory.upsert({
-        sessionId: asSessionId("sess-stale"),
         provider: "codex",
         threadId: ThreadId.makeUnsafe("thread-stale"),
       });
@@ -294,13 +282,13 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
 
     const persistedProvider = yield* Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;
-      return yield* directory.getProvider(asSessionId("sess-stale"));
+      return yield* directory.getProvider(asThreadId("thread-stale"));
     }).pipe(Effect.provide(directoryLayer));
     assert.equal(persistedProvider, "codex");
 
     const runtime = yield* Effect.gen(function* () {
       const repository = yield* ProviderSessionRuntimeRepository;
-      return yield* repository.getBySessionId({ providerSessionId: asSessionId("sess-stale") });
+      return yield* repository.getByThreadId({ threadId: asThreadId("thread-stale") });
     }).pipe(Effect.provide(runtimeRepositoryLayer));
     assert.equal(Option.isSome(runtime), true);
 
@@ -348,10 +336,12 @@ it.effect(
 
       const startedSession = yield* Effect.gen(function* () {
         const provider = yield* ProviderService;
-        return yield* provider.startSession(asThreadId("thread-1"), {
+        const threadId = asThreadId("thread-1");
+        return yield* provider.startSession(threadId, {
           provider: "codex",
           cwd: "/tmp/project",
           runtimeMode: "full-access",
+          threadId,
         });
       }).pipe(Effect.provide(firstProviderLayer));
 
@@ -362,9 +352,7 @@ it.effect(
 
       const persistedAfterStopAll = yield* Effect.gen(function* () {
         const repository = yield* ProviderSessionRuntimeRepository;
-        return yield* repository.getBySessionId({
-          providerSessionId: startedSession.sessionId,
-        });
+        return yield* repository.getByThreadId({ threadId: startedSession.threadId });
       }).pipe(Effect.provide(runtimeRepositoryLayer));
       assert.equal(Option.isSome(persistedAfterStopAll), true);
       if (Option.isSome(persistedAfterStopAll)) {
@@ -394,7 +382,7 @@ it.effect(
       yield* Effect.gen(function* () {
         const provider = yield* ProviderService;
         yield* provider.rollbackConversation({
-          sessionId: startedSession.sessionId,
+          threadId: startedSession.threadId,
           numTurns: 1,
         });
       }).pipe(Effect.provide(secondProviderLayer));
@@ -430,6 +418,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
       const session = yield* provider.startSession(asThreadId("thread-1"), {
         provider: "codex",
+        threadId: asThreadId("thread-1"),
         cwd: "/tmp/project",
         runtimeMode: "full-access",
       });
@@ -439,40 +428,43 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(sessions.length, 1);
 
       yield* provider.sendTurn({
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         input: "hello",
         attachments: [],
       });
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
 
-      yield* provider.interruptTurn({ sessionId: session.sessionId });
-      assert.deepEqual(routing.codex.interruptTurn.mock.calls, [[session.sessionId, undefined]]);
+      yield* provider.interruptTurn({ threadId: session.threadId });
+      assert.deepEqual(routing.codex.interruptTurn.mock.calls, [[session.threadId, undefined]]);
 
       yield* provider.respondToRequest({
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         requestId: asRequestId("req-1"),
         decision: "accept",
       });
       assert.deepEqual(routing.codex.respondToRequest.mock.calls, [
-        [session.sessionId, asRequestId("req-1"), "accept"],
+        [session.threadId, asRequestId("req-1"), "accept"],
       ]);
 
       yield* provider.rollbackConversation({
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         numTurns: 0,
       });
 
-      yield* provider.stopSession({ sessionId: session.sessionId });
+      yield* provider.stopSession({ threadId: session.threadId });
       const sendAfterStop = yield* Effect.result(
         provider.sendTurn({
-          sessionId: session.sessionId,
+          threadId: session.threadId,
           input: "after-stop",
           attachments: [],
         }),
       );
       assertFailure(
         sendAfterStop,
-        new ProviderSessionNotFoundError({ sessionId: session.sessionId }),
+        new ProviderValidationError({
+          operation: "ProviderService.sendTurn",
+          issue: `Cannot route thread '${session.threadId}' because no persisted provider binding exists.`,
+        }),
       );
     }),
   );
@@ -483,6 +475,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
       const session = yield* provider.startSession(asThreadId("thread-claude"), {
         provider: "claudeCode",
+        threadId: asThreadId("thread-claude"),
         cwd: "/tmp/project-claude",
         runtimeMode: "full-access",
       });
@@ -505,15 +498,16 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
       const initial = yield* provider.startSession(asThreadId("thread-1"), {
         provider: "codex",
+        threadId: asThreadId("thread-1"),
         cwd: "/tmp/project",
         runtimeMode: "full-access",
       });
-      yield* routing.codex.stopSession(initial.sessionId);
+      yield* routing.codex.stopSession(initial.threadId);
       routing.codex.startSession.mockClear();
       routing.codex.rollbackThread.mockClear();
 
       yield* provider.rollbackConversation({
-        sessionId: initial.sessionId,
+        threadId: initial.threadId,
         numTurns: 1,
       });
 
@@ -544,6 +538,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
       const initial = yield* provider.startSession(asThreadId("thread-1"), {
         provider: "codex",
+        threadId: asThreadId("thread-1"),
         cwd: "/tmp/project-send-turn",
         runtimeMode: "full-access",
       });
@@ -553,7 +548,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       routing.codex.sendTurn.mockClear();
 
       yield* provider.sendTurn({
-        sessionId: initial.sessionId,
+        threadId: initial.threadId,
         input: "resume",
         attachments: [],
       });
@@ -583,10 +578,12 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
       yield* provider.startSession(asThreadId("thread-1"), {
         provider: "codex",
+        threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
       yield* provider.startSession(asThreadId("thread-2"), {
         provider: "codex",
+        threadId: asThreadId("thread-2"),
         runtimeMode: "full-access",
       });
 
@@ -604,16 +601,17 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
       const session = yield* provider.startSession(asThreadId("thread-1"), {
         provider: "codex",
+        threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
       yield* provider.sendTurn({
-        sessionId: session.sessionId,
+        threadId: session.threadId,
         input: "hello",
         attachments: [],
       });
 
-      const runningRuntime = yield* runtimeRepository.getBySessionId({
-        providerSessionId: session.sessionId,
+      const runningRuntime = yield* runtimeRepository.getByThreadId({
+        threadId: session.threadId,
       });
       assert.equal(Option.isSome(runningRuntime), true);
       if (Option.isSome(runningRuntime)) {
@@ -638,8 +636,8 @@ routing.layer("ProviderServiceLive routing", (it) => {
       }
 
       yield* provider.stopAll();
-      const stoppedRuntime = yield* runtimeRepository.getBySessionId({
-        providerSessionId: session.sessionId,
+      const stoppedRuntime = yield* runtimeRepository.getByThreadId({
+        threadId: session.threadId,
       });
       assert.equal(Option.isSome(stoppedRuntime), true);
       if (Option.isSome(stoppedRuntime)) {
@@ -656,6 +654,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       const provider = yield* ProviderService;
       const session = yield* provider.startSession(asThreadId("thread-1"), {
         provider: "codex",
+        threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
 
@@ -669,9 +668,8 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         type: "turn.completed",
         eventId: asEventId("evt-1"),
         provider: "codex",
-        sessionId: session.sessionId,
         createdAt: new Date().toISOString(),
-        threadId: asProviderThreadId("thread-1"),
+        threadId: session.threadId,
         turnId: asTurnId("turn-1"),
         status: "completed",
       };
@@ -694,6 +692,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       const provider = yield* ProviderService;
       const session = yield* provider.startSession(asThreadId("thread-seq"), {
         provider: "codex",
+        threadId: asThreadId("thread-seq"),
         runtimeMode: "full-access",
       });
 
@@ -708,9 +707,8 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         type: "tool.started",
         eventId: asEventId("evt-seq-1"),
         provider: "codex",
-        sessionId: session.sessionId,
         createdAt: new Date().toISOString(),
-        threadId: asProviderThreadId("thread-1"),
+        threadId: session.threadId,
         turnId: asTurnId("turn-1"),
         toolKind: "command",
         title: "Command run",
@@ -719,9 +717,8 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         type: "tool.completed",
         eventId: asEventId("evt-seq-2"),
         provider: "codex",
-        sessionId: session.sessionId,
         createdAt: new Date().toISOString(),
-        threadId: asProviderThreadId("thread-1"),
+        threadId: session.threadId,
         turnId: asTurnId("turn-1"),
         toolKind: "command",
         title: "Command run",
@@ -730,9 +727,8 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         type: "turn.completed",
         eventId: asEventId("evt-seq-3"),
         provider: "codex",
-        sessionId: session.sessionId,
         createdAt: new Date().toISOString(),
-        threadId: asProviderThreadId("thread-1"),
+        threadId: session.threadId,
         turnId: asTurnId("turn-1"),
         status: "completed",
       });
@@ -751,6 +747,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       const provider = yield* ProviderService;
       const session = yield* provider.startSession(asThreadId("thread-1"), {
         provider: "codex",
+        threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
 
@@ -775,9 +772,8 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           type: "tool.completed",
           eventId: asEventId("evt-ordered-1"),
           provider: "codex",
-          sessionId: session.sessionId,
           createdAt: new Date().toISOString(),
-          threadId: asProviderThreadId("thread-1"),
+          threadId: session.threadId,
           turnId: asTurnId("turn-1"),
           toolKind: "command",
           title: "Command run",
@@ -787,9 +783,8 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           type: "message.delta",
           eventId: asEventId("evt-ordered-2"),
           provider: "codex",
-          sessionId: session.sessionId,
           createdAt: new Date().toISOString(),
-          threadId: asProviderThreadId("thread-1"),
+          threadId: session.threadId,
           turnId: asTurnId("turn-1"),
           delta: "hello",
         },
@@ -797,9 +792,8 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           type: "turn.completed",
           eventId: asEventId("evt-ordered-3"),
           provider: "codex",
-          sessionId: session.sessionId,
           createdAt: new Date().toISOString(),
-          threadId: asProviderThreadId("thread-1"),
+          threadId: session.threadId,
           turnId: asTurnId("turn-1"),
           status: "completed",
         },
@@ -854,32 +848,32 @@ validation.layer("ProviderServiceLive validation", (it) => {
         Effect.sync(() => {
           const now = new Date().toISOString();
           return {
-            sessionId: asSessionId("sess-missing-thread"),
             provider: "codex",
             status: "ready",
+            threadId: input.threadId,
             runtimeMode: input.runtimeMode,
-          cwd: input.cwd ?? process.cwd(),
-          createdAt: now,
-          updatedAt: now,
-        } satisfies ProviderSession;
-      }),
+            cwd: input.cwd ?? process.cwd(),
+            createdAt: now,
+            updatedAt: now,
+          } satisfies ProviderSession;
+        }),
       );
 
       const session = yield* provider.startSession(asThreadId("thread-missing"), {
         provider: "codex",
+        threadId: asThreadId("thread-missing"),
         cwd: "/tmp/project",
         runtimeMode: "full-access",
       });
 
-      assert.equal(session.sessionId, asSessionId("sess-missing-thread"));
-      assert.equal(session.threadId, undefined);
+      assert.equal(session.threadId, asThreadId("thread-missing"));
 
-      const runtime = yield* runtimeRepository.getBySessionId({
-        providerSessionId: session.sessionId,
+      const runtime = yield* runtimeRepository.getByThreadId({
+        threadId: session.threadId,
       });
       assert.equal(Option.isSome(runtime), true);
       if (Option.isSome(runtime)) {
-        assert.equal(runtime.value.providerThreadId, null);
+        assert.equal(runtime.value.threadId, session.threadId);
       }
     }),
   );

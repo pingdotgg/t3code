@@ -3324,6 +3324,8 @@ const PendingApprovalsPanel = memo(function PendingApprovalsPanel({
             <AlertTitle className="text-xs">
               {approval.requestKind === "command"
                 ? "Command approval requested"
+                : approval.requestKind === "file-read"
+                  ? "File-read approval requested"
                 : "File-change approval requested"}
             </AlertTitle>
             <AlertDescription
