@@ -76,6 +76,16 @@ describe("estimateTimelineMessageHeight", () => {
     expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 768 })).toBe(118);
   });
 
+  it("does not clamp user wrapping too aggressively on very narrow layouts", () => {
+    const message = {
+      role: "user" as const,
+      text: "a".repeat(20),
+    };
+
+    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 100 })).toBe(184);
+    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 320 })).toBe(118);
+  });
+
   it("uses narrower width to increase assistant line wrapping", () => {
     const message = {
       role: "assistant" as const,

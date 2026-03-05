@@ -3206,16 +3206,14 @@ const MessagesTimeline = memo(function MessagesTimeline({
     updateWidth(timelineRoot.getBoundingClientRect().width);
 
     if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver((entries) => {
-      const [entry] = entries;
-      if (!entry) return;
-      updateWidth(entry.contentRect.width);
+    const observer = new ResizeObserver(() => {
+      updateWidth(timelineRoot.getBoundingClientRect().width);
     });
     observer.observe(timelineRoot);
     return () => {
       observer.disconnect();
     };
-  }, []);
+  }, [hasMessages, isWorking]);
 
   const rows = useMemo<TimelineRow[]>(() => {
     const nextRows: TimelineRow[] = [];
