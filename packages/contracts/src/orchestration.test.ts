@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 
 import {
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   OrchestrationGetTurnDiffInput,
   OrchestrationSession,
@@ -110,6 +111,7 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
     });
     assert.strictEqual(parsed.provider, undefined);
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
   }),
 );
 
@@ -131,6 +133,7 @@ it.effect("preserves explicit provider and runtime mode in thread.turn.start", (
     });
     assert.strictEqual(parsed.provider, "claudeCode");
     assert.strictEqual(parsed.runtimeMode, "full-access");
+    assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
   }),
 );
 
@@ -150,10 +153,11 @@ it.effect("accepts cursor provider in thread.turn.start", () =>
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.provider, "cursor");
+    assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
   }),
 );
 
-it.effect("decodes thread.turn-start-requested defaults for provider and runtime mode", () =>
+it.effect("decodes thread.turn-start-requested defaults for provider, runtime mode, and interaction mode", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartRequestedPayload({
       threadId: "thread-1",
@@ -162,6 +166,7 @@ it.effect("decodes thread.turn-start-requested defaults for provider and runtime
     });
     assert.strictEqual(parsed.provider, undefined);
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
   }),
 );
 

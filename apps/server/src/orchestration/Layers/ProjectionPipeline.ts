@@ -397,6 +397,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             title: event.payload.title,
             model: event.payload.model,
             runtimeMode: event.payload.runtimeMode,
+            interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
             latestTurnId: null,
@@ -436,6 +437,21 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             runtimeMode: event.payload.runtimeMode,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.interaction-mode-set": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            interactionMode: event.payload.interactionMode,
             updatedAt: event.payload.updatedAt,
           });
           return;

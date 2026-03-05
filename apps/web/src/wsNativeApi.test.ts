@@ -6,6 +6,7 @@ import {
   ProjectId,
   ThreadId,
   WS_CHANNELS,
+  WS_METHODS,
   type ServerProviderStatus,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -327,6 +328,24 @@ describe("wsNativeApi", () => {
 
     expect(requestMock).toHaveBeenCalledWith(ORCHESTRATION_WS_METHODS.dispatchCommand, {
       command,
+    });
+  });
+
+  it("forwards workspace file writes to the websocket project method", async () => {
+    requestMock.mockResolvedValue({ relativePath: "plan.md" });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.projects.writeFile({
+      cwd: "/tmp/project",
+      relativePath: "plan.md",
+      contents: "# Plan\n",
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.projectsWriteFile, {
+      cwd: "/tmp/project",
+      relativePath: "plan.md",
+      contents: "# Plan\n",
     });
   });
 

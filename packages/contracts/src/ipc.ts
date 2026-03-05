@@ -14,7 +14,12 @@ import type {
   GitStatusInput,
   GitStatusResult,
 } from "./git";
-import type { ProjectSearchEntriesInput, ProjectSearchEntriesResult } from "./project";
+import type {
+  ProjectSearchEntriesInput,
+  ProjectSearchEntriesResult,
+  ProjectWriteFileInput,
+  ProjectWriteFileResult,
+} from "./project";
 import type { ServerConfig } from "./server";
 import type {
   TerminalClearInput,
@@ -104,6 +109,7 @@ export interface NativeApi {
   };
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
+    writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;

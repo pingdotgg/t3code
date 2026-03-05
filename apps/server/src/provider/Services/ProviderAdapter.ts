@@ -11,6 +11,7 @@ import type {
   ApprovalRequestId,
   ProviderApprovalDecision,
   ProviderKind,
+  ProviderUserInputAnswers,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
@@ -77,6 +78,15 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
+  ) => Effect.Effect<void, TError>;
+
+  /**
+   * Respond to a structured user-input request.
+   */
+  readonly respondToUserInput: (
+    threadId: ThreadId,
+    requestId: ApprovalRequestId,
+    answers: ProviderUserInputAnswers,
   ) => Effect.Effect<void, TError>;
 
   /**

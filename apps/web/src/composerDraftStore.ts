@@ -6,9 +6,14 @@ import {
   normalizeModelSlug,
   type CodexReasoningEffort,
   type ProviderKind,
+  type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
-import { DEFAULT_RUNTIME_MODE, type ChatImageAttachment } from "./types";
+import {
+  DEFAULT_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  type ChatImageAttachment,
+} from "./types";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -40,6 +45,7 @@ interface PersistedDraftThreadState {
   projectId: ProjectId;
   createdAt: string;
   runtimeMode: RuntimeMode;
+  interactionMode: ProviderInteractionMode;
   branch: string | null;
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
@@ -65,6 +71,7 @@ export interface DraftThreadState {
   projectId: ProjectId;
   createdAt: string;
   runtimeMode: RuntimeMode;
+  interactionMode: ProviderInteractionMode;
   branch: string | null;
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
@@ -89,6 +96,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       runtimeMode?: RuntimeMode;
+      interactionMode?: ProviderInteractionMode;
     },
   ) => void;
   setDraftThreadContext: (
@@ -100,6 +108,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       runtimeMode?: RuntimeMode;
+      interactionMode?: ProviderInteractionMode;
     },
   ) => void;
   clearProjectDraftThreadId: (projectId: ProjectId) => void;
@@ -270,6 +279,11 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
           candidateDraftThread.runtimeMode === "full-access"
             ? candidateDraftThread.runtimeMode
             : DEFAULT_RUNTIME_MODE,
+        interactionMode:
+          candidateDraftThread.interactionMode === "plan" ||
+          candidateDraftThread.interactionMode === "default"
+            ? candidateDraftThread.interactionMode
+            : DEFAULT_INTERACTION_MODE,
         branch: typeof branch === "string" ? branch : null,
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
@@ -297,6 +311,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
             projectId: projectId as ProjectId,
             createdAt: new Date().toISOString(),
             runtimeMode: DEFAULT_RUNTIME_MODE,
+            interactionMode: DEFAULT_INTERACTION_MODE,
             branch: null,
             worktreePath: null,
             envMode: "local",
@@ -500,6 +515,10 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             projectId,
             createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
             runtimeMode: options?.runtimeMode ?? existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+            interactionMode:
+              options?.interactionMode ??
+              existingThread?.interactionMode ??
+              DEFAULT_INTERACTION_MODE,
             branch:
               options?.branch === undefined
                 ? (existingThread?.branch ?? null)
@@ -515,6 +534,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             existingThread.projectId === nextDraftThread.projectId &&
             existingThread.createdAt === nextDraftThread.createdAt &&
             existingThread.runtimeMode === nextDraftThread.runtimeMode &&
+            existingThread.interactionMode === nextDraftThread.interactionMode &&
             existingThread.branch === nextDraftThread.branch &&
             existingThread.worktreePath === nextDraftThread.worktreePath &&
             existingThread.envMode === nextDraftThread.envMode;
@@ -570,6 +590,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
                 ? existing.createdAt
                 : options.createdAt || existing.createdAt,
             runtimeMode: options.runtimeMode ?? existing.runtimeMode,
+            interactionMode: options.interactionMode ?? existing.interactionMode,
             branch: options.branch === undefined ? existing.branch : (options.branch ?? null),
             worktreePath: nextWorktreePath,
             envMode:
@@ -580,6 +601,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             nextDraftThread.projectId === existing.projectId &&
             nextDraftThread.createdAt === existing.createdAt &&
             nextDraftThread.runtimeMode === existing.runtimeMode &&
+            nextDraftThread.interactionMode === existing.interactionMode &&
             nextDraftThread.branch === existing.branch &&
             nextDraftThread.worktreePath === existing.worktreePath &&
             nextDraftThread.envMode === existing.envMode;

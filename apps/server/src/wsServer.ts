@@ -12,6 +12,7 @@ import type { Duplex } from "node:stream";
 import Mime from "@effect/platform-node/Mime";
 import {
   CommandId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   type ClientOrchestrationCommand,
   type OrchestrationCommand,
   ORCHESTRATION_WS_CHANNELS,
@@ -144,6 +145,48 @@ function websocketRawToString(raw: unknown): string | null {
     return chunks.join("");
   }
   return null;
+}
+
+function toPosixRelativePath(input: string): string {
+  return input.replaceAll("\\", "/");
+}
+
+function resolveWorkspaceWritePath(params: {
+  workspaceRoot: string;
+  relativePath: string;
+  path: Path.Path;
+}): Effect.Effect<{ absolutePath: string; relativePath: string }, RouteRequestError> {
+  const normalizedInputPath = params.relativePath.trim();
+  if (params.path.isAbsolute(normalizedInputPath)) {
+    return Effect.fail(
+      new RouteRequestError({
+        message: "Workspace file path must be relative to the project root.",
+      }),
+    );
+  }
+
+  const absolutePath = params.path.resolve(params.workspaceRoot, normalizedInputPath);
+  const relativeToRoot = toPosixRelativePath(
+    params.path.relative(params.workspaceRoot, absolutePath),
+  );
+  if (
+    relativeToRoot.length === 0 ||
+    relativeToRoot === "." ||
+    relativeToRoot.startsWith("../") ||
+    relativeToRoot === ".." ||
+    params.path.isAbsolute(relativeToRoot)
+  ) {
+    return Effect.fail(
+      new RouteRequestError({
+        message: "Workspace file path must stay within the project root.",
+      }),
+    );
+  }
+
+  return Effect.succeed({
+    absolutePath,
+    relativePath: relativeToRoot,
+  });
 }
 
 function stripRequestTag<T extends { _tag: string }>(body: T) {
@@ -595,6 +638,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           projectId: bootstrapProjectId,
           title: "New thread",
           model: bootstrapProjectDefaultModel,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
@@ -682,6 +726,32 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
               message: `Failed to search workspace entries: ${String(cause)}`,
             }),
         });
+      }
+
+      case WS_METHODS.projectsWriteFile: {
+        const body = stripRequestTag(request.body);
+        const target = yield* resolveWorkspaceWritePath({
+          workspaceRoot: body.cwd,
+          relativePath: body.relativePath,
+          path,
+        });
+        yield* fileSystem.makeDirectory(path.dirname(target.absolutePath), { recursive: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RouteRequestError({
+                message: `Failed to prepare workspace path: ${String(cause)}`,
+              }),
+          ),
+        );
+        yield* fileSystem.writeFileString(target.absolutePath, body.contents).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RouteRequestError({
+                message: `Failed to write workspace file: ${String(cause)}`,
+              }),
+          ),
+        );
+        return { relativePath: target.relativePath };
       }
 
       case WS_METHODS.shellOpenInEditor: {

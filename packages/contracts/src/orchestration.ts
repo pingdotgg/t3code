@@ -32,6 +32,9 @@ export const DEFAULT_PROVIDER_KIND: ProviderKind = "codex";
 export const RuntimeMode = Schema.Literals(["approval-required", "full-access"]);
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
+export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
+export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
+export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
 export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
@@ -43,6 +46,8 @@ export const ProviderApprovalDecision = Schema.Literals([
   "cancel",
 ]);
 export type ProviderApprovalDecision = typeof ProviderApprovalDecision.Type;
+export const ProviderUserInputAnswers = Schema.Record(Schema.String, Schema.Unknown);
+export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
 export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
@@ -219,6 +224,9 @@ export const OrchestrationThread = Schema.Struct({
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
+  ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
@@ -274,6 +282,9 @@ export const ThreadCreateCommand = Schema.Struct({
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
+  ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
@@ -303,6 +314,14 @@ export const ThreadRuntimeModeSetCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadInteractionModeSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.interaction-mode.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  interactionMode: ProviderInteractionMode,
+  createdAt: IsoDateTime,
+});
+
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -318,6 +337,9 @@ export const ThreadTurnStartCommand = Schema.Struct({
   effort: Schema.optional(TrimmedNonEmptyString),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
+  ),
   createdAt: IsoDateTime,
 });
 
@@ -336,6 +358,7 @@ export const ClientThreadTurnStartCommand = Schema.Struct({
   effort: Schema.optional(TrimmedNonEmptyString),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
   runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
   createdAt: IsoDateTime,
 });
 
@@ -353,6 +376,15 @@ export const ThreadApprovalRespondCommand = Schema.Struct({
   threadId: ThreadId,
   requestId: ApprovalRequestId,
   decision: ProviderApprovalDecision,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadUserInputRespondCommand = Schema.Struct({
+  type: Schema.Literal("thread.user-input.respond"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  requestId: ApprovalRequestId,
+  answers: ProviderUserInputAnswers,
   createdAt: IsoDateTime,
 });
 
@@ -379,9 +411,11 @@ export const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadDeleteCommand,
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
+  ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
+  ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
 ]);
@@ -396,9 +430,11 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadDeleteCommand,
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
+  ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
+  ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
 ]);
@@ -485,10 +521,12 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.deleted",
   "thread.meta-updated",
   "thread.runtime-mode-set",
+  "thread.interaction-mode-set",
   "thread.message-sent",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
   "thread.approval-response-requested",
+  "thread.user-input-response-requested",
   "thread.checkpoint-revert-requested",
   "thread.reverted",
   "thread.session-stop-requested",
@@ -532,6 +570,9 @@ export const ThreadCreatedPayload = Schema.Struct({
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
+  ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
@@ -558,6 +599,14 @@ export const ThreadRuntimeModeSetPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+export const ThreadInteractionModeSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
+  ),
+  updatedAt: IsoDateTime,
+});
+
 export const ThreadMessageSentPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
@@ -578,6 +627,9 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   effort: Schema.optional(TrimmedNonEmptyString),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
+  ),
   createdAt: IsoDateTime,
 });
 
@@ -591,6 +643,13 @@ export const ThreadApprovalResponseRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   requestId: ApprovalRequestId,
   decision: ProviderApprovalDecision,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadUserInputResponseRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  requestId: ApprovalRequestId,
+  answers: ProviderUserInputAnswers,
   createdAt: IsoDateTime,
 });
 
@@ -704,6 +763,11 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
+    type: Schema.Literal("thread.interaction-mode-set"),
+    payload: ThreadInteractionModeSetPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
     type: Schema.Literal("thread.message-sent"),
     payload: ThreadMessageSentPayload,
   }),
@@ -721,6 +785,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.approval-response-requested"),
     payload: ThreadApprovalResponseRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.user-input-response-requested"),
+    payload: ThreadUserInputResponseRequestedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
@@ -793,6 +862,11 @@ export const OrchestrationPersistedEvent = Schema.Union([
   }),
   Schema.Struct({
     ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.interaction-mode-set"),
+    payload: ThreadInteractionModeSetPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
     eventType: Schema.Literal("thread.message-sent"),
     payload: ThreadMessageSentPayload,
   }),
@@ -810,6 +884,11 @@ export const OrchestrationPersistedEvent = Schema.Union([
     ...PersistedEventBaseFields,
     eventType: Schema.Literal("thread.approval-response-requested"),
     payload: ThreadApprovalResponseRequestedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.user-input-response-requested"),
+    payload: ThreadUserInputResponseRequestedPayload,
   }),
   Schema.Struct({
     ...PersistedEventBaseFields,

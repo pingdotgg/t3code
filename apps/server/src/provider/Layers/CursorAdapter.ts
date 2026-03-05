@@ -1490,6 +1490,19 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
         });
       });
 
+    const respondToUserInput: CursorAdapterShape["respondToUserInput"] = (
+      threadId,
+      requestId,
+      _answers,
+    ) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "cursor/ask_question",
+          detail: `Cursor does not yet support structured user-input responses for thread '${threadId}' and request '${requestId}'.`,
+        }),
+      );
+
     const stopSession: CursorAdapterShape["stopSession"] = (threadId) =>
       Effect.gen(function* () {
         const context = yield* requireSession(threadId);
@@ -1539,6 +1552,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
       readThread,
       rollbackThread,
       respondToRequest,
+      respondToUserInput,
       stopSession,
       listSessions,
       hasSession,

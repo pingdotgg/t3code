@@ -26,6 +26,8 @@ const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId 
 const DEFAULT_ASSISTANT_DELIVERY_MODE: AssistantDeliveryMode = "buffered";
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
+const MESSAGE_STREAM_KIND_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
+const MESSAGE_STREAM_KIND_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
@@ -63,6 +65,14 @@ function sameId(left: string | null | undefined, right: string | null | undefine
 
 function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
+}
+
+function wrapProposedPlanMessage(planMarkdown: string | undefined): string | undefined {
+  const trimmed = planMarkdown?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return `<proposed_plan>\n${trimmed}\n</proposed_plan>`;
 }
 
 function asString(value: unknown): string | undefined {
@@ -168,6 +178,9 @@ function runtimeEventToActivities(
   })();
   switch (event.type) {
     case "request.opened": {
+      if (event.payload.requestType === "tool_user_input") {
+        return [];
+      }
       const requestKind = requestKindFromCanonicalRequestType(event.payload.requestType);
       return [
         {
@@ -196,6 +209,9 @@ function runtimeEventToActivities(
     }
 
     case "request.resolved": {
+      if (event.payload.requestType === "tool_user_input") {
+        return [];
+      }
       const requestKind = requestKindFromCanonicalRequestType(event.payload.requestType);
       return [
         {
@@ -266,6 +282,111 @@ function runtimeEventToActivities(
           payload: {
             plan: event.payload.plan,
             ...(event.payload.explanation !== undefined ? { explanation: event.payload.explanation } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "user-input.requested": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "user-input.requested",
+          summary: "User input requested",
+          payload: {
+            ...(event.requestId ? { requestId: event.requestId } : {}),
+            questions: event.payload.questions,
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "user-input.resolved": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "user-input.resolved",
+          summary: "User input submitted",
+          payload: {
+            ...(event.requestId ? { requestId: event.requestId } : {}),
+            answers: event.payload.answers,
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "task.started": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "task.started",
+          summary:
+            event.payload.taskType === "plan"
+              ? "Plan task started"
+              : event.payload.taskType
+                ? `${event.payload.taskType} task started`
+                : "Task started",
+          payload: {
+            taskId: event.payload.taskId,
+            ...(event.payload.taskType ? { taskType: event.payload.taskType } : {}),
+            ...(event.payload.description ? { detail: truncateDetail(event.payload.description) } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "task.progress": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "task.progress",
+          summary: "Reasoning update",
+          payload: {
+            taskId: event.payload.taskId,
+            detail: truncateDetail(event.payload.description),
+            ...(event.payload.lastToolName ? { lastToolName: event.payload.lastToolName } : {}),
+            ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "task.completed": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: event.payload.status === "failed" ? "error" : "info",
+          kind: "task.completed",
+          summary:
+            event.payload.status === "failed"
+              ? "Task failed"
+              : event.payload.status === "stopped"
+                ? "Task stopped"
+                : "Task completed",
+          payload: {
+            taskId: event.payload.taskId,
+            status: event.payload.status,
+            ...(event.payload.summary ? { detail: truncateDetail(event.payload.summary) } : {}),
+            ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -359,6 +480,12 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed(new Set<MessageId>()),
   });
 
+  const messageStreamKindByMessageId = yield* Cache.make<MessageId, "assistant_text" | "plan_text">({
+    capacity: MESSAGE_STREAM_KIND_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: MESSAGE_STREAM_KIND_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.succeed("assistant_text"),
+  });
+
   const bufferedAssistantTextByMessageId = yield* Cache.make<MessageId, string>({
     capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
@@ -418,6 +545,16 @@ const make = Effect.gen(function* () {
   const clearAssistantMessageIdsForTurn = (threadId: ThreadId, turnId: TurnId) =>
     Cache.invalidate(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId));
 
+  const rememberMessageStreamKind = (
+    messageId: MessageId,
+    streamKind: "assistant_text" | "plan_text",
+  ) => Cache.set(messageStreamKindByMessageId, messageId, streamKind);
+
+  const getMessageStreamKind = (messageId: MessageId) =>
+    Cache.getOption(messageStreamKindByMessageId, messageId).pipe(
+      Effect.map((streamKind) => Option.getOrElse(streamKind, () => "assistant_text" as const)),
+    );
+
   const appendBufferedAssistantText = (messageId: MessageId, delta: string) =>
     Cache.getOption(bufferedAssistantTextByMessageId, messageId).pipe(
       Effect.flatMap((existingText) =>
@@ -451,7 +588,10 @@ const make = Effect.gen(function* () {
     Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
 
   const clearAssistantMessageState = (messageId: MessageId) =>
-    clearBufferedAssistantText(messageId);
+    Effect.all([
+      clearBufferedAssistantText(messageId),
+      Cache.invalidate(messageStreamKindByMessageId, messageId),
+    ]).pipe(Effect.asVoid);
 
   const finalizeAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
@@ -464,9 +604,20 @@ const make = Effect.gen(function* () {
     fallbackText?: string;
   }) =>
     Effect.gen(function* () {
+      const messageStreamKind = yield* getMessageStreamKind(input.messageId);
       const bufferedText = yield* takeBufferedAssistantText(input.messageId);
+      const bufferedFinalText =
+        bufferedText.length > 0
+          ? messageStreamKind === "plan_text"
+            ? (wrapProposedPlanMessage(bufferedText) ?? "")
+            : bufferedText
+          : "";
       const text =
-        bufferedText.length > 0 ? bufferedText : (input.fallbackText?.trim().length ?? 0) > 0 ? input.fallbackText! : "";
+        bufferedFinalText.length > 0
+          ? bufferedFinalText
+          : (input.fallbackText?.trim().length ?? 0) > 0
+            ? input.fallbackText!
+            : "";
 
       if (text.length > 0) {
         yield* orchestrationEngine.dispatch({
@@ -617,7 +768,8 @@ const make = Effect.gen(function* () {
       }
 
       const assistantDelta =
-        event.type === "content.delta" && event.payload.streamKind === "assistant_text"
+        event.type === "content.delta" &&
+        (event.payload.streamKind === "assistant_text" || event.payload.streamKind === "plan_text")
           ? event.payload.delta
           : undefined;
 
@@ -626,9 +778,14 @@ const make = Effect.gen(function* () {
           `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
         );
         const turnId = toTurnId(event.turnId);
+        const messageStreamKind =
+          event.type === "content.delta" && event.payload.streamKind === "plan_text"
+            ? "plan_text"
+            : "assistant_text";
         if (turnId) {
           yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
         }
+        yield* rememberMessageStreamKind(assistantMessageId, messageStreamKind);
 
         const assistantDeliveryMode = yield* Ref.get(assistantDeliveryModeRef);
         if (assistantDeliveryMode === "buffered") {
@@ -658,12 +815,16 @@ const make = Effect.gen(function* () {
       }
 
       const assistantCompletion =
-        event.type === "item.completed" && event.payload.itemType === "assistant_message"
+        event.type === "item.completed" &&
+        (event.payload.itemType === "assistant_message" || event.payload.itemType === "plan")
           ? {
               messageId: MessageId.makeUnsafe(`assistant:${event.itemId ?? event.turnId ?? event.eventId}`),
-              fallbackText: event.payload.detail,
+              fallbackText:
+                event.payload.itemType === "plan"
+                  ? wrapProposedPlanMessage(event.payload.detail)
+                  : event.payload.detail,
             }
-            : undefined;
+          : undefined;
 
       if (assistantCompletion) {
         const assistantMessageId = assistantCompletion.messageId;

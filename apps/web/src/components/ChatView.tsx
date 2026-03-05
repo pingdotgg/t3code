@@ -41,6 +41,7 @@ import {
   useRef,
   useState,
   useTransition,
+  useId,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
@@ -57,17 +58,22 @@ import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuer
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
+  type ComposerSlashCommand,
   type ComposerTrigger,
   type ComposerTriggerKind,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "../composer-logic";
 import {
   derivePendingApprovals,
+  derivePendingUserInputs,
   derivePhase,
   deriveTimelineEntries,
+  deriveActivePlanState,
   type PendingApproval,
+  type PendingUserInput,
   PROVIDER_OPTIONS,
   deriveWorkLogEntries,
   hasToolActivityForTurn,
@@ -76,9 +82,24 @@ import {
   formatTimestamp,
 } from "../session-logic";
 import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX, isScrollContainerNearBottom } from "../chat-scroll";
+import {
+  buildPendingUserInputAnswers,
+  derivePendingUserInputProgress,
+  setPendingUserInputCustomAnswer,
+  type PendingUserInputDraftAnswer,
+} from "../pendingUserInput";
 import { useStore } from "../store";
+import {
+  buildPlanImplementationThreadTitle,
+  buildPlanImplementationPrompt,
+  buildProposedPlanMarkdownFilename,
+  findLatestProposedPlanMessage,
+  parseProposedPlanMessage,
+  proposedPlanTitle,
+} from "../proposedPlan";
 import { truncateTitle } from "../truncateTitle";
 import {
+  DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_THREAD_TERMINAL_COUNT,
@@ -114,6 +135,7 @@ import {
   FileIcon,
   FolderIcon,
   DiffIcon,
+  EllipsisIcon,
   FolderClosedIcon,
   InfoIcon,
   LockIcon,
@@ -124,13 +146,8 @@ import {
   CheckIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
-import {
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
+import { Input } from "./ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { Separator } from "./ui/separator";
 import { Group, GroupSeparator } from "./ui/group";
 import {
@@ -161,6 +178,16 @@ import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { Badge } from "./ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Command, CommandItem, CommandList } from "./ui/command";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
+import { toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
@@ -172,7 +199,7 @@ import {
 } from "~/projectScripts";
 import { Toggle } from "./ui/toggle";
 import { SidebarTrigger } from "./ui/sidebar";
-import { newCommandId, newMessageId } from "~/lib/utils";
+import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import { getAppModelOptions, useAppSettings } from "../appSettings";
 import {
@@ -206,6 +233,7 @@ const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
+const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
@@ -234,6 +262,22 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   if (tone === "tool") return "text-muted-foreground/70";
   if (tone === "thinking") return "text-muted-foreground/50";
   return "text-muted-foreground/40";
+}
+
+function normalizePlanMarkdownForExport(planMarkdown: string): string {
+  return `${planMarkdown.trimEnd()}\n`;
+}
+
+function downloadTextFile(filename: string, contents: string): void {
+  const blob = new Blob([contents], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 0);
 }
 
 interface ExpandedImageItem {
@@ -279,6 +323,7 @@ function buildLocalDraftThread(
     title: "New thread",
     model: fallbackModel,
     runtimeMode: draftThread.runtimeMode,
+    interactionMode: draftThread.interactionMode,
     session: null,
     messages: [],
     error,
@@ -336,6 +381,7 @@ type ComposerCommandItem =
   | {
       id: string;
       type: "slash-command";
+      command: ComposerSlashCommand;
       label: string;
       description: string;
     }
@@ -513,6 +559,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const threads = useStore((store) => store.threads);
   const projects = useStore((store) => store.projects);
   const markThreadVisited = useStore((store) => store.markThreadVisited);
+  const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const { settings } = useAppSettings();
@@ -560,6 +607,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
+  const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
+    ApprovalRequestId[]
+  >([]);
+  const [pendingUserInputAnswersByRequestId, setPendingUserInputAnswersByRequestId] = useState<
+    Record<string, Record<string, PendingUserInputDraftAnswer>>
+  >({});
+  const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
+    useState<Record<string, number>>({});
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
@@ -652,8 +707,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const activeThread = serverThread ?? localDraftThread;
   const runtimeMode = activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+  const interactionMode = activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const [optimisticRuntimeMode, setOptimisticRuntimeMode] = useOptimistic(runtimeMode);
+  const [optimisticInteractionMode, setOptimisticInteractionMode] = useOptimistic(interactionMode);
   const [isRuntimeModePending, startRuntimeModeTransition] = useTransition();
+  const [isInteractionModePending, startInteractionModeTransition] = useTransition();
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const diffSearch = useMemo(
@@ -688,7 +746,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const selectedProviderByThreadId = composerDraft.provider;
   const hasThreadStarted = Boolean(
     activeThread &&
-      (activeThread.latestTurn !== null || activeThread.messages.length > 0 || activeThread.session !== null),
+    (activeThread.latestTurn !== null ||
+      activeThread.messages.length > 0 ||
+      activeThread.session !== null),
   );
   const lockedProvider: ProviderKind | null = hasThreadStarted
     ? (sessionProvider ?? selectedProviderByThreadId ?? null)
@@ -700,7 +760,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       : null;
   const baseThreadModel = resolveModelSlugForProvider(
     selectedProvider,
-    activeThread?.model ?? activeProject?.model ?? getDefaultModel(selectedProvider) ?? DEFAULT_MODEL,
+    activeThread?.model ??
+      activeProject?.model ??
+      getDefaultModel(selectedProvider) ??
+      DEFAULT_MODEL,
   );
   const selectedModel = useMemo(() => {
     const draftModel = composerDraft.model;
@@ -716,7 +779,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     const normalizedDraftModel = normalizeModelSlug(draftModel, selectedProvider);
     if (normalizedDraftModel) {
-      const normalizedMatch = providerOptions.find((option) => option.slug === normalizedDraftModel);
+      const normalizedMatch = providerOptions.find(
+        (option) => option.slug === normalizedDraftModel,
+      );
       if (normalizedMatch) {
         return normalizedMatch.slug as ModelSlug;
       }
@@ -732,19 +797,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [selectedModel, selectedProvider],
   );
   const selectedCursorModelCapabilities = useMemo(
-    () =>
-      selectedCursorModel ? getCursorModelCapabilities(selectedCursorModel.family) : null,
+    () => (selectedCursorModel ? getCursorModelCapabilities(selectedCursorModel.family) : null),
     [selectedCursorModel],
   );
   const hasSelectedCursorTraits = Boolean(
     selectedCursorModelCapabilities &&
-      (selectedCursorModelCapabilities.supportsReasoning ||
-        selectedCursorModelCapabilities.supportsFast ||
-        selectedCursorModelCapabilities.supportsThinking),
+    (selectedCursorModelCapabilities.supportsReasoning ||
+      selectedCursorModelCapabilities.supportsFast ||
+      selectedCursorModelCapabilities.supportsThinking),
   );
   const selectedModelForPicker =
-    selectedProvider === "cursor" && selectedCursorModel ? selectedCursorModel.family : selectedModel;
-  const modelOptionsByProvider = useMemo(() => getCustomModelOptionsByProvider(settings), [settings]);
+    selectedProvider === "cursor" && selectedCursorModel
+      ? selectedCursorModel.family
+      : selectedModel;
+  const modelOptionsByProvider = useMemo(
+    () => getCustomModelOptionsByProvider(settings),
+    [settings],
+  );
   const selectedModelForPickerWithCustomFallback = useMemo(() => {
     if (selectedProvider !== "cursor") {
       const currentOptions = modelOptionsByProvider[selectedProvider];
@@ -794,6 +863,80 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
   );
+  const pendingUserInputs = useMemo(
+    () => derivePendingUserInputs(threadActivities),
+    [threadActivities],
+  );
+  const activePendingUserInput = pendingUserInputs[0] ?? null;
+  const activePendingDraftAnswers = useMemo(
+    () =>
+      activePendingUserInput
+        ? (pendingUserInputAnswersByRequestId[activePendingUserInput.requestId] ??
+          EMPTY_PENDING_USER_INPUT_ANSWERS)
+        : EMPTY_PENDING_USER_INPUT_ANSWERS,
+    [activePendingUserInput, pendingUserInputAnswersByRequestId],
+  );
+  const activePendingQuestionIndex = activePendingUserInput
+    ? (pendingUserInputQuestionIndexByRequestId[activePendingUserInput.requestId] ?? 0)
+    : 0;
+  const activePendingProgress = useMemo(
+    () =>
+      activePendingUserInput
+        ? derivePendingUserInputProgress(
+            activePendingUserInput.questions,
+            activePendingDraftAnswers,
+            activePendingQuestionIndex,
+          )
+        : null,
+    [activePendingDraftAnswers, activePendingQuestionIndex, activePendingUserInput],
+  );
+  const activePendingResolvedAnswers = useMemo(
+    () =>
+      activePendingUserInput
+        ? buildPendingUserInputAnswers(activePendingUserInput.questions, activePendingDraftAnswers)
+        : null,
+    [activePendingDraftAnswers, activePendingUserInput],
+  );
+  const activePendingIsResponding = activePendingUserInput
+    ? respondingUserInputRequestIds.includes(activePendingUserInput.requestId)
+    : false;
+  const activeProposedPlan = useMemo(() => {
+    if (!latestTurnSettled) {
+      return null;
+    }
+    return findLatestProposedPlanMessage(
+      activeThread?.messages ?? [],
+      activeLatestTurn?.assistantMessageId ?? null,
+    );
+  }, [activeLatestTurn?.assistantMessageId, activeThread?.messages, latestTurnSettled]);
+  const activePlan = useMemo(
+    () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
+    [activeLatestTurn?.turnId, threadActivities],
+  );
+  const showPlanFollowUpPrompt =
+    pendingUserInputs.length === 0 &&
+    optimisticInteractionMode === "plan" &&
+    latestTurnSettled &&
+    activeProposedPlan !== null;
+  const hasComposerHeader =
+    pendingUserInputs.length > 0 || (showPlanFollowUpPrompt && activeProposedPlan !== null);
+  useEffect(() => {
+    if (!activePendingProgress) {
+      return;
+    }
+    promptRef.current = activePendingProgress.customAnswer;
+    setComposerCursor(activePendingProgress.customAnswer.length);
+    setComposerTrigger(
+      detectComposerTrigger(
+        activePendingProgress.customAnswer,
+        expandCollapsedComposerCursor(
+          activePendingProgress.customAnswer,
+          activePendingProgress.customAnswer.length,
+        ),
+      ),
+    );
+    setComposerHighlightedItemId(null);
+  }, [activePendingProgress, activePendingUserInput?.requestId]);
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
@@ -1038,31 +1181,54 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     if (composerTrigger.kind === "slash-command") {
-      if (!"model".includes(composerTrigger.query.toLowerCase())) {
-        return [];
-      }
-      return [
+      const slashCommandItems = [
         {
           id: "slash:model",
           type: "slash-command",
+          command: "model",
           label: "/model",
           description: "Switch response model for this thread",
         },
-      ];
+        {
+          id: "slash:plan",
+          type: "slash-command",
+          command: "plan",
+          label: "/plan",
+          description: "Switch this thread into plan mode",
+        },
+        {
+          id: "slash:default",
+          type: "slash-command",
+          command: "default",
+          label: "/default",
+          description: "Switch this thread back to normal chat mode",
+        },
+      ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
+      const query = composerTrigger.query.trim().toLowerCase();
+      if (!query) {
+        return [...slashCommandItems];
+      }
+      return slashCommandItems.filter(
+        (item) => item.command.includes(query) || item.label.slice(1).includes(query),
+      );
     }
 
-    return searchableModelOptions.filter(({ searchSlug, searchName, searchProvider }) => {
-      const query = composerTrigger.query.trim().toLowerCase();
-      if (!query) return true;
-      return searchSlug.includes(query) || searchName.includes(query) || searchProvider.includes(query);
-    }).map(({ provider, providerLabel, slug, name }) => ({
-      id: `model:${provider}:${slug}`,
-      type: "model",
-      provider,
-      model: slug,
-      label: name,
-      description: `${providerLabel} · ${slug}`,
-    }));
+    return searchableModelOptions
+      .filter(({ searchSlug, searchName, searchProvider }) => {
+        const query = composerTrigger.query.trim().toLowerCase();
+        if (!query) return true;
+        return (
+          searchSlug.includes(query) || searchName.includes(query) || searchProvider.includes(query)
+        );
+      })
+      .map(({ provider, providerLabel, slug, name }) => ({
+        id: `model:${provider}:${slug}`,
+        type: "model",
+        provider,
+        model: slug,
+        label: name,
+        description: `${providerLabel} · ${slug}`,
+      }));
   }, [composerTrigger, searchableModelOptions, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
@@ -1443,6 +1609,41 @@ export default function ChatView({ threadId }: ChatViewProps) {
         .catch(() => undefined);
     });
   };
+
+  const handleInteractionModeChange = useCallback(
+    async (mode: "default" | "plan") => {
+      if (mode === interactionMode) return;
+      if (isLocalDraftThread) {
+        setDraftThreadContext(threadId, { interactionMode: mode });
+        scheduleComposerFocus();
+        return;
+      }
+      const api = readNativeApi();
+      if (!api || !isServerThread) return;
+      scheduleComposerFocus();
+      startInteractionModeTransition(() => {
+        setOptimisticInteractionMode(mode);
+        void api.orchestration
+          .dispatchCommand({
+            type: "thread.interaction-mode.set",
+            commandId: newCommandId(),
+            threadId,
+            interactionMode: mode,
+            createdAt: new Date().toISOString(),
+          })
+          .catch(() => undefined);
+      });
+    },
+    [
+      interactionMode,
+      isLocalDraftThread,
+      isServerThread,
+      scheduleComposerFocus,
+      setDraftThreadContext,
+      setOptimisticInteractionMode,
+      threadId,
+    ],
+  );
 
   useEffect(() => {
     try {
@@ -2070,7 +2271,39 @@ export default function ChatView({ threadId }: ChatViewProps) {
     e?.preventDefault();
     const api = readNativeApi();
     if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (activePendingProgress) {
+      onAdvanceActivePendingUserInput();
+      return;
+    }
     const trimmed = prompt.trim();
+    if (showPlanFollowUpPrompt && activeProposedPlan) {
+      const followUpText =
+        trimmed.length > 0
+          ? trimmed
+          : buildPlanImplementationPrompt(activeProposedPlan.plan.planMarkdown);
+      const nextInteractionMode = trimmed.length > 0 ? "plan" : "default";
+      promptRef.current = "";
+      clearComposerDraftContent(activeThread.id);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      await onSubmitPlanFollowUp({
+        text: followUpText,
+        interactionMode: nextInteractionMode,
+      });
+      return;
+    }
+    const standaloneSlashCommand =
+      composerImages.length === 0 ? parseStandaloneComposerSlashCommand(trimmed) : null;
+    if (standaloneSlashCommand) {
+      await handleInteractionModeChange(standaloneSlashCommand);
+      promptRef.current = "";
+      clearComposerDraftContent(activeThread.id);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      return;
+    }
     if (!trimmed && composerImages.length === 0) return;
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
@@ -2183,7 +2416,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
       }
       const title = truncateTitle(titleSeed);
-      let threadCreateModel: ModelSlug = selectedModel || (activeProject.model as ModelSlug) || DEFAULT_MODEL;
+      let threadCreateModel: ModelSlug =
+        selectedModel || (activeProject.model as ModelSlug) || DEFAULT_MODEL;
 
       if (isLocalDraftThread) {
         await api.orchestration.dispatchCommand({
@@ -2194,6 +2428,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           title,
           model: threadCreateModel,
           runtimeMode,
+          interactionMode,
           branch: nextThreadBranch,
           worktreePath: nextThreadWorktreePath,
           createdAt: activeThread.createdAt,
@@ -2254,6 +2489,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ...(supportsReasoningEffort && selectedEffort ? { effort: selectedEffort } : {}),
         assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
         runtimeMode,
+        interactionMode,
         createdAt: messageCreatedAt,
       });
       turnStartSucceeded = true;
@@ -2336,6 +2572,345 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [activeThreadId, setStoreThreadError],
   );
+
+  const onRespondToUserInput = useCallback(
+    async (requestId: ApprovalRequestId, answers: Record<string, unknown>) => {
+      const api = readNativeApi();
+      if (!api || !activeThreadId) return;
+
+      setRespondingUserInputRequestIds((existing) =>
+        existing.includes(requestId) ? existing : [...existing, requestId],
+      );
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.user-input.respond",
+          commandId: newCommandId(),
+          threadId: activeThreadId,
+          requestId,
+          answers,
+          createdAt: new Date().toISOString(),
+        })
+        .catch((err: unknown) => {
+          setStoreThreadError(
+            activeThreadId,
+            err instanceof Error ? err.message : "Failed to submit user input.",
+          );
+        });
+      setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
+    },
+    [activeThreadId, setStoreThreadError],
+  );
+
+  const setActivePendingUserInputQuestionIndex = useCallback(
+    (nextQuestionIndex: number) => {
+      if (!activePendingUserInput) {
+        return;
+      }
+      setPendingUserInputQuestionIndexByRequestId((existing) => ({
+        ...existing,
+        [activePendingUserInput.requestId]: nextQuestionIndex,
+      }));
+    },
+    [activePendingUserInput],
+  );
+
+  const onSelectActivePendingUserInputOption = useCallback(
+    (questionId: string, optionLabel: string) => {
+      if (!activePendingUserInput) {
+        return;
+      }
+      setPendingUserInputAnswersByRequestId((existing) => ({
+        ...existing,
+        [activePendingUserInput.requestId]: {
+          ...existing[activePendingUserInput.requestId],
+          [questionId]: {
+            selectedOptionLabel: optionLabel,
+            customAnswer: "",
+          },
+        },
+      }));
+      promptRef.current = "";
+      setComposerCursor(0);
+      setComposerTrigger(null);
+    },
+    [activePendingUserInput],
+  );
+
+  const onChangeActivePendingUserInputCustomAnswer = useCallback(
+    (questionId: string, value: string, nextCursor: number, cursorAdjacentToMention: boolean) => {
+      if (!activePendingUserInput) {
+        return;
+      }
+      promptRef.current = value;
+      setPendingUserInputAnswersByRequestId((existing) => ({
+        ...existing,
+        [activePendingUserInput.requestId]: {
+          ...existing[activePendingUserInput.requestId],
+          [questionId]: setPendingUserInputCustomAnswer(
+            existing[activePendingUserInput.requestId]?.[questionId],
+            value,
+          ),
+        },
+      }));
+      setComposerCursor(nextCursor);
+      setComposerTrigger(
+        cursorAdjacentToMention
+          ? null
+          : detectComposerTrigger(value, expandCollapsedComposerCursor(value, nextCursor)),
+      );
+    },
+    [activePendingUserInput],
+  );
+
+  const onAdvanceActivePendingUserInput = useCallback(() => {
+    if (!activePendingUserInput || !activePendingProgress) {
+      return;
+    }
+    if (activePendingProgress.isLastQuestion) {
+      if (activePendingResolvedAnswers) {
+        void onRespondToUserInput(activePendingUserInput.requestId, activePendingResolvedAnswers);
+      }
+      return;
+    }
+    setActivePendingUserInputQuestionIndex(activePendingProgress.questionIndex + 1);
+  }, [
+    activePendingProgress,
+    activePendingResolvedAnswers,
+    activePendingUserInput,
+    onRespondToUserInput,
+    setActivePendingUserInputQuestionIndex,
+  ]);
+
+  const onPreviousActivePendingUserInputQuestion = useCallback(() => {
+    if (!activePendingProgress) {
+      return;
+    }
+    setActivePendingUserInputQuestionIndex(Math.max(activePendingProgress.questionIndex - 1, 0));
+  }, [activePendingProgress, setActivePendingUserInputQuestionIndex]);
+
+  const onSubmitPlanFollowUp = useCallback(
+    async ({
+      text,
+      interactionMode: nextInteractionMode,
+    }: {
+      text: string;
+      interactionMode: "default" | "plan";
+    }) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        !isServerThread ||
+        isSendBusy ||
+        isConnecting ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+
+      const trimmed = text.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      const threadIdForSend = activeThread.id;
+      const messageIdForSend = newMessageId();
+      const messageCreatedAt = new Date().toISOString();
+
+      sendInFlightRef.current = true;
+      setSendPhase("sending-turn");
+      setThreadError(threadIdForSend, null);
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: trimmed,
+          createdAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+      shouldAutoScrollRef.current = true;
+      forceStickToBottom();
+
+      try {
+        if (nextInteractionMode !== interactionMode) {
+          setOptimisticInteractionMode(nextInteractionMode);
+          await api.orchestration.dispatchCommand({
+            type: "thread.interaction-mode.set",
+            commandId: newCommandId(),
+            threadId: threadIdForSend,
+            interactionMode: nextInteractionMode,
+            createdAt: messageCreatedAt,
+          });
+        }
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          message: {
+            messageId: messageIdForSend,
+            role: "user",
+            text: trimmed,
+            attachments: [],
+          },
+          provider: selectedProvider,
+          model: selectedModel || undefined,
+          ...(supportsReasoningEffort && selectedEffort ? { effort: selectedEffort } : {}),
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          runtimeMode,
+          interactionMode: nextInteractionMode,
+          createdAt: messageCreatedAt,
+        });
+        sendInFlightRef.current = false;
+        setSendPhase("idle");
+      } catch (err) {
+        setOptimisticUserMessages((existing) =>
+          existing.filter((message) => message.id !== messageIdForSend),
+        );
+        if (nextInteractionMode !== interactionMode) {
+          setOptimisticInteractionMode(interactionMode);
+        }
+        setThreadError(
+          threadIdForSend,
+          err instanceof Error ? err.message : "Failed to send plan follow-up.",
+        );
+        sendInFlightRef.current = false;
+        setSendPhase("idle");
+      }
+    },
+    [
+      activeThread,
+      forceStickToBottom,
+      interactionMode,
+      isConnecting,
+      isSendBusy,
+      isServerThread,
+      runtimeMode,
+      selectedEffort,
+      selectedModel,
+      selectedProvider,
+      setOptimisticInteractionMode,
+      setThreadError,
+      settings.enableAssistantStreaming,
+      supportsReasoningEffort,
+    ],
+  );
+
+  const onImplementPlanInNewThread = useCallback(async () => {
+    const api = readNativeApi();
+    if (
+      !api ||
+      !activeThread ||
+      !activeProject ||
+      !activeProposedPlan ||
+      !isServerThread ||
+      isSendBusy ||
+      isConnecting ||
+      sendInFlightRef.current
+    ) {
+      return;
+    }
+
+    const createdAt = new Date().toISOString();
+    const nextThreadId = newThreadId();
+    const planMarkdown = activeProposedPlan.plan.planMarkdown;
+    const implementationPrompt = buildPlanImplementationPrompt(planMarkdown);
+    const nextThreadTitle = truncateTitle(buildPlanImplementationThreadTitle(planMarkdown));
+    const nextThreadModel: ModelSlug =
+      selectedModel ||
+      (activeThread.model as ModelSlug) ||
+      (activeProject.model as ModelSlug) ||
+      DEFAULT_MODEL;
+
+    sendInFlightRef.current = true;
+    setSendPhase("sending-turn");
+    const finish = () => {
+      sendInFlightRef.current = false;
+      setSendPhase("idle");
+    };
+
+    await api.orchestration
+      .dispatchCommand({
+        type: "thread.create",
+        commandId: newCommandId(),
+        threadId: nextThreadId,
+        projectId: activeProject.id,
+        title: nextThreadTitle,
+        model: nextThreadModel,
+        runtimeMode,
+        interactionMode: "default",
+        branch: activeThread.branch,
+        worktreePath: activeThread.worktreePath,
+        createdAt,
+      })
+      .then(() =>
+        api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: nextThreadId,
+          message: {
+            messageId: newMessageId(),
+            role: "user",
+            text: implementationPrompt,
+            attachments: [],
+          },
+          provider: selectedProvider,
+          model: selectedModel || undefined,
+          ...(supportsReasoningEffort && selectedEffort ? { effort: selectedEffort } : {}),
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          runtimeMode,
+          interactionMode: "default",
+          createdAt,
+        }),
+      )
+      .then(() => api.orchestration.getSnapshot())
+      .then((snapshot) => {
+        syncServerReadModel(snapshot);
+        return navigate({
+          to: "/$threadId",
+          params: { threadId: nextThreadId },
+        });
+      })
+      .catch(async (err) => {
+        await api.orchestration
+          .dispatchCommand({
+            type: "thread.delete",
+            commandId: newCommandId(),
+            threadId: nextThreadId,
+          })
+          .catch(() => undefined);
+        await api.orchestration
+          .getSnapshot()
+          .then((snapshot) => {
+            syncServerReadModel(snapshot);
+          })
+          .catch(() => undefined);
+        toastManager.add({
+          type: "error",
+          title: "Could not start implementation thread",
+          description:
+            err instanceof Error ? err.message : "An error occurred while creating the new thread.",
+        });
+      })
+      .then(finish, finish);
+  }, [
+    activeProject,
+    activeProposedPlan,
+    activeThread,
+    isConnecting,
+    isSendBusy,
+    isServerThread,
+    navigate,
+    runtimeMode,
+    selectedEffort,
+    selectedModel,
+    selectedProvider,
+    settings.enableAssistantStreaming,
+    supportsReasoningEffort,
+    syncServerReadModel,
+  ]);
 
   const onProviderModelSelect = useCallback(
     (provider: ProviderKind, model: ModelSlug) => {
@@ -2452,7 +3027,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       const next = replaceTextRange(promptRef.current, rangeStart, rangeEnd, replacement);
       promptRef.current = next.text;
-      setPrompt(next.text);
+      const activePendingQuestion = activePendingProgress?.activeQuestion;
+      if (activePendingQuestion && activePendingUserInput) {
+        setPendingUserInputAnswersByRequestId((existing) => ({
+          ...existing,
+          [activePendingUserInput.requestId]: {
+            ...existing[activePendingUserInput.requestId],
+            [activePendingQuestion.id]: setPendingUserInputCustomAnswer(
+              existing[activePendingUserInput.requestId]?.[activePendingQuestion.id],
+              next.text,
+            ),
+          },
+        }));
+      } else {
+        setPrompt(next.text);
+      }
       setComposerCursor(next.cursor);
       setComposerTrigger(detectComposerTrigger(next.text, next.cursor));
       window.requestAnimationFrame(() => {
@@ -2460,7 +3049,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       return true;
     },
-    [setPrompt],
+    [activePendingProgress?.activeQuestion, activePendingUserInput, setPrompt],
   );
 
   const readComposerSnapshot = useCallback((): { value: string; cursor: number } => {
@@ -2506,7 +3095,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
       if (item.type === "slash-command") {
-        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "/model ", {
+        if (item.command === "model") {
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "/model ", {
+            expectedText: expectedToken,
+          });
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
+        void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: expectedToken,
         });
         if (applied) {
@@ -2522,7 +3121,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setComposerHighlightedItemId(null);
       }
     },
-    [applyPromptReplacement, onProviderModelSelect, resolveActiveComposerTrigger],
+    [
+      applyPromptReplacement,
+      handleInteractionModeChange,
+      onProviderModelSelect,
+      resolveActiveComposerTrigger,
+    ],
   );
   const onComposerMenuItemHighlighted = useCallback((itemId: string | null) => {
     setComposerHighlightedItemId(itemId);
@@ -2553,6 +3157,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const onPromptChange = useCallback(
     (nextPrompt: string, nextCursor: number, cursorAdjacentToMention: boolean) => {
+      if (activePendingProgress?.activeQuestion && activePendingUserInput) {
+        onChangeActivePendingUserInputCustomAnswer(
+          activePendingProgress.activeQuestion.id,
+          nextPrompt,
+          nextCursor,
+          cursorAdjacentToMention,
+        );
+        return;
+      }
       promptRef.current = nextPrompt;
       setPrompt(nextPrompt);
       setComposerCursor(nextCursor);
@@ -2565,7 +3178,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
             ),
       );
     },
-    [setPrompt],
+    [
+      activePendingProgress?.activeQuestion,
+      activePendingUserInput,
+      onChangeActivePendingUserInputCustomAnswer,
+      setPrompt,
+    ],
   );
 
   const onComposerCommandKey = (
@@ -2698,6 +3316,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         respondingRequestIds={respondingRequestIds}
         onRespondToApproval={onRespondToApproval}
       />
+      <PlanModePanel activePlan={activePlan} />
 
       {/* Messages */}
       <div
@@ -2734,6 +3353,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onImageExpand={onExpandTimelineImage}
           markdownCwd={gitCwd ?? undefined}
           resolvedTheme={resolvedTheme}
+          workspaceRoot={activeProject?.cwd ?? undefined}
         />
       </div>
 
@@ -2754,8 +3374,32 @@ export default function ChatView({ threadId }: ChatViewProps) {
             onDragLeave={onComposerDragLeave}
             onDrop={onComposerDrop}
           >
+            {pendingUserInputs.length > 0 ? (
+              <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                <ComposerPendingUserInputPanel
+                  pendingUserInputs={pendingUserInputs}
+                  respondingRequestIds={respondingUserInputRequestIds}
+                  answers={activePendingDraftAnswers}
+                  questionIndex={activePendingQuestionIndex}
+                  onSelectOption={onSelectActivePendingUserInputOption}
+                />
+              </div>
+            ) : showPlanFollowUpPrompt && activeProposedPlan ? (
+              <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                <ComposerPlanFollowUpBanner
+                  key={activeProposedPlan.message.id}
+                  planTitle={proposedPlanTitle(activeProposedPlan.plan.planMarkdown) ?? null}
+                />
+              </div>
+            ) : null}
+
             {/* Textarea area */}
-            <div className="relative px-3 pt-3.5 pb-2 sm:px-4 sm:pt-4">
+            <div
+              className={cn(
+                "relative px-3 pb-2 sm:px-4",
+                hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
+              )}
+            >
               {composerMenuOpen && (
                 <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
                   <ComposerCommandMenu
@@ -2770,7 +3414,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 </div>
               )}
 
-              {composerImages.length > 0 && (
+              {pendingUserInputs.length === 0 && composerImages.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-2">
                   {composerImages.map((image) => (
                     <div
@@ -2836,15 +3480,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
               )}
               <ComposerPromptEditor
                 ref={composerEditorRef}
-                value={prompt}
+                value={activePendingProgress ? activePendingProgress.customAnswer : prompt}
                 cursor={composerCursor}
                 onChange={onPromptChange}
                 onCommandKeyDown={onComposerCommandKey}
                 onPaste={onComposerPaste}
                 placeholder={
-                  phase === "disconnected"
-                    ? "Ask for follow-up changes or attach images"
-                    : "Ask anything, @tag files/folders, or use /model"
+                  activePendingProgress
+                    ? "Type your own answer, or leave this blank to use the selected option"
+                    : showPlanFollowUpPrompt && activeProposedPlan
+                      ? "Add feedback to refine the plan, or leave this blank to implement it"
+                      : phase === "disconnected"
+                        ? "Ask for follow-up changes or attach images"
+                        : "Ask anything, @tag files/folders, or use /model"
                 }
                 disabled={isConnecting}
               />
@@ -2890,39 +3538,44 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
                     )}
 
-                    {selectedCursorModel && selectedCursorModelCapabilities && hasSelectedCursorTraits && (
-                      <>
-                        {cursorModelSelectionLockedReason ? (
-                          <Tooltip>
-                            <TooltipTrigger
-                              render={
-                                <span className="inline-flex">
-                                  <CursorTraitsPicker
-                                    selection={selectedCursorModel}
-                                    capabilities={selectedCursorModelCapabilities}
-                                    disabled
-                                    onReasoningChange={onCursorReasoningSelect}
-                                    onFastModeChange={onCursorFastModeChange}
-                                    onThinkingModeChange={onCursorThinkingModeChange}
-                                  />
-                                </span>
-                              }
+                    {selectedCursorModel &&
+                      selectedCursorModelCapabilities &&
+                      hasSelectedCursorTraits && (
+                        <>
+                          {cursorModelSelectionLockedReason ? (
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <span className="inline-flex">
+                                    <CursorTraitsPicker
+                                      selection={selectedCursorModel}
+                                      capabilities={selectedCursorModelCapabilities}
+                                      disabled
+                                      onReasoningChange={onCursorReasoningSelect}
+                                      onFastModeChange={onCursorFastModeChange}
+                                      onThinkingModeChange={onCursorThinkingModeChange}
+                                    />
+                                  </span>
+                                }
+                              />
+                              <TooltipPopup
+                                side="top"
+                                className="max-w-72 whitespace-normal leading-tight"
+                              >
+                                {cursorModelSelectionLockedReason}
+                              </TooltipPopup>
+                            </Tooltip>
+                          ) : (
+                            <CursorTraitsPicker
+                              selection={selectedCursorModel}
+                              capabilities={selectedCursorModelCapabilities}
+                              onReasoningChange={onCursorReasoningSelect}
+                              onFastModeChange={onCursorFastModeChange}
+                              onThinkingModeChange={onCursorThinkingModeChange}
                             />
-                            <TooltipPopup side="top" className="max-w-72 whitespace-normal leading-tight">
-                              {cursorModelSelectionLockedReason}
-                            </TooltipPopup>
-                          </Tooltip>
-                        ) : (
-                          <CursorTraitsPicker
-                            selection={selectedCursorModel}
-                            capabilities={selectedCursorModelCapabilities}
-                            onReasoningChange={onCursorReasoningSelect}
-                            onFastModeChange={onCursorFastModeChange}
-                            onThinkingModeChange={onCursorThinkingModeChange}
-                          />
-                        )}
-                      </>
-                    )}
+                          )}
+                        </>
+                      )}
                   </>
                 ) : supportsReasoningEffort ? (
                   <>
@@ -2943,6 +3596,33 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 {/* Divider */}
                 <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
 
+                {/* Interaction mode toggle */}
+                <Button
+                  variant="ghost"
+                  className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                  size="sm"
+                  type="button"
+                  disabled={isInteractionModePending}
+                  onClick={() =>
+                    void handleInteractionModeChange(
+                      optimisticInteractionMode === "plan" ? "default" : "plan",
+                    )
+                  }
+                  title={
+                    optimisticInteractionMode === "plan"
+                      ? "Plan mode — click to return to normal chat mode"
+                      : "Default mode — click to enter plan mode"
+                  }
+                >
+                  <BotIcon />
+                  <span className="sr-only sm:not-sr-only">
+                    {optimisticInteractionMode === "plan" ? "Plan" : "Chat"}
+                  </span>
+                </Button>
+
+                {/* Divider */}
+                <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+
                 {/* Runtime mode toggle */}
                 <Button
                   variant="ghost"
@@ -2952,9 +3632,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   disabled={isRuntimeModePending}
                   onClick={() =>
                     void handleRuntimeModeChange(
-                      optimisticRuntimeMode === "full-access"
-                        ? "approval-required"
-                        : "full-access",
+                      optimisticRuntimeMode === "full-access" ? "approval-required" : "full-access",
                     )
                   }
                   title={
@@ -2975,10 +3653,41 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 {isPreparingWorktree ? (
                   <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
                 ) : null}
-                {phase === "running" ? (
+                {activePendingProgress ? (
+                  <div className="flex items-center gap-2">
+                    {activePendingProgress.questionIndex > 0 ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="rounded-full"
+                        onClick={onPreviousActivePendingUserInputQuestion}
+                        disabled={activePendingIsResponding}
+                      >
+                        Previous
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="submit"
+                      size="sm"
+                      className="rounded-full px-4"
+                      disabled={
+                        activePendingIsResponding ||
+                        (activePendingProgress.isLastQuestion
+                          ? !activePendingResolvedAnswers
+                          : !activePendingProgress.canAdvance)
+                      }
+                    >
+                      {activePendingIsResponding
+                        ? "Submitting..."
+                        : activePendingProgress.isLastQuestion
+                          ? "Submit answers"
+                          : "Next question"}
+                    </Button>
+                  </div>
+                ) : phase === "running" ? (
                   <button
                     type="button"
-                    className="flex h-9 w-9 items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
+                    className="flex size-8 items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
                     onClick={() => void onInterrupt()}
                     aria-label="Stop generation"
                   >
@@ -2992,61 +3701,110 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       <rect x="2" y="2" width="8" height="8" rx="1.5" />
                     </svg>
                   </button>
-                ) : (
-                  <button
-                    type="submit"
-                    className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
-                    disabled={
-                      isSendBusy || isConnecting || (!prompt.trim() && composerImages.length === 0)
-                    }
-                    aria-label={
-                      isConnecting
-                        ? "Connecting"
-                        : isPreparingWorktree
-                          ? "Preparing worktree"
-                          : isSendBusy
-                            ? "Sending"
-                            : "Send message"
-                    }
-                  >
-                    {isConnecting || isSendBusy ? (
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 14 14"
-                        fill="none"
-                        className="animate-spin"
-                        aria-hidden="true"
+                ) : pendingUserInputs.length === 0 ? (
+                  showPlanFollowUpPrompt ? (
+                    prompt.trim().length > 0 ? (
+                      <Button
+                        type="submit"
+                        size="sm"
+                        className="h-9 rounded-full px-4 sm:h-8"
+                        disabled={isSendBusy || isConnecting}
                       >
-                        <circle
-                          cx="7"
-                          cy="7"
-                          r="5.5"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
-                          strokeDasharray="20 12"
-                        />
-                      </svg>
+                        {isConnecting || isSendBusy ? "Sending..." : "Refine"}
+                      </Button>
                     ) : (
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 14 14"
-                        fill="none"
-                        aria-hidden="true"
-                      >
-                        <path
-                          d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
-                          stroke="currentColor"
-                          strokeWidth="1.8"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    )}
-                  </button>
-                )}
+                      <div className="flex items-center">
+                        <Button
+                          type="submit"
+                          size="sm"
+                          className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
+                          disabled={isSendBusy || isConnecting}
+                        >
+                          {isConnecting || isSendBusy ? "Sending..." : "Implement"}
+                        </Button>
+                        <Menu>
+                          <MenuTrigger
+                            render={
+                              <Button
+                                size="sm"
+                                variant="default"
+                                className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
+                                aria-label="Implementation actions"
+                                disabled={isSendBusy || isConnecting}
+                              />
+                            }
+                          >
+                            <ChevronDownIcon className="size-3.5" />
+                          </MenuTrigger>
+                          <MenuPopup align="end" side="top">
+                            <MenuItem
+                              disabled={isSendBusy || isConnecting}
+                              onClick={() => void onImplementPlanInNewThread()}
+                            >
+                              Implement in new thread
+                            </MenuItem>
+                          </MenuPopup>
+                        </Menu>
+                      </div>
+                    )
+                  ) : (
+                    <button
+                      type="submit"
+                      className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
+                      disabled={
+                        isSendBusy ||
+                        isConnecting ||
+                        (!prompt.trim() && composerImages.length === 0)
+                      }
+                      aria-label={
+                        isConnecting
+                          ? "Connecting"
+                          : isPreparingWorktree
+                            ? "Preparing worktree"
+                            : isSendBusy
+                              ? "Sending"
+                              : "Send message"
+                      }
+                    >
+                      {isConnecting || isSendBusy ? (
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 14 14"
+                          fill="none"
+                          className="animate-spin"
+                          aria-hidden="true"
+                        >
+                          <circle
+                            cx="7"
+                            cy="7"
+                            r="5.5"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeDasharray="20 12"
+                          />
+                        </svg>
+                      ) : (
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 14 14"
+                          fill="none"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      )}
+                    </button>
+                  )
+                ) : null}
               </div>
             </div>
           </div>
@@ -3326,7 +4084,7 @@ const PendingApprovalsPanel = memo(function PendingApprovalsPanel({
                 ? "Command approval requested"
                 : approval.requestKind === "file-read"
                   ? "File-read approval requested"
-                : "File-change approval requested"}
+                  : "File-change approval requested"}
             </AlertTitle>
             <AlertDescription
               className="truncate block font-mono text-[11px]"
@@ -3371,6 +4129,159 @@ const PendingApprovalsPanel = memo(function PendingApprovalsPanel({
           </Alert>
         );
       })}
+    </div>
+  );
+});
+
+interface PlanModePanelProps {
+  activePlan: ReturnType<typeof deriveActivePlanState>;
+}
+
+const PlanModePanel = memo(function PlanModePanel({ activePlan }: PlanModePanelProps) {
+  if (!activePlan) return null;
+
+  return (
+    <div className="pt-3 mx-auto max-w-3xl">
+      <div className="rounded-xl border border-border/70 bg-muted/30 p-4">
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary">Plan</Badge>
+          <span className="text-xs text-muted-foreground">
+            Updated {formatTimestamp(activePlan.createdAt)}
+          </span>
+        </div>
+        {activePlan.explanation ? (
+          <p className="mt-2 text-sm text-muted-foreground">{activePlan.explanation}</p>
+        ) : null}
+        <div className="mt-3 space-y-2">
+          {activePlan.steps.map((step) => (
+            <div
+              key={`${step.status}:${step.step}`}
+              className="flex items-start gap-3 rounded-lg border border-border/60 bg-background/80 px-3 py-2"
+            >
+              <Badge
+                variant={
+                  step.status === "completed"
+                    ? "default"
+                    : step.status === "inProgress"
+                      ? "secondary"
+                      : "outline"
+                }
+              >
+                {step.status === "inProgress"
+                  ? "In progress"
+                  : step.status === "completed"
+                    ? "Done"
+                    : "Pending"}
+              </Badge>
+              <div className="min-w-0 flex-1 text-sm">{step.step}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+});
+
+interface PendingUserInputPanelProps {
+  pendingUserInputs: PendingUserInput[];
+  respondingRequestIds: ApprovalRequestId[];
+  answers: Record<string, PendingUserInputDraftAnswer>;
+  questionIndex: number;
+  onSelectOption: (questionId: string, optionLabel: string) => void;
+}
+
+const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
+  pendingUserInputs,
+  respondingRequestIds,
+  answers,
+  questionIndex,
+  onSelectOption,
+}: PendingUserInputPanelProps) {
+  if (pendingUserInputs.length === 0) return null;
+  const activePrompt = pendingUserInputs[0];
+  if (!activePrompt) return null;
+
+  return (
+    <ComposerPendingUserInputCard
+      key={activePrompt.requestId}
+      prompt={activePrompt}
+      pendingPromptCount={pendingUserInputs.length}
+      isResponding={respondingRequestIds.includes(activePrompt.requestId)}
+      answers={answers}
+      questionIndex={questionIndex}
+      onSelectOption={onSelectOption}
+    />
+  );
+});
+
+const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard({
+  prompt,
+  pendingPromptCount,
+  isResponding,
+  answers,
+  questionIndex,
+  onSelectOption,
+}: {
+  prompt: PendingUserInput;
+  pendingPromptCount: number;
+  isResponding: boolean;
+  answers: Record<string, PendingUserInputDraftAnswer>;
+  questionIndex: number;
+  onSelectOption: (questionId: string, optionLabel: string) => void;
+}) {
+  const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
+  const activeQuestion = progress.activeQuestion;
+
+  if (!activeQuestion) {
+    return null;
+  }
+
+  return (
+    <div className="px-4 py-4 sm:px-5">
+      <div className="flex gap-2">
+        <span className="uppercase text-sm tracking-[0.2em]">
+          {questionIndex + 1}/{prompt.questions.length} {activeQuestion.header}
+        </span>
+        <div className="text-sm font-medium">{activeQuestion.question}</div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {activeQuestion.options.map((option) => {
+          const isSelected = progress.selectedOptionLabel === option.label;
+          return (
+            <Button
+              key={`${activeQuestion.id}:${option.label}`}
+              size="sm"
+              variant={isSelected ? "default" : "outline"}
+              disabled={isResponding}
+              onClick={() => onSelectOption(activeQuestion.id, option.label)}
+              title={option.description}
+            >
+              {option.label}
+            </Button>
+          );
+        })}
+      </div>
+    </div>
+  );
+});
+
+const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBanner({
+  planTitle,
+}: {
+  planTitle: string | null;
+}) {
+  return (
+    <div className="px-4 py-3.5 sm:px-5 sm:py-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="secondary">Plan ready</Badge>
+        {planTitle ? (
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{planTitle}</span>
+        ) : null}
+      </div>
+      <div className="mt-2 text-xs text-muted-foreground">
+        Leave the composer empty to implement here, use the menu to implement in a new thread, or
+        type feedback to refine it.
+      </div>
     </div>
   );
 });
@@ -3537,6 +4448,191 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   return (
     <div className="space-y-0.5">
       {treeNodes.map((node) => renderTreeNode(node, 0))}
+const ProposedPlanMessage = memo(function ProposedPlanMessage({
+  text,
+  cwd,
+  workspaceRoot,
+  isStreaming,
+}: {
+  text: string;
+  cwd: string | undefined;
+  workspaceRoot: string | undefined;
+  isStreaming: boolean;
+}) {
+  const proposedPlan = parseProposedPlanMessage(text);
+  const [expanded, setExpanded] = useState(false);
+  const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
+  const [savePath, setSavePath] = useState("");
+  const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
+  const savePathInputId = useId();
+
+  if (!proposedPlan) {
+    return <ChatMarkdown text={text} cwd={cwd} isStreaming={isStreaming} />;
+  }
+
+  const title = proposedPlanTitle(proposedPlan.planMarkdown) ?? "Proposed plan";
+  const lineCount = proposedPlan.planMarkdown.split("\n").length;
+  const canCollapse = proposedPlan.planMarkdown.length > 900 || lineCount > 20;
+  const downloadFilename = buildProposedPlanMarkdownFilename(proposedPlan.planMarkdown);
+  const saveContents = normalizePlanMarkdownForExport(proposedPlan.planMarkdown);
+
+  const handleDownload = () => {
+    downloadTextFile(downloadFilename, saveContents);
+  };
+
+  const openSaveDialog = () => {
+    if (!workspaceRoot) {
+      toastManager.add({
+        type: "error",
+        title: "Workspace path is unavailable",
+        description: "This thread does not have a workspace path to save into.",
+      });
+      return;
+    }
+    setSavePath((existing) => (existing.length > 0 ? existing : downloadFilename));
+    setIsSaveDialogOpen(true);
+  };
+
+  const handleSaveToWorkspace = () => {
+    const api = readNativeApi();
+    const relativePath = savePath.trim();
+    if (!api || !workspaceRoot) {
+      return;
+    }
+    if (!relativePath) {
+      toastManager.add({
+        type: "warning",
+        title: "Enter a workspace path",
+      });
+      return;
+    }
+
+    setIsSavingToWorkspace(true);
+    void api.projects
+      .writeFile({
+        cwd: workspaceRoot,
+        relativePath,
+        contents: saveContents,
+      })
+      .then((result) => {
+        setIsSaveDialogOpen(false);
+        toastManager.add({
+          type: "success",
+          title: "Plan saved to workspace",
+          description: result.relativePath,
+        });
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not save plan",
+          description: error instanceof Error ? error.message : "An error occurred while saving.",
+        });
+      })
+      .then(
+        () => {
+          setIsSavingToWorkspace(false);
+        },
+        () => {
+          setIsSavingToWorkspace(false);
+        },
+      );
+  };
+
+  return (
+    <div className="space-y-3">
+      {proposedPlan.beforeText ? (
+        <ChatMarkdown text={proposedPlan.beforeText} cwd={cwd} isStreaming={isStreaming} />
+      ) : null}
+
+      <div className="rounded-[24px] border border-border/80 bg-card/70 p-4 sm:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <Badge variant="secondary">Plan</Badge>
+            <p className="truncate text-sm font-medium text-foreground">{title}</p>
+          </div>
+          <Menu>
+            <MenuTrigger
+              render={<Button aria-label="Plan actions" size="icon-xs" variant="outline" />}
+            >
+              <EllipsisIcon aria-hidden="true" className="size-4" />
+            </MenuTrigger>
+            <MenuPopup align="end">
+              <MenuItem onClick={handleDownload}>Download as markdown</MenuItem>
+              <MenuItem onClick={openSaveDialog} disabled={!workspaceRoot || isSavingToWorkspace}>
+                Save to workspace
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        </div>
+        <div className="mt-4">
+          <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
+            <ChatMarkdown text={proposedPlan.planMarkdown} cwd={cwd} isStreaming={false} />
+            {canCollapse && !expanded ? (
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
+            ) : null}
+          </div>
+          {canCollapse ? (
+            <div className="mt-4 flex justify-center">
+              <Button size="sm" variant="outline" onClick={() => setExpanded((value) => !value)}>
+                {expanded ? "Collapse plan" : "Expand plan"}
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <Dialog
+        open={isSaveDialogOpen}
+        onOpenChange={(open) => {
+          if (!isSavingToWorkspace) {
+            setIsSaveDialogOpen(open);
+          }
+        }}
+      >
+        <DialogPopup className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Save plan to workspace</DialogTitle>
+            <DialogDescription>
+              Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-3">
+            <label htmlFor={savePathInputId} className="grid gap-1.5">
+              <span className="text-xs font-medium text-foreground">Workspace path</span>
+              <Input
+                id={savePathInputId}
+                value={savePath}
+                onChange={(event) => setSavePath(event.target.value)}
+                placeholder={downloadFilename}
+                spellCheck={false}
+                disabled={isSavingToWorkspace}
+              />
+            </label>
+          </DialogPanel>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsSaveDialogOpen(false)}
+              disabled={isSavingToWorkspace}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => void handleSaveToWorkspace()}
+              disabled={isSavingToWorkspace}
+            >
+              {isSavingToWorkspace ? "Saving..." : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+
+      {proposedPlan.afterText ? (
+        <ChatMarkdown text={proposedPlan.afterText} cwd={cwd} isStreaming={isStreaming} />
+      ) : null}
     </div>
   );
 });
@@ -3561,6 +4657,7 @@ interface MessagesTimelineProps {
   onImageExpand: (preview: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
+  workspaceRoot: string | undefined;
 }
 
 type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
@@ -3602,6 +4699,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   onImageExpand,
   markdownCwd,
   resolvedTheme,
+  workspaceRoot,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
@@ -3946,9 +5044,10 @@ const MessagesTimeline = memo(function MessagesTimeline({
                 </div>
               )}
               <div className="min-w-0 px-1 py-0.5">
-                <ChatMarkdown
+                <ProposedPlanMessage
                   text={messageText}
                   cwd={markdownCwd}
+                  workspaceRoot={workspaceRoot}
                   isStreaming={Boolean(row.message.streaming)}
                 />
                 {(() => {
@@ -4201,7 +5300,10 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           return (
             <MenuSub key={option.value}>
               <MenuSubTrigger disabled={isDisabledByProviderLock}>
-                <OptionIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/85" />
+                <OptionIcon
+                  aria-hidden="true"
+                  className="size-4 shrink-0 text-muted-foreground/85"
+                />
                 {option.label}
               </MenuSubTrigger>
               <MenuSubPopup className="[--available-height:min(24rem,70vh)]">
@@ -4354,7 +5456,9 @@ const CursorTraitsPicker = memo(function CursorTraitsPicker(props: {
           </MenuGroup>
         )}
         {props.capabilities.supportsReasoning &&
-          (props.capabilities.supportsFast || props.capabilities.supportsThinking) && <MenuDivider />}
+          (props.capabilities.supportsFast || props.capabilities.supportsThinking) && (
+            <MenuDivider />
+          )}
         {props.capabilities.supportsFast && (
           <MenuGroup>
             <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Fast Mode</div>

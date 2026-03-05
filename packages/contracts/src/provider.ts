@@ -14,8 +14,10 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderApprovalDecision,
+  ProviderInteractionMode,
   ProviderKind,
   ProviderRequestKind,
+  ProviderUserInputAnswers,
   RuntimeMode,
   TurnCountRange,
 } from "./orchestration";
@@ -92,6 +94,7 @@ export const ProviderSendTurnInput = Schema.Struct({
   ),
   model: Schema.optional(TrimmedNonEmptyStringSchema),
   effort: Schema.optional(TrimmedNonEmptyStringSchema),
+  interactionMode: Schema.optional(ProviderInteractionMode),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 
@@ -168,6 +171,13 @@ export const ProviderRespondToRequestInput = Schema.Struct({
   decision: ProviderApprovalDecision,
 });
 export type ProviderRespondToRequestInput = typeof ProviderRespondToRequestInput.Type;
+
+export const ProviderRespondToUserInputInput = Schema.Struct({
+  threadId: ThreadId,
+  requestId: ApprovalRequestId,
+  answers: ProviderUserInputAnswers,
+});
+export type ProviderRespondToUserInputInput = typeof ProviderRespondToUserInputInput.Type;
 
 export const ProviderEventKind = Schema.Literals(["session", "notification", "request", "error"]);
 export type ProviderEventKind = typeof ProviderEventKind.Type;

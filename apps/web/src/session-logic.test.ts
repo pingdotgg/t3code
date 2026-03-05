@@ -2,8 +2,10 @@ import { EventId, TurnId, type OrchestrationThreadActivity } from "@t3tools/cont
 import { describe, expect, it } from "vitest";
 
 import {
+  deriveActivePlanState,
   PROVIDER_OPTIONS,
   derivePendingApprovals,
+  derivePendingUserInputs,
   deriveWorkLogEntries,
   hasToolActivityForTurn,
   isLatestTurnSettled,
@@ -128,6 +130,130 @@ describe("derivePendingApprovals", () => {
     ];
 
     expect(derivePendingApprovals(activities)).toEqual([]);
+  });
+});
+
+describe("derivePendingUserInputs", () => {
+  it("tracks open structured prompts and removes resolved ones", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "user-input-open",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-1",
+          questions: [
+            {
+              id: "sandbox_mode",
+              header: "Sandbox",
+              question: "Which mode should be used?",
+              options: [
+                {
+                  label: "workspace-write",
+                  description: "Allow workspace writes only",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "user-input-resolved",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "user-input.resolved",
+        summary: "User input submitted",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-2",
+          answers: {
+            sandbox_mode: "workspace-write",
+          },
+        },
+      }),
+      makeActivity({
+        id: "user-input-open-2",
+        createdAt: "2026-02-23T00:00:01.500Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-2",
+          questions: [
+            {
+              id: "approval",
+              header: "Approval",
+              question: "Continue?",
+              options: [
+                {
+                  label: "yes",
+                  description: "Continue execution",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    ];
+
+    expect(derivePendingUserInputs(activities)).toEqual([
+      {
+        requestId: "req-user-input-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        questions: [
+          {
+            id: "sandbox_mode",
+            header: "Sandbox",
+            question: "Which mode should be used?",
+            options: [
+              {
+                label: "workspace-write",
+                description: "Allow workspace writes only",
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+});
+
+describe("deriveActivePlanState", () => {
+  it("returns the latest plan update for the active turn", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "plan-old",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          explanation: "Initial plan",
+          plan: [{ step: "Inspect code", status: "pending" }],
+        },
+      }),
+      makeActivity({
+        id: "plan-latest",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          explanation: "Refined plan",
+          plan: [{ step: "Implement Codex user input", status: "inProgress" }],
+        },
+      }),
+    ];
+
+    expect(deriveActivePlanState(activities, TurnId.makeUnsafe("turn-1"))).toEqual({
+      createdAt: "2026-02-23T00:00:02.000Z",
+      turnId: "turn-1",
+      explanation: "Refined plan",
+      steps: [{ step: "Implement Codex user input", status: "inProgress" }],
+    });
   });
 });
 

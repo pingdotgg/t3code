@@ -31,6 +31,7 @@ type ProviderIntentEvent = Extract<
       | "thread.turn-start-requested"
       | "thread.turn-interrupt-requested"
       | "thread.approval-response-requested"
+      | "thread.user-input-response-requested"
       | "thread.session-stop-requested";
   }
 >;
@@ -147,6 +148,7 @@ const make = Effect.gen(function* () {
       | "provider.turn.start.failed"
       | "provider.turn.interrupt.failed"
       | "provider.approval.respond.failed"
+      | "provider.user-input.respond.failed"
       | "provider.session.stop.failed";
     readonly summary: string;
     readonly detail: string;
@@ -320,6 +322,7 @@ const make = Effect.gen(function* () {
     readonly provider?: ProviderKind;
     readonly model?: string;
     readonly effort?: string;
+    readonly interactionMode?: "default" | "plan";
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
@@ -348,6 +351,7 @@ const make = Effect.gen(function* () {
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { model: modelForTurn } : {}),
       ...(input.effort !== undefined ? { effort: input.effort } : {}),
+      ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
     });
   });
 
@@ -461,6 +465,7 @@ const make = Effect.gen(function* () {
       ...(event.payload.provider !== undefined ? { provider: event.payload.provider } : {}),
       ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
       ...(event.payload.effort !== undefined ? { effort: event.payload.effort } : {}),
+      interactionMode: event.payload.interactionMode,
       createdAt: event.payload.createdAt,
     });
   });
@@ -535,6 +540,50 @@ const make = Effect.gen(function* () {
       );
   });
 
+  const processUserInputResponseRequested = Effect.fnUntraced(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.user-input-response-requested" }>,
+  ) {
+    const thread = yield* resolveThread(event.payload.threadId);
+    if (!thread) {
+      return;
+    }
+    const hasSession = thread.session && thread.session.status !== "stopped";
+    if (!hasSession) {
+      return yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.user-input.respond.failed",
+        summary: "Provider user input response failed",
+        detail: "No active provider session is bound to this thread.",
+        turnId: null,
+        createdAt: event.payload.createdAt,
+        requestId: event.payload.requestId,
+      });
+    }
+
+    yield* providerService
+      .respondToUserInput({
+        threadId: event.payload.threadId,
+        requestId: event.payload.requestId,
+        answers: event.payload.answers,
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            const error = Cause.squash(cause);
+            yield* appendProviderFailureActivity({
+              threadId: event.payload.threadId,
+              kind: "provider.user-input.respond.failed",
+              summary: "Provider user input response failed",
+              detail: toErrorMessage(error),
+              turnId: null,
+              createdAt: event.payload.createdAt,
+              requestId: event.payload.requestId,
+            });
+          }),
+        ),
+      );
+  });
+
   const processSessionStopRequested = Effect.fnUntraced(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.session-stop-requested" }>,
   ) {
@@ -583,6 +632,9 @@ const make = Effect.gen(function* () {
         case "thread.approval-response-requested":
           yield* processApprovalResponseRequested(event);
           return;
+        case "thread.user-input-response-requested":
+          yield* processUserInputResponseRequested(event);
+          return;
         case "thread.session-stop-requested":
           yield* processSessionStopRequested(event);
           return;
@@ -617,6 +669,7 @@ const make = Effect.gen(function* () {
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.turn-interrupt-requested" &&
           event.type !== "thread.approval-response-requested" &&
+          event.type !== "thread.user-input-response-requested" &&
           event.type !== "thread.session-stop-requested"
         ) {
           return Effect.void;

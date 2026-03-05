@@ -11,11 +11,14 @@ import {
   type CanonicalRequestType,
   type ProviderEvent,
   type ProviderRuntimeEvent,
+  type ProviderUserInputAnswers,
   RuntimeItemId,
   RuntimeRequestId,
+  RuntimeTaskId,
   ProviderApprovalDecision,
   ProviderItemId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { Effect, FileSystem, Layer, Queue, Schema, ServiceMap, Stream } from "effect";
 
@@ -93,6 +96,10 @@ function asObject(value: unknown): Record<string, unknown> | undefined {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function asArray(value: unknown): unknown[] | undefined {
+  return Array.isArray(value) ? value : undefined;
 }
 
 function asNumber(value: unknown): number | undefined {
@@ -249,6 +256,88 @@ function toRequestTypeFromResolvedPayload(
   return "unknown";
 }
 
+function toCanonicalUserInputAnswers(
+  answers: ProviderUserInputAnswers | undefined,
+): ProviderUserInputAnswers {
+  if (!answers) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(answers).flatMap(([questionId, value]) => {
+      if (typeof value === "string") {
+        return [[questionId, value] as const];
+      }
+
+      if (Array.isArray(value)) {
+        const normalized = value.filter((entry): entry is string => typeof entry === "string");
+        if (normalized.length === 0) {
+          return [];
+        }
+        return [[questionId, normalized.length === 1 ? normalized[0] : normalized] as const];
+      }
+
+      const answerObject = asObject(value);
+      const answerList = asArray(answerObject?.answers)?.filter(
+        (entry): entry is string => typeof entry === "string",
+      );
+      if (!answerList || answerList.length === 0) {
+        return [];
+      }
+      return [[questionId, answerList.length === 1 ? answerList[0] : answerList] as const];
+    }),
+  );
+}
+
+function toUserInputQuestions(payload: Record<string, unknown> | undefined) {
+  const questions = asArray(payload?.questions);
+  if (!questions) {
+    return undefined;
+  }
+
+  const parsedQuestions = questions
+    .map((entry) => {
+      const question = asObject(entry);
+      if (!question) return undefined;
+      const options = asArray(question.options)
+        ?.map((option) => {
+          const optionRecord = asObject(option);
+          if (!optionRecord) return undefined;
+          const label = asString(optionRecord.label)?.trim();
+          const description = asString(optionRecord.description)?.trim();
+          if (!label || !description) {
+            return undefined;
+          }
+          return { label, description };
+        })
+        .filter((option): option is { label: string; description: string } => option !== undefined);
+      const id = asString(question.id)?.trim();
+      const header = asString(question.header)?.trim();
+      const prompt = asString(question.question)?.trim();
+      if (!id || !header || !prompt || !options || options.length === 0) {
+        return undefined;
+      }
+      return {
+        id,
+        header,
+        question: prompt,
+        options,
+      };
+    })
+    .filter(
+      (
+        question,
+      ): question is {
+        id: string;
+        header: string;
+        question: string;
+        options: Array<{ label: string; description: string }>;
+      } => question !== undefined,
+    );
+
+  return parsedQuestions.length > 0 ? parsedQuestions : undefined;
+}
+
 function toThreadState(
   value: unknown,
 ): "active" | "idle" | "archived" | "closed" | "compacted" | "error" {
@@ -302,6 +391,46 @@ function asRuntimeItemId(itemId: ProviderItemId): RuntimeItemId {
 
 function asRuntimeRequestId(requestId: string): RuntimeRequestId {
   return RuntimeRequestId.makeUnsafe(requestId);
+}
+
+function asRuntimeTaskId(taskId: string): RuntimeTaskId {
+  return RuntimeTaskId.makeUnsafe(taskId);
+}
+
+function codexEventMessage(payload: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  return asObject(payload?.msg);
+}
+
+function codexEventBase(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+): Omit<ProviderRuntimeEvent, "type" | "payload"> {
+  const payload = asObject(event.payload);
+  const msg = codexEventMessage(payload);
+  const turnId = asString(msg?.turn_id) ?? asString(msg?.turnId);
+  const itemId = asString(msg?.item_id) ?? asString(msg?.itemId);
+  const requestId = asString(msg?.request_id) ?? asString(msg?.requestId);
+  const base = runtimeEventBase(event, canonicalThreadId);
+  const providerRefs = base.providerRefs
+    ? {
+        ...base.providerRefs,
+        ...(turnId ? { providerTurnId: turnId } : {}),
+        ...(itemId ? { providerItemId: ProviderItemId.makeUnsafe(itemId) } : {}),
+        ...(requestId ? { providerRequestId: requestId } : {}),
+      }
+    : {
+        ...(turnId ? { providerTurnId: turnId } : {}),
+        ...(itemId ? { providerItemId: ProviderItemId.makeUnsafe(itemId) } : {}),
+        ...(requestId ? { providerRequestId: requestId } : {}),
+      };
+
+  return {
+    ...base,
+    ...(turnId ? { turnId: TurnId.makeUnsafe(turnId) } : {}),
+    ...(itemId ? { itemId: asRuntimeItemId(ProviderItemId.makeUnsafe(itemId)) } : {}),
+    ...(requestId ? { requestId: asRuntimeRequestId(requestId) } : {}),
+    ...(Object.keys(providerRefs).length > 0 ? { providerRefs } : {}),
+  };
 }
 
 function eventRawSource(event: ProviderEvent): NonNullable<ProviderRuntimeEvent["raw"]>["source"] {
@@ -404,6 +533,22 @@ function mapToRuntimeEvents(
   }
 
   if (event.kind === "request") {
+    if (event.method === "item/tool/requestUserInput") {
+      const questions = toUserInputQuestions(payload);
+      if (!questions) {
+        return [];
+      }
+      return [
+        {
+          ...runtimeEventBase(event, canonicalThreadId),
+          type: "user-input.requested",
+          payload: {
+            questions,
+          },
+        },
+      ];
+    }
+
     const detail =
       asString(payload?.command) ?? asString(payload?.reason) ?? asString(payload?.prompt);
     return [
@@ -737,6 +882,102 @@ function mapToRuntimeEvents(
     ];
   }
 
+  if (event.method === "item/tool/requestUserInput/answered") {
+    return [
+      {
+        ...runtimeEventBase(event, canonicalThreadId),
+        type: "user-input.resolved",
+        payload: {
+          answers: toCanonicalUserInputAnswers(
+            asObject(event.payload)?.answers as ProviderUserInputAnswers | undefined,
+          ),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "codex/event/task_started") {
+    const msg = codexEventMessage(payload);
+    const taskId = asString(payload?.id) ?? asString(msg?.turn_id);
+    if (!taskId) {
+      return [];
+    }
+    return [
+      {
+        ...codexEventBase(event, canonicalThreadId),
+        type: "task.started",
+        payload: {
+          taskId: asRuntimeTaskId(taskId),
+          ...(asString(msg?.collaboration_mode_kind)
+            ? { taskType: asString(msg?.collaboration_mode_kind) }
+            : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "codex/event/task_complete") {
+    const msg = codexEventMessage(payload);
+    const taskId = asString(payload?.id) ?? asString(msg?.turn_id);
+    if (!taskId) {
+      return [];
+    }
+    return [
+      {
+        ...codexEventBase(event, canonicalThreadId),
+        type: "task.completed",
+        payload: {
+          taskId: asRuntimeTaskId(taskId),
+          status: "completed",
+          ...(asString(msg?.last_agent_message)
+            ? { summary: asString(msg?.last_agent_message) }
+            : {}),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "codex/event/agent_reasoning") {
+    const msg = codexEventMessage(payload);
+    const taskId = asString(payload?.id);
+    const description = asString(msg?.text);
+    if (!taskId || !description) {
+      return [];
+    }
+    return [
+      {
+        ...codexEventBase(event, canonicalThreadId),
+        type: "task.progress",
+        payload: {
+          taskId: asRuntimeTaskId(taskId),
+          description,
+        },
+      },
+    ];
+  }
+
+  if (event.method === "codex/event/reasoning_content_delta") {
+    const msg = codexEventMessage(payload);
+    const delta = asString(msg?.delta);
+    if (!delta) {
+      return [];
+    }
+    return [
+      {
+        ...codexEventBase(event, canonicalThreadId),
+        type: "content.delta",
+        payload: {
+          streamKind:
+            asNumber(msg?.summary_index) !== undefined ? "reasoning_summary_text" : "reasoning_text",
+          delta,
+          ...(asNumber(msg?.summary_index) !== undefined
+            ? { summaryIndex: asNumber(msg?.summary_index) }
+            : {}),
+        },
+      },
+    ];
+  }
+
   if (event.method === "model/rerouted") {
     return [
       {
@@ -1034,6 +1275,9 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
               ...(input.input !== undefined ? { input: input.input } : {}),
               ...(input.model !== undefined ? { model: input.model } : {}),
               ...(input.effort !== undefined ? { effort: input.effort } : {}),
+              ...(input.interactionMode !== undefined
+                ? { interactionMode: input.interactionMode }
+                : {}),
               ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
             };
             return manager.sendTurn(managerInput);
@@ -1094,6 +1338,16 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
       Effect.tryPromise({
         try: () => manager.respondToRequest(threadId, requestId, decision),
         catch: (cause) => toRequestError(threadId, "item/requestApproval/decision", cause),
+      });
+
+    const respondToUserInput: CodexAdapterShape["respondToUserInput"] = (
+      threadId,
+      requestId,
+      answers,
+    ) =>
+      Effect.tryPromise({
+        try: () => manager.respondToUserInput(threadId, requestId, answers),
+        catch: (cause) => toRequestError(threadId, "item/tool/requestUserInput", cause),
       });
 
     const stopSession: CodexAdapterShape["stopSession"] = (threadId) =>
@@ -1163,6 +1417,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
       readThread,
       rollbackThread,
       respondToRequest,
+      respondToUserInput,
       stopSession,
       listSessions,
       hasSession,

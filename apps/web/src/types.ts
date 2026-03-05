@@ -9,11 +9,14 @@ import type {
   MessageId,
   CheckpointRef,
   ProviderKind,
+  ProviderInteractionMode,
 } from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export type RuntimeMode = "approval-required" | "full-access";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
+export type InteractionMode = ProviderInteractionMode;
+export const DEFAULT_INTERACTION_MODE: InteractionMode = "default";
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
 export const DEFAULT_THREAD_TERMINAL_ID = "default";
 export const MAX_THREAD_TERMINAL_COUNT = 4;
@@ -78,6 +81,7 @@ export interface Thread {
   title: string;
   model: string;
   runtimeMode: RuntimeMode;
+  interactionMode: InteractionMode;
   session: ThreadSession | null;
   messages: ChatMessage[];
   error: string | null;

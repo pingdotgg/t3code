@@ -158,6 +158,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           title: command.title,
           model: command.model,
           runtimeMode: command.runtimeMode,
+          interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
           createdAt: command.createdAt,
@@ -237,6 +238,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.interaction-mode.set": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.interaction-mode-set",
+        payload: {
+          threadId: command.threadId,
+          interactionMode: command.interactionMode,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
     case "thread.turn.start": {
       yield* requireThread({
         readModel,
@@ -282,6 +306,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           runtimeMode:
             readModel.threads.find((entry) => entry.id === command.threadId)?.runtimeMode ??
             command.runtimeMode,
+          interactionMode:
+            readModel.threads.find((entry) => entry.id === command.threadId)?.interactionMode ??
+            command.interactionMode,
           createdAt: command.createdAt,
         },
       };
@@ -331,6 +358,32 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           requestId: command.requestId,
           decision: command.decision,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.user-input.respond": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+          metadata: {
+            requestId: command.requestId,
+          },
+        }),
+        type: "thread.user-input-response-requested",
+        payload: {
+          threadId: command.threadId,
+          requestId: command.requestId,
+          answers: command.answers,
           createdAt: command.createdAt,
         },
       };

@@ -7,6 +7,7 @@ import {
   type ProviderSession,
   type ProviderSessionStartInput,
   type ProviderTurnStartResult,
+  type ProviderUserInputAnswers,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -76,6 +77,14 @@ class FakeCodexManager extends CodexAppServerManager {
     ): Promise<void> => undefined,
   );
 
+  public respondToUserInputImpl = vi.fn(
+    async (
+      _threadId: ThreadId,
+      _requestId: ApprovalRequestId,
+      _answers: ProviderUserInputAnswers,
+    ): Promise<void> => undefined,
+  );
+
   public stopAllImpl = vi.fn(() => undefined);
 
   override startSession(input: ProviderSessionStartInput): Promise<ProviderSession> {
@@ -104,6 +113,14 @@ class FakeCodexManager extends CodexAppServerManager {
     decision: ProviderApprovalDecision,
   ): Promise<void> {
     return this.respondToRequestImpl(threadId, requestId, decision);
+  }
+
+  override respondToUserInput(
+    threadId: ThreadId,
+    requestId: ApprovalRequestId,
+    answers: ProviderUserInputAnswers,
+  ): Promise<void> {
+    return this.respondToUserInputImpl(threadId, requestId, answers);
   }
 
   override stopSession(_threadId: ThreadId): void {}
@@ -253,6 +270,46 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps completed plan items to canonical item.completed plan events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      const event: ProviderEvent = {
+        id: asEventId("evt-plan-complete"),
+        kind: "notification",
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("plan_1"),
+        payload: {
+          item: {
+            type: "Plan",
+            id: "plan_1",
+            text: "## Final plan\n\n- one\n- two",
+          },
+        },
+      };
+
+      lifecycleManager.emit("event", event);
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(firstEvent.value.type, "item.completed");
+      if (firstEvent.value.type !== "item.completed") {
+        return;
+      }
+      assert.equal(firstEvent.value.itemId, "plan_1");
+      assert.equal(firstEvent.value.payload.itemType, "plan");
+      assert.equal(firstEvent.value.payload.detail, "## Final plan\n\n- one\n- two");
+    }),
+  );
+
   it.effect("maps session/closed lifecycle events to canonical session.exited runtime events", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
@@ -358,6 +415,182 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       assert.equal(secondEvent?.type, "runtime.warning");
       if (secondEvent?.type === "runtime.warning") {
         assert.equal(secondEvent.payload.message, "Sandbox setup failed");
+      }
+    }),
+  );
+
+  it.effect("maps requestUserInput requests and answered notifications to canonical user-input events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-user-input-requested"),
+        kind: "request",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "item/tool/requestUserInput",
+        requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
+        payload: {
+          questions: [
+            {
+              id: "sandbox_mode",
+              header: "Sandbox",
+              question: "Which mode should be used?",
+              options: [
+                {
+                  label: "workspace-write",
+                  description: "Allow workspace writes only",
+                },
+              ],
+            },
+          ],
+        },
+      } satisfies ProviderEvent);
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-user-input-resolved"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "item/tool/requestUserInput/answered",
+        requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
+        payload: {
+          answers: {
+            sandbox_mode: {
+              answers: ["workspace-write"],
+            },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      assert.equal(events[0]?.type, "user-input.requested");
+      if (events[0]?.type === "user-input.requested") {
+        assert.equal(events[0].requestId, "req-user-input-1");
+        assert.equal(events[0].payload.questions[0]?.id, "sandbox_mode");
+      }
+
+      assert.equal(events[1]?.type, "user-input.resolved");
+      if (events[1]?.type === "user-input.resolved") {
+        assert.equal(events[1].requestId, "req-user-input-1");
+        assert.deepEqual(events[1].payload.answers, {
+          sandbox_mode: "workspace-write",
+        });
+      }
+    }),
+  );
+
+  it.effect("maps Codex task and reasoning event chunks into canonical runtime events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 4)).pipe(
+        Effect.forkChild,
+      );
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-codex-task-started"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "codex/event/task_started",
+        payload: {
+          id: "turn-structured-1",
+          msg: {
+            type: "task_started",
+            turn_id: "turn-structured-1",
+            collaboration_mode_kind: "plan",
+          },
+        },
+      } satisfies ProviderEvent);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-codex-agent-reasoning"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "codex/event/agent_reasoning",
+        payload: {
+          id: "turn-structured-1",
+          msg: {
+            type: "agent_reasoning",
+            text: "Need to compare both transport layers before finalizing the plan.",
+          },
+        },
+      } satisfies ProviderEvent);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-codex-reasoning-delta"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "codex/event/reasoning_content_delta",
+        payload: {
+          id: "turn-structured-1",
+          msg: {
+            type: "reasoning_content_delta",
+            turn_id: "turn-structured-1",
+            item_id: "rs_reasoning_1",
+            delta: "**Compare** transport boundaries",
+            summary_index: 0,
+          },
+        },
+      } satisfies ProviderEvent);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-codex-task-complete"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "codex/event/task_complete",
+        payload: {
+          id: "turn-structured-1",
+          msg: {
+            type: "task_complete",
+            turn_id: "turn-structured-1",
+            last_agent_message: "<proposed_plan>\n# Ship it\n</proposed_plan>",
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+
+      assert.equal(events[0]?.type, "task.started");
+      if (events[0]?.type === "task.started") {
+        assert.equal(events[0].turnId, "turn-structured-1");
+        assert.equal(events[0].payload.taskId, "turn-structured-1");
+        assert.equal(events[0].payload.taskType, "plan");
+      }
+
+      assert.equal(events[1]?.type, "task.progress");
+      if (events[1]?.type === "task.progress") {
+        assert.equal(events[1].payload.taskId, "turn-structured-1");
+        assert.equal(
+          events[1].payload.description,
+          "Need to compare both transport layers before finalizing the plan.",
+        );
+      }
+
+      assert.equal(events[2]?.type, "content.delta");
+      if (events[2]?.type === "content.delta") {
+        assert.equal(events[2].turnId, "turn-structured-1");
+        assert.equal(events[2].itemId, "rs_reasoning_1");
+        assert.equal(events[2].payload.streamKind, "reasoning_summary_text");
+        assert.equal(events[2].payload.summaryIndex, 0);
+      }
+
+      assert.equal(events[3]?.type, "task.completed");
+      if (events[3]?.type === "task.completed") {
+        assert.equal(events[3].turnId, "turn-structured-1");
+        assert.equal(events[3].payload.taskId, "turn-structured-1");
+        assert.equal(events[3].payload.summary, "<proposed_plan>\n# Ship it\n</proposed_plan>");
       }
     }),
   );

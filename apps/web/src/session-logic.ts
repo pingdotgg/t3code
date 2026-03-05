@@ -3,6 +3,7 @@ import {
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
   type ProviderKind,
+  type UserInputQuestion,
   type TurnId,
 } from "@t3tools/contracts";
 
@@ -31,6 +32,22 @@ export interface PendingApproval {
   requestKind: "command" | "file-read" | "file-change";
   createdAt: string;
   detail?: string;
+}
+
+export interface PendingUserInput {
+  requestId: ApprovalRequestId;
+  createdAt: string;
+  questions: ReadonlyArray<UserInputQuestion>;
+}
+
+export interface ActivePlanState {
+  createdAt: string;
+  turnId: TurnId | null;
+  explanation?: string | null;
+  steps: Array<{
+    step: string;
+    status: "pending" | "inProgress" | "completed";
+  }>;
 }
 
 export type TimelineEntry =
@@ -159,6 +176,155 @@ export function derivePendingApprovals(
   return [...openByRequestId.values()].toSorted((left, right) =>
     left.createdAt.localeCompare(right.createdAt),
   );
+}
+
+function parseUserInputQuestions(
+  payload: Record<string, unknown> | null,
+): ReadonlyArray<UserInputQuestion> | null {
+  const questions = payload?.questions;
+  if (!Array.isArray(questions)) {
+    return null;
+  }
+  const parsed = questions
+    .map<UserInputQuestion | null>((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const question = entry as Record<string, unknown>;
+      if (
+        typeof question.id !== "string" ||
+        typeof question.header !== "string" ||
+        typeof question.question !== "string" ||
+        !Array.isArray(question.options)
+      ) {
+        return null;
+      }
+      const options = question.options
+        .map<UserInputQuestion["options"][number] | null>((option) => {
+          if (!option || typeof option !== "object") return null;
+          const optionRecord = option as Record<string, unknown>;
+          if (
+            typeof optionRecord.label !== "string" ||
+            typeof optionRecord.description !== "string"
+          ) {
+            return null;
+          }
+          return {
+            label: optionRecord.label,
+            description: optionRecord.description,
+          };
+        })
+        .filter((option): option is UserInputQuestion["options"][number] => option !== null);
+      if (options.length === 0) {
+        return null;
+      }
+      return {
+        id: question.id,
+        header: question.header,
+        question: question.question,
+        options,
+      };
+    })
+    .filter((question): question is UserInputQuestion => question !== null);
+  return parsed.length > 0 ? parsed : null;
+}
+
+export function derivePendingUserInputs(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): PendingUserInput[] {
+  const openByRequestId = new Map<ApprovalRequestId, PendingUserInput>();
+  const ordered = [...activities].toSorted(compareActivitiesByOrder);
+
+  for (const activity of ordered) {
+    const payload =
+      activity.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+    const requestId =
+      payload && typeof payload.requestId === "string"
+        ? ApprovalRequestId.makeUnsafe(payload.requestId)
+        : null;
+
+    if (activity.kind === "user-input.requested" && requestId) {
+      const questions = parseUserInputQuestions(payload);
+      if (!questions) {
+        continue;
+      }
+      openByRequestId.set(requestId, {
+        requestId,
+        createdAt: activity.createdAt,
+        questions,
+      });
+      continue;
+    }
+
+    if (activity.kind === "user-input.resolved" && requestId) {
+      openByRequestId.delete(requestId);
+    }
+  }
+
+  return [...openByRequestId.values()].toSorted((left, right) =>
+    left.createdAt.localeCompare(right.createdAt),
+  );
+}
+
+export function deriveActivePlanState(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  latestTurnId: TurnId | undefined,
+): ActivePlanState | null {
+  const ordered = [...activities].toSorted(compareActivitiesByOrder);
+  const candidates = ordered.filter((activity) => {
+    if (activity.kind !== "turn.plan.updated") {
+      return false;
+    }
+    if (!latestTurnId) {
+      return true;
+    }
+    return activity.turnId === latestTurnId;
+  });
+  const latest = candidates.at(-1);
+  if (!latest) {
+    return null;
+  }
+  const payload =
+    latest.payload && typeof latest.payload === "object"
+      ? (latest.payload as Record<string, unknown>)
+      : null;
+  const rawPlan = payload?.plan;
+  if (!Array.isArray(rawPlan)) {
+    return null;
+  }
+  const steps = rawPlan
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const record = entry as Record<string, unknown>;
+      if (typeof record.step !== "string") {
+        return null;
+      }
+      const status =
+        record.status === "completed" || record.status === "inProgress"
+          ? record.status
+          : "pending";
+      return {
+        step: record.step,
+        status,
+      };
+    })
+    .filter(
+      (
+        step,
+      ): step is {
+        step: string;
+        status: "pending" | "inProgress" | "completed";
+      } => step !== null,
+    );
+  if (steps.length === 0) {
+    return null;
+  }
+  return {
+    createdAt: latest.createdAt,
+    turnId: latest.turnId,
+    ...(payload && "explanation" in payload ? { explanation: payload.explanation as string | null } : {}),
+    steps,
+  };
 }
 
 export function deriveWorkLogEntries(

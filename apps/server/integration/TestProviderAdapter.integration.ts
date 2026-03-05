@@ -413,6 +413,12 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
         })
       : missingSessionEffect(provider, threadId);
 
+  const respondToUserInput: ProviderAdapterShape<ProviderAdapterError>["respondToUserInput"] = (
+    threadId,
+    _requestId,
+    _answers,
+  ) => (sessions.has(threadId) ? Effect.void : missingSessionEffect(provider, threadId));
+
   const stopSession: ProviderAdapterShape<ProviderAdapterError>["stopSession"] = (threadId) =>
     Effect.sync(() => {
       sessions.delete(threadId);
@@ -475,6 +481,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
     sendTurn,
     interruptTurn,
     respondToRequest,
+    respondToUserInput,
     stopSession,
     listSessions,
     hasSession,

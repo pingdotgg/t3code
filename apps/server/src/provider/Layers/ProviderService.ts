@@ -14,6 +14,7 @@ import {
   ThreadId,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
+  ProviderRespondToUserInputInput,
   ProviderSendTurnInput,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
@@ -333,6 +334,21 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         yield* routed.adapter.respondToRequest(routed.threadId, input.requestId, input.decision);
       });
 
+    const respondToUserInput: ProviderServiceShape["respondToUserInput"] = (rawInput) =>
+      Effect.gen(function* () {
+        const input = yield* decodeInputOrValidationError({
+          operation: "ProviderService.respondToUserInput",
+          schema: ProviderRespondToUserInputInput,
+          payload: rawInput,
+        });
+        const routed = yield* resolveRoutableSession({
+          threadId: input.threadId,
+          operation: "ProviderService.respondToUserInput",
+          allowRecovery: true,
+        });
+        yield* routed.adapter.respondToUserInput(routed.threadId, input.requestId, input.answers);
+      });
+
     const stopSession: ProviderServiceShape["stopSession"] = (rawInput) =>
       Effect.gen(function* () {
         const input = yield* decodeInputOrValidationError({
@@ -442,6 +458,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       sendTurn,
       interruptTurn,
       respondToRequest,
+      respondToUserInput,
       stopSession,
       listSessions,
       getCapabilities,

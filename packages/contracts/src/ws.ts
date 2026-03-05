@@ -29,7 +29,7 @@ import {
   TerminalWriteInput,
 } from "./terminal";
 import { KeybindingRule } from "./keybindings";
-import { ProjectSearchEntriesInput } from "./project";
+import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
 
 // ── WebSocket RPC Method Names ───────────────────────────────────────
@@ -40,6 +40,7 @@ export const WS_METHODS = {
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
+  projectsWriteFile: "projects.writeFile",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -101,6 +102,7 @@ export const WebSocketRequestBody = Schema.Union([
 
   // Project Search
   tagRequestBody(WS_METHODS.projectsSearchEntries, ProjectSearchEntriesInput),
+  tagRequestBody(WS_METHODS.projectsWriteFile, ProjectWriteFileInput),
 
   // Shell methods
   tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),

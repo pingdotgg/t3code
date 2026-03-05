@@ -6,6 +6,7 @@ import type { ProviderRuntimeEvent, ProviderSession } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
   CommandId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
   ProjectId,
@@ -139,6 +140,7 @@ describe("ProviderCommandReactor", () => {
     );
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
+    const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
     const stopSession = vi.fn((input: unknown) =>
       Effect.sync(() => {
         const threadId =
@@ -180,6 +182,7 @@ describe("ProviderCommandReactor", () => {
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
+      respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
       listSessions: () => Effect.succeed(runtimeSessions),
       getCapabilities: (provider) =>
@@ -234,6 +237,7 @@ describe("ProviderCommandReactor", () => {
         projectId: asProjectId("project-1"),
         title: "Thread",
         model: "gpt-5-codex",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
@@ -247,6 +251,7 @@ describe("ProviderCommandReactor", () => {
       sendTurn,
       interruptTurn,
       respondToRequest,
+      respondToUserInput,
       stopSession,
       renameBranch,
       generateBranchName,
@@ -269,6 +274,7 @@ describe("ProviderCommandReactor", () => {
           text: "hello reactor",
           attachments: [],
         },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
       }),
@@ -289,6 +295,44 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
+  it("forwards plan interaction mode to the provider turn request", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.makeUnsafe("cmd-interaction-mode-set-plan"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        interactionMode: "plan",
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-plan"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-plan"),
+          role: "user",
+          text: "plan this change",
+          attachments: [],
+        },
+        interactionMode: "plan",
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      interactionMode: "plan",
+    });
+  });
+
   it("starts first turn with requested provider when provider is specified", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
@@ -305,6 +349,7 @@ describe("ProviderCommandReactor", () => {
           attachments: [],
         },
         provider: "claudeCode",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
       }),
@@ -341,6 +386,7 @@ describe("ProviderCommandReactor", () => {
           attachments: [],
         },
         provider: "cursor",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
       }),
@@ -376,6 +422,7 @@ describe("ProviderCommandReactor", () => {
           text: "first",
           attachments: [],
         },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
       }),
@@ -395,6 +442,7 @@ describe("ProviderCommandReactor", () => {
           text: "second",
           attachments: [],
         },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
       }),
@@ -422,6 +470,7 @@ describe("ProviderCommandReactor", () => {
         },
         provider: "cursor",
         model: "composer-1.5",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
       }),
@@ -443,6 +492,7 @@ describe("ProviderCommandReactor", () => {
         },
         provider: "cursor",
         model: "composer-1.5",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
       }),
@@ -470,6 +520,7 @@ describe("ProviderCommandReactor", () => {
         },
         provider: "cursor",
         model: "gpt-5.3-codex",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
       }),
@@ -491,6 +542,7 @@ describe("ProviderCommandReactor", () => {
         },
         provider: "cursor",
         model: "composer-1.5",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
       }),
@@ -531,6 +583,7 @@ describe("ProviderCommandReactor", () => {
           text: "first",
           attachments: [],
         },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "full-access",
         createdAt: now,
       }),
@@ -566,6 +619,7 @@ describe("ProviderCommandReactor", () => {
           text: "second",
           attachments: [],
         },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "full-access",
         createdAt: now,
       }),
@@ -604,6 +658,7 @@ describe("ProviderCommandReactor", () => {
           text: "first",
           attachments: [],
         },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
       }),
@@ -624,6 +679,7 @@ describe("ProviderCommandReactor", () => {
           attachments: [],
         },
         provider: "claudeCode",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
       }),
@@ -672,6 +728,7 @@ describe("ProviderCommandReactor", () => {
           text: "first",
           attachments: [],
         },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "full-access",
         createdAt: now,
       }),
@@ -746,7 +803,6 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.interruptTurn.mock.calls.length === 1);
     expect(harness.interruptTurn.mock.calls[0]?.[0]).toEqual({
       threadId: "thread-1",
-      turnId: "turn-1",
     });
   });
 
@@ -788,6 +844,51 @@ describe("ProviderCommandReactor", () => {
       threadId: "thread-1",
       requestId: "approval-request-1",
       decision: "accept",
+    });
+  });
+
+  it("reacts to thread.user-input.respond by forwarding structured user input answers", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-set-for-user-input"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.user-input.respond",
+        commandId: CommandId.makeUnsafe("cmd-user-input-respond"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        requestId: asApprovalRequestId("user-input-request-1"),
+        answers: {
+          sandbox_mode: "workspace-write",
+        },
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.respondToUserInput.mock.calls.length === 1);
+    expect(harness.respondToUserInput.mock.calls[0]?.[0]).toEqual({
+      threadId: "thread-1",
+      requestId: "user-input-request-1",
+      answers: {
+        sandbox_mode: "workspace-write",
+      },
     });
   });
 

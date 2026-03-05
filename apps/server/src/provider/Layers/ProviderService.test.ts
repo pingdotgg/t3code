@@ -116,6 +116,14 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     ): Effect.Effect<void, ProviderAdapterError> => Effect.void,
   );
 
+  const respondToUserInput = vi.fn(
+    (
+      _threadId: ThreadId,
+      _requestId: string,
+      _answers: Record<string, unknown>,
+    ): Effect.Effect<void, ProviderAdapterError> => Effect.void,
+  );
+
   const stopSession = vi.fn(
     (threadId: ThreadId): Effect.Effect<void, ProviderAdapterError> =>
       Effect.sync(() => {
@@ -172,6 +180,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     sendTurn,
     interruptTurn,
     respondToRequest,
+    respondToUserInput,
     stopSession,
     listSessions,
     hasSession,
@@ -192,6 +201,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     sendTurn,
     interruptTurn,
     respondToRequest,
+    respondToUserInput,
     stopSession,
     listSessions,
     hasSession,
@@ -395,12 +405,12 @@ it.effect(
           provider?: string;
           cwd?: string;
           resumeCursor?: unknown;
-          resumeThreadId?: string;
+          threadId?: string;
         };
         assert.equal(startPayload.provider, "codex");
         assert.equal(startPayload.cwd, "/tmp/project");
         assert.deepEqual(startPayload.resumeCursor, startedSession.resumeCursor);
-        assert.equal(startPayload.resumeThreadId, "thread-1");
+        assert.equal(startPayload.threadId, startedSession.threadId);
       }
       assert.equal(secondCodex.rollbackThread.mock.calls.length, 1);
       const rollbackCall = secondCodex.rollbackThread.mock.calls[0];
@@ -444,6 +454,23 @@ routing.layer("ProviderServiceLive routing", (it) => {
       });
       assert.deepEqual(routing.codex.respondToRequest.mock.calls, [
         [session.threadId, asRequestId("req-1"), "accept"],
+      ]);
+
+      yield* provider.respondToUserInput({
+        threadId: session.threadId,
+        requestId: asRequestId("req-user-input-1"),
+        answers: {
+          sandbox_mode: "workspace-write",
+        },
+      });
+      assert.deepEqual(routing.codex.respondToUserInput.mock.calls, [
+        [
+          session.threadId,
+          asRequestId("req-user-input-1"),
+          {
+            sandbox_mode: "workspace-write",
+          },
+        ],
       ]);
 
       yield* provider.rollbackConversation({
@@ -519,12 +546,12 @@ routing.layer("ProviderServiceLive routing", (it) => {
           provider?: string;
           cwd?: string;
           resumeCursor?: unknown;
-          resumeThreadId?: string;
+          threadId?: string;
         };
         assert.equal(startPayload.provider, "codex");
         assert.equal(startPayload.cwd, "/tmp/project");
         assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
-        assert.equal(startPayload.resumeThreadId, "thread-2");
+        assert.equal(startPayload.threadId, initial.threadId);
       }
       assert.equal(routing.codex.rollbackThread.mock.calls.length, 1);
       const rollbackCall = routing.codex.rollbackThread.mock.calls[0];
@@ -561,12 +588,12 @@ routing.layer("ProviderServiceLive routing", (it) => {
           provider?: string;
           cwd?: string;
           resumeCursor?: unknown;
-          resumeThreadId?: string;
+          threadId?: string;
         };
         assert.equal(startPayload.provider, "codex");
         assert.equal(startPayload.cwd, "/tmp/project-send-turn");
         assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
-        assert.equal(startPayload.resumeThreadId, "thread-4");
+        assert.equal(startPayload.threadId, initial.threadId);
       }
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
     }),
@@ -629,7 +656,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           };
           assert.equal(runtimePayload.cwd, process.cwd());
           assert.equal(runtimePayload.model, null);
-          assert.equal(runtimePayload.activeTurnId, "turn-1");
+          assert.equal(runtimePayload.activeTurnId, `turn-${String(session.threadId)}`);
           assert.equal(runtimePayload.lastError, null);
           assert.equal(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
         }
@@ -822,7 +849,9 @@ validation.layer("ProviderServiceLive validation", (it) => {
 
       const failure = yield* Effect.result(
         provider.startSession(asThreadId("thread-validation"), {
+          threadId: asThreadId("thread-validation"),
           provider: "invalid-provider",
+          runtimeMode: "full-access",
         } as never),
       );
 

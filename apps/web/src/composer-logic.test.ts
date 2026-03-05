@@ -4,6 +4,7 @@ import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToMention,
+  parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
 
@@ -39,6 +40,18 @@ describe("detectComposerTrigger", () => {
     expect(trigger).toEqual({
       kind: "slash-model",
       query: "spark",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects non-model slash commands while typing", () => {
+    const text = "/pl";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "pl",
       rangeStart: 0,
       rangeEnd: text.length,
     });
@@ -109,5 +122,19 @@ describe("isCollapsedCursorAdjacentToMention", () => {
     expect(isCollapsedCursorAdjacentToMention(text, mentionStart, "right")).toBe(true);
     expect(isCollapsedCursorAdjacentToMention(text, mentionEnd, "right")).toBe(false);
     expect(isCollapsedCursorAdjacentToMention(text, mentionStart - 1, "right")).toBe(false);
+  });
+});
+
+describe("parseStandaloneComposerSlashCommand", () => {
+  it("parses standalone /plan command", () => {
+    expect(parseStandaloneComposerSlashCommand(" /plan ")).toBe("plan");
+  });
+
+  it("parses standalone /default command", () => {
+    expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
+  });
+
+  it("ignores slash commands with extra message text", () => {
+    expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
   });
 });

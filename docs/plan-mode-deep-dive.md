@@ -1,191 +1,244 @@
-# Plan Mode Implementation Plan
+# Plan Mode Deep Dive
 
 ## Goal
 
-Implement plan mode in a provider-agnostic way across:
+Implement plan mode without fighting the architecture that already exists in this repo.
 
-- Codex App Server
-- Claude Agent SDK / Claude Code
-- Cursor ACP
+The current app is:
 
-The implementation must support:
+- provider-adapter driven on the server
+- orchestration snapshot driven on the client
+- already equipped with some plan-adjacent runtime events
+- not yet equipped with first-class plan-mode state in the orchestration read model
 
-- provider-native or adapter-derived plan mode state
-- structured user-input question flows where available
-- graceful fallback when a provider lacks structured prompts or structured plan updates
-- a front-end UX that renders from capabilities and canonical events rather than provider-specific conditionals
-
-This document now serves as both:
-
-- the architecture plan for shared orchestration and UI wiring
-- the provider adapter implementation plan for each supported agent runtime
+This document updates the implementation plan to match that reality.
 
 ---
 
-## Source of truth
+## Current Repo Baseline
 
-### Codex
+### 1. Shared contracts already have some plan primitives
 
-Codex protocol decisions should be based on the open-source app-server protocol, not on local rollout session files.
+`packages/contracts/src/providerRuntime.ts` already includes:
 
-Upstream Codex app-server explicitly supports:
+- `turn.plan.updated`
+- `content.delta` with `streamKind: "plan_text"`
+- `user-input.requested`
+- `user-input.resolved`
 
-- `turn/plan/updated`
-- `item/plan/delta`
-- `item/tool/requestUserInput`
-- `serverRequest/resolved`
-- lower-level `EventMsg` variants `plan_update`, `plan_delta`, and `request_user_input`
+Important constraint:
+
+- these are runtime-event primitives only
+- there is no first-class provider capability schema
+- there is no first-class plan operating mode field
+- there is no dedicated final-plan artifact schema
+
+### 2. Existing `runtimeMode` is not plan mode
+
+`RuntimeMode` in `packages/contracts/src/orchestration.ts` and `packages/contracts/src/provider.ts` means execution policy:
+
+- `approval-required`
+- `full-access`
+
+Plan mode must not overload that field.
+
+If we need provider operating mode, it needs a separate concept and separate naming, for example:
+
+- `interactionMode`
+- `planningMode`
+- `providerOperatingMode`
+
+Anything is acceptable as long as it is not reused from the existing access-policy `runtimeMode`.
+
+### 3. Server flow is already canonical-event-first
+
+The current server pipeline is:
+
+1. Provider adapters emit `ProviderRuntimeEvent`s.
+2. `ProviderService` multiplexes adapter streams and maintains provider session bindings.
+3. `ProviderRuntimeIngestion` translates runtime events into orchestration commands and thread activities.
+4. `ProjectionPipeline` persists read-model tables.
+5. `ProjectionSnapshotQuery` rebuilds the orchestration snapshot returned by `orchestration.getSnapshot`.
+6. `wsServer` exposes generic orchestration snapshot, command dispatch, diff, and replay methods.
+
+This matters because plan mode should fit into the same pipeline, not bypass it with a parallel websocket protocol.
+
+Important detail:
+
+- `wsServer` broadcasts orchestration domain events, not raw provider runtime events
+- if the web should see plan state live, that state must first become orchestration events and/or projections
+
+### 4. The current read model has nowhere to put plan mode
+
+`OrchestrationThread` currently contains:
+
+- `messages`
+- `activities`
+- `checkpoints`
+- `session`
+- `latestTurn`
+- thread metadata like title, model, branch, worktree
+
+It does not contain:
+
+- current structured plan snapshot
+- accumulated plan-text stream
+- pending structured user-input prompt
+- resolved structured answers
+- provider interactive capabilities
+- provider plan/default operating mode
+- final approved plan artifact
+
+Today the only flexible place plan data can survive into the web snapshot is `activities[].payload`.
+
+### 5. The web app is snapshot-driven, not event-reduced
+
+The client flow today is:
+
+1. `EventRouter` listens to `orchestration.domainEvent`.
+2. On domain events, it re-fetches `orchestration.getSnapshot`.
+3. Zustand stores the latest normalized snapshot.
+4. `session-logic.ts` derives UI state like pending approvals and work log from thread activities.
+5. `ChatView` renders the thread from snapshot state plus those derived selectors.
 
 Important implication:
 
-- local Codex rollout JSONL files are a lossy or higher-level projection
-- they may preserve plan mode state and final `<proposed_plan>` output
-- they should not be treated as proof that low-level plan events do or do not exist
+- plan mode should be added to the orchestration snapshot and/or activity derivation path
+- it should not depend on a separate client-side event reducer
 
-### Claude
+### 6. Current implementation status by provider
 
-Claude protocol decisions should be based on:
+#### Codex
 
-- installed SDK typings
-- real local session JSONL evidence
+Currently implemented:
 
-Confirmed from local Claude transcript:
+- `turn/plan/updated` maps to `turn.plan.updated`
+- `item/plan/delta` maps to `content.delta` with `streamKind: "plan_text"`
 
-- `AskUserQuestion` is a native `tool_use`
-- `ExitPlanMode` is a native `tool_use`
-- `AskUserQuestion.input.questions[]` is structured and adapter-parseable
+Current gap:
 
-### Cursor
+- `item/tool/requestUserInput` is currently classified as `request.opened` with request type `tool_user_input`
+- it is not yet upgraded into `user-input.requested`
+- there is no structured answer submission path yet
 
-Cursor protocol decisions should be based on:
+#### Claude Code
 
-- ACP docs
-- current local ACP probe output
+Currently implemented:
 
-Confirmed from current docs + probe:
+- session/config metadata surfaces through `session.configured`
+- assistant/reasoning text flows through normal runtime content events
+- approval requests already bridge into `request.opened` / `request.resolved`
 
-- ACP session modes include `agent`, `plan`, and `ask`
-- for product semantics, treat ACP mode as binary: `operatingMode: default | plan`
-- Cursor ACP extension methods include:
-  - `cursor/ask_question` (multiple-choice question prompt)
-  - `cursor/create_plan` (explicit plan approval request)
-  - `cursor/update_todos` (todo-state updates that can drive plan-step UI)
-- probe streams still show standard chunk/update events and may not always emit extension methods in every run
+Current gap:
+
+- no current canonical plan-mode mapping
+- no current `AskUserQuestion` mapping
+- no current `ExitPlanMode` mapping
+
+#### Cursor
+
+Currently implemented:
+
+- `available_commands_update` maps to `session.configured`
+- thought/message chunks map to `content.delta`
+- permission requests bridge into approval request events
+
+Current gap:
+
+- no current plan-mode mapping
+- no current structured prompt mapping
+- no current todo/plan projection
 
 ---
 
-## High-level product model
+## Design Constraints
 
-The implementation should separate three concepts that are currently easy to conflate.
+### Keep the current transport model
 
-### 1. Operating mode
+Plan mode should continue to flow through:
 
-This is the agent runtime mode.
+- `ProviderRuntimeEvent`
+- orchestration commands/events
+- projection tables
+- `orchestration.getSnapshot`
+- `orchestration.domainEvent`
 
-Canonical operating mode:
+Do not introduce provider-specific websocket channels unless the current architecture proves insufficient.
 
-- `default`
-- `plan`
+### Keep the client snapshot-driven
 
-This should be represented at runtime independently of plan content or prompt cards.
+The client already assumes that server state is re-synced from snapshots. Plan mode should respect that.
 
-### 2. Structured plan state
+That means:
 
-This is the current structured plan snapshot, if the provider can supply one natively or if the adapter can synthesize one confidently.
+- server-side persistence matters more than clever client buffering
+- reconnect behavior should come from projection state, not ad hoc React state
+- `session-logic.ts` and `ChatView` are the main frontend extension seams
 
-Canonical model:
+### Keep approvals separate from structured user input
+
+The current system has a full approval pipeline:
+
+- runtime `request.opened` / `request.resolved`
+- orchestration `thread.approval.respond`
+- provider `respondToRequest(...)`
+
+Plan-mode structured prompts are different and should not be forced into the approval model unless a provider genuinely models them as approval requests.
+
+### Preserve raw provider payloads
+
+When adding plan-mode mappings:
+
+- keep `raw` on internal canonical runtime events
+- keep `providerRefs` on internal canonical runtime events
+- avoid throwing away native payload shape too early inside adapter/server processing
+
+This does not mean provider-specific payloads should leak into the orchestration read model, websocket API, or web UI.
+
+The boundary should stay:
+
+- adapter/server internals may retain native payloads for correlation, debugging, and future parser improvements
+- shared orchestration state and client-visible contracts should expose only canonical plan-mode data
+
+That matters most for Claude and Cursor, where some mappings will be adapter-derived and may need native context during implementation and debugging.
+
+---
+
+## Updated Shared Work Plan
+
+## 1. Tighten shared contract naming before wiring features
+
+The first step is not to invent a new architecture. It is to formalize the concepts that are currently missing from contracts.
+
+### Add a plan operating mode concept
+
+Add a new shared contract for provider plan/default mode.
+
+Requirements:
+
+- do not reuse `RuntimeMode`
+- keep it orthogonal to access policy
+- make it available in the server->web read model, not only in raw runtime payloads
+
+Preferred shape:
 
 ```ts
-interface CanonicalPlanState {
-  explanation?: string | null;
-  steps: Array<{
-    id?: string;
-    text: string;
-    status: 'pending' | 'inProgress' | 'completed';
-    source: 'native' | 'synthesized';
-  }>;
-}
+type ProviderInteractionMode = "default" | "plan";
 ```
 
-### 3. Structured user-input prompt
+### Add typed provider interactive capabilities
 
-This is the product-level question card model.
+Current `session.configured.payload.config` is just `Record<string, unknown>`. That is too weak for capability-driven UI.
 
-Canonical model:
+Add a typed capability surface in `packages/contracts` that both server and web can import directly.
 
-```ts
-interface CanonicalUserInputPrompt {
-  promptId: string;
-  title?: string;
-  description?: string;
-  questions: Array<{
-    id: string;
-    header?: string;
-    label: string;
-    description?: string;
-    options: Array<{
-      id: string;
-      label: string;
-      description?: string;
-      recommended?: boolean;
-    }>;
-    multiSelect?: boolean;
-    allowFreeform?: boolean;
-    freeformPlaceholder?: string;
-    required?: boolean;
-  }>;
-  source: 'native' | 'tool-derived' | 'synthesized';
-}
+Preferred shape:
 
-interface CanonicalUserInputAnswer {
-  promptId: string;
-  answers: Array<{
-    questionId: string;
-    selectedOptionIds?: string[];
-    text?: string;
-  }>;
-}
-```
+- exported constant/object keyed by `ProviderKind`
+- exported type derived from that object
+- usable by adapters, orchestration code, and frontend rendering logic without duplicating provider capability tables
 
-This should remain distinct from approvals.
-
----
-
-## Shared orchestration plan
-
-## Summary
-
-Implement a canonical plan-mode interaction pipeline that starts in provider adapters, flows through provider runtime ingestion and orchestration projection, and terminates in capability-driven frontend rendering and response submission.
-
-### Shared goals
-
-- normalize plan mode state from each provider
-- normalize structured prompts where possible
-- preserve native payloads for later refinement
-- avoid UI coupling to provider names
-- support degraded conversational fallback where native structured prompts are unavailable
-
----
-
-## Orchestration work items
-
-### 1. Extend canonical provider runtime contracts
-
-Files:
-
-- `packages/contracts/src/providerRuntime.ts`
-- `packages/contracts/src/provider.ts`
-- `EVENTS.md`
-
-Add or formalize the following runtime concepts:
-
-- provider interactive capability payload
-- plan-mode state event or mode metadata surface
-- canonical structured user-input payload schema
-- canonical structured user-input answer payload schema
-- final-plan handoff payload for providers that emit a completed plan as text or tool output
-
-Required additions:
+Minimum fields:
 
 ```ts
 interface ProviderInteractiveCapabilities {
@@ -194,460 +247,318 @@ interface ProviderInteractiveCapabilities {
   supportsPlanTextStreaming: boolean;
   supportsStructuredUserInput: boolean;
   supportsFreeformUserInput: boolean;
-  supportsExitPlanMode: boolean;
+  supportsPlanAcceptance: boolean;
 }
 ```
 
-Canonical runtime behavior:
+Preferred usage:
 
-- `request.opened/request.resolved` remain transport-oriented
-- `user-input.requested/user-input.resolved` remain product-oriented
-- `turn.plan.updated` remains the canonical structured plan update event
-- `content.delta(streamKind=plan_text)` remains the canonical streaming plan text surface
+- static provider capabilities live in shared contracts
+- adapters may still emit dynamic runtime metadata when a capability is session-specific or probe-dependent
+- the orchestration snapshot should expose the active provider and any dynamic overrides, not duplicate the full static capability catalog per thread
 
-### 2. Add canonical mode/capability publication from providers
+### Add a dedicated structured-answer command path
 
-Files:
+Current shared commands only support approvals:
 
-- `apps/server/src/provider/Layers/*Adapter.ts`
-- `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts`
+- `thread.approval.respond`
+- provider `respondToRequest(...)`
 
-Each adapter should publish provider capabilities and current operating mode early in session startup and when mode changes.
+Plan mode needs a distinct path for structured prompt answers.
 
-Preferred shape:
+Preferred additions:
 
-- capabilities included in `session.configured`
-- current mode included in `session.configured`, `session.state.changed`, or a dedicated mode field on turn/session runtime metadata
+- orchestration command such as `thread.user-input.respond`
+- provider service method such as `respondToUserInput(...)`
+- adapter hook per provider for native answer serialization
 
-### 3. Preserve and project plan/user-input state in orchestration
+Do not overload approval decisions like `accept` / `decline` for structured question answers.
 
-Files:
+## 2. Extend the orchestration read model
 
-- `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts`
-- `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts`
-- any orchestration projection models feeding the web socket domain events
+The current read model is the main missing piece.
 
-Implementation requirements:
+Plan mode needs first-class projection state so reconnect and refresh behave like the rest of the app.
 
-- persist latest structured plan snapshot per active turn
-- persist pending structured user-input prompts per turn
-- persist resolved answers for history rendering
-- preserve raw/native payloads for debugging and future adapter improvements
+### Add first-class thread plan state
 
-### 4. Add frontend state model for plan mode
+Preferred thread-level additions:
 
-Files likely involved:
+- `interactionMode`
+- `currentPlan`
+- `pendingUserInput`
+- `resolvedUserInputs`
+- optional `finalPlanArtifact`
 
-- web app session/thread stores
-- conversation/event rendering layer
-- input composer / pending interaction surfaces
+The exact nesting can vary, but it should be snapshot-friendly and not require replaying arbitrary activity payloads in the client.
 
-Add frontend state for:
+`interactiveCapabilities` should not be modeled as thread-owned state if they are static per provider.
 
-- current provider capabilities
-- current operating mode
+Preferred split:
+
+- static capabilities: shared contract export keyed by provider
+- dynamic per-thread/per-session state: only fields that can actually vary at runtime, such as current interaction mode or active pending prompt
+
+### Keep activities as secondary audit trail
+
+`thread.activities` should still receive plan/user-input activity summaries for timeline/debugging, but it should not be the only source of truth for active plan state.
+
+### Projection changes
+
+This likely means:
+
+- new projection repository/table(s) for plan state and prompt state
+- `ProjectionPipeline` updates
+- `ProjectionSnapshotQuery` returning the new fields
+- projection tests for persistence and replay
+
+## 3. Update runtime ingestion to populate that state
+
+`ProviderRuntimeIngestion` already knows how to:
+
+- turn assistant text into messages
+- turn approval events into activities
+- turn `turn.plan.updated` into an activity
+
+It should be extended to also translate plan/user-input runtime events into read-model state.
+
+Implementation direction:
+
+- `turn.plan.updated` updates projected plan snapshot
+- `content.delta(plan_text)` appends to projected plan-text buffer when relevant
+- `user-input.requested` opens a projected pending prompt
+- `user-input.resolved` closes/resolves that prompt
+- providers that only expose raw/native blobs can still emit synthesized canonical runtime events first, then rely on the shared ingestion path
+
+## 4. Integrate plan mode into the existing web seams
+
+The web architecture already has the right places.
+
+### Store and types
+
+Update:
+
+- `apps/web/src/types.ts`
+- `apps/web/src/store.ts`
+
+The store should stay thin and snapshot-oriented. It should sync whatever new read-model fields the server exposes.
+
+### Derived UI state
+
+Update:
+
+- `apps/web/src/session-logic.ts`
+
+This is the natural place for:
+
+- `derivePlanState(...)`
+- `derivePendingUserInput(...)`
+- any fallback derivation from activities during an incremental migration
+
+### Rendering
+
+Primary UI seam:
+
+- `apps/web/src/components/ChatView.tsx`
+
+Current UI already has:
+
+- top-of-thread alert stacks for pending approvals
+- work-log rendering derived from activities
+- timeline rows for messages and work state
+
+That suggests two viable rendering patterns:
+
+1. active plan/prompt panel above the timeline
+2. resolved plan/prompt entries rendered in timeline/history
+
+The route structure does not need to change. Plan mode should remain thread-local state inside the existing chat route.
+
+---
+
+## Provider Implementation Plan
+
+## Provider 1: Codex
+
+Codex is closest to the target shape and should be the first end-to-end implementation.
+
+### Current status
+
+Already present:
+
+- native structured plan update mapping
+- native plan-text stream mapping
+
+Missing:
+
+- native structured prompt mapping for `item/tool/requestUserInput`
+- structured answer submission path
+- removal of the current empty-answer auto-ack path in `codexAppServerManager`
+- projection and UI support for the already-emitted plan events
+
+### Required work
+
+1. Upgrade `item/tool/requestUserInput` from request-only handling to canonical `user-input.requested`.
+2. Preserve `request.opened` as transport/debug metadata when useful.
+3. Add adapter-side answer submission for the corresponding pending request/tool context.
+4. Emit `user-input.resolved` when the answer is submitted or confirmed resolved.
+5. Project the result into the orchestration snapshot.
+
+### Codex-specific note
+
+The runtime event schemas already match Codex reasonably well, so this provider should define the canonical end-to-end behavior first.
+
+## Provider 2: Claude Code
+
+Claude likely needs tool-aware adaptation rather than pure transport mapping.
+
+### Current status
+
+Already present:
+
+- generic session/runtime stream integration
+- approval bridging
+
+Missing:
+
+- plan/default operating mode mapping
+- `AskUserQuestion` -> `user-input.requested`
+- `ExitPlanMode` -> final-plan or plan-state handoff
+
+### Required work
+
+1. Detect plan/default operating mode from Claude-native metadata without touching access-policy `runtimeMode`.
+2. Map `AskUserQuestion` tool payloads into canonical `user-input.requested`.
+3. Add provider-specific answer serialization for the return path.
+4. Detect `ExitPlanMode` and decide whether it becomes:
+   - a final-plan artifact
+   - a synthetic structured plan snapshot
+   - or both
+5. Avoid over-synthesizing incremental structured plan steps unless Claude gives us enough structure to do it safely.
+
+## Provider 3: Cursor
+
+Cursor should start from the same canonical server pipeline, but with a more conservative adapter.
+
+### Current status
+
+Already present:
+
+- session/update stream handling
+- reasoning/assistant text mapping
+- approval bridging
+
+Missing:
+
+- plan/default operating mode mapping
+- structured prompt mapping
+- structured plan/todo mapping
+
+### Required work
+
+1. Detect and publish Cursor operating mode separately from access-policy runtime mode.
+2. Map documented extension methods such as `cursor/ask_question` and `cursor/update_todos` only when payloads are confirmed.
+3. Fall back to plan-mode indicator plus normal assistant/reasoning text if structured Cursor plan events are absent.
+4. Preserve raw ACP payloads so the adapter can improve without changing higher layers.
+
+---
+
+## Frontend Rendering Plan
+
+The frontend should remain capability-driven, but using real repo seams.
+
+### Active state
+
+Render from projected snapshot fields:
+
+- current plan/default operating mode
+- provider capabilities
+- current structured plan
+- current plan-text stream
 - pending structured prompt
-- structured plan snapshot
-- streaming plan text buffer
-- final plan handoff state when present
 
-### 5. Implement capability-driven UI rendering
+### History state
 
-UI rules:
+Render from:
 
-- if `supportsStructuredUserInput`, render the multi-question card UI
-- if not, fall back to standard conversational reply flow
-- if `supportsStructuredPlanUpdates`, render status-tracked plan steps
-- if only `supportsPlanTextStreaming`, render streaming plan prose
-- if neither exists, render standard assistant content in plan mode with clear mode indicator
+- normal messages
+- resolved prompt answers
+- plan-related activity/history rows
+- optional final-plan artifact
 
-### 6. Implement front-to-back response submission path
+### Placement
 
-Requirements:
+Recommended initial placement:
 
-- question card submit sends canonical answer payload to server
-- server routes answer to the correct provider adapter pending request/tool context
-- resolved provider response emits both:
-  - `user-input.resolved`
-  - `request.resolved` when applicable
+1. Active pending prompt and active plan panel above the timeline, near the current approvals stack.
+2. Resolved prompt/plan history in the timeline.
 
-### 7. History and reconnect behavior
-
-Requirements:
-
-- pending structured prompts should survive reconnect/resubscribe if still active
-- resolved prompts should be rendered in history as completed interactions
-- plan snapshots should be replayable from persisted orchestration activity
-- current streaming plan text should resume cleanly on reconnect if provider continues emitting deltas
+This fits the existing `ChatView` layout with the least architectural churn.
 
 ---
 
-## Provider adapter plans
-
-## Provider 1: Codex App Server
-
-### Summary
-
-Codex is the reference implementation and should be wired as the strongest native provider.
-
-### Native protocol mapping
-
-Source of truth: upstream open-source app-server protocol.
-
-Native incoming surfaces:
-
-- `turn/plan/updated`
-- `item/plan/delta`
-- `item/tool/requestUserInput`
-- `serverRequest/resolved`
-- lower-level `EventMsg.plan_update`
-- lower-level `EventMsg.plan_delta`
-- lower-level `EventMsg.request_user_input`
-
-### Adapter implementation
-
-Files:
-
-- `apps/server/src/provider/Layers/CodexAdapter.ts`
-- related tests in `apps/server/src/provider/Layers/*Codex*.test.ts`
-
-Implementation requirements:
-
-1. Keep native structured plan updates as-is:
-- `turn/plan/updated` -> `turn.plan.updated`
-
-2. Keep native plan text streaming as-is:
-- `item/plan/delta` -> `content.delta` with `streamKind: "plan_text"`
-
-3. Keep native structured user-input as-is:
-- `item/tool/requestUserInput` -> `user-input.requested`
-- also emit `request.opened` with a transport request type
-
-4. On client answer submission:
-- route answer to the corresponding Codex pending request id
-- emit `user-input.resolved`
-- observe/forward `serverRequest/resolved` -> `request.resolved`
-
-5. Publish capabilities:
-- `supportsPlanMode = true`
-- `supportsStructuredPlanUpdates = true`
-- `supportsPlanTextStreaming = true`
-- `supportsStructuredUserInput = true`
-- `supportsFreeformUserInput = true` if answer payload supports note/text in practice
-- `supportsExitPlanMode = false` unless a separate explicit tool/event is introduced
-
-### Codex-specific tests
-
-- `turn/plan/updated` maps to canonical structured plan state
-- `item/plan/delta` maps to `plan_text`
-- `item/tool/requestUserInput` maps to canonical structured prompt shape
-- answer response resolves pending request and emits both canonical resolved events
-- reconnect/history replay preserves plan snapshot and pending prompt
-
----
-
-## Provider 2: Claude Agent SDK / Claude Code
-
-### Summary
-
-Claude requires tool-aware adaptation. Native structured interaction exists, but it is surfaced through `tool_use` blocks rather than dedicated transport events equivalent to Codex.
-
-### Real native evidence
-
-From the local Claude session transcript:
-
-- `AskUserQuestion` arrives as:
-  - assistant message
-  - content block type `tool_use`
-  - `name: "AskUserQuestion"`
-  - `input.questions[]`
-- `ExitPlanMode` arrives as:
-  - assistant message
-  - content block type `tool_use`
-  - `name: "ExitPlanMode"`
-  - `input.plan` containing finalized plan text/spec
-
-Claude also has native:
-
-- `permissionMode: 'plan'`
-- `system:init.permissionMode`
-- `system:status.permissionMode`
-
-### Adapter implementation
-
-Files:
-
-- `apps/server/src/provider/Layers/ClaudeCodeAdapter.ts`
-- `apps/server/src/provider/Layers/ClaudeCodeAdapter.test.ts`
-
-Implementation requirements:
-
-1. Publish native operating mode:
-- `permissionMode: 'plan'` -> canonical mode `plan`
-- all other values -> canonical mode `default`
-
-2. Detect `AskUserQuestion` tool uses:
-- inspect `tool_use` blocks in assistant messages / stream events
-- when `name === 'AskUserQuestion'`, convert `input.questions[]` to canonical `user-input.requested`
-- also emit `request.opened` using a Claude-specific tool-user-input request type
-
-3. Canonical question mapping for Claude:
-- `header` -> canonical `header`
-- `question` -> canonical `label`
-- `options[].label` -> canonical option label
-- `options[].description` -> canonical option description
-- `multiSelect` -> canonical `multiSelect`
-- source = `tool-derived`
-
-4. Implement answer submission path:
-- on UI answer submit, convert canonical answers back into whatever Claude expects for the `AskUserQuestion` tool result path
-- emit `user-input.resolved`
-- emit `request.resolved`
-
-5. Detect `ExitPlanMode` tool uses:
-- when `name === 'ExitPlanMode'`, parse `input.plan`
-- emit a final plan handoff event and/or synthesize a `turn.plan.updated` snapshot if safe
-- treat this as the boundary between planning and implementation readiness
-
-6. Structured plan behavior:
-- Claude does not currently appear to expose a native `turn/plan/updated` equivalent
-- initial implementation should not over-synthesize incremental steps
-- use two-tier strategy:
-  - tier 1: preserve plan-related assistant text in `plan_text` only if clearly attributable
-  - tier 2: optionally synthesize `turn.plan.updated` from explicit structured plan strings only when parsing is robust
-
-7. Publish capabilities:
-- `supportsPlanMode = true`
-- `supportsStructuredPlanUpdates = partial/false initially`
-- `supportsPlanTextStreaming = partial`
-- `supportsStructuredUserInput = true`
-- `supportsFreeformUserInput = unknown/false until answer path confirmed`
-- `supportsExitPlanMode = true`
-
-### Claude-specific tests
-
-- `system:init` and `system:status` publish plan mode metadata
-- `AskUserQuestion` tool maps into canonical prompt schema
-- multi-select and option descriptions round-trip correctly
-- answer submission resolves the pending prompt
-- `ExitPlanMode` tool emits final plan handoff state
-- ordinary tool uses do not get misclassified as prompts or plan exits
-
-### Claude-specific open question to resolve during implementation
-
-- exact runtime shape expected for the answer payload returned to `AskUserQuestion`
-
-Implementation default:
-
-- build adapter abstraction so only the final answer-serialization function is provider-specific and easily swappable once runtime shape is confirmed
-
----
-
-## Provider 3: Cursor ACP
-
-### Summary
-
-Cursor should ship with binary plan-mode semantics (`default | plan`) and implement documented ACP extension methods when present. If extension methods are absent in a given session, it should degrade cleanly to mode + streamed assistant text.
-
-### Real native evidence
-
-From the Cursor ACP docs + current probe:
-
-- available modes include `agent`, `plan`, and `ask`
-- Cursor ACP docs define extension methods:
-  - `cursor/ask_question`
-  - `cursor/create_plan`
-  - `cursor/update_todos`
-- observed updates include:
-  - `available_commands_update`
-  - `agent_thought_chunk`
-  - `agent_message_chunk`
-  - `tool_call`
-  - `tool_call_update`
-- observed request type:
-  - `session/request_permission`
-
-Current caveats:
-
-- no standard ACP event equivalent to Codex `turn/plan/updated`
-- no standard ACP event equivalent to Codex `item/plan/delta`
-- extension-method payload shapes should be fixture-captured from live sessions before locking parser assumptions
-
-### Adapter implementation
-
-Files:
-
-- `apps/server/src/provider/Layers/CursorAdapter.ts`
-- `apps/server/src/provider/Layers/CursorAdapter.test.ts`
-- probe scripts under `scripts/`
-
-Implementation requirements:
-
-1. Publish native operating mode:
-- map ACP `plan` mode -> canonical `plan`
-- map ACP `agent` and `ask` modes -> canonical `default`
-- preserve raw ACP mode in native metadata for debugging
-
-2. Implement documented Cursor extension methods:
-- `cursor/ask_question` -> canonical `user-input.requested`
-- `cursor/update_todos` -> canonical `turn.plan.updated` when payload is parseable into stable step ids/text/status
-- `cursor/create_plan` -> canonical final-plan handoff / approval-request surface
-
-3. Use graceful fallback behavior:
-- render plan mode as mode state + assistant text stream
-- if no `cursor/ask_question` event is emitted, fall back to normal conversational input
-- if no parseable `cursor/update_todos` event is emitted, fall back to text-only plan rendering
-
-4. Preserve room for future enrichment:
-- keep raw ACP notifications available in native event logs
-- extend the ACP probe to search for hidden or uncommon prompt/mode-change surfaces
-
-5. Publish capabilities:
-- `supportsPlanMode = true`
-- `supportsStructuredPlanUpdates = true` when `cursor/update_todos` is available, otherwise false
-- `supportsPlanTextStreaming = false` initially (no distinct plan-text channel)
-- `supportsStructuredUserInput = true` when `cursor/ask_question` is available, otherwise false
-- `supportsFreeformUserInput = false` via structured prompt path
-- `supportsExitPlanMode = false`
-
-### Cursor-specific tests
-
-- ACP mode metadata maps to `plan` vs `default` correctly
-- `cursor/ask_question` maps into canonical structured prompt schema
-- `cursor/update_todos` maps into canonical structured plan state when parseable
-- `cursor/create_plan` maps into final-plan handoff / approval surface
-- `agent_thought_chunk` and `agent_message_chunk` still render normally in plan mode
-- fallback conversational flow remains functional
-
-### Cursor-specific follow-up probe work
-
-Add dedicated probes for:
-
-- mode-switching during an active session
-- real payload shapes for `cursor/ask_question`, `cursor/create_plan`, and `cursor/update_todos`
-- any request types besides `session/request_permission`
-- whether extension methods are always emitted or only for specific prompt styles
-
----
-
-## Frontend implementation plan
-
-### Summary
-
-Render plan mode through a single UI model driven by canonical events and provider capabilities.
-
-### UI states to support
-
-- standard conversation
-- plan mode with structured steps
-- plan mode with text-only plan stream
-- pending structured question card
-- resolved question card in history
-- final plan handoff / completed plan artifact
-
-### Rendering rules
-
-1. Show operating mode indicator whenever current mode is `plan`
-2. Show structured question card only when a pending `user-input.requested` exists
-3. Show structured plan step list when a current `turn.plan.updated` snapshot exists
-4. Append `plan_text` streaming content beneath or alongside structured steps when both exist
-5. Fall back to assistant text rendering when provider capabilities do not support structure
-6. Show completed selected answers in history after `user-input.resolved`
-
-### Submission behavior
-
-- option click / freeform answer submits canonical answer payload
-- disable duplicate submits while request is pending resolution
-- preserve pending-card state across reconnects if request remains open
-
----
-
-## Data flow end to end
-
-1. Provider starts session and publishes capabilities + mode
-2. User starts plan-mode turn or provider enters plan mode
-3. Adapter emits structured plan and/or plan text events when available
-4. Adapter emits `user-input.requested` when provider asks a structured question
-5. Frontend renders question card or fallback conversational prompt based on capabilities
-6. User submits answer
-7. Server routes answer back to provider adapter pending request/tool context
-8. Adapter emits `user-input.resolved` and `request.resolved`
-9. Provider may continue planning, emit more plan updates, or emit final plan handoff
-10. Frontend renders final completed plan state and history
-
----
-
-## Test plan
+## Test Plan
 
 ### Contracts
 
-Files:
-
-- `packages/contracts/src/providerRuntime.test.ts`
-- related schema tests
-
 Add coverage for:
 
-- provider capabilities schema
-- structured user-input prompt schema
-- structured user-input answer schema
-- mode metadata schema
+- new interaction-mode schema
+- new capability schema
+- new structured-answer command schema
+- any read-model additions for active plan/prompt state
 
-### Server/provider tests
+Retain existing coverage for:
 
-Files:
+- `turn.plan.updated`
+- `content.delta(plan_text)`
+- `user-input.requested`
+- `user-input.resolved`
 
-- `apps/server/src/provider/Layers/CodexAdapter.test.ts`
-- `apps/server/src/provider/Layers/ClaudeCodeAdapter.test.ts`
-- `apps/server/src/provider/Layers/CursorAdapter.test.ts`
-- `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts`
+### Server
 
-Add coverage for:
+Add or extend tests for:
 
-- capabilities emission
-- mode propagation
-- plan update propagation
-- plan text propagation
-- structured prompt lifecycle
-- answer resolution lifecycle
-- reconnect/history replay behavior
+- provider adapter plan/prompt mapping
+- `ProviderRuntimeIngestion` plan/prompt projection behavior
+- `ProjectionPipeline` persistence and replay
+- `ProjectionSnapshotQuery` returning active plan state
+- provider answer submission path
 
-### Web/UI tests
+### Web
 
-Add coverage for:
+Add or extend tests for:
 
-- question card rendering from canonical prompt
-- question answer submission
-- resolved question history rendering
-- structured plan step rendering
-- text-only plan rendering
-- capability-based fallback rendering for Cursor
-
-### Probe / fixture tests
-
-- preserve the Claude transcript-derived `AskUserQuestion` and `ExitPlanMode` payloads as fixtures
-- preserve Codex protocol fixtures for `turn/plan/updated`, `item/plan/delta`, and `item/tool/requestUserInput`
-- preserve ACP probe summaries as fixtures for unsupported-capability assertions
+- `syncServerReadModel` with new plan fields
+- `session-logic.ts` derivation of active plan/prompt state
+- `ChatView` rendering of:
+  - active plan panel
+  - pending structured prompt
+  - resolved prompt history
+  - plan-text fallback
 
 ---
 
-## Assumptions and defaults
+## Recommended Execution Order
 
-- Codex is the reference provider for full structured plan/question UX.
-- Claude supports structured prompts via tool adaptation, but incremental structured plan updates are not assumed initially.
-- Cursor transport exposes `agent|plan|ask`, but product semantics collapse this to `operatingMode: default | plan`.
-- Cursor structured prompts/plan steps are driven by ACP extension methods when present, with fallback when absent.
-- Product/UI should degrade gracefully rather than invent unsupported provider behavior.
-- Raw provider payloads should always be retained where feasible to support future adapter refinement.
+1. Add shared contract types for interaction mode, capabilities, and structured-answer submission.
+2. Extend orchestration read-model contracts and projection storage for active plan/prompt state.
+3. Wire `ProviderRuntimeIngestion` into those projections.
+4. Finish Codex end-to-end first, since it already emits most of the canonical runtime pieces.
+5. Add frontend snapshot sync, derivation, and rendering in `types.ts`, `store.ts`, `session-logic.ts`, and `ChatView.tsx`.
+6. Add Claude adapter mapping.
+7. Add Cursor adapter mapping and fallback behavior.
 
----
+## Short version
 
-## Recommended execution order
+The repo is already close in one specific sense: the runtime event vocabulary for plans and structured prompts exists.
 
-1. Formalize canonical capabilities + mode + structured prompt contracts
-2. Wire capabilities/mode through orchestration and web socket projections
-3. Finish Codex end-to-end plan mode implementation first
-4. Implement Claude `AskUserQuestion` and `ExitPlanMode` adapter mapping
-5. Add Cursor binary (`default|plan`) mode support + ACP extension-method mapping
-6. Build capability-driven frontend rendering and answer submission
-7. Add reconnect/history coverage and transcript/protocol fixtures
+The real missing architecture is:
+
+- a separate plan/default operating mode concept
+- typed provider capabilities
+- a first-class structured-answer command path
+- read-model projection for active plan/prompt state
+- web rendering sourced from that snapshot state
+
+That is the shape the implementation should follow.

@@ -3,9 +3,11 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ThreadId } from "@t3tools/contracts";
+import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
 
 import {
+  buildCodexInitializeParams,
+  CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
   CodexAppServerManager,
   classifyCodexStderrLine,
   isRecoverableThreadResumeError,
@@ -22,6 +24,7 @@ function createSendTurnHarness() {
       provider: "codex",
       status: "ready",
       threadId: "thread_1",
+      resumeCursor: { threadId: "thread_1" },
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
     },
@@ -58,6 +61,7 @@ function createThreadControlHarness() {
       provider: "codex",
       status: "ready",
       threadId: "thread_1",
+      resumeCursor: { threadId: "thread_1" },
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
     },
@@ -78,6 +82,46 @@ function createThreadControlHarness() {
     .mockImplementation(() => {});
 
   return { manager, context, requireSession, sendRequest, updateSession };
+}
+
+function createPendingUserInputHarness() {
+  const manager = new CodexAppServerManager();
+  const context = {
+    session: {
+      sessionId: "sess_1",
+      provider: "codex",
+      status: "ready",
+      threadId: "thread_1",
+      resumeCursor: { threadId: "thread_1" },
+      createdAt: "2026-02-10T00:00:00.000Z",
+      updatedAt: "2026-02-10T00:00:00.000Z",
+    },
+    pendingUserInputs: new Map([
+      [
+        ApprovalRequestId.makeUnsafe("req-user-input-1"),
+        {
+          requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
+          jsonRpcId: 42,
+          threadId: asThreadId("thread_1"),
+        },
+      ],
+    ]),
+  };
+
+  const requireSession = vi
+    .spyOn(
+      manager as unknown as { requireSession: (sessionId: string) => unknown },
+      "requireSession",
+    )
+    .mockReturnValue(context);
+  const writeMessage = vi
+    .spyOn(manager as unknown as { writeMessage: (...args: unknown[]) => void }, "writeMessage")
+    .mockImplementation(() => {});
+  const emitEvent = vi
+    .spyOn(manager as unknown as { emitEvent: (...args: unknown[]) => void }, "emitEvent")
+    .mockImplementation(() => {});
+
+  return { manager, context, requireSession, writeMessage, emitEvent };
 }
 
 describe("classifyCodexStderrLine", () => {
@@ -151,6 +195,19 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("startSession", () => {
+  it("enables Codex experimental api capabilities during initialize", () => {
+    expect(buildCodexInitializeParams()).toEqual({
+      clientInfo: {
+        name: "t3code_desktop",
+        title: "T3 Code Desktop",
+        version: "0.1.0",
+      },
+      capabilities: {
+        experimentalApi: true,
+      },
+    });
+  });
+
   it("emits session/startFailed when resolving cwd throws before process launch", async () => {
     const manager = new CodexAppServerManager();
     const events: Array<{ method: string; kind: string; message?: string }> = [];
@@ -207,6 +264,7 @@ describe("sendTurn", () => {
     expect(result).toEqual({
       threadId: "thread_1",
       turnId: "turn_1",
+      resumeCursor: { threadId: "thread_1" },
     });
     expect(requireSession).toHaveBeenCalledWith("thread_1");
     expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
@@ -228,6 +286,7 @@ describe("sendTurn", () => {
     expect(updateSession).toHaveBeenCalledWith(context, {
       status: "running",
       activeTurnId: "turn_1",
+      resumeCursor: { threadId: "thread_1" },
     });
   });
 
@@ -252,6 +311,36 @@ describe("sendTurn", () => {
           url: "data:image/png;base64,BBBB",
         },
       ],
+    });
+  });
+
+  it("passes Codex plan mode as a collaboration preset on turn/start", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "Plan the work",
+      interactionMode: "plan",
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Plan the work",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.3-codex",
+      collaborationMode: {
+        mode: "plan",
+        settings: {
+          model: "gpt-5.3-codex",
+          reasoning_effort: "medium",
+          developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+        },
+      },
     });
   });
 
@@ -351,6 +440,45 @@ describe("thread checkpoint control", () => {
       threadId: "thread_1",
       turns: [],
     });
+  });
+});
+
+describe("respondToUserInput", () => {
+  it("serializes canonical answers to Codex native answer objects", async () => {
+    const { manager, context, requireSession, writeMessage, emitEvent } =
+      createPendingUserInputHarness();
+
+    await manager.respondToUserInput(
+      asThreadId("thread_1"),
+      ApprovalRequestId.makeUnsafe("req-user-input-1"),
+      {
+      scope: "All request methods",
+      compat: "Keep current envelope",
+      },
+    );
+
+    expect(requireSession).toHaveBeenCalledWith("thread_1");
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 42,
+      result: {
+        answers: {
+          scope: { answers: ["All request methods"] },
+          compat: { answers: ["Keep current envelope"] },
+        },
+      },
+    });
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "item/tool/requestUserInput/answered",
+        payload: {
+          requestId: "req-user-input-1",
+          answers: {
+            scope: { answers: ["All request methods"] },
+            compat: { answers: ["Keep current envelope"] },
+          },
+        },
+      }),
+    );
   });
 });
 

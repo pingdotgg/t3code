@@ -1781,6 +1781,19 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         yield* Deferred.succeed(pending.decision, decision);
       });
 
+    const respondToUserInput: ClaudeCodeAdapterShape["respondToUserInput"] = (
+      threadId,
+      requestId,
+      _answers,
+    ) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "item/tool/requestUserInput",
+          detail: `Claude Code does not yet support structured user-input responses for thread '${threadId}' and request '${requestId}'.`,
+        }),
+      );
+
     const stopSession: ClaudeCodeAdapterShape["stopSession"] = (threadId) =>
       Effect.gen(function* () {
         const context = yield* requireSession(threadId);
@@ -1830,6 +1843,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
       readThread,
       rollbackThread,
       respondToRequest,
+      respondToUserInput,
       stopSession,
       listSessions,
       hasSession,

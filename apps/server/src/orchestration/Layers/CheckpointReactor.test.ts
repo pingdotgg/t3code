@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import type { ProviderRuntimeEvent, ProviderSession } from "@t3tools/contracts";
 import {
   CommandId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
   ProjectId,
@@ -85,6 +86,7 @@ function createProviderServiceHarness(
     sendTurn: () => unsupported(),
     interruptTurn: () => unsupported(),
     respondToRequest: () => unsupported(),
+    respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions,
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
@@ -286,6 +288,7 @@ describe("CheckpointReactor", () => {
         projectId: asProjectId("project-1"),
         title: "Thread",
         model: "gpt-5-codex",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: options?.threadWorktreePath ?? cwd,
@@ -601,6 +604,7 @@ describe("CheckpointReactor", () => {
           text: "start turn",
           attachments: [],
         },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: new Date().toISOString(),
       }),

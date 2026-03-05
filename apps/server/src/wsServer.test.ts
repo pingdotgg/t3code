@@ -1126,6 +1126,8 @@ describe("WebSocket Server", () => {
       projectId: "project-diff",
       title: "Diff Thread",
       model: "gpt-5-codex",
+      runtimeMode: "full-access",
+      interactionMode: "default",
       branch: null,
       worktreePath: null,
       createdAt,
@@ -1164,6 +1166,7 @@ describe("WebSocket Server", () => {
         }),
       interruptTurn: () => unsupported(),
       respondToRequest: () => unsupported(),
+      respondToUserInput: () => unsupported(),
       stopSession: () => unsupported(),
       listSessions: () => Effect.succeed([]),
       getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
@@ -1202,6 +1205,8 @@ describe("WebSocket Server", () => {
       projectId: "project-1",
       title: "Thread 1",
       model: "gpt-5-codex",
+      runtimeMode: "full-access",
+      interactionMode: "default",
       branch: null,
       worktreePath: null,
       createdAt,
@@ -1220,6 +1225,7 @@ describe("WebSocket Server", () => {
       },
       assistantDeliveryMode: "streaming",
       runtimeMode: "approval-required",
+      interactionMode: "default",
       createdAt,
     });
     expect(startTurnResponse.error).toBeUndefined();
@@ -1517,6 +1523,54 @@ describe("WebSocket Server", () => {
       ]),
       truncated: false,
     });
+  });
+
+  it("supports projects.writeFile within the workspace root", async () => {
+    const workspace = makeTempDir("t3code-ws-write-file-");
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.projectsWriteFile, {
+      cwd: workspace,
+      relativePath: "plans/effect-rpc.md",
+      contents: "# Plan\n\n- step 1\n",
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({
+      relativePath: "plans/effect-rpc.md",
+    });
+    expect(fs.readFileSync(path.join(workspace, "plans", "effect-rpc.md"), "utf8")).toBe(
+      "# Plan\n\n- step 1\n",
+    );
+  });
+
+  it("rejects projects.writeFile paths outside the workspace root", async () => {
+    const workspace = makeTempDir("t3code-ws-write-file-reject-");
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.projectsWriteFile, {
+      cwd: workspace,
+      relativePath: "../escape.md",
+      contents: "# no\n",
+    });
+
+    expect(response.result).toBeUndefined();
+    expect(response.error?.message).toContain("Workspace file path must stay within the project root.");
+    expect(fs.existsSync(path.join(workspace, "..", "escape.md"))).toBe(false);
   });
 
   it("routes git core methods over websocket", async () => {

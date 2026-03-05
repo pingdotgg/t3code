@@ -2,6 +2,7 @@ import type { OrchestrationReadModel, ProviderRuntimeEvent } from "@t3tools/cont
 import {
   ApprovalRequestId,
   CommandId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
   ProjectId,
@@ -59,6 +60,7 @@ function createProviderServiceHarness() {
     sendTurn: () => unsupported(),
     interruptTurn: () => unsupported(),
     respondToRequest: () => unsupported(),
+    respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions: () => Effect.succeed([]),
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
@@ -163,6 +165,7 @@ describe("ProviderRuntimeIngestion", () => {
         projectId: asProjectId("project-1"),
         title: "Thread",
         model: "gpt-5-codex",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
@@ -630,6 +633,112 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("projects completed plan items into finalized proposed-plan assistant messages", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-plan-item-completed"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-plan-final"),
+      itemId: asItemId("item-plan-final"),
+      payload: {
+        itemType: "plan",
+        status: "completed",
+        detail: "## Ship plan\n\n- wire projection\n- render follow-up",
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) => {
+      const message = entry.messages.find(
+        (candidate: ProviderRuntimeTestMessage) => candidate.id === "assistant:item-plan-final",
+      );
+      return message?.streaming === false && message.text.includes("<proposed_plan>");
+    });
+    const message = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-plan-final",
+    );
+    expect(message?.text).toBe(
+      "<proposed_plan>\n## Ship plan\n\n- wire projection\n- render follow-up\n</proposed_plan>",
+    );
+    expect(message?.streaming).toBe(false);
+  });
+
+  it("finalizes buffered plan deltas into a proposed-plan assistant message on turn completion", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-plan-buffer"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-plan-buffer"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" && thread.session?.activeTurnId === "turn-plan-buffer",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-plan-delta-1"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-plan-buffer"),
+      itemId: asItemId("item-plan-buffer"),
+      payload: {
+        streamKind: "plan_text",
+        delta: "## Buffered plan\n\n- first",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-plan-delta-2"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-plan-buffer"),
+      itemId: asItemId("item-plan-buffer"),
+      payload: {
+        streamKind: "plan_text",
+        delta: "\n- second",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-plan-buffer"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-plan-buffer"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) => {
+      const message = entry.messages.find(
+        (candidate: ProviderRuntimeTestMessage) => candidate.id === "assistant:item-plan-buffer",
+      );
+      return message?.streaming === false && message.text.includes("<proposed_plan>");
+    });
+    const message = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-plan-buffer",
+    );
+    expect(message?.text).toBe(
+      "<proposed_plan>\n## Buffered plan\n\n- first\n- second\n</proposed_plan>",
+    );
+    expect(message?.streaming).toBe(false);
+  });
+
   it("buffers assistant deltas by default until completion", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
@@ -716,6 +825,7 @@ describe("ProviderRuntimeIngestion", () => {
           attachments: [],
         },
         assistantDeliveryMode: "streaming",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
       }),
@@ -1215,6 +1325,160 @@ describe("ProviderRuntimeIngestion", () => {
     expect(checkpoint?.status).toBe("missing");
     expect(checkpoint?.assistantMessageId).toBe("assistant:item-p1-assistant");
     expect(checkpoint?.checkpointRef).toBe("provider-diff:evt-turn-diff-updated");
+  });
+
+  it("projects Codex task lifecycle chunks into thread activities", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-task-started"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-task-1"),
+      payload: {
+        taskId: "turn-task-1",
+        taskType: "plan",
+      },
+    });
+
+    harness.emit({
+      type: "task.progress",
+      eventId: asEventId("evt-task-progress"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-task-1"),
+      payload: {
+        taskId: "turn-task-1",
+        description: "Comparing the desktop rollout chunks to the app-server stream.",
+      },
+    });
+
+    harness.emit({
+      type: "task.completed",
+      eventId: asEventId("evt-task-completed"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-task-1"),
+      payload: {
+        taskId: "turn-task-1",
+        status: "completed",
+        summary: "<proposed_plan>\n# Plan title\n</proposed_plan>",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "task.completed",
+        ),
+    );
+
+    const started = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-task-started",
+    );
+    const progress = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-task-progress",
+    );
+    const completed = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-task-completed",
+    );
+
+    const progressPayload =
+      progress?.payload && typeof progress.payload === "object"
+        ? (progress.payload as Record<string, unknown>)
+        : undefined;
+    const completedPayload =
+      completed?.payload && typeof completed.payload === "object"
+        ? (completed.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(started?.kind).toBe("task.started");
+    expect(started?.summary).toBe("Plan task started");
+    expect(progress?.kind).toBe("task.progress");
+    expect(progressPayload?.detail).toBe(
+      "Comparing the desktop rollout chunks to the app-server stream.",
+    );
+    expect(completed?.kind).toBe("task.completed");
+    expect(completedPayload?.detail).toBe("<proposed_plan>\n# Plan title\n</proposed_plan>");
+  });
+
+  it("projects structured user input request and resolution as thread activities", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "user-input.requested",
+      eventId: asEventId("evt-user-input-requested"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-user-input"),
+      requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
+      payload: {
+        questions: [
+          {
+            id: "sandbox_mode",
+            header: "Sandbox",
+            question: "Which mode should be used?",
+            options: [
+              {
+                label: "workspace-write",
+                description: "Allow workspace writes only",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    harness.emit({
+      type: "user-input.resolved",
+      eventId: asEventId("evt-user-input-resolved"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-user-input"),
+      requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
+      payload: {
+        answers: {
+          sandbox_mode: "workspace-write",
+        },
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "user-input.requested",
+        ) &&
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "user-input.resolved",
+        ),
+    );
+
+    const requested = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-user-input-requested",
+    );
+    expect(requested?.kind).toBe("user-input.requested");
+
+    const resolved = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-user-input-resolved",
+    );
+    const resolvedPayload =
+      resolved?.payload && typeof resolved.payload === "object"
+        ? (resolved.payload as Record<string, unknown>)
+        : undefined;
+    expect(resolved?.kind).toBe("user-input.resolved");
+    expect(resolvedPayload?.answers).toEqual({
+      sandbox_mode: "workspace-write",
+    });
   });
 
   it("continues processing runtime events after a single event handler failure", async () => {
