@@ -62,6 +62,8 @@ export interface TextGenerationService {
 
 /**
  * TextGenerationShape - Service API for commit/PR text generation.
+ *
+ * Interface isolates provider-specific model behavior behind deterministic method contracts.
  */
 export interface TextGenerationShape {
   /**

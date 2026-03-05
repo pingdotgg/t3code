@@ -96,31 +96,53 @@ describe("buildTurnDiffTree", () => {
     expect(tree).toEqual([
       {
         kind: "directory",
-        name: "apps",
-        path: "apps",
+        name: "apps/web/src",
+        path: "apps/web/src",
         stat: { additions: 2, deletions: 1 },
         children: [
           {
+            kind: "file",
+            name: "index.ts",
+            path: "apps/web/src/index.ts",
+            stat: { additions: 2, deletions: 1 },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("compacts only single-directory chains and stops at branch points", () => {
+    const tree = buildTurnDiffTree([
+      { path: "apps/server/src/index.ts", additions: 2, deletions: 1 },
+      { path: "apps/server/main.ts", additions: 4, deletions: 0 },
+    ]);
+
+    expect(tree).toEqual([
+      {
+        kind: "directory",
+        name: "apps/server",
+        path: "apps/server",
+        stat: { additions: 6, deletions: 1 },
+        children: [
+          {
             kind: "directory",
-            name: "web",
-            path: "apps/web",
+            name: "src",
+            path: "apps/server/src",
             stat: { additions: 2, deletions: 1 },
             children: [
               {
-                kind: "directory",
-                name: "src",
-                path: "apps/web/src",
+                kind: "file",
+                name: "index.ts",
+                path: "apps/server/src/index.ts",
                 stat: { additions: 2, deletions: 1 },
-                children: [
-                  {
-                    kind: "file",
-                    name: "index.ts",
-                    path: "apps/web/src/index.ts",
-                    stat: { additions: 2, deletions: 1 },
-                  },
-                ],
               },
             ],
+          },
+          {
+            kind: "file",
+            name: "main.ts",
+            path: "apps/server/main.ts",
+            stat: { additions: 4, deletions: 0 },
           },
         ],
       },

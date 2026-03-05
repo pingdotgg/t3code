@@ -2,6 +2,14 @@ import path from "node:path";
 
 export const ATTACHMENTS_ROUTE_PREFIX = "/attachments";
 
+export function stripAttachmentRoutePrefix(pathname: string): string | null {
+  if (!pathname.startsWith(ATTACHMENTS_ROUTE_PREFIX)) {
+    return null;
+  }
+  const remainder = pathname.slice(ATTACHMENTS_ROUTE_PREFIX.length);
+  return remainder.startsWith("/") ? remainder.slice(1) : remainder;
+}
+
 export function normalizeAttachmentRelativePath(rawRelativePath: string): string | null {
   const normalized = path.normalize(rawRelativePath).replace(/^[/\\]+/, "");
   if (normalized.length === 0 || normalized.startsWith("..") || normalized.includes("\0")) {

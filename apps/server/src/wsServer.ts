@@ -60,9 +60,9 @@ import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
 import {
-  ATTACHMENTS_ROUTE_PREFIX,
   normalizeAttachmentRelativePath,
   resolveAttachmentRelativePath,
+  stripAttachmentRoutePrefix,
 } from "./attachmentPaths";
 import {
   createAttachmentId,
@@ -350,9 +350,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           return;
         }
 
-        if (url.pathname.startsWith(ATTACHMENTS_ROUTE_PREFIX)) {
-          const rawRelativePath = url.pathname.slice(ATTACHMENTS_ROUTE_PREFIX.length);
-          const normalizedRelativePath = normalizeAttachmentRelativePath(rawRelativePath);
+        const routeRelativePath = stripAttachmentRoutePrefix(url.pathname);
+        if (routeRelativePath !== null) {
+          const normalizedRelativePath = normalizeAttachmentRelativePath(routeRelativePath);
           if (!normalizedRelativePath) {
             respond(400, { "Content-Type": "text/plain" }, "Invalid attachment path");
             return;

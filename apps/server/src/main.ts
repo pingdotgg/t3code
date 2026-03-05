@@ -12,8 +12,10 @@ import { NetService } from "@t3tools/shared/Net";
 
 import {
   DEFAULT_PORT,
+  KEYBINDINGS_CONFIG_FILENAME,
   resolveStaticDir,
   ServerConfig,
+  isDesktopMode,
   type RuntimeMode,
   type ServerConfigShape,
 } from "./config";
@@ -133,6 +135,8 @@ const ServerConfigLive = (input: CliInput) =>
       );
 
       const mode = Option.getOrElse(input.mode, () => env.mode);
+      const isDesktop = isDesktopMode(mode);
+      const isWeb = !isDesktop;
 
       const port = yield* Option.match(input.port, {
         onSome: (value) => Effect.succeed(value),
@@ -140,7 +144,7 @@ const ServerConfigLive = (input: CliInput) =>
           if (env.port) {
             return Effect.succeed(env.port);
           }
-          if (mode === "desktop") {
+          if (isDesktop) {
             return Effect.succeed(DEFAULT_PORT);
           }
           return findAvailablePort(DEFAULT_PORT);
@@ -153,15 +157,15 @@ const ServerConfigLive = (input: CliInput) =>
       const noBrowser = Option.match(input.noBrowser, {
         // effect/cli boolean flags parse to `false` when absent; in that case
         // we still want env/mode fallbacks to apply.
-        onSome: (value) => (value ? true : (env.noBrowser ?? mode === "desktop")),
-        onNone: () => env.noBrowser ?? mode === "desktop",
+        onSome: (value) => (value ? true : (env.noBrowser ?? isDesktop)),
+        onNone: () => env.noBrowser ?? isDesktop,
       });
       const authToken = Option.getOrUndefined(input.authToken) ?? env.authToken;
       const autoBootstrapProjectFromCwd = Option.match(input.autoBootstrapProjectFromCwd, {
         // effect/cli boolean flags parse to `false` when absent; in that case
         // we still want env/mode fallbacks to apply.
-        onSome: (value) => (value ? true : (env.autoBootstrapProjectFromCwd ?? mode === "web")),
-        onNone: () => env.autoBootstrapProjectFromCwd ?? mode === "web",
+        onSome: (value) => (value ? true : (env.autoBootstrapProjectFromCwd ?? isWeb)),
+        onNone: () => env.autoBootstrapProjectFromCwd ?? isWeb,
       });
       const logWebSocketEvents = Option.match(input.logWebSocketEvents, {
         // effect/cli boolean flags parse to `false` when absent; in that case
@@ -171,11 +175,11 @@ const ServerConfigLive = (input: CliInput) =>
       });
       const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
       const { join } = yield* Path.Path;
-      const keybindingsConfigPath = join(stateDir, "keybindings.json");
+      const keybindingsConfigPath = join(stateDir, KEYBINDINGS_CONFIG_FILENAME);
       const host =
         Option.getOrUndefined(input.host) ??
         env.host ??
-        (mode === "desktop" ? "127.0.0.1" : undefined);
+        (isDesktop ? "127.0.0.1" : undefined);
 
       return {
         mode,

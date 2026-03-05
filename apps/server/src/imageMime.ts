@@ -29,6 +29,28 @@ export const SAFE_IMAGE_FILE_EXTENSIONS = new Set([
   ".webp",
 ]);
 
+const normalizeImageExtension = (extension: string): string | null => {
+  const trimmed = extension.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const lower = trimmed.toLowerCase();
+  return lower.startsWith(".") ? lower : `.${lower}`;
+};
+
+const coerceSafeImageExtension = (
+  extension: string | null | undefined,
+): string | null => {
+  if (!extension) return null;
+  const normalized = normalizeImageExtension(extension);
+  if (!normalized) return null;
+  return SAFE_IMAGE_FILE_EXTENSIONS.has(normalized) ? normalized : null;
+};
+
+export const isSafeImageExtension = (extension: string): boolean =>
+  coerceSafeImageExtension(extension) !== null;
+
 export function parseBase64DataUrl(
   dataUrl: string,
 ): { readonly mimeType: string; readonly base64: string } | null {
@@ -63,15 +85,15 @@ export function inferImageExtension(input: { mimeType: string; fileName?: string
     return fromMime;
   }
 
-  const fromMimeExtension = Mime.getExtension(input.mimeType);
-  if (fromMimeExtension && SAFE_IMAGE_FILE_EXTENSIONS.has(fromMimeExtension)) {
+  const fromMimeExtension = coerceSafeImageExtension(Mime.getExtension(input.mimeType));
+  if (fromMimeExtension) {
     return fromMimeExtension;
   }
 
   const fileName = input.fileName?.trim() ?? "";
   const extensionMatch = /\.([a-z0-9]{1,8})$/i.exec(fileName);
-  const fileNameExtension = extensionMatch ? `.${extensionMatch[1]!.toLowerCase()}` : "";
-  if (SAFE_IMAGE_FILE_EXTENSIONS.has(fileNameExtension)) {
+  const fileNameExtension = extensionMatch ? coerceSafeImageExtension(extensionMatch[1]) : null;
+  if (fileNameExtension) {
     return fileNameExtension;
   }
 

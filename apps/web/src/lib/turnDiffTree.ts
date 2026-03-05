@@ -54,10 +54,34 @@ function readStat(file: TurnDiffFileChange): TurnDiffStat | null {
   };
 }
 
+function compactDirectoryNode(node: TurnDiffTreeDirectoryNode): TurnDiffTreeDirectoryNode {
+  const compactedChildren = node.children.map((child) =>
+    child.kind === "directory" ? compactDirectoryNode(child) : child,
+  );
+
+  let compactedNode: TurnDiffTreeDirectoryNode = {
+    ...node,
+    children: compactedChildren,
+  };
+
+  while (compactedNode.children.length === 1 && compactedNode.children[0]?.kind === "directory") {
+    const onlyChild = compactedNode.children[0];
+    compactedNode = {
+      kind: "directory",
+      name: `${compactedNode.name}/${onlyChild.name}`,
+      path: onlyChild.path,
+      stat: onlyChild.stat,
+      children: onlyChild.children,
+    };
+  }
+
+  return compactedNode;
+}
+
 function toTreeNodes(directory: MutableDirectoryNode): TurnDiffTreeNode[] {
   const subdirectories: TurnDiffTreeDirectoryNode[] = Array.from(directory.directories.values())
     .toSorted(compareByName)
-    .map((subdirectory) => ({
+    .map<TurnDiffTreeDirectoryNode>((subdirectory) => ({
       kind: "directory",
       name: subdirectory.name,
       path: subdirectory.path,
@@ -66,7 +90,8 @@ function toTreeNodes(directory: MutableDirectoryNode): TurnDiffTreeNode[] {
         deletions: subdirectory.stat.deletions,
       },
       children: toTreeNodes(subdirectory),
-    }));
+    }))
+    .map((subdirectory) => compactDirectoryNode(subdirectory));
 
   const files = directory.files.toSorted(compareByName);
   return [...subdirectories, ...files];
