@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  isCollapsedCursorAdjacentToMention,
   replaceTextRange,
 } from "./composer-logic";
 
@@ -75,5 +76,32 @@ describe("expandCollapsedComposerCursor", () => {
     const expandedCursor = expandCollapsedComposerCursor(text, collapsedCursorAfterMention);
 
     expect(detectComposerTrigger(text, expandedCursor)).toBeNull();
+  });
+});
+
+describe("isCollapsedCursorAdjacentToMention", () => {
+  it("returns false when no mention exists", () => {
+    expect(isCollapsedCursorAdjacentToMention("plain text", 6, "left")).toBe(false);
+    expect(isCollapsedCursorAdjacentToMention("plain text", 6, "right")).toBe(false);
+  });
+
+  it("detects left adjacency only when cursor is directly after a mention", () => {
+    const text = "open @AGENTS.md next";
+    const mentionStart = "open ".length;
+    const mentionEnd = mentionStart + 1;
+
+    expect(isCollapsedCursorAdjacentToMention(text, mentionEnd, "left")).toBe(true);
+    expect(isCollapsedCursorAdjacentToMention(text, mentionStart, "left")).toBe(false);
+    expect(isCollapsedCursorAdjacentToMention(text, mentionEnd + 1, "left")).toBe(false);
+  });
+
+  it("detects right adjacency only when cursor is directly before a mention", () => {
+    const text = "open @AGENTS.md next";
+    const mentionStart = "open ".length;
+    const mentionEnd = mentionStart + 1;
+
+    expect(isCollapsedCursorAdjacentToMention(text, mentionStart, "right")).toBe(true);
+    expect(isCollapsedCursorAdjacentToMention(text, mentionEnd, "right")).toBe(false);
+    expect(isCollapsedCursorAdjacentToMention(text, mentionStart - 1, "right")).toBe(false);
   });
 });

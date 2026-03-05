@@ -58,6 +58,52 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
   return expandedCursor;
 }
 
+function collapsedSegmentLength(segment: { type: "text"; text: string } | { type: "mention" }): number {
+  return segment.type === "mention" ? 1 : segment.text.length;
+}
+
+function clampCollapsedComposerCursor(
+  segments: ReadonlyArray<{ type: "text"; text: string } | { type: "mention" }>,
+  cursorInput: number,
+): number {
+  const collapsedLength = segments.reduce(
+    (total, segment) => total + collapsedSegmentLength(segment),
+    0,
+  );
+  if (!Number.isFinite(cursorInput)) {
+    return collapsedLength;
+  }
+  return Math.max(0, Math.min(collapsedLength, Math.floor(cursorInput)));
+}
+
+export function isCollapsedCursorAdjacentToMention(
+  text: string,
+  cursorInput: number,
+  direction: "left" | "right",
+): boolean {
+  const segments = splitPromptIntoComposerSegments(text);
+  if (!segments.some((segment) => segment.type === "mention")) {
+    return false;
+  }
+
+  const cursor = clampCollapsedComposerCursor(segments, cursorInput);
+  let collapsedOffset = 0;
+
+  for (const segment of segments) {
+    if (segment.type === "mention") {
+      if (direction === "left" && cursor === collapsedOffset + 1) {
+        return true;
+      }
+      if (direction === "right" && cursor === collapsedOffset) {
+        return true;
+      }
+    }
+    collapsedOffset += collapsedSegmentLength(segment);
+  }
+
+  return false;
+}
+
 export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
   const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;

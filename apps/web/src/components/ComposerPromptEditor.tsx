@@ -50,6 +50,7 @@ import {
   type Ref,
 } from "react";
 
+import { isCollapsedCursorAdjacentToMention } from "~/composer-logic";
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { cn } from "~/lib/utils";
 import { basenameOfPath, getVscodeIconUrlForEntry } from "~/vscode-icons";
@@ -469,16 +470,25 @@ function ComposerMentionArrowPlugin() {
   useEffect(() => {
     const unregisterLeft = editor.registerCommand(
       KEY_ARROW_LEFT_COMMAND,
-      () => {
-        let currentOffset = -1;
+      (event) => {
+        let nextOffset: number | null = null;
         editor.getEditorState().read(() => {
           const selection = $getSelection();
           if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
-          currentOffset = $readSelectionOffsetFromEditorState(0);
+          const currentOffset = $readSelectionOffsetFromEditorState(0);
+          if (currentOffset <= 0) return;
+          const promptValue = $getRoot().getTextContent();
+          if (!isCollapsedCursorAdjacentToMention(promptValue, currentOffset, "left")) {
+            return;
+          }
+          nextOffset = currentOffset - 1;
         });
-        if (currentOffset <= 0) return false;
+        if (nextOffset === null) return false;
+        const selectionOffset = nextOffset;
+        event?.preventDefault();
+        event?.stopPropagation();
         editor.update(() => {
-          $setSelectionAtComposerOffset(currentOffset - 1);
+          $setSelectionAtComposerOffset(selectionOffset);
         });
         return true;
       },
@@ -486,18 +496,26 @@ function ComposerMentionArrowPlugin() {
     );
     const unregisterRight = editor.registerCommand(
       KEY_ARROW_RIGHT_COMMAND,
-      () => {
-        let currentOffset = -1;
-        let composerLength = 0;
+      (event) => {
+        let nextOffset: number | null = null;
         editor.getEditorState().read(() => {
           const selection = $getSelection();
           if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
-          composerLength = $getComposerRootLength();
-          currentOffset = $readSelectionOffsetFromEditorState(0);
+          const currentOffset = $readSelectionOffsetFromEditorState(0);
+          const composerLength = $getComposerRootLength();
+          if (currentOffset >= composerLength) return;
+          const promptValue = $getRoot().getTextContent();
+          if (!isCollapsedCursorAdjacentToMention(promptValue, currentOffset, "right")) {
+            return;
+          }
+          nextOffset = currentOffset + 1;
         });
-        if (currentOffset < 0 || currentOffset >= composerLength) return false;
+        if (nextOffset === null) return false;
+        const selectionOffset = nextOffset;
+        event?.preventDefault();
+        event?.stopPropagation();
         editor.update(() => {
-          $setSelectionAtComposerOffset(currentOffset + 1);
+          $setSelectionAtComposerOffset(selectionOffset);
         });
         return true;
       },
