@@ -1,279 +1,141 @@
 import "../index.css";
 
-import { type MessageId, type ThreadId } from "@t3tools/contracts";
 import {
-  Outlet,
-  RouterProvider,
-  createMemoryHistory,
-  createRootRoute,
-  createRoute,
-  createRouter,
-} from "@tanstack/react-router";
+  ORCHESTRATION_WS_METHODS,
+  type MessageId,
+  type OrchestrationReadModel,
+  type ProjectId,
+  type ProviderSessionId,
+  type ServerConfig,
+  type ThreadId,
+  type WsWelcomePayload,
+  WS_CHANNELS,
+  WS_METHODS,
+} from "@t3tools/contracts";
+import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
+import { HttpResponse, http, ws } from "msw";
+import { setupWorker } from "msw/browser";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import type { ChatMessage, Thread } from "../types";
-import ChatView from "./ChatView";
+import { getRouter } from "../router";
+import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 
-const mocks = vi.hoisted(() => {
-  return {
-    markThreadVisited: vi.fn(),
-    setThreadError: vi.fn(),
-    setRuntimeMode: vi.fn(),
-    setThreadBranch: vi.fn(),
-    storeState: {
-      projects: [] as unknown[],
-      threads: [] as Thread[],
-      runtimeMode: "full-access",
-      markThreadVisited: vi.fn(),
-      setError: vi.fn(),
-      setRuntimeMode: vi.fn(),
-      setThreadBranch: vi.fn(),
-    },
-    composerDraft: {
-      prompt: "",
-      images: [] as unknown[],
-      nonPersistedImageIds: [] as string[],
-      model: null,
-      effort: null,
-    },
-    composerStore: {
-      draftsByThreadId: {},
-      draftThreadsByThreadId: {},
-      setPrompt: vi.fn(),
-      setModel: vi.fn(),
-      setEffort: vi.fn(),
-      addImage: vi.fn(),
-      addImages: vi.fn(),
-      removeImage: vi.fn(),
-      clearPersistedAttachments: vi.fn(),
-      syncPersistedAttachments: vi.fn(),
-      clearComposerContent: vi.fn(),
-      clearDraftThread: vi.fn(),
-      setDraftThreadContext: vi.fn(),
-    },
-    terminalStore: {
-      terminalStateByThreadId: {} as Record<string, unknown>,
-      setTerminalOpen: vi.fn(),
-      setTerminalHeight: vi.fn(),
-      splitTerminal: vi.fn(),
-      newTerminal: vi.fn(),
-      setActiveTerminal: vi.fn(),
-      closeTerminal: vi.fn(),
-    },
-    terminalState: {
-      terminalOpen: false,
-      terminalHeight: 280,
-      terminalIds: ["default"],
-      runningTerminalIds: [],
-      activeTerminalId: "default",
-      terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
-      activeTerminalGroupId: "group-default",
-    },
-  };
-});
-
-vi.mock("@tanstack/react-query", async () => {
-  const actual = await vi.importActual<typeof import("@tanstack/react-query")>(
-    "@tanstack/react-query",
-  );
-  return {
-    ...actual,
-    useQueryClient: () => ({}),
-    useMutation: () => ({
-      mutateAsync: vi.fn(async () => ({})),
-      isPending: false,
-    }),
-    useQuery: () => ({
-      data: undefined,
-      isLoading: false,
-      error: null,
-    }),
-  };
-});
-
-vi.mock("../store", () => ({
-  useStore: (selector: (store: typeof mocks.storeState) => unknown) => selector(mocks.storeState),
-}));
-
-vi.mock("../composerDraftStore", () => ({
-  useComposerThreadDraft: () => mocks.composerDraft,
-  useComposerDraftStore: (selector: (store: typeof mocks.composerStore) => unknown) =>
-    selector(mocks.composerStore),
-}));
-
-vi.mock("../terminalStateStore", () => ({
-  useTerminalStateStore: (selector: (store: typeof mocks.terminalStore) => unknown) =>
-    selector(mocks.terminalStore),
-  selectThreadTerminalState: () => mocks.terminalState,
-}));
-
-vi.mock("../hooks/useTurnDiffSummaries", () => ({
-  useTurnDiffSummaries: () => ({
-    turnDiffSummaries: [],
-    inferredCheckpointTurnCountByTurnId: {},
-  }),
-}));
-
-vi.mock("../hooks/useTheme", () => ({
-  useTheme: () => ({ resolvedTheme: "light" as const }),
-}));
-
-vi.mock("../nativeApi", () => ({
-  readNativeApi: () => null,
-  ensureNativeApi: () => {
-    throw new Error("Native API unavailable in browser test");
-  },
-}));
-
-vi.mock("./BranchToolbar", () => ({
-  default: () => null,
-}));
-
-vi.mock("./GitActionsControl", () => ({
-  default: () => null,
-}));
-
-vi.mock("./ProjectScriptsControl", () => ({
-  default: () => null,
-}));
-
-vi.mock("./ThreadTerminalDrawer", () => ({
-  default: () => null,
-}));
-
-vi.mock("./ComposerPromptEditor", () => ({
-  ComposerPromptEditor: () => null,
-}));
-
-vi.mock("./ui/sidebar", () => ({
-  SidebarTrigger: () => null,
-}));
-
 const THREAD_ID = "thread-browser-test" as ThreadId;
+const PROJECT_ID = "project-1" as ProjectId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
-const TALL_IMAGE_DATA_URI = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
-  "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='300'></svg>",
-)}`;
+const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='300'></svg>";
 
-interface RenderMeasureOptions {
-  timelineWidthPx: number;
-  messages: ChatMessage[];
-  targetMessageId: MessageId;
-}
-
-function createTestRouter(threadId: ThreadId) {
-  const rootRoute = createRootRoute({
-    component: () => <Outlet />,
-  });
-  const threadRoute = createRoute({
-    getParentRoute: () => rootRoute,
-    path: "/$threadId",
-    component: () => <ChatView threadId={threadId} />,
-  });
-  return createRouter({
-    routeTree: rootRoute.addChildren([threadRoute]),
-    history: createMemoryHistory({
-      initialEntries: [`/${threadId}`],
-    }),
-    context: {},
-  });
-}
-
-function createThread(messages: ChatMessage[]): Thread {
-  return {
-    id: THREAD_ID,
-    codexThreadId: null,
-    projectId: "project-1" as Thread["projectId"],
-    title: "Browser test thread",
-    model: "gpt-5",
-    session: null,
-    messages,
-    error: null,
-    createdAt: NOW_ISO,
-    latestTurn: null,
-    lastVisitedAt: NOW_ISO,
-    branch: null,
-    worktreePath: null,
-    turnDiffSummaries: [],
-    activities: [],
+interface WsRequestEnvelope {
+  id: string;
+  body: {
+    _tag: string;
+    [key: string]: unknown;
   };
 }
+
+interface TestFixture {
+  snapshot: OrchestrationReadModel;
+  serverConfig: ServerConfig;
+  welcome: WsWelcomePayload;
+}
+
+let fixture: TestFixture;
+const wsLink = ws.link(/ws(s)?:\/\/.*/);
 
 function isoAt(offsetSeconds: number): string {
   return new Date(BASE_TIME_MS + offsetSeconds * 1_000).toISOString();
 }
 
-function createUserMessage({
-  id,
-  text,
-  offsetSeconds,
-  attachments,
-}: {
-  id: MessageId;
-  text: string;
-  offsetSeconds: number;
-  attachments?: ChatMessage["attachments"];
-}): ChatMessage {
+function createBaseServerConfig(): ServerConfig {
   return {
-    id,
-    role: "user",
-    text,
-    ...(attachments && attachments.length > 0 ? { attachments } : {}),
-    createdAt: isoAt(offsetSeconds),
-    completedAt: isoAt(offsetSeconds + 1),
-    streaming: false,
+    cwd: "/repo/project",
+    keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
+    keybindings: [],
+    issues: [],
+    providers: [
+      {
+        provider: "codex",
+        status: "ready",
+        available: true,
+        authStatus: "authenticated",
+        checkedAt: NOW_ISO,
+      },
+    ],
+    availableEditors: [],
   };
 }
 
-function createAssistantMessage({
-  id,
-  text,
-  offsetSeconds,
-}: {
+function createUserMessage(options: {
   id: MessageId;
   text: string;
   offsetSeconds: number;
-}): ChatMessage {
+  attachments?: Array<{
+    type: "image";
+    id: string;
+    name: string;
+    mimeType: string;
+    sizeBytes: number;
+  }>;
+}) {
   return {
-    id,
-    role: "assistant",
-    text,
-    createdAt: isoAt(offsetSeconds),
-    completedAt: isoAt(offsetSeconds + 1),
+    id: options.id,
+    role: "user" as const,
+    text: options.text,
+    ...(options.attachments ? { attachments: options.attachments } : {}),
+    turnId: null,
     streaming: false,
+    createdAt: isoAt(options.offsetSeconds),
+    updatedAt: isoAt(options.offsetSeconds + 1),
   };
 }
 
-function createImageAttachments(count: number): NonNullable<ChatMessage["attachments"]> {
-  return Array.from({ length: count }, (_, index) => ({
-    type: "image" as const,
-    id: `attachment-${index + 1}`,
-    name: `attachment-${index + 1}.svg`,
-    mimeType: "image/svg+xml",
-    sizeBytes: 128,
-    previewUrl: TALL_IMAGE_DATA_URI,
-  }));
+function createAssistantMessage(options: {
+  id: MessageId;
+  text: string;
+  offsetSeconds: number;
+}) {
+  return {
+    id: options.id,
+    role: "assistant" as const,
+    text: options.text,
+    turnId: null,
+    streaming: false,
+    createdAt: isoAt(options.offsetSeconds),
+    updatedAt: isoAt(options.offsetSeconds + 1),
+  };
 }
 
-function createConversationWithTargetUser(options: {
+function createSnapshotForTargetUser(options: {
   targetMessageId: MessageId;
   targetText: string;
-  targetAttachments?: ChatMessage["attachments"];
-}): ChatMessage[] {
-  const messages: ChatMessage[] = [];
+  targetAttachmentCount?: number;
+}): OrchestrationReadModel {
+  const messages: Array<OrchestrationReadModel["threads"][number]["messages"][number]> = [];
+
   for (let index = 0; index < 22; index += 1) {
-    const userId = (`msg-user-${index}` as MessageId);
-    const assistantId = (`msg-assistant-${index}` as MessageId);
     const isTarget = index === 3;
+    const userId = `msg-user-${index}` as MessageId;
+    const assistantId = `msg-assistant-${index}` as MessageId;
+    const attachments =
+      isTarget && (options.targetAttachmentCount ?? 0) > 0
+        ? Array.from({ length: options.targetAttachmentCount ?? 0 }, (_, attachmentIndex) => ({
+            type: "image" as const,
+            id: `attachment-${attachmentIndex + 1}`,
+            name: `attachment-${attachmentIndex + 1}.png`,
+            mimeType: "image/png",
+            sizeBytes: 128,
+          }))
+        : undefined;
+
     messages.push(
       createUserMessage({
         id: isTarget ? options.targetMessageId : userId,
         text: isTarget ? options.targetText : `filler user message ${index}`,
         offsetSeconds: messages.length * 3,
-        attachments: isTarget ? options.targetAttachments : undefined,
+        ...(attachments ? { attachments } : {}),
       }),
     );
     messages.push(
@@ -284,8 +146,148 @@ function createConversationWithTargetUser(options: {
       }),
     );
   }
-  return messages;
+
+  return {
+    snapshotSequence: 1,
+    projects: [
+      {
+        id: PROJECT_ID,
+        title: "Project",
+        workspaceRoot: "/repo/project",
+        defaultModel: "gpt-5",
+        scripts: [],
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+      },
+    ],
+    threads: [
+      {
+        id: THREAD_ID,
+        projectId: PROJECT_ID,
+        title: "Browser test thread",
+        model: "gpt-5",
+        branch: "main",
+        worktreePath: null,
+        latestTurn: null,
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+        messages,
+        activities: [],
+        checkpoints: [],
+        session: {
+          threadId: THREAD_ID,
+          status: "ready",
+          providerName: "codex",
+          providerSessionId: "session-1" as ProviderSessionId,
+          providerThreadId: null,
+          approvalPolicy: "on-failure",
+          sandboxMode: "workspace-write",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: NOW_ISO,
+        },
+      },
+    ],
+    updatedAt: NOW_ISO,
+  };
 }
+
+function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
+  return {
+    snapshot,
+    serverConfig: createBaseServerConfig(),
+    welcome: {
+      cwd: "/repo/project",
+      projectName: "Project",
+      bootstrapProjectId: PROJECT_ID,
+      bootstrapThreadId: THREAD_ID,
+    },
+  };
+}
+
+function resolveWsRpc(tag: string): unknown {
+  if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
+    return fixture.snapshot;
+  }
+  if (tag === WS_METHODS.serverGetConfig) {
+    return fixture.serverConfig;
+  }
+  if (tag === WS_METHODS.gitListBranches) {
+    return {
+      isRepo: true,
+      branches: [
+        {
+          name: "main",
+          current: true,
+          isDefault: true,
+          worktreePath: null,
+        },
+      ],
+    };
+  }
+  if (tag === WS_METHODS.gitStatus) {
+    return {
+      branch: "main",
+      hasWorkingTreeChanges: false,
+      workingTree: {
+        files: [],
+        insertions: 0,
+        deletions: 0,
+      },
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: null,
+    };
+  }
+  if (tag === WS_METHODS.projectsSearchEntries) {
+    return {
+      entries: [],
+      truncated: false,
+    };
+  }
+  return {};
+}
+
+const worker = setupWorker(
+  wsLink.addEventListener("connection", ({ client }) => {
+    client.send(
+      JSON.stringify({
+        type: "push",
+        channel: WS_CHANNELS.serverWelcome,
+        data: fixture.welcome,
+      }),
+    );
+    client.addEventListener("message", (event) => {
+      const rawData = event.data;
+      if (typeof rawData !== "string") return;
+      let request: WsRequestEnvelope;
+      try {
+        request = JSON.parse(rawData) as WsRequestEnvelope;
+      } catch {
+        return;
+      }
+      const method = request.body?._tag;
+      if (typeof method !== "string") return;
+      client.send(
+        JSON.stringify({
+          id: request.id,
+          result: resolveWsRpc(method),
+        }),
+      );
+    });
+  }),
+  http.get("*/attachments/:attachmentId", () =>
+    HttpResponse.text(ATTACHMENT_SVG, {
+      headers: {
+        "Content-Type": "image/svg+xml",
+      },
+    }),
+  ),
+  http.get("*/api/project-favicon", () => new HttpResponse(null, { status: 204 })),
+);
 
 async function nextFrame(): Promise<void> {
   await new Promise<void>((resolve) => {
@@ -299,8 +301,24 @@ async function waitForLayout(): Promise<void> {
   await nextFrame();
 }
 
+async function waitForElement<T extends Element>(
+  query: () => T | null,
+  errorMessage: string,
+): Promise<T> {
+  const timeoutAt = performance.now() + 8_000;
+  while (performance.now() < timeoutAt) {
+    const element = query();
+    if (element) return element;
+    await nextFrame();
+  }
+  throw new Error(errorMessage);
+}
+
 async function waitForImagesToLoad(scope: ParentNode): Promise<void> {
   const images = Array.from(scope.querySelectorAll("img"));
+  if (images.length === 0) {
+    return;
+  }
   await Promise.all(
     images.map(
       (image) =>
@@ -317,74 +335,130 @@ async function waitForImagesToLoad(scope: ParentNode): Promise<void> {
   await waitForLayout();
 }
 
-async function renderAndMeasureUserRow({
-  timelineWidthPx,
-  messages,
-  targetMessageId,
-}: RenderMeasureOptions): Promise<{
+async function renderAndMeasureUserRow(options: {
+  timelineWidthPx: number;
+  targetMessageId: MessageId;
+  snapshot: OrchestrationReadModel;
+}): Promise<{
   measuredRowHeightPx: number;
   timelineWidthMeasuredPx: number;
   renderedInVirtualizedRegion: boolean;
 }> {
+  fixture = buildFixture(options.snapshot);
+
   const host = document.createElement("div");
-  host.style.width = `${timelineWidthPx}px`;
+  host.style.width = `${options.timelineWidthPx}px`;
   host.style.height = "920px";
   host.style.display = "flex";
   host.style.overflow = "hidden";
   document.body.append(host);
 
-  mocks.storeState.threads = [createThread(messages)];
-  const router = createTestRouter(THREAD_ID);
+  const router = getRouter(
+    createMemoryHistory({
+      initialEntries: [`/${THREAD_ID}`],
+    }),
+  );
 
   const root: Root = createRoot(host);
   root.render(<RouterProvider router={router} />);
-  await waitForLayout();
 
-  const scrollContainer = host.querySelector("div.overflow-y-auto.overscroll-y-contain");
-  if (!(scrollContainer instanceof HTMLDivElement)) {
+  try {
+    await waitForLayout();
+
+    const scrollContainer = await waitForElement(
+      () => host.querySelector<HTMLDivElement>("div.overflow-y-auto.overscroll-y-contain"),
+      "Unable to find ChatView message scroll container.",
+    );
+
+    let row: HTMLElement | null = null;
+    const timeoutAt = performance.now() + 8_000;
+  while (performance.now() < timeoutAt) {
+      scrollContainer.scrollTop = 0;
+      scrollContainer.dispatchEvent(new Event("scroll"));
+      await waitForLayout();
+      row = host.querySelector<HTMLElement>(
+        `[data-message-id="${options.targetMessageId}"][data-message-role="user"]`,
+      );
+      if (row) {
+        break;
+      }
+    }
+    if (!row) {
+      throw new Error("Unable to locate targeted user message row.");
+    }
+
+    await waitForImagesToLoad(row);
+    scrollContainer.scrollTop = 0;
+    scrollContainer.dispatchEvent(new Event("scroll"));
+    await nextFrame();
+
+    const timelineRoot =
+      row.closest<HTMLElement>('[data-timeline-root="true"]') ??
+      host.querySelector<HTMLElement>('[data-timeline-root="true"]');
+    if (!(timelineRoot instanceof HTMLElement)) {
+      throw new Error("Unable to locate timeline root container.");
+    }
+
+    const timelineWidthMeasuredPx = timelineRoot.getBoundingClientRect().width;
+    let measuredRowHeightPx = 0;
+    let renderedInVirtualizedRegion = false;
+    const rowSelector = `[data-message-id="${options.targetMessageId}"][data-message-role="user"]`;
+    const measureTimeoutAt = performance.now() + 4_000;
+    while (performance.now() < measureTimeoutAt) {
+      scrollContainer.scrollTop = 0;
+      scrollContainer.dispatchEvent(new Event("scroll"));
+      await nextFrame();
+      const measuredRow = host.querySelector<HTMLElement>(rowSelector);
+      if (!measuredRow) {
+        continue;
+      }
+      measuredRowHeightPx = measuredRow.getBoundingClientRect().height;
+      renderedInVirtualizedRegion = measuredRow.closest("[data-index]") instanceof HTMLElement;
+      if (measuredRowHeightPx > 0) {
+        break;
+      }
+    }
+    if (measuredRowHeightPx <= 0) {
+      throw new Error("Unable to measure targeted user row height.");
+    }
+
+    return { measuredRowHeightPx, timelineWidthMeasuredPx, renderedInVirtualizedRegion };
+  } finally {
     root.unmount();
-    throw new Error("Unable to find ChatView message scroll container.");
+    host.remove();
   }
-  scrollContainer.scrollTop = 0;
-  scrollContainer.dispatchEvent(new Event("scroll"));
-  await waitForLayout();
-
-  const row = host.querySelector<HTMLElement>(
-    `[data-message-id="${targetMessageId}"][data-message-role="user"]`,
-  );
-  if (!(row instanceof HTMLElement)) {
-    root.unmount();
-    throw new Error("Unable to locate targeted user message row.");
-  }
-  await waitForImagesToLoad(row);
-
-  const timelineRoot = row.closest("div.max-w-3xl");
-  if (!(timelineRoot instanceof HTMLElement)) {
-    root.unmount();
-    throw new Error("Unable to locate timeline root container.");
-  }
-
-  const measuredRowHeightPx = row.getBoundingClientRect().height;
-  const timelineWidthMeasuredPx = timelineRoot.getBoundingClientRect().width;
-  const renderedInVirtualizedRegion = row.closest("[data-index]") instanceof HTMLElement;
-
-  root.unmount();
-  host.remove();
-
-  return { measuredRowHeightPx, timelineWidthMeasuredPx, renderedInVirtualizedRegion };
 }
 
-describe("ChatView timeline estimator parity", () => {
+describe("ChatView timeline estimator parity (full app)", () => {
+  beforeAll(async () => {
+    fixture = buildFixture(
+      createSnapshotForTargetUser({
+        targetMessageId: "msg-user-bootstrap" as MessageId,
+        targetText: "bootstrap",
+      }),
+    );
+    await worker.start({
+      onUnhandledRequest: "bypass",
+      quiet: true,
+      serviceWorker: {
+        url: "/mockServiceWorker.js",
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await worker.stop();
+  });
+
   beforeEach(() => {
+    localStorage.clear();
     document.body.innerHTML = "";
-    mocks.storeState.projects = [];
-    mocks.storeState.threads = [];
-    mocks.storeState.runtimeMode = "full-access";
-    mocks.composerDraft.prompt = "";
-    mocks.composerDraft.images = [];
-    mocks.composerDraft.nonPersistedImageIds = [];
-    mocks.composerDraft.model = null;
-    mocks.composerDraft.effort = null;
+    useStore.setState({
+      projects: [],
+      threads: [],
+      threadsHydrated: false,
+      runtimeMode: "full-access",
+    });
   });
 
   afterEach(() => {
@@ -398,7 +472,7 @@ describe("ChatView timeline estimator parity", () => {
       await renderAndMeasureUserRow({
         timelineWidthPx: 960,
         targetMessageId,
-        messages: createConversationWithTargetUser({
+        snapshot: createSnapshotForTargetUser({
           targetMessageId,
           targetText: userText,
         }),
@@ -417,19 +491,19 @@ describe("ChatView timeline estimator parity", () => {
   it("tracks additional rendered wrapping when ChatView width narrows", async () => {
     const userText = "x".repeat(2_400);
     const targetMessageId = "msg-user-target-wrap" as MessageId;
-    const messages = createConversationWithTargetUser({
+    const snapshot = createSnapshotForTargetUser({
       targetMessageId,
       targetText: userText,
     });
     const desktop = await renderAndMeasureUserRow({
       timelineWidthPx: 960,
       targetMessageId,
-      messages,
+      snapshot,
     });
     const mobile = await renderAndMeasureUserRow({
       timelineWidthPx: 360,
       targetMessageId,
-      messages,
+      snapshot,
     });
 
     const estimatedDesktopPx = estimateTimelineMessageHeight(
@@ -452,16 +526,15 @@ describe("ChatView timeline estimator parity", () => {
 
   it("keeps user attachment estimate close to actual rendered ChatView row height", async () => {
     const targetMessageId = "msg-user-target-attachments" as MessageId;
-    const attachments = createImageAttachments(3);
     const userText = "message with image attachments";
     const { measuredRowHeightPx, timelineWidthMeasuredPx, renderedInVirtualizedRegion } =
       await renderAndMeasureUserRow({
         timelineWidthPx: 960,
         targetMessageId,
-        messages: createConversationWithTargetUser({
+        snapshot: createSnapshotForTargetUser({
           targetMessageId,
           targetText: userText,
-          targetAttachments: attachments,
+          targetAttachmentCount: 3,
         }),
       });
 
@@ -471,7 +544,7 @@ describe("ChatView timeline estimator parity", () => {
       {
         role: "user",
         text: userText,
-        attachments: attachments.map((attachment) => ({ id: attachment.id })),
+        attachments: [{ id: "attachment-1" }, { id: "attachment-2" }, { id: "attachment-3" }],
       },
       { timelineWidthPx: timelineWidthMeasuredPx },
     );

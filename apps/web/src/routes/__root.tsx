@@ -26,6 +26,9 @@ export const Route = createRootRouteWithContext<{
 }>()({
   component: RootRouteView,
   errorComponent: RootRouteErrorView,
+  head: () => ({
+    meta: [{ name: "title", content: APP_DISPLAY_NAME }],
+  }),
 });
 
 function RootRouteView() {
@@ -152,9 +155,7 @@ function EventRouter() {
       latestSequence = Math.max(latestSequence, snapshot.snapshotSequence);
       syncServerReadModel(snapshot);
       const activeThreadIds = new Set(
-        snapshot.threads
-          .filter((t) => t.deletedAt === null)
-          .map((t) => t.id),
+        snapshot.threads.filter((t) => t.deletedAt === null).map((t) => t.id),
       );
       removeOrphanedTerminalStates(activeThreadIds);
       if (pending) {
@@ -195,11 +196,13 @@ function EventRouter() {
       if (hasRunningSubprocess === null) {
         return;
       }
-      useTerminalStateStore.getState().setTerminalActivity(
-        ThreadId.makeUnsafe(event.threadId),
-        event.terminalId,
-        hasRunningSubprocess,
-      );
+      useTerminalStateStore
+        .getState()
+        .setTerminalActivity(
+          ThreadId.makeUnsafe(event.threadId),
+          event.terminalId,
+          hasRunningSubprocess,
+        );
     });
     const unsubWelcome = onServerWelcome((payload) => {
       void (async () => {
@@ -276,7 +279,13 @@ function EventRouter() {
       unsubWelcome();
       unsubServerConfigUpdated();
     };
-  }, [navigate, queryClient, removeOrphanedTerminalStates, setProjectExpanded, syncServerReadModel]);
+  }, [
+    navigate,
+    queryClient,
+    removeOrphanedTerminalStates,
+    setProjectExpanded,
+    syncServerReadModel,
+  ]);
 
   return null;
 }
