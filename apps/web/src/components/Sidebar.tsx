@@ -60,6 +60,13 @@ import { isNonEmpty as isNonEmptyString } from "effect/String";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (typeof navigator === "undefined" || navigator.clipboard?.writeText === undefined) {
+    throw new Error("Clipboard API unavailable.");
+  }
+  await navigator.clipboard.writeText(text);
+}
+
 function formatRelativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const minutes = Math.floor(diff / 60_000);
@@ -581,6 +588,7 @@ export default function Sidebar() {
         [
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
+          { id: "copy-thread-id", label: "Copy Thread ID" },
           { id: "delete", label: "Delete", destructive: true },
         ],
         position,
@@ -597,6 +605,23 @@ export default function Sidebar() {
 
       if (clicked === "mark-unread") {
         markThreadUnread(threadId);
+        return;
+      }
+      if (clicked === "copy-thread-id") {
+        try {
+          await copyTextToClipboard(threadId);
+          toastManager.add({
+            type: "success",
+            title: "Thread ID copied",
+            description: threadId,
+          });
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Failed to copy thread ID",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        }
         return;
       }
       if (clicked !== "delete") return;
