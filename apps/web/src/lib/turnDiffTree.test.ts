@@ -148,4 +148,18 @@ describe("buildTurnDiffTree", () => {
       },
     ]);
   });
+
+  it("preserves leading/trailing whitespace in path segments", () => {
+    const tree = buildTurnDiffTree([
+      { path: "a/file.ts", additions: 1, deletions: 0 },
+      { path: " a/file.ts", additions: 2, deletions: 0 },
+    ]);
+
+    expect(tree).toHaveLength(2);
+    const directoryNodes = tree.filter(
+      (node): node is Extract<(typeof tree)[number], { kind: "directory" }> => node.kind === "directory",
+    );
+    expect(directoryNodes.map((node) => node.name).toSorted()).toEqual([" a", "a"]);
+    expect(directoryNodes.map((node) => node.path).toSorted()).toEqual([" a", "a"]);
+  });
 });

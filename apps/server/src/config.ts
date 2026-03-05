@@ -9,11 +9,8 @@
 import { Effect, FileSystem, Layer, Path, ServiceMap } from "effect";
 
 export const DEFAULT_PORT = 3773;
-export const KEYBINDINGS_CONFIG_FILENAME = "keybindings.json" as const;
 
 export type RuntimeMode = "web" | "desktop";
-
-export const isDesktopMode = (mode: RuntimeMode): mode is "desktop" => mode === "desktop";
 
 /**
  * ServerConfigShape - Process/runtime configuration required by the server.
@@ -53,7 +50,7 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
           port: 0,
           host: undefined,
           authToken: undefined,
-          keybindingsConfigPath: path.join(statedir, KEYBINDINGS_CONFIG_FILENAME),
+          keybindingsConfigPath: path.join(statedir, "keybindings.json"),
           staticDir: undefined,
           devUrl: undefined,
           noBrowser: false,

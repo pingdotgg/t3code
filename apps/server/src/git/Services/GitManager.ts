@@ -38,8 +38,6 @@ export interface GitManagerShape {
 
 /**
  * GitManager - Service tag for stacked Git workflow orchestration.
- *
- * Single tag keeps orchestration wiring swappable in Layer-based tests.
  */
 export class GitManager extends ServiceMap.Service<GitManager, GitManagerShape>()(
   "t3/git/Services/GitManager",

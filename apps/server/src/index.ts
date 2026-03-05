@@ -10,7 +10,6 @@ import { version } from "../package.json" with { type: "json" };
 import { ServerLive } from "./wsServer";
 import { NetService } from "@t3tools/shared/Net";
 
-// Compose all required services once so every CLI invocation shares the same runtime.
 const RuntimeLayer = Layer.empty.pipe(
   Layer.provideMerge(CliConfig.layer),
   Layer.provideMerge(ServerLive),

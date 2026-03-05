@@ -59,8 +59,6 @@ export class GitManagerError extends Schema.TaggedErrorClass<GitManagerError>()(
 
 /**
  * GitManagerServiceError - Errors emitted by stacked Git workflow orchestration.
- *
- * Keep this union centralized so callers can pattern-match once at API boundaries.
  */
 export type GitManagerServiceError =
   | GitManagerError

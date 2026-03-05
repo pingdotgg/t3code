@@ -3,7 +3,6 @@ import { Effect, Path } from "effect";
 import { execFileSync } from "node:child_process";
 
 export function fixPath(): void {
-  // Only macOS shells need PATH hydration from interactive startup files.
   if (process.platform !== "darwin") return;
 
   try {

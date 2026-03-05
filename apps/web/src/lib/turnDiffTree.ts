@@ -36,7 +36,6 @@ function normalizePathSegments(pathValue: string): string[] {
   return pathValue
     .replaceAll("\\", "/")
     .split("/")
-    .map((segment) => segment.trim())
     .filter((segment) => segment.length > 0);
 }
 

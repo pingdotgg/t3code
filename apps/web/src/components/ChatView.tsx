@@ -3202,10 +3202,10 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     setExpandedDirectories(allDirectoryExpansionState);
   }, [allDirectoryExpansionState]);
 
-  const toggleDirectory = useCallback((pathValue: string) => {
+  const toggleDirectory = useCallback((pathValue: string, fallbackExpanded: boolean) => {
     setExpandedDirectories((current) => ({
       ...current,
-      [pathValue]: !current[pathValue],
+      [pathValue]: !(current[pathValue] ?? fallbackExpanded),
     }));
   }, []);
 
@@ -3219,7 +3219,7 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
             type="button"
             className="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
             style={{ paddingLeft: `${leftPadding}px` }}
-            onClick={() => toggleDirectory(node.path)}
+            onClick={() => toggleDirectory(node.path, depth === 0)}
           >
             <ChevronRightIcon
               aria-hidden="true"
@@ -3236,9 +3236,11 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
             <span className="truncate font-mono text-[11px] text-muted-foreground/90 group-hover:text-foreground/90">
               {node.name}
             </span>
-            <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
-              <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
-            </span>
+            {hasNonZeroStat(node.stat) && (
+              <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
+                <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
+              </span>
+            )}
           </button>
           {isExpanded && (
             <div className="space-y-0.5">
