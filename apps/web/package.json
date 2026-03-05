@@ -50,6 +50,7 @@
     "tailwindcss": "^4.0.0",
     "typescript": "catalog:",
     "vite": "^8.0.0-beta.12",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "vitest-browser-react": "^2.0.5"
   }
 }

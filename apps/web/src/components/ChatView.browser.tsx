@@ -15,8 +15,8 @@ import {
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
-import { createRoot, type Root } from "react-dom/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { render } from "vitest-browser-react";
 
 import { getRouter } from "../router";
 import { useStore } from "../store";
@@ -92,11 +92,7 @@ function createUserMessage(options: {
   };
 }
 
-function createAssistantMessage(options: {
-  id: MessageId;
-  text: string;
-  offsetSeconds: number;
-}) {
+function createAssistantMessage(options: { id: MessageId; text: string; offsetSeconds: number }) {
   return {
     id: options.id,
     role: "assistant" as const,
@@ -359,8 +355,9 @@ async function renderAndMeasureUserRow(options: {
     }),
   );
 
-  const root: Root = createRoot(host);
-  root.render(<RouterProvider router={router} />);
+  const screen = await render(<RouterProvider router={router} />, {
+    container: host,
+  });
 
   try {
     await waitForLayout();
@@ -372,7 +369,7 @@ async function renderAndMeasureUserRow(options: {
 
     let row: HTMLElement | null = null;
     const timeoutAt = performance.now() + 8_000;
-  while (performance.now() < timeoutAt) {
+    while (performance.now() < timeoutAt) {
       scrollContainer.scrollTop = 0;
       scrollContainer.dispatchEvent(new Event("scroll"));
       await waitForLayout();
@@ -424,7 +421,7 @@ async function renderAndMeasureUserRow(options: {
 
     return { measuredRowHeightPx, timelineWidthMeasuredPx, renderedInVirtualizedRegion };
   } finally {
-    root.unmount();
+    await screen.unmount();
     host.remove();
   }
 }
