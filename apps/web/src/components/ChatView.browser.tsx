@@ -1,3 +1,4 @@
+// Production CSS is part of the behavior under test because row height depends on it.
 import "../index.css";
 
 import {
@@ -15,6 +16,7 @@ import {
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
+import { page } from "vitest/browser";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
@@ -44,6 +46,45 @@ interface TestFixture {
 
 let fixture: TestFixture;
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
+
+interface ViewportSpec {
+  name: string;
+  width: number;
+  height: number;
+  textTolerancePx: number;
+  attachmentTolerancePx: number;
+}
+
+const DEFAULT_VIEWPORT: ViewportSpec = {
+  name: "desktop",
+  width: 960,
+  height: 1_100,
+  textTolerancePx: 44,
+  attachmentTolerancePx: 56,
+};
+const TEXT_VIEWPORT_MATRIX = [
+  DEFAULT_VIEWPORT,
+  { name: "tablet", width: 720, height: 1_024, textTolerancePx: 44, attachmentTolerancePx: 56 },
+  { name: "mobile", width: 430, height: 932, textTolerancePx: 56, attachmentTolerancePx: 56 },
+  { name: "narrow", width: 320, height: 700, textTolerancePx: 84, attachmentTolerancePx: 56 },
+] as const satisfies readonly ViewportSpec[];
+const ATTACHMENT_VIEWPORT_MATRIX = [
+  DEFAULT_VIEWPORT,
+  { name: "mobile", width: 430, height: 932, textTolerancePx: 56, attachmentTolerancePx: 56 },
+  { name: "narrow", width: 320, height: 700, textTolerancePx: 84, attachmentTolerancePx: 56 },
+] as const satisfies readonly ViewportSpec[];
+
+interface UserRowMeasurement {
+  measuredRowHeightPx: number;
+  timelineWidthMeasuredPx: number;
+  renderedInVirtualizedRegion: boolean;
+}
+
+interface MountedChatView {
+  cleanup: () => Promise<void>;
+  measureUserRow: (targetMessageId: MessageId) => Promise<UserRowMeasurement>;
+  setViewport: (viewport: ViewportSpec) => Promise<void>;
+}
 
 function isoAt(offsetSeconds: number): string {
   return new Date(BASE_TIME_MS + offsetSeconds * 1_000).toISOString();
@@ -297,6 +338,26 @@ async function waitForLayout(): Promise<void> {
   await nextFrame();
 }
 
+async function setViewport(viewport: ViewportSpec): Promise<void> {
+  await page.viewport(viewport.width, viewport.height);
+  await waitForLayout();
+}
+
+async function waitForProductionStyles(): Promise<void> {
+  await vi.waitFor(
+    () => {
+      expect(getComputedStyle(document.documentElement).getPropertyValue("--background").trim()).not.toBe(
+        "",
+      );
+      expect(getComputedStyle(document.body).marginTop).toBe("0px");
+    },
+    {
+      timeout: 4_000,
+      interval: 16,
+    },
+  );
+}
+
 async function waitForElement<T extends Element>(
   query: () => T | null,
   errorMessage: string,
@@ -339,21 +400,84 @@ async function waitForImagesToLoad(scope: ParentNode): Promise<void> {
   await waitForLayout();
 }
 
-async function renderAndMeasureUserRow(options: {
-  timelineWidthPx: number;
+async function measureUserRow(options: {
+  host: HTMLElement;
   targetMessageId: MessageId;
+}): Promise<UserRowMeasurement> {
+  const { host, targetMessageId } = options;
+  const rowSelector = `[data-message-id="${targetMessageId}"][data-message-role="user"]`;
+
+  const scrollContainer = await waitForElement(
+    () => host.querySelector<HTMLDivElement>("div.overflow-y-auto.overscroll-y-contain"),
+    "Unable to find ChatView message scroll container.",
+  );
+
+  let row: HTMLElement | null = null;
+  await vi.waitFor(
+    async () => {
+      scrollContainer.scrollTop = 0;
+      scrollContainer.dispatchEvent(new Event("scroll"));
+      await waitForLayout();
+      row = host.querySelector<HTMLElement>(rowSelector);
+      expect(row, "Unable to locate targeted user message row.").toBeTruthy();
+    },
+    {
+      timeout: 8_000,
+      interval: 16,
+    },
+  );
+
+  await waitForImagesToLoad(row!);
+  scrollContainer.scrollTop = 0;
+  scrollContainer.dispatchEvent(new Event("scroll"));
+  await nextFrame();
+
+  const timelineRoot =
+    row!.closest<HTMLElement>('[data-timeline-root="true"]') ??
+    host.querySelector<HTMLElement>('[data-timeline-root="true"]');
+  if (!(timelineRoot instanceof HTMLElement)) {
+    throw new Error("Unable to locate timeline root container.");
+  }
+
+  let timelineWidthMeasuredPx = 0;
+  let measuredRowHeightPx = 0;
+  let renderedInVirtualizedRegion = false;
+  await vi.waitFor(
+    async () => {
+      scrollContainer.scrollTop = 0;
+      scrollContainer.dispatchEvent(new Event("scroll"));
+      await nextFrame();
+      const measuredRow = host.querySelector<HTMLElement>(rowSelector);
+      expect(measuredRow, "Unable to measure targeted user row height.").toBeTruthy();
+      timelineWidthMeasuredPx = timelineRoot.getBoundingClientRect().width;
+      measuredRowHeightPx = measuredRow!.getBoundingClientRect().height;
+      renderedInVirtualizedRegion = measuredRow!.closest("[data-index]") instanceof HTMLElement;
+      expect(timelineWidthMeasuredPx, "Unable to measure timeline width.").toBeGreaterThan(0);
+      expect(measuredRowHeightPx, "Unable to measure targeted user row height.").toBeGreaterThan(0);
+    },
+    {
+      timeout: 4_000,
+      interval: 16,
+    },
+  );
+
+  return { measuredRowHeightPx, timelineWidthMeasuredPx, renderedInVirtualizedRegion };
+}
+
+async function mountChatView(options: {
+  viewport: ViewportSpec;
   snapshot: OrchestrationReadModel;
-}): Promise<{
-  measuredRowHeightPx: number;
-  timelineWidthMeasuredPx: number;
-  renderedInVirtualizedRegion: boolean;
-}> {
+}): Promise<MountedChatView> {
   fixture = buildFixture(options.snapshot);
+  await setViewport(options.viewport);
+  await waitForProductionStyles();
 
   const host = document.createElement("div");
-  host.style.width = `${options.timelineWidthPx}px`;
-  host.style.height = "920px";
-  host.style.display = "flex";
+  host.style.position = "fixed";
+  host.style.inset = "0";
+  host.style.width = "100vw";
+  host.style.height = "100vh";
+  host.style.display = "grid";
   host.style.overflow = "hidden";
   document.body.append(host);
 
@@ -367,68 +491,35 @@ async function renderAndMeasureUserRow(options: {
     container: host,
   });
 
+  await waitForLayout();
+
+  return {
+    cleanup: async () => {
+      await screen.unmount();
+      host.remove();
+    },
+    measureUserRow: async (targetMessageId: MessageId) => measureUserRow({ host, targetMessageId }),
+    setViewport: async (viewport: ViewportSpec) => {
+      await setViewport(viewport);
+      await waitForProductionStyles();
+    },
+  };
+}
+
+async function measureUserRowAtViewport(options: {
+  snapshot: OrchestrationReadModel;
+  targetMessageId: MessageId;
+  viewport: ViewportSpec;
+}): Promise<UserRowMeasurement> {
+  const mounted = await mountChatView({
+    viewport: options.viewport,
+    snapshot: options.snapshot,
+  });
+
   try {
-    await waitForLayout();
-
-    const scrollContainer = await waitForElement(
-      () => host.querySelector<HTMLDivElement>("div.overflow-y-auto.overscroll-y-contain"),
-      "Unable to find ChatView message scroll container.",
-    );
-
-    let row: HTMLElement | null = null;
-    await vi.waitFor(
-      async () => {
-        scrollContainer.scrollTop = 0;
-        scrollContainer.dispatchEvent(new Event("scroll"));
-        await waitForLayout();
-        row = host.querySelector<HTMLElement>(
-          `[data-message-id="${options.targetMessageId}"][data-message-role="user"]`,
-        );
-        expect(row, "Unable to locate targeted user message row.").toBeTruthy();
-      },
-      {
-        timeout: 8_000,
-        interval: 16,
-      },
-    );
-
-    await waitForImagesToLoad(row!);
-    scrollContainer.scrollTop = 0;
-    scrollContainer.dispatchEvent(new Event("scroll"));
-    await nextFrame();
-
-    const timelineRoot =
-      row!.closest<HTMLElement>('[data-timeline-root="true"]') ??
-      host.querySelector<HTMLElement>('[data-timeline-root="true"]');
-    if (!(timelineRoot instanceof HTMLElement)) {
-      throw new Error("Unable to locate timeline root container.");
-    }
-
-    const timelineWidthMeasuredPx = timelineRoot.getBoundingClientRect().width;
-    let measuredRowHeightPx = 0;
-    let renderedInVirtualizedRegion = false;
-    const rowSelector = `[data-message-id="${options.targetMessageId}"][data-message-role="user"]`;
-    await vi.waitFor(
-      async () => {
-        scrollContainer.scrollTop = 0;
-        scrollContainer.dispatchEvent(new Event("scroll"));
-        await nextFrame();
-        const measuredRow = host.querySelector<HTMLElement>(rowSelector);
-        expect(measuredRow, "Unable to measure targeted user row height.").toBeTruthy();
-        measuredRowHeightPx = measuredRow!.getBoundingClientRect().height;
-        renderedInVirtualizedRegion = measuredRow!.closest("[data-index]") instanceof HTMLElement;
-        expect(measuredRowHeightPx, "Unable to measure targeted user row height.").toBeGreaterThan(0);
-      },
-      {
-        timeout: 4_000,
-        interval: 16,
-      },
-    );
-
-    return { measuredRowHeightPx, timelineWidthMeasuredPx, renderedInVirtualizedRegion };
+    return await mounted.measureUserRow(options.targetMessageId);
   } finally {
-    await screen.unmount();
-    host.remove();
+    await mounted.cleanup();
   }
 }
 
@@ -453,7 +544,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
     await worker.stop();
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await setViewport(DEFAULT_VIEWPORT);
     localStorage.clear();
     document.body.innerHTML = "";
     useStore.setState({
@@ -468,57 +560,111 @@ describe("ChatView timeline estimator parity (full app)", () => {
     document.body.innerHTML = "";
   });
 
-  it("keeps long user message estimate close to actual rendered virtualized ChatView row height", async () => {
-    const userText = "x".repeat(3_200);
-    const targetMessageId = "msg-user-target-long" as MessageId;
-    const { measuredRowHeightPx, timelineWidthMeasuredPx, renderedInVirtualizedRegion } =
-      await renderAndMeasureUserRow({
-        timelineWidthPx: 960,
-        targetMessageId,
+  it.each(TEXT_VIEWPORT_MATRIX)(
+    "keeps long user message estimate close at the $name viewport",
+    async (viewport) => {
+      const userText = "x".repeat(3_200);
+      const targetMessageId = `msg-user-target-long-${viewport.name}` as MessageId;
+      const mounted = await mountChatView({
+        viewport,
         snapshot: createSnapshotForTargetUser({
           targetMessageId,
           targetText: userText,
         }),
       });
 
-    expect(renderedInVirtualizedRegion).toBe(true);
+      try {
+        const { measuredRowHeightPx, timelineWidthMeasuredPx, renderedInVirtualizedRegion } =
+          await mounted.measureUserRow(targetMessageId);
 
-    const estimatedHeightPx = estimateTimelineMessageHeight(
-      { role: "user", text: userText, attachments: [] },
-      { timelineWidthPx: timelineWidthMeasuredPx },
-    );
+        expect(renderedInVirtualizedRegion).toBe(true);
 
-    expect(Math.abs(measuredRowHeightPx - estimatedHeightPx)).toBeLessThanOrEqual(44);
+        const estimatedHeightPx = estimateTimelineMessageHeight(
+          { role: "user", text: userText, attachments: [] },
+          { timelineWidthPx: timelineWidthMeasuredPx },
+        );
+
+        expect(Math.abs(measuredRowHeightPx - estimatedHeightPx)).toBeLessThanOrEqual(
+          viewport.textTolerancePx,
+        );
+      } finally {
+        await mounted.cleanup();
+      }
+    },
+  );
+
+  it("tracks wrapping parity while resizing an existing ChatView across the viewport matrix", async () => {
+    const userText = "x".repeat(3_200);
+    const targetMessageId = "msg-user-target-resize" as MessageId;
+    const mounted = await mountChatView({
+      viewport: TEXT_VIEWPORT_MATRIX[0],
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId,
+        targetText: userText,
+      }),
+    });
+
+    try {
+      const measurements: Array<UserRowMeasurement & { viewport: ViewportSpec; estimatedHeightPx: number }> = [];
+
+      for (const viewport of TEXT_VIEWPORT_MATRIX) {
+        await mounted.setViewport(viewport);
+        const measurement = await mounted.measureUserRow(targetMessageId);
+        const estimatedHeightPx = estimateTimelineMessageHeight(
+          { role: "user", text: userText, attachments: [] },
+          { timelineWidthPx: measurement.timelineWidthMeasuredPx },
+        );
+
+        expect(measurement.renderedInVirtualizedRegion).toBe(true);
+        expect(Math.abs(measurement.measuredRowHeightPx - estimatedHeightPx)).toBeLessThanOrEqual(
+          viewport.textTolerancePx,
+        );
+        measurements.push({ ...measurement, viewport, estimatedHeightPx });
+      }
+
+      expect(new Set(measurements.map((measurement) => Math.round(measurement.timelineWidthMeasuredPx))).size).toBeGreaterThanOrEqual(3);
+
+      const byMeasuredWidth = measurements.toSorted(
+        (left, right) => left.timelineWidthMeasuredPx - right.timelineWidthMeasuredPx,
+      );
+      const narrowest = byMeasuredWidth[0]!;
+      const widest = byMeasuredWidth.at(-1)!;
+      expect(narrowest.timelineWidthMeasuredPx).toBeLessThan(widest.timelineWidthMeasuredPx);
+      expect(narrowest.measuredRowHeightPx).toBeGreaterThan(widest.measuredRowHeightPx);
+      expect(narrowest.estimatedHeightPx).toBeGreaterThan(widest.estimatedHeightPx);
+    } finally {
+      await mounted.cleanup();
+    }
   });
 
-  it("tracks additional rendered wrapping when ChatView width narrows", async () => {
+  it("tracks additional rendered wrapping when ChatView width narrows between desktop and mobile viewports", async () => {
     const userText = "x".repeat(2_400);
     const targetMessageId = "msg-user-target-wrap" as MessageId;
     const snapshot = createSnapshotForTargetUser({
       targetMessageId,
       targetText: userText,
     });
-    const desktop = await renderAndMeasureUserRow({
-      timelineWidthPx: 960,
-      targetMessageId,
+    const desktopMeasurement = await measureUserRowAtViewport({
+      viewport: TEXT_VIEWPORT_MATRIX[0],
       snapshot,
+      targetMessageId,
     });
-    const mobile = await renderAndMeasureUserRow({
-      timelineWidthPx: 360,
-      targetMessageId,
+    const mobileMeasurement = await measureUserRowAtViewport({
+      viewport: TEXT_VIEWPORT_MATRIX[2],
       snapshot,
+      targetMessageId,
     });
 
     const estimatedDesktopPx = estimateTimelineMessageHeight(
       { role: "user", text: userText, attachments: [] },
-      { timelineWidthPx: desktop.timelineWidthMeasuredPx },
+      { timelineWidthPx: desktopMeasurement.timelineWidthMeasuredPx },
     );
     const estimatedMobilePx = estimateTimelineMessageHeight(
       { role: "user", text: userText, attachments: [] },
-      { timelineWidthPx: mobile.timelineWidthMeasuredPx },
+      { timelineWidthPx: mobileMeasurement.timelineWidthMeasuredPx },
     );
 
-    const measuredDeltaPx = mobile.measuredRowHeightPx - desktop.measuredRowHeightPx;
+    const measuredDeltaPx = mobileMeasurement.measuredRowHeightPx - desktopMeasurement.measuredRowHeightPx;
     const estimatedDeltaPx = estimatedMobilePx - estimatedDesktopPx;
     expect(measuredDeltaPx).toBeGreaterThan(0);
     expect(estimatedDeltaPx).toBeGreaterThan(0);
@@ -527,13 +673,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
     expect(ratio).toBeLessThan(1.35);
   });
 
-  it("keeps user attachment estimate close to actual rendered ChatView row height", async () => {
-    const targetMessageId = "msg-user-target-attachments" as MessageId;
-    const userText = "message with image attachments";
-    const { measuredRowHeightPx, timelineWidthMeasuredPx, renderedInVirtualizedRegion } =
-      await renderAndMeasureUserRow({
-        timelineWidthPx: 960,
-        targetMessageId,
+  it.each(ATTACHMENT_VIEWPORT_MATRIX)(
+    "keeps user attachment estimate close at the $name viewport",
+    async (viewport) => {
+      const targetMessageId = `msg-user-target-attachments-${viewport.name}` as MessageId;
+      const userText = "message with image attachments";
+      const mounted = await mountChatView({
+        viewport,
         snapshot: createSnapshotForTargetUser({
           targetMessageId,
           targetText: userText,
@@ -541,17 +687,27 @@ describe("ChatView timeline estimator parity (full app)", () => {
         }),
       });
 
-    expect(renderedInVirtualizedRegion).toBe(true);
+      try {
+        const { measuredRowHeightPx, timelineWidthMeasuredPx, renderedInVirtualizedRegion } =
+          await mounted.measureUserRow(targetMessageId);
 
-    const estimatedHeightPx = estimateTimelineMessageHeight(
-      {
-        role: "user",
-        text: userText,
-        attachments: [{ id: "attachment-1" }, { id: "attachment-2" }, { id: "attachment-3" }],
-      },
-      { timelineWidthPx: timelineWidthMeasuredPx },
-    );
+        expect(renderedInVirtualizedRegion).toBe(true);
 
-    expect(Math.abs(measuredRowHeightPx - estimatedHeightPx)).toBeLessThanOrEqual(56);
-  });
+        const estimatedHeightPx = estimateTimelineMessageHeight(
+          {
+            role: "user",
+            text: userText,
+            attachments: [{ id: "attachment-1" }, { id: "attachment-2" }, { id: "attachment-3" }],
+          },
+          { timelineWidthPx: timelineWidthMeasuredPx },
+        );
+
+        expect(Math.abs(measuredRowHeightPx - estimatedHeightPx)).toBeLessThanOrEqual(
+          viewport.attachmentTolerancePx,
+        );
+      } finally {
+        await mounted.cleanup();
+      }
+    },
+  );
 });
