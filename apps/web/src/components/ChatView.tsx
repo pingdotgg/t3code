@@ -637,6 +637,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const lastTouchClientYRef = useRef<number | null>(null);
   const pendingUserScrollUpIntentRef = useRef(false);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
+  const pendingInteractionAnchorRef = useRef<{
+    element: HTMLElement;
+    top: number;
+  } | null>(null);
+  const pendingInteractionAnchorFrameRef = useRef<number | null>(null);
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerFormHeightRef = useRef(0);
@@ -1055,7 +1060,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
   }, [serverMessages, attachmentPreviewHandoffByMessageId, optimisticUserMessages]);
   const timelineEntries = useMemo(
-    () => deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
+    () =>
+      deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
   );
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
@@ -1675,6 +1681,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     pendingAutoScrollFrameRef.current = null;
     window.cancelAnimationFrame(pendingFrame);
   }, []);
+  const cancelPendingInteractionAnchorAdjustment = useCallback(() => {
+    const pendingFrame = pendingInteractionAnchorFrameRef.current;
+    if (pendingFrame === null) return;
+    pendingInteractionAnchorFrameRef.current = null;
+    window.cancelAnimationFrame(pendingFrame);
+  }, []);
   const scheduleStickToBottom = useCallback(() => {
     if (pendingAutoScrollFrameRef.current !== null) return;
     pendingAutoScrollFrameRef.current = window.requestAnimationFrame(() => {
@@ -1682,6 +1694,40 @@ export default function ChatView({ threadId }: ChatViewProps) {
       scrollMessagesToBottom();
     });
   }, [scrollMessagesToBottom]);
+  const onMessagesClickCapture = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const scrollContainer = messagesScrollRef.current;
+      if (!scrollContainer || !(event.target instanceof Element)) return;
+
+      const trigger = event.target.closest<HTMLElement>(
+        "button, summary, [role='button'], [data-scroll-anchor-target]",
+      );
+      if (!trigger || !scrollContainer.contains(trigger)) return;
+
+      pendingInteractionAnchorRef.current = {
+        element: trigger,
+        top: trigger.getBoundingClientRect().top,
+      };
+
+      cancelPendingInteractionAnchorAdjustment();
+      pendingInteractionAnchorFrameRef.current = window.requestAnimationFrame(() => {
+        pendingInteractionAnchorFrameRef.current = null;
+        const anchor = pendingInteractionAnchorRef.current;
+        pendingInteractionAnchorRef.current = null;
+        const activeScrollContainer = messagesScrollRef.current;
+        if (!anchor || !activeScrollContainer) return;
+        if (!anchor.element.isConnected || !activeScrollContainer.contains(anchor.element)) return;
+
+        const nextTop = anchor.element.getBoundingClientRect().top;
+        const delta = nextTop - anchor.top;
+        if (Math.abs(delta) < 0.5) return;
+
+        activeScrollContainer.scrollTop += delta;
+        lastKnownScrollTopRef.current = activeScrollContainer.scrollTop;
+      });
+    },
+    [cancelPendingInteractionAnchorAdjustment],
+  );
   const forceStickToBottom = useCallback(() => {
     cancelPendingStickToBottom();
     scrollMessagesToBottom();
@@ -1751,8 +1797,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   useEffect(() => {
     return () => {
       cancelPendingStickToBottom();
+      cancelPendingInteractionAnchorAdjustment();
     };
-  }, [cancelPendingStickToBottom]);
+  }, [cancelPendingInteractionAnchorAdjustment, cancelPendingStickToBottom]);
   useLayoutEffect(() => {
     if (!activeThread?.id) return;
     shouldAutoScrollRef.current = true;
@@ -2279,7 +2326,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (showPlanFollowUpPrompt && activeProposedPlan) {
       const followUpText =
         trimmed.length > 0
-        ? trimmed
+          ? trimmed
           : buildPlanImplementationPrompt(activeProposedPlan.planMarkdown);
       const nextInteractionMode = trimmed.length > 0 ? "plan" : "default";
       promptRef.current = "";
@@ -3323,6 +3370,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ref={setMessagesScrollContainerRef}
         className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
         onScroll={onMessagesScroll}
+        onClickCapture={onMessagesClickCapture}
         onWheel={onMessagesWheel}
         onPointerDown={onMessagesPointerDown}
         onPointerUp={onMessagesPointerUp}
@@ -4270,15 +4318,14 @@ const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBanner({
   return (
     <div className="px-4 py-3.5 sm:px-5 sm:py-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="secondary">Plan ready</Badge>
+        <span className="uppercase text-sm tracking-[0.2em]">Plan ready</span>
         {planTitle ? (
-          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{planTitle}</span>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{planTitle}</span>
         ) : null}
       </div>
-      <div className="mt-2 text-xs text-muted-foreground">
-        Leave the composer empty to implement here, use the menu to implement in a new thread, or
-        type feedback to refine it.
-      </div>
+      {/* <div className="mt-2 text-xs text-muted-foreground">
+        Review the plan
+      </div> */}
     </div>
   );
 });
