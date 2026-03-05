@@ -206,7 +206,10 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
                 "data-[position*=top]:after:top-full",
                 "data-[position*=bottom]:after:bottom-full",
                 // Define some variables
-                "[--toast-calc-height:var(--toast-frontmost-height,var(--toast-height))] [--toast-gap:--spacing(3)] [--toast-peek:--spacing(3)] [--toast-scale:calc(max(0,1-(var(--toast-index)*.1)))] [--toast-shrink:calc(1-var(--toast-scale))]",
+                // Base UI exposes a shared front-most height for the collapsed stack.
+                // If that shared measurement is briefly stale, long content can render
+                // outside the card until hover expands the toast and swaps to its own height.
+                "[--toast-calc-height:max(var(--toast-frontmost-height,var(--toast-height)),var(--toast-height))] [--toast-gap:--spacing(3)] [--toast-peek:--spacing(3)] [--toast-scale:calc(max(0,1-(var(--toast-index)*.1)))] [--toast-shrink:calc(1-var(--toast-scale))]",
                 // Define offset-y variable
                 "data-[position*=top]:[--toast-calc-offset-y:calc(var(--toast-offset-y)+var(--toast-index)*var(--toast-gap)+var(--toast-swipe-movement-y))]",
                 "data-[position*=bottom]:[--toast-calc-offset-y:calc(var(--toast-offset-y)*-1+var(--toast-index)*var(--toast-gap)*-1+var(--toast-swipe-movement-y))]",
@@ -258,7 +261,7 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
                     "not-data-expanded:pointer-events-none not-data-expanded:opacity-0",
                 )}
               >
-                <div className="flex gap-2">
+                <div className="flex min-w-0 flex-1 gap-2">
                   {Icon && (
                     <div
                       className="[&>svg]:h-lh [&>svg]:w-4 [&_svg]:pointer-events-none [&_svg]:shrink-0"
@@ -268,16 +271,22 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
                     </div>
                   )}
 
-                  <div className="flex flex-col gap-0.5">
-                    <Toast.Title className="font-medium" data-slot="toast-title" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <Toast.Title
+                      className="min-w-0 break-words font-medium"
+                      data-slot="toast-title"
+                    />
                     <Toast.Description
-                      className="text-muted-foreground"
+                      className="min-w-0 break-words text-muted-foreground"
                       data-slot="toast-description"
                     />
                   </div>
                 </div>
                 {toast.actionProps && (
-                  <Toast.Action className={buttonVariants({ size: "xs" })} data-slot="toast-action">
+                  <Toast.Action
+                    className={cn(buttonVariants({ size: "xs" }), "shrink-0")}
+                    data-slot="toast-action"
+                  >
                     {toast.actionProps.children}
                   </Toast.Action>
                 )}
@@ -341,7 +350,7 @@ function AnchoredToasts() {
                     </Toast.Content>
                   ) : (
                     <Toast.Content className="pointer-events-auto flex items-center justify-between gap-1.5 overflow-hidden px-3.5 py-3 text-sm">
-                      <div className="flex gap-2">
+                      <div className="flex min-w-0 flex-1 gap-2">
                         {Icon && (
                           <div
                             className="[&>svg]:h-lh [&>svg]:w-4 [&_svg]:pointer-events-none [&_svg]:shrink-0"
@@ -351,17 +360,20 @@ function AnchoredToasts() {
                           </div>
                         )}
 
-                        <div className="flex flex-col gap-0.5">
-                          <Toast.Title className="font-medium" data-slot="toast-title" />
+                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <Toast.Title
+                            className="min-w-0 break-words font-medium"
+                            data-slot="toast-title"
+                          />
                           <Toast.Description
-                            className="text-muted-foreground"
+                            className="min-w-0 break-words text-muted-foreground"
                             data-slot="toast-description"
                           />
                         </div>
                       </div>
                       {toast.actionProps && (
                         <Toast.Action
-                          className={buttonVariants({ size: "xs" })}
+                          className={cn(buttonVariants({ size: "xs" }), "shrink-0")}
                           data-slot="toast-action"
                         >
                           {toast.actionProps.children}
