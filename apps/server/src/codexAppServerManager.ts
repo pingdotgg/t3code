@@ -18,6 +18,7 @@ import {
   type ProviderSessionStartInput,
   type ProviderTurnStartResult,
 } from "@t3tools/contracts";
+import { Effect } from "effect";
 
 type PendingRequestKey = string;
 
@@ -265,6 +266,20 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         experimentalRawEvents: false,
       };
       const resumeThreadId = readResumeThreadId(input);
+      this.emitLifecycleEvent(
+        context,
+        "session/threadOpenRequested",
+        resumeThreadId
+          ? `Attempting to resume thread ${resumeThreadId}.`
+          : "Starting a new Codex thread.",
+      );
+      await Effect.logInfo("codex app-server opening thread", {
+        sessionId,
+        requestedRuntimeMode: input.runtimeMode,
+        requestedModel: normalizedModel ?? null,
+        requestedCwd: resolvedCwd,
+        resumeThreadId: resumeThreadId ?? null,
+      }).pipe(Effect.runPromise);
 
       let threadOpenMethod: "thread/start" | "thread/resume" = "thread/start";
       let threadOpenResponse: unknown;
@@ -277,6 +292,18 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           });
         } catch (error) {
           if (!isRecoverableThreadResumeError(error)) {
+            this.emitErrorEvent(
+              context,
+              "session/threadResumeFailed",
+              error instanceof Error ? error.message : "Codex thread resume failed.",
+            );
+            await Effect.logWarning("codex app-server thread resume failed", {
+              sessionId,
+              requestedRuntimeMode: input.runtimeMode,
+              resumeThreadId,
+              recoverable: false,
+              cause: error instanceof Error ? error.message : String(error),
+            }).pipe(Effect.runPromise);
             throw error;
           }
 
@@ -286,6 +313,13 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
             "session/threadResumeFallback",
             `Could not resume thread ${resumeThreadId}; started a new thread instead.`,
           );
+          await Effect.logWarning("codex app-server thread resume fell back to fresh start", {
+            sessionId,
+            requestedRuntimeMode: input.runtimeMode,
+            resumeThreadId,
+            recoverable: true,
+            cause: error instanceof Error ? error.message : String(error),
+          }).pipe(Effect.runPromise);
           threadOpenResponse = await this.sendRequest(context, "thread/start", threadStartParams);
         }
       } else {
@@ -307,6 +341,14 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         threadId,
         resumeCursor: { threadId },
       });
+      this.emitLifecycleEvent(context, "session/threadOpenResolved", `Codex ${threadOpenMethod} resolved.`);
+      await Effect.logInfo("codex app-server thread open resolved", {
+        sessionId,
+        threadOpenMethod,
+        requestedResumeThreadId: resumeThreadId ?? null,
+        resolvedThreadId: threadId,
+        requestedRuntimeMode: input.runtimeMode,
+      }).pipe(Effect.runPromise);
       this.emitLifecycleEvent(context, "session/ready", `Connected to thread ${threadId}`);
       return { ...context.session };
     } catch (error) {

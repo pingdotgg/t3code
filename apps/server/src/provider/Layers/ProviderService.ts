@@ -539,9 +539,50 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       });
 
     const listSessions: ProviderServiceShape["listSessions"] = () =>
-      Effect.forEach(adapters, (adapter) => adapter.listSessions()).pipe(
-        Effect.map((sessionsByProvider) => sessionsByProvider.flatMap((sessions) => sessions)),
-      );
+      Effect.gen(function* () {
+        const sessionsByProvider = yield* Effect.forEach(adapters, (adapter) => adapter.listSessions());
+        const activeSessions = sessionsByProvider.flatMap((sessions) => sessions);
+        const persistedBindings = yield* directory
+          .listSessionIds()
+          .pipe(
+            Effect.flatMap((sessionIds) =>
+              Effect.forEach(
+                sessionIds,
+                (sessionId) =>
+                  directory.getBinding(sessionId).pipe(
+                    Effect.orElseSucceed(() => Option.none<ProviderSessionBinding>()),
+                  ),
+                { concurrency: "unbounded" },
+              ),
+            ),
+            Effect.orElseSucceed(() => [] as Array<Option.Option<ProviderSessionBinding>>),
+          );
+        const bindingsBySessionId = new Map<ProviderSessionId, ProviderSessionBinding>();
+        for (const bindingOption of persistedBindings) {
+          const binding = Option.getOrUndefined(bindingOption);
+          if (binding) {
+            bindingsBySessionId.set(binding.sessionId, binding);
+          }
+        }
+
+        return activeSessions.map((session) => {
+          const binding = bindingsBySessionId.get(session.sessionId);
+          if (!binding) {
+            return session;
+          }
+
+          return {
+            ...session,
+            ...(session.threadId === undefined && binding.providerThreadId
+              ? { threadId: binding.providerThreadId }
+              : {}),
+            ...(session.resumeCursor === undefined && binding.resumeCursor !== undefined
+              ? { resumeCursor: binding.resumeCursor }
+              : {}),
+            ...(binding.runtimeMode !== undefined ? { runtimeMode: binding.runtimeMode } : {}),
+          };
+        });
+      });
 
     const getCapabilities: ProviderServiceShape["getCapabilities"] = (provider) =>
       registry.getByProvider(provider).pipe(Effect.map((adapter) => adapter.capabilities));

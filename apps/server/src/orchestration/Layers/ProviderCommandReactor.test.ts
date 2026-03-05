@@ -511,6 +511,16 @@ describe("ProviderCommandReactor", () => {
 
     await Effect.runPromise(
       harness.engine.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.makeUnsafe("cmd-runtime-mode-set-initial-full-access"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        runtimeMode: "full-access",
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.makeUnsafe("cmd-turn-start-runtime-mode-1"),
         threadId: ThreadId.makeUnsafe("thread-1"),
@@ -538,6 +548,11 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+      return thread?.runtimeMode === "approval-required";
+    });
     await waitFor(() => harness.startSession.mock.calls.length === 2);
     await waitFor(() => harness.stopSession.mock.calls.length === 1);
 
@@ -638,6 +653,16 @@ describe("ProviderCommandReactor", () => {
 
     await Effect.runPromise(
       harness.engine.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.makeUnsafe("cmd-runtime-mode-set-initial-full-access-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        runtimeMode: "full-access",
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.makeUnsafe("cmd-turn-start-restart-failure-1"),
         threadId: ThreadId.makeUnsafe("thread-1"),
@@ -669,6 +694,11 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+      return thread?.runtimeMode === "approval-required";
+    });
     await waitFor(() => harness.startSession.mock.calls.length === 2);
     await Effect.runPromise(Effect.sleep("30 millis"));
 

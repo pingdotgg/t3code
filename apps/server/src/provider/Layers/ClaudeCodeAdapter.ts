@@ -34,6 +34,7 @@ import {
   RuntimeItemId,
   RuntimeRequestId,
   RuntimeSessionId,
+  RuntimeTaskId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -1130,7 +1131,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
               ...base,
               type: "task.started",
               payload: {
-                taskId: message.task_id,
+                taskId: RuntimeTaskId.makeUnsafe(message.task_id),
                 description: message.description,
                 ...(message.task_type ? { taskType: message.task_type } : {}),
               },
@@ -1141,7 +1142,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
               ...base,
               type: "task.progress",
               payload: {
-                taskId: message.task_id,
+                taskId: RuntimeTaskId.makeUnsafe(message.task_id),
                 description: message.description,
                 ...(message.usage ? { usage: message.usage } : {}),
                 ...(message.last_tool_name ? { lastToolName: message.last_tool_name } : {}),
@@ -1153,7 +1154,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
               ...base,
               type: "task.completed",
               payload: {
-                taskId: message.task_id,
+                taskId: RuntimeTaskId.makeUnsafe(message.task_id),
                 status: message.status,
                 ...(message.summary ? { summary: message.summary } : {}),
                 ...(message.usage ? { usage: message.usage } : {}),
@@ -1259,7 +1260,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           return;
         }
 
-        if (message.type === "rate_limit") {
+        if (message.type === "rate_limit_event") {
           yield* offerRuntimeEvent({
             ...base,
             type: "account.rate-limits.updated",
@@ -1295,7 +1296,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           case "tool_progress":
           case "tool_use_summary":
           case "auth_status":
-          case "rate_limit":
+          case "rate_limit_event":
             yield* handleSdkTelemetryMessage(context, message);
             return;
           default:

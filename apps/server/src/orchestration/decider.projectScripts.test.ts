@@ -251,10 +251,12 @@ describe("decider project scripts", () => {
     if (singleResult === null) {
       throw new Error("Expected a single runtime-mode-set event.");
     }
-    expect(singleResult.type).toBe("thread.runtime-mode-set");
-    expect(singleResult.payload).toMatchObject({
-      threadId: ThreadId.makeUnsafe("thread-1"),
-      runtimeMode: "approval-required",
+    expect(singleResult).toMatchObject({
+      type: "thread.runtime-mode-set",
+      payload: {
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        runtimeMode: "approval-required",
+      },
     });
   });
 });

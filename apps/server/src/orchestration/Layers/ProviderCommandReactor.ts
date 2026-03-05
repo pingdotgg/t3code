@@ -283,9 +283,30 @@ const make = Effect.gen(function* () {
         providerChanged || shouldRestartForModelChange
           ? undefined
           : (activeSession?.resumeCursor ?? undefined);
+      yield* Effect.logInfo("provider command reactor restarting provider session", {
+        threadId,
+        existingSessionId,
+        currentProvider,
+        desiredProvider: options?.provider ?? currentProvider,
+        currentRuntimeMode: thread.session?.runtimeMode,
+        desiredRuntimeMode: thread.runtimeMode,
+        runtimeModeChanged,
+        providerChanged,
+        modelChanged,
+        shouldRestartForModelChange,
+        hasResumeCursor: resumeCursor !== undefined,
+      });
       const restartedSession = yield* startProviderSession({
         ...(resumeCursor !== undefined ? { resumeCursor } : {}),
         ...(options?.provider !== undefined ? { provider: options.provider } : {}),
+      });
+      yield* Effect.logInfo("provider command reactor restarted provider session", {
+        threadId,
+        previousSessionId: existingSessionId,
+        restartedSessionId: restartedSession.sessionId,
+        provider: restartedSession.provider,
+        providerThreadId: restartedSession.threadId,
+        runtimeMode: restartedSession.runtimeMode,
       });
       yield* bindSessionToThread(restartedSession);
       yield* providerService.stopSession({ sessionId: existingSessionId }).pipe(

@@ -189,9 +189,6 @@ export function createDevRunnerEnv({
 
     if (mode === "dev") {
       output.T3CODE_MODE = "web";
-      if (logWebSocketEvents === undefined) {
-        output.T3CODE_LOG_WS_EVENTS = "1";
-      }
       delete output.T3CODE_DESKTOP_WS_URL;
     }
 
@@ -350,6 +347,35 @@ interface DevRunnerCliInput {
   readonly turboArgs: ReadonlyArray<string>;
 }
 
+const readOptionalBooleanEnv = (name: string): boolean | undefined => {
+  const value = process.env[name];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "1" || value.toLowerCase() === "true") {
+    return true;
+  }
+  if (value === "0" || value.toLowerCase() === "false") {
+    return false;
+  }
+  return undefined;
+};
+
+const resolveOptionalBooleanOverride = (
+  explicitValue: boolean | undefined,
+  envValue: boolean | undefined,
+): boolean | undefined => {
+  if (explicitValue === true) {
+    return true;
+  }
+
+  if (explicitValue === false) {
+    return envValue;
+  }
+
+  return envValue;
+};
+
 export function runDevRunnerWithInput(input: DevRunnerCliInput) {
   return Effect.gen(function* () {
     const { portOffset, devInstance } = yield* OffsetConfig.asEffect().pipe(
@@ -371,6 +397,14 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         }),
     });
 
+    const envOverrides = {
+      noBrowser: readOptionalBooleanEnv("T3CODE_NO_BROWSER"),
+      autoBootstrapProjectFromCwd: readOptionalBooleanEnv(
+        "T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD",
+      ),
+      logWebSocketEvents: readOptionalBooleanEnv("T3CODE_LOG_WS_EVENTS"),
+    };
+
     const { serverOffset, webOffset } = yield* resolveModePortOffsets({
       mode: input.mode,
       startOffset: offset,
@@ -385,9 +419,15 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       webOffset,
       stateDir: input.stateDir,
       authToken: input.authToken,
-      noBrowser: input.noBrowser,
-      autoBootstrapProjectFromCwd: input.autoBootstrapProjectFromCwd,
-      logWebSocketEvents: input.logWebSocketEvents,
+      noBrowser: resolveOptionalBooleanOverride(input.noBrowser, envOverrides.noBrowser),
+      autoBootstrapProjectFromCwd: resolveOptionalBooleanOverride(
+        input.autoBootstrapProjectFromCwd,
+        envOverrides.autoBootstrapProjectFromCwd,
+      ),
+      logWebSocketEvents: resolveOptionalBooleanOverride(
+        input.logWebSocketEvents,
+        envOverrides.logWebSocketEvents,
+      ),
       host: input.host,
       port: input.port,
       devUrl: input.devUrl,
