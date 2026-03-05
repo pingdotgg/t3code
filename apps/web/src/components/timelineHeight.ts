@@ -67,16 +67,24 @@ export function estimateTimelineMessageHeight(
   message: TimelineMessageHeightInput,
   layout: TimelineHeightEstimateLayout = { timelineWidthPx: null },
 ): number {
-  if (message.role !== "user") {
+  if (message.role === "assistant") {
     const charsPerLine = estimateCharsPerLineForAssistant(layout.timelineWidthPx);
     const estimatedLines = estimateWrappedLineCount(message.text, charsPerLine);
     return ASSISTANT_BASE_HEIGHT_PX + estimatedLines * LINE_HEIGHT_PX;
   }
 
-  const charsPerLine = estimateCharsPerLineForUser(layout.timelineWidthPx);
+  if (message.role === "user") {
+    const charsPerLine = estimateCharsPerLineForUser(layout.timelineWidthPx);
+    const estimatedLines = estimateWrappedLineCount(message.text, charsPerLine);
+    const attachmentCount = message.attachments?.length ?? 0;
+    const attachmentRows = Math.ceil(attachmentCount / ATTACHMENTS_PER_ROW);
+    const attachmentHeight = attachmentRows * USER_ATTACHMENT_ROW_HEIGHT_PX;
+    return USER_BASE_HEIGHT_PX + estimatedLines * LINE_HEIGHT_PX + attachmentHeight;
+  }
+
+  // `system` messages are not rendered in the chat timeline, but keep a stable
+  // explicit branch in case they are present in timeline data.
+  const charsPerLine = estimateCharsPerLineForAssistant(layout.timelineWidthPx);
   const estimatedLines = estimateWrappedLineCount(message.text, charsPerLine);
-  const attachmentCount = message.attachments?.length ?? 0;
-  const attachmentRows = Math.ceil(attachmentCount / ATTACHMENTS_PER_ROW);
-  const attachmentHeight = attachmentRows * USER_ATTACHMENT_ROW_HEIGHT_PX;
-  return USER_BASE_HEIGHT_PX + estimatedLines * LINE_HEIGHT_PX + attachmentHeight;
+  return ASSISTANT_BASE_HEIGHT_PX + estimatedLines * LINE_HEIGHT_PX;
 }
