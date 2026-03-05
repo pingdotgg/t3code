@@ -85,6 +85,12 @@ describe("isCollapsedCursorAdjacentToMention", () => {
     expect(isCollapsedCursorAdjacentToMention("plain text", 6, "right")).toBe(false);
   });
 
+  it("keeps @query typing non-adjacent while no mention pill exists", () => {
+    const text = "hello @pac";
+    expect(isCollapsedCursorAdjacentToMention(text, text.length, "left")).toBe(false);
+    expect(isCollapsedCursorAdjacentToMention(text, text.length, "right")).toBe(false);
+  });
+
   it("detects left adjacency only when cursor is directly after a mention", () => {
     const text = "open @AGENTS.md next";
     const mentionStart = "open ".length;

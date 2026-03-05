@@ -558,29 +558,6 @@ function ComposerMentionSelectionNormalizePlugin() {
   return null;
 }
 
-function $isCursorAdjacentToMention(): boolean {
-  const selection = $getSelection();
-  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
-  const anchorNode = selection.anchor.getNode();
-
-  if (anchorNode instanceof ComposerMentionNode) return true;
-
-  if ($isElementNode(anchorNode)) {
-    const childIndex = selection.anchor.offset - 1;
-    if (childIndex >= 0) {
-      const child = anchorNode.getChildAtIndex(childIndex);
-      if (child instanceof ComposerMentionNode) return true;
-    }
-  }
-
-  if ($isTextNode(anchorNode) && selection.anchor.offset === 0) {
-    const prev = anchorNode.getPreviousSibling();
-    if (prev instanceof ComposerMentionNode) return true;
-  }
-
-  return false;
-}
-
 function ComposerMentionBackspacePlugin() {
   const [editor] = useLexicalComposerContext();
 
@@ -756,7 +733,10 @@ function ComposerPromptEditorInner({
         value: nextValue,
         cursor: nextCursor,
       };
-      onChangeRef.current(nextValue, nextCursor, $isCursorAdjacentToMention());
+      const cursorAdjacentToMention =
+        isCollapsedCursorAdjacentToMention(nextValue, nextCursor, "left") ||
+        isCollapsedCursorAdjacentToMention(nextValue, nextCursor, "right");
+      onChangeRef.current(nextValue, nextCursor, cursorAdjacentToMention);
     });
   }, []);
 
