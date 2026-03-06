@@ -471,7 +471,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         });
       });
 
-    const stopAll: ProviderServiceShape["stopAll"] = () =>
+    const runStopAll = () =>
       Effect.gen(function* () {
         const threadIds = yield* directory.listThreadIds();
         yield* Effect.forEach(adapters, (adapter) => adapter.stopAll()).pipe(Effect.asVoid);
@@ -497,6 +497,12 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         yield* analytics.flush;
       });
 
+    yield* Effect.addFinalizer(() =>
+      Effect.catch(runStopAll(), (cause) =>
+        Effect.logWarning("failed to stop provider service", { cause }),
+      ),
+    );
+
     return {
       startSession,
       sendTurn,
@@ -507,7 +513,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       listSessions,
       getCapabilities,
       rollbackConversation,
-      stopAll,
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
     } satisfies ProviderServiceShape;
   });

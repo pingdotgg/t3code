@@ -568,7 +568,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
   const checkpointDiffQuery = yield* CheckpointDiffQuery;
-  const liveProviderService = yield* ProviderService;
   const orchestrationReactor = yield* OrchestrationReactor;
   const { openInEditor } = yield* Open;
 
@@ -660,11 +659,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   }
 
   const runPromise = yield* Effect.map(Effect.services<never>(), Effect.runPromiseWith);
-  yield* Effect.addFinalizer(() =>
-    Effect.catch(liveProviderService.stopAll(), (cause) =>
-      Effect.logWarning("failed to stop provider service", { cause }),
-    ),
-  );
 
   const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
     (event) => void Effect.runPromise(onTerminalEvent(event)),

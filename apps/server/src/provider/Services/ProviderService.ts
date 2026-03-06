@@ -100,16 +100,6 @@ export interface ProviderServiceShape {
   }) => Effect.Effect<void, ProviderServiceError>;
 
   /**
-   * Stop all active provider sessions.
-   *
-   * Persisted session bindings remain so stale sessions can be resumed after
-   * process restart.
-   *
-   * Runtime alias mappings are cleared as part of shutdown.
-   */
-  readonly stopAll: () => Effect.Effect<void, ProviderServiceError>;
-
-  /**
    * Canonical provider runtime event stream.
    *
    * Fan-out is owned by ProviderService (not by a standalone event-bus service).

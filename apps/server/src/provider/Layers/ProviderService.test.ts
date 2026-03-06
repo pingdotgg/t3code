@@ -356,11 +356,6 @@ it.effect(
         });
       }).pipe(Effect.provide(firstProviderLayer));
 
-      yield* Effect.gen(function* () {
-        const provider = yield* ProviderService;
-        yield* provider.stopAll();
-      }).pipe(Effect.provide(firstProviderLayer));
-
       const persistedAfterStopAll = yield* Effect.gen(function* () {
         const repository = yield* ProviderSessionRuntimeRepository;
         return yield* repository.getByThreadId({ threadId: startedSession.threadId });
@@ -549,7 +544,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         runtimeMode: "full-access",
       });
 
-      yield* provider.stopAll();
+      yield* routing.codex.stopAll();
       routing.codex.startSession.mockClear();
       routing.codex.sendTurn.mockClear();
 
@@ -578,7 +573,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
-  it.effect("stops all sessions and clears adapter runtime", () =>
+  it.effect("lists no sessions after adapter runtime clears", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
 
@@ -593,7 +588,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         runtimeMode: "full-access",
       });
 
-      yield* provider.stopAll();
+      yield* routing.codex.stopAll();
 
       const remaining = yield* provider.listSessions();
       assert.equal(remaining.length, 0);
@@ -641,14 +636,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
         }
       }
 
-      yield* provider.stopAll();
-      const stoppedRuntime = yield* runtimeRepository.getByThreadId({
-        threadId: session.threadId,
-      });
-      assert.equal(Option.isSome(stoppedRuntime), true);
-      if (Option.isSome(stoppedRuntime)) {
-        assert.equal(stoppedRuntime.value.status, "stopped");
-      }
     }),
   );
 });
