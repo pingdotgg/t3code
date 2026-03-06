@@ -60,14 +60,14 @@ const upsertAnonymousId = Effect.gen(function* () {
  * 2. ~/.t3/telemetry/anonymous-id
  */
 export const getTelemetryIdentifier = Effect.gen(function* () {
-  const codexAccountId = yield* getCodexAccountId;
-  if (codexAccountId) {
-    return yield* hash(codexAccountId);
+  const codexAccountId = yield* Effect.result(getCodexAccountId);
+  if (codexAccountId._tag === "Success") {
+    return yield* hash(codexAccountId.success);
   }
 
-  const anonymousId = yield* upsertAnonymousId;
-  if (anonymousId) {
-    return yield* hash(anonymousId);
+  const anonymousId = yield* Effect.result(upsertAnonymousId);
+  if (anonymousId._tag === "Success") {
+    return yield* hash(anonymousId.success);
   }
 
   return null;
