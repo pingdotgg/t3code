@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_MODEL, MODEL_OPTIONS } from "@t3tools/contracts";
+import { DEFAULT_MODEL_BY_PROVIDER, MODEL_OPTIONS_BY_PROVIDER } from "@t3tools/contracts";
 
 import {
   getDefaultModel,
@@ -31,23 +31,23 @@ describe("normalizeModelSlug", () => {
 
 describe("resolveModelSlug", () => {
   it("returns default only when the model is missing", () => {
-    expect(resolveModelSlug(undefined)).toBe(DEFAULT_MODEL);
-    expect(resolveModelSlug(null)).toBe(DEFAULT_MODEL);
+    expect(resolveModelSlug(undefined)).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
+    expect(resolveModelSlug(null)).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
   });
 
   it("preserves unknown custom models", () => {
-    expect(resolveModelSlug("gpt-4.1")).toBe(DEFAULT_MODEL);
-    expect(resolveModelSlug("custom/internal-model")).toBe(DEFAULT_MODEL);
+    expect(resolveModelSlug("gpt-4.1")).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
+    expect(resolveModelSlug("custom/internal-model")).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
   });
 
   it("resolves only supported model options", () => {
-    for (const model of MODEL_OPTIONS) {
+    for (const model of MODEL_OPTIONS_BY_PROVIDER.codex) {
       expect(resolveModelSlug(model.slug)).toBe(model.slug);
     }
   });
   it("keeps codex defaults for backward compatibility", () => {
-    expect(getDefaultModel()).toBe(DEFAULT_MODEL);
-    expect(getModelOptions()).toEqual(MODEL_OPTIONS);
+    expect(getDefaultModel()).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
+    expect(getModelOptions()).toEqual(MODEL_OPTIONS_BY_PROVIDER.codex);
   });
 });
 

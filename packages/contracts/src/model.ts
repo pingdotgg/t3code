@@ -29,17 +29,14 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "gpt-5.2", name: "GPT-5.2" },
   ],
 } as const satisfies Record<ProviderKind, readonly ModelOption[]>;
+export type ModelOptionsByProvider = typeof MODEL_OPTIONS_BY_PROVIDER;
 
-type BuiltInModelSlug = (typeof MODEL_OPTIONS_BY_PROVIDER)[ProviderKind][number]["slug"];
+type BuiltInModelSlug = ModelOptionsByProvider[ProviderKind][number]["slug"];
 export type ModelSlug = BuiltInModelSlug | (string & {});
 
 export const DEFAULT_MODEL_BY_PROVIDER = {
   codex: "gpt-5.4",
 } as const satisfies Record<ProviderKind, ModelSlug>;
-
-// Backward compatibility for existing Codex-only call sites.
-export const MODEL_OPTIONS = MODEL_OPTIONS_BY_PROVIDER.codex;
-export const DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER.codex;
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER = {
   codex: {

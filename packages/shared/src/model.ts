@@ -1,6 +1,5 @@
 import {
   CODEX_REASONING_EFFORT_OPTIONS,
-  DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   MODEL_OPTIONS_BY_PROVIDER,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
@@ -20,7 +19,7 @@ export function getModelOptions(provider: ProviderKind = "codex") {
 }
 
 export function getDefaultModel(provider: ProviderKind = "codex"): ModelSlug {
-  return DEFAULT_MODEL_BY_PROVIDER[provider] ?? DEFAULT_MODEL;
+  return DEFAULT_MODEL_BY_PROVIDER[provider];
 }
 
 export function normalizeModelSlug(
