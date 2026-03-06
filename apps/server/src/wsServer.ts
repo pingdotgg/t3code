@@ -71,6 +71,7 @@ import {
   resolveAttachmentPathById,
 } from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
+import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -207,7 +208,8 @@ export type ServerRuntimeServices =
   | GitCore
   | TerminalManager
   | Keybindings
-  | Open;
+  | Open
+  | AnalyticsService;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",

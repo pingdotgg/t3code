@@ -12,6 +12,7 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../src/provider/Services/ProviderService.ts";
+import { AnalyticsService } from "../src/telemetry/Services/AnalyticsService.ts";
 import { SqlitePersistenceMemory } from "../src/persistence/Layers/Sqlite.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../src/persistence/Layers/ProviderSessionRuntime.ts";
 
@@ -59,6 +60,10 @@ const makeIntegrationFixture = Effect.gen(function* () {
   const shared = Layer.mergeAll(
     directoryLayer,
     Layer.succeed(ProviderAdapterRegistry, registry),
+    Layer.succeed(AnalyticsService, {
+      record: () => Effect.void,
+      flush: Effect.void,
+    }),
   ).pipe(Layer.provide(SqlitePersistenceMemory));
 
   const layer = makeProviderServiceLive().pipe(Layer.provide(shared));

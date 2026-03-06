@@ -11,6 +11,7 @@ import { NetService } from "@t3tools/shared/Net";
 import { CliConfig, t3Cli, type CliConfigShape } from "./main";
 import { ServerConfig, type ServerConfigShape } from "./config";
 import { Open, type OpenShape } from "./open";
+import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { Server, type ServerShape } from "./wsServer";
 
 const start = vi.fn(() => undefined);
@@ -47,6 +48,10 @@ const testLayer = Layer.mergeAll(
     openBrowser: (_target: string) => Effect.void,
     openInEditor: () => Effect.void,
   } satisfies OpenShape),
+  Layer.succeed(AnalyticsService, {
+    record: () => Effect.void,
+    flush: Effect.void,
+  }),
   NodeServices.layer,
 );
 
