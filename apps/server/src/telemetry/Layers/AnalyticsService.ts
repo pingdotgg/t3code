@@ -126,7 +126,11 @@ const makeAnalyticsService = Effect.gen(function* () {
     }
   });
 
-  yield* Effect.forever(flush, { disableYield: true }).pipe(Effect.forkDetach);
+  yield* Effect.forever(Effect.sleep(1000).pipe(Effect.flatMap(() => flush)), {
+    disableYield: true,
+  }).pipe(Effect.forkDetach);
+
+  yield* Effect.addFinalizer(() => flush);
 
   return {
     record,

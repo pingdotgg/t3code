@@ -50,8 +50,7 @@ import type { GitCoreShape } from "./git/Services/GitCore.ts";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
-import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService.ts";
-import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
+import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 
 interface PendingMessages {
   queue: unknown[];
@@ -436,6 +435,7 @@ describe("WebSocket Server", () => {
         ? Layer.succeed(TerminalManager, options.terminalManager)
         : Layer.empty,
     );
+
     const runtimeLayer = Layer.merge(
       Layer.merge(
         makeServerRuntimeServicesLayer().pipe(Layer.provide(infrastructureLayer)),
@@ -448,9 +448,8 @@ describe("WebSocket Server", () => {
       Layer.provideMerge(providerHealthLayer),
       Layer.provideMerge(openLayer),
       Layer.provideMerge(serverConfigLayer),
-      Layer.provideMerge(AnalyticsServiceLayerLive),
+      Layer.provideMerge(AnalyticsService.layerTest),
       Layer.provideMerge(NodeServices.layer),
-      Layer.provideMerge(NodeHttpClient.layerUndici),
     );
     const runtimeServices = await Effect.runPromise(
       Layer.build(dependenciesLayer).pipe(Scope.provide(scope)),
