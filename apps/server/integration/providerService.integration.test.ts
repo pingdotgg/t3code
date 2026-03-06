@@ -60,10 +60,7 @@ const makeIntegrationFixture = Effect.gen(function* () {
   const shared = Layer.mergeAll(
     directoryLayer,
     Layer.succeed(ProviderAdapterRegistry, registry),
-    Layer.succeed(AnalyticsService, {
-      record: () => Effect.void,
-      flush: Effect.void,
-    }),
+    AnalyticsService.layerTest,
   ).pipe(Layer.provide(SqlitePersistenceMemory));
 
   const layer = makeProviderServiceLive().pipe(Layer.provide(shared));

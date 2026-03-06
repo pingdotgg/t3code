@@ -96,26 +96,28 @@ const makeAnalyticsService = Effect.gen(function* () {
     });
 
   const flush: AnalyticsServiceShape["flush"] = Effect.gen(function* () {
-    const batch = yield* Ref.modify(bufferRef, (current) => {
-      if (current.length === 0) {
-        return [[] as ReadonlyArray<BufferedAnalyticsEvent>, current] as const;
+    while (true) {
+      const batch = yield* Ref.modify(bufferRef, (current) => {
+        if (current.length === 0) {
+          return [[] as ReadonlyArray<BufferedAnalyticsEvent>, current] as const;
+        }
+        const nextBatch = current.slice(0, telemetryConfig.flushBatchSize);
+        const remaining = current.slice(nextBatch.length);
+        return [nextBatch, remaining] as const;
+      });
+
+      if (batch.length === 0) {
+        return;
       }
-      const nextBatch = current.slice(0, telemetryConfig.flushBatchSize);
-      const remaining = current.slice(nextBatch.length);
-      return [nextBatch, remaining] as const;
-    });
 
-    if (batch.length === 0) {
-      return;
-    }
-
-    yield* sendBatch(batch).pipe(
-      Effect.catch((error) =>
-        Ref.update(bufferRef, (current) => [...batch, ...current]).pipe(
-          Effect.flatMap(() => Effect.fail(error)),
+      yield* sendBatch(batch).pipe(
+        Effect.catch((error) =>
+          Ref.update(bufferRef, (current) => [...batch, ...current]).pipe(
+            Effect.flatMap(() => Effect.fail(error)),
+          ),
         ),
-      ),
-    );
+      );
+    }
   }).pipe(Effect.catch((cause) => Effect.logError("Failed to flush telemetry", { cause })));
 
   const record: AnalyticsServiceShape["record"] = Effect.fnUntraced(function* (event, properties) {
