@@ -216,15 +216,12 @@ const sleep = (ms: number) =>
 
 function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
-  const claude = makeFakeCodexAdapter("claudeCode");
   const registry: typeof ProviderAdapterRegistry.Service = {
     getByProvider: (provider) =>
       provider === "codex"
         ? Effect.succeed(codex.adapter)
-        : provider === "claudeCode"
-          ? Effect.succeed(claude.adapter)
-          : Effect.fail(new ProviderUnsupportedError({ provider })),
-    listProviders: () => Effect.succeed(["codex", "claudeCode"]),
+        : Effect.fail(new ProviderUnsupportedError({ provider })),
+    listProviders: () => Effect.succeed(["codex"]),
   };
 
   const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
@@ -247,7 +244,6 @@ function makeProviderServiceLayer() {
 
   return {
     codex,
-    claude,
     layer,
   };
 }
@@ -493,29 +489,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
           issue: `Cannot route thread '${session.threadId}' because no persisted provider binding exists.`,
         }),
       );
-    }),
-  );
-
-  it.effect("routes explicit claudeCode provider session starts to the claude adapter", () =>
-    Effect.gen(function* () {
-      const provider = yield* ProviderService;
-
-      const session = yield* provider.startSession(asThreadId("thread-claude"), {
-        provider: "claudeCode",
-        threadId: asThreadId("thread-claude"),
-        cwd: "/tmp/project-claude",
-        runtimeMode: "full-access",
-      });
-
-      assert.equal(session.provider, "claudeCode");
-      assert.equal(routing.claude.startSession.mock.calls.length, 1);
-      const startInput = routing.claude.startSession.mock.calls[0]?.[0];
-      assert.equal(typeof startInput === "object" && startInput !== null, true);
-      if (startInput && typeof startInput === "object") {
-        const startPayload = startInput as { provider?: string; cwd?: string };
-        assert.equal(startPayload.provider, "claudeCode");
-        assert.equal(startPayload.cwd, "/tmp/project-claude");
-      }
     }),
   );
 
