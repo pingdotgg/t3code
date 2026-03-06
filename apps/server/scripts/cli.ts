@@ -6,7 +6,7 @@ import { Data, Effect, FileSystem, Logger, Option, Path } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { PUBLISH_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
+import { DEVELOPMENT_ICON_OVERRIDES, PUBLISH_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
 import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
 import rootPackageJson from "../../../package.json" with { type: "json" };
 import serverPackageJson from "../package.json" with { type: "json" };
@@ -82,6 +82,34 @@ const restorePublishIconOverrides = Effect.fn("restorePublishIconOverrides")(fun
   }
 });
 
+const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")(function* (
+  repoRoot: string,
+  serverDir: string,
+) {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+
+  for (const override of DEVELOPMENT_ICON_OVERRIDES) {
+    const sourcePath = path.join(repoRoot, override.sourceRelativePath);
+    const targetPath = path.join(serverDir, override.targetRelativePath);
+
+    if (!(yield* fs.exists(sourcePath))) {
+      return yield* new CliError({
+        message: `Missing development icon source: ${sourcePath}`,
+      });
+    }
+    if (!(yield* fs.exists(targetPath))) {
+      return yield* new CliError({
+        message: `Missing development icon target: ${targetPath}. Build web first.`,
+      });
+    }
+
+    yield* fs.copyFile(sourcePath, targetPath);
+  }
+
+  yield* Effect.log("[cli] Applied development icon overrides to dist/client");
+});
+
 // ---------------------------------------------------------------------------
 // build subcommand
 // ---------------------------------------------------------------------------
@@ -112,6 +140,7 @@ const buildCmd = Command.make(
 
       if (yield* fs.exists(webDist)) {
         yield* fs.copy(webDist, clientTarget);
+        yield* applyDevelopmentIconOverrides(repoRoot, serverDir);
         yield* Effect.log("[cli] Bundled web app into dist/client");
       } else {
         yield* Effect.logWarning("[cli] Web dist not found — skipping client bundle.");

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
@@ -113,6 +115,39 @@ function resolveGitCommitHash(repoRoot: string): string {
     return "unknown";
   }
   return hash.toLowerCase();
+}
+
+function resolvePythonForNodeGyp(): string | undefined {
+  const configured = process.env.npm_config_python ?? process.env.PYTHON;
+  if (configured && existsSync(configured)) {
+    return configured;
+  }
+
+  if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA;
+    if (localAppData) {
+      for (const version of ["Python313", "Python312", "Python311", "Python310"]) {
+        const candidate = join(localAppData, "Programs", "Python", version, "python.exe");
+        if (existsSync(candidate)) {
+          return candidate;
+        }
+      }
+    }
+  }
+
+  const probe = spawnSync("python", ["-c", "import sys;print(sys.executable)"], {
+    encoding: "utf8",
+  });
+  if (probe.status !== 0) {
+    return undefined;
+  }
+
+  const executable = probe.stdout.trim();
+  if (!executable || !existsSync(executable)) {
+    return undefined;
+  }
+
+  return executable;
 }
 
 interface ResolvedBuildOptions {
@@ -625,6 +660,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     delete buildEnv.APPLE_API_KEY;
     delete buildEnv.APPLE_API_KEY_ID;
     delete buildEnv.APPLE_API_ISSUER;
+  }
+
+  if (process.platform === "win32") {
+    const python = resolvePythonForNodeGyp();
+    if (python) {
+      buildEnv.PYTHON = python;
+      buildEnv.npm_config_python = python;
+    }
+    buildEnv.npm_config_msvs_version = buildEnv.npm_config_msvs_version ?? "2022";
+    buildEnv.GYP_MSVS_VERSION = buildEnv.GYP_MSVS_VERSION ?? "2022";
   }
 
   yield* Effect.log(
