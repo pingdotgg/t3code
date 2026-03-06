@@ -92,6 +92,7 @@ import {
   buildPlanImplementationPrompt,
   buildProposedPlanMarkdownFilename,
   proposedPlanTitle,
+  resolvePlanFollowUpSubmission,
 } from "../proposedPlan";
 import { truncateTitle } from "../truncateTitle";
 import {
@@ -2318,19 +2319,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     const trimmed = prompt.trim();
     if (showPlanFollowUpPrompt && activeProposedPlan) {
-      const followUpText =
-        trimmed.length > 0
-          ? trimmed
-          : buildPlanImplementationPrompt(activeProposedPlan.planMarkdown);
-      const nextInteractionMode = trimmed.length > 0 ? "plan" : "default";
+      const followUp = resolvePlanFollowUpSubmission({
+        draftText: trimmed,
+        planMarkdown: activeProposedPlan.planMarkdown,
+      });
       promptRef.current = "";
       clearComposerDraftContent(activeThread.id);
       setComposerHighlightedItemId(null);
       setComposerCursor(0);
       setComposerTrigger(null);
       await onSubmitPlanFollowUp({
-        text: followUpText,
-        interactionMode: nextInteractionMode,
+        text: followUp.text,
+        interactionMode: followUp.interactionMode,
       });
       return;
     }
@@ -2795,6 +2795,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
           interactionMode: nextInteractionMode,
         });
 
+        // Keep the mode toggle and plan-follow-up banner in sync immediately
+        // while the same-thread implementation turn is starting.
+        setComposerDraftInteractionMode(threadIdForSend, nextInteractionMode);
+
         await api.orchestration.dispatchCommand({
           type: "thread.turn.start",
           commandId: newCommandId(),
@@ -2840,6 +2844,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       selectedModel,
       selectedModelOptionsForDispatch,
       selectedProvider,
+      setComposerDraftInteractionMode,
       setThreadError,
       settings.enableAssistantStreaming,
     ],
