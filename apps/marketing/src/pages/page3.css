@@ -1,0 +1,207 @@
+/* ── Page 3: Terminal Native ── */
+
+.p3 {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background:
+    radial-gradient(circle, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    #09090b;
+  background-size: 24px 24px;
+}
+
+/* ── Terminal Window ── */
+
+.p3-terminal {
+  width: 100%;
+  max-width: 960px;
+  background: #0c0c0e;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* ── Window Chrome ── */
+
+.p3-chrome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #1a1a1e;
+}
+
+.p3-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.p3-dot-red {
+  background: #ff5f57;
+}
+
+.p3-dot-yellow {
+  background: #febc2e;
+}
+
+.p3-dot-green {
+  background: #28c840;
+}
+
+.p3-title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75rem;
+  color: var(--fg-dim);
+  margin-left: 8px;
+  user-select: none;
+}
+
+/* ── Terminal Body ── */
+
+.p3-body {
+  padding: 24px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.9rem;
+  line-height: 1.7;
+  color: #e4e4e7;
+}
+
+.p3-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+  animation: p3-fade-in 0.4s ease-out both;
+}
+
+.p3-line-blank {
+  height: 1.7em;
+}
+
+.p3-prompt {
+  color: #22d3ee;
+  font-weight: 600;
+}
+
+.p3-heading {
+  font-weight: 700;
+  color: #fafafa;
+}
+
+.p3-flag {
+  color: #22d3ee;
+}
+
+.p3-desc {
+  color: var(--fg-muted);
+}
+
+.p3-label {
+  color: var(--fg-dim);
+  font-weight: 600;
+}
+
+/* ── Screenshot inside terminal ── */
+
+.p3-screenshot {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  margin: 16px 0;
+}
+
+/* ── Blinking Cursor ── */
+
+.p3-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 1.2em;
+  background: #22d3ee;
+  animation: p3-blink 1s step-end infinite;
+  vertical-align: text-bottom;
+}
+
+@keyframes p3-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ── Line fade-in animation ── */
+
+@keyframes p3-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Links below terminal ── */
+
+.p3-links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.p3-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.625rem 1.5rem;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--fg-muted);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+
+.p3-link:hover {
+  color: var(--fg);
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* ── Responsive ── */
+
+@media (max-width: 768px) {
+  .p3 {
+    padding: 1rem;
+  }
+
+  .p3-body {
+    padding: 16px;
+    font-size: 0.8rem;
+  }
+
+  .p3-title {
+    font-size: 0.65rem;
+  }
+
+  .p3-links {
+    flex-direction: column;
+    width: 100%;
+    max-width: 960px;
+  }
+
+  .p3-link {
+    width: 100%;
+    text-align: center;
+  }
+}

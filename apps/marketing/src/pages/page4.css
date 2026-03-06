@@ -1,0 +1,349 @@
+/* ── Page 4: Bento Grid ── */
+
+.p4 {
+  min-height: 100vh;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* ── Navbar ── */
+
+.p4-nav {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 2rem;
+  font-family: "DM Sans", sans-serif;
+  font-size: 0.875rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.p4-nav-left {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.p4-nav-left span {
+  font-weight: 600;
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+}
+
+.p4-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.p4-badge {
+  display: inline-flex;
+  padding: 0.2rem 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.p4-nav-link {
+  color: var(--fg-muted);
+  transition: color 0.2s;
+}
+
+.p4-nav-link:hover {
+  color: var(--fg);
+}
+
+/* ── Grid ── */
+
+.p4-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 1rem;
+  width: 100%;
+  max-width: 1100px;
+  padding: 2rem;
+  animation: p4-fade-in 0.6s ease-out;
+}
+
+/* ── Cells ── */
+
+.p4-cell {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1.5rem;
+  transition: border-color 0.2s;
+}
+
+.p4-cell:hover {
+  border-color: var(--border-strong);
+}
+
+/* ── Screenshot Cell ── */
+
+.p4-screenshot {
+  grid-row: span 2;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+}
+
+.p4-screenshot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 15px;
+}
+
+/* ── Feature Cells ── */
+
+.p4-feature {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.p4-feature::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 1.5rem;
+  right: 1.5rem;
+  height: 2px;
+  background: linear-gradient(90deg, var(--blue), var(--blue-bright));
+  border-radius: 0 0 2px 2px;
+}
+
+.p4-feature-title {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-weight: 700;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--fg);
+  margin-top: 0.5rem;
+}
+
+.p4-feature-desc {
+  font-family: "DM Sans", sans-serif;
+  color: var(--fg-muted);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+/* ── Hero Text Cell ── */
+
+.p4-hero-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  justify-content: center;
+}
+
+.p4-hero-title {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-weight: 700;
+  font-size: clamp(1.75rem, 3vw, 2.25rem);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--fg);
+}
+
+.p4-hero-subtitle {
+  font-family: "DM Sans", sans-serif;
+  color: var(--fg-muted);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.p4-download {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  justify-content: center;
+  background: var(--fg);
+  color: var(--bg);
+  border-radius: 8px;
+  padding: 0.75rem 1.5rem;
+  font-family: "DM Sans", sans-serif;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.2s;
+  text-decoration: none;
+  border: none;
+  margin-top: 0.25rem;
+}
+
+.p4-download:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+/* ── Command Cell ── */
+
+.p4-command {
+  background: #0c0c0e;
+  display: flex;
+  align-items: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.p4-command::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 1.5rem;
+  right: 1.5rem;
+  height: 2px;
+  background: linear-gradient(90deg, #22d3ee, #06b6d4);
+  border-radius: 0 0 2px 2px;
+}
+
+.p4-command-text {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.9rem;
+  color: var(--fg-muted);
+  letter-spacing: -0.01em;
+}
+
+.p4-command-prompt {
+  color: #22d3ee;
+  margin-right: 0.5rem;
+}
+
+/* ── Desktop + Web Cell ── */
+
+.p4-desktop {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.p4-desktop::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 1.5rem;
+  right: 1.5rem;
+  height: 2px;
+  background: linear-gradient(90deg, var(--blue), var(--blue-bright));
+  border-radius: 0 0 2px 2px;
+}
+
+.p4-desktop-title {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-weight: 700;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--fg);
+  margin-top: 0.5rem;
+}
+
+.p4-desktop-desc {
+  font-family: "DM Sans", sans-serif;
+  color: var(--fg-muted);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+/* ── GitHub Cell ── */
+
+.p4-github {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.35rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.p4-github::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 1.5rem;
+  right: 1.5rem;
+  height: 2px;
+  background: linear-gradient(90deg, var(--blue), var(--blue-bright));
+  border-radius: 0 0 2px 2px;
+}
+
+.p4-github-link {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-weight: 700;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--fg);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+  margin-top: 0.5rem;
+}
+
+.p4-github-arrow {
+  display: inline-block;
+  transition: transform 0.2s;
+}
+
+.p4-github:hover .p4-github-arrow {
+  transform: translateX(4px);
+}
+
+.p4-github-desc {
+  font-family: "DM Sans", sans-serif;
+  color: var(--fg-muted);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+/* ── Animation ── */
+
+@keyframes p4-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Responsive ── */
+
+@media (max-width: 768px) {
+  .p4-nav {
+    padding: 0.75rem 1.25rem;
+  }
+
+  .p4-grid {
+    grid-template-columns: 1fr;
+    padding: 1.25rem;
+    gap: 0.75rem;
+  }
+
+  .p4-screenshot {
+    grid-row: span 1;
+    aspect-ratio: 16 / 10;
+  }
+
+  .p4-hero-title {
+    font-size: 1.75rem;
+  }
+}
