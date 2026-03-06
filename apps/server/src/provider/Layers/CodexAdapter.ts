@@ -1355,7 +1355,6 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
               ...(input.input !== undefined ? { input: input.input } : {}),
               ...(input.model !== undefined ? { model: input.model } : {}),
               ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
-              ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
               ...(input.modelOptions?.codex?.reasoningEffort !== undefined
                 ? { effort: input.modelOptions.codex.reasoningEffort }
                 : {}),
