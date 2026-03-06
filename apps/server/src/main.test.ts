@@ -49,10 +49,7 @@ const testLayer = Layer.mergeAll(
     openBrowser: (_target: string) => Effect.void,
     openInEditor: () => Effect.void,
   } satisfies OpenShape),
-  Layer.succeed(AnalyticsService, {
-    record: () => Effect.void,
-    flush: Effect.void,
-  }),
+  AnalyticsService.layerTest,
   FetchHttpClient.layer,
   NodeServices.layer,
 );

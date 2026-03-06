@@ -215,11 +215,6 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
 const sleep = (ms: number) =>
   Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
-const noopAnalyticsLayer = Layer.succeed(AnalyticsService, {
-  record: () => Effect.void,
-  flush: Effect.void,
-});
-
 function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
   const registry: typeof ProviderAdapterRegistry.Service = {
@@ -241,7 +236,7 @@ function makeProviderServiceLayer() {
       makeProviderServiceLive().pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
-        Layer.provideMerge(noopAnalyticsLayer),
+        Layer.provideMerge(AnalyticsService.layerTest),
       ),
       directoryLayer,
 
@@ -288,7 +283,7 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
     const providerLayer = makeProviderServiceLive().pipe(
       Layer.provide(Layer.succeed(ProviderAdapterRegistry, registry)),
       Layer.provide(directoryLayer),
-      Layer.provide(noopAnalyticsLayer),
+      Layer.provide(AnalyticsService.layerTest),
     );
 
     yield* Effect.gen(function* () {
@@ -347,7 +342,7 @@ it.effect(
       const firstProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, firstRegistry)),
         Layer.provide(firstDirectoryLayer),
-        Layer.provide(noopAnalyticsLayer),
+        Layer.provide(AnalyticsService.layerTest),
       );
 
       const startedSession = yield* Effect.gen(function* () {
@@ -390,7 +385,7 @@ it.effect(
       const secondProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, secondRegistry)),
         Layer.provide(secondDirectoryLayer),
-        Layer.provide(noopAnalyticsLayer),
+        Layer.provide(AnalyticsService.layerTest),
       );
 
       secondCodex.startSession.mockClear();

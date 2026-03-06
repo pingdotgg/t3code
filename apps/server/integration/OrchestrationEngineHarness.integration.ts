@@ -253,22 +253,12 @@ export const makeOrchestrationIntegrationHarness = (
       ? makeProviderServiceLive().pipe(
           Layer.provide(providerSessionDirectoryLayer),
           Layer.provide(realCodexRegistry),
-          Layer.provide(
-            Layer.succeed(AnalyticsService, {
-              record: () => Effect.void,
-              flush: Effect.void,
-            }),
-          ),
+          Layer.provide(AnalyticsService.layerTest),
         )
       : makeProviderServiceLive().pipe(
           Layer.provide(providerSessionDirectoryLayer),
           Layer.provide(fakeRegistry!),
-          Layer.provide(
-            Layer.succeed(AnalyticsService, {
-              record: () => Effect.void,
-              flush: Effect.void,
-            }),
-          ),
+          Layer.provide(AnalyticsService.layerTest),
         );
 
     const runtimeServicesLayer = Layer.mergeAll(
