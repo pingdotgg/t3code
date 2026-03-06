@@ -54,13 +54,6 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     placeholder: "your-claude-model-slug",
     example: "claude-sonnet-5-0",
   },
-  {
-    provider: "cursor",
-    title: "Cursor",
-    description: "Save additional Cursor model slugs for the picker and `/model` command.",
-    placeholder: "your-cursor-model-slug",
-    example: "openai/gpt-oss-120b",
-  },
 ] as const;
 
 function getCustomModelsForProvider(

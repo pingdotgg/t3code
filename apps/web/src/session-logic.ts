@@ -17,7 +17,6 @@ export const PROVIDER_OPTIONS: Array<{
 }> = [
   { value: "codex", label: "Codex", available: true },
   { value: "claudeCode", label: "Claude Code", available: true },
-  { value: "cursor", label: "Cursor Agent", available: true },
 ];
 
 export interface WorkLogEntry {
