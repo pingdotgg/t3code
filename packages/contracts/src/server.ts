@@ -4,18 +4,16 @@ import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 import { EditorId } from "./editor";
 import { ProviderKind } from "./orchestration";
 
-export const KeybindingsMalformedConfigIssue = Schema.Struct({
+const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
   message: TrimmedNonEmptyString,
 });
-export type KeybindingsMalformedConfigIssue = typeof KeybindingsMalformedConfigIssue.Type;
 
-export const KeybindingsInvalidEntryIssue = Schema.Struct({
+const KeybindingsInvalidEntryIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.invalid-entry"),
   message: TrimmedNonEmptyString,
   index: Schema.Number,
 });
-export type KeybindingsInvalidEntryIssue = typeof KeybindingsInvalidEntryIssue.Type;
 
 export const ServerConfigIssue = Schema.Union([
   KeybindingsMalformedConfigIssue,
@@ -23,8 +21,7 @@ export const ServerConfigIssue = Schema.Union([
 ]);
 export type ServerConfigIssue = typeof ServerConfigIssue.Type;
 
-export const ServerConfigIssues = Schema.Array(ServerConfigIssue);
-export type ServerConfigIssues = typeof ServerConfigIssues.Type;
+const ServerConfigIssues = Schema.Array(ServerConfigIssue);
 
 export const ServerProviderStatusState = Schema.Literals(["ready", "warning", "error"]);
 export type ServerProviderStatusState = typeof ServerProviderStatusState.Type;
@@ -46,8 +43,7 @@ export const ServerProviderStatus = Schema.Struct({
 });
 export type ServerProviderStatus = typeof ServerProviderStatus.Type;
 
-export const ServerProviderStatuses = Schema.Array(ServerProviderStatus);
-export type ServerProviderStatuses = typeof ServerProviderStatuses.Type;
+const ServerProviderStatuses = Schema.Array(ServerProviderStatus);
 
 export const ServerConfig = Schema.Struct({
   cwd: TrimmedNonEmptyString,

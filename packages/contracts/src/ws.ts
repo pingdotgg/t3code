@@ -89,7 +89,7 @@ const tagRequestBody = <const Tag extends string, const Fields extends Schema.St
     { unsafePreserveChecks: true },
   );
 
-export const WebSocketRequestBody = Schema.Union([
+const WebSocketRequestBody = Schema.Union([
   // Orchestration methods
   tagRequestBody(
     ORCHESTRATION_WS_METHODS.dispatchCommand,

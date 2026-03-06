@@ -1,8 +1,8 @@
 import { Schema } from "effect";
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas";
 
-export const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
-export const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
+const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
+const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 
 export const ProjectSearchEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
@@ -11,7 +11,7 @@ export const ProjectSearchEntriesInput = Schema.Struct({
 });
 export type ProjectSearchEntriesInput = typeof ProjectSearchEntriesInput.Type;
 
-export const ProjectEntryKind = Schema.Literals(["file", "directory"]);
+const ProjectEntryKind = Schema.Literals(["file", "directory"]);
 
 export const ProjectEntry = Schema.Struct({
   path: TrimmedNonEmptyString,

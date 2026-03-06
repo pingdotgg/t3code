@@ -52,14 +52,14 @@ export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
 export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
 export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-export const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
-export const CHAT_ATTACHMENT_ID_MAX_CHARS = 128;
+const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
+const CHAT_ATTACHMENT_ID_MAX_CHARS = 128;
 
 // Correlation id is command id by design in this model.
 export const CorrelationId = CommandId;
 export type CorrelationId = typeof CorrelationId.Type;
 
-export const ChatAttachmentId = TrimmedNonEmptyString.check(
+const ChatAttachmentId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(CHAT_ATTACHMENT_ID_MAX_CHARS),
   Schema.isPattern(/^[a-z0-9_-]+$/i),
 );
@@ -74,7 +74,7 @@ export const ChatImageAttachment = Schema.Struct({
 });
 export type ChatImageAttachment = typeof ChatImageAttachment.Type;
 
-export const UploadChatImageAttachment = Schema.Struct({
+const UploadChatImageAttachment = Schema.Struct({
   type: Schema.Literal("image"),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
   mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^image\//i)),
@@ -87,7 +87,7 @@ export type UploadChatImageAttachment = typeof UploadChatImageAttachment.Type;
 
 export const ChatAttachment = Schema.Union([ChatImageAttachment]);
 export type ChatAttachment = typeof ChatAttachment.Type;
-export const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
+const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
 export type UploadChatAttachment = typeof UploadChatAttachment.Type;
 
 export const ProjectScriptIcon = Schema.Literals([
@@ -212,7 +212,7 @@ export const OrchestrationThreadActivity = Schema.Struct({
 });
 export type OrchestrationThreadActivity = typeof OrchestrationThreadActivity.Type;
 
-export const OrchestrationLatestTurnState = Schema.Literals([
+const OrchestrationLatestTurnState = Schema.Literals([
   "running",
   "interrupted",
   "completed",
@@ -263,7 +263,7 @@ export const OrchestrationReadModel = Schema.Struct({
 });
 export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;
 
-export const ProjectCreateCommand = Schema.Struct({
+const ProjectCreateCommand = Schema.Struct({
   type: Schema.Literal("project.create"),
   commandId: CommandId,
   projectId: ProjectId,
@@ -273,7 +273,7 @@ export const ProjectCreateCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ProjectMetaUpdateCommand = Schema.Struct({
+const ProjectMetaUpdateCommand = Schema.Struct({
   type: Schema.Literal("project.meta.update"),
   commandId: CommandId,
   projectId: ProjectId,
@@ -283,13 +283,13 @@ export const ProjectMetaUpdateCommand = Schema.Struct({
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 
-export const ProjectDeleteCommand = Schema.Struct({
+const ProjectDeleteCommand = Schema.Struct({
   type: Schema.Literal("project.delete"),
   commandId: CommandId,
   projectId: ProjectId,
 });
 
-export const ThreadCreateCommand = Schema.Struct({
+const ThreadCreateCommand = Schema.Struct({
   type: Schema.Literal("thread.create"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -305,13 +305,13 @@ export const ThreadCreateCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadDeleteCommand = Schema.Struct({
+const ThreadDeleteCommand = Schema.Struct({
   type: Schema.Literal("thread.delete"),
   commandId: CommandId,
   threadId: ThreadId,
 });
 
-export const ThreadMetaUpdateCommand = Schema.Struct({
+const ThreadMetaUpdateCommand = Schema.Struct({
   type: Schema.Literal("thread.meta.update"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -321,7 +321,7 @@ export const ThreadMetaUpdateCommand = Schema.Struct({
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 
-export const ThreadRuntimeModeSetCommand = Schema.Struct({
+const ThreadRuntimeModeSetCommand = Schema.Struct({
   type: Schema.Literal("thread.runtime-mode.set"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -329,7 +329,7 @@ export const ThreadRuntimeModeSetCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadInteractionModeSetCommand = Schema.Struct({
+const ThreadInteractionModeSetCommand = Schema.Struct({
   type: Schema.Literal("thread.interaction-mode.set"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -337,7 +337,7 @@ export const ThreadInteractionModeSetCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadTurnStartCommand = Schema.Struct({
+const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -358,7 +358,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ClientThreadTurnStartCommand = Schema.Struct({
+const ClientThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -377,7 +377,7 @@ export const ClientThreadTurnStartCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadTurnInterruptCommand = Schema.Struct({
+const ThreadTurnInterruptCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.interrupt"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -385,7 +385,7 @@ export const ThreadTurnInterruptCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadApprovalRespondCommand = Schema.Struct({
+const ThreadApprovalRespondCommand = Schema.Struct({
   type: Schema.Literal("thread.approval.respond"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -394,7 +394,7 @@ export const ThreadApprovalRespondCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadUserInputRespondCommand = Schema.Struct({
+const ThreadUserInputRespondCommand = Schema.Struct({
   type: Schema.Literal("thread.user-input.respond"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -403,7 +403,7 @@ export const ThreadUserInputRespondCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadCheckpointRevertCommand = Schema.Struct({
+const ThreadCheckpointRevertCommand = Schema.Struct({
   type: Schema.Literal("thread.checkpoint.revert"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -411,14 +411,14 @@ export const ThreadCheckpointRevertCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadSessionStopCommand = Schema.Struct({
+const ThreadSessionStopCommand = Schema.Struct({
   type: Schema.Literal("thread.session.stop"),
   commandId: CommandId,
   threadId: ThreadId,
   createdAt: IsoDateTime,
 });
 
-export const DispatchableClientOrchestrationCommand = Schema.Union([
+const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
@@ -455,7 +455,7 @@ export const ClientOrchestrationCommand = Schema.Union([
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
-export const ThreadSessionSetCommand = Schema.Struct({
+const ThreadSessionSetCommand = Schema.Struct({
   type: Schema.Literal("thread.session.set"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -463,7 +463,7 @@ export const ThreadSessionSetCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadMessageAssistantDeltaCommand = Schema.Struct({
+const ThreadMessageAssistantDeltaCommand = Schema.Struct({
   type: Schema.Literal("thread.message.assistant.delta"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -473,7 +473,7 @@ export const ThreadMessageAssistantDeltaCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadMessageAssistantCompleteCommand = Schema.Struct({
+const ThreadMessageAssistantCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.message.assistant.complete"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -482,7 +482,7 @@ export const ThreadMessageAssistantCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadProposedPlanUpsertCommand = Schema.Struct({
+const ThreadProposedPlanUpsertCommand = Schema.Struct({
   type: Schema.Literal("thread.proposed-plan.upsert"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -490,7 +490,7 @@ export const ThreadProposedPlanUpsertCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadTurnDiffCompleteCommand = Schema.Struct({
+const ThreadTurnDiffCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.diff.complete"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -504,7 +504,7 @@ export const ThreadTurnDiffCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadActivityAppendCommand = Schema.Struct({
+const ThreadActivityAppendCommand = Schema.Struct({
   type: Schema.Literal("thread.activity.append"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -512,7 +512,7 @@ export const ThreadActivityAppendCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadRevertCompleteCommand = Schema.Struct({
+const ThreadRevertCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.revert.complete"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -520,7 +520,7 @@ export const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const InternalOrchestrationCommand = Schema.Union([
+const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
@@ -671,7 +671,7 @@ export const ThreadApprovalResponseRequestedPayload = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadUserInputResponseRequestedPayload = Schema.Struct({
+const ThreadUserInputResponseRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   requestId: ApprovalRequestId,
   answers: ProviderUserInputAnswers,
@@ -980,7 +980,7 @@ export const TurnCountRange = Schema.Struct({
   ),
 );
 
-export const ThreadTurnDiff = TurnCountRange.mapFields(
+const ThreadTurnDiff = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
     diff: Schema.String,
@@ -996,7 +996,7 @@ export const ProviderSessionRuntimeStatus = Schema.Literals([
 ]);
 export type ProviderSessionRuntimeStatus = typeof ProviderSessionRuntimeStatus.Type;
 
-export const ProjectionThreadTurnStatus = Schema.Literals([
+const ProjectionThreadTurnStatus = Schema.Literals([
   "running",
   "completed",
   "interrupted",
@@ -1004,7 +1004,7 @@ export const ProjectionThreadTurnStatus = Schema.Literals([
 ]);
 export type ProjectionThreadTurnStatus = typeof ProjectionThreadTurnStatus.Type;
 
-export const ProjectionCheckpointRow = Schema.Struct({
+const ProjectionCheckpointRow = Schema.Struct({
   threadId: ThreadId,
   turnId: TurnId,
   checkpointTurnCount: NonNegativeInt,
@@ -1029,7 +1029,7 @@ export type DispatchResult = typeof DispatchResult.Type;
 
 export const OrchestrationGetSnapshotInput = Schema.Struct({});
 export type OrchestrationGetSnapshotInput = typeof OrchestrationGetSnapshotInput.Type;
-export const OrchestrationGetSnapshotResult = OrchestrationReadModel;
+const OrchestrationGetSnapshotResult = OrchestrationReadModel;
 export type OrchestrationGetSnapshotResult = typeof OrchestrationGetSnapshotResult.Type;
 
 export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
@@ -1055,7 +1055,7 @@ export const OrchestrationReplayEventsInput = Schema.Struct({
 });
 export type OrchestrationReplayEventsInput = typeof OrchestrationReplayEventsInput.Type;
 
-export const OrchestrationReplayEventsResult = Schema.Array(OrchestrationEvent);
+const OrchestrationReplayEventsResult = Schema.Array(OrchestrationEvent);
 export type OrchestrationReplayEventsResult = typeof OrchestrationReplayEventsResult.Type;
 
 export const OrchestrationRpcSchemas = {

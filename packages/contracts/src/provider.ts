@@ -19,19 +19,17 @@ import {
   ProviderRequestKind,
   ProviderUserInputAnswers,
   RuntimeMode,
-  TurnCountRange,
 } from "./orchestration";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 
-export const ProviderSessionStatus = Schema.Literals([
+const ProviderSessionStatus = Schema.Literals([
   "connecting",
   "ready",
   "running",
   "error",
   "closed",
 ]);
-export type ProviderSessionStatus = typeof ProviderSessionStatus.Type;
 
 export const ProviderSession = Schema.Struct({
   provider: ProviderKind,
@@ -48,30 +46,26 @@ export const ProviderSession = Schema.Struct({
 });
 export type ProviderSession = typeof ProviderSession.Type;
 
-export const CodexProviderStartOptions = Schema.Struct({
+const CodexProviderStartOptions = Schema.Struct({
   binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
   homePath: Schema.optional(TrimmedNonEmptyStringSchema),
 });
-export type CodexProviderStartOptions = typeof CodexProviderStartOptions.Type;
 
-export const ClaudeCodeProviderStartOptions = Schema.Struct({
+const ClaudeCodeProviderStartOptions = Schema.Struct({
   binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
   permissionMode: Schema.optional(TrimmedNonEmptyStringSchema),
   maxThinkingTokens: Schema.optional(NonNegativeInt),
 });
-export type ClaudeCodeProviderStartOptions = typeof ClaudeCodeProviderStartOptions.Type;
 
-export const CursorProviderStartOptions = Schema.Struct({
+const CursorProviderStartOptions = Schema.Struct({
   binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
 });
-export type CursorProviderStartOptions = typeof CursorProviderStartOptions.Type;
 
-export const ProviderStartOptions = Schema.Struct({
+const ProviderStartOptions = Schema.Struct({
   codex: Schema.optional(CodexProviderStartOptions),
   claudeCode: Schema.optional(ClaudeCodeProviderStartOptions),
   cursor: Schema.optional(CursorProviderStartOptions),
 });
-export type ProviderStartOptions = typeof ProviderStartOptions.Type;
 
 export const ProviderSessionStartInput = Schema.Struct({
   threadId: ThreadId,
@@ -116,55 +110,6 @@ export const ProviderStopSessionInput = Schema.Struct({
 });
 export type ProviderStopSessionInput = typeof ProviderStopSessionInput.Type;
 
-export const ProviderListCheckpointsInput = Schema.Struct({
-  threadId: ThreadId,
-});
-export type ProviderListCheckpointsInput = typeof ProviderListCheckpointsInput.Type;
-
-export const ProviderCheckpoint = Schema.Struct({
-  id: TrimmedNonEmptyStringSchema,
-  turnCount: NonNegativeInt,
-  messageCount: NonNegativeInt,
-  label: TrimmedNonEmptyStringSchema,
-  preview: Schema.optional(TrimmedNonEmptyStringSchema),
-  isCurrent: Schema.Boolean,
-});
-export type ProviderCheckpoint = typeof ProviderCheckpoint.Type;
-
-export const ProviderListCheckpointsResult = Schema.Struct({
-  threadId: ThreadId,
-  checkpoints: Schema.Array(ProviderCheckpoint),
-});
-export type ProviderListCheckpointsResult = typeof ProviderListCheckpointsResult.Type;
-
-export const ProviderRevertToCheckpointInput = Schema.Struct({
-  threadId: ThreadId,
-  turnCount: NonNegativeInt,
-});
-export type ProviderRevertToCheckpointInput = typeof ProviderRevertToCheckpointInput.Type;
-
-export const ProviderRevertToCheckpointResult = Schema.Struct({
-  threadId: ThreadId,
-  turnCount: NonNegativeInt,
-  messageCount: NonNegativeInt,
-  rolledBackTurns: NonNegativeInt,
-  checkpoints: Schema.Array(ProviderCheckpoint),
-});
-export type ProviderRevertToCheckpointResult = typeof ProviderRevertToCheckpointResult.Type;
-
-export const ProviderGetCheckpointDiffInput = Schema.Struct({
-  threadId: ThreadId,
-  ...TurnCountRange.fields,
-});
-export type ProviderGetCheckpointDiffInput = typeof ProviderGetCheckpointDiffInput.Type;
-
-export const ProviderGetCheckpointDiffResult = Schema.Struct({
-  threadId: ThreadId,
-  ...TurnCountRange.fields,
-  diff: Schema.String,
-});
-export type ProviderGetCheckpointDiffResult = typeof ProviderGetCheckpointDiffResult.Type;
-
 export const ProviderRespondToRequestInput = Schema.Struct({
   threadId: ThreadId,
   requestId: ApprovalRequestId,
@@ -179,8 +124,7 @@ export const ProviderRespondToUserInputInput = Schema.Struct({
 });
 export type ProviderRespondToUserInputInput = typeof ProviderRespondToUserInputInput.Type;
 
-export const ProviderEventKind = Schema.Literals(["session", "notification", "request", "error"]);
-export type ProviderEventKind = typeof ProviderEventKind.Type;
+const ProviderEventKind = Schema.Literals(["session", "notification", "request", "error"]);
 
 export const ProviderEvent = Schema.Struct({
   id: EventId,
@@ -198,6 +142,3 @@ export const ProviderEvent = Schema.Struct({
   payload: Schema.optional(Schema.Unknown),
 });
 export type ProviderEvent = typeof ProviderEvent.Type;
-
-export type ProviderSendTurnAttachment = typeof ChatAttachment.Type;
-export type ProviderSendTurnAttachmentInput = typeof ChatAttachment.Type;

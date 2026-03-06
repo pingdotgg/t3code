@@ -1,15 +1,13 @@
 import { Schema } from "effect";
 import { TrimmedString } from "./baseSchemas";
 
-export const MAX_KEYBINDING_COMMAND_LENGTH = 96;
 export const MAX_KEYBINDING_VALUE_LENGTH = 64;
-export const MAX_KEYBINDING_WHEN_LENGTH = 256;
+const MAX_KEYBINDING_WHEN_LENGTH = 256;
 export const MAX_WHEN_EXPRESSION_DEPTH = 64;
 export const MAX_SCRIPT_ID_LENGTH = 24;
-export const MAX_SCRIPT_RUN_COMMAND_LENGTH = 96;
 export const MAX_KEYBINDINGS_COUNT = 256;
 
-export const STATIC_KEYBINDING_COMMANDS = [
+const STATIC_KEYBINDING_COMMANDS = [
   "terminal.toggle",
   "terminal.split",
   "terminal.new",
@@ -35,17 +33,15 @@ export const KeybindingCommand = Schema.Union([
 ]);
 export type KeybindingCommand = typeof KeybindingCommand.Type;
 
-export const KeybindingValue = TrimmedString.check(
+const KeybindingValue = TrimmedString.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(MAX_KEYBINDING_VALUE_LENGTH),
 );
-export type KeybindingValue = typeof KeybindingValue.Type;
 
-export const KeybindingWhen = TrimmedString.check(
+const KeybindingWhen = TrimmedString.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(MAX_KEYBINDING_WHEN_LENGTH),
 );
-export type KeybindingWhen = typeof KeybindingWhen.Type;
 export const KeybindingRule = Schema.Struct({
   key: KeybindingValue,
   command: KeybindingCommand,

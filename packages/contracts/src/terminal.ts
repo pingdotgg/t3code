@@ -23,12 +23,12 @@ const TerminalIdWithDefaultSchema = TerminalIdSchema.pipe(
   Schema.withDecodingDefault(() => DEFAULT_TERMINAL_ID),
 );
 
-export const TerminalThreadInput = Schema.Struct({
+const TerminalThreadInput = Schema.Struct({
   threadId: TrimmedNonEmptyStringSchema,
 });
 export type TerminalThreadInput = Schema.Codec.Encoded<typeof TerminalThreadInput>;
 
-export const TerminalSessionInput = Schema.Struct({
+const TerminalSessionInput = Schema.Struct({
   ...TerminalThreadInput.fields,
   terminalId: TerminalIdWithDefaultSchema,
 });
@@ -96,43 +96,43 @@ const TerminalEventBaseSchema = Schema.Struct({
   createdAt: Schema.String,
 });
 
-export const TerminalStartedEvent = Schema.Struct({
+const TerminalStartedEvent = Schema.Struct({
   ...TerminalEventBaseSchema.fields,
   type: Schema.Literal("started"),
   snapshot: TerminalSessionSnapshot,
 });
 
-export const TerminalOutputEvent = Schema.Struct({
+const TerminalOutputEvent = Schema.Struct({
   ...TerminalEventBaseSchema.fields,
   type: Schema.Literal("output"),
   data: Schema.String,
 });
 
-export const TerminalExitedEvent = Schema.Struct({
+const TerminalExitedEvent = Schema.Struct({
   ...TerminalEventBaseSchema.fields,
   type: Schema.Literal("exited"),
   exitCode: Schema.NullOr(Schema.Int),
   exitSignal: Schema.NullOr(Schema.Int),
 });
 
-export const TerminalErrorEvent = Schema.Struct({
+const TerminalErrorEvent = Schema.Struct({
   ...TerminalEventBaseSchema.fields,
   type: Schema.Literal("error"),
   message: Schema.String.check(Schema.isNonEmpty()),
 });
 
-export const TerminalClearedEvent = Schema.Struct({
+const TerminalClearedEvent = Schema.Struct({
   ...TerminalEventBaseSchema.fields,
   type: Schema.Literal("cleared"),
 });
 
-export const TerminalRestartedEvent = Schema.Struct({
+const TerminalRestartedEvent = Schema.Struct({
   ...TerminalEventBaseSchema.fields,
   type: Schema.Literal("restarted"),
   snapshot: TerminalSessionSnapshot,
 });
 
-export const TerminalActivityEvent = Schema.Struct({
+const TerminalActivityEvent = Schema.Struct({
   ...TerminalEventBaseSchema.fields,
   type: Schema.Literal("activity"),
   hasRunningSubprocess: Schema.Boolean,
