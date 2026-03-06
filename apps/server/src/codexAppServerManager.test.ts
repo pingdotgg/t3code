@@ -388,6 +388,7 @@ describe("sendTurn", () => {
           url: "data:image/png;base64,BBBB",
         },
       ],
+      model: "gpt-5.3-codex",
     });
   });
 
