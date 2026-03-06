@@ -23,13 +23,19 @@ function createSendTurnHarness() {
   const manager = new CodexAppServerManager();
   const context = {
     session: {
-      sessionId: "sess_1",
       provider: "codex",
       status: "ready",
       threadId: "thread_1",
+      runtimeMode: "full-access",
+      model: "gpt-5.3-codex",
       resumeCursor: { threadId: "thread_1" },
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
+    },
+    account: {
+      type: "unknown",
+      planType: null,
+      sparkEnabled: true,
     },
   };
 
@@ -60,10 +66,11 @@ function createThreadControlHarness() {
   const manager = new CodexAppServerManager();
   const context = {
     session: {
-      sessionId: "sess_1",
       provider: "codex",
       status: "ready",
       threadId: "thread_1",
+      runtimeMode: "full-access",
+      model: "gpt-5.3-codex",
       resumeCursor: { threadId: "thread_1" },
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
@@ -91,10 +98,11 @@ function createPendingUserInputHarness() {
   const manager = new CodexAppServerManager();
   const context = {
     session: {
-      sessionId: "sess_1",
       provider: "codex",
       status: "ready",
       threadId: "thread_1",
+      runtimeMode: "full-access",
+      model: "gpt-5.3-codex",
       resumeCursor: { threadId: "thread_1" },
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
@@ -438,6 +446,37 @@ describe("sendTurn", () => {
           model: "gpt-5.3-codex",
           reasoning_effort: "medium",
           developer_instructions: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+        },
+      },
+    });
+  });
+
+  it("keeps the session model when interaction mode is set without an explicit model", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+    context.session.model = "gpt-5.2-codex";
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "Plan this with my current session model",
+      interactionMode: "plan",
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Plan this with my current session model",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.2-codex",
+      collaborationMode: {
+        mode: "plan",
+        settings: {
+          model: "gpt-5.2-codex",
+          reasoning_effort: "medium",
+          developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
         },
       },
     });

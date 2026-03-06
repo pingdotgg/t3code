@@ -25,7 +25,7 @@ export const APP_SERVICE_TIER_OPTIONS = [
 ] as const;
 export type AppServiceTier = (typeof APP_SERVICE_TIER_OPTIONS)[number]["value"];
 const AppServiceTierSchema = Schema.Literals(["auto", "fast", "flex"]);
-const MODELS_WITH_FAST_SUPPORT = ["gpt-5.4"];
+const MODELS_WITH_FAST_SUPPORT = new Set(["gpt-5.4"]);
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
 };
@@ -61,7 +61,12 @@ export function shouldShowFastTierIcon(
   model: string | null | undefined,
   serviceTier: AppServiceTier,
 ): boolean {
-  return resolveAppServiceTier(serviceTier) === "fast" && MODELS_WITH_FAST_SUPPORT.includes(normalizeModelSlug(model));
+  const normalizedModel = normalizeModelSlug(model);
+  return (
+    resolveAppServiceTier(serviceTier) === "fast" &&
+    normalizedModel !== null &&
+    MODELS_WITH_FAST_SUPPORT.has(normalizedModel)
+  );
 }
 
 const DEFAULT_APP_SETTINGS = AppSettingsSchema.makeUnsafe({});
