@@ -34,7 +34,10 @@ interface PendingRequest {
 interface PendingApprovalRequest {
   requestId: ApprovalRequestId;
   jsonRpcId: string | number;
-  method: "item/commandExecution/requestApproval" | "item/fileChange/requestApproval";
+  method:
+    | "item/commandExecution/requestApproval"
+    | "item/fileChange/requestApproval"
+    | "item/fileRead/requestApproval";
   requestKind: ProviderRequestKind;
   threadId: ThreadId;
   turnId?: TurnId;
@@ -352,18 +355,14 @@ function toCodexUserInputAnswer(value: unknown): CodexUserInputAnswer {
 
   if (Array.isArray(value)) {
     const answers = value.filter((entry): entry is string => typeof entry === "string");
-    if (answers.length > 0) {
-      return { answers };
-    }
+    return { answers };
   }
 
   if (value && typeof value === "object") {
     const maybeAnswers = (value as { answers?: unknown }).answers;
     if (Array.isArray(maybeAnswers)) {
       const answers = maybeAnswers.filter((entry): entry is string => typeof entry === "string");
-      if (answers.length > 0) {
-        return { answers };
-      }
+      return { answers };
     }
   }
 
@@ -1064,7 +1063,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         method:
           requestKind === "command"
             ? "item/commandExecution/requestApproval"
-            : "item/fileChange/requestApproval",
+            : requestKind === "file-read"
+              ? "item/fileRead/requestApproval"
+              : "item/fileChange/requestApproval",
         requestKind,
         threadId: context.session.threadId,
         ...(route.turnId ? { turnId: route.turnId } : {}),

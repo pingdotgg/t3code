@@ -152,7 +152,7 @@ export interface OrchestrationIntegrationHarness {
   readonly rootDir: string;
   readonly workspaceDir: string;
   readonly dbPath: string;
-  readonly adapterHarness: TestProviderAdapterHarness;
+  readonly adapterHarness: TestProviderAdapterHarness | null;
   readonly engine: OrchestrationEngineShape;
   readonly snapshotQuery: ProjectionSnapshotQuery["Service"];
   readonly providerService: ProviderService["Service"];
@@ -435,7 +435,7 @@ export const makeOrchestrationIntegrationHarness = (
       rootDir,
       workspaceDir,
       dbPath,
-      adapterHarness: adapterHarness as TestProviderAdapterHarness,
+      adapterHarness,
       engine,
       snapshotQuery,
       providerService,

@@ -444,6 +444,78 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("preserves file-read request type when mapping serverRequest/resolved", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      const event: ProviderEvent = {
+        id: asEventId("evt-file-read-request-resolved"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "serverRequest/resolved",
+        requestId: ApprovalRequestId.makeUnsafe("req-file-read-1"),
+        payload: {
+          request: {
+            method: "item/fileRead/requestApproval",
+          },
+          decision: "accept",
+        },
+      };
+
+      lifecycleManager.emit("event", event);
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(firstEvent.value.type, "request.resolved");
+      if (firstEvent.value.type !== "request.resolved") {
+        return;
+      }
+      assert.equal(firstEvent.value.payload.requestType, "file_read_approval");
+    }),
+  );
+
+  it.effect("preserves explicit empty multi-select user-input answers", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      const event: ProviderEvent = {
+        id: asEventId("evt-user-input-empty"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "item/tool/requestUserInput/answered",
+        payload: {
+          answers: {
+            scope: [],
+          },
+        },
+      };
+
+      lifecycleManager.emit("event", event);
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(firstEvent.value.type, "user-input.resolved");
+      if (firstEvent.value.type !== "user-input.resolved") {
+        return;
+      }
+      assert.deepEqual(firstEvent.value.payload.answers, {
+        scope: [],
+      });
+    }),
+  );
+
   it.effect("maps windowsSandbox/setupCompleted to session state and warning on failure", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;

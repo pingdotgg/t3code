@@ -27,6 +27,11 @@ describe("normalizeModelSlug", () => {
     expect(normalizeModelSlug("gpt-5.2")).toBe("gpt-5.2");
     expect(normalizeModelSlug("gpt-5.2-codex")).toBe("gpt-5.2-codex");
   });
+
+  it("does not leak prototype properties as aliases", () => {
+    expect(normalizeModelSlug("toString")).toBe("toString");
+    expect(normalizeModelSlug("constructor")).toBe("constructor");
+  });
 });
 
 describe("resolveModelSlug", () => {

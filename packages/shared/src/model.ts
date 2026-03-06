@@ -36,7 +36,8 @@ export function normalizeModelSlug(
   }
 
   const aliases = MODEL_SLUG_ALIASES_BY_PROVIDER[provider] as Record<string, ModelSlug>;
-  return aliases[trimmed] ?? (trimmed as ModelSlug);
+  const aliased = aliases[trimmed];
+  return typeof aliased === "string" ? aliased : (trimmed as ModelSlug);
 }
 
 export function resolveModelSlug(
