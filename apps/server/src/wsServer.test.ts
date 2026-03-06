@@ -50,6 +50,8 @@ import type { GitCoreShape } from "./git/Services/GitCore.ts";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
+import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService.ts";
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 
 interface PendingMessages {
   queue: unknown[];
@@ -393,10 +395,7 @@ describe("WebSocket Server", () => {
       providerHealth?: ProviderHealthShape;
       open?: OpenShape;
       gitManager?: GitManagerShape;
-      gitCore?: Pick<
-        GitCoreShape,
-        "listBranches" | "initRepo" | "pullCurrentBranch"
-      >;
+      gitCore?: Pick<GitCoreShape, "listBranches" | "initRepo" | "pullCurrentBranch">;
       terminalManager?: TerminalManagerShape;
     } = {},
   ): Promise<Http.Server> {
@@ -449,7 +448,9 @@ describe("WebSocket Server", () => {
       Layer.provideMerge(providerHealthLayer),
       Layer.provideMerge(openLayer),
       Layer.provideMerge(serverConfigLayer),
+      Layer.provideMerge(AnalyticsServiceLayerLive),
       Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(NodeHttpClient.layerUndici),
     );
     const runtimeServices = await Effect.runPromise(
       Layer.build(dependenciesLayer).pipe(Scope.provide(scope)),
@@ -1620,7 +1621,6 @@ describe("WebSocket Server", () => {
     expect(pullResponse.result).toBeUndefined();
     expect(pullResponse.error?.message).toContain("No upstream configured");
     expect(pullCurrentBranch).toHaveBeenCalledWith("/repo/path");
-
   });
 
   it("supports git.status over websocket", async () => {

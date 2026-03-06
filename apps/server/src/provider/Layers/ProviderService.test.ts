@@ -42,6 +42,7 @@ import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
+import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
 
 const asRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
@@ -214,6 +215,11 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
 const sleep = (ms: number) =>
   Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
+const noopAnalyticsLayer = Layer.succeed(AnalyticsService, {
+  record: () => Effect.void,
+  flush: Effect.void,
+});
+
 function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
   const registry: typeof ProviderAdapterRegistry.Service = {
@@ -235,8 +241,10 @@ function makeProviderServiceLayer() {
       makeProviderServiceLive().pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
+        Layer.provideMerge(noopAnalyticsLayer),
       ),
       directoryLayer,
+
       runtimeRepositoryLayer,
       NodeServices.layer,
     ),
@@ -280,6 +288,7 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
     const providerLayer = makeProviderServiceLive().pipe(
       Layer.provide(Layer.succeed(ProviderAdapterRegistry, registry)),
       Layer.provide(directoryLayer),
+      Layer.provide(noopAnalyticsLayer),
     );
 
     yield* Effect.gen(function* () {
@@ -338,6 +347,7 @@ it.effect(
       const firstProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, firstRegistry)),
         Layer.provide(firstDirectoryLayer),
+        Layer.provide(noopAnalyticsLayer),
       );
 
       const startedSession = yield* Effect.gen(function* () {
@@ -380,6 +390,7 @@ it.effect(
       const secondProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, secondRegistry)),
         Layer.provide(secondDirectoryLayer),
+        Layer.provide(noopAnalyticsLayer),
       );
 
       secondCodex.startSession.mockClear();
