@@ -21,8 +21,13 @@ const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
-const ProductionPngIconSource = Effect.zipWith(RepoRoot, Effect.service(Path.Path), (repoRoot, path) =>
-  path.join(repoRoot, BRAND_ASSET_PATHS.productionIconPng),
+const ProductionMacIconSource = Effect.zipWith(RepoRoot, Effect.service(Path.Path), (repoRoot, path) =>
+  path.join(repoRoot, BRAND_ASSET_PATHS.productionMacIconPng),
+);
+const ProductionLinuxIconSource = Effect.zipWith(
+  RepoRoot,
+  Effect.service(Path.Path),
+  (repoRoot, path) => path.join(repoRoot, BRAND_ASSET_PATHS.productionLinuxIconPng),
 );
 const ProductionWindowsIconSource = Effect.zipWith(
   RepoRoot,
@@ -267,7 +272,7 @@ function stageMacIcons(stageResourcesDir: string, verbose: boolean) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const iconSource = yield* ProductionPngIconSource;
+    const iconSource = yield* ProductionMacIconSource;
     if (!(yield* fs.exists(iconSource))) {
       return yield* new BuildScriptError({
         message: `Production icon source is missing at ${iconSource}`,
@@ -295,7 +300,7 @@ function stageLinuxIcons(stageResourcesDir: string) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const iconSource = yield* ProductionPngIconSource;
+    const iconSource = yield* ProductionLinuxIconSource;
     if (!(yield* fs.exists(iconSource))) {
       return yield* new BuildScriptError({
         message: `Production icon source is missing at ${iconSource}`,
