@@ -18,6 +18,7 @@ interface RecordedBatchRequest {
       readonly event?: string;
       readonly properties?: {
         readonly index?: number;
+        readonly clientType?: string;
       };
     }>;
   } | null;
@@ -28,6 +29,7 @@ interface RecordedBatchBody {
     readonly event?: string;
     readonly properties?: {
       readonly index?: number;
+      readonly clientType?: string;
     };
   }>;
 }
@@ -108,6 +110,12 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       assert.deepEqual(
         sorted,
         Array.from({ length: 45 }, (_, index) => index),
+      );
+      assert.equal(
+        batchRequests.every((request) =>
+          request.body.batch.every((event) => event.properties?.clientType === "cli-web-client"),
+        ),
+        true,
       );
     }),
   );
