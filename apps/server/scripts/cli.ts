@@ -155,11 +155,8 @@ const publishCmd = Command.make(
       yield* Effect.acquireUseRelease(
         // Acquire: backup package.json, resolve catalog: deps, strip devDependencies/scripts
         Effect.gen(function* () {
-          const original = yield* fs.readFileString(packageJsonPath);
-          yield* fs.writeFileString(backupPath, original);
-          const iconBackups = yield* applyPublishIconOverrides(repoRoot, serverDir);
-
-          // Build package.json for publish
+          // Resolve catalog dependencies before any file mutations. If this throws,
+          // acquire fails and no release hook runs, so filesystem must still be untouched.
           const version = Option.getOrElse(config.appVersion, () => serverPackageJson.version);
           const pkg = {
             name: serverPackageJson.name,
@@ -172,15 +169,18 @@ const publishCmd = Command.make(
             dependencies: serverPackageJson.dependencies as Record<string, unknown>,
           };
 
-          // Resolve catalog: entries in production dependencies
           pkg.dependencies = resolveCatalogDependencies(
             pkg.dependencies,
             rootPackageJson.workspaces.catalog,
             "apps/server dependencies",
           );
 
+          const original = yield* fs.readFileString(packageJsonPath);
+          yield* fs.writeFileString(backupPath, original);
           yield* fs.writeFileString(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
           yield* Effect.log("[cli] Resolved package.json for publish");
+
+          const iconBackups = yield* applyPublishIconOverrides(repoRoot, serverDir);
           return { iconBackups };
         }),
         // Use: npm publish

@@ -459,9 +459,6 @@ const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(f
   stageResourcesDir: string,
   verbose: boolean,
 ) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-
   if (platform === "mac") {
     yield* stageMacIcons(stageResourcesDir, verbose);
     return;
@@ -469,23 +466,11 @@ const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(f
 
   if (platform === "linux") {
     yield* stageLinuxIcons(stageResourcesDir);
-    const iconPath = path.join(stageResourcesDir, "icon.png");
-    if (!(yield* fs.exists(iconPath))) {
-      return yield* new BuildScriptError({
-        message: `Missing Linux icon at ${iconPath}`,
-      });
-    }
     return;
   }
 
   if (platform === "win") {
     yield* stageWindowsIcons(stageResourcesDir);
-    const iconPath = path.join(stageResourcesDir, "icon.ico");
-    if (!(yield* fs.exists(iconPath))) {
-      return yield* new BuildScriptError({
-        message: `Missing Windows icon at ${iconPath}`,
-      });
-    }
   }
 });
 
