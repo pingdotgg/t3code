@@ -63,9 +63,8 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
             Effect.map((body) => body as RecordedBatchRequest["body"]),
             Effect.catch(() => Effect.succeed(null)),
           );
-          yield* Effect.sync(() => {
-            capturedRequests.push({ path: request.url, body: payload });
-          });
+
+          capturedRequests.push({ path: request.url, body: payload });
 
           return HttpServerResponse.jsonUnsafe({});
         }),
