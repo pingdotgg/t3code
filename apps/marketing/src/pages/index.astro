@@ -1,0 +1,326 @@
+---
+---
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="T3 Code — The best way to code with AI." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" href="/icon.png" />
+    <title>T3 Code</title>
+  </head>
+  <body>
+    <div class="page">
+      <nav class="nav">
+        <a href="/" class="nav-brand">
+          <img src="/icon.png" alt="T3" class="nav-icon" />
+        </a>
+        <a
+          href="https://github.com/pingdotgg/t3code"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="nav-github"
+        >
+          GitHub
+          <span class="nav-github-arrow" aria-hidden="true">&#8599;</span>
+        </a>
+      </nav>
+
+      <main class="main">
+        <h1 class="tagline">T3 Code is the best way to code with AI.</h1>
+
+        <a
+          href="https://github.com/pingdotgg/t3code/releases"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="hero-button"
+        >
+          Download now
+        </a>
+
+        <div class="screenshot-wrap">
+          <img src="/screenshot.jpeg" alt="T3 Code" class="screenshot" />
+        </div>
+
+      </main>
+
+      <footer class="footer">
+        <span class="footer-copy">&copy; {new Date().getFullYear()} T3 Tools Inc</span>
+        <div class="footer-links">
+          <a href="https://github.com/pingdotgg/t3code" target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a href="https://discord.gg/jn4EGJjrvv" target="_blank" rel="noopener noreferrer">Discord</a>
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>
+
+<style>
+  :root {
+    --bg: #09090b;
+    --fg: #fafafa;
+    --fg-muted: #a1a1aa;
+    --fg-dim: #71717a;
+    --border: rgba(255, 255, 255, 0.08);
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "DM Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-size: 256px 256px;
+    z-index: 9999;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  img {
+    display: block;
+    max-width: 100%;
+  }
+
+  /* ── Page ── */
+
+  .page {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+  }
+
+  /* ── Navbar ── */
+
+  .nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.5rem 2.5rem;
+    opacity: 0.5;
+    transition: opacity 0.4s ease;
+  }
+
+  .nav:hover {
+    opacity: 1;
+  }
+
+  .nav-brand {
+    display: flex;
+    align-items: center;
+  }
+
+  .nav-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+  }
+
+  .nav-github {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--fg-muted);
+    font-size: 0.875rem;
+    transition: color 0.3s ease;
+  }
+
+  .nav-github:hover {
+    color: var(--fg);
+  }
+
+  .nav-github-arrow {
+    display: inline-block;
+    transition: transform 0.3s ease;
+  }
+
+  .nav-github:hover .nav-github-arrow {
+    transform: translateX(2px) translateY(-1px);
+  }
+
+  /* ── Main content ── */
+
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 10vh;
+  }
+
+  /* ── Tagline ── */
+
+  .tagline {
+    font-weight: 500;
+    font-size: clamp(2rem, 5vw, 3.5rem);
+    letter-spacing: -0.035em;
+    line-height: 1.15;
+    text-align: center;
+    margin: 0 0 6vh;
+    opacity: 0;
+    animation: fade-in 1s ease-out forwards;
+  }
+
+  /* ── Hero button ── */
+
+  .hero-button {
+    display: inline-block;
+    background: #fafafa;
+    color: #09090b;
+    padding: 0.75rem 2rem;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 5vh;
+    opacity: 0;
+    animation: fade-in 1s ease-out 0.15s forwards;
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+  }
+
+  .hero-button:hover {
+    transform: scale(1.03);
+    box-shadow: 0 0 24px rgba(255, 255, 255, 0.08);
+  }
+
+  .hero-button:active {
+    transform: scale(0.98);
+  }
+
+  /* ── Screenshot ── */
+
+  .screenshot-wrap {
+    margin: 0 auto;
+    width: min(95vw, 1400px);
+    opacity: 0;
+    transform: scale(0.98);
+    animation: screenshot-in 1s ease-out 0.15s forwards;
+  }
+
+  .screenshot {
+    width: 100%;
+    display: block;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+  }
+
+  .screenshot-wrap::after {
+    content: "";
+    display: block;
+    width: 100%;
+    height: 120px;
+    background: inherit;
+    margin-top: -1px;
+    opacity: 0.04;
+    transform: scaleY(-1);
+    mask-image: linear-gradient(to bottom, black 0%, transparent 60%);
+    -webkit-mask-image: linear-gradient(to bottom, black 0%, transparent 60%);
+    pointer-events: none;
+  }
+
+  /* ── Footer ── */
+
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.5rem 2.5rem;
+    font-size: 0.8rem;
+    color: var(--fg-dim);
+  }
+
+  .footer-links {
+    display: flex;
+    gap: 1.25rem;
+  }
+
+  .footer-links a {
+    color: var(--fg-dim);
+    transition: color 0.3s ease;
+  }
+
+  .footer-links a:hover {
+    color: var(--fg);
+  }
+
+  /* ── Animations ── */
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes screenshot-in {
+    from {
+      opacity: 0;
+      transform: scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  /* ── Mobile ── */
+
+  @media (max-width: 640px) {
+    .nav {
+      padding: 1.25rem 1.25rem;
+    }
+
+    .main {
+      padding-top: 7vh;
+    }
+
+    .tagline {
+      margin-bottom: 4vh;
+    }
+
+    .screenshot-wrap {
+      width: 95vw;
+    }
+
+    .footer {
+      padding: 1.25rem;
+    }
+  }
+</style>
