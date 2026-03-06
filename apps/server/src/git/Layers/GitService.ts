@@ -1,13 +1,13 @@
 /**
- * Git process helpers - Effect-native git execution with typed errors.
+ * Git process helpers - runtime-aware git execution with typed errors.
  *
  * Centralizes child-process git invocation for server modules. This module
  * only executes git commands and reports structured failures.
  *
  * @module GitServiceLive
  */
-import { Effect, Layer, Option, Schema, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Effect, Layer, Schema } from "effect";
+import { runProcess } from "../../processRunner.ts";
 import { GitCommandError } from "../Errors.ts";
 import {
   ExecuteGitInput,
@@ -39,37 +39,60 @@ function toGitCommandError(
         });
 }
 
-const collectOutput = Effect.fn(function* <E>(
-  input: Pick<ExecuteGitInput, "operation" | "cwd" | "args">,
-  stream: Stream.Stream<Uint8Array, E>,
-  maxOutputBytes: number,
-): Effect.fn.Return<string, GitCommandError> {
-  const decoder = new TextDecoder();
-  let bytes = 0;
-  let text = "";
+export function normalizeGitProcessResult(
+  commandInput: Pick<ExecuteGitInput, "operation" | "cwd" | "args">,
+  input: Pick<ExecuteGitInput, "allowNonZeroExit">,
+  result: {
+    readonly stdout: string;
+    readonly stderr: string;
+    readonly code: number | null;
+    readonly signal: NodeJS.Signals | null;
+    readonly timedOut: boolean;
+  },
+): ExecuteGitResult {
+  if (result.timedOut) {
+    throw new GitCommandError({
+      operation: commandInput.operation,
+      command: quoteGitCommand(commandInput.args),
+      cwd: commandInput.cwd,
+      detail: `${quoteGitCommand(commandInput.args)} timed out.`,
+    });
+  }
 
-  yield* Stream.runForEach(stream, (chunk) =>
-    Effect.gen(function* () {
-      bytes += chunk.byteLength;
-      if (bytes > maxOutputBytes) {
-        return yield* new GitCommandError({
-          operation: input.operation,
-          command: quoteGitCommand(input.args),
-          cwd: input.cwd,
-          detail: `${quoteGitCommand(input.args)} output exceeded ${maxOutputBytes} bytes and was truncated.`,
-        });
-      }
-      text += decoder.decode(chunk, { stream: true });
-    }),
-  ).pipe(Effect.mapError(toGitCommandError(input, "output stream failed.")));
+  if (result.code === null) {
+    throw new GitCommandError({
+      operation: commandInput.operation,
+      command: quoteGitCommand(commandInput.args),
+      cwd: commandInput.cwd,
+      detail:
+        result.signal !== null
+          ? `${quoteGitCommand(commandInput.args)} terminated by signal ${result.signal}.`
+          : `${quoteGitCommand(commandInput.args)} terminated before reporting an exit code.`,
+    });
+  }
 
-  text += decoder.decode();
-  return text;
-});
+  const exitCode = result.code;
+  if (!input.allowNonZeroExit && exitCode !== 0) {
+    const trimmedStderr = result.stderr.trim();
+    throw new GitCommandError({
+      operation: commandInput.operation,
+      command: quoteGitCommand(commandInput.args),
+      cwd: commandInput.cwd,
+      detail:
+        trimmedStderr.length > 0
+          ? `${quoteGitCommand(commandInput.args)} failed: ${trimmedStderr}`
+          : `${quoteGitCommand(commandInput.args)} failed with code ${exitCode}.`,
+    });
+  }
 
-const makeGitService = Effect.gen(function* () {
-  const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  return {
+    code: exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  } satisfies ExecuteGitResult;
+}
 
+const makeGitService = Effect.sync(() => {
   const execute: GitServiceShape["execute"] = Effect.fnUntraced(function* (input) {
     const commandInput = {
       ...input,
@@ -78,62 +101,21 @@ const makeGitService = Effect.gen(function* () {
     const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
 
-    const commandEffect = Effect.gen(function* () {
-      const child = yield* commandSpawner
-        .spawn(
-          ChildProcess.make("git", commandInput.args, {
-            cwd: commandInput.cwd,
-            ...(input.env ? { env: input.env } : {}),
-          }),
-        )
-        .pipe(Effect.mapError(toGitCommandError(commandInput, "failed to spawn.")));
-
-      const [stdout, stderr, exitCode] = yield* Effect.all(
-        [
-          collectOutput(commandInput, child.stdout, maxOutputBytes),
-          collectOutput(commandInput, child.stderr, maxOutputBytes),
-          child.exitCode.pipe(
-            Effect.map((value) => Number(value)),
-            Effect.mapError(toGitCommandError(commandInput, "failed to report exit code.")),
-          ),
-        ],
-        { concurrency: "unbounded" },
-      );
-
-      if (!input.allowNonZeroExit && exitCode !== 0) {
-        const trimmedStderr = stderr.trim();
-        return yield* new GitCommandError({
-          operation: commandInput.operation,
-          command: quoteGitCommand(commandInput.args),
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const result = await runProcess("git", commandInput.args, {
           cwd: commandInput.cwd,
-          detail:
-            trimmedStderr.length > 0
-              ? `${quoteGitCommand(commandInput.args)} failed: ${trimmedStderr}`
-              : `${quoteGitCommand(commandInput.args)} failed with code ${exitCode}.`,
+          ...(input.env ? { env: input.env } : {}),
+          timeoutMs,
+          allowNonZeroExit: true,
+          maxBufferBytes: maxOutputBytes,
+          outputMode: "error",
         });
-      }
 
-      return { code: exitCode, stdout, stderr } satisfies ExecuteGitResult;
+        return normalizeGitProcessResult(commandInput, input, result);
+      },
+      catch: toGitCommandError(commandInput, "failed to run."),
     });
-
-    return yield* commandEffect.pipe(
-      Effect.scoped,
-      Effect.timeoutOption(timeoutMs),
-      Effect.flatMap((result) =>
-        Option.match(result, {
-          onNone: () =>
-            Effect.fail(
-              new GitCommandError({
-                operation: commandInput.operation,
-                command: quoteGitCommand(commandInput.args),
-                cwd: commandInput.cwd,
-                detail: `${quoteGitCommand(commandInput.args)} timed out.`,
-              }),
-            ),
-          onSome: Effect.succeed,
-        }),
-      ),
-    );
   });
 
   return {

@@ -9,12 +9,14 @@ import {
   TerminalOpenInput,
   TerminalResizeInput,
   TerminalWriteInput,
+  type ServerRuntimeEnvironment,
   type TerminalEvent,
   type TerminalSessionSnapshot,
 } from "@t3tools/contracts";
 import { Effect, Encoding, Layer, Path, Schema } from "effect";
 
 import { createLogger } from "../../logger";
+import { detectServerRuntimeEnvironment } from "../../runtimeEnvironment";
 import { PtyAdapter, PtyAdapterShape, type PtyExitEvent, type PtyProcess } from "../Services/PTY";
 import { runProcess } from "../../processRunner";
 import { ServerConfig } from "../../config";
@@ -35,6 +37,8 @@ const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
 const DEFAULT_OPEN_ROWS = 30;
 const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
+const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[A-Za-z]:[\\/]/;
+const WINDOWS_UNC_PATH_PATTERN = /^\\\\/;
 
 const decodeTerminalOpenInput = Schema.decodeUnknownSync(TerminalOpenInput);
 const decodeTerminalWriteInput = Schema.decodeUnknownSync(TerminalWriteInput);
@@ -44,19 +48,22 @@ const decodeTerminalCloseInput = Schema.decodeUnknownSync(TerminalCloseInput);
 
 type TerminalSubprocessChecker = (terminalPid: number) => Promise<boolean>;
 
-function defaultShellResolver(): string {
-  if (process.platform === "win32") {
+function defaultShellResolver(runtimeEnvironment: ServerRuntimeEnvironment): string {
+  if (runtimeEnvironment.platform === "windows") {
     return process.env.ComSpec ?? "cmd.exe";
   }
   return process.env.SHELL ?? "bash";
 }
 
-function normalizeShellCommand(value: string | undefined): string | null {
+function normalizeShellCommand(
+  value: string | undefined,
+  runtimeEnvironment: ServerRuntimeEnvironment,
+): string | null {
   if (!value) return null;
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
 
-  if (process.platform === "win32") {
+  if (runtimeEnvironment.platform === "windows") {
     return trimmed;
   }
 
@@ -65,10 +72,13 @@ function normalizeShellCommand(value: string | undefined): string | null {
   return firstToken.replace(/^['"]|['"]$/g, "");
 }
 
-function shellCandidateFromCommand(command: string | null): ShellCandidate | null {
+function shellCandidateFromCommand(
+  command: string | null,
+  runtimeEnvironment: ServerRuntimeEnvironment,
+): ShellCandidate | null {
   if (!command || command.length === 0) return null;
   const shellName = path.basename(command).toLowerCase();
-  if (process.platform !== "win32" && shellName === "zsh") {
+  if (runtimeEnvironment.platform !== "windows" && shellName === "zsh") {
     return { shell: command, args: ["-o", "nopromptsp"] };
   }
   return { shell: command };
@@ -92,27 +102,36 @@ function uniqueShellCandidates(candidates: Array<ShellCandidate | null>): ShellC
   return ordered;
 }
 
-function resolveShellCandidates(shellResolver: () => string): ShellCandidate[] {
-  const requested = shellCandidateFromCommand(normalizeShellCommand(shellResolver()));
+export function resolveShellCandidates(
+  shellResolver: () => string,
+  runtimeEnvironment: ServerRuntimeEnvironment = detectServerRuntimeEnvironment(),
+): ShellCandidate[] {
+  const requested = shellCandidateFromCommand(
+    normalizeShellCommand(shellResolver(), runtimeEnvironment),
+    runtimeEnvironment,
+  );
 
-  if (process.platform === "win32") {
+  if (runtimeEnvironment.platform === "windows") {
     return uniqueShellCandidates([
       requested,
-      shellCandidateFromCommand(process.env.ComSpec ?? null),
-      shellCandidateFromCommand("powershell.exe"),
-      shellCandidateFromCommand("cmd.exe"),
+      shellCandidateFromCommand(process.env.ComSpec ?? null, runtimeEnvironment),
+      shellCandidateFromCommand("powershell.exe", runtimeEnvironment),
+      shellCandidateFromCommand("cmd.exe", runtimeEnvironment),
     ]);
   }
 
   return uniqueShellCandidates([
     requested,
-    shellCandidateFromCommand(normalizeShellCommand(process.env.SHELL)),
-    shellCandidateFromCommand("/bin/zsh"),
-    shellCandidateFromCommand("/bin/bash"),
-    shellCandidateFromCommand("/bin/sh"),
-    shellCandidateFromCommand("zsh"),
-    shellCandidateFromCommand("bash"),
-    shellCandidateFromCommand("sh"),
+    shellCandidateFromCommand(
+      normalizeShellCommand(process.env.SHELL, runtimeEnvironment),
+      runtimeEnvironment,
+    ),
+    shellCandidateFromCommand("/bin/zsh", runtimeEnvironment),
+    shellCandidateFromCommand("/bin/bash", runtimeEnvironment),
+    shellCandidateFromCommand("/bin/sh", runtimeEnvironment),
+    shellCandidateFromCommand("zsh", runtimeEnvironment),
+    shellCandidateFromCommand("bash", runtimeEnvironment),
+    shellCandidateFromCommand("sh", runtimeEnvironment),
   ]);
 }
 
@@ -178,6 +197,13 @@ async function checkWindowsSubprocessActivity(terminalPid: number): Promise<bool
         allowNonZeroExit: true,
         maxBufferBytes: 32_768,
         outputMode: "truncate",
+        runtimeEnvironment: {
+          platform: "windows",
+          pathStyle: "windows",
+          isWsl: false,
+          windowsInteropMode: "windows-native",
+          wslDistroName: null,
+        },
       },
     );
     return result.code === 0;
@@ -230,14 +256,37 @@ async function checkPosixSubprocessActivity(terminalPid: number): Promise<boolea
   }
 }
 
-async function defaultSubprocessChecker(terminalPid: number): Promise<boolean> {
-  if (!Number.isInteger(terminalPid) || terminalPid <= 0) {
-    return false;
+function createDefaultSubprocessChecker(runtimeEnvironment: ServerRuntimeEnvironment) {
+  return async (terminalPid: number): Promise<boolean> => {
+    if (!Number.isInteger(terminalPid) || terminalPid <= 0) {
+      return false;
+    }
+    if (runtimeEnvironment.platform === "windows") {
+      return checkWindowsSubprocessActivity(terminalPid);
+    }
+    return checkPosixSubprocessActivity(terminalPid);
+  };
+}
+
+function isWindowsPath(value: string): boolean {
+  return WINDOWS_ABSOLUTE_PATH_PATTERN.test(value) || WINDOWS_UNC_PATH_PATTERN.test(value);
+}
+
+export function validateTerminalCwdForRuntime(
+  cwd: string,
+  runtimeEnvironment: ServerRuntimeEnvironment = detectServerRuntimeEnvironment(),
+): string | null {
+  if (runtimeEnvironment.pathStyle === "windows") {
+    if (cwd.startsWith("/")) {
+      return `Terminal cwd does not match Windows runtime path style: ${cwd}`;
+    }
+    return null;
   }
-  if (process.platform === "win32") {
-    return checkWindowsSubprocessActivity(terminalPid);
+
+  if (isWindowsPath(cwd)) {
+    return `Terminal cwd does not match POSIX runtime path style: ${cwd}`;
   }
-  return checkPosixSubprocessActivity(terminalPid);
+  return null;
 }
 
 function capHistory(history: string, maxLines: number): string {
@@ -316,6 +365,7 @@ interface TerminalManagerOptions {
   ptyAdapter: PtyAdapterShape;
   shellResolver?: () => string;
   subprocessChecker?: TerminalSubprocessChecker;
+  runtimeEnvironment?: ServerRuntimeEnvironment;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
@@ -333,6 +383,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
   private readonly threadLocks = new Map<string, Promise<void>>();
   private readonly persistDebounceMs: number;
   private readonly subprocessChecker: TerminalSubprocessChecker;
+  private readonly runtimeEnvironment: ServerRuntimeEnvironment;
   private readonly subprocessPollIntervalMs: number;
   private readonly processKillGraceMs: number;
   private readonly maxRetainedInactiveSessions: number;
@@ -343,12 +394,15 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
 
   constructor(options: TerminalManagerOptions) {
     super();
+    this.runtimeEnvironment = options.runtimeEnvironment ?? detectServerRuntimeEnvironment();
     this.logsDir = options.logsDir ?? path.resolve(process.cwd(), ".logs", "terminals");
     this.historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
     this.ptyAdapter = options.ptyAdapter;
-    this.shellResolver = options.shellResolver ?? defaultShellResolver;
+    this.shellResolver =
+      options.shellResolver ?? (() => defaultShellResolver(this.runtimeEnvironment));
     this.persistDebounceMs = DEFAULT_PERSIST_DEBOUNCE_MS;
-    this.subprocessChecker = options.subprocessChecker ?? defaultSubprocessChecker;
+    this.subprocessChecker =
+      options.subprocessChecker ?? createDefaultSubprocessChecker(this.runtimeEnvironment);
     this.subprocessPollIntervalMs =
       options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
     this.processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
@@ -589,7 +643,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     let ptyProcess: PtyProcess | null = null;
     let startedShell: string | null = null;
     try {
-      const shellCandidates = resolveShellCandidates(this.shellResolver);
+      const shellCandidates = resolveShellCandidates(this.shellResolver, this.runtimeEnvironment);
       const terminalEnv = createTerminalSpawnEnv(process.env, session.runtimeEnv);
       let lastSpawnError: unknown = null;
 
@@ -1051,6 +1105,11 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
   }
 
   private async assertValidCwd(cwd: string): Promise<void> {
+    const runtimePathError = validateTerminalCwdForRuntime(cwd, this.runtimeEnvironment);
+    if (runtimePathError) {
+      throw new Error(runtimePathError);
+    }
+
     let stats: fs.Stats;
     try {
       stats = await fs.promises.stat(cwd);
@@ -1173,10 +1232,11 @@ export const TerminalManagerLive = Layer.effect(
     const { stateDir } = yield* ServerConfig;
     const { join } = yield* Path.Path;
     const logsDir = join(stateDir, "logs", "terminals");
+    const runtimeEnvironment = detectServerRuntimeEnvironment();
 
     const ptyAdapter = yield* PtyAdapter;
     const runtime = yield* Effect.acquireRelease(
-      Effect.sync(() => new TerminalManagerRuntime({ logsDir, ptyAdapter })),
+      Effect.sync(() => new TerminalManagerRuntime({ logsDir, ptyAdapter, runtimeEnvironment })),
       (r) => Effect.sync(() => r.dispose()),
     );
 

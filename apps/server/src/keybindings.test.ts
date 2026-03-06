@@ -17,21 +17,45 @@ import {
 } from "./keybindings";
 
 const KeybindingsConfigJson = Schema.fromJsonString(KeybindingsConfig);
-const makeKeybindingsLayer = () =>
-  KeybindingsLive.pipe(
-    Layer.provideMerge(
-      Layer.effect(
-        ServerConfig,
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const { join } = yield* Path.Path;
-          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-server-config-test-" });
-          const configPath = join(dir, "keybindings.json");
-          return { keybindingsConfigPath: configPath } as ServerConfigShape;
-        }),
-      ),
-    ),
+const makeKeybindingsLayer = (options?: {
+  readonly fileSystemLayer?: Layer.Layer<FileSystem.FileSystem>;
+}) => {
+  const serverConfigLayer = Layer.effect(
+    ServerConfig,
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-server-config-test-" });
+      const configPath = join(dir, "keybindings.json");
+      return { keybindingsConfigPath: configPath } as ServerConfigShape;
+    }),
   );
+
+  return options?.fileSystemLayer
+    ? KeybindingsLive.pipe(
+        Layer.provideMerge(options.fileSystemLayer),
+        Layer.provideMerge(serverConfigLayer),
+      )
+    : KeybindingsLive.pipe(Layer.provideMerge(serverConfigLayer));
+};
+
+const makeTempWriteFailingFileSystemLayer = () =>
+  Layer.effect(
+    FileSystem.FileSystem,
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return {
+        ...fs,
+        writeFileString: ((filePath: string, ...args: [string, ...unknown[]]) =>
+          filePath.endsWith(".tmp")
+            ? Effect.fail(new Error("simulated temp write failure"))
+            : (fs.writeFileString as (...allArgs: [string, ...unknown[]]) => ReturnType<typeof fs.writeFileString>)(
+                filePath,
+                ...args,
+              )) as typeof fs.writeFileString,
+      } satisfies typeof fs;
+    }),
+  ).pipe(Layer.provide(NodeServices.layer));
 
 const toDetailResult = <A, R>(effect: Effect.Effect<A, KeybindingsConfigError, R>) =>
   effect.pipe(
@@ -392,13 +416,10 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
   it.effect("fails when config directory is not writable", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
       const { keybindingsConfigPath } = yield* ServerConfig;
-      const { dirname } = yield* Path.Path;
       yield* writeKeybindingsConfig(keybindingsConfigPath, [
         { key: "mod+j", command: "terminal.toggle" },
       ]);
-      yield* fs.chmod(dirname(keybindingsConfigPath), 0o500);
 
       const result = yield* Effect.gen(function* () {
         const keybindings = yield* Keybindings;
@@ -409,12 +430,16 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       }).pipe(toDetailResult);
       assertFailure(result, "failed to write keybindings config");
 
-      yield* fs.chmod(dirname(keybindingsConfigPath), 0o700);
-
       const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
       const persistedView = persisted.map(({ key, command }) => ({ key, command }));
       assert.deepEqual(persistedView, [{ key: "mod+j", command: "terminal.toggle" }]);
-    }).pipe(Effect.provide(makeKeybindingsLayer())),
+    }).pipe(
+      Effect.provide(
+        makeKeybindingsLayer({
+          fileSystemLayer: makeTempWriteFailingFileSystemLayer(),
+        }),
+      ),
+    ),
   );
 
   it.effect("caches loaded resolved config across repeated reads", () =>

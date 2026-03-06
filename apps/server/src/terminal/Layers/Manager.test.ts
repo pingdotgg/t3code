@@ -4,6 +4,7 @@ import path from "node:path";
 
 import {
   DEFAULT_TERMINAL_ID,
+  type ServerRuntimeEnvironment,
   type TerminalEvent,
   type TerminalOpenInput,
 } from "@t3tools/contracts";
@@ -16,7 +17,11 @@ import {
   type PtyProcess,
   type PtySpawnInput,
 } from "../Services/PTY";
-import { TerminalManagerRuntime } from "./Manager";
+import {
+  resolveShellCandidates,
+  TerminalManagerRuntime,
+  validateTerminalCwdForRuntime,
+} from "./Manager";
 import { Effect, Encoding } from "effect";
 
 class FakePtyProcess implements PtyProcess {
@@ -172,6 +177,7 @@ describe("TerminalManager", () => {
     options: {
       shellResolver?: () => string;
       subprocessChecker?: (terminalPid: number) => Promise<boolean>;
+      runtimeEnvironment?: ServerRuntimeEnvironment;
       subprocessPollIntervalMs?: number;
       processKillGraceMs?: number;
       maxRetainedInactiveSessions?: number;
@@ -186,6 +192,7 @@ describe("TerminalManager", () => {
       ptyAdapter,
       historyLineLimit,
       shellResolver: options.shellResolver ?? (() => "/bin/bash"),
+      ...(options.runtimeEnvironment ? { runtimeEnvironment: options.runtimeEnvironment } : {}),
       ...(options.subprocessChecker ? { subprocessChecker: options.subprocessChecker } : {}),
       ...(options.subprocessPollIntervalMs
         ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
@@ -568,7 +575,9 @@ describe("TerminalManager", () => {
 
     expect(snapshot.status).toBe("running");
     expect(ptyAdapter.spawnInputs.length).toBeGreaterThanOrEqual(2);
-    expect(ptyAdapter.spawnInputs[0]?.shell).toBe("/definitely/missing-shell");
+    expect(ptyAdapter.spawnInputs[0]?.shell).toBe(
+      process.platform === "win32" ? "/definitely/missing-shell -l" : "/definitely/missing-shell",
+    );
 
     if (process.platform === "win32") {
       expect(
@@ -668,5 +677,94 @@ describe("TerminalManager", () => {
     expect(spawnInput.args).toEqual(["-o", "nopromptsp"]);
 
     manager.dispose();
+  });
+
+  it("resolves Windows shell candidates from runtime environment instead of host assumptions", () => {
+    const runtimeEnvironment: ServerRuntimeEnvironment = {
+      platform: "windows",
+      pathStyle: "windows",
+      isWsl: false,
+      windowsInteropMode: "windows-native",
+      wslDistroName: null,
+    };
+
+    const candidates = resolveShellCandidates(() => "/bin/bash -l", runtimeEnvironment);
+
+    expect(candidates.map((candidate) => candidate.shell)).toContain("cmd.exe");
+    expect(candidates.map((candidate) => candidate.shell)).toContain("powershell.exe");
+    expect(candidates.map((candidate) => candidate.shell)).not.toContain("/bin/sh");
+  });
+
+  it("resolves POSIX shell candidates for wsl-hosted runtime even when the requested shell is Windows-style", () => {
+    const runtimeEnvironment: ServerRuntimeEnvironment = {
+      platform: "linux",
+      pathStyle: "posix",
+      isWsl: true,
+      windowsInteropMode: "wsl-hosted",
+      wslDistroName: "Ubuntu",
+    };
+
+    const candidates = resolveShellCandidates(() => "powershell.exe", runtimeEnvironment);
+
+    expect(candidates.map((candidate) => candidate.shell)).toContain("powershell.exe");
+    expect(candidates.map((candidate) => candidate.shell)).toContain("/bin/bash");
+    expect(candidates.map((candidate) => candidate.shell)).toContain("sh");
+  });
+
+  it("rejects POSIX cwd values for windows-native terminal runtimes", async () => {
+    const runtimeEnvironment: ServerRuntimeEnvironment = {
+      platform: "windows",
+      pathStyle: "windows",
+      isWsl: false,
+      windowsInteropMode: "windows-native",
+      wslDistroName: null,
+    };
+    const { manager, ptyAdapter } = makeManager(5, { runtimeEnvironment });
+
+    await expect(manager.open(openInput({ cwd: "/home/julius/project" }))).rejects.toThrow(
+      "Terminal cwd does not match Windows runtime path style",
+    );
+    expect(ptyAdapter.spawnInputs).toHaveLength(0);
+
+    manager.dispose();
+  });
+
+  it("rejects Windows cwd values for wsl-hosted terminal runtimes", async () => {
+    const runtimeEnvironment: ServerRuntimeEnvironment = {
+      platform: "linux",
+      pathStyle: "posix",
+      isWsl: true,
+      windowsInteropMode: "wsl-hosted",
+      wslDistroName: "Ubuntu",
+    };
+    const { manager, ptyAdapter } = makeManager(5, { runtimeEnvironment });
+
+    await expect(manager.open(openInput({ cwd: "C:\\Users\\julius\\project" }))).rejects.toThrow(
+      "Terminal cwd does not match POSIX runtime path style",
+    );
+    expect(ptyAdapter.spawnInputs).toHaveLength(0);
+
+    manager.dispose();
+  });
+
+  it("validates cwd compatibility as a pure runtime helper", () => {
+    expect(
+      validateTerminalCwdForRuntime("/repo", {
+        platform: "linux",
+        pathStyle: "posix",
+        isWsl: true,
+        windowsInteropMode: "wsl-hosted",
+        wslDistroName: "Ubuntu",
+      }),
+    ).toBeNull();
+    expect(
+      validateTerminalCwdForRuntime("\\\\wsl.localhost\\Ubuntu\\repo", {
+        platform: "linux",
+        pathStyle: "posix",
+        isWsl: true,
+        windowsInteropMode: "wsl-hosted",
+        wslDistroName: "Ubuntu",
+      }),
+    ).toContain("POSIX runtime path style");
   });
 });

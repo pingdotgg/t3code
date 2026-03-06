@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 
-import { Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Effect, FileSystem, Layer, Path, Schema } from "effect";
 
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { runProcess } from "../../processRunner.ts";
 import { TextGenerationError } from "../Errors.ts";
 import {
   type BranchNameGenerationInput,
@@ -98,30 +98,11 @@ function sanitizePrTitle(raw: string): string {
 const makeCodexTextGeneration = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverConfig = yield* Effect.service(ServerConfig);
 
   type MaterializedImageAttachments = {
     readonly imagePaths: ReadonlyArray<string>;
   };
-
-  const readStreamAsString = <E>(
-    operation: string,
-    stream: Stream.Stream<Uint8Array, E>,
-  ): Effect.Effect<string, TextGenerationError> =>
-    Effect.gen(function* () {
-      let text = "";
-      yield* Stream.runForEach(stream, (chunk) =>
-        Effect.sync(() => {
-          text += Buffer.from(chunk).toString("utf8");
-        }),
-      ).pipe(
-        Effect.mapError((cause) =>
-          normalizeCodexError(operation, cause, "Failed to collect process output"),
-        ),
-      );
-      return text;
-    });
 
   const tempDir = process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP ?? "/tmp";
 
@@ -203,68 +184,59 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       );
       const outputPath = yield* writeTempFile(operation, "codex-output", "");
 
-      const runCodexCommand = Effect.gen(function* () {
-        const command = ChildProcess.make(
-          "codex",
-          [
-            "exec",
-            "--ephemeral",
-            "-s",
-            "read-only",
-            "--model",
-            CODEX_MODEL,
-            "--config",
-            `model_reasoning_effort="${CODEX_REASONING_EFFORT}"`,
-            "--output-schema",
-            schemaPath,
-            "--output-last-message",
-            outputPath,
-            ...imagePaths.flatMap((imagePath) => ["--image", imagePath]),
-            "-",
-          ],
-          {
-            cwd,
-            shell: process.platform === "win32",
-            stdin: {
-              stream: Stream.make(new TextEncoder().encode(prompt)),
+      const runCodexCommand = Effect.tryPromise({
+        try: async () => {
+          const result = await runProcess(
+            "codex",
+            [
+              "exec",
+              "--ephemeral",
+              "-s",
+              "read-only",
+              "--model",
+              CODEX_MODEL,
+              "--config",
+              `model_reasoning_effort="${CODEX_REASONING_EFFORT}"`,
+              "--output-schema",
+              schemaPath,
+              "--output-last-message",
+              outputPath,
+              ...imagePaths.flatMap((imagePath) => ["--image", imagePath]),
+              "-",
+            ],
+            {
+              cwd,
+              stdin: prompt,
+              allowNonZeroExit: true,
+              timeoutMs: CODEX_TIMEOUT_MS,
+              maxBufferBytes: 1_000_000,
+              outputMode: "truncate",
             },
-          },
-        );
-
-        const child = yield* commandSpawner
-          .spawn(command)
-          .pipe(
-            Effect.mapError((cause) =>
-              normalizeCodexError(operation, cause, "Failed to spawn Codex CLI process"),
-            ),
           );
 
-        const [stdout, stderr, exitCode] = yield* Effect.all(
-          [
-            readStreamAsString(operation, child.stdout),
-            readStreamAsString(operation, child.stderr),
-            child.exitCode.pipe(
-              Effect.map((value) => Number(value)),
-              Effect.mapError((cause) =>
-                normalizeCodexError(operation, cause, "Failed to read Codex CLI exit code"),
-              ),
-            ),
-          ],
-          { concurrency: "unbounded" },
-        );
+          if (result.timedOut) {
+            throw new TextGenerationError({ operation, detail: "Codex CLI request timed out." });
+          }
 
-        if (exitCode !== 0) {
-          const stderrDetail = stderr.trim();
-          const stdoutDetail = stdout.trim();
-          const detail = stderrDetail.length > 0 ? stderrDetail : stdoutDetail;
-          return yield* new TextGenerationError({
-            operation,
-            detail:
-              detail.length > 0
-                ? `Codex CLI command failed: ${detail}`
-                : `Codex CLI command failed with code ${exitCode}.`,
-          });
-        }
+          const stdout = result.stdout;
+          const stderr = result.stderr;
+          const exitCode = result.code ?? 0;
+
+          if (exitCode !== 0) {
+            const stderrDetail = stderr.trim();
+            const stdoutDetail = stdout.trim();
+            const detail = stderrDetail.length > 0 ? stderrDetail : stdoutDetail;
+            throw new TextGenerationError({
+              operation,
+              detail:
+                detail.length > 0
+                  ? `Codex CLI command failed: ${detail}`
+                  : `Codex CLI command failed with code ${exitCode}.`,
+            });
+          }
+        },
+        catch: (error) =>
+          normalizeCodexError(operation, error, "Failed to execute Codex CLI process"),
       });
 
       const cleanup = Effect.all(
@@ -275,19 +247,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       ).pipe(Effect.asVoid);
 
       return yield* Effect.gen(function* () {
-        yield* runCodexCommand.pipe(
-          Effect.scoped,
-          Effect.timeoutOption(CODEX_TIMEOUT_MS),
-          Effect.flatMap(
-            Option.match({
-              onNone: () =>
-                Effect.fail(
-                  new TextGenerationError({ operation, detail: "Codex CLI request timed out." }),
-                ),
-              onSome: () => Effect.void,
-            }),
-          ),
-        );
+        yield* runCodexCommand;
 
         return yield* fileSystem.readFileString(outputPath).pipe(
           Effect.mapError(

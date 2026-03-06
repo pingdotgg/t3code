@@ -38,6 +38,7 @@ import {
 } from "../../provider/Services/ProviderService.ts";
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { ServerConfig } from "../../config.ts";
+import { removeDirectoryBestEffort } from "../../testUtils/removeDirectoryBestEffort.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
@@ -155,6 +156,7 @@ function createGitRepository() {
   runGit(cwd, ["init", "--initial-branch=main"]);
   runGit(cwd, ["config", "user.email", "test@example.com"]);
   runGit(cwd, ["config", "user.name", "Test User"]);
+  runGit(cwd, ["config", "core.autocrlf", "false"]);
   fs.writeFileSync(path.join(cwd, "README.md"), "v1\n", "utf8");
   runGit(cwd, ["add", "."]);
   runGit(cwd, ["commit", "-m", "Initial"]);
@@ -209,7 +211,7 @@ describe("CheckpointReactor", () => {
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop();
       if (dir) {
-        fs.rmSync(dir, { recursive: true, force: true });
+        await removeDirectoryBestEffort(dir);
       }
     }
   });

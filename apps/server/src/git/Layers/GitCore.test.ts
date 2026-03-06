@@ -1,17 +1,19 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
-import { describe, expect, vi } from "vitest";
+import { Effect, FileSystem, Layer, PlatformError } from "effect";
+import { afterEach, describe, expect, vi } from "vitest";
 
 import { GitServiceLive } from "./GitService.ts";
 import { GitService, type GitServiceShape } from "../Services/GitService.ts";
 import { GitCoreLive } from "./GitCore.ts";
 import { GitCore, type GitCoreShape } from "../Services/GitCore.ts";
 import { GitCommandError } from "../Errors.ts";
-import { type ProcessRunResult, runProcess } from "../../processRunner.ts";
+import { runProcess } from "../../processRunner.ts";
+import { removeDirectoryBestEffort } from "../../testUtils/removeDirectoryBestEffort.ts";
 
 // ── Helpers ──
 
@@ -21,13 +23,20 @@ const GitCoreTestLayer = GitCoreLive.pipe(
   Layer.provide(NodeServices.layer),
 );
 const TestLayer = Layer.mergeAll(NodeServices.layer, GitServiceTestLayer, GitCoreTestLayer);
+const tempDirs = new Set<string>();
 
-function makeTmpDir(
-  prefix = "git-test-",
-): Effect.Effect<string, PlatformError.PlatformError, FileSystem.FileSystem | Scope.Scope> {
-  return Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    return yield* fileSystem.makeTempDirectoryScoped({ prefix });
+afterEach(async () => {
+  for (const dir of tempDirs) {
+    await removeDirectoryBestEffort(dir);
+  }
+  tempDirs.clear();
+});
+
+function makeTmpDir(prefix = "git-test-"): Effect.Effect<string> {
+  return Effect.sync(() => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), prefix));
+    tempDirs.add(dir);
+    return dir;
   });
 }
 
@@ -57,31 +66,6 @@ function git(
       timeoutMs: 10_000,
     });
     return result.stdout.trim();
-  });
-}
-
-function runShellCommand(input: {
-  command: string;
-  cwd: string;
-  timeoutMs?: number;
-  maxOutputBytes?: number;
-}): Effect.Effect<ProcessRunResult, Error> {
-  return Effect.promise(() => {
-    const shellPath =
-      process.platform === "win32"
-        ? (process.env.ComSpec ?? "cmd.exe")
-        : (process.env.SHELL ?? "/bin/sh");
-
-    const args =
-      process.platform === "win32" ? ["/d", "/s", "/c", input.command] : ["-lc", input.command];
-
-    return runProcess(shellPath, args, {
-      cwd: input.cwd,
-      timeoutMs: input.timeoutMs ?? 30_000,
-      allowNonZeroExit: true,
-      maxBufferBytes: input.maxOutputBytes ?? 1_000_000,
-      outputMode: "truncate",
-    });
   });
 }
 
@@ -182,6 +166,7 @@ function initRepoWithCommit(
     yield* initGitRepo({ cwd });
     yield* git(cwd, ["config", "user.email", "test@test.com"]);
     yield* git(cwd, ["config", "user.name", "Test"]);
+    yield* git(cwd, ["config", "core.autocrlf", "false"]);
     yield* writeTextFile(path.join(cwd, "README.md"), "# test\n");
     yield* git(cwd, ["add", "."]);
     yield* git(cwd, ["commit", "-m", "initial commit"]);
@@ -215,12 +200,13 @@ function commitWithDate(
 it.layer(TestLayer)("git integration", (it) => {
   describe("shell process execution", () => {
     it.effect("caps captured output when maxOutputBytes is exceeded", () =>
-      Effect.gen(function* () {
-        const result = yield* runShellCommand({
-          command: `node -e "process.stdout.write('x'.repeat(2000))"`,
+      Effect.promise(async () => {
+        const result = await runProcess(process.execPath, ["-e", "process.stdout.write('x'.repeat(2000))"], {
           cwd: process.cwd(),
           timeoutMs: 10_000,
-          maxOutputBytes: 128,
+          allowNonZeroExit: true,
+          maxBufferBytes: 128,
+          outputMode: "truncate",
         });
 
         expect(result.code).toBe(0);

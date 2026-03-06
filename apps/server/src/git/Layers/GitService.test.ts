@@ -3,7 +3,7 @@ import { it, assert } from "@effect/vitest";
 import { Effect, Layer, Schema } from "effect";
 
 import { GitCommandError } from "../Errors.ts";
-import { GitServiceLive } from "./GitService.ts";
+import { GitServiceLive, normalizeGitProcessResult } from "./GitService.ts";
 import { GitService } from "../Services/GitService.ts";
 
 const layer = it.layer(Layer.provideMerge(GitServiceLive, NodeServices.layer));
@@ -56,4 +56,31 @@ layer("GitServiceLive", (it) => {
       }
     }),
   );
+
+  it("normalizeGitProcessResult fails when git exits without a code", () => {
+    try {
+      void normalizeGitProcessResult(
+        {
+          operation: "GitProcess.test.signal",
+          cwd: process.cwd(),
+          args: ["status"],
+        },
+        {},
+        {
+          code: null,
+          signal: "SIGTERM",
+          stdout: "",
+          stderr: "",
+          timedOut: false,
+        },
+      );
+      assert.fail("Expected normalizeGitProcessResult to throw.");
+    } catch (error) {
+      assert.equal(Schema.is(GitCommandError)(error), true);
+      if (!Schema.is(GitCommandError)(error)) {
+        return;
+      }
+      assert.equal(error.detail, "git status terminated by signal SIGTERM.");
+    }
+  });
 });

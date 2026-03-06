@@ -51,6 +51,7 @@ import type { GitCoreShape } from "./git/Services/GitCore.ts";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
+import { detectServerRuntimeEnvironment } from "./runtimeEnvironment";
 
 interface PendingMessages {
   queue: unknown[];
@@ -84,6 +85,8 @@ const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
 const defaultProviderHealthService: ProviderHealthShape = {
   getStatuses: Effect.succeed(defaultProviderStatuses),
 };
+
+const defaultRuntimeEnvironment = detectServerRuntimeEnvironment();
 
 class MockTerminalManager implements TerminalManagerShape {
   private readonly sessions = new Map<string, TerminalSessionSnapshot>();
@@ -760,6 +763,7 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      runtimeEnvironment: defaultRuntimeEnvironment,
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
@@ -786,6 +790,7 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      runtimeEnvironment: defaultRuntimeEnvironment,
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
 
@@ -822,6 +827,7 @@ describe("WebSocket Server", () => {
       ],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      runtimeEnvironment: defaultRuntimeEnvironment,
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
     expect(fs.readFileSync(keybindingsPath, "utf8")).toBe("{ not-json");
@@ -857,6 +863,7 @@ describe("WebSocket Server", () => {
       issues: Array<{ kind: string; index?: number; message: string }>;
       providers: ReadonlyArray<ServerProviderStatus>;
       availableEditors: unknown;
+      runtimeEnvironment: unknown;
     };
     expect(result.cwd).toBe("/my/workspace");
     expect(result.keybindingsConfigPath).toBe(keybindingsPath);
@@ -877,6 +884,7 @@ describe("WebSocket Server", () => {
     expect(result.keybindings.some((entry) => entry.command === "terminal.new")).toBe(true);
     expect(result.providers).toEqual(defaultProviderStatuses);
     expectAvailableEditors(result.availableEditors);
+    expect(result.runtimeEnvironment).toEqual(defaultRuntimeEnvironment);
   });
 
   it("pushes server.configUpdated issues when keybindings file changes", async () => {
@@ -977,6 +985,7 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      runtimeEnvironment: defaultRuntimeEnvironment,
     });
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
@@ -1025,6 +1034,7 @@ describe("WebSocket Server", () => {
       issues: [],
       providers: defaultProviderStatuses,
       availableEditors: expect.any(Array),
+      runtimeEnvironment: defaultRuntimeEnvironment,
     });
     expectAvailableEditors(
       (configResponse.result as { availableEditors: unknown }).availableEditors,

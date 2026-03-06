@@ -49,6 +49,24 @@ export type ServerProviderStatus = typeof ServerProviderStatus.Type;
 export const ServerProviderStatuses = Schema.Array(ServerProviderStatus);
 export type ServerProviderStatuses = typeof ServerProviderStatuses.Type;
 
+export const ServerRuntimePlatform = Schema.Literals(["windows", "linux", "macos"]);
+export type ServerRuntimePlatform = typeof ServerRuntimePlatform.Type;
+
+export const ServerPathStyle = Schema.Literals(["windows", "posix"]);
+export type ServerPathStyle = typeof ServerPathStyle.Type;
+
+export const ServerWindowsInteropMode = Schema.Literals(["windows-native", "wsl-hosted"]);
+export type ServerWindowsInteropMode = typeof ServerWindowsInteropMode.Type;
+
+export const ServerRuntimeEnvironment = Schema.Struct({
+  platform: ServerRuntimePlatform,
+  pathStyle: ServerPathStyle,
+  isWsl: Schema.Boolean,
+  windowsInteropMode: Schema.NullOr(ServerWindowsInteropMode),
+  wslDistroName: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ServerRuntimeEnvironment = typeof ServerRuntimeEnvironment.Type;
+
 export const ServerConfig = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   keybindingsConfigPath: TrimmedNonEmptyString,
@@ -56,6 +74,7 @@ export const ServerConfig = Schema.Struct({
   issues: ServerConfigIssues,
   providers: ServerProviderStatuses,
   availableEditors: Schema.Array(EditorId),
+  runtimeEnvironment: ServerRuntimeEnvironment,
 });
 export type ServerConfig = typeof ServerConfig.Type;
 

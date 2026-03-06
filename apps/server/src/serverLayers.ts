@@ -38,7 +38,7 @@ import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService,
   ProviderUnsupportedError,
-  SqlClient.SqlClient | ServerConfig | FileSystem.FileSystem
+  SqlClient.SqlClient | ServerConfig | FileSystem.FileSystem | NodeServices.NodeServices
 > {
   return Effect.gen(function* () {
     const { stateDir } = yield* ServerConfig;

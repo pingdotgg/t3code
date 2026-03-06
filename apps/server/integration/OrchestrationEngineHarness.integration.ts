@@ -57,6 +57,7 @@ import {
   type TestProviderAdapterHarness,
 } from "./TestProviderAdapter.integration.ts";
 import { ServerConfig } from "../src/config.ts";
+import { removeDirectoryBestEffort } from "../src/testUtils/removeDirectoryBestEffort.ts";
 
 function runGit(cwd: string, args: ReadonlyArray<string>) {
   return execFileSync("git", args, {
@@ -70,6 +71,7 @@ function initializeGitWorkspace(cwd: string) {
   runGit(cwd, ["init", "--initial-branch=main"]);
   runGit(cwd, ["config", "user.email", "test@example.com"]);
   runGit(cwd, ["config", "user.name", "Test User"]);
+  runGit(cwd, ["config", "core.autocrlf", "false"]);
   fs.writeFileSync(path.join(cwd, "README.md"), "v1\n", "utf8");
   runGit(cwd, ["add", "."]);
   runGit(cwd, ["commit", "-m", "Initial"]);
@@ -387,9 +389,7 @@ export const makeOrchestrationIntegrationHarness = Effect.gen(function* () {
 
     yield* shutdown.pipe(
       Effect.ensuring(
-        Effect.sync(() => {
-          fs.rmSync(rootDir, { recursive: true, force: true });
-        }),
+        Effect.promise(() => removeDirectoryBestEffort(rootDir)),
       ),
     );
   });

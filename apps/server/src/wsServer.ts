@@ -59,6 +59,7 @@ import { Open, resolveAvailableEditors } from "./open";
 import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
+import { detectServerRuntimeEnvironment } from "./runtimeEnvironment";
 import {
   ATTACHMENTS_ROUTE_PREFIX,
   normalizeAttachmentRelativePath,
@@ -196,6 +197,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     autoBootstrapProjectFromCwd,
   } = serverConfig;
   const availableEditors = resolveAvailableEditors();
+  const runtimeEnvironment = detectServerRuntimeEnvironment();
 
   const gitManager = yield* GitManager;
   const terminalManager = yield* TerminalManager;
@@ -745,6 +747,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           issues: keybindingsConfig.issues,
           providers: providerStatuses,
           availableEditors,
+          runtimeEnvironment,
         };
 
       case WS_METHODS.serverUpsertKeybinding: {
