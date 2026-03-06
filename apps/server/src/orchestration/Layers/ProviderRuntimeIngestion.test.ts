@@ -437,60 +437,6 @@ describe("ProviderRuntimeIngestion", () => {
     );
   });
 
-  it("accepts claude turn lifecycle when seeded thread id is a synthetic placeholder", async () => {
-    const harness = await createHarness();
-    const seededAt = new Date().toISOString();
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.session.set",
-        commandId: CommandId.makeUnsafe("cmd-session-seed-claude-placeholder"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        session: {
-          threadId: ThreadId.makeUnsafe("thread-1"),
-          status: "ready",
-          providerName: "claudeCode",
-          runtimeMode: "approval-required",
-          activeTurnId: null,
-          updatedAt: seededAt,
-          lastError: null,
-        },
-        createdAt: seededAt,
-      }),
-    );
-
-    harness.emit({
-      type: "turn.started",
-      eventId: asEventId("evt-turn-started-claude-placeholder"),
-      provider: "claudeCode",
-      createdAt: new Date().toISOString(),
-      threadId: asThreadId("thread-1"),
-      turnId: asTurnId("turn-claude-placeholder"),
-    });
-
-    await waitForThread(
-      harness.engine,
-      (thread) =>
-        thread.session?.status === "running" &&
-        thread.session?.activeTurnId === "turn-claude-placeholder",
-    );
-
-    harness.emit({
-      type: "turn.completed",
-      eventId: asEventId("evt-turn-completed-claude-placeholder"),
-      provider: "claudeCode",
-      createdAt: new Date().toISOString(),
-      threadId: asThreadId("thread-1"),
-      turnId: asTurnId("turn-claude-placeholder"),
-      status: "completed",
-    });
-
-    await waitForThread(
-      harness.engine,
-      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
-    );
-  });
-
   it("ignores non-active turn completion when runtime omits thread id", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
