@@ -862,6 +862,7 @@ export default function Sidebar() {
 
   const handleProjectDragCancel = useCallback((_event: DragCancelEvent) => {
     dragInProgressRef.current = false;
+    suppressProjectClickAfterDragRef.current = false;
   }, []);
 
   const handleProjectTitlePointerDownCapture = useCallback(() => {
@@ -870,7 +871,14 @@ export default function Sidebar() {
 
   const handleProjectTitleClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>, projectId: ProjectId) => {
-      if (dragInProgressRef.current || suppressProjectClickAfterDragRef.current) {
+      if (dragInProgressRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (suppressProjectClickAfterDragRef.current) {
+        // Consume the synthetic click emitted after a drag release.
+        suppressProjectClickAfterDragRef.current = false;
         event.preventDefault();
         event.stopPropagation();
         return;
