@@ -129,7 +129,7 @@ describe("store pure functions", () => {
 });
 
 describe("store read model sync", () => {
-  it("preserves claude model slugs without an active session", () => {
+  it("falls back to the codex default for unsupported provider models without an active session", () => {
     const initialState = makeState(makeThread());
     const readModel = makeReadModel(
       makeReadModelThread({
@@ -139,29 +139,7 @@ describe("store read model sync", () => {
 
     const next = syncServerReadModel(initialState, readModel);
 
-    expect(next.threads[0]?.model).toBe("claude-opus-4-6");
-  });
-
-  it("resolves claude aliases when session provider is claudeCode", () => {
-    const initialState = makeState(makeThread());
-    const readModel = makeReadModel(
-      makeReadModelThread({
-        model: "sonnet",
-        session: {
-          threadId: ThreadId.makeUnsafe("thread-1"),
-          status: "ready",
-          providerName: "claudeCode",
-          runtimeMode: "approval-required",
-          activeTurnId: null,
-          lastError: null,
-          updatedAt: "2026-02-27T00:00:00.000Z",
-        },
-      }),
-    );
-
-    const next = syncServerReadModel(initialState, readModel);
-
-    expect(next.threads[0]?.model).toBe("claude-sonnet-4-6");
+    expect(next.threads[0]?.model).toBe("gpt-5.3-codex");
   });
 
   it("resolves cursor aliases when session provider is cursor", () => {

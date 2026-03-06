@@ -10,8 +10,10 @@ import {
 
 import type { ChatMessage, ProposedPlan, SessionPhase, ThreadSession, TurnDiffSummary } from "./types";
 
+export type ProviderPickerKind = ProviderKind | "claudeCode";
+
 export const PROVIDER_OPTIONS: Array<{
-  value: ProviderKind;
+  value: ProviderPickerKind;
   label: string;
   available: boolean;
 }> = [

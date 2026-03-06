@@ -77,6 +77,7 @@ import {
   findLatestProposedPlan,
   type PendingApproval,
   type PendingUserInput,
+  type ProviderPickerKind,
   PROVIDER_OPTIONS,
   deriveWorkLogEntries,
   hasToolActivityForTurn,
@@ -847,9 +848,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [modelOptionsByProvider, selectedModelForPicker, selectedProvider]);
   const searchableModelOptions = useMemo(
     () =>
-      PROVIDER_OPTIONS.filter(
-        (option) =>
-          option.available && (lockedProvider === null || option.value === lockedProvider),
+      AVAILABLE_PROVIDER_OPTIONS.filter(
+        (option) => lockedProvider === null || option.value === lockedProvider,
       ).flatMap((option) =>
         modelOptionsByProvider[option.value].map(({ slug, name }) => ({
           provider: option.value,
@@ -5278,7 +5278,17 @@ const MessagesTimeline = memo(function MessagesTimeline({
   );
 });
 
-const AVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter((option) => option.available);
+function isAvailableProviderOption(
+  option: (typeof PROVIDER_OPTIONS)[number],
+): option is {
+  value: ProviderKind;
+  label: string;
+  available: true;
+} {
+  return option.available && option.value !== "claudeCode";
+}
+
+const AVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter(isAvailableProviderOption);
 const UNAVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter((option) => !option.available);
 const COMING_SOON_PROVIDER_OPTIONS = [
   { id: "opencode", label: "OpenCode", icon: OpenCodeIcon },
@@ -5287,13 +5297,11 @@ const COMING_SOON_PROVIDER_OPTIONS = [
 
 function getCustomModelOptionsByProvider(settings: {
   customCodexModels: readonly string[];
-  customClaudeModels: readonly string[];
   customCursorModels: readonly string[];
 }): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
   const cursorFamilyOptions = getCursorModelFamilyOptions();
   return {
     codex: getAppModelOptions("codex", settings.customCodexModels),
-    claudeCode: getAppModelOptions("claudeCode", settings.customClaudeModels),
     cursor: [
       ...cursorFamilyOptions,
       ...getAppModelOptions("cursor", settings.customCursorModels).filter(
@@ -5304,7 +5312,7 @@ function getCustomModelOptionsByProvider(settings: {
   };
 }
 
-const PROVIDER_ICON_BY_PROVIDER: Record<ProviderKind, Icon> = {
+const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
   codex: OpenAI,
   claudeCode: ClaudeAI,
   cursor: CursorIcon,
@@ -5385,10 +5393,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         <span className="flex min-w-0 items-center gap-2">
           <ProviderIcon
             aria-hidden="true"
-            className={cn(
-              "size-4 shrink-0",
-              props.provider === "claudeCode" ? "" : "text-muted-foreground/70",
-            )}
+            className="size-4 shrink-0 text-muted-foreground/70"
           />
           <span className="truncate">{selectedModelLabel}</span>
           <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />

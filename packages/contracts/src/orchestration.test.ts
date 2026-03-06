@@ -128,11 +128,11 @@ it.effect("preserves explicit provider and runtime mode in thread.turn.start", (
         text: "hello",
         attachments: [],
       },
-      provider: "claudeCode",
+      provider: "cursor",
       runtimeMode: "full-access",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
-    assert.strictEqual(parsed.provider, "claudeCode");
+    assert.strictEqual(parsed.provider, "cursor");
     assert.strictEqual(parsed.runtimeMode, "full-access");
     assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
   }),

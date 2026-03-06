@@ -27,7 +27,7 @@ export const ORCHESTRATION_WS_CHANNELS = {
   domainEvent: "orchestration.domainEvent",
 } as const;
 
-export const ProviderKind = Schema.Literals(["codex", "claudeCode", "cursor"]);
+export const ProviderKind = Schema.Literals(["codex", "cursor"]);
 export type ProviderKind = typeof ProviderKind.Type;
 export const DEFAULT_PROVIDER_KIND: ProviderKind = "codex";
 export const RuntimeMode = Schema.Literals(["approval-required", "full-access"]);

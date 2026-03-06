@@ -84,7 +84,6 @@ describe("resolveModelSlug", () => {
   it("keeps codex defaults for backward compatibility", () => {
     expect(getDefaultModel()).toBe(DEFAULT_MODEL);
     expect(getModelOptions()).toEqual(MODEL_OPTIONS);
-    expect(getModelOptions("claudeCode")).toEqual([]);
     expect(getModelOptions("cursor")).toEqual(MODEL_OPTIONS_BY_PROVIDER.cursor);
     expect(getCursorModelFamilyOptions()).toEqual(CURSOR_MODEL_FAMILY_OPTIONS);
   });
