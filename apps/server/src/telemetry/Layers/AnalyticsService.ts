@@ -12,6 +12,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstab
 
 import { AnalyticsService, type AnalyticsServiceShape } from "../Services/AnalyticsService.ts";
 import { getTelemetryIdentifier } from "../Identify.ts";
+import { version } from "../../../package.json" with { type: "json" };
 
 interface BufferedAnalyticsEvent {
   readonly event: string;
@@ -78,7 +79,10 @@ const makeAnalyticsService = Effect.gen(function* () {
           properties: {
             ...event.properties,
             $process_person_profile: false,
-            $lib: "t3code-server",
+            platform: process.platform,
+            wsl: process.env.WSL_DISTRO_NAME,
+            arch: process.arch,
+            t3CodeVersion: version,
           },
           timestamp: event.capturedAt,
         })),
