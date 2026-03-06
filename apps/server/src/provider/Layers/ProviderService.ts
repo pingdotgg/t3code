@@ -276,8 +276,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         yield* upsertSessionBinding(session, threadId);
         yield* analytics.record("provider.session.started", {
           provider: session.provider,
-          hasResumeCursor: session.resumeCursor !== undefined,
-          hasCwd: typeof input.cwd === "string" && input.cwd.trim().length > 0,
           approvalPolicy: input.approvalPolicy,
           sandboxMode: input.sandboxMode,
         });
@@ -322,8 +320,8 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         });
         yield* analytics.record("provider.turn.sent", {
           provider: routed.adapter.provider,
-          attachmentCount: input.attachments.length,
-          hasInput: typeof input.input === "string" && input.input.trim().length > 0,
+          model: input.model,
+          effort: input.effort,
         });
         return turn;
       });
@@ -343,7 +341,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         yield* routed.adapter.interruptTurn(routed.threadId, input.turnId);
         yield* analytics.record("provider.turn.interrupted", {
           provider: routed.adapter.provider,
-          hasTurnId: input.turnId !== undefined,
         });
       });
 
@@ -379,8 +376,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           allowRecovery: true,
         });
         yield* routed.adapter.respondToUserInput(routed.threadId, input.requestId, input.answers);
-        yield* analytics.record("provider.user_input.responded", {
-          provider: routed.adapter.provider,
         });
       });
 
@@ -402,7 +397,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         yield* directory.remove(input.threadId);
         yield* analytics.record("provider.session.stopped", {
           provider: routed.adapter.provider,
-          wasActive: routed.isActive,
         });
       });
 
