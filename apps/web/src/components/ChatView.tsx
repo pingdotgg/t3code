@@ -5296,7 +5296,8 @@ function getCustomModelOptionsByProvider(settings: {
     cursor: [
       ...cursorFamilyOptions,
       ...getAppModelOptions("cursor", settings.customCursorModels).filter(
-        (option) => !cursorFamilyOptions.some((family) => family.slug === option.slug),
+        (option) =>
+          option.isCustom && !cursorFamilyOptions.some((family) => family.slug === option.slug),
       ),
     ],
   };
