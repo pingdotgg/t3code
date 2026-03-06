@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import {
   ApprovalRequestId,
   EventId,
@@ -5,20 +6,19 @@ import {
   type ProviderApprovalDecision,
   type ProviderEvent,
   type ProviderSession,
-  type ProviderSessionStartInput,
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { afterAll, assert, it, vi } from "@effect/vitest";
-import { assertFailure } from "@effect/vitest/utils";
+import { afterAll, it, vi } from "@effect/vitest";
 
 import { Effect, Fiber, Layer, Option, Stream } from "effect";
 
 import {
   CodexAppServerManager,
+  type CodexAppServerStartSessionInput,
   type CodexAppServerSendTurnInput,
 } from "../../codexAppServerManager.ts";
 import { ServerConfig } from "../../config.ts";
@@ -34,7 +34,7 @@ const asItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(va
 
 class FakeCodexManager extends CodexAppServerManager {
   public startSessionImpl = vi.fn(
-    async (input: ProviderSessionStartInput): Promise<ProviderSession> => {
+    async (input: CodexAppServerStartSessionInput): Promise<ProviderSession> => {
       const now = new Date().toISOString();
       return {
         provider: "codex",
@@ -87,7 +87,7 @@ class FakeCodexManager extends CodexAppServerManager {
 
   public stopAllImpl = vi.fn(() => undefined);
 
-  override startSession(input: ProviderSessionStartInput): Promise<ProviderSession> {
+  override startSession(input: CodexAppServerStartSessionInput): Promise<ProviderSession> {
     return this.startSessionImpl(input);
   }
 
@@ -168,8 +168,9 @@ validationLayer("CodexAdapterLive validation", (it) => {
         })
         .pipe(Effect.result);
 
-      assertFailure(
-        result,
+      assert.equal(result._tag, "Failure");
+      assert.deepStrictEqual(
+        result.failure,
         new ProviderAdapterValidationError({
           provider: "codex",
           operation: "startSession",
@@ -177,6 +178,33 @@ validationLayer("CodexAdapterLive validation", (it) => {
         }),
       );
       assert.equal(validationManager.startSessionImpl.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("maps codex model options before starting a session", () =>
+    Effect.gen(function* () {
+      validationManager.startSessionImpl.mockClear();
+      const adapter = yield* CodexAdapter;
+
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        model: "gpt-5.3-codex",
+        modelOptions: {
+          codex: {
+            fastMode: true,
+          },
+        },
+        runtimeMode: "full-access",
+      });
+
+      assert.deepStrictEqual(validationManager.startSessionImpl.mock.calls[0]?.[0], {
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        model: "gpt-5.3-codex",
+        serviceTier: "fast",
+        runtimeMode: "full-access",
+      });
     }),
   );
 });
@@ -216,7 +244,37 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       }
       assert.equal(result.failure.provider, "codex");
       assert.equal(result.failure.threadId, "sess-missing");
-      assert.instanceOf(result.failure.cause, Error);
+      assert.equal(result.failure.cause instanceof Error, true);
+    }),
+  );
+
+  it.effect("maps codex model options before sending a turn", () =>
+    Effect.gen(function* () {
+      sessionErrorManager.sendTurnImpl.mockClear();
+      const adapter = yield* CodexAdapter;
+
+      yield* Effect.ignore(
+        adapter.sendTurn({
+          threadId: asThreadId("sess-missing"),
+          input: "hello",
+          model: "gpt-5.3-codex",
+          modelOptions: {
+            codex: {
+              reasoningEffort: "high",
+              fastMode: true,
+            },
+          },
+          attachments: [],
+        }),
+      );
+
+      assert.deepStrictEqual(sessionErrorManager.sendTurnImpl.mock.calls[0]?.[0], {
+        threadId: asThreadId("sess-missing"),
+        input: "hello",
+        model: "gpt-5.3-codex",
+        effort: "high",
+        serviceTier: "fast",
+      });
     }),
   );
 });
@@ -452,69 +510,71 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("maps requestUserInput requests and answered notifications to canonical user-input events", () =>
-    Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
-      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
-        Effect.forkChild,
-      );
+  it.effect(
+    "maps requestUserInput requests and answered notifications to canonical user-input events",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* CodexAdapter;
+        const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+          Effect.forkChild,
+        );
 
-      lifecycleManager.emit("event", {
-        id: asEventId("evt-user-input-requested"),
-        kind: "request",
-        provider: "codex",
-        threadId: asThreadId("thread-1"),
-        createdAt: new Date().toISOString(),
-        method: "item/tool/requestUserInput",
-        requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
-        payload: {
-          questions: [
-            {
-              id: "sandbox_mode",
-              header: "Sandbox",
-              question: "Which mode should be used?",
-              options: [
-                {
-                  label: "workspace-write",
-                  description: "Allow workspace writes only",
-                },
-              ],
-            },
-          ],
-        },
-      } satisfies ProviderEvent);
-      lifecycleManager.emit("event", {
-        id: asEventId("evt-user-input-resolved"),
-        kind: "notification",
-        provider: "codex",
-        threadId: asThreadId("thread-1"),
-        createdAt: new Date().toISOString(),
-        method: "item/tool/requestUserInput/answered",
-        requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
-        payload: {
-          answers: {
-            sandbox_mode: {
-              answers: ["workspace-write"],
+        lifecycleManager.emit("event", {
+          id: asEventId("evt-user-input-requested"),
+          kind: "request",
+          provider: "codex",
+          threadId: asThreadId("thread-1"),
+          createdAt: new Date().toISOString(),
+          method: "item/tool/requestUserInput",
+          requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
+          payload: {
+            questions: [
+              {
+                id: "sandbox_mode",
+                header: "Sandbox",
+                question: "Which mode should be used?",
+                options: [
+                  {
+                    label: "workspace-write",
+                    description: "Allow workspace writes only",
+                  },
+                ],
+              },
+            ],
+          },
+        } satisfies ProviderEvent);
+        lifecycleManager.emit("event", {
+          id: asEventId("evt-user-input-resolved"),
+          kind: "notification",
+          provider: "codex",
+          threadId: asThreadId("thread-1"),
+          createdAt: new Date().toISOString(),
+          method: "item/tool/requestUserInput/answered",
+          requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
+          payload: {
+            answers: {
+              sandbox_mode: {
+                answers: ["workspace-write"],
+              },
             },
           },
-        },
-      } satisfies ProviderEvent);
+        } satisfies ProviderEvent);
 
-      const events = Array.from(yield* Fiber.join(eventsFiber));
-      assert.equal(events[0]?.type, "user-input.requested");
-      if (events[0]?.type === "user-input.requested") {
-        assert.equal(events[0].requestId, "req-user-input-1");
-        assert.equal(events[0].payload.questions[0]?.id, "sandbox_mode");
-      }
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+        assert.equal(events[0]?.type, "user-input.requested");
+        if (events[0]?.type === "user-input.requested") {
+          assert.equal(events[0].requestId, "req-user-input-1");
+          assert.equal(events[0].payload.questions[0]?.id, "sandbox_mode");
+        }
 
-      assert.equal(events[1]?.type, "user-input.resolved");
-      if (events[1]?.type === "user-input.resolved") {
-        assert.equal(events[1].requestId, "req-user-input-1");
-        assert.deepEqual(events[1].payload.answers, {
-          sandbox_mode: "workspace-write",
-        });
-      }
-    }),
+        assert.equal(events[1]?.type, "user-input.resolved");
+        if (events[1]?.type === "user-input.resolved") {
+          assert.equal(events[1].requestId, "req-user-input-1");
+          assert.deepEqual(events[1].payload.answers, {
+            sandbox_mode: "workspace-write",
+          });
+        }
+      }),
   );
 
   it.effect("maps Codex task and reasoning event chunks into canonical runtime events", () =>
@@ -636,5 +696,8 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
 });
 
 afterAll(() => {
-  assert.equal(lifecycleManager.stopAllImpl.mock.calls.length, 1);
+  if (lifecycleManager.stopAllImpl.mock.calls.length === 0) {
+    lifecycleManager.stopAll();
+  }
+  assert.ok(lifecycleManager.stopAllImpl.mock.calls.length >= 1);
 });

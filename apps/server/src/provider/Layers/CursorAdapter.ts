@@ -1316,10 +1316,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
           createdAt: startedStamp.createdAt,
           threadId: context.session.threadId,
           turnId,
-          payload: {
-            ...(input.model ? { model: input.model } : {}),
-            ...(input.effort ? { effort: input.effort } : {}),
-          },
+          payload: input.model ? { model: input.model } : {},
           providerRefs: {
             providerTurnId: String(turnId),
           },

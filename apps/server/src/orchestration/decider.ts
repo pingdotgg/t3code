@@ -301,7 +301,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           messageId: command.message.messageId,
           ...(command.provider !== undefined ? { provider: command.provider } : {}),
           ...(command.model !== undefined ? { model: command.model } : {}),
-          ...(command.effort !== undefined ? { effort: command.effort } : {}),
+          ...(command.modelOptions !== undefined ? { modelOptions: command.modelOptions } : {}),
           assistantDeliveryMode: command.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
           runtimeMode:
             readModel.threads.find((entry) => entry.id === command.threadId)?.runtimeMode ??

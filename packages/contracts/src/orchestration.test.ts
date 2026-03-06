@@ -1,4 +1,5 @@
-import { assert, it } from "@effect/vitest";
+import assert from "node:assert/strict";
+import { it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 
 import {
@@ -137,6 +138,34 @@ it.effect("preserves explicit provider and runtime mode in thread.turn.start", (
   }),
 );
 
+it.effect("accepts provider-scoped model options in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-options",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-options",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      provider: "codex",
+      model: "gpt-5.3-codex",
+      modelOptions: {
+        codex: {
+          reasoningEffort: "high",
+          fastMode: true,
+        },
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.provider, "codex");
+    assert.strictEqual(parsed.modelOptions?.codex?.reasoningEffort, "high");
+    assert.strictEqual(parsed.modelOptions?.codex?.fastMode, true);
+  }),
+);
+
 it.effect("accepts cursor provider in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({
@@ -157,17 +186,19 @@ it.effect("accepts cursor provider in thread.turn.start", () =>
   }),
 );
 
-it.effect("decodes thread.turn-start-requested defaults for provider, runtime mode, and interaction mode", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeThreadTurnStartRequestedPayload({
-      threadId: "thread-1",
-      messageId: "msg-1",
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
-    assert.strictEqual(parsed.provider, undefined);
-    assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
-    assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
-  }),
+it.effect(
+  "decodes thread.turn-start-requested defaults for provider, runtime mode, and interaction mode",
+  () =>
+    Effect.gen(function* () {
+      const parsed = yield* decodeThreadTurnStartRequestedPayload({
+        threadId: "thread-1",
+        messageId: "msg-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      assert.strictEqual(parsed.provider, undefined);
+      assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+      assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+    }),
 );
 
 it.effect("decodes orchestration session runtime mode defaults", () =>

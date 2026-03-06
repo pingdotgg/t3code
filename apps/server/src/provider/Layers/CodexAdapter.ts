@@ -31,7 +31,10 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { CodexAdapter, type CodexAdapterShape } from "../Services/CodexAdapter.ts";
-import { CodexAppServerManager } from "../../codexAppServerManager.ts";
+import {
+  CodexAppServerManager,
+  type CodexAppServerStartSessionInput,
+} from "../../codexAppServerManager.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -1293,8 +1296,19 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         );
       }
 
+      const managerInput: CodexAppServerStartSessionInput = {
+        threadId: input.threadId,
+        provider: "codex",
+        ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+        ...(input.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+        ...(input.providerOptions !== undefined ? { providerOptions: input.providerOptions } : {}),
+        runtimeMode: input.runtimeMode,
+        ...(input.model !== undefined ? { model: input.model } : {}),
+        ...(input.modelOptions?.codex?.fastMode ? { serviceTier: "fast" } : {}),
+      };
+
       return Effect.tryPromise({
-        try: () => manager.startSession(input),
+        try: () => manager.startSession(managerInput),
         catch: (cause) =>
           new ProviderAdapterProcessError({
             provider: PROVIDER,
@@ -1343,7 +1357,10 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
               threadId: input.threadId,
               ...(input.input !== undefined ? { input: input.input } : {}),
               ...(input.model !== undefined ? { model: input.model } : {}),
-              ...(input.effort !== undefined ? { effort: input.effort } : {}),
+              ...(input.modelOptions?.codex?.reasoningEffort !== undefined
+                ? { effort: input.modelOptions.codex.reasoningEffort }
+                : {}),
+              ...(input.modelOptions?.codex?.fastMode ? { serviceTier: "fast" } : {}),
               ...(input.interactionMode !== undefined
                 ? { interactionMode: input.interactionMode }
                 : {}),

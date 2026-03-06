@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { TrimmedNonEmptyString } from "./baseSchemas";
+import { ProviderModelOptions } from "./model";
 import {
   ApprovalRequestId,
   EventId,
@@ -22,7 +23,6 @@ import {
 } from "./orchestration";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
-
 const ProviderSessionStatus = Schema.Literals([
   "connecting",
   "ready",
@@ -72,6 +72,7 @@ export const ProviderSessionStartInput = Schema.Struct({
   provider: Schema.optional(ProviderKind),
   cwd: Schema.optional(TrimmedNonEmptyStringSchema),
   model: Schema.optional(TrimmedNonEmptyStringSchema),
+  modelOptions: Schema.optional(ProviderModelOptions),
   resumeCursor: Schema.optional(Schema.Unknown),
   providerOptions: Schema.optional(ProviderStartOptions),
   runtimeMode: RuntimeMode,
@@ -87,7 +88,7 @@ export const ProviderSendTurnInput = Schema.Struct({
     Schema.Array(ChatAttachment).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
   ),
   model: Schema.optional(TrimmedNonEmptyStringSchema),
-  effort: Schema.optional(TrimmedNonEmptyStringSchema),
+  modelOptions: Schema.optional(ProviderModelOptions),
   interactionMode: Schema.optional(ProviderInteractionMode),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;

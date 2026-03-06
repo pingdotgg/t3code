@@ -3,6 +3,7 @@ import {
   CommandId,
   EventId,
   type OrchestrationEvent,
+  type ProviderModelOptions,
   type ProviderKind,
   type OrchestrationSession,
   ThreadId,
@@ -199,6 +200,7 @@ const make = Effect.gen(function* () {
     options?: {
       readonly provider?: ProviderKind;
       readonly model?: string;
+      readonly modelOptions?: ProviderModelOptions;
     },
   ) {
     const readModel = yield* orchestrationEngine.getReadModel();
@@ -237,6 +239,7 @@ const make = Effect.gen(function* () {
           : {}),
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
         ...(desiredModel ? { model: desiredModel } : {}),
+        ...(options?.modelOptions !== undefined ? { modelOptions: options.modelOptions } : {}),
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: desiredRuntimeMode,
       });
@@ -321,7 +324,7 @@ const make = Effect.gen(function* () {
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly provider?: ProviderKind;
     readonly model?: string;
-    readonly effort?: string;
+    readonly modelOptions?: ProviderModelOptions;
     readonly interactionMode?: "default" | "plan";
     readonly createdAt: string;
   }) {
@@ -332,6 +335,7 @@ const make = Effect.gen(function* () {
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.provider !== undefined ? { provider: input.provider } : {}),
       ...(input.model !== undefined ? { model: input.model } : {}),
+      ...(input.modelOptions !== undefined ? { modelOptions: input.modelOptions } : {}),
     });
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
@@ -350,7 +354,7 @@ const make = Effect.gen(function* () {
       ...(normalizedInput ? { input: normalizedInput } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { model: modelForTurn } : {}),
-      ...(input.effort !== undefined ? { effort: input.effort } : {}),
+      ...(input.modelOptions !== undefined ? { modelOptions: input.modelOptions } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
     });
   });
@@ -464,7 +468,7 @@ const make = Effect.gen(function* () {
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.provider !== undefined ? { provider: event.payload.provider } : {}),
       ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
-      ...(event.payload.effort !== undefined ? { effort: event.payload.effort } : {}),
+      ...(event.payload.modelOptions !== undefined ? { modelOptions: event.payload.modelOptions } : {}),
       interactionMode: event.payload.interactionMode,
       createdAt: event.payload.createdAt,
     });

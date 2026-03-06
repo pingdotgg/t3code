@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
-import { getModelOptions, normalizeModelSlug, type ProviderKind } from "@t3tools/contracts";
+import { type ProviderKind } from "@t3tools/contracts";
+import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { isElectron } from "../env";

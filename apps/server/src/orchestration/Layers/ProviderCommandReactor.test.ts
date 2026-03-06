@@ -295,6 +295,58 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
+  it("forwards codex model options through session start and turn send", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-fast"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-fast"),
+          role: "user",
+          text: "hello fast mode",
+          attachments: [],
+        },
+        provider: "codex",
+        model: "gpt-5.3-codex",
+        modelOptions: {
+          codex: {
+            reasoningEffort: "high",
+            fastMode: true,
+          },
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      model: "gpt-5.3-codex",
+      modelOptions: {
+        codex: {
+          reasoningEffort: "high",
+          fastMode: true,
+        },
+      },
+    });
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      model: "gpt-5.3-codex",
+      modelOptions: {
+        codex: {
+          reasoningEffort: "high",
+          fastMode: true,
+        },
+      },
+    });
+  });
+
   it("forwards plan interaction mode to the provider turn request", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

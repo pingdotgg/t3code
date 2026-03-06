@@ -159,9 +159,14 @@ describe("decider project scripts", () => {
             text: "hello",
             attachments: [],
           },
-          provider: "claudeCode",
-          model: "gpt-5",
-          effort: "high",
+          provider: "codex",
+          model: "gpt-5.3-codex",
+          modelOptions: {
+            codex: {
+              reasoningEffort: "high",
+              fastMode: true,
+            },
+          },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "approval-required",
           createdAt: now,
@@ -184,9 +189,14 @@ describe("decider project scripts", () => {
     expect(turnStartEvent.payload).toMatchObject({
       threadId: ThreadId.makeUnsafe("thread-1"),
       messageId: asMessageId("message-user-1"),
-      provider: "claudeCode",
-      model: "gpt-5",
-      effort: "high",
+      provider: "codex",
+      model: "gpt-5.3-codex",
+      modelOptions: {
+        codex: {
+          reasoningEffort: "high",
+          fastMode: true,
+        },
+      },
       runtimeMode: "approval-required",
     });
   });

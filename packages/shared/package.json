@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./model": {
+      "types": "./src/model.ts",
+      "import": "./src/model.ts"
+    },
     "./git": {
       "types": "./src/git.ts",
       "import": "./src/git.ts"
@@ -23,6 +27,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@t3tools/contracts": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

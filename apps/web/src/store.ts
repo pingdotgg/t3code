@@ -1,15 +1,17 @@
 import { Fragment, type ReactNode, createElement, useEffect } from "react";
 import {
   DEFAULT_MODEL,
-  getModelOptions,
-  normalizeModelSlug,
   type ProviderKind,
   ThreadId,
   type OrchestrationReadModel,
   type OrchestrationSessionStatus,
+} from "@t3tools/contracts";
+import {
+  getModelOptions,
+  normalizeModelSlug,
   resolveModelSlug,
   resolveModelSlugForProvider,
-} from "@t3tools/contracts";
+} from "@t3tools/shared/model";
 import { create } from "zustand";
 import {
   type ChatMessage,

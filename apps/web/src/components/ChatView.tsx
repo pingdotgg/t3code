@@ -8,16 +8,10 @@ import {
   type CodexReasoningEffort,
   type CursorReasoningOption,
   type MessageId,
-  getDefaultModel,
-  getDefaultReasoningEffort,
-  getCursorModelCapabilities,
-  getCursorModelFamilyOptions,
-  getReasoningEffortOptions,
   type ProjectId,
   type ProjectEntry,
   type ProjectScript,
   type ModelSlug,
-  parseCursorModelSelection,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ResolvedKeybindingsConfig,
@@ -26,21 +20,29 @@ import {
   type ProviderKind,
   type ThreadId,
   type TurnId,
+  OrchestrationThreadActivity,
+  RuntimeMode,
+  ProviderInteractionMode,
+} from "@t3tools/contracts";
+import {
+  getDefaultModel,
+  getDefaultReasoningEffort,
+  getCursorModelCapabilities,
+  getCursorModelFamilyOptions,
+  getReasoningEffortOptions,
   normalizeModelSlug,
+  parseCursorModelSelection,
   resolveCursorModelFromSelection,
   resolveModelSlugForProvider,
-  OrchestrationThreadActivity,
-} from "@t3tools/contracts";
+} from "@t3tools/shared/model";
 import {
   memo,
   useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
-  useOptimistic,
   useRef,
   useState,
-  useTransition,
   useId,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -146,7 +148,6 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { Separator } from "./ui/separator";
 import { Group, GroupSeparator } from "./ui/group";
 import {
@@ -578,7 +579,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const setComposerDraftProvider = useComposerDraftStore((store) => store.setProvider);
   const setComposerDraftModel = useComposerDraftStore((store) => store.setModel);
+  const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
+  const setComposerDraftInteractionMode = useComposerDraftStore((store) => store.setInteractionMode);
   const setComposerDraftEffort = useComposerDraftStore((store) => store.setEffort);
+  const setComposerDraftCodexFastMode = useComposerDraftStore((store) => store.setCodexFastMode);
   const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const removeComposerDraftImage = useComposerDraftStore((store) => store.removeImage);
@@ -711,12 +715,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [draftThread, fallbackDraftProject?.model, localDraftError, threadId],
   );
   const activeThread = serverThread ?? localDraftThread;
-  const runtimeMode = activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
-  const interactionMode = activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
-  const [optimisticRuntimeMode, setOptimisticRuntimeMode] = useOptimistic(runtimeMode);
-  const [optimisticInteractionMode, setOptimisticInteractionMode] = useOptimistic(interactionMode);
-  const [isRuntimeModePending, startRuntimeModeTransition] = useTransition();
-  const [isInteractionModePending, startInteractionModeTransition] = useTransition();
+  const runtimeMode = composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+  const interactionMode =
+    composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const diffSearch = useMemo(
@@ -794,9 +795,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     return resolveModelSlugForProvider(selectedProvider, draftModel);
   }, [baseThreadModel, composerDraft.model, selectedProvider, settings]);
-  const selectedEffort = composerDraft.effort ?? getDefaultReasoningEffort(selectedProvider);
   const reasoningOptions = getReasoningEffortOptions(selectedProvider);
   const supportsReasoningEffort = reasoningOptions.length > 0;
+  const selectedEffort = composerDraft.effort ?? getDefaultReasoningEffort(selectedProvider);
+  const selectedCodexFastModeEnabled =
+    selectedProvider === "codex" ? composerDraft.codexFastMode : false;
+  const selectedModelOptionsForDispatch = useMemo(() => {
+    if (selectedProvider !== "codex") {
+      return undefined;
+    }
+    const codexOptions = {
+      ...(supportsReasoningEffort && selectedEffort ? { reasoningEffort: selectedEffort } : {}),
+      ...(selectedCodexFastModeEnabled ? { fastMode: true } : {}),
+    };
+    return Object.keys(codexOptions).length > 0 ? { codex: codexOptions } : undefined;
+  }, [selectedCodexFastModeEnabled, selectedEffort, selectedProvider, supportsReasoningEffort]);
   const selectedCursorModel = useMemo(
     () => (selectedProvider === "cursor" ? parseCursorModelSelection(selectedModel) : null),
     [selectedModel, selectedProvider],
@@ -920,7 +933,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&
-    optimisticInteractionMode === "plan" &&
+    interactionMode === "plan" &&
     latestTurnSettled &&
     activeProposedPlan !== null;
   const hasComposerHeader =
@@ -1592,63 +1605,90 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeProject, persistProjectScripts],
   );
 
-  const handleRuntimeModeChange = async (mode: "approval-required" | "full-access") => {
-    if (mode === runtimeMode) return;
-    if (isLocalDraftThread) {
-      setDraftThreadContext(threadId, { runtimeMode: mode });
+  const handleRuntimeModeChange = useCallback(
+    (mode: RuntimeMode) => {
+      if (mode === runtimeMode) return;
+      setComposerDraftRuntimeMode(threadId, mode);
+      if (isLocalDraftThread) {
+        setDraftThreadContext(threadId, { runtimeMode: mode });
+      }
       scheduleComposerFocus();
-      return;
-    }
-    const api = readNativeApi();
-    if (!api || !isServerThread) return;
-    scheduleComposerFocus();
-    startRuntimeModeTransition(() => {
-      setOptimisticRuntimeMode(mode);
-      void api.orchestration
-        .dispatchCommand({
-          type: "thread.runtime-mode.set",
-          commandId: newCommandId(),
-          threadId,
-          runtimeMode: mode,
-          createdAt: new Date().toISOString(),
-        })
-        .catch(() => undefined);
-    });
-  };
+    },
+    [
+      isLocalDraftThread,
+      runtimeMode,
+      scheduleComposerFocus,
+      setComposerDraftRuntimeMode,
+      setDraftThreadContext,
+      threadId,
+    ],
+  );
 
   const handleInteractionModeChange = useCallback(
-    async (mode: "default" | "plan") => {
+    (mode: ProviderInteractionMode) => {
       if (mode === interactionMode) return;
+      setComposerDraftInteractionMode(threadId, mode);
       if (isLocalDraftThread) {
         setDraftThreadContext(threadId, { interactionMode: mode });
-        scheduleComposerFocus();
-        return;
       }
-      const api = readNativeApi();
-      if (!api || !isServerThread) return;
       scheduleComposerFocus();
-      startInteractionModeTransition(() => {
-        setOptimisticInteractionMode(mode);
-        void api.orchestration
-          .dispatchCommand({
-            type: "thread.interaction-mode.set",
-            commandId: newCommandId(),
-            threadId,
-            interactionMode: mode,
-            createdAt: new Date().toISOString(),
-          })
-          .catch(() => undefined);
-      });
     },
     [
       interactionMode,
       isLocalDraftThread,
-      isServerThread,
       scheduleComposerFocus,
+      setComposerDraftInteractionMode,
       setDraftThreadContext,
-      setOptimisticInteractionMode,
       threadId,
     ],
+  );
+
+  const persistThreadSettingsForNextTurn = useCallback(
+    async (input: {
+      threadId: ThreadId;
+      createdAt: string;
+      model?: string;
+      runtimeMode: RuntimeMode;
+      interactionMode: ProviderInteractionMode;
+    }) => {
+      if (!serverThread) {
+        return;
+      }
+      const api = readNativeApi();
+      if (!api) {
+        return;
+      }
+
+      if (input.model !== undefined && input.model !== serverThread.model) {
+        await api.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId: input.threadId,
+          model: input.model,
+        });
+      }
+
+      if (input.runtimeMode !== serverThread.runtimeMode) {
+        await api.orchestration.dispatchCommand({
+          type: "thread.runtime-mode.set",
+          commandId: newCommandId(),
+          threadId: input.threadId,
+          runtimeMode: input.runtimeMode,
+          createdAt: input.createdAt,
+        });
+      }
+
+      if (input.interactionMode !== serverThread.interactionMode) {
+        await api.orchestration.dispatchCommand({
+          type: "thread.interaction-mode.set",
+          commandId: newCommandId(),
+          threadId: input.threadId,
+          interactionMode: input.interactionMode,
+          createdAt: input.createdAt,
+        });
+      }
+    },
+    [serverThread],
   );
 
   useEffect(() => {
@@ -2519,6 +2559,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
       }
 
+      if (isServerThread) {
+        await persistThreadSettingsForNextTurn({
+          threadId: threadIdForSend,
+          createdAt: messageCreatedAt,
+          ...(selectedModel ? { model: selectedModel } : {}),
+          runtimeMode,
+          interactionMode,
+        });
+      }
+
       setSendPhase("sending-turn");
       const turnAttachments = await turnAttachmentsPromise;
       await api.orchestration.dispatchCommand({
@@ -2532,8 +2582,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
           attachments: turnAttachments,
         },
         model: selectedModel || undefined,
+        ...(selectedModelOptionsForDispatch
+          ? { modelOptions: selectedModelOptionsForDispatch }
+          : {}),
         provider: selectedProvider,
-        ...(supportsReasoningEffort && selectedEffort ? { effort: selectedEffort } : {}),
         assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
         runtimeMode,
         interactionMode,
@@ -2781,16 +2833,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       forceStickToBottom();
 
       try {
-        if (nextInteractionMode !== interactionMode) {
-          setOptimisticInteractionMode(nextInteractionMode);
-          await api.orchestration.dispatchCommand({
-            type: "thread.interaction-mode.set",
-            commandId: newCommandId(),
-            threadId: threadIdForSend,
-            interactionMode: nextInteractionMode,
-            createdAt: messageCreatedAt,
-          });
-        }
+        await persistThreadSettingsForNextTurn({
+          threadId: threadIdForSend,
+          createdAt: messageCreatedAt,
+          ...(selectedModel ? { model: selectedModel } : {}),
+          runtimeMode,
+          interactionMode: nextInteractionMode,
+        });
 
         await api.orchestration.dispatchCommand({
           type: "thread.turn.start",
@@ -2804,7 +2853,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           },
           provider: selectedProvider,
           model: selectedModel || undefined,
-          ...(supportsReasoningEffort && selectedEffort ? { effort: selectedEffort } : {}),
+          ...(selectedModelOptionsForDispatch
+            ? { modelOptions: selectedModelOptionsForDispatch }
+            : {}),
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: nextInteractionMode,
@@ -2816,9 +2867,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setOptimisticUserMessages((existing) =>
           existing.filter((message) => message.id !== messageIdForSend),
         );
-        if (nextInteractionMode !== interactionMode) {
-          setOptimisticInteractionMode(interactionMode);
-        }
         setThreadError(
           threadIdForSend,
           err instanceof Error ? err.message : "Failed to send plan follow-up.",
@@ -2830,18 +2878,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [
       activeThread,
       forceStickToBottom,
-      interactionMode,
       isConnecting,
       isSendBusy,
       isServerThread,
+      persistThreadSettingsForNextTurn,
       runtimeMode,
-      selectedEffort,
       selectedModel,
+      selectedModelOptionsForDispatch,
       selectedProvider,
-      setOptimisticInteractionMode,
       setThreadError,
       settings.enableAssistantStreaming,
-      supportsReasoningEffort,
     ],
   );
 
@@ -2905,7 +2951,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           },
           provider: selectedProvider,
           model: selectedModel || undefined,
-          ...(supportsReasoningEffort && selectedEffort ? { effort: selectedEffort } : {}),
+          ...(selectedModelOptionsForDispatch
+            ? { modelOptions: selectedModelOptionsForDispatch }
+            : {}),
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: "default",
@@ -2951,11 +2999,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     isServerThread,
     navigate,
     runtimeMode,
-    selectedEffort,
     selectedModel,
+    selectedModelOptionsForDispatch,
     selectedProvider,
     settings.enableAssistantStreaming,
-    supportsReasoningEffort,
     syncServerReadModel,
   ]);
 
@@ -2970,27 +3017,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
         scheduleComposerFocus();
         return;
       }
-      const api = readNativeApi();
       const resolvedModel =
         provider === "cursor"
           ? resolveCursorModelFromSelection(parseCursorModelSelection(model))
           : resolveModelSlugForProvider(provider, model);
       setComposerDraftProvider(activeThread.id, provider);
       setComposerDraftModel(activeThread.id, resolvedModel);
-      if (api && isServerThread) {
-        void api.orchestration.dispatchCommand({
-          type: "thread.meta.update",
-          commandId: newCommandId(),
-          threadId: activeThread.id,
-          model: resolvedModel,
-        });
-      }
       scheduleComposerFocus();
     },
     [
       activeThread,
       cursorModelSelectionLockedReason,
-      isServerThread,
       lockedProvider,
       scheduleComposerFocus,
       setComposerDraftModel,
@@ -3045,6 +3082,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       scheduleComposerFocus();
     },
     [scheduleComposerFocus, setComposerDraftEffort, threadId],
+  );
+  const onCodexFastModeChange = useCallback(
+    (enabled: boolean) => {
+      setComposerDraftCodexFastMode(threadId, enabled);
+      scheduleComposerFocus();
+    },
+    [scheduleComposerFocus, setComposerDraftCodexFastMode, threadId],
   );
   const onEnvModeChange = useCallback(
     (mode: DraftThreadEnvMode) => {
@@ -3625,19 +3669,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         </>
                       )}
                   </>
-                ) : supportsReasoningEffort ? (
+                ) : selectedProvider === "codex" && selectedEffort != null ? (
                   <>
-                    {/* Divider */}
                     <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-
-                    {/* Reasoning effort */}
-                    {selectedEffort != null && (
-                      <ReasoningEffortPicker
-                        effort={selectedEffort}
-                        options={reasoningOptions}
-                        onEffortChange={onEffortSelect}
-                      />
-                    )}
+                    <CodexTraitsPicker
+                      effort={selectedEffort}
+                      fastModeEnabled={selectedCodexFastModeEnabled}
+                      options={reasoningOptions}
+                      onEffortChange={onEffortSelect}
+                      onFastModeChange={onCodexFastModeChange}
+                    />
                   </>
                 ) : null}
 
@@ -3650,21 +3691,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
                   size="sm"
                   type="button"
-                  disabled={isInteractionModePending}
                   onClick={() =>
                     void handleInteractionModeChange(
-                      optimisticInteractionMode === "plan" ? "default" : "plan",
+                      interactionMode === "plan" ? "default" : "plan",
                     )
                   }
                   title={
-                    optimisticInteractionMode === "plan"
+                    interactionMode === "plan"
                       ? "Plan mode — click to return to normal chat mode"
                       : "Default mode — click to enter plan mode"
                   }
                 >
                   <BotIcon />
                   <span className="sr-only sm:not-sr-only">
-                    {optimisticInteractionMode === "plan" ? "Plan" : "Chat"}
+                    {interactionMode === "plan" ? "Plan" : "Chat"}
                   </span>
                 </Button>
 
@@ -3677,21 +3717,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
                   size="sm"
                   type="button"
-                  disabled={isRuntimeModePending}
                   onClick={() =>
                     void handleRuntimeModeChange(
-                      optimisticRuntimeMode === "full-access" ? "approval-required" : "full-access",
+                      runtimeMode === "full-access" ? "approval-required" : "full-access",
                     )
                   }
                   title={
-                    optimisticRuntimeMode === "full-access"
+                    runtimeMode === "full-access"
                       ? "Full access — click to require approvals"
                       : "Approval required — click for full access"
                   }
                 >
-                  {optimisticRuntimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
+                  {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
                   <span className="sr-only sm:not-sr-only">
-                    {optimisticRuntimeMode === "full-access" ? "Full access" : "Supervised"}
+                    {runtimeMode === "full-access" ? "Full access" : "Supervised"}
                   </span>
                 </Button>
               </div>
@@ -4397,7 +4436,10 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
 }) {
   const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId } = props;
   const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
-  const directoryPathsKey = useMemo(() => collectDirectoryPaths(treeNodes).join("\u0000"), [treeNodes]);
+  const directoryPathsKey = useMemo(
+    () => collectDirectoryPaths(treeNodes).join("\u0000"),
+    [treeNodes],
+  );
   const allDirectoryExpansionState = useMemo(
     () =>
       buildDirectoryExpansionState(
@@ -4406,8 +4448,8 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
       ),
     [allDirectoriesExpanded, directoryPathsKey],
   );
-  const [expandedDirectories, setExpandedDirectories] = useState<Record<string, boolean>>(
-    () => buildDirectoryExpansionState((directoryPathsKey ? directoryPathsKey.split("\u0000") : []), true),
+  const [expandedDirectories, setExpandedDirectories] = useState<Record<string, boolean>>(() =>
+    buildDirectoryExpansionState(directoryPathsKey ? directoryPathsKey.split("\u0000") : [], true),
   );
   useEffect(() => {
     setExpandedDirectories(allDirectoryExpansionState);
@@ -4489,11 +4531,7 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     );
   };
 
-  return (
-    <div className="space-y-0.5">
-      {treeNodes.map((node) => renderTreeNode(node, 0))}
-    </div>
-  );
+  return <div className="space-y-0.5">{treeNodes.map((node) => renderTreeNode(node, 0))}</div>;
 });
 
 const ProposedPlanCard = memo(function ProposedPlanCard({
@@ -5337,7 +5375,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           <Button
             size="sm"
             variant="ghost"
-            className="shrink-0 whitespace-nowrap px-2 sm:px-3"
+            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
             disabled={props.disabled}
           />
         }
@@ -5347,7 +5385,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             aria-hidden="true"
             className={cn(
               "size-4 shrink-0",
-              props.provider === "claudeCode" ? "" : "text-foreground/80",
+              props.provider === "claudeCode" ? "" : "text-muted-foreground/70",
             )}
           />
           <span className="truncate">{selectedModelLabel}</span>
@@ -5419,30 +5457,82 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   );
 });
 
-const ReasoningEffortPicker = memo(function ReasoningEffortPicker(props: {
+const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
   effort: CodexReasoningEffort;
+  fastModeEnabled: boolean;
   options: ReadonlyArray<CodexReasoningEffort>;
   onEffortChange: (effort: CodexReasoningEffort) => void;
+  onFastModeChange: (enabled: boolean) => void;
 }) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const defaultReasoningEffort = getDefaultReasoningEffort("codex");
+  const reasoningLabelByOption: Record<CodexReasoningEffort, string> = {
+    low: "Low",
+    medium: "Medium",
+    high: "High",
+    xhigh: "Extra High",
+  };
+  const triggerLabel = [
+    reasoningLabelByOption[props.effort],
+    ...(props.fastModeEnabled ? ["Fast"] : []),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <Select
-      value={props.effort}
-      onValueChange={(value) => (value ? props.onEffortChange(value) : undefined)}
+    <Menu
+      open={isMenuOpen}
+      onOpenChange={(open) => {
+        setIsMenuOpen(open);
+      }}
     >
-      <SelectTrigger variant="ghost" size="sm">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectPopup alignItemWithTrigger={false}>
-        {props.options.map((effort) => (
-          <SelectItem key={effort} value={effort}>
-            {effort}
-            {effort === defaultReasoningEffort ? " (default)" : ""}
-          </SelectItem>
-        ))}
-      </SelectPopup>
-    </Select>
+      <MenuTrigger
+        render={
+          <Button
+            size="sm"
+            variant="ghost"
+            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+          />
+        }
+      >
+        <span>{triggerLabel}</span>
+        <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
+      </MenuTrigger>
+      <MenuPopup align="start">
+        <MenuGroup>
+          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Reasoning</div>
+          <MenuRadioGroup
+            value={props.effort}
+            onValueChange={(value) => {
+              if (!value) return;
+              const nextEffort = props.options.find((option) => option === value);
+              if (!nextEffort) return;
+              props.onEffortChange(nextEffort);
+            }}
+          >
+            {props.options.map((effort) => (
+              <MenuRadioItem key={effort} value={effort}>
+                {reasoningLabelByOption[effort]}
+                {effort === defaultReasoningEffort ? " (default)" : ""}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuGroup>
+        <MenuDivider />
+        <MenuGroup>
+          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Fast Mode</div>
+          <MenuRadioGroup
+            value={props.fastModeEnabled ? "on" : "off"}
+            onValueChange={(value) => {
+              props.onFastModeChange(value === "on");
+            }}
+          >
+            <MenuRadioItem value="off">off</MenuRadioItem>
+            <MenuRadioItem value="on">on</MenuRadioItem>
+          </MenuRadioGroup>
+        </MenuGroup>
+      </MenuPopup>
+    </Menu>
   );
 });
 
@@ -5459,7 +5549,7 @@ const CursorTraitsPicker = memo(function CursorTraitsPicker(props: {
     low: "Low",
     normal: "Normal",
     high: "High",
-    xhigh: "XHigh",
+    xhigh: "Extra High",
   };
   const traitSummary = [
     ...(props.capabilities.supportsReasoning
@@ -5486,7 +5576,7 @@ const CursorTraitsPicker = memo(function CursorTraitsPicker(props: {
           <Button
             size="sm"
             variant="ghost"
-            className="shrink-0 whitespace-nowrap px-2 sm:px-3"
+            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
             disabled={props.disabled}
           />
         }

@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
-
 import {
   CURSOR_MODEL_FAMILY_OPTIONS,
   CURSOR_REASONING_OPTIONS,
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_REASONING_EFFORT_BY_PROVIDER,
   MODEL_OPTIONS,
   MODEL_OPTIONS_BY_PROVIDER,
   REASONING_EFFORT_OPTIONS_BY_PROVIDER,
-  DEFAULT_REASONING_EFFORT_BY_PROVIDER,
+} from "../../contracts/src";
+
+import {
   getDefaultModel,
   getDefaultReasoningEffort,
   getCursorModelFamilyOptions,

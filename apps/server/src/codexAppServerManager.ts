@@ -11,13 +11,15 @@ import {
   type ProviderUserInputAnswers,
   ThreadId,
   TurnId,
-  normalizeModelSlug,
   type ProviderApprovalDecision,
   type ProviderEvent,
   type ProviderSession,
   type ProviderSessionStartInput,
   type ProviderTurnStartResult,
+  RuntimeMode,
+  ProviderInteractionMode,
 } from "@t3tools/contracts";
+import { normalizeModelSlug } from "@t3tools/shared/model";
 import { Effect, ServiceMap } from "effect";
 
 type PendingRequestKey = string;
@@ -90,7 +92,19 @@ export interface CodexAppServerSendTurnInput {
   readonly attachments?: ReadonlyArray<{ type: "image"; url: string }>;
   readonly model?: string;
   readonly effort?: string;
-  readonly interactionMode?: "default" | "plan";
+  readonly serviceTier?: string;
+  readonly interactionMode?: ProviderInteractionMode;
+}
+
+export interface CodexAppServerStartSessionInput {
+  readonly threadId: ThreadId;
+  readonly provider?: "codex";
+  readonly cwd?: string;
+  readonly model?: string;
+  readonly serviceTier?: string;
+  readonly resumeCursor?: unknown;
+  readonly providerOptions?: ProviderSessionStartInput["providerOptions"];
+  readonly runtimeMode: RuntimeMode;
 }
 
 export interface CodexThreadTurnSnapshot {
@@ -240,7 +254,7 @@ Do not ask "should I proceed?" in the final output. The user can easily switch o
 Only produce at most one \`<proposed_plan>\` block per turn, and only when you are presenting a complete spec.
 </collaboration_mode>`;
 
-function mapCodexRuntimeMode(runtimeMode: "approval-required" | "full-access"): {
+function mapCodexRuntimeMode(runtimeMode: RuntimeMode): {
   readonly approvalPolicy: "on-request" | "never";
   readonly sandbox: "workspace-write" | "danger-full-access";
 } {
@@ -360,7 +374,10 @@ function toCodexUserInputAnswers(
   answers: ProviderUserInputAnswers,
 ): Record<string, CodexUserInputAnswer> {
   return Object.fromEntries(
-    Object.entries(answers).map(([questionId, value]) => [questionId, toCodexUserInputAnswer(value)]),
+    Object.entries(answers).map(([questionId, value]) => [
+      questionId,
+      toCodexUserInputAnswer(value),
+    ]),
   );
 }
 
@@ -408,7 +425,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     this.runPromise = services ? Effect.runPromiseWith(services) : Effect.runPromise;
   }
 
-  async startSession(input: ProviderSessionStartInput): Promise<ProviderSession> {
+  async startSession(input: CodexAppServerStartSessionInput): Promise<ProviderSession> {
     const threadId = input.threadId;
     const now = new Date().toISOString();
     let context: CodexSessionContext | undefined;
@@ -465,6 +482,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const sessionOverrides = {
         model: normalizedModel ?? null,
         cwd: input.cwd ?? null,
+        ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
         ...mapCodexRuntimeMode(input.runtimeMode ?? "full-access"),
       };
 
@@ -625,6 +643,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       >;
       model?: string;
       effort?: string;
+      serviceTier?: string;
       collaborationMode?: {
         mode: "plan";
         settings: {
@@ -643,6 +662,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
     if (input.effort) {
       turnStartParams.effort = input.effort;
+    }
+    if (input.serviceTier) {
+      turnStartParams.serviceTier = input.serviceTier;
     }
     const collaborationMode = buildCodexCollaborationMode({
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
@@ -1345,7 +1367,7 @@ function normalizeProviderThreadId(value: string | undefined): string | undefine
   return brandIfNonEmpty(value, (normalized) => normalized);
 }
 
-function readCodexProviderOptions(input: ProviderSessionStartInput): {
+function readCodexProviderOptions(input: CodexAppServerStartSessionInput): {
   readonly binaryPath?: string;
   readonly homePath?: string;
 } {
@@ -1367,7 +1389,7 @@ function readResumeCursorThreadId(resumeCursor: unknown): string | undefined {
   return typeof rawThreadId === "string" ? normalizeProviderThreadId(rawThreadId) : undefined;
 }
 
-function readResumeThreadId(input: ProviderSessionStartInput): string | undefined {
+function readResumeThreadId(input: CodexAppServerStartSessionInput): string | undefined {
   return readResumeCursorThreadId(input.resumeCursor);
 }
 

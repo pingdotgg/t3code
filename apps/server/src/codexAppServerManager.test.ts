@@ -259,6 +259,7 @@ describe("sendTurn", () => {
       ],
       model: "gpt-5.3",
       effort: "high",
+      serviceTier: "fast",
     });
 
     expect(result).toEqual({
@@ -282,6 +283,7 @@ describe("sendTurn", () => {
       ],
       model: "gpt-5.3-codex",
       effort: "high",
+      serviceTier: "fast",
     });
     expect(updateSession).toHaveBeenCalledWith(context, {
       status: "running",
@@ -499,7 +501,9 @@ describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume"
           runtimeMode: "full-access",
           providerOptions: {
             codex: {
-              binaryPath: process.env.CODEX_BINARY_PATH,
+              ...(process.env.CODEX_BINARY_PATH
+                ? { binaryPath: process.env.CODEX_BINARY_PATH }
+                : {}),
               ...(process.env.CODEX_HOME_PATH
                 ? { homePath: process.env.CODEX_HOME_PATH }
                 : {}),
@@ -533,7 +537,9 @@ describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume"
           resumeCursor: firstSession.resumeCursor,
           providerOptions: {
             codex: {
-              binaryPath: process.env.CODEX_BINARY_PATH,
+              ...(process.env.CODEX_BINARY_PATH
+                ? { binaryPath: process.env.CODEX_BINARY_PATH }
+                : {}),
               ...(process.env.CODEX_HOME_PATH
                 ? { homePath: process.env.CODEX_HOME_PATH }
                 : {}),
