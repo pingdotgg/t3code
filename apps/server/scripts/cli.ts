@@ -111,6 +111,7 @@ const publishCmd = Command.make(
           const version = Option.getOrElse(config.appVersion, () => serverPackageJson.version);
           const pkg = {
             name: serverPackageJson.name,
+            bin: serverPackageJson.bin,
             type: serverPackageJson.type,
             version,
             engines: serverPackageJson.engines,
