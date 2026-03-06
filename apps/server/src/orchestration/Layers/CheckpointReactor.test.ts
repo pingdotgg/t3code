@@ -504,7 +504,6 @@ describe("CheckpointReactor", () => {
       type: "turn.started",
       eventId: EventId.makeUnsafe("evt-turn-started-claude-1"),
       provider: "claudeCode",
-      
       createdAt: new Date().toISOString(),
       threadId: ThreadId.makeUnsafe("thread-1"),
       turnId: asTurnId("turn-claude-1"),
@@ -519,7 +518,6 @@ describe("CheckpointReactor", () => {
       type: "turn.completed",
       eventId: EventId.makeUnsafe("evt-turn-completed-claude-1"),
       provider: "claudeCode",
-      
       createdAt: new Date().toISOString(),
       threadId: ThreadId.makeUnsafe("thread-1"),
       turnId: asTurnId("turn-claude-1"),
@@ -917,7 +915,7 @@ describe("CheckpointReactor", () => {
     await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
     expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);
     expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
-      
+      threadId: ThreadId.makeUnsafe("thread-1"),
       numTurns: 1,
     });
   });

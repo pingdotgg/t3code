@@ -224,7 +224,7 @@ function makeProviderServiceLayer() {
         ? Effect.succeed(codex.adapter)
         : provider === "claudeCode"
           ? Effect.succeed(claude.adapter)
-          : Effect.fail(new ProviderUnsupportedError({ provider })),
+        : Effect.fail(new ProviderUnsupportedError({ provider })),
     listProviders: () => Effect.succeed(["codex", "claudeCode"]),
   };
 
@@ -557,6 +557,29 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(routing.codex.rollbackThread.mock.calls.length, 1);
       const rollbackCall = routing.codex.rollbackThread.mock.calls[0];
       assert.equal(rollbackCall?.[1], 1);
+    }),
+  );
+
+  it.effect("routes explicit claudeCode provider session starts to the claude adapter", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      const session = yield* provider.startSession(asThreadId("thread-claude"), {
+        provider: "claudeCode",
+        threadId: asThreadId("thread-claude"),
+        cwd: "/tmp/project-claude",
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(session.provider, "claudeCode");
+      assert.equal(routing.claude.startSession.mock.calls.length, 1);
+      const startInput = routing.claude.startSession.mock.calls[0]?.[0];
+      assert.equal(typeof startInput === "object" && startInput !== null, true);
+      if (startInput && typeof startInput === "object") {
+        const startPayload = startInput as { provider?: string; cwd?: string };
+        assert.equal(startPayload.provider, "claudeCode");
+        assert.equal(startPayload.cwd, "/tmp/project-claude");
+      }
     }),
   );
 
