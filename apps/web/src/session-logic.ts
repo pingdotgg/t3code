@@ -16,7 +16,6 @@ export const PROVIDER_OPTIONS: Array<{
   available: boolean;
 }> = [
   { value: "codex", label: "Codex", available: true },
-  { value: "claudeCode", label: "Claude Code", available: true },
 ];
 
 export interface WorkLogEntry {

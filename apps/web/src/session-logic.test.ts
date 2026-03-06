@@ -514,17 +514,11 @@ describe("isLatestTurnSettled", () => {
 });
 
 describe("PROVIDER_OPTIONS", () => {
-  it("marks claudeCode as available", () => {
+  it("only advertises codex in the stack base", () => {
     const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeCode");
-    expect(claude).toEqual({
-      value: "claudeCode",
-      label: "Claude Code",
-      available: true,
-    });
-  });
-
-  it("does not advertise cursor as an available provider", () => {
     const cursor = PROVIDER_OPTIONS.find((option) => option.value === "cursor");
+    expect(PROVIDER_OPTIONS).toEqual([{ value: "codex", label: "Codex", available: true }]);
+    expect(claude).toBeUndefined();
     expect(cursor).toBeUndefined();
   });
 });

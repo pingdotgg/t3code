@@ -47,13 +47,6 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     placeholder: "your-codex-model-slug",
     example: "gpt-6.7-codex-ultra-preview",
   },
-  {
-    provider: "claudeCode",
-    title: "Claude Code",
-    description: "Save additional Claude model slugs for the picker and `/model` command.",
-    placeholder: "your-claude-model-slug",
-    example: "claude-sonnet-5-0",
-  },
 ] as const;
 
 function getCustomModelsForProvider(
