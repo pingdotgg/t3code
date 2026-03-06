@@ -5,6 +5,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Command from "effect/unstable/cli/Command";
+import { FetchHttpClient } from "effect/unstable/http";
 import { beforeEach } from "vitest";
 import { NetService } from "@t3tools/shared/Net";
 
@@ -52,6 +53,7 @@ const testLayer = Layer.mergeAll(
     record: () => Effect.void,
     flush: Effect.void,
   }),
+  FetchHttpClient.layer,
   NodeServices.layer,
 );
 

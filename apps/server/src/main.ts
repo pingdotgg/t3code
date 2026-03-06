@@ -23,6 +23,7 @@ import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serve
 import { ProviderHealthLive } from "./provider/Layers/ProviderHealth";
 import { Server } from "./wsServer";
 import { ServerLoggerLive } from "./serverLogger";
+import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 
 export class StartupError extends Data.TaggedError("StartupError")<{
   readonly message: string;
@@ -197,6 +198,7 @@ const LayerLive = (input: CliInput) =>
     Layer.provideMerge(ProviderHealthLive),
     Layer.provideMerge(SqlitePersistence.layerConfig),
     Layer.provideMerge(ServerLoggerLive),
+    Layer.provideMerge(AnalyticsServiceLayerLive),
     Layer.provideMerge(ServerConfigLive(input)),
   );
 
