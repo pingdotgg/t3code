@@ -61,6 +61,7 @@ import {
 } from "./desktopUpdate.logic";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
+import { Collapsible, CollapsibleContent } from "./ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
@@ -231,18 +232,20 @@ function SortableProjectItem({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging, isOver } =
     useSortable({ id: projectId });
   return (
-    <div
+    <li
       ref={setNodeRef}
       style={{
         transform: CSS.Translate.toString(transform),
         transition,
       }}
-      className={`rounded-md ${
+      className={`group/menu-item relative rounded-md ${
         isDragging ? "z-20 opacity-80" : ""
       } ${isOver && !isDragging ? "ring-1 ring-primary/40" : ""}`}
+      data-sidebar="menu-item"
+      data-slot="sidebar-menu-item"
     >
       {children({ attributes, listeners })}
-    </div>
+    </li>
   );
 }
 
@@ -294,14 +297,7 @@ export default function Sidebar() {
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const dragInProgressRef = useRef(false);
-  const suppressProjectClickFromGestureRef = useRef(false);
-  const suppressProjectClickResetTimerRef = useRef<number | null>(null);
-  const projectTitlePointerRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    moved: boolean;
-  } | null>(null);
+  const suppressProjectClickAfterDragRef = useRef(false);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
   const shouldBrowseForProjectImmediately = isElectron;
   const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
@@ -861,64 +857,20 @@ export default function Sidebar() {
 
   const handleProjectDragStart = useCallback((_event: DragStartEvent) => {
     dragInProgressRef.current = true;
+    suppressProjectClickAfterDragRef.current = true;
   }, []);
 
   const handleProjectDragCancel = useCallback((_event: DragCancelEvent) => {
     dragInProgressRef.current = false;
   }, []);
 
-  const handleProjectTitlePointerDownCapture = useCallback(
-    (event: React.PointerEvent<HTMLButtonElement>) => {
-      projectTitlePointerRef.current = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        moved: false,
-      };
-    },
-    [],
-  );
-
-  const handleProjectTitlePointerMoveCapture = useCallback(
-    (event: React.PointerEvent<HTMLButtonElement>) => {
-      const pointer = projectTitlePointerRef.current;
-      if (!pointer || pointer.pointerId !== event.pointerId) return;
-      const movedX = Math.abs(event.clientX - pointer.startX);
-      const movedY = Math.abs(event.clientY - pointer.startY);
-      if (movedX > 3 || movedY > 3) {
-        pointer.moved = true;
-      }
-    },
-    [],
-  );
-
-  const handleProjectTitlePointerUpCapture = useCallback(
-    (event: React.PointerEvent<HTMLButtonElement>) => {
-      const pointer = projectTitlePointerRef.current;
-      if (pointer?.pointerId === event.pointerId) {
-        if (pointer.moved) {
-          suppressProjectClickFromGestureRef.current = true;
-          if (suppressProjectClickResetTimerRef.current !== null) {
-            window.clearTimeout(suppressProjectClickResetTimerRef.current);
-          }
-          suppressProjectClickResetTimerRef.current = window.setTimeout(() => {
-            suppressProjectClickFromGestureRef.current = false;
-            suppressProjectClickResetTimerRef.current = null;
-          }, 0);
-        }
-        projectTitlePointerRef.current = null;
-      }
-    },
-    [],
-  );
-
-  const handleProjectTitlePointerCancelCapture = useCallback(() => {
-    projectTitlePointerRef.current = null;
+  const handleProjectTitlePointerDownCapture = useCallback(() => {
+    suppressProjectClickAfterDragRef.current = false;
   }, []);
 
   const handleProjectTitleClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>, projectId: ProjectId) => {
-      if (dragInProgressRef.current || suppressProjectClickFromGestureRef.current) {
+      if (dragInProgressRef.current || suppressProjectClickAfterDragRef.current) {
         event.preventDefault();
         event.stopPropagation();
         return;
@@ -939,14 +891,6 @@ export default function Sidebar() {
     },
     [toggleProject],
   );
-
-  useEffect(() => {
-    return () => {
-      if (suppressProjectClickResetTimerRef.current !== null) {
-        window.clearTimeout(suppressProjectClickResetTimerRef.current);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -1318,7 +1262,10 @@ export default function Sidebar() {
                   return (
                     <SortableProjectItem key={project.id} projectId={project.id}>
                       {(dragHandleProps) => (
-                        <SidebarMenuItem className="group/collapsible">
+                        <Collapsible
+                          className="group/collapsible"
+                          open={project.expanded}
+                        >
                           <div className="group/project-header relative">
                             <SidebarMenuButton
                               size="sm"
@@ -1326,9 +1273,6 @@ export default function Sidebar() {
                               {...dragHandleProps.attributes}
                               {...dragHandleProps.listeners}
                               onPointerDownCapture={handleProjectTitlePointerDownCapture}
-                              onPointerMoveCapture={handleProjectTitlePointerMoveCapture}
-                              onPointerUpCapture={handleProjectTitlePointerUpCapture}
-                              onPointerCancelCapture={handleProjectTitlePointerCancelCapture}
                               onClick={(event) => handleProjectTitleClick(event, project.id)}
                               onKeyDown={(event) => handleProjectTitleKeyDown(event, project.id)}
                               onContextMenu={(event) => {
@@ -1379,15 +1323,8 @@ export default function Sidebar() {
                             </Tooltip>
                           </div>
 
-                          <div
-                            className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
-                              project.expanded
-                                ? "grid-rows-[1fr] opacity-100"
-                                : "pointer-events-none grid-rows-[0fr] opacity-0"
-                            }`}
-                          >
-                            <div className="min-h-0 overflow-hidden">
-                              <SidebarMenuSub className="mx-1 my-0 w-full translate-x-0 gap-0 px-1.5 py-0">
+                          <CollapsibleContent keepMounted>
+                            <SidebarMenuSub className="mx-1 my-0 w-full translate-x-0 gap-0 px-1.5 py-0">
                                 {visibleThreads.map((thread) => {
                                   const isActive = routeThreadId === thread.id;
                                   const threadStatus = resolveThreadStatusPill({
@@ -1558,9 +1495,8 @@ export default function Sidebar() {
                                   </SidebarMenuSubItem>
                                 )}
                               </SidebarMenuSub>
-                            </div>
-                          </div>
-                        </SidebarMenuItem>
+                          </CollapsibleContent>
+                        </Collapsible>
                       )}
                     </SortableProjectItem>
                   );
