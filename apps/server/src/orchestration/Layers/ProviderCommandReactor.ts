@@ -6,6 +6,7 @@ import {
   type ProviderApprovalPolicy,
   type ProviderKind,
   type ProviderSandboxMode,
+  type ProviderServiceTier,
   type OrchestrationSession,
   type ThreadId,
   type ProviderSession,
@@ -169,6 +170,7 @@ const make = Effect.gen(function* () {
     createdAt: string,
     options?: {
       readonly approvalPolicy?: ProviderApprovalPolicy;
+      readonly serviceTier?: ProviderServiceTier | null;
       readonly sandboxMode?: ProviderSandboxMode;
     },
   ) {
@@ -197,6 +199,7 @@ const make = Effect.gen(function* () {
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
         ...(thread.model ? { model: thread.model } : {}),
         ...(resumeThreadId ? { resumeThreadId } : {}),
+        ...(options?.serviceTier !== undefined ? { serviceTier: options.serviceTier } : {}),
         approvalPolicy: desiredApprovalPolicy,
         sandboxMode: desiredSandboxMode,
       });
@@ -258,6 +261,7 @@ const make = Effect.gen(function* () {
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly model?: string;
+    readonly serviceTier?: ProviderServiceTier | null;
     readonly effort?: string;
     readonly approvalPolicy: ProviderApprovalPolicy;
     readonly sandboxMode: ProviderSandboxMode;
@@ -269,6 +273,7 @@ const make = Effect.gen(function* () {
     }
     const sessionId = yield* ensureSessionForThread(input.threadId, input.createdAt, {
       approvalPolicy: input.approvalPolicy,
+      ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
       sandboxMode: input.sandboxMode,
     });
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
@@ -279,6 +284,7 @@ const make = Effect.gen(function* () {
       ...(normalizedInput ? { input: normalizedInput } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(input.model !== undefined ? { model: input.model } : {}),
+      ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
       ...(input.effort !== undefined ? { effort: input.effort } : {}),
     });
   });
@@ -391,6 +397,7 @@ const make = Effect.gen(function* () {
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
+      ...(event.payload.serviceTier !== undefined ? { serviceTier: event.payload.serviceTier } : {}),
       ...(event.payload.effort !== undefined ? { effort: event.payload.effort } : {}),
       approvalPolicy: event.payload.approvalPolicy,
       sandboxMode: event.payload.sandboxMode,

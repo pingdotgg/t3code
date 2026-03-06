@@ -5,6 +5,7 @@ import readline from "node:readline";
 
 import {
   ApprovalRequestId,
+  DEFAULT_MODEL,
   EventId,
   ProviderItemId,
   ProviderRequestKind,
@@ -40,6 +41,7 @@ interface PendingApprovalRequest {
 
 interface CodexSessionContext {
   session: ProviderSession;
+  account: CodexAccountSnapshot;
   child: ChildProcessWithoutNullStreams;
   output: readline.Interface;
   pending: Map<PendingRequestKey, PendingRequest>;
@@ -70,11 +72,29 @@ interface JsonRpcNotification {
   params?: unknown;
 }
 
+type CodexPlanType =
+  | "free"
+  | "go"
+  | "plus"
+  | "pro"
+  | "team"
+  | "business"
+  | "enterprise"
+  | "edu"
+  | "unknown";
+
+interface CodexAccountSnapshot {
+  readonly type: "apiKey" | "chatgpt" | "unknown";
+  readonly planType: CodexPlanType | null;
+  readonly sparkEnabled: boolean;
+}
+
 export interface CodexAppServerSendTurnInput {
   readonly sessionId: ProviderSessionId;
   readonly input?: string;
   readonly attachments?: ReadonlyArray<{ type: "image"; url: string }>;
   readonly model?: string;
+  readonly serviceTier?: string | null;
   readonly effort?: string;
 }
 
@@ -103,6 +123,59 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "unknown thread",
   "does not exist",
 ];
+const CODEX_SPARK_MODEL = "gpt-5.3-codex-spark";
+const CODEX_SPARK_DISABLED_PLAN_TYPES = new Set<CodexPlanType>(["free", "go", "plus"]);
+
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+export function readCodexAccountSnapshot(response: unknown): CodexAccountSnapshot {
+  const record = asObject(response);
+  const account = asObject(record?.account) ?? record;
+  const accountType = asString(account?.type);
+
+  if (accountType === "apiKey") {
+    return {
+      type: "apiKey",
+      planType: null,
+      sparkEnabled: true,
+    };
+  }
+
+  if (accountType === "chatgpt") {
+    const planType = (account?.planType as CodexPlanType | null) ?? "unknown";
+    return {
+      type: "chatgpt",
+      planType,
+      sparkEnabled: !CODEX_SPARK_DISABLED_PLAN_TYPES.has(planType),
+    };
+  }
+
+  return {
+    type: "unknown",
+    planType: null,
+    sparkEnabled: true,
+  };
+}
+
+export function resolveCodexModelForAccount(
+  model: string | undefined,
+  account: CodexAccountSnapshot,
+): string | undefined {
+  if (model !== CODEX_SPARK_MODEL || account.sparkEnabled) {
+    return model;
+  }
+
+  return DEFAULT_MODEL;
+}
 
 /**
  * On Windows with `shell: true`, `child.kill()` only terminates the `cmd.exe`
@@ -208,6 +281,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       context = {
         session,
+        account: {
+          type: "unknown",
+          planType: null,
+          sparkEnabled: true,
+        },
         child,
         output,
         pending: new Map(),
@@ -233,10 +311,32 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       });
 
       this.writeMessage(context, { method: "initialized" });
+      try {
+        const modelListResponse = await this.sendRequest(context, "model/list", {});
+        console.log("codex model/list response", modelListResponse);
+      } catch (error) {
+        console.log("codex model/list failed", error);
+      }
+      try {
+        const accountReadResponse = await this.sendRequest(context, "account/read", {});
+        console.log("codex account/read response", accountReadResponse);
+        context.account = readCodexAccountSnapshot(accountReadResponse);
+        console.log("codex subscription status", {
+          type: context.account.type,
+          planType: context.account.planType,
+          sparkEnabled: context.account.sparkEnabled,
+        });
+      } catch (error) {
+        console.log("codex account/read failed", error);
+      }
 
-      const normalizedModel = normalizeCodexModelSlug(input.model);
+      const normalizedModel = resolveCodexModelForAccount(
+        normalizeCodexModelSlug(input.model),
+        context.account,
+      );
       const sessionOverrides = {
         model: normalizedModel ?? null,
+        ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
         cwd: input.cwd ?? null,
         approvalPolicy: input.approvalPolicy,
         sandbox: input.sandboxMode,
@@ -349,14 +449,21 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         { type: "text"; text: string; text_elements: [] } | { type: "image"; url: string }
       >;
       model?: string;
+      serviceTier?: string | null;
       effort?: string;
     } = {
       threadId: context.session.threadId,
       input: turnInput,
     };
-    const normalizedModel = normalizeCodexModelSlug(input.model);
+    const normalizedModel = resolveCodexModelForAccount(
+      normalizeCodexModelSlug(input.model),
+      context.account,
+    );
     if (normalizedModel) {
       turnStartParams.model = normalizedModel;
+    }
+    if (input.serviceTier !== undefined) {
+      turnStartParams.serviceTier = input.serviceTier;
     }
     if (input.effort) {
       turnStartParams.effort = input.effort;

@@ -520,6 +520,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
               sessionId: input.sessionId,
               ...(input.input !== undefined ? { input: input.input } : {}),
               ...(input.model !== undefined ? { model: input.model } : {}),
+              ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
               ...(input.effort !== undefined ? { effort: input.effort } : {}),
               ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
             };

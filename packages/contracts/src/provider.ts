@@ -20,6 +20,7 @@ import {
   ProviderKind,
   ProviderRequestKind,
   ProviderSandboxMode,
+  ProviderServiceTier,
   TurnCountRange,
 } from "./orchestration";
 
@@ -57,6 +58,7 @@ export const ProviderSessionStartInput = Schema.Struct({
   resumeCursor: Schema.optional(Schema.Unknown),
   codexBinaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
   codexHomePath: Schema.optional(TrimmedNonEmptyStringSchema),
+  serviceTier: Schema.optional(Schema.NullOr(ProviderServiceTier)),
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
 });
@@ -71,6 +73,7 @@ export const ProviderSendTurnInput = Schema.Struct({
     Schema.Array(ChatAttachment).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
   ),
   model: Schema.optional(TrimmedNonEmptyStringSchema),
+  serviceTier: Schema.optional(Schema.NullOr(ProviderServiceTier)),
   effort: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;

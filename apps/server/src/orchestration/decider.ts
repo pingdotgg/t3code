@@ -252,6 +252,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           messageId: command.message.messageId,
           ...(command.model !== undefined ? { model: command.model } : {}),
+          ...(command.serviceTier !== undefined ? { serviceTier: command.serviceTier } : {}),
           ...(command.effort !== undefined ? { effort: command.effort } : {}),
           assistantDeliveryMode: command.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
           approvalPolicy: command.approvalPolicy,

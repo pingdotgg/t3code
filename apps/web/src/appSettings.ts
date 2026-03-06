@@ -1,11 +1,31 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { Option, Schema } from "effect";
-import { MODEL_OPTIONS, normalizeModelSlug } from "@t3tools/contracts";
+import { MODEL_OPTIONS, normalizeModelSlug, type ProviderServiceTier } from "@t3tools/contracts";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
 const BUILT_IN_MODEL_SLUGS = new Set<string>(MODEL_OPTIONS.map((option) => option.slug));
+export const APP_SERVICE_TIER_OPTIONS = [
+  {
+    value: "auto",
+    label: "Automatic",
+    description: "Use Codex defaults without forcing a service tier.",
+  },
+  {
+    value: "fast",
+    label: "Fast",
+    description: "Request the fast service tier when the model supports it.",
+  },
+  {
+    value: "flex",
+    label: "Flex",
+    description: "Request the flex service tier when the model supports it.",
+  },
+] as const;
+export type AppServiceTier = (typeof APP_SERVICE_TIER_OPTIONS)[number]["value"];
+const AppServiceTierSchema = Schema.Literals(["auto", "fast", "flex"]);
+const FAST_TIER_MODEL_ID = "gpt-5.4";
 
 const AppSettingsSchema = Schema.Struct({
   codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
@@ -18,6 +38,7 @@ const AppSettingsSchema = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
+  codexServiceTier: AppServiceTierSchema.pipe(Schema.withConstructorDefault(() => Option.some("auto"))),
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
@@ -27,6 +48,17 @@ export interface AppModelOption {
   slug: string;
   name: string;
   isCustom: boolean;
+}
+
+export function resolveAppServiceTier(serviceTier: AppServiceTier): ProviderServiceTier | null {
+  return serviceTier === "auto" ? null : serviceTier;
+}
+
+export function shouldShowFastTierIcon(
+  model: string | null | undefined,
+  serviceTier: AppServiceTier,
+): boolean {
+  return resolveAppServiceTier(serviceTier) === "fast" && normalizeModelSlug(model) === FAST_TIER_MODEL_ID;
 }
 
 const DEFAULT_APP_SETTINGS = AppSettingsSchema.makeUnsafe({});

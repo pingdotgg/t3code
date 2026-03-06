@@ -6,6 +6,8 @@ import {
   classifyCodexStderrLine,
   isRecoverableThreadResumeError,
   normalizeCodexModelSlug,
+  readCodexAccountSnapshot,
+  resolveCodexModelForAccount,
 } from "./codexAppServerManager";
 
 const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
@@ -146,6 +148,70 @@ describe("isRecoverableThreadResumeError", () => {
   });
 });
 
+describe("readCodexAccountSnapshot", () => {
+  it("disables spark for chatgpt plus accounts", () => {
+    expect(
+      readCodexAccountSnapshot({
+        type: "chatgpt",
+        email: "plus@example.com",
+        planType: "plus",
+      }),
+    ).toEqual({
+      type: "chatgpt",
+      planType: "plus",
+      sparkEnabled: false,
+    });
+  });
+
+  it("keeps spark enabled for chatgpt pro accounts", () => {
+    expect(
+      readCodexAccountSnapshot({
+        type: "chatgpt",
+        email: "pro@example.com",
+        planType: "pro",
+      }),
+    ).toEqual({
+      type: "chatgpt",
+      planType: "pro",
+      sparkEnabled: true,
+    });
+  });
+
+  it("keeps spark enabled for api key accounts", () => {
+    expect(
+      readCodexAccountSnapshot({
+        type: "apiKey",
+      }),
+    ).toEqual({
+      type: "apiKey",
+      planType: null,
+      sparkEnabled: true,
+    });
+  });
+});
+
+describe("resolveCodexModelForAccount", () => {
+  it("falls back from spark to default for unsupported chatgpt plans", () => {
+    expect(
+      resolveCodexModelForAccount("gpt-5.3-codex-spark", {
+        type: "chatgpt",
+        planType: "plus",
+        sparkEnabled: false,
+      }),
+    ).toBe("gpt-5.3-codex");
+  });
+
+  it("keeps spark for supported plans", () => {
+    expect(
+      resolveCodexModelForAccount("gpt-5.3-codex-spark", {
+        type: "chatgpt",
+        planType: "pro",
+        sparkEnabled: true,
+      }),
+    ).toBe("gpt-5.3-codex-spark");
+  });
+});
+
 describe("startSession", () => {
   it("emits session/startFailed when resolving cwd throws before process launch", async () => {
     const manager = new CodexAppServerManager();
@@ -195,6 +261,7 @@ describe("sendTurn", () => {
         },
       ],
       model: "gpt-5.3",
+      serviceTier: "fast",
       effort: "high",
     });
 
@@ -220,6 +287,7 @@ describe("sendTurn", () => {
         },
       ],
       model: "gpt-5.3-codex",
+      serviceTier: "fast",
       effort: "high",
     });
     expect(updateSession).toHaveBeenCalledWith(context, {

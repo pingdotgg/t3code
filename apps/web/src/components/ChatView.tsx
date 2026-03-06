@@ -101,6 +101,7 @@ import {
   XIcon,
   CopyIcon,
   CheckIcon,
+  ZapIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
@@ -125,7 +126,14 @@ import { Toggle } from "./ui/toggle";
 import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
-import { getAppModelOptions, getSlashModelOptions, useAppSettings } from "../appSettings";
+import {
+  getAppModelOptions,
+  getSlashModelOptions,
+  resolveAppServiceTier,
+  shouldShowFastTierIcon,
+  type AppServiceTier,
+  useAppSettings,
+} from "../appSettings";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -295,6 +303,7 @@ type ComposerCommandItem =
       model: string;
       label: string;
       description: string;
+      showFastBadge: boolean;
     };
 
 type SendPhase = "idle" | "preparing-worktree" | "sending-turn";
@@ -404,7 +413,12 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           model
         </Badge>
       ) : null}
-      <span className="truncate">{props.item.label}</span>
+      <span className="flex min-w-0 items-center gap-1.5 truncate">
+        {props.item.type === "model" && props.item.showFastBadge ? (
+          <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
+        ) : null}
+        <span className="truncate">{props.item.label}</span>
+      </span>
       <span className="truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
     </CommandItem>
   );
@@ -636,6 +650,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeThread?.model ?? activeProject?.model ?? DEFAULT_MODEL,
   );
   const selectedModel = resolveModelSlug(composerDraft.model ?? baseThreadModel);
+  const selectedServiceTierSetting = settings.codexServiceTier;
+  const selectedServiceTier = resolveAppServiceTier(selectedServiceTierSetting);
   const selectedEffort = composerDraft.effort ?? DEFAULT_REASONING;
   const modelOptions = useMemo(
     () => getAppModelOptions(settings.customCodexModels, selectedModel),
@@ -927,8 +943,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       model: slug,
       label: name,
       description: slug,
+      showFastBadge: shouldShowFastTierIcon(slug, selectedServiceTierSetting),
     }));
-  }, [composerTrigger, slashModelOptions, workspaceEntries]);
+  }, [composerTrigger, selectedServiceTierSetting, slashModelOptions, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -2127,6 +2144,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           attachments: turnAttachments,
         },
         model: selectedModel || undefined,
+        serviceTier: selectedServiceTier,
         effort: selectedEffort || undefined,
         assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
         approvalPolicy,
@@ -2679,6 +2697,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 <ModelPicker
                   model={selectedModel}
                   options={modelOptions}
+                  serviceTierSetting={selectedServiceTierSetting}
                   onModelChange={onModelSelect}
                 />
 
@@ -3826,8 +3845,11 @@ const MessagesTimeline = memo(function MessagesTimeline({
 const ModelPicker = memo(function ModelPicker(props: {
   model: string;
   options: ReadonlyArray<{ slug: string; name: string }>;
+  serviceTierSetting: AppServiceTier;
   onModelChange: (model: string) => void;
 }) {
+  const selectedOption = props.options.find((option) => option.slug === props.model);
+
   return (
     <Select
       items={props.options.map((option) => ({ label: option.name, value: option.slug }))}
@@ -3835,12 +3857,22 @@ const ModelPicker = memo(function ModelPicker(props: {
       onValueChange={(value) => (value ? props.onModelChange(value) : undefined)}
     >
       <SelectTrigger size="sm" variant="ghost">
-        <SelectValue />
+        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          {shouldShowFastTierIcon(props.model, props.serviceTierSetting) ? (
+            <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
+          ) : null}
+          <span className="truncate">{selectedOption?.name ?? props.model}</span>
+        </span>
       </SelectTrigger>
       <SelectPopup alignItemWithTrigger={false}>
         {props.options.map(({ slug, name }) => (
           <SelectItem key={slug} value={slug}>
-            {name}
+            <span className="flex min-w-0 items-center gap-1.5">
+              {shouldShowFastTierIcon(slug, props.serviceTierSetting) ? (
+                <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
+              ) : null}
+              <span className="truncate">{name}</span>
+            </span>
           </SelectItem>
         ))}
       </SelectPopup>

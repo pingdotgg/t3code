@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { getAppModelOptions, getSlashModelOptions, normalizeCustomModelSlugs } from "./appSettings";
+import {
+  getAppModelOptions,
+  getSlashModelOptions,
+  normalizeCustomModelSlugs,
+  resolveAppServiceTier,
+  shouldShowFastTierIcon,
+} from "./appSettings";
 
 describe("normalizeCustomModelSlugs", () => {
   it("normalizes aliases, removes built-ins, and deduplicates values", () => {
@@ -52,5 +58,24 @@ describe("getSlashModelOptions", () => {
     const options = getSlashModelOptions(["openai/gpt-oss-120b"], "oss", "gpt-5.3-codex");
 
     expect(options.map((option) => option.slug)).toEqual(["openai/gpt-oss-120b"]);
+  });
+});
+
+describe("resolveAppServiceTier", () => {
+  it("maps automatic to no override", () => {
+    expect(resolveAppServiceTier("auto")).toBeNull();
+  });
+
+  it("preserves explicit service tier overrides", () => {
+    expect(resolveAppServiceTier("fast")).toBe("fast");
+    expect(resolveAppServiceTier("flex")).toBe("flex");
+  });
+});
+
+describe("shouldShowFastTierIcon", () => {
+  it("shows the fast-tier icon only for gpt-5.4 on fast tier", () => {
+    expect(shouldShowFastTierIcon("gpt-5.4", "fast")).toBe(true);
+    expect(shouldShowFastTierIcon("gpt-5.4", "auto")).toBe(false);
+    expect(shouldShowFastTierIcon("gpt-5.3-codex", "fast")).toBe(false);
   });
 });
