@@ -392,6 +392,23 @@ async function waitForElement<T extends Element>(
   return element;
 }
 
+async function waitForComposerEditor(): Promise<HTMLElement> {
+  return waitForElement(
+    () => document.querySelector<HTMLElement>('[contenteditable="true"]'),
+    "Unable to find composer editor.",
+  );
+}
+
+async function waitForInteractionModeButton(expectedLabel: "Chat" | "Plan"): Promise<HTMLButtonElement> {
+  return waitForElement(
+    () =>
+      Array.from(document.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === expectedLabel,
+      ) as HTMLButtonElement | null,
+    `Unable to find ${expectedLabel} interaction mode button.`,
+  );
+}
+
 async function waitForImagesToLoad(scope: ParentNode): Promise<void> {
   const images = Array.from(scope.querySelectorAll("img"));
   if (images.length === 0) {
@@ -778,6 +795,71 @@ describe("ChatView timeline estimator parity (full app)", () => {
             cwd: "/repo/project",
             editor: "vscode",
           });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("toggles plan mode with Shift+Tab only while the composer is focused", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-hotkey" as MessageId,
+        targetText: "hotkey target",
+      }),
+    });
+
+    try {
+      const initialModeButton = await waitForInteractionModeButton("Chat");
+      expect(initialModeButton.title).toContain("enter plan mode");
+
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Tab",
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await waitForLayout();
+
+      expect((await waitForInteractionModeButton("Chat")).title).toContain("enter plan mode");
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Tab",
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        async () => {
+          expect((await waitForInteractionModeButton("Plan")).title).toContain(
+            "return to normal chat mode",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Tab",
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        async () => {
+          expect((await waitForInteractionModeButton("Chat")).title).toContain("enter plan mode");
         },
         { timeout: 8_000, interval: 16 },
       );

@@ -1618,6 +1618,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       threadId,
     ],
   );
+  const toggleInteractionMode = useCallback(() => {
+    handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
+  }, [handleInteractionModeChange, interactionMode]);
 
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {
@@ -3215,6 +3218,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
   ) => {
+    if (key === "Tab" && event.shiftKey) {
+      toggleInteractionMode();
+      return true;
+    }
+
     const { trigger } = resolveActiveComposerTrigger();
     const menuIsActive = composerMenuOpenRef.current || trigger !== null;
 
@@ -3579,11 +3587,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
                     size="sm"
                     type="button"
-                    onClick={() =>
-                      void handleInteractionModeChange(
-                        interactionMode === "plan" ? "default" : "plan",
-                      )
-                    }
+                    onClick={toggleInteractionMode}
                     title={
                       interactionMode === "plan"
                         ? "Plan mode — click to return to normal chat mode"
