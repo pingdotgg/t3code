@@ -54,8 +54,6 @@ function getCustomModelsForProvider(
   provider: ProviderKind,
 ) {
   switch (provider) {
-    case "cursor":
-      return settings.customCursorModels;
     case "codex":
     default:
       return settings.customCodexModels;
@@ -67,8 +65,6 @@ function getDefaultCustomModelsForProvider(
   provider: ProviderKind,
 ) {
   switch (provider) {
-    case "cursor":
-      return defaults.customCursorModels;
     case "codex":
     default:
       return defaults.customCodexModels;
@@ -77,8 +73,6 @@ function getDefaultCustomModelsForProvider(
 
 function patchCustomModels(provider: ProviderKind, models: string[]) {
   switch (provider) {
-    case "cursor":
-      return { customCursorModels: models };
     case "codex":
     default:
       return { customCodexModels: models };
@@ -95,7 +89,6 @@ function SettingsRouteView() {
     Record<ProviderKind, string>
   >({
     codex: "",
-    cursor: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>

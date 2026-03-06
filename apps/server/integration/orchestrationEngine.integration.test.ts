@@ -32,7 +32,7 @@ const PROJECT_ID = asProjectId("project-1");
 const THREAD_ID = ThreadId.makeUnsafe("thread-1");
 const FIXTURE_TURN_ID = "fixture-turn";
 const APPROVAL_REQUEST_ID = asApprovalRequestId("req-approval-1");
-type IntegrationProvider = "codex" | "cursor";
+type IntegrationProvider = "codex";
 
 function nowIso() {
   return new Date().toISOString();

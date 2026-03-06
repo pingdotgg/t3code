@@ -50,13 +50,8 @@ const CodexProviderStartOptions = Schema.Struct({
   homePath: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 
-const CursorProviderStartOptions = Schema.Struct({
-  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
-});
-
 const ProviderStartOptions = Schema.Struct({
   codex: Schema.optional(CodexProviderStartOptions),
-  cursor: Schema.optional(CursorProviderStartOptions),
 });
 
 export const ProviderSessionStartInput = Schema.Struct({

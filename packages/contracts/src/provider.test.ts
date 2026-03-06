@@ -42,31 +42,6 @@ describe("ProviderSessionStartInput", () => {
       }),
     ).toThrow();
   });
-
-  it("accepts cursor provider payloads", () => {
-    const parsed = decodeProviderSessionStartInput({
-      threadId: "thread-1",
-      provider: "cursor",
-      cwd: "/tmp/workspace",
-      model: "composer-1.5",
-      modelOptions: {
-        cursor: {
-          thinking: true,
-        },
-      },
-      providerOptions: {
-        cursor: {
-          binaryPath: "/usr/local/bin/agent",
-        },
-      },
-      runtimeMode: "approval-required",
-    });
-    expect(parsed.provider).toBe("cursor");
-    expect(parsed.model).toBe("composer-1.5");
-    expect(parsed.modelOptions?.cursor?.thinking).toBe(true);
-    expect(parsed.providerOptions?.cursor?.binaryPath).toBe("/usr/local/bin/agent");
-    expect(parsed.runtimeMode).toBe("approval-required");
-  });
 });
 
 describe("ProviderSendTurnInput", () => {

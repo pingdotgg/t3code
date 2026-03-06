@@ -145,42 +145,24 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex" || providerName === "cursor") {
+  if (providerName === "codex") {
     return providerName;
   }
   return "codex";
 }
 
 const CODEX_MODEL_SLUGS = new Set<string>(getModelOptions("codex").map((option) => option.slug));
-const CURSOR_MODEL_SLUGS = new Set<string>(getModelOptions("cursor").map((option) => option.slug));
-const CURSOR_DISTINCT_MODEL_SLUGS = new Set(
-  [...CURSOR_MODEL_SLUGS].filter((slug) => !CODEX_MODEL_SLUGS.has(slug)),
-);
 
 function inferProviderForThreadModel(input: {
   readonly model: string;
   readonly sessionProviderName: string | null;
 }): ProviderKind {
-  if (
-    input.sessionProviderName === "codex" ||
-    input.sessionProviderName === "cursor"
-  ) {
+  if (input.sessionProviderName === "codex") {
     return input.sessionProviderName;
-  }
-  const normalizedCursor = normalizeModelSlug(input.model, "cursor");
-  if (normalizedCursor && CURSOR_DISTINCT_MODEL_SLUGS.has(normalizedCursor)) {
-    return "cursor";
   }
   const normalizedCodex = normalizeModelSlug(input.model, "codex");
   if (normalizedCodex && CODEX_MODEL_SLUGS.has(normalizedCodex)) {
     return "codex";
-  }
-  if (
-    input.model.trim().startsWith("composer-") ||
-    input.model.trim().startsWith("gemini-") ||
-    input.model.trim().endsWith("-thinking")
-  ) {
-    return "cursor";
   }
   return "codex";
 }

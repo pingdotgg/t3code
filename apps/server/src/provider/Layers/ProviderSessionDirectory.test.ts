@@ -174,26 +174,4 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
 
       fs.rmSync(tempDir, { recursive: true, force: true });
     }));
-
-  it("accepts cursor provider bindings", () =>
-    Effect.gen(function* () {
-      const directory = yield* ProviderSessionDirectory;
-      const threadId = ThreadId.makeUnsafe("thread-cursor");
-
-      yield* directory.upsert({
-        provider: "cursor",
-        threadId,
-      });
-
-      const provider = yield* directory.getProvider(threadId);
-      assert.equal(provider, "cursor");
-      const resolvedBinding = yield* directory.getBinding(threadId);
-      assertSome(resolvedBinding, {
-        threadId,
-        provider: "cursor",
-      });
-      if (Option.isSome(resolvedBinding)) {
-        assert.equal(resolvedBinding.value.threadId, threadId);
-      }
-    }));
 });

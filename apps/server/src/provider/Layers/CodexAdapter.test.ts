@@ -157,30 +157,6 @@ const validationLayer = it.layer(
 );
 
 validationLayer("CodexAdapterLive validation", (it) => {
-  it.effect("returns validation error for non-codex provider on startSession", () =>
-    Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
-      const result = yield* adapter
-        .startSession({
-          provider: "cursor",
-          threadId: asThreadId("thread-1"),
-          runtimeMode: "full-access",
-        })
-        .pipe(Effect.result);
-
-      assert.equal(result._tag, "Failure");
-      assert.deepStrictEqual(
-        result.failure,
-        new ProviderAdapterValidationError({
-          provider: "codex",
-          operation: "startSession",
-          issue: "Expected provider 'codex' but received 'cursor'.",
-        }),
-      );
-      assert.equal(validationManager.startSessionImpl.mock.calls.length, 0);
-    }),
-  );
-
   it.effect("maps codex model options before starting a session", () =>
     Effect.gen(function* () {
       validationManager.startSessionImpl.mockClear();

@@ -8,7 +8,6 @@ const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
-  cursor: new Set(getModelOptions("cursor").map((option) => option.slug)),
 };
 
 const AppSettingsSchema = Schema.Struct({
@@ -23,9 +22,6 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
   customCodexModels: Schema.Array(Schema.String).pipe(
-    Schema.withConstructorDefault(() => Option.some([])),
-  ),
-  customCursorModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
 });
@@ -75,7 +71,6 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
-    customCursorModels: normalizeCustomModelSlugs(settings.customCursorModels, "cursor"),
   };
 }
 
