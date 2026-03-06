@@ -122,7 +122,7 @@ import {
 } from "../keybindings";
 import ChatMarkdown from "./ChatMarkdown";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import {
   BotIcon,
   ChevronDownIcon,
@@ -134,7 +134,6 @@ import {
   DiffIcon,
   EllipsisIcon,
   FolderClosedIcon,
-  InfoIcon,
   LockIcon,
   LockOpenIcon,
   Undo2Icon,
@@ -891,8 +890,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     interactionMode === "plan" &&
     latestTurnSettled &&
     activeProposedPlan !== null;
+  const activePendingApproval = pendingApprovals[0] ?? null;
   const hasComposerHeader =
-    pendingUserInputs.length > 0 || (showPlanFollowUpPrompt && activeProposedPlan !== null);
+    activePendingApproval !== null ||
+    pendingUserInputs.length > 0 ||
+    (showPlanFollowUpPrompt && activeProposedPlan !== null);
   useEffect(() => {
     if (!activePendingProgress) {
       return;
@@ -3315,11 +3317,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {/* Error banner */}
       <ProviderHealthBanner status={activeProviderStatus} />
       <ThreadErrorBanner error={activeThread.error} />
-      <PendingApprovalsPanel
-        pendingApprovals={pendingApprovals}
-        respondingRequestIds={respondingRequestIds}
-        onRespondToApproval={onRespondToApproval}
-      />
       <PlanModePanel activePlan={activePlan} />
 
       {/* Messages */}
@@ -3379,7 +3376,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
             onDragLeave={onComposerDragLeave}
             onDrop={onComposerDrop}
           >
-            {pendingUserInputs.length > 0 ? (
+            {activePendingApproval ? (
+              <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                <ComposerPendingApprovalPanel
+                  approval={activePendingApproval}
+                  pendingCount={pendingApprovals.length}
+                  isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
+                  onRespondToApproval={onRespondToApproval}
+                />
+              </div>
+            ) : pendingUserInputs.length > 0 ? (
               <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
                 <ComposerPendingUserInputPanel
                   pendingUserInputs={pendingUserInputs}
@@ -3991,79 +3997,75 @@ const ProviderHealthBanner = memo(function ProviderHealthBanner({
   );
 });
 
-interface PendingApprovalsPanelProps {
-  pendingApprovals: PendingApproval[];
-  respondingRequestIds: ApprovalRequestId[];
+interface ComposerPendingApprovalPanelProps {
+  approval: PendingApproval;
+  pendingCount: number;
+  isResponding: boolean;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
   ) => Promise<void>;
 }
 
-const PendingApprovalsPanel = memo(function PendingApprovalsPanel({
-  pendingApprovals,
-  respondingRequestIds,
+const ComposerPendingApprovalPanel = memo(function ComposerPendingApprovalPanel({
+  approval,
+  pendingCount,
+  isResponding,
   onRespondToApproval,
-}: PendingApprovalsPanelProps) {
-  if (pendingApprovals.length === 0) return null;
-  return (
-    <div className="pt-3 mx-auto max-w-3xl space-y-2">
-      {pendingApprovals.map((approval) => {
-        const isResponding = respondingRequestIds.includes(approval.requestId);
+}: ComposerPendingApprovalPanelProps) {
+  const approvalSummary =
+    approval.requestKind === "command"
+      ? "Command approval requested"
+      : approval.requestKind === "file-read"
+        ? "File-read approval requested"
+        : "File-change approval requested";
 
-        return (
-          <Alert variant="warning" key={approval.requestId}>
-            <InfoIcon />
-            <AlertTitle className="text-xs">
-              {approval.requestKind === "command"
-                ? "Command approval requested"
-                : approval.requestKind === "file-read"
-                  ? "File-read approval requested"
-                  : "File-change approval requested"}
-            </AlertTitle>
-            <AlertDescription
-              className="truncate block font-mono text-[11px]"
-              title={approval.detail}
-            >
-              {approval.detail}
-            </AlertDescription>
-            <AlertAction className="col-start-2! -col-end-1! mt-1.5 sm:row-start-auto sm:row-end-auto">
-              <Button
-                size="xs"
-                variant="default"
-                disabled={isResponding}
-                onClick={() => void onRespondToApproval(approval.requestId, "accept")}
-              >
-                Approve once
-              </Button>
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={isResponding}
-                onClick={() => void onRespondToApproval(approval.requestId, "acceptForSession")}
-              >
-                Always allow this session
-              </Button>
-              <Button
-                size="xs"
-                variant="destructive-outline"
-                disabled={isResponding}
-                onClick={() => void onRespondToApproval(approval.requestId, "decline")}
-              >
-                Decline
-              </Button>
-              <Button
-                size="xs"
-                variant="ghost"
-                disabled={isResponding}
-                onClick={() => void onRespondToApproval(approval.requestId, "cancel")}
-              >
-                Cancel turn
-              </Button>
-            </AlertAction>
-          </Alert>
-        );
-      })}
+  return (
+    <div className="px-4 py-3.5 sm:px-5 sm:py-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="uppercase text-sm tracking-[0.2em]">PENDING APPROVAL</span>
+        <span className="text-sm font-medium">{approvalSummary}</span>
+        {pendingCount > 1 ? (
+          <span className="text-xs text-muted-foreground">1/{pendingCount}</span>
+        ) : null}
+      </div>
+      <p className="mt-2 block truncate font-mono text-[11px] text-muted-foreground" title={approval.detail}>
+        {approval.detail}
+      </p>
+      <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+        <Button
+          size="xs"
+          variant="default"
+          disabled={isResponding}
+          onClick={() => void onRespondToApproval(approval.requestId, "accept")}
+        >
+          Approve once
+        </Button>
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={isResponding}
+          onClick={() => void onRespondToApproval(approval.requestId, "acceptForSession")}
+        >
+          Always allow this session
+        </Button>
+        <Button
+          size="xs"
+          variant="destructive-outline"
+          disabled={isResponding}
+          onClick={() => void onRespondToApproval(approval.requestId, "decline")}
+        >
+          Decline
+        </Button>
+        <Button
+          size="xs"
+          variant="ghost"
+          disabled={isResponding}
+          onClick={() => void onRespondToApproval(approval.requestId, "cancel")}
+        >
+          Cancel turn
+        </Button>
+      </div>
     </div>
   );
 });
