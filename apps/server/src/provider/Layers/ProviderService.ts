@@ -276,8 +276,10 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         yield* upsertSessionBinding(session, threadId);
         yield* analytics.record("provider.session.started", {
           provider: session.provider,
-          approvalPolicy: input.approvalPolicy,
-          sandboxMode: input.sandboxMode,
+          runtimeMode: input.runtimeMode,
+          hasResumeCursor: session.resumeCursor !== undefined,
+          hasCwd: typeof input.cwd === "string" && input.cwd.trim().length > 0,
+          hasModel: typeof input.model === "string" && input.model.trim().length > 0,
         });
 
         return session;
@@ -321,7 +323,9 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         yield* analytics.record("provider.turn.sent", {
           provider: routed.adapter.provider,
           model: input.model,
-          effort: input.effort,
+          interactionMode: input.interactionMode,
+          attachmentCount: input.attachments.length,
+          hasInput: typeof input.input === "string" && input.input.trim().length > 0,
         });
         return turn;
       });
@@ -376,7 +380,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           allowRecovery: true,
         });
         yield* routed.adapter.respondToUserInput(routed.threadId, input.requestId, input.answers);
-        });
       });
 
     const stopSession: ProviderServiceShape["stopSession"] = (rawInput) =>
