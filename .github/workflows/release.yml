@@ -257,6 +257,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.preflight.outputs.tag }}
+          target_commitish: ${{ needs.preflight.outputs.ref }}
           name: T3 Code v${{ needs.preflight.outputs.version }}
           generate_release_notes: true
           make_latest: true
@@ -290,12 +291,13 @@ jobs:
         with:
           node-version-file: package.json
 
-      - name: Update version strings
+      - id: update_versions
+        name: Update version strings
         env:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           node --input-type=module -e '
-            import { readFileSync, writeFileSync } from "node:fs";
+            import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
             const files = [
               "apps/server/package.json",
@@ -317,15 +319,20 @@ jobs:
             if (!changed) {
               console.log("All package.json versions already match release version.");
             }
+
+            appendFileSync(process.env.GITHUB_OUTPUT, `changed=${changed}\n`);
           '
 
       - name: Format package.json files
+        if: steps.update_versions.outputs.changed == 'true'
         run: bunx oxfmt apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
 
       - name: Refresh lockfile
+        if: steps.update_versions.outputs.changed == 'true'
         run: bun install
 
       - name: Commit and push version bump
+        if: steps.update_versions.outputs.changed == 'true'
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
