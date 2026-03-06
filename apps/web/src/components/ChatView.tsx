@@ -196,7 +196,7 @@ import { Toggle } from "./ui/toggle";
 import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
-import { getAppModelOptions, useAppSettings } from "../appSettings";
+import { getAppModelOptions, resolveAppModelSelection, useAppSettings } from "../appSettings";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -762,30 +762,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedProvider,
     activeThread?.model ?? activeProject?.model ?? getDefaultModel(selectedProvider),
   );
+  const customModelsForSelectedProvider = settings.customCodexModels;
   const selectedModel = useMemo(() => {
     const draftModel = composerDraft.model;
     if (!draftModel) {
       return baseThreadModel;
     }
-
-    const providerOptions = getCustomModelOptionsByProvider(settings)[selectedProvider];
-    const directMatch = providerOptions.find((option) => option.slug === draftModel);
-    if (directMatch) {
-      return directMatch.slug as ModelSlug;
-    }
-
-    const normalizedDraftModel = normalizeModelSlug(draftModel, selectedProvider);
-    if (normalizedDraftModel) {
-      const normalizedMatch = providerOptions.find(
-        (option) => option.slug === normalizedDraftModel,
-      );
-      if (normalizedMatch) {
-        return normalizedMatch.slug as ModelSlug;
-      }
-    }
-
-    return resolveModelSlugForProvider(selectedProvider, draftModel);
-  }, [baseThreadModel, composerDraft.model, selectedProvider, settings]);
+    return resolveAppModelSelection(
+      selectedProvider,
+      customModelsForSelectedProvider,
+      draftModel,
+    ) as ModelSlug;
+  }, [baseThreadModel, composerDraft.model, customModelsForSelectedProvider, selectedProvider]);
   const reasoningOptions = getReasoningEffortOptions(selectedProvider);
   const supportsReasoningEffort = reasoningOptions.length > 0;
   const selectedEffort = composerDraft.effort ?? getDefaultReasoningEffort(selectedProvider);
@@ -2979,9 +2967,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
         scheduleComposerFocus();
         return;
       }
-      const resolvedModel = resolveModelSlugForProvider(provider, model);
       setComposerDraftProvider(activeThread.id, provider);
-      setComposerDraftModel(activeThread.id, resolvedModel);
+      setComposerDraftModel(
+        activeThread.id,
+        resolveAppModelSelection(provider, settings.customCodexModels, model),
+      );
       scheduleComposerFocus();
     },
     [
@@ -2990,6 +2980,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       scheduleComposerFocus,
       setComposerDraftModel,
       setComposerDraftProvider,
+      settings.customCodexModels,
     ],
   );
   const onEffortSelect = useCallback(

@@ -1,7 +1,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { Option, Schema } from "effect";
 import { type ProviderKind } from "@t3tools/contracts";
-import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
+import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
@@ -109,6 +109,38 @@ export function getAppModelOptions(
   }
 
   return options;
+}
+
+export function resolveAppModelSelection(
+  provider: ProviderKind,
+  customModels: readonly string[],
+  selectedModel: string | null | undefined,
+): string {
+  const options = getAppModelOptions(provider, customModels, selectedModel);
+  const trimmedSelectedModel = selectedModel?.trim();
+  if (trimmedSelectedModel) {
+    const direct = options.find((option) => option.slug === trimmedSelectedModel);
+    if (direct) {
+      return direct.slug;
+    }
+
+    const byName = options.find(
+      (option) => option.name.toLowerCase() === trimmedSelectedModel.toLowerCase(),
+    );
+    if (byName) {
+      return byName.slug;
+    }
+  }
+
+  const normalizedSelectedModel = normalizeModelSlug(selectedModel, provider);
+  if (!normalizedSelectedModel) {
+    return getDefaultModel(provider);
+  }
+
+  return (
+    options.find((option) => option.slug === normalizedSelectedModel)?.slug ??
+    getDefaultModel(provider)
+  );
 }
 
 export function getSlashModelOptions(

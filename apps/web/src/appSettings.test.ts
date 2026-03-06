@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { getAppModelOptions, getSlashModelOptions, normalizeCustomModelSlugs } from "./appSettings";
+import {
+  getAppModelOptions,
+  getSlashModelOptions,
+  normalizeCustomModelSlugs,
+  resolveAppModelSelection,
+} from "./appSettings";
 
 describe("normalizeCustomModelSlugs", () => {
   it("normalizes aliases, removes built-ins, and deduplicates values", () => {
@@ -39,6 +44,18 @@ describe("getAppModelOptions", () => {
       name: "custom/selected-model",
       isCustom: true,
     });
+  });
+});
+
+describe("resolveAppModelSelection", () => {
+  it("preserves saved custom model slugs instead of falling back to the default", () => {
+    expect(resolveAppModelSelection("codex", ["galapagos-alpha"], "galapagos-alpha")).toBe(
+      "galapagos-alpha",
+    );
+  });
+
+  it("falls back to the provider default when no model is selected", () => {
+    expect(resolveAppModelSelection("codex", [], "")).toBe("gpt-5.4");
   });
 });
 
