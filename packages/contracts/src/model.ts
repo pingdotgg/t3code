@@ -1,5 +1,4 @@
 import { Schema } from "effect";
-import type { ProviderKind } from "./orchestration";
 
 export const CURSOR_REASONING_OPTIONS = ["low", "normal", "high", "xhigh"] as const;
 export type CursorReasoningOption = (typeof CURSOR_REASONING_OPTIONS)[number];
@@ -58,11 +57,6 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
     { slug: "gpt-5.2", name: "GPT-5.2" },
   ],
-  claudeCode: [
-    { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
-    { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-    { slug: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
-  ],
   cursor: [
     { slug: "auto", name: "Auto" },
     { slug: "composer-1.5", name: "Composer 1.5" },
@@ -84,43 +78,29 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "sonnet-4.6-thinking", name: "Claude 4.6 Sonnet (Thinking)" },
     { slug: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
   ],
-} as const satisfies Record<ProviderKind, readonly ModelOption[]>;
+} as const satisfies Record<"codex" | "cursor", readonly ModelOption[]>;
 
-type BuiltInModelSlug = (typeof MODEL_OPTIONS_BY_PROVIDER)[ProviderKind][number]["slug"];
+type BuiltInModelSlug =
+  (typeof MODEL_OPTIONS_BY_PROVIDER)[keyof typeof MODEL_OPTIONS_BY_PROVIDER][number]["slug"];
 export type ModelSlug = BuiltInModelSlug | (string & {});
 export type CursorModelSlug = (typeof MODEL_OPTIONS_BY_PROVIDER)["cursor"][number]["slug"];
 
-export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, ModelSlug> = {
+export const DEFAULT_MODEL_BY_PROVIDER = {
   codex: "gpt-5.3-codex",
-  claudeCode: "claude-sonnet-4-6",
   cursor: "opus-4.6-thinking",
-};
+} as const satisfies Record<keyof typeof MODEL_OPTIONS_BY_PROVIDER, ModelSlug>;
 
 // Backward compatibility for existing Codex-only call sites.
 export const MODEL_OPTIONS = MODEL_OPTIONS_BY_PROVIDER.codex;
 export const DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER.codex;
 
-export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, ModelSlug>> = {
+export const MODEL_SLUG_ALIASES_BY_PROVIDER = {
   codex: {
     "5.4": "gpt-5.4",
     "5.3": "gpt-5.3-codex",
     "gpt-5.3": "gpt-5.3-codex",
     "5.3-spark": "gpt-5.3-codex-spark",
     "gpt-5.3-spark": "gpt-5.3-codex-spark",
-  },
-  claudeCode: {
-    opus: "claude-opus-4-6",
-    "opus-4.6": "claude-opus-4-6",
-    "claude-opus-4.6": "claude-opus-4-6",
-    "claude-opus-4-6-20251117": "claude-opus-4-6",
-    sonnet: "claude-sonnet-4-6",
-    "sonnet-4.6": "claude-sonnet-4-6",
-    "claude-sonnet-4.6": "claude-sonnet-4-6",
-    "claude-sonnet-4-6-20251117": "claude-sonnet-4-6",
-    haiku: "claude-haiku-4-5",
-    "haiku-4.5": "claude-haiku-4-5",
-    "claude-haiku-4.5": "claude-haiku-4-5",
-    "claude-haiku-4-5-20251001": "claude-haiku-4-5",
   },
   cursor: {
     composer: "composer-1.5",
@@ -136,16 +116,17 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "opus-4.6-thinking": "opus-4.6-thinking",
     "opus-4.5-thinking": "opus-4.5-thinking",
   },
-};
+} as const satisfies Record<keyof typeof MODEL_OPTIONS_BY_PROVIDER, Record<string, ModelSlug>>;
 
 export const REASONING_EFFORT_OPTIONS_BY_PROVIDER = {
   codex: CODEX_REASONING_EFFORT_OPTIONS,
-  claudeCode: [],
   cursor: [],
-} as const satisfies Record<ProviderKind, readonly CodexReasoningEffort[]>;
+} as const satisfies Record<
+  keyof typeof MODEL_OPTIONS_BY_PROVIDER,
+  readonly CodexReasoningEffort[]
+>;
 
 export const DEFAULT_REASONING_EFFORT_BY_PROVIDER = {
   codex: "high",
-  claudeCode: null,
   cursor: null,
-} as const satisfies Record<ProviderKind, CodexReasoningEffort | null>;
+} as const satisfies Record<keyof typeof MODEL_OPTIONS_BY_PROVIDER, CodexReasoningEffort | null>;

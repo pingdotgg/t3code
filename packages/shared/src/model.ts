@@ -2,11 +2,10 @@ import {
   CODEX_REASONING_EFFORT_OPTIONS,
   CURSOR_MODEL_FAMILY_OPTIONS,
   CURSOR_REASONING_OPTIONS,
+  DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
-  DEFAULT_REASONING_EFFORT_BY_PROVIDER,
   MODEL_OPTIONS_BY_PROVIDER,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
-  REASONING_EFFORT_OPTIONS_BY_PROVIDER,
   type CodexReasoningEffort,
   type CursorModelFamily,
   type CursorModelSlug,
@@ -14,6 +13,8 @@ import {
   type ModelSlug,
   type ProviderKind,
 } from "../../contracts/src";
+
+type CatalogProvider = keyof typeof MODEL_OPTIONS_BY_PROVIDER;
 
 type CursorModelCapability = {
   readonly supportsReasoning: boolean;
@@ -89,8 +90,11 @@ const CURSOR_MODEL_CAPABILITY_BY_FAMILY: Record<CursorModelFamily, CursorModelCa
   },
 };
 
-const MODEL_SLUG_SET_BY_PROVIDER: Record<ProviderKind, ReadonlySet<ModelSlug>> = {
-  claudeCode: new Set(MODEL_OPTIONS_BY_PROVIDER.claudeCode.map((option) => option.slug)),
+function hasModelCatalog(provider: ProviderKind): provider is CatalogProvider {
+  return Object.hasOwn(MODEL_OPTIONS_BY_PROVIDER, provider);
+}
+
+const MODEL_SLUG_SET_BY_PROVIDER: Record<CatalogProvider, ReadonlySet<ModelSlug>> = {
   codex: new Set(MODEL_OPTIONS_BY_PROVIDER.codex.map((option) => option.slug)),
   cursor: new Set(MODEL_OPTIONS_BY_PROVIDER.cursor.map((option) => option.slug)),
 };
@@ -107,7 +111,7 @@ export interface CursorModelSelection {
 }
 
 export function getModelOptions(provider: ProviderKind = "codex") {
-  return MODEL_OPTIONS_BY_PROVIDER[provider];
+  return hasModelCatalog(provider) ? MODEL_OPTIONS_BY_PROVIDER[provider] : [];
 }
 
 export function getCursorModelFamilyOptions() {
@@ -223,7 +227,7 @@ export function resolveCursorModelFromSelection(input: {
 }
 
 export function getDefaultModel(provider: ProviderKind = "codex"): ModelSlug {
-  return DEFAULT_MODEL_BY_PROVIDER[provider];
+  return hasModelCatalog(provider) ? DEFAULT_MODEL_BY_PROVIDER[provider] : DEFAULT_MODEL;
 }
 
 export function normalizeModelSlug(
@@ -239,7 +243,12 @@ export function normalizeModelSlug(
     return null;
   }
 
-  return MODEL_SLUG_ALIASES_BY_PROVIDER[provider][trimmed] ?? (trimmed as ModelSlug);
+  if (!hasModelCatalog(provider)) {
+    return trimmed as ModelSlug;
+  }
+
+  const aliases = MODEL_SLUG_ALIASES_BY_PROVIDER[provider] as Record<string, ModelSlug>;
+  return aliases[trimmed] ?? (trimmed as ModelSlug);
 }
 
 export function resolveModelSlug(
@@ -248,12 +257,14 @@ export function resolveModelSlug(
 ): ModelSlug {
   const normalized = normalizeModelSlug(model, provider);
   if (!normalized) {
-    return DEFAULT_MODEL_BY_PROVIDER[provider];
+    return getDefaultModel(provider);
   }
 
-  return MODEL_SLUG_SET_BY_PROVIDER[provider].has(normalized)
-    ? normalized
-    : DEFAULT_MODEL_BY_PROVIDER[provider];
+  if (!hasModelCatalog(provider)) {
+    return getDefaultModel(provider);
+  }
+
+  return MODEL_SLUG_SET_BY_PROVIDER[provider].has(normalized) ? normalized : getDefaultModel(provider);
 }
 
 export function resolveModelSlugForProvider(
@@ -266,7 +277,7 @@ export function resolveModelSlugForProvider(
 export function getReasoningEffortOptions(
   provider: ProviderKind = "codex",
 ): ReadonlyArray<CodexReasoningEffort> {
-  return REASONING_EFFORT_OPTIONS_BY_PROVIDER[provider];
+  return provider === "codex" ? CODEX_REASONING_EFFORT_OPTIONS : [];
 }
 
 export function getDefaultReasoningEffort(provider: "codex"): CodexReasoningEffort;
@@ -274,7 +285,7 @@ export function getDefaultReasoningEffort(provider: ProviderKind): CodexReasonin
 export function getDefaultReasoningEffort(
   provider: ProviderKind = "codex",
 ): CodexReasoningEffort | null {
-  return DEFAULT_REASONING_EFFORT_BY_PROVIDER[provider];
+  return provider === "codex" ? "high" : null;
 }
 
 export { CODEX_REASONING_EFFORT_OPTIONS };

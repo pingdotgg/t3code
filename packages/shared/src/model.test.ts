@@ -4,10 +4,8 @@ import {
   CURSOR_REASONING_OPTIONS,
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
-  DEFAULT_REASONING_EFFORT_BY_PROVIDER,
   MODEL_OPTIONS,
   MODEL_OPTIONS_BY_PROVIDER,
-  REASONING_EFFORT_OPTIONS_BY_PROVIDER,
 } from "../../contracts/src";
 
 import {
@@ -42,11 +40,6 @@ describe("normalizeModelSlug", () => {
   });
 
   it("uses provider-specific aliases", () => {
-    expect(normalizeModelSlug("sonnet", "claudeCode")).toBe("claude-sonnet-4-6");
-    expect(normalizeModelSlug("opus-4.6", "claudeCode")).toBe("claude-opus-4-6");
-    expect(normalizeModelSlug("claude-haiku-4-5-20251001", "claudeCode")).toBe(
-      "claude-haiku-4-5",
-    );
     expect(normalizeModelSlug("composer", "cursor")).toBe("composer-1.5");
     expect(normalizeModelSlug("gpt-5.3-codex-spark", "cursor")).toBe(
       "gpt-5.3-codex-spark-preview",
@@ -76,13 +69,6 @@ describe("resolveModelSlug", () => {
   });
 
   it("supports provider-aware resolution", () => {
-    expect(resolveModelSlugForProvider("claudeCode", undefined)).toBe(
-      DEFAULT_MODEL_BY_PROVIDER.claudeCode,
-    );
-    expect(resolveModelSlugForProvider("claudeCode", "sonnet")).toBe("claude-sonnet-4-6");
-    expect(resolveModelSlugForProvider("claudeCode", "gpt-5.3-codex")).toBe(
-      DEFAULT_MODEL_BY_PROVIDER.claudeCode,
-    );
     expect(resolveModelSlugForProvider("cursor", undefined)).toBe(
       DEFAULT_MODEL_BY_PROVIDER.cursor,
     );
@@ -98,7 +84,7 @@ describe("resolveModelSlug", () => {
   it("keeps codex defaults for backward compatibility", () => {
     expect(getDefaultModel()).toBe(DEFAULT_MODEL);
     expect(getModelOptions()).toEqual(MODEL_OPTIONS);
-    expect(getModelOptions("claudeCode")).toEqual(MODEL_OPTIONS_BY_PROVIDER.claudeCode);
+    expect(getModelOptions("claudeCode")).toEqual([]);
     expect(getModelOptions("cursor")).toEqual(MODEL_OPTIONS_BY_PROVIDER.cursor);
     expect(getCursorModelFamilyOptions()).toEqual(CURSOR_MODEL_FAMILY_OPTIONS);
   });
@@ -151,13 +137,7 @@ describe("cursor model selection", () => {
 
 describe("getReasoningEffortOptions", () => {
   it("returns codex reasoning options for codex", () => {
-    expect(getReasoningEffortOptions("codex")).toEqual(
-      REASONING_EFFORT_OPTIONS_BY_PROVIDER.codex,
-    );
-  });
-
-  it("returns no reasoning options for claudeCode", () => {
-    expect(getReasoningEffortOptions("claudeCode")).toEqual([]);
+    expect(getReasoningEffortOptions("codex")).toEqual(["xhigh", "high", "medium", "low"]);
   });
 
   it("returns no reasoning options for cursor", () => {
@@ -167,14 +147,7 @@ describe("getReasoningEffortOptions", () => {
 
 describe("getDefaultReasoningEffort", () => {
   it("returns provider-scoped defaults", () => {
-    expect(getDefaultReasoningEffort("codex")).toBe(
-      DEFAULT_REASONING_EFFORT_BY_PROVIDER.codex,
-    );
-    expect(getDefaultReasoningEffort("claudeCode")).toBe(
-      DEFAULT_REASONING_EFFORT_BY_PROVIDER.claudeCode,
-    );
-    expect(getDefaultReasoningEffort("cursor")).toBe(
-      DEFAULT_REASONING_EFFORT_BY_PROVIDER.cursor,
-    );
+    expect(getDefaultReasoningEffort("codex")).toBe("high");
+    expect(getDefaultReasoningEffort("cursor")).toBeNull();
   });
 });
