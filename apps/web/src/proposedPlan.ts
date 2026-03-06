@@ -16,6 +16,27 @@ export function buildPlanImplementationPrompt(planMarkdown: string): string {
   return `PLEASE IMPLEMENT THIS PLAN:\n${planMarkdown.trim()}`;
 }
 
+export function resolvePlanFollowUpSubmission(input: {
+  draftText: string;
+  planMarkdown: string;
+}): {
+  text: string;
+  interactionMode: "default" | "plan";
+} {
+  const trimmedDraftText = input.draftText.trim();
+  if (trimmedDraftText.length > 0) {
+    return {
+      text: trimmedDraftText,
+      interactionMode: "plan",
+    };
+  }
+
+  return {
+    text: buildPlanImplementationPrompt(input.planMarkdown),
+    interactionMode: "default",
+  };
+}
+
 export function buildPlanImplementationThreadTitle(planMarkdown: string): string {
   const title = proposedPlanTitle(planMarkdown);
   if (!title) {
