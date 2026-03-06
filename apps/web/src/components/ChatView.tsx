@@ -3293,6 +3293,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           activeThreadId={activeThread.id}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
+          openInCwd={activeThread.worktreePath ?? activeProject?.cwd ?? null}
           activeProjectScripts={activeProject?.scripts}
           preferredScriptId={
             activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
@@ -3855,6 +3856,7 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
@@ -3872,6 +3874,7 @@ const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   activeThreadTitle,
   activeProjectName,
+  openInCwd,
   activeProjectScripts,
   preferredScriptId,
   keybindings,
@@ -3915,7 +3918,7 @@ const ChatHeader = memo(function ChatHeader({
           <OpenInPicker
             keybindings={keybindings}
             availableEditors={availableEditors}
-            activeThreadId={activeThreadId}
+            openInCwd={openInCwd}
           />
         )}
         {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
@@ -5392,11 +5395,11 @@ const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
 const OpenInPicker = memo(function OpenInPicker({
   keybindings,
   availableEditors,
-  activeThreadId,
+  openInCwd,
 }: {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
-  activeThreadId: ThreadId | null;
+  openInCwd: string | null;
 }) {
   const [lastEditor, setLastEditor] = useState<EditorId>(() => {
     const stored = localStorage.getItem(LAST_EDITOR_KEY);
@@ -5442,26 +5445,17 @@ const OpenInPicker = memo(function OpenInPicker({
     : (options[0]?.value ?? null);
   const primaryOption = options.find(({ value }) => value === effectiveEditor) ?? null;
 
-  const activeThread = useStore((store) =>
-    activeThreadId ? store.threads.find((thread) => thread.id === activeThreadId) : undefined,
-  );
-  const activeProjectId = activeThread?.projectId ?? null;
-  const activeProject = useStore((store) =>
-    activeProjectId ? store.projects.find((project) => project.id === activeProjectId) : undefined,
-  );
-
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
       const api = readNativeApi();
-      if (!api || !activeProject) return;
+      if (!api || !openInCwd) return;
       const editor = editorId ?? effectiveEditor;
       if (!editor) return;
-      const cwd = activeThread?.worktreePath ?? activeProject.cwd;
-      void api.shell.openInEditor(cwd, editor);
+      void api.shell.openInEditor(openInCwd, editor);
       localStorage.setItem(LAST_EDITOR_KEY, editor);
       setLastEditor(editor);
     },
-    [activeProject, activeThread, effectiveEditor, setLastEditor],
+    [effectiveEditor, openInCwd, setLastEditor],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -5473,23 +5467,22 @@ const OpenInPicker = memo(function OpenInPicker({
     const handler = (e: globalThis.KeyboardEvent) => {
       const api = readNativeApi();
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
-      if (!api || !activeProject) return;
+      if (!api || !openInCwd) return;
       if (!effectiveEditor) return;
 
       e.preventDefault();
-      const cwd = activeThread?.worktreePath ?? activeProject.cwd;
-      void api.shell.openInEditor(cwd, effectiveEditor);
+      void api.shell.openInEditor(openInCwd, effectiveEditor);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeProject, activeThread, keybindings, effectiveEditor]);
+  }, [effectiveEditor, keybindings, openInCwd]);
 
   return (
     <Group aria-label="Subscription actions">
       <Button
         size="xs"
         variant="outline"
-        disabled={!effectiveEditor || !activeProject}
+        disabled={!effectiveEditor || !openInCwd}
         onClick={() => openInEditor(effectiveEditor)}
       >
         {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
