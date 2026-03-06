@@ -13,6 +13,8 @@ import {
   classifyCodexStderrLine,
   isRecoverableThreadResumeError,
   normalizeCodexModelSlug,
+  readCodexAccountSnapshot,
+  resolveCodexModelForAccount,
 } from "./codexAppServerManager";
 
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
@@ -21,13 +23,19 @@ function createSendTurnHarness() {
   const manager = new CodexAppServerManager();
   const context = {
     session: {
-      sessionId: "sess_1",
       provider: "codex",
       status: "ready",
       threadId: "thread_1",
+      runtimeMode: "full-access",
+      model: "gpt-5.3-codex",
       resumeCursor: { threadId: "thread_1" },
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
+    },
+    account: {
+      type: "unknown",
+      planType: null,
+      sparkEnabled: true,
     },
   };
 
@@ -58,10 +66,11 @@ function createThreadControlHarness() {
   const manager = new CodexAppServerManager();
   const context = {
     session: {
-      sessionId: "sess_1",
       provider: "codex",
       status: "ready",
       threadId: "thread_1",
+      runtimeMode: "full-access",
+      model: "gpt-5.3-codex",
       resumeCursor: { threadId: "thread_1" },
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
@@ -89,10 +98,11 @@ function createPendingUserInputHarness() {
   const manager = new CodexAppServerManager();
   const context = {
     session: {
-      sessionId: "sess_1",
       provider: "codex",
       status: "ready",
       threadId: "thread_1",
+      runtimeMode: "full-access",
+      model: "gpt-5.3-codex",
       resumeCursor: { threadId: "thread_1" },
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
@@ -195,6 +205,70 @@ describe("isRecoverableThreadResumeError", () => {
   });
 });
 
+describe("readCodexAccountSnapshot", () => {
+  it("disables spark for chatgpt plus accounts", () => {
+    expect(
+      readCodexAccountSnapshot({
+        type: "chatgpt",
+        email: "plus@example.com",
+        planType: "plus",
+      }),
+    ).toEqual({
+      type: "chatgpt",
+      planType: "plus",
+      sparkEnabled: false,
+    });
+  });
+
+  it("keeps spark enabled for chatgpt pro accounts", () => {
+    expect(
+      readCodexAccountSnapshot({
+        type: "chatgpt",
+        email: "pro@example.com",
+        planType: "pro",
+      }),
+    ).toEqual({
+      type: "chatgpt",
+      planType: "pro",
+      sparkEnabled: true,
+    });
+  });
+
+  it("keeps spark enabled for api key accounts", () => {
+    expect(
+      readCodexAccountSnapshot({
+        type: "apiKey",
+      }),
+    ).toEqual({
+      type: "apiKey",
+      planType: null,
+      sparkEnabled: true,
+    });
+  });
+});
+
+describe("resolveCodexModelForAccount", () => {
+  it("falls back from spark to default for unsupported chatgpt plans", () => {
+    expect(
+      resolveCodexModelForAccount("gpt-5.3-codex-spark", {
+        type: "chatgpt",
+        planType: "plus",
+        sparkEnabled: false,
+      }),
+    ).toBe("gpt-5.3-codex");
+  });
+
+  it("keeps spark for supported plans", () => {
+    expect(
+      resolveCodexModelForAccount("gpt-5.3-codex-spark", {
+        type: "chatgpt",
+        planType: "pro",
+        sparkEnabled: true,
+      }),
+    ).toBe("gpt-5.3-codex-spark");
+  });
+});
+
 describe("startSession", () => {
   it("enables Codex experimental api capabilities during initialize", () => {
     expect(buildCodexInitializeParams()).toEqual({
@@ -259,8 +333,8 @@ describe("sendTurn", () => {
         },
       ],
       model: "gpt-5.3",
-      effort: "high",
       serviceTier: "fast",
+      effort: "high",
     });
 
     expect(result).toEqual({
@@ -283,8 +357,8 @@ describe("sendTurn", () => {
         },
       ],
       model: "gpt-5.3-codex",
-      effort: "high",
       serviceTier: "fast",
+      effort: "high",
     });
     expect(updateSession).toHaveBeenCalledWith(context, {
       status: "running",
@@ -314,6 +388,7 @@ describe("sendTurn", () => {
           url: "data:image/png;base64,BBBB",
         },
       ],
+      model: "gpt-5.3-codex",
     });
   });
 
@@ -372,6 +447,37 @@ describe("sendTurn", () => {
           model: "gpt-5.3-codex",
           reasoning_effort: "medium",
           developer_instructions: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+        },
+      },
+    });
+  });
+
+  it("keeps the session model when interaction mode is set without an explicit model", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+    context.session.model = "gpt-5.2-codex";
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "Plan this with my current session model",
+      interactionMode: "plan",
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Plan this with my current session model",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.2-codex",
+      collaborationMode: {
+        mode: "plan",
+        settings: {
+          model: "gpt-5.2-codex",
+          reasoning_effort: "medium",
+          developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
         },
       },
     });

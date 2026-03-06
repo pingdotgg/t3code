@@ -58,6 +58,7 @@ interface CodexUserInputAnswer {
 
 interface CodexSessionContext {
   session: ProviderSession;
+  account: CodexAccountSnapshot;
   child: ChildProcessWithoutNullStreams;
   output: readline.Interface;
   pending: Map<PendingRequestKey, PendingRequest>;
@@ -89,13 +90,30 @@ interface JsonRpcNotification {
   params?: unknown;
 }
 
+type CodexPlanType =
+  | "free"
+  | "go"
+  | "plus"
+  | "pro"
+  | "team"
+  | "business"
+  | "enterprise"
+  | "edu"
+  | "unknown";
+
+interface CodexAccountSnapshot {
+  readonly type: "apiKey" | "chatgpt" | "unknown";
+  readonly planType: CodexPlanType | null;
+  readonly sparkEnabled: boolean;
+}
+
 export interface CodexAppServerSendTurnInput {
   readonly threadId: ThreadId;
   readonly input?: string;
   readonly attachments?: ReadonlyArray<{ type: "image"; url: string }>;
   readonly model?: string;
+  readonly serviceTier?: string | null;
   readonly effort?: string;
-  readonly serviceTier?: string;
   readonly interactionMode?: ProviderInteractionMode;
 }
 
@@ -135,6 +153,50 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "unknown thread",
   "does not exist",
 ];
+const CODEX_DEFAULT_MODEL = "gpt-5.3-codex";
+const CODEX_SPARK_MODEL = "gpt-5.3-codex-spark";
+const CODEX_SPARK_DISABLED_PLAN_TYPES = new Set<CodexPlanType>(["free", "go", "plus"]);
+
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+export function readCodexAccountSnapshot(response: unknown): CodexAccountSnapshot {
+  const record = asObject(response);
+  const account = asObject(record?.account) ?? record;
+  const accountType = asString(account?.type);
+
+  if (accountType === "apiKey") {
+    return {
+      type: "apiKey",
+      planType: null,
+      sparkEnabled: true,
+    };
+  }
+
+  if (accountType === "chatgpt") {
+    const planType = (account?.planType as CodexPlanType | null) ?? "unknown";
+    return {
+      type: "chatgpt",
+      planType,
+      sparkEnabled: !CODEX_SPARK_DISABLED_PLAN_TYPES.has(planType),
+    };
+  }
+
+  return {
+    type: "unknown",
+    planType: null,
+    sparkEnabled: true,
+  };
+}
+
 export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
@@ -285,6 +347,17 @@ function mapCodexRuntimeMode(runtimeMode: RuntimeMode): {
     approvalPolicy: "never",
     sandbox: "danger-full-access",
   };
+}
+
+export function resolveCodexModelForAccount(
+  model: string | undefined,
+  account: CodexAccountSnapshot,
+): string | undefined {
+  if (model !== CODEX_SPARK_MODEL || account.sparkEnabled) {
+    return model;
+  }
+
+  return CODEX_DEFAULT_MODEL;
 }
 
 /**
@@ -475,6 +548,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       context = {
         session,
+        account: {
+          type: "unknown",
+          planType: null,
+          sparkEnabled: true,
+        },
         child,
         output,
         pending: new Map(),
@@ -492,12 +570,33 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       await this.sendRequest(context, "initialize", buildCodexInitializeParams());
 
       this.writeMessage(context, { method: "initialized" });
+      try {
+        const modelListResponse = await this.sendRequest(context, "model/list", {});
+        console.log("codex model/list response", modelListResponse);
+      } catch (error) {
+        console.log("codex model/list failed", error);
+      }
+      try {
+        const accountReadResponse = await this.sendRequest(context, "account/read", {});
+        console.log("codex account/read response", accountReadResponse);
+        context.account = readCodexAccountSnapshot(accountReadResponse);
+        console.log("codex subscription status", {
+          type: context.account.type,
+          planType: context.account.planType,
+          sparkEnabled: context.account.sparkEnabled,
+        });
+      } catch (error) {
+        console.log("codex account/read failed", error);
+      }
 
-      const normalizedModel = normalizeCodexModelSlug(input.model);
+      const normalizedModel = resolveCodexModelForAccount(
+        normalizeCodexModelSlug(input.model),
+        context.account,
+      );
       const sessionOverrides = {
         model: normalizedModel ?? null,
-        cwd: input.cwd ?? null,
         ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
+        cwd: input.cwd ?? null,
         ...mapCodexRuntimeMode(input.runtimeMode ?? "full-access"),
       };
 
@@ -657,8 +756,8 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         { type: "text"; text: string; text_elements: [] } | { type: "image"; url: string }
       >;
       model?: string;
+      serviceTier?: string | null;
       effort?: string;
-      serviceTier?: string;
       collaborationMode?: {
         mode: "default" | "plan";
         settings: {
@@ -671,15 +770,18 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       threadId: providerThreadId,
       input: turnInput,
     };
-    const normalizedModel = normalizeCodexModelSlug(input.model ?? context.session.model);
+    const normalizedModel = resolveCodexModelForAccount(
+      normalizeCodexModelSlug(input.model ?? context.session.model),
+      context.account,
+    );
     if (normalizedModel) {
       turnStartParams.model = normalizedModel;
     }
+    if (input.serviceTier !== undefined) {
+      turnStartParams.serviceTier = input.serviceTier;
+    }
     if (input.effort) {
       turnStartParams.effort = input.effort;
-    }
-    if (input.serviceTier) {
-      turnStartParams.serviceTier = input.serviceTier;
     }
     const collaborationMode = buildCodexCollaborationMode({
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
