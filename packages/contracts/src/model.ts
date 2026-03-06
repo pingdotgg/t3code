@@ -1,40 +1,57 @@
-export const MODEL_OPTIONS = [
-  { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
-  { slug: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark" },
-  { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
-  { slug: "gpt-5.2", name: "GPT-5.2" },
-] as const;
+import { Schema } from "effect";
+import { ProviderKind } from "./orchestration";
 
-export type BuiltInModelSlug = (typeof MODEL_OPTIONS)[number]["slug"];
-export type ModelSlug = string;
+export const CODEX_REASONING_EFFORT_OPTIONS = ["xhigh", "high", "medium", "low"] as const;
+export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORT_OPTIONS)[number];
 
-export const DEFAULT_MODEL = "gpt-5.3-codex";
+export const CodexModelOptions = Schema.Struct({
+  reasoningEffort: Schema.optional(Schema.Literals(CODEX_REASONING_EFFORT_OPTIONS)),
+  fastMode: Schema.optional(Schema.Boolean),
+});
+export type CodexModelOptions = typeof CodexModelOptions.Type;
 
-export const MODEL_SLUG_ALIASES: Record<string, BuiltInModelSlug> = {
-  "5.3": "gpt-5.3-codex",
-  "gpt-5.3": "gpt-5.3-codex",
-  "5.3-spark": "gpt-5.3-codex-spark",
-  "gpt-5.3-spark": "gpt-5.3-codex-spark",
+export const ProviderModelOptions = Schema.Struct({
+  codex: Schema.optional(CodexModelOptions),
+});
+export type ProviderModelOptions = typeof ProviderModelOptions.Type;
+
+type ModelOption = {
+  readonly slug: string;
+  readonly name: string;
 };
 
-export function normalizeModelSlug(model: string | null | undefined): ModelSlug | null {
-  if (typeof model !== "string") {
-    return null;
-  }
+export const MODEL_OPTIONS_BY_PROVIDER = {
+  codex: [
+    { slug: "gpt-5.4", name: "GPT-5.4" },
+    { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
+    { slug: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark" },
+    { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
+    { slug: "gpt-5.2", name: "GPT-5.2" },
+  ],
+} as const satisfies Record<ProviderKind, readonly ModelOption[]>;
+export type ModelOptionsByProvider = typeof MODEL_OPTIONS_BY_PROVIDER;
 
-  const trimmed = model.trim();
-  if (!trimmed) {
-    return null;
-  }
+type BuiltInModelSlug = ModelOptionsByProvider[ProviderKind][number]["slug"];
+export type ModelSlug = BuiltInModelSlug | (string & {});
 
-  return MODEL_SLUG_ALIASES[trimmed] ?? trimmed;
-}
+export const DEFAULT_MODEL_BY_PROVIDER = {
+  codex: "gpt-5.4",
+} as const satisfies Record<ProviderKind, ModelSlug>;
 
-export function resolveModelSlug(model: string | null | undefined): ModelSlug {
-  const normalized = normalizeModelSlug(model);
-  return normalized ?? DEFAULT_MODEL;
-}
+export const MODEL_SLUG_ALIASES_BY_PROVIDER = {
+  codex: {
+    "5.4": "gpt-5.4",
+    "5.3": "gpt-5.3-codex",
+    "gpt-5.3": "gpt-5.3-codex",
+    "5.3-spark": "gpt-5.3-codex-spark",
+    "gpt-5.3-spark": "gpt-5.3-codex-spark",
+  },
+} as const satisfies Record<ProviderKind, Record<string, ModelSlug>>;
 
-export const REASONING_OPTIONS = ["xhigh", "high", "medium", "low"] as const;
-export type ReasoningEffort = (typeof REASONING_OPTIONS)[number];
-export const DEFAULT_REASONING: ReasoningEffort = "high";
+export const REASONING_EFFORT_OPTIONS_BY_PROVIDER = {
+  codex: CODEX_REASONING_EFFORT_OPTIONS,
+} as const satisfies Record<ProviderKind, readonly CodexReasoningEffort[]>;
+
+export const DEFAULT_REASONING_EFFORT_BY_PROVIDER = {
+  codex: "high",
+} as const satisfies Record<ProviderKind, CodexReasoningEffort | null>;

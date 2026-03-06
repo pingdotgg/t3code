@@ -1,5 +1,6 @@
 import {
   CheckpointRef,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   ProjectId,
   ThreadId,
   TurnId,
@@ -43,6 +44,8 @@ function makeSnapshot(input: {
         projectId: input.projectId,
         title: "Thread",
         model: "gpt-5-codex",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
         branch: null,
         worktreePath: input.worktreePath,
         latestTurn: {
@@ -58,6 +61,7 @@ function makeSnapshot(input: {
         deletedAt: null,
         messages: [],
         activities: [],
+        proposedPlans: [],
         checkpoints: [
           {
             turnId: TurnId.makeUnsafe("turn-1"),

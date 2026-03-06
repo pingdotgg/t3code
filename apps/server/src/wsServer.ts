@@ -12,6 +12,7 @@ import type { Duplex } from "node:stream";
 import Mime from "@effect/platform-node/Mime";
 import {
   CommandId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   type ClientOrchestrationCommand,
   type OrchestrationCommand,
   ORCHESTRATION_WS_CHANNELS,
@@ -70,6 +71,7 @@ import {
   resolveAttachmentPathById,
 } from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
+import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -146,6 +148,48 @@ function websocketRawToString(raw: unknown): string | null {
   return null;
 }
 
+function toPosixRelativePath(input: string): string {
+  return input.replaceAll("\\", "/");
+}
+
+function resolveWorkspaceWritePath(params: {
+  workspaceRoot: string;
+  relativePath: string;
+  path: Path.Path;
+}): Effect.Effect<{ absolutePath: string; relativePath: string }, RouteRequestError> {
+  const normalizedInputPath = params.relativePath.trim();
+  if (params.path.isAbsolute(normalizedInputPath)) {
+    return Effect.fail(
+      new RouteRequestError({
+        message: "Workspace file path must be relative to the project root.",
+      }),
+    );
+  }
+
+  const absolutePath = params.path.resolve(params.workspaceRoot, normalizedInputPath);
+  const relativeToRoot = toPosixRelativePath(
+    params.path.relative(params.workspaceRoot, absolutePath),
+  );
+  if (
+    relativeToRoot.length === 0 ||
+    relativeToRoot === "." ||
+    relativeToRoot.startsWith("../") ||
+    relativeToRoot === ".." ||
+    params.path.isAbsolute(relativeToRoot)
+  ) {
+    return Effect.fail(
+      new RouteRequestError({
+        message: "Workspace file path must stay within the project root.",
+      }),
+    );
+  }
+
+  return Effect.succeed({
+    absolutePath,
+    relativePath: relativeToRoot,
+  });
+}
+
 function stripRequestTag<T extends { _tag: string }>(body: T) {
   return Struct.omit(body, ["_tag"]);
 }
@@ -164,7 +208,8 @@ export type ServerRuntimeServices =
   | GitCore
   | TerminalManager
   | Keybindings
-  | Open;
+  | Open
+  | AnalyticsService;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -595,6 +640,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           projectId: bootstrapProjectId,
           title: "New thread",
           model: bootstrapProjectDefaultModel,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
           createdAt,
@@ -611,6 +658,33 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       ),
     );
   }
+
+  const runPromise = yield* Effect.map(Effect.services<never>(), Effect.runPromiseWith);
+  yield* Effect.addFinalizer(() =>
+    Effect.catch(liveProviderService.stopAll(), (cause) =>
+      Effect.logWarning("failed to stop provider service", { cause }),
+    ),
+  );
+
+  const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
+    (event) => void Effect.runPromise(onTerminalEvent(event)),
+  );
+  yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeTerminalEvents()));
+
+  yield* NodeHttpServer.make(() => httpServer, listenOptions).pipe(
+    Effect.mapError((cause) => new ServerLifecycleError({ operation: "httpServerListen", cause })),
+  );
+
+  yield* Effect.addFinalizer(() =>
+    Effect.all([
+      closeAllClients,
+      closeWebSocketServer.pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to close web socket server", { cause: error }),
+        ),
+      ),
+    ]),
+  );
 
   const routeRequest = Effect.fnUntraced(function* (request: WebSocketRequest) {
     switch (request.body._tag) {
@@ -654,6 +728,32 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
               message: `Failed to search workspace entries: ${String(cause)}`,
             }),
         });
+      }
+
+      case WS_METHODS.projectsWriteFile: {
+        const body = stripRequestTag(request.body);
+        const target = yield* resolveWorkspaceWritePath({
+          workspaceRoot: body.cwd,
+          relativePath: body.relativePath,
+          path,
+        });
+        yield* fileSystem.makeDirectory(path.dirname(target.absolutePath), { recursive: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RouteRequestError({
+                message: `Failed to prepare workspace path: ${String(cause)}`,
+              }),
+          ),
+        );
+        yield* fileSystem.writeFileString(target.absolutePath, body.contents).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RouteRequestError({
+                message: `Failed to write workspace file: ${String(cause)}`,
+              }),
+          ),
+        );
+        return { relativePath: target.relativePath };
       }
 
       case WS_METHODS.shellOpenInEditor: {
@@ -799,6 +899,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       id: request.value.id,
       result: result.value,
     });
+
     ws.send(response);
   });
 
@@ -827,7 +928,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   wss.on("connection", (ws) => {
-    void Effect.runPromise(Ref.update(clients, (clients) => clients.add(ws)));
+    void runPromise(Ref.update(clients, (clients) => clients.add(ws)));
 
     const segments = cwd.split(/[/\\]/).filter(Boolean);
     const projectName = segments[segments.length - 1] ?? "project";
@@ -846,7 +947,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ws.send(JSON.stringify(welcome));
 
     ws.on("message", (raw) => {
-      void Effect.runPromise(
+      void runPromise(
         handleMessage(ws, raw).pipe(
           Effect.catch((error) => Effect.logError("Error handling message", error)),
         ),
@@ -854,7 +955,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     });
 
     ws.on("close", () => {
-      void Effect.runPromise(
+      void runPromise(
         Ref.update(clients, (clients) => {
           clients.delete(ws);
           return clients;
@@ -863,7 +964,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     });
 
     ws.on("error", () => {
-      void Effect.runPromise(
+      void runPromise(
         Ref.update(clients, (clients) => {
           clients.delete(ws);
           return clients;
@@ -871,32 +972,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       );
     });
   });
-
-  yield* Effect.addFinalizer(() =>
-    Effect.catch(liveProviderService.stopAll(), (cause) =>
-      Effect.logWarning("failed to stop provider service", { cause }),
-    ),
-  );
-
-  const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
-    (event) => void Effect.runPromise(onTerminalEvent(event)),
-  );
-  yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeTerminalEvents()));
-
-  yield* NodeHttpServer.make(() => httpServer, listenOptions).pipe(
-    Effect.mapError((cause) => new ServerLifecycleError({ operation: "httpServerListen", cause })),
-  );
-
-  yield* Effect.addFinalizer(() =>
-    Effect.all([
-      closeAllClients,
-      closeWebSocketServer.pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("failed to close web socket server", { cause: error }),
-        ),
-      ),
-    ]),
-  );
 
   return httpServer;
 });

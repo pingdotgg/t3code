@@ -1,5 +1,6 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import { NonNegativeInt } from "@t3tools/contracts";
 import { Effect, Layer, Schema, Struct } from "effect";
 
 import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
@@ -15,6 +16,7 @@ import {
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   Struct.assign({
     payload: Schema.fromJsonString(Schema.Unknown),
+    sequence: Schema.NullOr(NonNegativeInt),
   }),
 );
 
@@ -29,7 +31,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   const upsertProjectionThreadActivityRow = SqlSchema.void({
-    Request: ProjectionThreadActivityDbRowSchema,
+    Request: ProjectionThreadActivity,
     execute: (row) =>
       sql`
             INSERT INTO projection_thread_activities (
@@ -40,6 +42,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
               kind,
               summary,
               payload_json,
+              sequence,
               created_at
             )
             VALUES (
@@ -49,7 +52,8 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
               ${row.tone},
               ${row.kind},
               ${row.summary},
-              ${row.payload},
+              ${JSON.stringify(row.payload)},
+              ${row.sequence ?? null},
               ${row.createdAt}
             )
             ON CONFLICT (activity_id)
@@ -60,6 +64,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
               kind = excluded.kind,
               summary = excluded.summary,
               payload_json = excluded.payload_json,
+              sequence = excluded.sequence,
               created_at = excluded.created_at
           `,
   });
@@ -77,10 +82,15 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
           kind,
           summary,
           payload_json AS "payload",
+          sequence,
           created_at AS "createdAt"
         FROM projection_thread_activities
         WHERE thread_id = ${threadId}
-        ORDER BY created_at ASC, activity_id ASC
+        ORDER BY
+          CASE WHEN sequence IS NULL THEN 0 ELSE 1 END ASC,
+          sequence ASC,
+          created_at ASC,
+          activity_id ASC
       `,
   });
 
@@ -111,8 +121,18 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
           "ProjectionThreadActivityRepository.listByThreadId:decodeRows",
         ),
       ),
-      Effect.map(
-        (rows) => rows as ReadonlyArray<Schema.Schema.Type<typeof ProjectionThreadActivity>>,
+      Effect.map((rows) =>
+        rows.map((row) => ({
+          activityId: row.activityId,
+          threadId: row.threadId,
+          turnId: row.turnId,
+          tone: row.tone,
+          kind: row.kind,
+          summary: row.summary,
+          payload: row.payload,
+          ...(row.sequence !== null ? { sequence: row.sequence } : {}),
+          createdAt: row.createdAt,
+        })),
       ),
     );
 

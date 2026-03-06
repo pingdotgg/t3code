@@ -2,8 +2,6 @@ import {
   CommandId,
   EventId,
   MessageId,
-  ProviderSessionId,
-  ProviderThreadId,
   ThreadId,
   TurnId,
   type OrchestrationEvent,
@@ -34,11 +32,7 @@ type ReactorInput =
     };
 
 function toTurnId(value: string | undefined): TurnId | null {
-  return value === undefined ? null : TurnId.makeUnsafe(value);
-}
-
-function toProviderThreadId(value: string | undefined): ProviderThreadId | null {
-  return value === undefined ? null : ProviderThreadId.makeUnsafe(value);
+  return value === undefined ? null : TurnId.makeUnsafe(String(value));
 }
 
 function sameId(left: string | null | undefined, right: string | null | undefined): boolean {
@@ -95,74 +89,55 @@ const make = Effect.gen(function* () {
     });
 
   const appendCaptureFailureActivity = (input: {
-    readonly sessionId: ProviderSessionId;
+    readonly threadId: ThreadId;
     readonly turnId: TurnId | null;
     readonly detail: string;
     readonly createdAt: string;
   }) =>
-    Effect.gen(function* () {
-      const readModel = yield* orchestrationEngine.getReadModel();
-      const thread = readModel.threads.find(
-        (entry) => entry.session?.providerSessionId === input.sessionId,
-      );
-      if (!thread) {
-        return;
-      }
-      yield* orchestrationEngine.dispatch({
-        type: "thread.activity.append",
-        commandId: serverCommandId("checkpoint-capture-failure"),
-        threadId: thread.id,
-        activity: {
-          id: EventId.makeUnsafe(crypto.randomUUID()),
-          tone: "error",
-          kind: "checkpoint.capture.failed",
-          summary: "Checkpoint capture failed",
-          payload: {
-            detail: input.detail,
-          },
-          turnId: input.turnId,
-          createdAt: input.createdAt,
+    orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: serverCommandId("checkpoint-capture-failure"),
+      threadId: input.threadId,
+      activity: {
+        id: EventId.makeUnsafe(crypto.randomUUID()),
+        tone: "error",
+        kind: "checkpoint.capture.failed",
+        summary: "Checkpoint capture failed",
+        payload: {
+          detail: input.detail,
         },
+        turnId: input.turnId,
         createdAt: input.createdAt,
-      });
+      },
+      createdAt: input.createdAt,
     });
 
   const resolveSessionRuntimeForThread = Effect.fnUntraced(function* (
     threadId: ThreadId,
   ): Effect.fn.Return<
-    Option.Option<{ readonly sessionId: ProviderSessionId; readonly cwd: string }>
+    Option.Option<{ readonly threadId: ThreadId; readonly cwd: string }>
   > {
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === threadId);
-    const projectedSessionId = thread?.session?.providerSessionId ?? null;
-    const projectedProviderThreadId = thread?.session?.providerThreadId ?? undefined;
 
     const sessions = yield* providerService.listSessions();
 
     const findSessionWithCwd = (
       session: (typeof sessions)[number] | undefined,
-    ): Option.Option<{ readonly sessionId: ProviderSessionId; readonly cwd: string }> => {
+    ): Option.Option<{ readonly threadId: ThreadId; readonly cwd: string }> => {
       if (!session?.cwd) {
         return Option.none();
       }
-      return Option.some({ sessionId: session.sessionId, cwd: session.cwd });
+      return Option.some({ threadId: session.threadId, cwd: session.cwd });
     };
 
-    if (projectedSessionId !== null) {
-      const projectedSession = sessions.find((session) => session.sessionId === projectedSessionId);
+    if (thread) {
+      const projectedSession = sessions.find(
+        (session) => session.threadId === thread.id,
+      );
       const fromProjected = findSessionWithCwd(projectedSession);
       if (Option.isSome(fromProjected)) {
         return fromProjected;
-      }
-    }
-
-    if (projectedProviderThreadId) {
-      const matchedSession = sessions.find(
-        (session) => session.threadId === projectedProviderThreadId,
-      );
-      const fromProviderThread = findSessionWithCwd(matchedSession);
-      if (Option.isSome(fromProviderThread)) {
-        return fromProviderThread;
       }
     }
 
@@ -178,20 +153,8 @@ const make = Effect.gen(function* () {
     }
 
     const readModel = yield* orchestrationEngine.getReadModel();
-    const thread = readModel.threads.find(
-      (entry) => entry.session?.providerSessionId === event.sessionId,
-    );
+    const thread = readModel.threads.find((entry) => entry.id === event.threadId);
     if (!thread) {
-      return;
-    }
-
-    const projectedProviderThreadId = thread.session?.providerThreadId ?? null;
-    const eventProviderThreadId = toProviderThreadId(event.threadId);
-    if (
-      projectedProviderThreadId !== null &&
-      eventProviderThreadId !== null &&
-      !sameId(projectedProviderThreadId, eventProviderThreadId)
-    ) {
       return;
     }
 
@@ -266,7 +229,7 @@ const make = Effect.gen(function* () {
         ),
         Effect.tapError((error) =>
           appendCaptureFailureActivity({
-            sessionId: event.sessionId,
+            threadId: thread.id,
             turnId,
             detail: `Checkpoint captured, but turn diff summary is unavailable: ${error.message}`,
             createdAt: event.createdAt,
@@ -296,7 +259,7 @@ const make = Effect.gen(function* () {
       turnId,
       completedAt: now,
       checkpointRef: targetCheckpointRef,
-      status: checkpointStatusFromRuntime(event.status),
+      status: checkpointStatusFromRuntime(event.payload.state),
       files,
       assistantMessageId,
       checkpointTurnCount: nextTurnCount,
@@ -314,7 +277,7 @@ const make = Effect.gen(function* () {
         summary: "Checkpoint captured",
         payload: {
           turnCount: nextTurnCount,
-          ...(event.status !== undefined ? { status: event.status } : {}),
+          status: event.payload.state,
         },
         turnId,
         createdAt: now,
@@ -333,7 +296,7 @@ const make = Effect.gen(function* () {
 
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find(
-      (entry) => entry.session?.providerSessionId === event.sessionId,
+      (entry) => entry.id === event.threadId,
     );
     if (!thread) {
       return;
@@ -513,7 +476,7 @@ const make = Effect.gen(function* () {
     const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
     if (rolledBackTurns > 0) {
       yield* providerService.rollbackConversation({
-        sessionId: sessionRuntime.value.sessionId,
+        threadId: sessionRuntime.value.threadId,
         numTurns: rolledBackTurns,
       });
     }
@@ -581,7 +544,7 @@ const make = Effect.gen(function* () {
       yield* captureCheckpointFromTurnCompletion(event).pipe(
         Effect.catch((error) =>
           appendCaptureFailureActivity({
-            sessionId: event.sessionId,
+            threadId: event.threadId,
             turnId,
             detail: error.message,
             createdAt: new Date().toISOString(),
@@ -589,89 +552,6 @@ const make = Effect.gen(function* () {
         ),
       );
       return;
-    }
-
-    if (event.type === "checkpoint.captured") {
-      const turnId = toTurnId(event.turnId);
-      if (!turnId) {
-        return;
-      }
-
-      const readModel = yield* orchestrationEngine.getReadModel();
-      const thread = readModel.threads.find(
-        (entry) => entry.session?.providerSessionId === event.sessionId,
-      );
-      if (!thread) {
-        return;
-      }
-
-      if (
-        thread.checkpoints.some(
-          (checkpoint) =>
-            checkpoint.turnId === turnId || checkpoint.checkpointTurnCount === event.turnCount,
-        )
-      ) {
-        return;
-      }
-
-      const sessionRuntime = yield* resolveSessionRuntimeForThread(thread.id);
-      if (Option.isNone(sessionRuntime)) {
-        return;
-      }
-
-      const fromTurnCount = Math.max(0, event.turnCount - 1);
-      const fromCheckpointRef = checkpointRefForThreadTurn(thread.id, fromTurnCount);
-      const targetCheckpointRef = checkpointRefForThreadTurn(thread.id, event.turnCount);
-
-      const targetExists = yield* checkpointStore.hasCheckpointRef({
-        cwd: sessionRuntime.value.cwd,
-        checkpointRef: targetCheckpointRef,
-      });
-      if (!targetExists) {
-        yield* checkpointStore.captureCheckpoint({
-          cwd: sessionRuntime.value.cwd,
-          checkpointRef: targetCheckpointRef,
-        });
-      }
-
-      const files = yield* checkpointStore
-        .diffCheckpoints({
-          cwd: sessionRuntime.value.cwd,
-          fromCheckpointRef,
-          toCheckpointRef: targetCheckpointRef,
-          fallbackFromToHead: false,
-        })
-        .pipe(
-          Effect.map((diff) =>
-            parseTurnDiffFilesFromUnifiedDiff(diff).map((file) => ({
-              path: file.path,
-              kind: "modified" as const,
-              additions: file.additions,
-              deletions: file.deletions,
-            })),
-          ),
-          Effect.catch(() => Effect.succeed([])),
-        );
-
-      const assistantMessageId =
-        thread.messages
-          .toReversed()
-          .find((entry) => entry.role === "assistant" && entry.turnId === turnId)?.id ??
-        MessageId.makeUnsafe(`assistant:${turnId}`);
-
-      yield* orchestrationEngine.dispatch({
-        type: "thread.turn.diff.complete",
-        commandId: serverCommandId("checkpoint-runtime-captured-diff-complete"),
-        threadId: thread.id,
-        turnId,
-        completedAt: event.createdAt,
-        checkpointRef: targetCheckpointRef,
-        status: checkpointStatusFromRuntime(event.status),
-        files,
-        assistantMessageId,
-        checkpointTurnCount: event.turnCount,
-        createdAt: event.createdAt,
-      });
     }
   });
 
@@ -717,11 +597,7 @@ const make = Effect.gen(function* () {
 
     yield* Effect.forkScoped(
       Stream.runForEach(providerService.streamEvents, (event) => {
-        if (
-          event.type !== "turn.started" &&
-          event.type !== "turn.completed" &&
-          event.type !== "checkpoint.captured"
-        ) {
+        if (event.type !== "turn.started" && event.type !== "turn.completed") {
           return Effect.void;
         }
         return Queue.offer(queue, { source: "runtime", event }).pipe(Effect.asVoid);

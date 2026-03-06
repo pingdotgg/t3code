@@ -9,7 +9,6 @@
 import { Config, Data, Effect, FileSystem, Layer, Option, Path, Schema, ServiceMap } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import { NetService } from "@t3tools/shared/Net";
-
 import {
   DEFAULT_PORT,
   resolveStaticDir,
@@ -21,8 +20,12 @@ import { fixPath, resolveStateDir } from "./os-jank";
 import { Open } from "./open";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
+import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { ProviderHealthLive } from "./provider/Layers/ProviderHealth";
 import { Server } from "./wsServer";
+import { ServerLoggerLive } from "./serverLogger";
+import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
+import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 
 export class StartupError extends Data.TaggedError("StartupError")<{
   readonly message: string;
@@ -119,6 +122,9 @@ const CliEnvConfig = Config.all({
   ),
 });
 
+const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
+  Option.getOrElse(Option.filter(flag, Boolean), () => envValue);
+
 const ServerConfigLive = (input: CliInput) =>
   Layer.effect(
     ServerConfig,
@@ -150,25 +156,16 @@ const ServerConfigLive = (input: CliInput) =>
         Option.getOrUndefined(input.stateDir) ?? env.stateDir,
       );
       const devUrl = Option.getOrElse(input.devUrl, () => env.devUrl);
-      const noBrowser = Option.match(input.noBrowser, {
-        // effect/cli boolean flags parse to `false` when absent; in that case
-        // we still want env/mode fallbacks to apply.
-        onSome: (value) => (value ? true : (env.noBrowser ?? mode === "desktop")),
-        onNone: () => env.noBrowser ?? mode === "desktop",
-      });
+      const noBrowser = resolveBooleanFlag(input.noBrowser, env.noBrowser ?? mode === "desktop");
       const authToken = Option.getOrUndefined(input.authToken) ?? env.authToken;
-      const autoBootstrapProjectFromCwd = Option.match(input.autoBootstrapProjectFromCwd, {
-        // effect/cli boolean flags parse to `false` when absent; in that case
-        // we still want env/mode fallbacks to apply.
-        onSome: (value) => (value ? true : (env.autoBootstrapProjectFromCwd ?? mode === "web")),
-        onNone: () => env.autoBootstrapProjectFromCwd ?? mode === "web",
-      });
-      const logWebSocketEvents = Option.match(input.logWebSocketEvents, {
-        // effect/cli boolean flags parse to `false` when absent; in that case
-        // we still want env/dev fallbacks to apply.
-        onSome: (value) => (value ? true : (env.logWebSocketEvents ?? Boolean(devUrl))),
-        onNone: () => env.logWebSocketEvents ?? Boolean(devUrl),
-      });
+      const autoBootstrapProjectFromCwd = resolveBooleanFlag(
+        input.autoBootstrapProjectFromCwd,
+        env.autoBootstrapProjectFromCwd ?? mode === "web",
+      );
+      const logWebSocketEvents = resolveBooleanFlag(
+        input.logWebSocketEvents,
+        env.logWebSocketEvents ?? Boolean(devUrl),
+      );
       const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
       const { join } = yield* Path.Path;
       const keybindingsConfigPath = join(stateDir, "keybindings.json");
@@ -177,7 +174,7 @@ const ServerConfigLive = (input: CliInput) =>
         env.host ??
         (mode === "desktop" ? "127.0.0.1" : undefined);
 
-      return {
+      const config: ServerConfigShape = {
         mode,
         port,
         cwd: cliConfig.cwd,
@@ -191,6 +188,8 @@ const ServerConfigLive = (input: CliInput) =>
         autoBootstrapProjectFromCwd,
         logWebSocketEvents,
       } satisfies ServerConfigShape;
+
+      return config;
     }),
   );
 
@@ -200,6 +199,8 @@ const LayerLive = (input: CliInput) =>
     Layer.provideMerge(makeServerProviderLayer()),
     Layer.provideMerge(ProviderHealthLive),
     Layer.provideMerge(SqlitePersistence.layerConfig),
+    Layer.provideMerge(ServerLoggerLive),
+    Layer.provideMerge(AnalyticsServiceLayerLive),
     Layer.provideMerge(ServerConfigLive(input)),
   );
 
@@ -208,6 +209,31 @@ const isWildcardHost = (host: string | undefined): boolean =>
 
 const formatHostForUrl = (host: string): string =>
   host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+
+export const recordStartupHeartbeat = Effect.gen(function* () {
+  const analytics = yield* AnalyticsService;
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+
+  const { threadCount, projectCount } = yield* projectionSnapshotQuery.getSnapshot().pipe(
+    Effect.map((snapshot) => ({
+      threadCount: snapshot.threads.length,
+      projectCount: snapshot.projects.length,
+    })),
+    Effect.catch((cause) =>
+      Effect.logWarning("failed to gather startup snapshot for telemetry", { cause }).pipe(
+        Effect.as({
+          threadCount: 0,
+          projectCount: 0,
+        }),
+      ),
+    ),
+  );
+
+  yield* analytics.record("server.boot.heartbeat", {
+    threadCount,
+    projectCount,
+  });
+});
 
 const makeServerProgram = (input: CliInput) =>
   Effect.gen(function* () {
@@ -228,20 +254,18 @@ const makeServerProgram = (input: CliInput) =>
     }
 
     yield* start;
+    yield* Effect.forkChild(recordStartupHeartbeat);
 
     const localUrl = `http://localhost:${config.port}`;
     const bindUrl =
       config.host && !isWildcardHost(config.host)
         ? `http://${formatHostForUrl(config.host)}:${config.port}`
         : localUrl;
+    const { authToken, devUrl, ...safeConfig } = config;
     yield* Effect.logInfo("T3 Code running", {
-      url: bindUrl,
-      localUrl,
-      bindHost: config.host ?? "default",
-      cwd: config.cwd,
-      mode: config.mode,
-      stateDir: config.stateDir,
-      authEnabled: Boolean(config.authToken),
+      ...safeConfig,
+      devUrl: devUrl?.toString(),
+      authEnabled: Boolean(authToken),
     });
 
     if (!config.noBrowser) {

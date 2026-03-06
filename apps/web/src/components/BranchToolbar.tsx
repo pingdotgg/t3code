@@ -52,8 +52,7 @@ export default function BranchToolbar({
       const api = readNativeApi();
       // If the effective cwd is about to change, stop the running session so the
       // next message creates a new one with the correct cwd.
-      const sessionId = serverThread?.session?.sessionId;
-      if (sessionId && worktreePath !== activeWorktreePath && api) {
+      if (serverThread?.session && worktreePath !== activeWorktreePath && api) {
         void api.orchestration
           .dispatchCommand({
             type: "thread.session.stop",
@@ -89,7 +88,7 @@ export default function BranchToolbar({
     },
     [
       activeThreadId,
-      serverThread?.session?.sessionId,
+      serverThread?.session,
       activeWorktreePath,
       hasServerThread,
       setThreadBranchAction,

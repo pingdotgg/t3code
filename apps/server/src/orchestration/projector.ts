@@ -16,7 +16,10 @@ import {
   ThreadActivityAppendedPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
+  ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
+  ThreadProposedPlanUpsertedPayload,
+  ThreadRuntimeModeSetPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
@@ -124,6 +127,32 @@ function retainThreadActivitiesAfterRevert(
   );
 }
 
+function retainThreadProposedPlansAfterRevert(
+  proposedPlans: ReadonlyArray<OrchestrationThread["proposedPlans"][number]>,
+  retainedTurnIds: ReadonlySet<string>,
+): ReadonlyArray<OrchestrationThread["proposedPlans"][number]> {
+  return proposedPlans.filter(
+    (proposedPlan) => proposedPlan.turnId === null || retainedTurnIds.has(proposedPlan.turnId),
+  );
+}
+
+function compareThreadActivities(
+  left: OrchestrationThread["activities"][number],
+  right: OrchestrationThread["activities"][number],
+): number {
+  if (left.sequence !== undefined && right.sequence !== undefined) {
+    if (left.sequence !== right.sequence) {
+      return left.sequence - right.sequence;
+    }
+  } else if (left.sequence !== undefined) {
+    return 1;
+  } else if (right.sequence !== undefined) {
+    return -1;
+  }
+
+  return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
+}
+
 export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
@@ -224,6 +253,8 @@ export function projectEvent(
             projectId: payload.projectId,
             title: payload.title,
             model: payload.model,
+            runtimeMode: payload.runtimeMode,
+            interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
             latestTurn: null,
@@ -267,6 +298,38 @@ export function projectEvent(
             ...(payload.model !== undefined ? { model: payload.model } : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.runtime-mode-set":
+      return decodeForEvent(
+        ThreadRuntimeModeSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            runtimeMode: payload.runtimeMode,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.interaction-mode-set":
+      return decodeForEvent(
+        ThreadInteractionModeSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            interactionMode: payload.interactionMode,
             updatedAt: payload.updatedAt,
           }),
         })),
@@ -382,6 +445,38 @@ export function projectEvent(
         };
       });
 
+    case "thread.proposed-plan-upserted":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadProposedPlanUpsertedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        if (!thread) {
+          return nextBase;
+        }
+
+        const proposedPlans = [
+          ...thread.proposedPlans.filter((entry) => entry.id !== payload.proposedPlan.id),
+          payload.proposedPlan,
+        ]
+          .toSorted(
+            (left, right) =>
+              left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+          )
+          .slice(-200);
+
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            proposedPlans,
+            updatedAt: event.occurredAt,
+          }),
+        };
+      });
+
     case "thread.turn-diff-completed":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
@@ -458,6 +553,10 @@ export function projectEvent(
             retainedTurnIds,
             payload.turnCount,
           ).slice(-MAX_THREAD_MESSAGES);
+          const proposedPlans = retainThreadProposedPlansAfterRevert(
+            thread.proposedPlans,
+            retainedTurnIds,
+          ).slice(-200);
           const activities = retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds);
 
           const latestCheckpoint = checkpoints.at(-1) ?? null;
@@ -478,6 +577,7 @@ export function projectEvent(
             threads: updateThread(nextBase.threads, payload.threadId, {
               checkpoints,
               messages,
+              proposedPlans,
               activities,
               latestTurn,
               updatedAt: event.occurredAt,
@@ -503,7 +603,7 @@ export function projectEvent(
             ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
             payload.activity,
           ]
-            .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
+            .toSorted(compareThreadActivities)
             .slice(-500);
 
           return {

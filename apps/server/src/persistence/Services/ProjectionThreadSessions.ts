@@ -7,12 +7,9 @@
  * @module ProjectionThreadSessionRepository
  */
 import {
+  RuntimeMode,
   IsoDateTime,
   OrchestrationSessionStatus,
-  ProviderApprovalPolicy,
-  ProviderSandboxMode,
-  ProviderSessionId,
-  ProviderThreadId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -25,10 +22,7 @@ export const ProjectionThreadSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
   providerName: Schema.NullOr(Schema.String),
-  providerSessionId: Schema.NullOr(ProviderSessionId),
-  providerThreadId: Schema.NullOr(ProviderThreadId),
-  approvalPolicy: ProviderApprovalPolicy,
-  sandboxMode: ProviderSandboxMode,
+  runtimeMode: RuntimeMode,
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(Schema.String),
   updatedAt: IsoDateTime,

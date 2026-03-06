@@ -3,8 +3,6 @@ import {
   EventId,
   MessageId,
   ProjectId,
-  ProviderSessionId,
-  ProviderThreadId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -22,9 +20,6 @@ const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.makeUnsafe(value);
-const asProviderSessionId = (value: string): ProviderSessionId =>
-  ProviderSessionId.makeUnsafe(value);
-const asProviderThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
 
 const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
@@ -143,8 +138,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           provider_name,
           provider_session_id,
           provider_thread_id,
-          approval_policy,
-          sandbox_mode,
+          runtime_mode,
           active_turn_id,
           last_error,
           updated_at
@@ -155,8 +149,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'codex',
           'provider-session-1',
           'provider-thread-1',
-          'on-request',
-          'workspace-write',
+          'approval-required',
           'turn-1',
           NULL,
           '2026-02-24T00:00:07.000Z'
@@ -241,6 +234,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           projectId: asProjectId("project-1"),
           title: "Thread 1",
           model: "gpt-5-codex",
+          interactionMode: "default",
+          runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
           latestTurn: {
@@ -265,6 +260,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               updatedAt: "2026-02-24T00:00:05.000Z",
             },
           ],
+          proposedPlans: [],
           activities: [
             {
               id: asEventId("activity-1"),
@@ -291,10 +287,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             threadId: ThreadId.makeUnsafe("thread-1"),
             status: "running",
             providerName: "codex",
-            providerSessionId: asProviderSessionId("provider-session-1"),
-            providerThreadId: asProviderThreadId("provider-thread-1"),
-            approvalPolicy: "on-request",
-            sandboxMode: "workspace-write",
+            runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,
             updatedAt: "2026-02-24T00:00:07.000Z",

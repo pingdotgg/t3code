@@ -184,6 +184,8 @@ describe("composerDraftStore project draft thread mapping", () => {
       branch: "feature/test",
       worktreePath: "/tmp/worktree-test",
       envMode: "worktree",
+      runtimeMode: "full-access",
+      interactionMode: "default",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     expect(useComposerDraftStore.getState().getDraftThread(threadId)).toEqual({
@@ -191,6 +193,8 @@ describe("composerDraftStore project draft thread mapping", () => {
       branch: "feature/test",
       worktreePath: "/tmp/worktree-test",
       envMode: "worktree",
+      runtimeMode: "full-access",
+      interactionMode: "default",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
   });
@@ -329,6 +333,33 @@ describe("composerDraftStore project draft thread mapping", () => {
   });
 });
 
+describe("composerDraftStore codex fast mode", () => {
+  const threadId = ThreadId.makeUnsafe("thread-service-tier");
+
+  beforeEach(() => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+  });
+
+  it("stores codex fast mode in the draft", () => {
+    const store = useComposerDraftStore.getState();
+    store.setCodexFastMode(threadId, true);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.codexFastMode).toBe(true);
+  });
+
+  it("clears codex fast mode when reset to the default", () => {
+    const store = useComposerDraftStore.getState();
+    store.setCodexFastMode(threadId, true);
+    store.setCodexFastMode(threadId, false);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+});
+
 describe("composerDraftStore setModel", () => {
   const threadId = ThreadId.makeUnsafe("thread-model");
 
@@ -346,5 +377,77 @@ describe("composerDraftStore setModel", () => {
     store.setModel(threadId, "gpt-5.3-codex");
 
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.model).toBe("gpt-5.3-codex");
+  });
+});
+
+describe("composerDraftStore setProvider", () => {
+  const threadId = ThreadId.makeUnsafe("thread-provider");
+
+  beforeEach(() => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+  });
+
+  it("persists provider-only selection even when prompt/model are empty", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "codex");
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.provider).toBe("codex");
+  });
+
+  it("removes empty provider-only draft when provider is reset", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "codex");
+    store.setProvider(threadId, null);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+});
+
+describe("composerDraftStore runtime and interaction settings", () => {
+  const threadId = ThreadId.makeUnsafe("thread-settings");
+
+  beforeEach(() => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+  });
+
+  it("stores runtime mode overrides in the composer draft", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setRuntimeMode(threadId, "approval-required");
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.runtimeMode).toBe(
+      "approval-required",
+    );
+  });
+
+  it("stores interaction mode overrides in the composer draft", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setInteractionMode(threadId, "plan");
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.interactionMode).toBe(
+      "plan",
+    );
+  });
+
+  it("removes empty settings-only drafts when overrides are cleared", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setRuntimeMode(threadId, "approval-required");
+    store.setInteractionMode(threadId, "plan");
+    store.setRuntimeMode(threadId, null);
+    store.setInteractionMode(threadId, null);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
   });
 });

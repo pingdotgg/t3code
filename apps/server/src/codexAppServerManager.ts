@@ -5,20 +5,22 @@ import readline from "node:readline";
 
 import {
   ApprovalRequestId,
-  DEFAULT_MODEL,
   EventId,
   ProviderItemId,
   ProviderRequestKind,
-  ProviderSessionId,
-  ProviderThreadId,
-  ProviderTurnId,
-  normalizeModelSlug,
+  type ProviderUserInputAnswers,
+  ThreadId,
+  TurnId,
   type ProviderApprovalDecision,
   type ProviderEvent,
   type ProviderSession,
   type ProviderSessionStartInput,
   type ProviderTurnStartResult,
+  RuntimeMode,
+  ProviderInteractionMode,
 } from "@t3tools/contracts";
+import { getDefaultModel, normalizeModelSlug } from "@t3tools/shared/model";
+import { Effect, ServiceMap } from "effect";
 
 type PendingRequestKey = string;
 
@@ -32,11 +34,26 @@ interface PendingRequest {
 interface PendingApprovalRequest {
   requestId: ApprovalRequestId;
   jsonRpcId: string | number;
-  method: "item/commandExecution/requestApproval" | "item/fileChange/requestApproval";
+  method:
+    | "item/commandExecution/requestApproval"
+    | "item/fileChange/requestApproval"
+    | "item/fileRead/requestApproval";
   requestKind: ProviderRequestKind;
-  threadId?: ProviderThreadId;
-  turnId?: ProviderTurnId;
+  threadId: ThreadId;
+  turnId?: TurnId;
   itemId?: ProviderItemId;
+}
+
+interface PendingUserInputRequest {
+  requestId: ApprovalRequestId;
+  jsonRpcId: string | number;
+  threadId: ThreadId;
+  turnId?: TurnId;
+  itemId?: ProviderItemId;
+}
+
+interface CodexUserInputAnswer {
+  answers: string[];
 }
 
 interface CodexSessionContext {
@@ -46,6 +63,7 @@ interface CodexSessionContext {
   output: readline.Interface;
   pending: Map<PendingRequestKey, PendingRequest>;
   pendingApprovals: Map<ApprovalRequestId, PendingApprovalRequest>;
+  pendingUserInputs: Map<ApprovalRequestId, PendingUserInputRequest>;
   nextRequestId: number;
   stopping: boolean;
 }
@@ -90,21 +108,33 @@ interface CodexAccountSnapshot {
 }
 
 export interface CodexAppServerSendTurnInput {
-  readonly sessionId: ProviderSessionId;
+  readonly threadId: ThreadId;
   readonly input?: string;
   readonly attachments?: ReadonlyArray<{ type: "image"; url: string }>;
   readonly model?: string;
   readonly serviceTier?: string | null;
   readonly effort?: string;
+  readonly interactionMode?: ProviderInteractionMode;
+}
+
+export interface CodexAppServerStartSessionInput {
+  readonly threadId: ThreadId;
+  readonly provider?: "codex";
+  readonly cwd?: string;
+  readonly model?: string;
+  readonly serviceTier?: string;
+  readonly resumeCursor?: unknown;
+  readonly providerOptions?: ProviderSessionStartInput["providerOptions"];
+  readonly runtimeMode: RuntimeMode;
 }
 
 export interface CodexThreadTurnSnapshot {
-  id: ProviderTurnId;
+  id: TurnId;
   items: unknown[];
 }
 
 export interface CodexThreadSnapshot {
-  threadId: ProviderThreadId;
+  threadId: string;
   turns: CodexThreadTurnSnapshot[];
 }
 
@@ -166,6 +196,158 @@ export function readCodexAccountSnapshot(response: unknown): CodexAccountSnapsho
   };
 }
 
+export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
+
+You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
+
+## Mode rules (strict)
+
+You are in **Plan Mode** until a developer message explicitly ends it.
+
+Plan Mode is not changed by user intent, tone, or imperative language. If a user asks for execution while still in Plan Mode, treat it as a request to **plan the execution**, not perform it.
+
+## Plan Mode vs update_plan tool
+
+Plan Mode is a collaboration mode that can involve requesting user input and eventually issuing a \`<proposed_plan>\` block.
+
+Separately, \`update_plan\` is a checklist/progress/TODOs tool; it does not enter or exit Plan Mode. Do not confuse it with Plan mode or try to use it while in Plan mode. If you try to use \`update_plan\` in Plan mode, it will return an error.
+
+## Execution vs. mutation in Plan Mode
+
+You may explore and execute **non-mutating** actions that improve the plan. You must not perform **mutating** actions.
+
+### Allowed (non-mutating, plan-improving)
+
+Actions that gather truth, reduce ambiguity, or validate feasibility without changing repo-tracked state. Examples:
+
+* Reading or searching files, configs, schemas, types, manifests, and docs
+* Static analysis, inspection, and repo exploration
+* Dry-run style commands when they do not edit repo-tracked files
+* Tests, builds, or checks that may write to caches or build artifacts (for example, \`target/\`, \`.cache/\`, or snapshots) so long as they do not edit repo-tracked files
+
+### Not allowed (mutating, plan-executing)
+
+Actions that implement the plan or change repo-tracked state. Examples:
+
+* Editing or writing files
+* Running formatters or linters that rewrite files
+* Applying patches, migrations, or codegen that updates repo-tracked files
+* Side-effectful commands whose purpose is to carry out the plan rather than refine it
+
+When in doubt: if the action would reasonably be described as "doing the work" rather than "planning the work," do not do it.
+
+## PHASE 1 - Ground in the environment (explore first, ask second)
+
+Begin by grounding yourself in the actual environment. Eliminate unknowns in the prompt by discovering facts, not by asking the user. Resolve all questions that can be answered through exploration or inspection. Identify missing or ambiguous details only if they cannot be derived from the environment. Silent exploration between turns is allowed and encouraged.
+
+Before asking the user any question, perform at least one targeted non-mutating exploration pass (for example: search relevant files, inspect likely entrypoints/configs, confirm current implementation shape), unless no local environment/repo is available.
+
+Exception: you may ask clarifying questions about the user's prompt before exploring, ONLY if there are obvious ambiguities or contradictions in the prompt itself. However, if ambiguity might be resolved by exploring, always prefer exploring first.
+
+Do not ask questions that can be answered from the repo or system (for example, "where is this struct?" or "which UI component should we use?" when exploration can make it clear). Only ask once you have exhausted reasonable non-mutating exploration.
+
+## PHASE 2 - Intent chat (what they actually want)
+
+* Keep asking until you can clearly state: goal + success criteria, audience, in/out of scope, constraints, current state, and the key preferences/tradeoffs.
+* Bias toward questions over guessing: if any high-impact ambiguity remains, do NOT plan yet-ask.
+
+## PHASE 3 - Implementation chat (what/how we'll build)
+
+* Once intent is stable, keep asking until the spec is decision complete: approach, interfaces (APIs/schemas/I/O), data flow, edge cases/failure modes, testing + acceptance criteria, rollout/monitoring, and any migrations/compat constraints.
+
+## Asking questions
+
+Critical rules:
+
+* Strongly prefer using the \`request_user_input\` tool to ask any questions.
+* Offer only meaningful multiple-choice options; don't include filler choices that are obviously wrong or irrelevant.
+* In rare cases where an unavoidable, important question can't be expressed with reasonable multiple-choice options (due to extreme ambiguity), you may ask it directly without the tool.
+
+You SHOULD ask many questions, but each question must:
+
+* materially change the spec/plan, OR
+* confirm/lock an assumption, OR
+* choose between meaningful tradeoffs.
+* not be answerable by non-mutating commands.
+
+Use the \`request_user_input\` tool only for decisions that materially change the plan, for confirming important assumptions, or for information that cannot be discovered via non-mutating exploration.
+
+## Two kinds of unknowns (treat differently)
+
+1. **Discoverable facts** (repo/system truth): explore first.
+
+   * Before asking, run targeted searches and check likely sources of truth (configs/manifests/entrypoints/schemas/types/constants).
+   * Ask only if: multiple plausible candidates; nothing found but you need a missing identifier/context; or ambiguity is actually product intent.
+   * If asking, present concrete candidates (paths/service names) + recommend one.
+   * Never ask questions you can answer from your environment (e.g., "where is this struct").
+
+2. **Preferences/tradeoffs** (not discoverable): ask early.
+
+   * These are intent or implementation preferences that cannot be derived from exploration.
+   * Provide 2-4 mutually exclusive options + a recommended default.
+   * If unanswered, proceed with the recommended option and record it as an assumption in the final plan.
+
+## Finalization rule
+
+Only output the final plan when it is decision complete and leaves no decisions to the implementer.
+
+When you present the official plan, wrap it in a \`<proposed_plan>\` block so the client can render it specially:
+
+1) The opening tag must be on its own line.
+2) Start the plan content on the next line (no text on the same line as the tag).
+3) The closing tag must be on its own line.
+4) Use Markdown inside the block.
+5) Keep the tags exactly as \`<proposed_plan>\` and \`</proposed_plan>\` (do not translate or rename them), even if the plan content is in another language.
+
+Example:
+
+<proposed_plan>
+plan content
+</proposed_plan>
+
+plan content should be human and agent digestible. The final plan must be plan-only and include:
+
+* A clear title
+* A brief summary section
+* Important changes or additions to public APIs/interfaces/types
+* Test cases and scenarios
+* Explicit assumptions and defaults chosen where needed
+
+Do not ask "should I proceed?" in the final output. The user can easily switch out of Plan mode and request implementation if you have included a \`<proposed_plan>\` block in your response. Alternatively, they can decide to stay in Plan mode and continue refining the plan.
+
+Only produce at most one \`<proposed_plan>\` block per turn, and only when you are presenting a complete spec.
+</collaboration_mode>`;
+
+export const CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Collaboration Mode: Default
+
+You are now in Default mode. Any previous instructions for other modes (e.g. Plan mode) are no longer active.
+
+Your active mode changes only when new developer instructions with a different \`<collaboration_mode>...</collaboration_mode>\` change it; user requests or tool descriptions do not change mode by themselves. Known mode names are Default and Plan.
+
+## request_user_input availability
+
+The \`request_user_input\` tool is unavailable in Default mode. If you call it while in Default mode, it will return an error.
+
+In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
+</collaboration_mode>`;
+
+function mapCodexRuntimeMode(runtimeMode: RuntimeMode): {
+  readonly approvalPolicy: "on-request" | "never";
+  readonly sandbox: "workspace-write" | "danger-full-access";
+} {
+  if (runtimeMode === "approval-required") {
+    return {
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+    };
+  }
+
+  return {
+    approvalPolicy: "never",
+    sandbox: "danger-full-access",
+  };
+}
+
 export function resolveCodexModelForAccount(
   model: string | undefined,
   account: CodexAccountSnapshot,
@@ -174,7 +356,7 @@ export function resolveCodexModelForAccount(
     return model;
   }
 
-  return DEFAULT_MODEL;
+  return getDefaultModel("codex");
 }
 
 /**
@@ -208,6 +390,82 @@ export function normalizeCodexModelSlug(
   }
 
   return normalized;
+}
+
+export function buildCodexInitializeParams() {
+  return {
+    clientInfo: {
+      name: "t3code_desktop",
+      title: "T3 Code Desktop",
+      version: "0.1.0",
+    },
+    capabilities: {
+      experimentalApi: true,
+    },
+  } as const;
+}
+
+function buildCodexCollaborationMode(input: {
+  readonly interactionMode?: "default" | "plan";
+  readonly model?: string;
+  readonly effort?: string;
+}):
+  | {
+      mode: "default" | "plan";
+      settings: {
+        model: string;
+        reasoning_effort: string;
+        developer_instructions: string;
+      };
+    }
+  | undefined {
+  if (input.interactionMode === undefined) {
+    return undefined;
+  }
+  const model = normalizeCodexModelSlug(input.model) ?? "gpt-5.3-codex";
+  return {
+    mode: input.interactionMode,
+    settings: {
+      model,
+      reasoning_effort: input.effort ?? "medium",
+      developer_instructions:
+        input.interactionMode === "plan"
+          ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
+          : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+    },
+  };
+}
+
+function toCodexUserInputAnswer(value: unknown): CodexUserInputAnswer {
+  if (typeof value === "string") {
+    return { answers: [value] };
+  }
+
+  if (Array.isArray(value)) {
+    const answers = value.filter((entry): entry is string => typeof entry === "string");
+    return { answers };
+  }
+
+  if (value && typeof value === "object") {
+    const maybeAnswers = (value as { answers?: unknown }).answers;
+    if (Array.isArray(maybeAnswers)) {
+      const answers = maybeAnswers.filter((entry): entry is string => typeof entry === "string");
+      return { answers };
+    }
+  }
+
+  throw new Error("User input answers must be strings or arrays of strings.");
+}
+
+function toCodexUserInputAnswers(
+  answers: ProviderUserInputAnswers,
+): Record<string, CodexUserInputAnswer> {
+  return Object.fromEntries(
+    Object.entries(answers).map(([questionId, value]) => [
+      questionId,
+      toCodexUserInputAnswer(value),
+    ]),
+  );
 }
 
 export function classifyCodexStderrLine(rawLine: string): { message: string } | null {
@@ -246,10 +504,16 @@ export interface CodexAppServerManagerEvents {
 }
 
 export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEvents> {
-  private readonly sessions = new Map<ProviderSessionId, CodexSessionContext>();
+  private readonly sessions = new Map<ThreadId, CodexSessionContext>();
 
-  async startSession(input: ProviderSessionStartInput): Promise<ProviderSession> {
-    const sessionId = ProviderSessionId.makeUnsafe(randomUUID());
+  private runPromise: (effect: Effect.Effect<unknown, never>) => Promise<unknown>;
+  constructor(services?: ServiceMap.ServiceMap<never>) {
+    super();
+    this.runPromise = services ? Effect.runPromiseWith(services) : Effect.runPromise;
+  }
+
+  async startSession(input: CodexAppServerStartSessionInput): Promise<ProviderSession> {
+    const threadId = input.threadId;
     const now = new Date().toISOString();
     let context: CodexSessionContext | undefined;
 
@@ -257,17 +521,19 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const resolvedCwd = input.cwd ?? process.cwd();
 
       const session: ProviderSession = {
-        sessionId,
         provider: "codex",
         status: "connecting",
+        runtimeMode: input.runtimeMode,
         model: normalizeCodexModelSlug(input.model),
         cwd: resolvedCwd,
+        threadId,
         createdAt: now,
         updatedAt: now,
       };
 
-      const codexBinaryPath = input.codexBinaryPath ?? "codex";
-      const codexHomePath = input.codexHomePath;
+      const codexOptions = readCodexProviderOptions(input);
+      const codexBinaryPath = codexOptions.binaryPath ?? "codex";
+      const codexHomePath = codexOptions.homePath;
       const child = spawn(codexBinaryPath, ["app-server"], {
         cwd: resolvedCwd,
         env: {
@@ -290,25 +556,17 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         output,
         pending: new Map(),
         pendingApprovals: new Map(),
+        pendingUserInputs: new Map(),
         nextRequestId: 1,
         stopping: false,
       };
 
-      this.sessions.set(sessionId, context);
+      this.sessions.set(threadId, context);
       this.attachProcessListeners(context);
 
       this.emitLifecycleEvent(context, "session/connecting", "Starting codex app-server");
 
-      await this.sendRequest(context, "initialize", {
-        clientInfo: {
-          name: "t3code_desktop",
-          title: "T3 Code Desktop",
-          version: "0.1.0",
-        },
-        capabilities: {
-          experimentalApi: false,
-        },
-      });
+      await this.sendRequest(context, "initialize", buildCodexInitializeParams());
 
       this.writeMessage(context, { method: "initialized" });
       try {
@@ -338,8 +596,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         model: normalizedModel ?? null,
         ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
         cwd: input.cwd ?? null,
-        approvalPolicy: input.approvalPolicy,
-        sandbox: input.sandboxMode,
+        ...mapCodexRuntimeMode(input.runtimeMode ?? "full-access"),
       };
 
       const threadStartParams = {
@@ -347,6 +604,20 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         experimentalRawEvents: false,
       };
       const resumeThreadId = readResumeThreadId(input);
+      this.emitLifecycleEvent(
+        context,
+        "session/threadOpenRequested",
+        resumeThreadId
+          ? `Attempting to resume thread ${resumeThreadId}.`
+          : "Starting a new Codex thread.",
+      );
+      await Effect.logInfo("codex app-server opening thread", {
+        threadId,
+        requestedRuntimeMode: input.runtimeMode,
+        requestedModel: normalizedModel ?? null,
+        requestedCwd: resolvedCwd,
+        resumeThreadId: resumeThreadId ?? null,
+      }).pipe(this.runPromise);
 
       let threadOpenMethod: "thread/start" | "thread/resume" = "thread/start";
       let threadOpenResponse: unknown;
@@ -359,6 +630,18 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           });
         } catch (error) {
           if (!isRecoverableThreadResumeError(error)) {
+            this.emitErrorEvent(
+              context,
+              "session/threadResumeFailed",
+              error instanceof Error ? error.message : "Codex thread resume failed.",
+            );
+            await Effect.logWarning("codex app-server thread resume failed", {
+              threadId,
+              requestedRuntimeMode: input.runtimeMode,
+              resumeThreadId,
+              recoverable: false,
+              cause: error instanceof Error ? error.message : String(error),
+            }).pipe(this.runPromise);
             throw error;
           }
 
@@ -368,6 +651,13 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
             "session/threadResumeFallback",
             `Could not resume thread ${resumeThreadId}; started a new thread instead.`,
           );
+          await Effect.logWarning("codex app-server thread resume fell back to fresh start", {
+            threadId,
+            requestedRuntimeMode: input.runtimeMode,
+            resumeThreadId,
+            recoverable: true,
+            cause: error instanceof Error ? error.message : String(error),
+          }).pipe(this.runPromise);
           threadOpenResponse = await this.sendRequest(context, "thread/start", threadStartParams);
         }
       } else {
@@ -382,14 +672,25 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       if (!threadIdRaw) {
         throw new Error(`${threadOpenMethod} response did not include a thread id.`);
       }
-      const threadId = ProviderThreadId.makeUnsafe(threadIdRaw);
+      const providerThreadId = threadIdRaw;
 
       this.updateSession(context, {
         status: "ready",
-        threadId,
-        resumeCursor: { threadId },
+        resumeCursor: { threadId: providerThreadId },
       });
-      this.emitLifecycleEvent(context, "session/ready", `Connected to thread ${threadId}`);
+      this.emitLifecycleEvent(
+        context,
+        "session/threadOpenResolved",
+        `Codex ${threadOpenMethod} resolved.`,
+      );
+      await Effect.logInfo("codex app-server thread open resolved", {
+        threadId,
+        threadOpenMethod,
+        requestedResumeThreadId: resumeThreadId ?? null,
+        resolvedThreadId: providerThreadId,
+        requestedRuntimeMode: input.runtimeMode,
+      }).pipe(this.runPromise);
+      this.emitLifecycleEvent(context, "session/ready", `Connected to thread ${providerThreadId}`);
       return { ...context.session };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start Codex session.";
@@ -399,13 +700,13 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           lastError: message,
         });
         this.emitErrorEvent(context, "session/startFailed", message);
-        this.stopSession(sessionId);
+        this.stopSession(threadId);
       } else {
         this.emitEvent({
           id: EventId.makeUnsafe(randomUUID()),
           kind: "error",
           provider: "codex",
-          sessionId,
+          threadId,
           createdAt: new Date().toISOString(),
           method: "session/startFailed",
           message,
@@ -416,10 +717,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   async sendTurn(input: CodexAppServerSendTurnInput): Promise<ProviderTurnStartResult> {
-    const context = this.requireSession(input.sessionId);
-    if (!context.session.threadId) {
-      throw new Error("Session is missing a thread id.");
-    }
+    const context = this.requireSession(input.threadId);
 
     const turnInput: Array<
       { type: "text"; text: string; text_elements: [] } | { type: "image"; url: string }
@@ -443,16 +741,32 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       throw new Error("Turn input must include text or attachments.");
     }
 
+    const providerThreadId = readResumeThreadId({
+      threadId: context.session.threadId,
+      runtimeMode: context.session.runtimeMode,
+      resumeCursor: context.session.resumeCursor,
+    });
+    if (!providerThreadId) {
+      throw new Error("Session is missing provider resume thread id.");
+    }
     const turnStartParams: {
-      threadId: ProviderThreadId;
+      threadId: string;
       input: Array<
         { type: "text"; text: string; text_elements: [] } | { type: "image"; url: string }
       >;
       model?: string;
       serviceTier?: string | null;
       effort?: string;
+      collaborationMode?: {
+        mode: "default" | "plan";
+        settings: {
+          model: string;
+          reasoning_effort: string;
+          developer_instructions: string;
+        };
+      };
     } = {
-      threadId: context.session.threadId,
+      threadId: providerThreadId,
       input: turnInput,
     };
     const normalizedModel = resolveCodexModelForAccount(
@@ -468,6 +782,17 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     if (input.effort) {
       turnStartParams.effort = input.effort;
     }
+    const collaborationMode = buildCodexCollaborationMode({
+      ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(normalizedModel !== undefined ? { model: normalizedModel } : {}),
+      ...(input.effort !== undefined ? { effort: input.effort } : {}),
+    });
+    if (collaborationMode) {
+      if (!turnStartParams.model) {
+        turnStartParams.model = collaborationMode.settings.model;
+      }
+      turnStartParams.collaborationMode = collaborationMode;
+    }
 
     const response = await this.sendRequest(context, "turn/start", turnStartParams);
 
@@ -476,64 +801,78 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     if (!turnIdRaw) {
       throw new Error("turn/start response did not include a turn id.");
     }
-    const turnId = ProviderTurnId.makeUnsafe(turnIdRaw);
+    const turnId = TurnId.makeUnsafe(turnIdRaw);
 
     this.updateSession(context, {
       status: "running",
       activeTurnId: turnId,
-      resumeCursor: context.session.resumeCursor ?? { threadId: context.session.threadId },
+      ...(context.session.resumeCursor !== undefined
+        ? { resumeCursor: context.session.resumeCursor }
+        : {}),
     });
 
     return {
       threadId: context.session.threadId,
       turnId,
-      resumeCursor: context.session.resumeCursor ?? { threadId: context.session.threadId },
+      ...(context.session.resumeCursor !== undefined
+        ? { resumeCursor: context.session.resumeCursor }
+        : {}),
     };
   }
 
-  async interruptTurn(sessionId: ProviderSessionId, turnId?: ProviderTurnId): Promise<void> {
-    const context = this.requireSession(sessionId);
+  async interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void> {
+    const context = this.requireSession(threadId);
     const effectiveTurnId = turnId ?? context.session.activeTurnId;
 
-    if (!effectiveTurnId || !context.session.threadId) {
+    const providerThreadId = readResumeThreadId({
+      threadId: context.session.threadId,
+      runtimeMode: context.session.runtimeMode,
+      resumeCursor: context.session.resumeCursor,
+    });
+    if (!effectiveTurnId || !providerThreadId) {
       return;
     }
 
     await this.sendRequest(context, "turn/interrupt", {
-      threadId: context.session.threadId,
+      threadId: providerThreadId,
       turnId: effectiveTurnId,
     });
   }
 
-  async readThread(sessionId: ProviderSessionId): Promise<CodexThreadSnapshot> {
-    const context = this.requireSession(sessionId);
-    const threadId = context.session.threadId;
-    if (!threadId) {
-      throw new Error("Session is missing a thread id.");
+  async readThread(threadId: ThreadId): Promise<CodexThreadSnapshot> {
+    const context = this.requireSession(threadId);
+    const providerThreadId = readResumeThreadId({
+      threadId: context.session.threadId,
+      runtimeMode: context.session.runtimeMode,
+      resumeCursor: context.session.resumeCursor,
+    });
+    if (!providerThreadId) {
+      throw new Error("Session is missing a provider resume thread id.");
     }
 
     const response = await this.sendRequest(context, "thread/read", {
-      threadId,
+      threadId: providerThreadId,
       includeTurns: true,
     });
     return this.parseThreadSnapshot("thread/read", response);
   }
 
-  async rollbackThread(
-    sessionId: ProviderSessionId,
-    numTurns: number,
-  ): Promise<CodexThreadSnapshot> {
-    const context = this.requireSession(sessionId);
-    const threadId = context.session.threadId;
-    if (!threadId) {
-      throw new Error("Session is missing a thread id.");
+  async rollbackThread(threadId: ThreadId, numTurns: number): Promise<CodexThreadSnapshot> {
+    const context = this.requireSession(threadId);
+    const providerThreadId = readResumeThreadId({
+      threadId: context.session.threadId,
+      runtimeMode: context.session.runtimeMode,
+      resumeCursor: context.session.resumeCursor,
+    });
+    if (!providerThreadId) {
+      throw new Error("Session is missing a provider resume thread id.");
     }
     if (!Number.isInteger(numTurns) || numTurns < 1) {
       throw new Error("numTurns must be an integer >= 1.");
     }
 
     const response = await this.sendRequest(context, "thread/rollback", {
-      threadId,
+      threadId: providerThreadId,
       numTurns,
     });
     this.updateSession(context, {
@@ -544,11 +883,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   async respondToRequest(
-    sessionId: ProviderSessionId,
+    threadId: ThreadId,
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
   ): Promise<void> {
-    const context = this.requireSession(sessionId);
+    const context = this.requireSession(threadId);
     const pendingRequest = context.pendingApprovals.get(requestId);
     if (!pendingRequest) {
       throw new Error(`Unknown pending approval request: ${requestId}`);
@@ -566,10 +905,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       id: EventId.makeUnsafe(randomUUID()),
       kind: "notification",
       provider: "codex",
-      sessionId: context.session.sessionId,
+      threadId: context.session.threadId,
       createdAt: new Date().toISOString(),
       method: "item/requestApproval/decision",
-      threadId: pendingRequest.threadId,
       turnId: pendingRequest.turnId,
       itemId: pendingRequest.itemId,
       requestId: pendingRequest.requestId,
@@ -582,8 +920,45 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     });
   }
 
-  stopSession(sessionId: ProviderSessionId): void {
-    const context = this.sessions.get(sessionId);
+  async respondToUserInput(
+    threadId: ThreadId,
+    requestId: ApprovalRequestId,
+    answers: ProviderUserInputAnswers,
+  ): Promise<void> {
+    const context = this.requireSession(threadId);
+    const pendingRequest = context.pendingUserInputs.get(requestId);
+    if (!pendingRequest) {
+      throw new Error(`Unknown pending user input request: ${requestId}`);
+    }
+
+    context.pendingUserInputs.delete(requestId);
+    const codexAnswers = toCodexUserInputAnswers(answers);
+    this.writeMessage(context, {
+      id: pendingRequest.jsonRpcId,
+      result: {
+        answers: codexAnswers,
+      },
+    });
+
+    this.emitEvent({
+      id: EventId.makeUnsafe(randomUUID()),
+      kind: "notification",
+      provider: "codex",
+      threadId: context.session.threadId,
+      createdAt: new Date().toISOString(),
+      method: "item/tool/requestUserInput/answered",
+      turnId: pendingRequest.turnId,
+      itemId: pendingRequest.itemId,
+      requestId: pendingRequest.requestId,
+      payload: {
+        requestId: pendingRequest.requestId,
+        answers: codexAnswers,
+      },
+    });
+  }
+
+  stopSession(threadId: ThreadId): void {
+    const context = this.sessions.get(threadId);
     if (!context) {
       return;
     }
@@ -596,6 +971,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
     context.pending.clear();
     context.pendingApprovals.clear();
+    context.pendingUserInputs.clear();
 
     context.output.close();
 
@@ -608,7 +984,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       activeTurnId: undefined,
     });
     this.emitLifecycleEvent(context, "session/closed", "Session stopped");
-    this.sessions.delete(sessionId);
+    this.sessions.delete(threadId);
   }
 
   listSessions(): ProviderSession[] {
@@ -617,24 +993,24 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }));
   }
 
-  hasSession(sessionId: ProviderSessionId): boolean {
-    return this.sessions.has(sessionId);
+  hasSession(threadId: ThreadId): boolean {
+    return this.sessions.has(threadId);
   }
 
   stopAll(): void {
-    for (const sessionId of this.sessions.keys()) {
-      this.stopSession(sessionId);
+    for (const threadId of this.sessions.keys()) {
+      this.stopSession(threadId);
     }
   }
 
-  private requireSession(sessionId: ProviderSessionId): CodexSessionContext {
-    const context = this.sessions.get(sessionId);
+  private requireSession(threadId: ThreadId): CodexSessionContext {
+    const context = this.sessions.get(threadId);
     if (!context) {
-      throw new Error(`Unknown session: ${sessionId}`);
+      throw new Error(`Unknown session for thread: ${threadId}`);
     }
 
     if (context.session.status === "closed") {
-      throw new Error(`Session is closed: ${sessionId}`);
+      throw new Error(`Session is closed for thread: ${threadId}`);
     }
 
     return context;
@@ -679,7 +1055,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         lastError: code === 0 ? context.session.lastError : message,
       });
       this.emitLifecycleEvent(context, "session/exited", message);
-      this.sessions.delete(context.session.sessionId);
+      this.sessions.delete(context.session.threadId);
     });
   }
 
@@ -741,10 +1117,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       id: EventId.makeUnsafe(randomUUID()),
       kind: "notification",
       provider: "codex",
-      sessionId: context.session.sessionId,
+      threadId: context.session.threadId,
       createdAt: new Date().toISOString(),
       method: notification.method,
-      threadId: route.threadId,
       turnId: route.turnId,
       itemId: route.itemId,
       textDelta,
@@ -752,19 +1127,17 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     });
 
     if (notification.method === "thread/started") {
-      const threadId = toProviderThreadId(
+      const providerThreadId = normalizeProviderThreadId(
         this.readString(this.readObject(notification.params)?.thread, "id"),
       );
-      if (threadId) {
-        this.updateSession(context, { threadId });
+      if (providerThreadId) {
+        this.updateSession(context, { resumeCursor: { threadId: providerThreadId } });
       }
       return;
     }
 
     if (notification.method === "turn/started") {
-      const turnId = toProviderTurnId(
-        this.readString(this.readObject(notification.params)?.turn, "id"),
-      );
+      const turnId = toTurnId(this.readString(this.readObject(notification.params)?.turn, "id"));
       this.updateSession(context, {
         status: "running",
         activeTurnId: turnId,
@@ -807,23 +1180,35 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         method:
           requestKind === "command"
             ? "item/commandExecution/requestApproval"
-            : "item/fileChange/requestApproval",
+            : requestKind === "file-read"
+              ? "item/fileRead/requestApproval"
+              : "item/fileChange/requestApproval",
         requestKind,
-        ...(route.threadId ? { threadId: route.threadId } : {}),
+        threadId: context.session.threadId,
         ...(route.turnId ? { turnId: route.turnId } : {}),
         ...(route.itemId ? { itemId: route.itemId } : {}),
       };
       context.pendingApprovals.set(requestId, pendingRequest);
     }
 
+    if (request.method === "item/tool/requestUserInput") {
+      requestId = ApprovalRequestId.makeUnsafe(randomUUID());
+      context.pendingUserInputs.set(requestId, {
+        requestId,
+        jsonRpcId: request.id,
+        threadId: context.session.threadId,
+        ...(route.turnId ? { turnId: route.turnId } : {}),
+        ...(route.itemId ? { itemId: route.itemId } : {}),
+      });
+    }
+
     this.emitEvent({
       id: EventId.makeUnsafe(randomUUID()),
       kind: "request",
       provider: "codex",
-      sessionId: context.session.sessionId,
+      threadId: context.session.threadId,
       createdAt: new Date().toISOString(),
       method: request.method,
-      threadId: route.threadId,
       turnId: route.turnId,
       itemId: route.itemId,
       requestId,
@@ -836,10 +1221,6 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     if (request.method === "item/tool/requestUserInput") {
-      this.writeMessage(context, {
-        id: request.id,
-        result: { answers: {} },
-      });
       return;
     }
 
@@ -915,7 +1296,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       id: EventId.makeUnsafe(randomUUID()),
       kind: "session",
       provider: "codex",
-      sessionId: context.session.sessionId,
+      threadId: context.session.threadId,
       createdAt: new Date().toISOString(),
       method,
       message,
@@ -927,7 +1308,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       id: EventId.makeUnsafe(randomUUID()),
       kind: "error",
       provider: "codex",
-      sessionId: context.session.sessionId,
+      threadId: context.session.threadId,
       createdAt: new Date().toISOString(),
       method,
       message,
@@ -951,6 +1332,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       return "command";
     }
 
+    if (method === "item/fileRead/requestApproval") {
+      return "file-read";
+    }
+
     if (method === "item/fileChange/requestApproval") {
       return "file-change";
     }
@@ -966,14 +1351,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     if (!threadIdRaw) {
       throw new Error(`${method} response did not include a thread id.`);
     }
-    const threadId = ProviderThreadId.makeUnsafe(threadIdRaw);
-
     const turnsRaw =
       this.readArray(thread, "turns") ?? this.readArray(responseRecord, "turns") ?? [];
     const turns = turnsRaw.map((turnValue, index) => {
       const turn = this.readObject(turnValue);
       const turnIdRaw = this.readString(turn, "id") ?? `${threadIdRaw}:turn:${index + 1}`;
-      const turnId = ProviderTurnId.makeUnsafe(turnIdRaw);
+      const turnId = TurnId.makeUnsafe(turnIdRaw);
       const items = this.readArray(turn, "items") ?? [];
       return {
         id: turnId,
@@ -982,7 +1365,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     });
 
     return {
-      threadId,
+      threadId: threadIdRaw,
       turns,
     };
   }
@@ -1020,30 +1403,20 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   private readRouteFields(params: unknown): {
-    threadId?: ProviderThreadId;
-    turnId?: ProviderTurnId;
+    turnId?: TurnId;
     itemId?: ProviderItemId;
   } {
     const route: {
-      threadId?: ProviderThreadId;
-      turnId?: ProviderTurnId;
+      turnId?: TurnId;
       itemId?: ProviderItemId;
     } = {};
 
-    const threadId = toProviderThreadId(
-      this.readString(params, "threadId") ??
-        this.readString(this.readObject(params, "thread"), "id"),
-    );
-    const turnId = toProviderTurnId(
+    const turnId = toTurnId(
       this.readString(params, "turnId") ?? this.readString(this.readObject(params, "turn"), "id"),
     );
     const itemId = toProviderItemId(
       this.readString(params, "itemId") ?? this.readString(this.readObject(params, "item"), "id"),
     );
-
-    if (threadId) {
-      route.threadId = threadId;
-    }
 
     if (turnId) {
       route.turnId = turnId;
@@ -1108,24 +1481,38 @@ function brandIfNonEmpty<T extends string>(
   return normalized?.length ? maker(normalized) : undefined;
 }
 
-function toProviderThreadId(value: string | undefined): ProviderThreadId | undefined {
-  return brandIfNonEmpty(value, ProviderThreadId.makeUnsafe);
+function normalizeProviderThreadId(value: string | undefined): string | undefined {
+  return brandIfNonEmpty(value, (normalized) => normalized);
 }
 
-function readResumeThreadId(input: ProviderSessionStartInput): ProviderThreadId | undefined {
-  if (
-    !input.resumeCursor ||
-    typeof input.resumeCursor !== "object" ||
-    Array.isArray(input.resumeCursor)
-  ) {
-    return input.resumeThreadId;
+function readCodexProviderOptions(input: CodexAppServerStartSessionInput): {
+  readonly binaryPath?: string;
+  readonly homePath?: string;
+} {
+  const options = input.providerOptions?.codex;
+  if (!options) {
+    return {};
   }
-  const rawThreadId = (input.resumeCursor as Record<string, unknown>).threadId;
-  return typeof rawThreadId === "string" ? toProviderThreadId(rawThreadId) : input.resumeThreadId;
+  return {
+    ...(options.binaryPath ? { binaryPath: options.binaryPath } : {}),
+    ...(options.homePath ? { homePath: options.homePath } : {}),
+  };
 }
 
-function toProviderTurnId(value: string | undefined): ProviderTurnId | undefined {
-  return brandIfNonEmpty(value, ProviderTurnId.makeUnsafe);
+function readResumeCursorThreadId(resumeCursor: unknown): string | undefined {
+  if (!resumeCursor || typeof resumeCursor !== "object" || Array.isArray(resumeCursor)) {
+    return undefined;
+  }
+  const rawThreadId = (resumeCursor as Record<string, unknown>).threadId;
+  return typeof rawThreadId === "string" ? normalizeProviderThreadId(rawThreadId) : undefined;
+}
+
+function readResumeThreadId(input: CodexAppServerStartSessionInput): string | undefined {
+  return readResumeCursorThreadId(input.resumeCursor);
+}
+
+function toTurnId(value: string | undefined): TurnId | undefined {
+  return brandIfNonEmpty(value, TurnId.makeUnsafe);
 }
 
 function toProviderItemId(value: string | undefined): ProviderItemId | undefined {

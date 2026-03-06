@@ -1,5 +1,6 @@
 import type {
   OrchestrationLatestTurn,
+  OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
   ProjectScript as ContractProjectScript,
@@ -8,14 +9,15 @@ import type {
   TurnId,
   MessageId,
   CheckpointRef,
-  ProviderThreadId,
-  ProviderSessionId,
   ProviderKind,
+  ProviderInteractionMode,
+  RuntimeMode,
 } from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
-export type RuntimeMode = "approval-required" | "full-access";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
+
+export const DEFAULT_INTERACTION_MODE: ProviderInteractionMode = "default";
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
 export const DEFAULT_THREAD_TERMINAL_ID = "default";
 export const MAX_THREAD_TERMINAL_COUNT = 4;
@@ -47,6 +49,14 @@ export interface ChatMessage {
   streaming: boolean;
 }
 
+export interface ProposedPlan {
+  id: OrchestrationProposedPlanId;
+  turnId: TurnId | null;
+  planMarkdown: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface TurnDiffFileChange {
   path: string;
   kind?: string | undefined;
@@ -75,12 +85,15 @@ export interface Project {
 
 export interface Thread {
   id: ThreadId;
-  codexThreadId: ProviderThreadId | null;
+  codexThreadId: string | null;
   projectId: ProjectId;
   title: string;
   model: string;
+  runtimeMode: RuntimeMode;
+  interactionMode: ProviderInteractionMode;
   session: ThreadSession | null;
   messages: ChatMessage[];
+  proposedPlans: ProposedPlan[];
   error: string | null;
   createdAt: string;
   latestTurn: OrchestrationLatestTurn | null;
@@ -92,10 +105,8 @@ export interface Thread {
 }
 
 export interface ThreadSession {
-  sessionId: ProviderSessionId;
   provider: ProviderKind;
   status: SessionPhase | "error" | "closed";
-  threadId: ProviderThreadId | null;
   activeTurnId?: TurnId | undefined;
   createdAt: string;
   updatedAt: string;

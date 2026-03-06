@@ -1,20 +1,19 @@
 import { Fragment, type ReactNode, createElement, useEffect } from "react";
 import {
-  DEFAULT_MODEL,
-  ProviderSessionId,
+  DEFAULT_MODEL_BY_PROVIDER,
+  type ProviderKind,
   ThreadId,
   type OrchestrationReadModel,
   type OrchestrationSessionStatus,
-  resolveModelSlug,
 } from "@t3tools/contracts";
-import { create } from "zustand";
 import {
-  DEFAULT_RUNTIME_MODE,
-  type ChatMessage,
-  type Project,
-  type RuntimeMode,
-  type Thread,
-} from "./types";
+  getModelOptions,
+  normalizeModelSlug,
+  resolveModelSlug,
+  resolveModelSlugForProvider,
+} from "@t3tools/shared/model";
+import { create } from "zustand";
+import { type ChatMessage, type Project, type Thread } from "./types";
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -22,10 +21,9 @@ export interface AppState {
   projects: Project[];
   threads: Thread[];
   threadsHydrated: boolean;
-  runtimeMode: RuntimeMode;
 }
 
-const PERSISTED_STATE_KEY = "t3code:renderer-state:v7";
+const PERSISTED_STATE_KEY = "t3code:renderer-state:v8";
 const LEGACY_PERSISTED_STATE_KEYS = [
   "t3code:renderer-state:v6",
   "t3code:renderer-state:v5",
@@ -41,7 +39,6 @@ const initialState: AppState = {
   projects: [],
   threads: [],
   threadsHydrated: false,
-  runtimeMode: DEFAULT_RUNTIME_MODE,
 };
 const persistedExpandedProjectCwds = new Set<string>();
 
@@ -52,23 +49,14 @@ function readPersistedState(): AppState {
   try {
     const raw = window.localStorage.getItem(PERSISTED_STATE_KEY);
     if (!raw) return initialState;
-    const parsed = JSON.parse(raw) as {
-      runtimeMode?: RuntimeMode;
-      expandedProjectCwds?: string[];
-    };
+    const parsed = JSON.parse(raw) as { expandedProjectCwds?: string[] };
     persistedExpandedProjectCwds.clear();
     for (const cwd of parsed.expandedProjectCwds ?? []) {
       if (typeof cwd === "string" && cwd.length > 0) {
         persistedExpandedProjectCwds.add(cwd);
       }
     }
-    return {
-      ...initialState,
-      runtimeMode:
-        parsed.runtimeMode === "approval-required" || parsed.runtimeMode === "full-access"
-          ? parsed.runtimeMode
-          : DEFAULT_RUNTIME_MODE,
-    };
+    return { ...initialState };
   } catch {
     return initialState;
   }
@@ -80,7 +68,6 @@ function persistState(state: AppState): void {
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
-        runtimeMode: state.runtimeMode,
         expandedProjectCwds: state.projects
           .filter((project) => project.expanded)
           .map((project) => project.cwd),
@@ -123,7 +110,9 @@ function mapProjectsFromReadModel(
       id: project.id,
       name: project.title,
       cwd: project.workspaceRoot,
-      model: existing?.model ?? resolveModelSlug(project.defaultModel ?? DEFAULT_MODEL),
+      model:
+        existing?.model ??
+        resolveModelSlug(project.defaultModel ?? DEFAULT_MODEL_BY_PROVIDER.codex),
       expanded:
         existing?.expanded ??
         (persistedExpandedProjectCwds.size > 0
@@ -153,8 +142,27 @@ function toLegacySessionStatus(
   }
 }
 
-function toLegacyProvider(providerName: string | null): "codex" | "claudeCode" {
-  return providerName === "claudeCode" ? "claudeCode" : "codex";
+function toLegacyProvider(providerName: string | null): ProviderKind {
+  if (providerName === "codex") {
+    return providerName;
+  }
+  return "codex";
+}
+
+const CODEX_MODEL_SLUGS = new Set<string>(getModelOptions("codex").map((option) => option.slug));
+
+function inferProviderForThreadModel(input: {
+  readonly model: string;
+  readonly sessionProviderName: string | null;
+}): ProviderKind {
+  if (input.sessionProviderName === "codex") {
+    return input.sessionProviderName;
+  }
+  const normalizedCodex = normalizeModelSlug(input.model, "codex");
+  if (normalizedCodex && CODEX_MODEL_SLUGS.has(normalizedCodex)) {
+    return "codex";
+  }
+  return "codex";
 }
 
 function resolveWsHttpOrigin(): string {
@@ -171,11 +179,7 @@ function resolveWsHttpOrigin(): string {
   try {
     const wsUrl = new URL(wsCandidate);
     const protocol =
-      wsUrl.protocol === "wss:"
-        ? "https:"
-        : wsUrl.protocol === "ws:"
-          ? "http:"
-          : wsUrl.protocol;
+      wsUrl.protocol === "wss:" ? "https:" : wsUrl.protocol === "ws:" ? "http:" : wsUrl.protocol;
     return `${protocol}//${wsUrl.host}`;
   } catch {
     return window.location.origin;
@@ -195,36 +199,35 @@ function attachmentPreviewRoutePath(attachmentId: string): string {
 
 // ── Pure state transition functions ────────────────────────────────────
 
-export function syncServerReadModel(
-  state: AppState,
-  readModel: OrchestrationReadModel,
-): AppState {
+export function syncServerReadModel(state: AppState, readModel: OrchestrationReadModel): AppState {
   const projects = mapProjectsFromReadModel(
     readModel.projects.filter((project) => project.deletedAt === null),
     state.projects,
   );
-  const existingThreadById = new Map(
-    state.threads.map((thread) => [thread.id, thread] as const),
-  );
+  const existingThreadById = new Map(state.threads.map((thread) => [thread.id, thread] as const));
   const threads = readModel.threads
     .filter((thread) => thread.deletedAt === null)
     .map((thread) => {
       const existing = existingThreadById.get(thread.id);
       return {
         id: thread.id,
-        codexThreadId: thread.session?.providerThreadId ?? null,
+        codexThreadId: null,
         projectId: thread.projectId,
         title: thread.title,
-        model: resolveModelSlug(thread.model),
+        model: resolveModelSlugForProvider(
+          inferProviderForThreadModel({
+            model: thread.model,
+            sessionProviderName: thread.session?.providerName ?? null,
+          }),
+          thread.model,
+        ),
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
         session: thread.session
           ? {
-              sessionId:
-                thread.session.providerSessionId ??
-                ProviderSessionId.makeUnsafe(`thread:${thread.id}`),
               provider: toLegacyProvider(thread.session.providerName),
               status: toLegacySessionStatus(thread.session.status),
               orchestrationStatus: thread.session.status,
-              threadId: thread.session.providerThreadId,
               activeTurnId: thread.session.activeTurnId ?? undefined,
               createdAt: thread.session.updatedAt,
               updatedAt: thread.session.updatedAt,
@@ -251,6 +254,13 @@ export function syncServerReadModel(
           };
           return normalizedMessage;
         }),
+        proposedPlans: thread.proposedPlans.map((proposedPlan) => ({
+          id: proposedPlan.id,
+          turnId: proposedPlan.turnId,
+          planMarkdown: proposedPlan.planMarkdown,
+          createdAt: proposedPlan.createdAt,
+          updatedAt: proposedPlan.updatedAt,
+        })),
         error: thread.session?.lastError ?? null,
         createdAt: thread.createdAt,
         latestTurn: thread.latestTurn,
@@ -313,9 +323,7 @@ export function markThreadUnread(state: AppState, threadId: ThreadId): AppState 
 export function toggleProject(state: AppState, projectId: Project["id"]): AppState {
   return {
     ...state,
-    projects: state.projects.map((p) =>
-      p.id === projectId ? { ...p, expanded: !p.expanded } : p,
-    ),
+    projects: state.projects.map((p) => (p.id === projectId ? { ...p, expanded: !p.expanded } : p)),
   };
 }
 
@@ -360,11 +368,6 @@ export function setThreadBranch(
   return threads === state.threads ? state : { ...state, threads };
 }
 
-export function setRuntimeMode(state: AppState, mode: RuntimeMode): AppState {
-  if (state.runtimeMode === mode) return state;
-  return { ...state, runtimeMode: mode };
-}
-
 // ── Zustand store ────────────────────────────────────────────────────
 
 interface AppStore extends AppState {
@@ -374,35 +377,24 @@ interface AppStore extends AppState {
   toggleProject: (projectId: Project["id"]) => void;
   setProjectExpanded: (projectId: Project["id"], expanded: boolean) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
-  setThreadBranch: (
-    threadId: ThreadId,
-    branch: string | null,
-    worktreePath: string | null,
-  ) => void;
-  setRuntimeMode: (mode: RuntimeMode) => void;
+  setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
 }
 
 export const useStore = create<AppStore>((set) => ({
   ...readPersistedState(),
-  syncServerReadModel: (readModel) =>
-    set((state) => syncServerReadModel(state, readModel)),
+  syncServerReadModel: (readModel) => set((state) => syncServerReadModel(state, readModel)),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
-  markThreadUnread: (threadId) =>
-    set((state) => markThreadUnread(state, threadId)),
-  toggleProject: (projectId) =>
-    set((state) => toggleProject(state, projectId)),
+  markThreadUnread: (threadId) => set((state) => markThreadUnread(state, threadId)),
+  toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
   setProjectExpanded: (projectId, expanded) =>
     set((state) => setProjectExpanded(state, projectId, expanded)),
-  setError: (threadId, error) =>
-    set((state) => setError(state, threadId, error)),
+  setError: (threadId, error) => set((state) => setError(state, threadId, error)),
   setThreadBranch: (threadId, branch, worktreePath) =>
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
-  setRuntimeMode: (mode) =>
-    set((state) => setRuntimeMode(state, mode)),
 }));
 
-// Persist on every state change (only runtimeMode + expandedProjectCwds)
+// Persist on every state change
 useStore.subscribe((state) => persistState(state));
 
 export function StoreProvider({ children }: { children: ReactNode }) {

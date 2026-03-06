@@ -12,10 +12,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const fakeCodexAdapter: CodexAdapterShape = {
   provider: "codex",
+  capabilities: { sessionModelSwitch: "in-session" },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
   interruptTurn: vi.fn(),
   respondToRequest: vi.fn(),
+  respondToUserInput: vi.fn(),
   stopSession: vi.fn(),
   listSessions: vi.fn(),
   hasSession: vi.fn(),
@@ -27,7 +29,10 @@ const fakeCodexAdapter: CodexAdapterShape = {
 
 const layer = it.layer(
   Layer.mergeAll(
-    Layer.provide(ProviderAdapterRegistryLive, Layer.succeed(CodexAdapter, fakeCodexAdapter)),
+    Layer.provide(
+      ProviderAdapterRegistryLive,
+      Layer.succeed(CodexAdapter, fakeCodexAdapter),
+    ),
     NodeServices.layer,
   ),
 );
@@ -36,8 +41,8 @@ layer("ProviderAdapterRegistryLive", (it) => {
   it.effect("resolves a registered provider adapter", () =>
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry;
-      const adapter = yield* registry.getByProvider("codex");
-      assert.equal(adapter, fakeCodexAdapter);
+      const codex = yield* registry.getByProvider("codex");
+      assert.equal(codex, fakeCodexAdapter);
 
       const providers = yield* registry.listProviders();
       assert.deepEqual(providers, ["codex"]);

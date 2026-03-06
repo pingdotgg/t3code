@@ -18,9 +18,8 @@ import {
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   ProviderItemId,
-  ProviderSessionId,
-  ProviderThreadId,
-  ProviderTurnId,
+  ThreadId,
+  TurnId,
   WS_CHANNELS,
   WS_METHODS,
   type WebSocketResponse,
@@ -51,6 +50,7 @@ import type { GitCoreShape } from "./git/Services/GitCore.ts";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
+import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 
 interface PendingMessages {
   queue: unknown[];
@@ -60,11 +60,9 @@ interface PendingMessages {
 const pendingBySocket = new WeakMap<WebSocket, PendingMessages>();
 
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
-const asProviderSessionId = (value: string): ProviderSessionId =>
-  ProviderSessionId.makeUnsafe(value);
-const asProviderThreadId = (value: string): ProviderThreadId => ProviderThreadId.makeUnsafe(value);
-const asProviderTurnId = (value: string): ProviderTurnId => ProviderTurnId.makeUnsafe(value);
 const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
+const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
+const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
 const defaultOpenService: OpenShape = {
   openBrowser: () => Effect.void,
@@ -396,10 +394,7 @@ describe("WebSocket Server", () => {
       providerHealth?: ProviderHealthShape;
       open?: OpenShape;
       gitManager?: GitManagerShape;
-      gitCore?: Pick<
-        GitCoreShape,
-        "listBranches" | "initRepo" | "pullCurrentBranch"
-      >;
+      gitCore?: Pick<GitCoreShape, "listBranches" | "initRepo" | "pullCurrentBranch">;
       terminalManager?: TerminalManagerShape;
     } = {},
   ): Promise<Http.Server> {
@@ -440,6 +435,7 @@ describe("WebSocket Server", () => {
         ? Layer.succeed(TerminalManager, options.terminalManager)
         : Layer.empty,
     );
+
     const runtimeLayer = Layer.merge(
       Layer.merge(
         makeServerRuntimeServicesLayer().pipe(Layer.provide(infrastructureLayer)),
@@ -452,6 +448,7 @@ describe("WebSocket Server", () => {
       Layer.provideMerge(providerHealthLayer),
       Layer.provideMerge(openLayer),
       Layer.provideMerge(serverConfigLayer),
+      Layer.provideMerge(AnalyticsService.layerTest),
       Layer.provideMerge(NodeServices.layer),
     );
     const runtimeServices = await Effect.runPromise(
@@ -1129,6 +1126,8 @@ describe("WebSocket Server", () => {
       projectId: "project-diff",
       title: "Diff Thread",
       model: "gpt-5-codex",
+      runtimeMode: "full-access",
+      interactionMode: "default",
       branch: null,
       worktreePath: null,
       createdAt,
@@ -1146,30 +1145,31 @@ describe("WebSocket Server", () => {
 
   it("keeps orchestration domain push behavior for provider runtime events", async () => {
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
-    const sessionId = asProviderSessionId("sess-test");
     const emitRuntimeEvent = (event: ProviderRuntimeEvent) => {
       Effect.runSync(PubSub.publish(runtimeEventPubSub, event));
     };
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
     const providerService: ProviderServiceShape = {
-      startSession: () =>
+      startSession: (threadId) =>
         Effect.succeed({
-          sessionId,
           provider: "codex",
           status: "ready",
-          threadId: asProviderThreadId("provider-thread-1"),
+          runtimeMode: "full-access",
+          threadId,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         }),
-      sendTurn: () =>
+      sendTurn: ({ threadId }) =>
         Effect.succeed({
-          threadId: asProviderThreadId("provider-thread-1"),
-          turnId: asProviderTurnId("provider-turn-1"),
+          threadId,
+          turnId: asTurnId("provider-turn-1"),
         }),
       interruptTurn: () => unsupported(),
       respondToRequest: () => unsupported(),
+      respondToUserInput: () => unsupported(),
       stopSession: () => unsupported(),
       listSessions: () => Effect.succeed([]),
+      getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
       rollbackConversation: () => unsupported(),
       stopAll: () => Effect.void,
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
@@ -1205,6 +1205,8 @@ describe("WebSocket Server", () => {
       projectId: "project-1",
       title: "Thread 1",
       model: "gpt-5-codex",
+      runtimeMode: "full-access",
+      interactionMode: "default",
       branch: null,
       worktreePath: null,
       createdAt,
@@ -1222,8 +1224,8 @@ describe("WebSocket Server", () => {
         attachments: [],
       },
       assistantDeliveryMode: "streaming",
-      approvalPolicy: "on-request",
-      sandboxMode: "workspace-write",
+      runtimeMode: "approval-required",
+      interactionMode: "default",
       createdAt,
     });
     expect(startTurnResponse.error).toBeUndefined();
@@ -1233,16 +1235,21 @@ describe("WebSocket Server", () => {
       return event.type === "thread.session-set";
     });
 
-    emitRuntimeEvent({
-      type: "message.delta",
-      eventId: asEventId("evt-ws-runtime-message-delta"),
-      provider: "codex",
-      sessionId,
-      createdAt: new Date().toISOString(),
-      turnId: asProviderTurnId("turn-1"),
-      itemId: asProviderItemId("item-1"),
-      delta: "hello from runtime",
-    });
+    emitRuntimeEvent(
+      {
+        type: "content.delta",
+        eventId: asEventId("evt-ws-runtime-message-delta"),
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        turnId: asTurnId("turn-1"),
+        itemId: asProviderItemId("item-1"),
+        payload: {
+          streamKind: "assistant_text",
+          delta: "hello from runtime",
+        },
+      } as unknown as ProviderRuntimeEvent,
+    );
 
     const domainPush = await waitForPush(ws, ORCHESTRATION_WS_CHANNELS.domainEvent, (push) => {
       const event = push.data as { type?: string; payload?: { messageId?: string; text?: string } };
@@ -1518,6 +1525,54 @@ describe("WebSocket Server", () => {
     });
   });
 
+  it("supports projects.writeFile within the workspace root", async () => {
+    const workspace = makeTempDir("t3code-ws-write-file-");
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.projectsWriteFile, {
+      cwd: workspace,
+      relativePath: "plans/effect-rpc.md",
+      contents: "# Plan\n\n- step 1\n",
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({
+      relativePath: "plans/effect-rpc.md",
+    });
+    expect(fs.readFileSync(path.join(workspace, "plans", "effect-rpc.md"), "utf8")).toBe(
+      "# Plan\n\n- step 1\n",
+    );
+  });
+
+  it("rejects projects.writeFile paths outside the workspace root", async () => {
+    const workspace = makeTempDir("t3code-ws-write-file-reject-");
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.projectsWriteFile, {
+      cwd: workspace,
+      relativePath: "../escape.md",
+      contents: "# no\n",
+    });
+
+    expect(response.result).toBeUndefined();
+    expect(response.error?.message).toContain("Workspace file path must stay within the project root.");
+    expect(fs.existsSync(path.join(workspace, "..", "escape.md"))).toBe(false);
+  });
+
   it("routes git core methods over websocket", async () => {
     const listBranches = vi.fn(() =>
       Effect.succeed({
@@ -1565,7 +1620,6 @@ describe("WebSocket Server", () => {
     expect(pullResponse.result).toBeUndefined();
     expect(pullResponse.error?.message).toContain("No upstream configured");
     expect(pullCurrentBranch).toHaveBeenCalledWith("/repo/path");
-
   });
 
   it("supports git.status over websocket", async () => {

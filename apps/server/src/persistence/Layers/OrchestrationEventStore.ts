@@ -74,8 +74,6 @@ function inferActorKind(
     return "server";
   }
   if (
-    event.metadata.providerSessionId !== undefined ||
-    event.metadata.providerThreadId !== undefined ||
     event.metadata.providerTurnId !== undefined ||
     event.metadata.providerItemId !== undefined ||
     event.metadata.adapterKey !== undefined

@@ -157,6 +157,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           title: command.title,
           model: command.model,
+          runtimeMode: command.runtimeMode,
+          interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
           createdAt: command.createdAt,
@@ -213,6 +215,52 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.runtime-mode.set": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.runtime-mode-set",
+        payload: {
+          threadId: command.threadId,
+          runtimeMode: command.runtimeMode,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.interaction-mode.set": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.interaction-mode-set",
+        payload: {
+          threadId: command.threadId,
+          interactionMode: command.interactionMode,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
     case "thread.turn.start": {
       yield* requireThread({
         readModel,
@@ -251,12 +299,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           messageId: command.message.messageId,
+          ...(command.provider !== undefined ? { provider: command.provider } : {}),
           ...(command.model !== undefined ? { model: command.model } : {}),
           ...(command.serviceTier !== undefined ? { serviceTier: command.serviceTier } : {}),
-          ...(command.effort !== undefined ? { effort: command.effort } : {}),
+          ...(command.modelOptions !== undefined ? { modelOptions: command.modelOptions } : {}),
           assistantDeliveryMode: command.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
-          approvalPolicy: command.approvalPolicy,
-          sandboxMode: command.sandboxMode,
+          runtimeMode:
+            readModel.threads.find((entry) => entry.id === command.threadId)?.runtimeMode ??
+            command.runtimeMode,
+          interactionMode:
+            readModel.threads.find((entry) => entry.id === command.threadId)?.interactionMode ??
+            command.interactionMode,
           createdAt: command.createdAt,
         },
       };
@@ -306,6 +359,32 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           requestId: command.requestId,
           decision: command.decision,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.user-input.respond": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+          metadata: {
+            requestId: command.requestId,
+          },
+        }),
+        type: "thread.user-input-response-requested",
+        payload: {
+          threadId: command.threadId,
+          requestId: command.requestId,
+          answers: command.answers,
           createdAt: command.createdAt,
         },
       };
@@ -366,14 +445,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           aggregateId: command.threadId,
           occurredAt: command.createdAt,
           commandId: command.commandId,
-          metadata: {
-            ...(command.session.providerSessionId !== null
-              ? { providerSessionId: command.session.providerSessionId }
-              : {}),
-            ...(command.session.providerThreadId !== null
-              ? { providerThreadId: command.session.providerThreadId }
-              : {}),
-          },
+          metadata: {},
         }),
         type: "thread.session-set",
         payload: {
@@ -433,6 +505,27 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           streaming: false,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.proposed-plan.upsert": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.proposed-plan-upserted",
+        payload: {
+          threadId: command.threadId,
+          proposedPlan: command.proposedPlan,
         },
       };
     }

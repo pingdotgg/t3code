@@ -7,20 +7,19 @@ const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 
 export const GitStackedAction = Schema.Literals(["commit", "commit_push", "commit_push_pr"]);
 export type GitStackedAction = typeof GitStackedAction.Type;
-export const GitCommitStepStatus = Schema.Literals(["created", "skipped_no_changes"]);
-export const GitPushStepStatus = Schema.Literals([
+const GitCommitStepStatus = Schema.Literals(["created", "skipped_no_changes"]);
+const GitPushStepStatus = Schema.Literals([
   "pushed",
   "skipped_not_requested",
   "skipped_up_to_date",
 ]);
-export const GitBranchStepStatus = Schema.Literals(["created", "skipped_not_requested"]);
-export const GitPrStepStatus = Schema.Literals([
+const GitBranchStepStatus = Schema.Literals(["created", "skipped_not_requested"]);
+const GitPrStepStatus = Schema.Literals([
   "created",
   "opened_existing",
   "skipped_not_requested",
 ]);
-export const GitStatusPrState = Schema.Literals(["open", "closed", "merged"]);
-export type GitStatusPrState = typeof GitStatusPrState.Type;
+const GitStatusPrState = Schema.Literals(["open", "closed", "merged"]);
 
 export const GitBranch = Schema.Struct({
   name: TrimmedNonEmptyStringSchema,
@@ -32,11 +31,10 @@ export const GitBranch = Schema.Struct({
 });
 export type GitBranch = typeof GitBranch.Type;
 
-export const GitWorktree = Schema.Struct({
+const GitWorktree = Schema.Struct({
   path: TrimmedNonEmptyStringSchema,
   branch: TrimmedNonEmptyStringSchema,
 });
-export type GitWorktree = typeof GitWorktree.Type;
 
 // RPC Inputs
 
@@ -97,7 +95,7 @@ export type GitInitInput = typeof GitInitInput.Type;
 
 // RPC Results
 
-export const GitStatusPr = Schema.Struct({
+const GitStatusPr = Schema.Struct({
   number: PositiveInt,
   title: TrimmedNonEmptyStringSchema,
   url: Schema.String,
@@ -105,7 +103,6 @@ export const GitStatusPr = Schema.Struct({
   headBranch: TrimmedNonEmptyStringSchema,
   state: GitStatusPrState,
 });
-export type GitStatusPr = typeof GitStatusPr.Type;
 
 export const GitStatusResult = Schema.Struct({
   branch: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),

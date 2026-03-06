@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { ProviderSessionId } from "@t3tools/contracts";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
 
 import {
+  buildCodexInitializeParams,
+  CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+  CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
   CodexAppServerManager,
   classifyCodexStderrLine,
   isRecoverableThreadResumeError,
@@ -10,7 +17,7 @@ import {
   resolveCodexModelForAccount,
 } from "./codexAppServerManager";
 
-const asSessionId = (value: string): ProviderSessionId => ProviderSessionId.makeUnsafe(value);
+const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 
 function createSendTurnHarness() {
   const manager = new CodexAppServerManager();
@@ -20,6 +27,7 @@ function createSendTurnHarness() {
       provider: "codex",
       status: "ready",
       threadId: "thread_1",
+      resumeCursor: { threadId: "thread_1" },
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
     },
@@ -56,6 +64,7 @@ function createThreadControlHarness() {
       provider: "codex",
       status: "ready",
       threadId: "thread_1",
+      resumeCursor: { threadId: "thread_1" },
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
     },
@@ -76,6 +85,46 @@ function createThreadControlHarness() {
     .mockImplementation(() => {});
 
   return { manager, context, requireSession, sendRequest, updateSession };
+}
+
+function createPendingUserInputHarness() {
+  const manager = new CodexAppServerManager();
+  const context = {
+    session: {
+      sessionId: "sess_1",
+      provider: "codex",
+      status: "ready",
+      threadId: "thread_1",
+      resumeCursor: { threadId: "thread_1" },
+      createdAt: "2026-02-10T00:00:00.000Z",
+      updatedAt: "2026-02-10T00:00:00.000Z",
+    },
+    pendingUserInputs: new Map([
+      [
+        ApprovalRequestId.makeUnsafe("req-user-input-1"),
+        {
+          requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
+          jsonRpcId: 42,
+          threadId: asThreadId("thread_1"),
+        },
+      ],
+    ]),
+  };
+
+  const requireSession = vi
+    .spyOn(
+      manager as unknown as { requireSession: (sessionId: string) => unknown },
+      "requireSession",
+    )
+    .mockReturnValue(context);
+  const writeMessage = vi
+    .spyOn(manager as unknown as { writeMessage: (...args: unknown[]) => void }, "writeMessage")
+    .mockImplementation(() => {});
+  const emitEvent = vi
+    .spyOn(manager as unknown as { emitEvent: (...args: unknown[]) => void }, "emitEvent")
+    .mockImplementation(() => {});
+
+  return { manager, context, requireSession, writeMessage, emitEvent };
 }
 
 describe("classifyCodexStderrLine", () => {
@@ -213,6 +262,19 @@ describe("resolveCodexModelForAccount", () => {
 });
 
 describe("startSession", () => {
+  it("enables Codex experimental api capabilities during initialize", () => {
+    expect(buildCodexInitializeParams()).toEqual({
+      clientInfo: {
+        name: "t3code_desktop",
+        title: "T3 Code Desktop",
+        version: "0.1.0",
+      },
+      capabilities: {
+        experimentalApi: true,
+      },
+    });
+  });
+
   it("emits session/startFailed when resolving cwd throws before process launch", async () => {
     const manager = new CodexAppServerManager();
     const events: Array<{ method: string; kind: string; message?: string }> = [];
@@ -230,7 +292,9 @@ describe("startSession", () => {
     try {
       await expect(
         manager.startSession({
+          threadId: asThreadId("thread-1"),
           provider: "codex",
+          runtimeMode: "full-access",
         }),
       ).rejects.toThrow("cwd missing");
       expect(events).toHaveLength(1);
@@ -252,7 +316,7 @@ describe("sendTurn", () => {
       createSendTurnHarness();
 
     const result = await manager.sendTurn({
-      sessionId: asSessionId("sess_1"),
+      threadId: asThreadId("thread_1"),
       input: "Inspect this image",
       attachments: [
         {
@@ -268,11 +332,9 @@ describe("sendTurn", () => {
     expect(result).toEqual({
       threadId: "thread_1",
       turnId: "turn_1",
-      resumeCursor: {
-        threadId: "thread_1",
-      },
+      resumeCursor: { threadId: "thread_1" },
     });
-    expect(requireSession).toHaveBeenCalledWith("sess_1");
+    expect(requireSession).toHaveBeenCalledWith("thread_1");
     expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
       threadId: "thread_1",
       input: [
@@ -293,9 +355,7 @@ describe("sendTurn", () => {
     expect(updateSession).toHaveBeenCalledWith(context, {
       status: "running",
       activeTurnId: "turn_1",
-      resumeCursor: {
-        threadId: "thread_1",
-      },
+      resumeCursor: { threadId: "thread_1" },
     });
   });
 
@@ -303,7 +363,7 @@ describe("sendTurn", () => {
     const { manager, context, sendRequest } = createSendTurnHarness();
 
     await manager.sendTurn({
-      sessionId: asSessionId("sess_1"),
+      threadId: asThreadId("thread_1"),
       attachments: [
         {
           type: "image",
@@ -323,12 +383,72 @@ describe("sendTurn", () => {
     });
   });
 
+  it("passes Codex plan mode as a collaboration preset on turn/start", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "Plan the work",
+      interactionMode: "plan",
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Plan the work",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.3-codex",
+      collaborationMode: {
+        mode: "plan",
+        settings: {
+          model: "gpt-5.3-codex",
+          reasoning_effort: "medium",
+          developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+        },
+      },
+    });
+  });
+
+  it("passes Codex default mode as a collaboration preset on turn/start", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "PLEASE IMPLEMENT THIS PLAN:\n- step 1",
+      interactionMode: "default",
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "PLEASE IMPLEMENT THIS PLAN:\n- step 1",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.3-codex",
+      collaborationMode: {
+        mode: "default",
+        settings: {
+          model: "gpt-5.3-codex",
+          reasoning_effort: "medium",
+          developer_instructions: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+        },
+      },
+    });
+  });
+
   it("rejects empty turn input", async () => {
     const { manager } = createSendTurnHarness();
 
     await expect(
       manager.sendTurn({
-        sessionId: asSessionId("sess_1"),
+        threadId: asThreadId("thread_1"),
       }),
     ).rejects.toThrow("Turn input must include text or attachments.");
   });
@@ -349,9 +469,9 @@ describe("thread checkpoint control", () => {
       },
     });
 
-    const result = await manager.readThread(asSessionId("sess_1"));
+    const result = await manager.readThread(asThreadId("thread_1"));
 
-    expect(requireSession).toHaveBeenCalledWith("sess_1");
+    expect(requireSession).toHaveBeenCalledWith("thread_1");
     expect(sendRequest).toHaveBeenCalledWith(context, "thread/read", {
       threadId: "thread_1",
       includeTurns: true,
@@ -379,7 +499,7 @@ describe("thread checkpoint control", () => {
       ],
     });
 
-    const result = await manager.readThread(asSessionId("sess_1"));
+    const result = await manager.readThread(asThreadId("thread_1"));
 
     expect(sendRequest).toHaveBeenCalledWith(context, "thread/read", {
       threadId: "thread_1",
@@ -405,7 +525,7 @@ describe("thread checkpoint control", () => {
       },
     });
 
-    const result = await manager.rollbackThread(asSessionId("sess_1"), 2);
+    const result = await manager.rollbackThread(asThreadId("thread_1"), 2);
 
     expect(sendRequest).toHaveBeenCalledWith(context, "thread/rollback", {
       threadId: "thread_1",
@@ -420,4 +540,204 @@ describe("thread checkpoint control", () => {
       turns: [],
     });
   });
+});
+
+describe("respondToUserInput", () => {
+  it("serializes canonical answers to Codex native answer objects", async () => {
+    const { manager, context, requireSession, writeMessage, emitEvent } =
+      createPendingUserInputHarness();
+
+    await manager.respondToUserInput(
+      asThreadId("thread_1"),
+      ApprovalRequestId.makeUnsafe("req-user-input-1"),
+      {
+        scope: "All request methods",
+        compat: "Keep current envelope",
+      },
+    );
+
+    expect(requireSession).toHaveBeenCalledWith("thread_1");
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 42,
+      result: {
+        answers: {
+          scope: { answers: ["All request methods"] },
+          compat: { answers: ["Keep current envelope"] },
+        },
+      },
+    });
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "item/tool/requestUserInput/answered",
+        payload: {
+          requestId: "req-user-input-1",
+          answers: {
+            scope: { answers: ["All request methods"] },
+            compat: { answers: ["Keep current envelope"] },
+          },
+        },
+      }),
+    );
+  });
+
+  it("preserves explicit empty multi-select answers", async () => {
+    const { manager, context, requireSession, writeMessage, emitEvent } =
+      createPendingUserInputHarness();
+
+    await manager.respondToUserInput(
+      asThreadId("thread_1"),
+      ApprovalRequestId.makeUnsafe("req-user-input-1"),
+      {
+        scope: [],
+      },
+    );
+
+    expect(requireSession).toHaveBeenCalledWith("thread_1");
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 42,
+      result: {
+        answers: {
+          scope: { answers: [] },
+        },
+      },
+    });
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "item/tool/requestUserInput/answered",
+        payload: {
+          requestId: "req-user-input-1",
+          answers: {
+            scope: { answers: [] },
+          },
+        },
+      }),
+    );
+  });
+
+  it("tracks file-read approval requests with the correct method", () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        sessionId: "sess_1",
+        provider: "codex",
+        status: "ready",
+        threadId: asThreadId("thread_1"),
+        resumeCursor: { threadId: "thread_1" },
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+    };
+    type ApprovalRequestContext = {
+      session: typeof context.session;
+      pendingApprovals: typeof context.pendingApprovals;
+      pendingUserInputs: typeof context.pendingUserInputs;
+    };
+
+    (
+      manager as unknown as {
+        handleServerRequest: (
+          context: ApprovalRequestContext,
+          request: Record<string, unknown>,
+        ) => void;
+      }
+    ).handleServerRequest(context, {
+      jsonrpc: "2.0",
+      id: 42,
+      method: "item/fileRead/requestApproval",
+      params: {},
+    });
+
+    const request = Array.from(context.pendingApprovals.values())[0];
+    expect(request?.requestKind).toBe("file-read");
+    expect(request?.method).toBe("item/fileRead/requestApproval");
+  });
+});
+
+describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume", () => {
+  it(
+    "keeps prior thread history when resuming with a changed runtime mode",
+    async () => {
+      const workspaceDir = mkdtempSync(path.join(os.tmpdir(), "codex-live-resume-"));
+      writeFileSync(path.join(workspaceDir, "README.md"), "hello\n", "utf8");
+
+      const manager = new CodexAppServerManager();
+
+      try {
+        const firstSession = await manager.startSession({
+          threadId: asThreadId("thread-live"),
+          provider: "codex",
+          cwd: workspaceDir,
+          runtimeMode: "full-access",
+          providerOptions: {
+            codex: {
+              ...(process.env.CODEX_BINARY_PATH
+                ? { binaryPath: process.env.CODEX_BINARY_PATH }
+                : {}),
+              ...(process.env.CODEX_HOME_PATH
+                ? { homePath: process.env.CODEX_HOME_PATH }
+                : {}),
+            },
+          },
+        });
+
+        const firstTurn = await manager.sendTurn({
+          threadId: firstSession.threadId,
+          input: `Reply with exactly the word ALPHA ${randomUUID()}`,
+        });
+
+        expect(firstTurn.threadId).toBe(firstSession.threadId);
+
+        await vi.waitFor(async () => {
+          const snapshot = await manager.readThread(firstSession.threadId);
+          expect(snapshot.turns.length).toBeGreaterThan(0);
+        }, { timeout: 120_000, interval: 1_000 });
+
+        const firstSnapshot = await manager.readThread(firstSession.threadId);
+        const originalThreadId = firstSnapshot.threadId;
+        const originalTurnCount = firstSnapshot.turns.length;
+
+        manager.stopSession(firstSession.threadId);
+
+        const resumedSession = await manager.startSession({
+          threadId: firstSession.threadId,
+          provider: "codex",
+          cwd: workspaceDir,
+          runtimeMode: "approval-required",
+          resumeCursor: firstSession.resumeCursor,
+          providerOptions: {
+            codex: {
+              ...(process.env.CODEX_BINARY_PATH
+                ? { binaryPath: process.env.CODEX_BINARY_PATH }
+                : {}),
+              ...(process.env.CODEX_HOME_PATH
+                ? { homePath: process.env.CODEX_HOME_PATH }
+                : {}),
+            },
+          },
+        });
+
+        expect(resumedSession.threadId).toBe(originalThreadId);
+
+        const resumedSnapshotBeforeTurn = await manager.readThread(resumedSession.threadId);
+        expect(resumedSnapshotBeforeTurn.threadId).toBe(originalThreadId);
+        expect(resumedSnapshotBeforeTurn.turns.length).toBeGreaterThanOrEqual(originalTurnCount);
+
+        await manager.sendTurn({
+          threadId: resumedSession.threadId,
+          input: `Reply with exactly the word BETA ${randomUUID()}`,
+        });
+
+        await vi.waitFor(async () => {
+          const snapshot = await manager.readThread(resumedSession.threadId);
+          expect(snapshot.turns.length).toBeGreaterThan(originalTurnCount);
+        }, { timeout: 120_000, interval: 1_000 });
+      } finally {
+        manager.stopAll();
+        rmSync(workspaceDir, { recursive: true, force: true });
+      }
+    },
+    180_000,
+  );
 });

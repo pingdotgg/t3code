@@ -34,11 +34,12 @@ import { CodexTextGenerationLive } from "./git/Layers/CodexTextGeneration";
 import { GitServiceLive } from "./git/Layers/GitService";
 import { BunPtyAdapterLive } from "./terminal/Layers/BunPTY";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
+import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService,
   ProviderUnsupportedError,
-  SqlClient.SqlClient | ServerConfig | FileSystem.FileSystem
+  SqlClient.SqlClient | ServerConfig | FileSystem.FileSystem | AnalyticsService
 > {
   return Effect.gen(function* () {
     const { stateDir } = yield* ServerConfig;

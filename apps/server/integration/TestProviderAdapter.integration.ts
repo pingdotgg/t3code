@@ -5,11 +5,11 @@ import {
   EventId,
   ProviderApprovalDecision,
   ProviderRuntimeEvent,
+  RuntimeSessionId,
   ProviderSession,
-  ProviderSessionId,
-  ProviderThreadId,
-  ProviderTurnId,
   ProviderTurnStartResult,
+  ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { Effect, Queue, Stream } from "effect";
 
@@ -25,12 +25,28 @@ import type {
 } from "../src/provider/Services/ProviderAdapter.ts";
 
 export interface TestTurnResponse {
-  readonly events: ReadonlyArray<ProviderRuntimeEvent>;
+  readonly events: ReadonlyArray<FixtureProviderRuntimeEvent>;
   readonly mutateWorkspace?: (input: {
     readonly cwd: string;
     readonly turnCount: number;
   }) => Effect.Effect<void, never>;
 }
+
+export type FixtureProviderRuntimeEvent = {
+  readonly type: string;
+  readonly eventId: EventId;
+  readonly provider: "codex";
+  readonly createdAt: string;
+  readonly threadId: string;
+  readonly turnId?: string | undefined;
+  readonly itemId?: string | undefined;
+  readonly requestId?: string | undefined;
+  readonly payload?: unknown | undefined;
+  readonly [key: string]: unknown;
+};
+
+// Temporary alias while fixtures migrate to the new name.
+export type LegacyProviderRuntimeEvent = FixtureProviderRuntimeEvent;
 
 interface SessionState {
   readonly session: ProviderSession;
@@ -40,82 +56,217 @@ interface SessionState {
   readonly rollbackCalls: Array<number>;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function normalizeTurnState(value: unknown): "completed" | "failed" | "interrupted" | "cancelled" {
+  if (
+    value === "completed" ||
+    value === "failed" ||
+    value === "interrupted" ||
+    value === "cancelled"
+  ) {
+    return value;
+  }
+  return "completed";
+}
+
+function mapRequestType(requestKind: unknown):
+  | "command_execution_approval"
+  | "file_change_approval"
+  | "unknown" {
+  if (requestKind === "command") {
+    return "command_execution_approval";
+  }
+  if (requestKind === "file-change") {
+    return "file_change_approval";
+  }
+  return "unknown";
+}
+
+function mapItemType(toolKind: unknown): "command_execution" | "file_change" | "unknown" {
+  if (toolKind === "command") {
+    return "command_execution";
+  }
+  if (toolKind === "file-change") {
+    return "file_change";
+  }
+  return "unknown";
+}
+
+function normalizeFixtureEvent(rawEvent: Record<string, unknown>): ProviderRuntimeEvent {
+  const type = typeof rawEvent.type === "string" ? rawEvent.type : "";
+  switch (type) {
+    case "turn.started":
+      return {
+        ...rawEvent,
+        type: "turn.started",
+        payload: isRecord(rawEvent.payload) ? rawEvent.payload : {},
+      } as ProviderRuntimeEvent;
+    case "turn.completed":
+      return {
+        ...rawEvent,
+        type: "turn.completed",
+        payload: isRecord(rawEvent.payload)
+          ? rawEvent.payload
+          : {
+              state: normalizeTurnState(rawEvent.status),
+            },
+      } as ProviderRuntimeEvent;
+    case "message.delta":
+      return {
+        ...rawEvent,
+        type: "content.delta",
+        payload: {
+          streamKind: "assistant_text",
+          delta: typeof rawEvent.delta === "string" ? rawEvent.delta : "",
+        },
+      } as ProviderRuntimeEvent;
+    case "message.completed":
+      return {
+        ...rawEvent,
+        type: "item.completed",
+        payload: {
+          itemType: "assistant_message",
+          ...(typeof rawEvent.detail === "string" ? { detail: rawEvent.detail } : {}),
+        },
+      } as ProviderRuntimeEvent;
+    case "tool.started":
+      return {
+        ...rawEvent,
+        type: "item.started",
+        payload: {
+          itemType: mapItemType(rawEvent.toolKind),
+          ...(typeof rawEvent.title === "string" ? { title: rawEvent.title } : {}),
+          ...(typeof rawEvent.detail === "string" ? { detail: rawEvent.detail } : {}),
+        },
+      } as ProviderRuntimeEvent;
+    case "tool.completed":
+      return {
+        ...rawEvent,
+        type: "item.completed",
+        payload: {
+          itemType: mapItemType(rawEvent.toolKind),
+          status: "completed",
+          ...(typeof rawEvent.title === "string" ? { title: rawEvent.title } : {}),
+          ...(typeof rawEvent.detail === "string" ? { detail: rawEvent.detail } : {}),
+        },
+      } as ProviderRuntimeEvent;
+    case "approval.requested":
+      return {
+        ...rawEvent,
+        type: "request.opened",
+        payload: {
+          requestType: mapRequestType(rawEvent.requestKind),
+          ...(typeof rawEvent.detail === "string" ? { detail: rawEvent.detail } : {}),
+        },
+      } as ProviderRuntimeEvent;
+    case "approval.resolved":
+      return {
+        ...rawEvent,
+        type: "request.resolved",
+        payload: {
+          requestType: mapRequestType(rawEvent.requestKind),
+          ...(typeof rawEvent.decision === "string" ? { decision: rawEvent.decision } : {}),
+        },
+      } as ProviderRuntimeEvent;
+    default:
+      return rawEvent as ProviderRuntimeEvent;
+  }
+}
+
 export interface TestProviderAdapterHarness {
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
+  readonly provider: "codex";
   readonly queueTurnResponse: (
-    sessionId: string,
+    threadId: ThreadId,
     response: TestTurnResponse,
   ) => Effect.Effect<void, ProviderAdapterSessionNotFoundError>;
   readonly queueTurnResponseForNextSession: (
     response: TestTurnResponse,
   ) => Effect.Effect<void, never>;
-  readonly getRollbackCalls: (sessionId: string) => ReadonlyArray<number>;
-  readonly getApprovalResponses: (sessionId: string) => ReadonlyArray<{
-    readonly sessionId: ProviderSessionId;
+  readonly getStartCount: () => number;
+  readonly getRollbackCalls: (threadId: ThreadId) => ReadonlyArray<number>;
+  readonly getInterruptCalls: (threadId: ThreadId) => ReadonlyArray<TurnId | undefined>;
+  readonly listActiveSessionIds: () => ReadonlyArray<ThreadId>;
+  readonly getApprovalResponses: (threadId: ThreadId) => ReadonlyArray<{
+    readonly threadId: ThreadId;
     readonly requestId: ApprovalRequestId;
     readonly decision: ProviderApprovalDecision;
   }>;
 }
 
-const PROVIDER = "codex" as const;
+interface MakeTestProviderAdapterHarnessOptions {
+  readonly provider?: "codex";
+}
 
 function nowIso(): string {
   return new Date().toISOString();
 }
 
-function sessionNotFound(sessionId: string): ProviderAdapterSessionNotFoundError {
+function sessionNotFound(
+  provider: "codex",
+  threadId: ThreadId,
+): ProviderAdapterSessionNotFoundError {
   return new ProviderAdapterSessionNotFoundError({
-    provider: PROVIDER,
-    sessionId,
+    provider,
+    threadId: String(threadId),
   });
 }
 
-function missingSessionEffect(sessionId: string): Effect.Effect<never, ProviderAdapterError> {
-  return Effect.fail(sessionNotFound(sessionId));
+function missingSessionEffect(
+  provider: "codex",
+  threadId: ThreadId,
+): Effect.Effect<never, ProviderAdapterError> {
+  return Effect.fail(sessionNotFound(provider, threadId));
 }
 
-export const makeTestProviderAdapterHarness = Effect.gen(function* () {
-  const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
-  let sessionCount = 0;
-  const sessions = new Map<string, SessionState>();
-  const queuedResponsesForNextSession: TestTurnResponse[] = [];
-  const approvalResponsesBySession = new Map<
-    string,
-    Array<{
-      readonly sessionId: ProviderSessionId;
-      readonly requestId: ApprovalRequestId;
-      readonly decision: ProviderApprovalDecision;
-    }>
-  >();
+export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapterHarnessOptions) =>
+  Effect.gen(function* () {
+    const provider = options?.provider ?? "codex";
+    const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
+    let sessionCount = 0;
+    const sessions = new Map<ThreadId, SessionState>();
+    const queuedResponsesForNextSession: TestTurnResponse[] = [];
+    const interruptCallsBySession = new Map<ThreadId, Array<TurnId | undefined>>();
+    const approvalResponsesBySession = new Map<
+      ThreadId,
+      Array<{
+        readonly threadId: ThreadId;
+        readonly requestId: ApprovalRequestId;
+        readonly decision: ProviderApprovalDecision;
+      }>
+    >();
 
   const emit = (event: ProviderRuntimeEvent) => Queue.offer(runtimeEvents, event);
 
   const startSession: ProviderAdapterShape<ProviderAdapterError>["startSession"] = (input) =>
     Effect.gen(function* () {
-      if (input.provider !== undefined && input.provider !== PROVIDER) {
+      if (input.provider !== undefined && input.provider !== provider) {
         return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "startSession",
-          issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
+          issue: `Expected provider '${provider}' but received '${input.provider}'.`,
         });
       }
 
       sessionCount += 1;
-      const sessionId = ProviderSessionId.makeUnsafe(`test-session-${sessionCount}`);
-      const threadId = ProviderThreadId.makeUnsafe(`test-thread-${sessionCount}`);
+      const threadId = input.threadId;
       const createdAt = nowIso();
 
       const session: ProviderSession = {
-        sessionId,
-        provider: PROVIDER,
+        provider,
         status: "ready",
+        runtimeMode: input.runtimeMode,
         threadId,
         cwd: input.cwd,
+        resumeCursor: input.resumeCursor ?? { threadId: String(threadId), seed: sessionCount },
         createdAt,
         updatedAt: createdAt,
       };
 
-      sessions.set(sessionId, {
+      sessions.set(threadId, {
         session,
         snapshot: {
           threadId,
@@ -131,21 +282,21 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
 
   const sendTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (input) =>
     Effect.gen(function* () {
-      const state = sessions.get(input.sessionId);
+      const state = sessions.get(input.threadId);
       if (!state) {
-        return yield* missingSessionEffect(input.sessionId);
+        return yield* missingSessionEffect(provider, input.threadId);
       }
 
       state.turnCount += 1;
       const turnCount = state.turnCount;
-      const turnId = ProviderTurnId.makeUnsafe(`turn-${turnCount}`);
+      const turnId = TurnId.makeUnsafe(`turn-${turnCount}`);
 
       const response = state.queuedResponses.shift();
       if (!response) {
         return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "sendTurn",
-          issue: `No queued turn response for session ${input.sessionId}.`,
+          issue: `No queued turn response for thread ${input.threadId}.`,
         });
       }
 
@@ -155,20 +306,27 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
         const rawEvent: Record<string, unknown> = {
           ...(fixtureEvent as Record<string, unknown>),
           eventId: randomUUID(),
-          provider: PROVIDER,
-          sessionId: input.sessionId,
+          provider,
+          sessionId: RuntimeSessionId.makeUnsafe(String(input.threadId)),
           createdAt: nowIso(),
         };
-        if (Object.hasOwn(rawEvent, "threadId")) {
-          rawEvent.threadId = state.snapshot.threadId;
-        }
+        rawEvent.threadId = state.snapshot.threadId;
         if (Object.hasOwn(rawEvent, "turnId")) {
           rawEvent.turnId = turnId;
         }
 
-        const runtimeEvent = rawEvent as ProviderRuntimeEvent;
-        if (runtimeEvent.type === "message.delta") {
-          assistantDeltas.push(runtimeEvent.delta);
+        const runtimeEvent = normalizeFixtureEvent(rawEvent);
+        const runtimeType = (runtimeEvent as { type: string }).type;
+        if (runtimeType === "content.delta") {
+          const payload = runtimeEvent.payload as { delta?: unknown } | undefined;
+          if (typeof payload?.delta === "string") {
+            assistantDeltas.push(payload.delta);
+          }
+        } else if (runtimeType === "message.delta") {
+          const legacyDelta = (runtimeEvent as { delta?: unknown }).delta;
+          if (typeof legacyDelta === "string") {
+            assistantDeltas.push(legacyDelta);
+          }
         }
         if (runtimeEvent.type === "turn.completed") {
           deferredTurnCompletedEvents.push(runtimeEvent);
@@ -206,12 +364,13 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
         yield* emit({
           type: "turn.completed",
           eventId: EventId.makeUnsafe(randomUUID()),
-          provider: PROVIDER,
-          sessionId: input.sessionId,
+          provider,
           createdAt: nowIso(),
           threadId: state.snapshot.threadId,
           turnId,
-          status: "completed",
+          payload: {
+            state: "completed",
+          },
         });
       } else {
         for (const completedEvent of deferredTurnCompletedEvents) {
@@ -226,58 +385,71 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
     });
 
   const interruptTurn: ProviderAdapterShape<ProviderAdapterError>["interruptTurn"] = (
-    sessionId,
-    _turnId,
-  ) => (sessions.has(sessionId) ? Effect.void : missingSessionEffect(sessionId));
+    threadId,
+    turnId,
+  ) =>
+    sessions.has(threadId)
+      ? Effect.sync(() => {
+          const existing = interruptCallsBySession.get(threadId) ?? [];
+          existing.push(turnId);
+          interruptCallsBySession.set(threadId, existing);
+        })
+      : missingSessionEffect(provider, threadId);
 
   const respondToRequest: ProviderAdapterShape<ProviderAdapterError>["respondToRequest"] = (
-    sessionId,
+    threadId,
     requestId,
     decision,
   ) =>
-    sessions.has(sessionId)
+    sessions.has(threadId)
       ? Effect.sync(() => {
-          const existing = approvalResponsesBySession.get(sessionId) ?? [];
+          const existing = approvalResponsesBySession.get(threadId) ?? [];
           existing.push({
-            sessionId,
+            threadId,
             requestId,
             decision,
           });
-          approvalResponsesBySession.set(sessionId, existing);
+          approvalResponsesBySession.set(threadId, existing);
         })
-      : missingSessionEffect(sessionId);
+      : missingSessionEffect(provider, threadId);
 
-  const stopSession: ProviderAdapterShape<ProviderAdapterError>["stopSession"] = (sessionId) =>
+  const respondToUserInput: ProviderAdapterShape<ProviderAdapterError>["respondToUserInput"] = (
+    threadId,
+    _requestId,
+    _answers,
+  ) => (sessions.has(threadId) ? Effect.void : missingSessionEffect(provider, threadId));
+
+  const stopSession: ProviderAdapterShape<ProviderAdapterError>["stopSession"] = (threadId) =>
     Effect.sync(() => {
-      sessions.delete(sessionId);
+      sessions.delete(threadId);
     });
 
   const listSessions: ProviderAdapterShape<ProviderAdapterError>["listSessions"] = () =>
     Effect.sync(() => Array.from(sessions.values(), (state) => state.session));
 
-  const hasSession: ProviderAdapterShape<ProviderAdapterError>["hasSession"] = (sessionId) =>
-    Effect.succeed(sessions.has(sessionId));
+  const hasSession: ProviderAdapterShape<ProviderAdapterError>["hasSession"] = (threadId) =>
+    Effect.succeed(sessions.has(threadId));
 
-  const readThread: ProviderAdapterShape<ProviderAdapterError>["readThread"] = (sessionId) => {
-    const state = sessions.get(sessionId);
+  const readThread: ProviderAdapterShape<ProviderAdapterError>["readThread"] = (threadId) => {
+    const state = sessions.get(threadId);
     if (!state) {
-      return missingSessionEffect(sessionId);
+      return missingSessionEffect(provider, threadId);
     }
     return Effect.succeed(state.snapshot);
   };
 
   const rollbackThread: ProviderAdapterShape<ProviderAdapterError>["rollbackThread"] = (
-    sessionId,
+    threadId,
     numTurns,
   ) => {
-    const state = sessions.get(sessionId);
+    const state = sessions.get(threadId);
     if (!state) {
-      return missingSessionEffect(sessionId);
+      return missingSessionEffect(provider, threadId);
     }
     if (!Number.isInteger(numTurns) || numTurns < 0 || numTurns > state.snapshot.turns.length) {
       return Effect.fail(
         new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "rollbackThread",
           issue: "numTurns must be an integer between 0 and current turn count.",
         }),
@@ -301,11 +473,15 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
     });
 
   const adapter: ProviderAdapterShape<ProviderAdapterError> = {
-    provider: PROVIDER,
+    provider,
+    capabilities: {
+      sessionModelSwitch: "in-session",
+    },
     startSession,
     sendTurn,
     interruptTurn,
     respondToRequest,
+    respondToUserInput,
     stopSession,
     listSessions,
     hasSession,
@@ -316,16 +492,16 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
   };
 
   const queueTurnResponse = (
-    sessionId: string,
+    threadId: ThreadId,
     response: TestTurnResponse,
   ): Effect.Effect<void, ProviderAdapterSessionNotFoundError> =>
-    Effect.sync(() => sessions.get(sessionId)).pipe(
+    Effect.sync(() => sessions.get(threadId)).pipe(
       Effect.flatMap((state) =>
         state
           ? Effect.sync(() => {
               state.queuedResponses.push(response);
             })
-          : Effect.fail(sessionNotFound(sessionId)),
+          : Effect.fail(sessionNotFound(provider, threadId)),
       ),
     );
 
@@ -336,22 +512,35 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
       queuedResponsesForNextSession.push(response);
     });
 
-  const getRollbackCalls = (sessionId: string): ReadonlyArray<number> => {
-    const state = sessions.get(sessionId);
+  const getRollbackCalls = (threadId: ThreadId): ReadonlyArray<number> => {
+    const state = sessions.get(threadId);
     if (!state) {
       return [];
     }
     return [...state.rollbackCalls];
   };
 
+  const getStartCount = (): number => sessionCount;
+
+  const getInterruptCalls = (threadId: ThreadId): ReadonlyArray<TurnId | undefined> => {
+    const calls = interruptCallsBySession.get(threadId);
+    if (!calls) {
+      return [];
+    }
+    return [...calls];
+  };
+
+  const listActiveSessionIds = (): ReadonlyArray<ThreadId> =>
+    Array.from(sessions.values(), (state) => state.session.threadId);
+
   const getApprovalResponses = (
-    sessionId: string,
+    threadId: ThreadId,
   ): ReadonlyArray<{
-    readonly sessionId: ProviderSessionId;
+    readonly threadId: ThreadId;
     readonly requestId: ApprovalRequestId;
     readonly decision: ProviderApprovalDecision;
   }> => {
-    const responses = approvalResponsesBySession.get(sessionId);
+    const responses = approvalResponsesBySession.get(threadId);
     if (!responses) {
       return [];
     }
@@ -360,9 +549,13 @@ export const makeTestProviderAdapterHarness = Effect.gen(function* () {
 
   return {
     adapter,
+    provider,
     queueTurnResponse,
     queueTurnResponseForNextSession,
+    getStartCount,
     getRollbackCalls,
+    getInterruptCalls,
+    listActiveSessionIds,
     getApprovalResponses,
   } satisfies TestProviderAdapterHarness;
 });

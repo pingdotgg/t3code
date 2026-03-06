@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
-import { MODEL_OPTIONS, normalizeModelSlug } from "@t3tools/contracts";
+import { type ProviderKind } from "@t3tools/contracts";
+import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { ZapIcon } from "lucide-react";
 
 import {
@@ -14,7 +15,6 @@ import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
-import { useStore } from "../store";
 import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -40,34 +40,70 @@ const THEME_OPTIONS = [
   },
 ] as const;
 
-const RUNTIME_MODE_OPTIONS = [
+const MODEL_PROVIDER_SETTINGS: Array<{
+  provider: ProviderKind;
+  title: string;
+  description: string;
+  placeholder: string;
+  example: string;
+}> = [
   {
-    value: "full-access",
-    label: "Full access",
-    description: "Allow commands to run without confirmation prompts.",
-  },
-  {
-    value: "approval-required",
-    label: "Supervised",
-    description: "Require approval prompts before command execution.",
+    provider: "codex",
+    title: "Codex",
+    description: "Save additional Codex model slugs for the picker and `/model` command.",
+    placeholder: "your-codex-model-slug",
+    example: "gpt-6.7-codex-ultra-preview",
   },
 ] as const;
 
+function getCustomModelsForProvider(
+  settings: ReturnType<typeof useAppSettings>["settings"],
+  provider: ProviderKind,
+) {
+  switch (provider) {
+    case "codex":
+    default:
+      return settings.customCodexModels;
+  }
+}
+
+function getDefaultCustomModelsForProvider(
+  defaults: ReturnType<typeof useAppSettings>["defaults"],
+  provider: ProviderKind,
+) {
+  switch (provider) {
+    case "codex":
+    default:
+      return defaults.customCodexModels;
+  }
+}
+
+function patchCustomModels(provider: ProviderKind, models: string[]) {
+  switch (provider) {
+    case "codex":
+    default:
+      return { customCodexModels: models };
+  }
+}
+
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
-  const runtimeMode = useStore((store) => store.runtimeMode);
-  const setRuntimeMode = useStore((store) => store.setRuntimeMode);
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
-  const [customModelInput, setCustomModelInput] = useState("");
-  const [customModelError, setCustomModelError] = useState<string | null>(null);
+  const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
+    Record<ProviderKind, string>
+  >({
+    codex: "",
+  });
+  const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
+    Partial<Record<ProviderKind, string | null>>
+  >({});
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const codexServiceTier = settings.codexServiceTier;
-  const customCodexModels = settings.customCodexModels;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
   const openKeybindingsFile = useCallback(() => {
@@ -87,40 +123,60 @@ function SettingsRouteView() {
       });
   }, [keybindingsConfigPath]);
 
-  const addCustomModel = useCallback(() => {
-    const normalized = normalizeModelSlug(customModelInput);
+  const addCustomModel = useCallback((provider: ProviderKind) => {
+    const customModelInput = customModelInputByProvider[provider];
+    const customModels = getCustomModelsForProvider(settings, provider);
+    const normalized = normalizeModelSlug(customModelInput, provider);
     if (!normalized) {
-      setCustomModelError("Enter a model slug.");
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: "Enter a model slug.",
+      }));
       return;
     }
-    if (MODEL_OPTIONS.some((option) => option.slug === normalized)) {
-      setCustomModelError("That model is already built in.");
+    if (getModelOptions(provider).some((option) => option.slug === normalized)) {
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: "That model is already built in.",
+      }));
       return;
     }
     if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
-      setCustomModelError(`Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`);
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
+      }));
       return;
     }
-    if (customCodexModels.includes(normalized)) {
-      setCustomModelError("That custom model is already saved.");
+    if (customModels.includes(normalized)) {
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: "That custom model is already saved.",
+      }));
       return;
     }
 
-    updateSettings({
-      customCodexModels: [...customCodexModels, normalized],
-    });
-    setCustomModelInput("");
-    setCustomModelError(null);
-  }, [customCodexModels, customModelInput, updateSettings]);
+    updateSettings(patchCustomModels(provider, [...customModels, normalized]));
+    setCustomModelInputByProvider((existing) => ({
+      ...existing,
+      [provider]: "",
+    }));
+    setCustomModelErrorByProvider((existing) => ({
+      ...existing,
+      [provider]: null,
+    }));
+  }, [customModelInputByProvider, settings, updateSettings]);
 
   const removeCustomModel = useCallback(
-    (slug: string) => {
-      updateSettings({
-        customCodexModels: customCodexModels.filter((model) => model !== slug),
-      });
-      setCustomModelError(null);
+    (provider: ProviderKind, slug: string) => {
+      const customModels = getCustomModelsForProvider(settings, provider);
+      updateSettings(patchCustomModels(provider, customModels.filter((model) => model !== slug)));
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: null,
+      }));
     },
-    [customCodexModels, updateSettings],
+    [settings, updateSettings],
   );
 
   return (
@@ -248,11 +304,12 @@ function SettingsRouteView() {
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Models</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Save additional Codex model slugs so they appear in the chat model picker.
+                  Save additional provider model slugs so they appear in the chat model picker and
+                  `/model` command suggestions.
                 </p>
               </div>
 
-              <div className="space-y-4">
+              <div className="space-y-5">
                 <label className="block space-y-1">
                   <span className="text-xs font-medium text-foreground">Default service tier</span>
                   <Select
@@ -290,128 +347,130 @@ function SettingsRouteView() {
                   </span>
                 </label>
 
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-                  <label htmlFor="custom-model-slug" className="block flex-1 space-y-1">
-                    <span className="text-xs font-medium text-foreground">Custom model slug</span>
-                    <Input
-                      id="custom-model-slug"
-                      value={customModelInput}
-                      onChange={(event) => {
-                        setCustomModelInput(event.target.value);
-                        if (customModelError) {
-                          setCustomModelError(null);
-                        }
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter") return;
-                        event.preventDefault();
-                        addCustomModel();
-                      }}
-                      placeholder="your-model-slug"
-                      spellCheck={false}
-                    />
-                    <span className="text-xs text-muted-foreground">
-                      Example: <code>gpt-6.7-codex-ultra-preview</code>
-                    </span>
-                  </label>
+                {MODEL_PROVIDER_SETTINGS.map((providerSettings) => {
+                  const provider = providerSettings.provider;
+                  const customModels = getCustomModelsForProvider(settings, provider);
+                  const customModelInput = customModelInputByProvider[provider];
+                  const customModelError = customModelErrorByProvider[provider] ?? null;
+                  return (
+                    <div
+                      key={provider}
+                      className="rounded-xl border border-border bg-background/50 p-4"
+                    >
+                      <div className="mb-4">
+                        <h3 className="text-sm font-medium text-foreground">
+                          {providerSettings.title}
+                        </h3>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {providerSettings.description}
+                        </p>
+                      </div>
 
-                  <Button className="sm:mt-6" type="button" onClick={addCustomModel}>
-                    Add model
-                  </Button>
-                </div>
-
-                {customModelError ? (
-                  <p className="text-xs text-destructive">{customModelError}</p>
-                ) : null}
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                    <p>Saved custom models: {customCodexModels.length}</p>
-                    {customCodexModels.length > 0 ? (
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        onClick={() =>
-                          updateSettings({
-                            customCodexModels: defaults.customCodexModels,
-                          })
-                        }
-                      >
-                        Reset custom models
-                      </Button>
-                    ) : null}
-                  </div>
-
-                  {customCodexModels.length > 0 ? (
-                    <div className="space-y-2">
-                      {customCodexModels.map((slug) => (
-                        <div
-                          key={slug}
-                          className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2"
-                        >
-                          <div className="flex min-w-0 flex-1 items-center gap-2">
-                            {shouldShowFastTierIcon(slug, codexServiceTier) ? (
-                              <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
-                            ) : null}
-                            <code className="min-w-0 flex-1 truncate text-xs text-foreground">
-                              {slug}
-                            </code>
-                          </div>
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            onClick={() => removeCustomModel(slug)}
+                      <div className="space-y-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                          <label
+                            htmlFor={`custom-model-slug-${provider}`}
+                            className="block flex-1 space-y-1"
                           >
-                            Remove
+                            <span className="text-xs font-medium text-foreground">
+                              Custom model slug
+                            </span>
+                            <Input
+                              id={`custom-model-slug-${provider}`}
+                              value={customModelInput}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setCustomModelInputByProvider((existing) => ({
+                                  ...existing,
+                                  [provider]: value,
+                                }));
+                                if (customModelError) {
+                                  setCustomModelErrorByProvider((existing) => ({
+                                    ...existing,
+                                    [provider]: null,
+                                  }));
+                                }
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter") return;
+                                event.preventDefault();
+                                addCustomModel(provider);
+                              }}
+                              placeholder={providerSettings.placeholder}
+                              spellCheck={false}
+                            />
+                            <span className="text-xs text-muted-foreground">
+                              Example: <code>{providerSettings.example}</code>
+                            </span>
+                          </label>
+
+                          <Button
+                            className="sm:mt-6"
+                            type="button"
+                            onClick={() => addCustomModel(provider)}
+                          >
+                            Add model
                           </Button>
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-lg border border-dashed border-border bg-background px-3 py-4 text-xs text-muted-foreground">
-                      No custom models saved yet.
-                    </div>
-                  )}
-                </div>
-              </div>
-            </section>
 
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Runtime Mode</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Select the default execution policy for this client.
-                </p>
-              </div>
+                        {customModelError ? (
+                          <p className="text-xs text-destructive">{customModelError}</p>
+                        ) : null}
 
-              <div className="space-y-2" role="radiogroup" aria-label="Runtime mode preference">
-                {RUNTIME_MODE_OPTIONS.map((option) => {
-                  const selected = runtimeMode === option.value;
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
-                        selected
-                          ? "border-primary/60 bg-primary/8 text-foreground"
-                          : "border-border bg-background text-muted-foreground hover:bg-accent"
-                      }`}
-                      onClick={() => {
-                        setRuntimeMode(option.value);
-                      }}
-                    >
-                      <span className="flex flex-col">
-                        <span className="text-sm font-medium">{option.label}</span>
-                        <span className="text-xs">{option.description}</span>
-                      </span>
-                      {selected ? (
-                        <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
-                          Selected
-                        </span>
-                      ) : null}
-                    </button>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                            <p>Saved custom models: {customModels.length}</p>
+                            {customModels.length > 0 ? (
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                onClick={() =>
+                                  updateSettings(
+                                    patchCustomModels(
+                                      provider,
+                                      [...getDefaultCustomModelsForProvider(defaults, provider)],
+                                    ),
+                                  )
+                                }
+                              >
+                                Reset custom models
+                              </Button>
+                            ) : null}
+                          </div>
+
+                          {customModels.length > 0 ? (
+                            <div className="space-y-2">
+                              {customModels.map((slug) => (
+                                <div
+                                  key={`${provider}:${slug}`}
+                                  className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2"
+                                >
+                                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                                    {provider === "codex" && shouldShowFastTierIcon(slug, codexServiceTier) ? (
+                                      <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
+                                    ) : null}
+                                    <code className="min-w-0 flex-1 truncate text-xs text-foreground">
+                                      {slug}
+                                    </code>
+                                  </div>
+                                  <Button
+                                    size="xs"
+                                    variant="ghost"
+                                    onClick={() => removeCustomModel(provider, slug)}
+                                  >
+                                    Remove
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="rounded-lg border border-dashed border-border bg-background px-3 py-4 text-xs text-muted-foreground">
+                              No custom models saved yet.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   );
                 })}
               </div>

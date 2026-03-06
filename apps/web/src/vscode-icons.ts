@@ -45,6 +45,9 @@ const languageIdByFileName = toLowercaseLookup(languageAssociations.fileNameToLa
 const localLanguageIdByExtensionOverrides = {
   // Cursor rules files (*.mdc) are commonly treated as markdown in VSCode/Cursor.
   mdc: "markdown",
+  // Upstream languages.ts currently maps .html to django-html before html.
+  // Prefer the base HTML icon for standalone HTML files.
+  html: "html",
   // Upstream languages.ts maps yml/yaml to specialized language ids that can produce
   // non-generic YAML icons (for example cloudfoundry/esphome). Prefer the base YAML icon
   // unless a more specific basename/extension match (e.g. azure-pipelines.yml) is found.

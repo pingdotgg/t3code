@@ -6,21 +6,15 @@ export default Effect.gen(function* () {
 
   yield* sql`
     CREATE TABLE IF NOT EXISTS provider_session_runtime (
-      provider_session_id TEXT PRIMARY KEY,
-      thread_id TEXT NOT NULL,
+      thread_id TEXT PRIMARY KEY,
       provider_name TEXT NOT NULL,
       adapter_key TEXT NOT NULL,
-      provider_thread_id TEXT,
+      runtime_mode TEXT NOT NULL DEFAULT 'full-access',
       status TEXT NOT NULL,
       last_seen_at TEXT NOT NULL,
       resume_cursor_json TEXT,
       runtime_payload_json TEXT
     )
-  `;
-
-  yield* sql`
-    CREATE INDEX IF NOT EXISTS idx_provider_session_runtime_thread
-    ON provider_session_runtime(thread_id)
   `;
 
   yield* sql`

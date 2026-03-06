@@ -19,6 +19,13 @@ import Migration0004 from "./Migrations/004_ProviderSessionRuntime.ts";
 import Migration0005 from "./Migrations/005_Projections.ts";
 import Migration0006 from "./Migrations/006_ProjectionThreadSessionRuntimeModeColumns.ts";
 import Migration0007 from "./Migrations/007_ProjectionThreadMessageAttachments.ts";
+import Migration0008 from "./Migrations/008_ProjectionThreadActivitySequence.ts";
+import Migration0009 from "./Migrations/009_ProviderSessionRuntimeMode.ts";
+import Migration0010 from "./Migrations/010_ProjectionThreadsRuntimeMode.ts";
+import Migration0011 from "./Migrations/011_OrchestrationThreadCreatedRuntimeMode.ts";
+import Migration0012 from "./Migrations/012_ProjectionThreadsInteractionMode.ts";
+import Migration0013 from "./Migrations/013_ProjectionThreadProposedPlans.ts";
+import { Effect } from "effect";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -38,6 +45,12 @@ const loader = Migrator.fromRecord({
   "5_Projections": Migration0005,
   "6_ProjectionThreadSessionRuntimeModeColumns": Migration0006,
   "7_ProjectionThreadMessageAttachments": Migration0007,
+  "8_ProjectionThreadActivitySequence": Migration0008,
+  "9_ProviderSessionRuntimeMode": Migration0009,
+  "10_ProjectionThreadsRuntimeMode": Migration0010,
+  "11_OrchestrationThreadCreatedRuntimeMode": Migration0011,
+  "12_ProjectionThreadsInteractionMode": Migration0012,
+  "13_ProjectionThreadProposedPlans": Migration0013,
 });
 
 /**
@@ -56,7 +69,11 @@ const run = Migrator.make({});
  *
  * @returns Effect containing array of executed migrations
  */
-export const runMigrations = run({ loader });
+export const runMigrations = Effect.gen(function* () {
+  yield* Effect.log("Running migrations...");
+  yield* run({ loader });
+  yield* Effect.log("Migrations ran successfully");
+});
 
 /**
  * Layer that runs migrations when the layer is built.

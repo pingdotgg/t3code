@@ -1,8 +1,9 @@
-# CLAUDE.md
+# AGENTS.md
 
 ## Task Completion Requirements
 
 - Both `bun lint` and `bun typecheck` must pass before considering tasks completed.
+- NEVER run `bun test`. Always use `bun run test` (runs Vitest).
 
 ## Project Snapshot
 

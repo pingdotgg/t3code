@@ -8,7 +8,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  DEFAULT_MODEL,
+  DEFAULT_RUNTIME_MODE,
+  DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
   ProjectId,
   ThreadId,
@@ -435,6 +436,7 @@ export default function Sidebar() {
           branch: options?.branch ?? null,
           worktreePath: options?.worktreePath ?? null,
           envMode: options?.envMode ?? "local",
+          runtimeMode: DEFAULT_RUNTIME_MODE,
         });
 
         await navigate({
@@ -504,7 +506,7 @@ export default function Sidebar() {
           projectId,
           title,
           workspaceRoot: cwd,
-          defaultModel: DEFAULT_MODEL,
+          defaultModel: DEFAULT_MODEL_BY_PROVIDER.codex,
           createdAt,
         })
         .then(() => true)
@@ -883,7 +885,7 @@ export default function Sidebar() {
         ? "text-sky-400"
         : shouldHighlightDesktopUpdateError(desktopUpdateState)
           ? "text-rose-500 animate-pulse"
-        : "text-amber-500 animate-pulse";
+          : "text-amber-500 animate-pulse";
   const newThreadShortcutLabel = useMemo(
     () =>
       shortcutLabelForCommand(keybindings, "chat.newLocal") ??

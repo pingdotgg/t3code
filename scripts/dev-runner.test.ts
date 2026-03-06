@@ -97,6 +97,51 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.VITE_DEV_SERVER_URL, "http://localhost:7331/");
       }),
     );
+
+    it.effect("does not force websocket logging on in dev mode when unset", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: {
+            T3CODE_LOG_WS_EVENTS: "keep-me-out",
+          },
+          serverOffset: 0,
+          webOffset: 0,
+          stateDir: undefined,
+          authToken: undefined,
+          noBrowser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.T3CODE_MODE, "web");
+        assert.equal(env.T3CODE_LOG_WS_EVENTS, undefined);
+      }),
+    );
+
+    it.effect("forwards explicit websocket logging false without coercing it away", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: {},
+          serverOffset: 0,
+          webOffset: 0,
+          stateDir: undefined,
+          authToken: undefined,
+          noBrowser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: false,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.T3CODE_LOG_WS_EVENTS, "0");
+      }),
+    );
   });
 
   describe("findFirstAvailableOffset", () => {

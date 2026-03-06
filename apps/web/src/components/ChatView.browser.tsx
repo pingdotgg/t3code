@@ -6,7 +6,6 @@ import {
   type MessageId,
   type OrchestrationReadModel,
   type ProjectId,
-  type ProviderSessionId,
   type ServerConfig,
   type ThreadId,
   type WsWelcomePayload,
@@ -20,6 +19,7 @@ import { page } from "vitest/browser";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
+import { useComposerDraftStore } from "../composerDraftStore";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
@@ -45,6 +45,7 @@ interface TestFixture {
 }
 
 let fixture: TestFixture;
+const wsRequests: WsRequestEnvelope["body"][] = [];
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
 
 interface ViewportSpec {
@@ -204,6 +205,8 @@ function createSnapshotForTargetUser(options: {
         projectId: PROJECT_ID,
         title: "Browser test thread",
         model: "gpt-5",
+        interactionMode: "default",
+        runtimeMode: "full-access",
         branch: "main",
         worktreePath: null,
         latestTurn: null,
@@ -212,15 +215,13 @@ function createSnapshotForTargetUser(options: {
         deletedAt: null,
         messages,
         activities: [],
+        proposedPlans: [],
         checkpoints: [],
         session: {
           threadId: THREAD_ID,
           status: "ready",
           providerName: "codex",
-          providerSessionId: "session-1" as ProviderSessionId,
-          providerThreadId: null,
-          approvalPolicy: "on-failure",
-          sandboxMode: "workspace-write",
+          runtimeMode: "full-access",
           activeTurnId: null,
           lastError: null,
           updatedAt: NOW_ISO,
@@ -241,6 +242,17 @@ function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
       bootstrapProjectId: PROJECT_ID,
       bootstrapThreadId: THREAD_ID,
     },
+  };
+}
+
+function createDraftOnlySnapshot(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-draft-target" as MessageId,
+    targetText: "draft thread",
+  });
+  return {
+    ...snapshot,
+    threads: [],
   };
 }
 
@@ -308,6 +320,7 @@ const worker = setupWorker(
       }
       const method = request.body?._tag;
       if (typeof method !== "string") return;
+      wsRequests.push(request.body);
       client.send(
         JSON.stringify({
           id: request.id,
@@ -467,8 +480,10 @@ async function measureUserRow(options: {
 async function mountChatView(options: {
   viewport: ViewportSpec;
   snapshot: OrchestrationReadModel;
+  configureFixture?: (fixture: TestFixture) => void;
 }): Promise<MountedChatView> {
   fixture = buildFixture(options.snapshot);
+  options.configureFixture?.(fixture);
   await setViewport(options.viewport);
   await waitForProductionStyles();
 
@@ -548,11 +563,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
     await setViewport(DEFAULT_VIEWPORT);
     localStorage.clear();
     document.body.innerHTML = "";
+    wsRequests.length = 0;
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
     useStore.setState({
       projects: [],
       threads: [],
       threadsHydrated: false,
-      runtimeMode: "full-access",
     });
   });
 
@@ -710,4 +730,59 @@ describe("ChatView timeline estimator parity (full app)", () => {
       }
     },
   );
+
+  it("opens the project cwd for draft threads without a worktree path", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          availableEditors: ["vscode"],
+        };
+      },
+    });
+
+    try {
+      const openButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Open",
+          ) as HTMLButtonElement | null,
+        "Unable to find Open button.",
+      );
+      openButton.click();
+
+      await vi.waitFor(
+        () => {
+          const openRequest = wsRequests.find((request) => request._tag === WS_METHODS.shellOpenInEditor);
+          expect(openRequest).toMatchObject({
+            _tag: WS_METHODS.shellOpenInEditor,
+            cwd: "/repo/project",
+            editor: "vscode",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
 });
