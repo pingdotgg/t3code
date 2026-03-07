@@ -2,8 +2,10 @@ import {
   ChevronRightIcon,
   FolderIcon,
   GitPullRequestIcon,
+  MoonIcon,
   RocketIcon,
   SquarePenIcon,
+  SunIcon,
   TerminalIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -60,6 +62,7 @@ import {
 } from "./ui/sidebar";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
+import { useTheme } from "../hooks/useTheme";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -258,6 +261,7 @@ function ProjectFavicon({ cwd }: { cwd: string }) {
 }
 
 export default function Sidebar() {
+  const { resolvedTheme, setTheme } = useTheme();
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
@@ -984,12 +988,36 @@ export default function Sidebar() {
     </div>
   );
 
+  const nextTheme = resolvedTheme === "dark" ? "light" : "dark";
+  const themeTooltip = `Switch to ${nextTheme} mode`;
+
   return (
     <>
       {isElectron ? (
         <>
           <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[82px]">
             {wordmark}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={themeTooltip}
+                    className="inline-flex size-7 mt-2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    onClick={() => {
+                      setTheme(nextTheme);
+                    }}
+                  >
+                    {resolvedTheme === "dark" ? (
+                      <SunIcon className="size-3.5" />
+                    ) : (
+                      <MoonIcon className="size-3.5" />
+                    )}
+                  </button>
+                }
+              />
+              <TooltipPopup side="bottom">{themeTooltip}</TooltipPopup>
+            </Tooltip>
             {showDesktopUpdateButton && (
               <Tooltip>
                 <TooltipTrigger
