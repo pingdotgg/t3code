@@ -214,7 +214,7 @@ class MockTerminalManager implements TerminalManagerShape {
   readonly dispose: TerminalManagerShape["dispose"] = Effect.void;
 }
 
-function connectWs(port: number, token?: string): Promise<WebSocket> {
+function connectWsOnce(port: number, token?: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const query = token ? `?token=${encodeURIComponent(token)}` : "";
     const ws = new WebSocket(`ws://127.0.0.1:${port}/${query}`);
@@ -236,6 +236,25 @@ function connectWs(port: number, token?: string): Promise<WebSocket> {
   });
 }
 
+async function connectWs(port: number, token?: string, attempts = 5): Promise<WebSocket> {
+  let lastError: unknown = new Error("WebSocket connection failed");
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      // The HTTP server can report a bound port just before websocket upgrades
+      // are consistently accepted, so allow a few short retries in tests.
+      return await connectWsOnce(port, token);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 function waitForMessage(ws: WebSocket): Promise<unknown> {
   const pending = pendingBySocket.get(ws);
   if (!pending) {
@@ -249,6 +268,36 @@ function waitForMessage(ws: WebSocket): Promise<unknown> {
 
   return new Promise((resolve) => {
     pending.waiters.push(resolve);
+  });
+}
+
+// waitForPush can filter many unrelated envelopes before finding a match. When
+// no more frames arrive, an idle timeout gives the test a precise failure
+// instead of hanging until the suite-level test timeout expires.
+function waitForMessageWithTimeout(ws: WebSocket, timeoutMs: number): Promise<unknown> {
+  const pending = pendingBySocket.get(ws);
+  if (!pending) {
+    return Promise.reject(new Error("WebSocket not initialized"));
+  }
+
+  const queued = pending.queue.shift();
+  if (queued !== undefined) {
+    return Promise.resolve(queued);
+  }
+
+  return new Promise((resolve, reject) => {
+    const waiter = (message: unknown) => {
+      clearTimeout(timeoutId);
+      resolve(message);
+    };
+    const timeoutId = setTimeout(() => {
+      const index = pending.waiters.indexOf(waiter);
+      if (index >= 0) {
+        pending.waiters.splice(index, 1);
+      }
+      reject(new Error(`Timed out waiting for WebSocket message after ${timeoutMs}ms`));
+    }, timeoutMs);
+    pending.waiters.push(waiter);
   });
 }
 
@@ -295,12 +344,13 @@ async function waitForPush(
   channel: string,
   predicate?: (push: WsPush) => boolean,
   maxMessages = 120,
+  idleTimeoutMs = 5_000,
 ): Promise<WsPush> {
   const take = async (remaining: number): Promise<WsPush> => {
     if (remaining <= 0) {
       throw new Error(`Timed out waiting for push on ${channel}`);
     }
-    const message = (await waitForMessage(ws)) as WsPush;
+    const message = (await waitForMessageWithTimeout(ws, idleTimeoutMs)) as WsPush;
     if (message.type !== "push" || message.channel !== channel) {
       return take(remaining - 1);
     }
@@ -310,6 +360,30 @@ async function waitForPush(
     return take(remaining - 1);
   };
   return take(maxMessages);
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+async function rewriteKeybindingsAndWaitForPush(
+  ws: WebSocket,
+  keybindingsPath: string,
+  contents: string,
+  predicate: (push: WsPush) => boolean,
+  attempts = 6,
+): Promise<WsPush> {
+  let lastError: unknown = new Error("Timed out waiting for keybindings watcher push");
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    fs.writeFileSync(keybindingsPath, contents, "utf8");
+    try {
+      return await waitForPush(ws, WS_CHANNELS.serverConfigUpdated, predicate, 12, 250);
+    } catch (error) {
+      lastError = error;
+      await sleep(25);
+    }
+  }
+
+  throw lastError;
 }
 
 async function requestPath(
@@ -889,10 +963,10 @@ describe("WebSocket Server", () => {
     connections.push(ws);
     await waitForMessage(ws);
 
-    fs.writeFileSync(keybindingsPath, "{ not-json", "utf8");
-    const malformedPush = await waitForPush(
+    const malformedPush = await rewriteKeybindingsAndWaitForPush(
       ws,
-      WS_CHANNELS.serverConfigUpdated,
+      keybindingsPath,
+      "{ not-json",
       (push) =>
         Array.isArray((push.data as { issues?: unknown[] }).issues) &&
         Boolean((push.data as { issues: Array<{ kind: string }> }).issues[0]) &&
@@ -904,10 +978,10 @@ describe("WebSocket Server", () => {
       providers: defaultProviderStatuses,
     });
 
-    fs.writeFileSync(keybindingsPath, "[]", "utf8");
-    const successPush = await waitForPush(
+    const successPush = await rewriteKeybindingsAndWaitForPush(
       ws,
-      WS_CHANNELS.serverConfigUpdated,
+      keybindingsPath,
+      "[]",
       (push) =>
         Array.isArray((push.data as { issues?: unknown[] }).issues) &&
         (push.data as { issues: unknown[] }).issues.length === 0,
@@ -1333,7 +1407,16 @@ describe("WebSocket Server", () => {
     };
     terminalManager.emitEvent(manualEvent);
 
-    const push = (await waitForMessage(ws)) as WsPush;
+    // Startup keybindings broadcasts can race ahead of terminal pushes, so match
+    // the manual output payload instead of assuming the next push is terminal-related.
+    const push = await waitForPush(
+      ws,
+      WS_CHANNELS.terminalEvent,
+      (candidate) => {
+        const event = candidate.data as TerminalEvent;
+        return event.type === "output" && event.data === manualEvent.data;
+      },
+    );
     expect(push.type).toBe("push");
     expect(push.channel).toBe(WS_CHANNELS.terminalEvent);
     expect((push.data as TerminalEvent).type).toBe("output");
