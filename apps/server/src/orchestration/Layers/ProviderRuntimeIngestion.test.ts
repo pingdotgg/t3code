@@ -104,7 +104,6 @@ type ProviderRuntimeTestThread = ProviderRuntimeTestReadModel["threads"][number]
 type ProviderRuntimeTestMessage = ProviderRuntimeTestThread["messages"][number];
 type ProviderRuntimeTestProposedPlan = ProviderRuntimeTestThread["proposedPlans"][number];
 type ProviderRuntimeTestActivity = ProviderRuntimeTestThread["activities"][number];
-type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][number];
 
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
@@ -1214,8 +1213,8 @@ describe("ProviderRuntimeIngestion", () => {
         entry.activities.some(
           (activity: ProviderRuntimeTestActivity) => activity.kind === "runtime.warning",
         ) &&
-        entry.checkpoints.some(
-          (checkpoint: ProviderRuntimeTestCheckpoint) => checkpoint.turnId === "turn-p1",
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "turn.diff.updated",
         ),
     );
 
@@ -1252,12 +1251,16 @@ describe("ProviderRuntimeIngestion", () => {
     expect(warning?.kind).toBe("runtime.warning");
     expect(warningPayload?.message).toBe("Provider got slow");
 
-    const checkpoint = thread.checkpoints.find(
-      (entry: ProviderRuntimeTestCheckpoint) => entry.turnId === "turn-p1",
+    const turnDiffActivity = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-turn-diff-updated",
     );
-    expect(checkpoint?.status).toBe("missing");
-    expect(checkpoint?.assistantMessageId).toBe("assistant:item-p1-assistant");
-    expect(checkpoint?.checkpointRef).toBe("provider-diff:evt-turn-diff-updated");
+    const turnDiffPayload =
+      turnDiffActivity?.payload && typeof turnDiffActivity.payload === "object"
+        ? (turnDiffActivity.payload as Record<string, unknown>)
+        : undefined;
+    expect(turnDiffActivity?.kind).toBe("turn.diff.updated");
+    expect(turnDiffPayload?.diffBytes).toBe(40);
+    expect(thread.checkpoints).toHaveLength(0);
   });
 
   it("projects Codex task lifecycle chunks into thread activities", async () => {

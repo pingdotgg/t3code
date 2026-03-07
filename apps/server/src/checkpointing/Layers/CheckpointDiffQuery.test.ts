@@ -22,6 +22,7 @@ function makeSnapshot(input: {
   readonly worktreePath: string | null;
   readonly checkpointTurnCount: number;
   readonly checkpointRef: CheckpointRef;
+  readonly checkpointStatus?: "ready" | "missing" | "error";
 }): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
@@ -67,7 +68,7 @@ function makeSnapshot(input: {
             turnId: TurnId.makeUnsafe("turn-1"),
             checkpointTurnCount: input.checkpointTurnCount,
             checkpointRef: input.checkpointRef,
-            status: "ready",
+            status: input.checkpointStatus ?? "ready",
             files: [],
             assistantMessageId: null,
             completedAt: "2026-01-01T00:00:00.000Z",
@@ -193,5 +194,58 @@ describe("CheckpointDiffQueryLive", () => {
         }).pipe(Effect.provide(layer)),
       ),
     ).rejects.toThrow("Thread 'thread-missing' not found.");
+  });
+
+  it("returns an empty diff when a non-ready checkpoint ref is absent on disk", async () => {
+    const projectId = ProjectId.makeUnsafe("project-1");
+    const threadId = ThreadId.makeUnsafe("thread-1");
+    const toCheckpointRef = CheckpointRef.makeUnsafe("provider-diff:evt-turn-diff-updated");
+
+    const snapshot = makeSnapshot({
+      projectId,
+      threadId,
+      workspaceRoot: "/tmp/workspace",
+      worktreePath: null,
+      checkpointTurnCount: 1,
+      checkpointRef: toCheckpointRef,
+      checkpointStatus: "missing",
+    });
+
+    const checkpointStore: CheckpointStoreShape = {
+      isGitRepository: () => Effect.succeed(true),
+      captureCheckpoint: () => Effect.void,
+      hasCheckpointRef: ({ checkpointRef }) =>
+        Effect.succeed(checkpointRef !== toCheckpointRef),
+      restoreCheckpoint: () => Effect.succeed(true),
+      diffCheckpoints: () => Effect.succeed("diff should not be read"),
+      deleteCheckpointRefs: () => Effect.void,
+    };
+
+    const layer = CheckpointDiffQueryLive.pipe(
+      Layer.provideMerge(Layer.succeed(CheckpointStore, checkpointStore)),
+      Layer.provideMerge(
+        Layer.succeed(ProjectionSnapshotQuery, {
+          getSnapshot: () => Effect.succeed(snapshot),
+        }),
+      ),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const query = yield* CheckpointDiffQuery;
+        return yield* query.getTurnDiff({
+          threadId,
+          fromTurnCount: 0,
+          toTurnCount: 1,
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(result).toEqual({
+      threadId,
+      fromTurnCount: 0,
+      toTurnCount: 1,
+      diff: "",
+    });
   });
 });

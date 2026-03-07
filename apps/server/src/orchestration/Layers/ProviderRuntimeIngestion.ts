@@ -4,7 +4,6 @@ import {
   CommandId,
   MessageId,
   type OrchestrationEvent,
-  CheckpointRef,
   ThreadId,
   TurnId,
   type OrchestrationThreadActivity,
@@ -297,6 +296,24 @@ function runtimeEventToActivities(
           payload: {
             plan: event.payload.plan,
             ...(event.payload.explanation !== undefined ? { explanation: event.payload.explanation } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "turn.diff.updated": {
+      const diffBytes = event.payload.unifiedDiff.length;
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "turn.diff.updated",
+          summary: diffBytes > 0 ? "Turn diff updated" : "Turn diff cleared",
+          payload: {
+            diffBytes,
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -1037,28 +1054,6 @@ const make = Effect.gen(function* () {
           threadId: thread.id,
           title: event.payload.name,
         });
-      }
-
-      if (event.type === "turn.diff.updated") {
-        const turnId = toTurnId(event.turnId);
-        if (turnId) {
-          const assistantMessageId = MessageId.makeUnsafe(
-            `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
-          );
-          yield* orchestrationEngine.dispatch({
-            type: "thread.turn.diff.complete",
-            commandId: providerCommandId(event, "thread-turn-diff-complete"),
-            threadId: thread.id,
-            turnId,
-            completedAt: now,
-            checkpointRef: CheckpointRef.makeUnsafe(`provider-diff:${event.eventId}`),
-            status: "missing",
-            files: [],
-            assistantMessageId,
-            checkpointTurnCount: thread.checkpoints.length + 1,
-            createdAt: now,
-          });
-        }
       }
 
       const activities = runtimeEventToActivities(event);
