@@ -455,6 +455,11 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         stderr: "inherit",
         env,
         extendEnv: false,
+        // Keep turbo in the same process group so terminal signals (Ctrl+C)
+        // reach it directly. Effect defaults to detached: true on non-Windows,
+        // which would put turbo in a new group and require manual forwarding.
+        detached: false,
+        forceKillAfter: "1500 millis",
       },
     );
 
