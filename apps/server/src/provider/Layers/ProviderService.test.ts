@@ -49,18 +49,6 @@ const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
-type LegacyProviderRuntimeEvent = {
-  readonly type: string;
-  readonly eventId: EventId;
-  readonly provider: "codex";
-  readonly createdAt: string;
-  readonly threadId: ThreadId;
-  readonly turnId?: string | undefined;
-  readonly itemId?: string | undefined;
-  readonly requestId?: string | undefined;
-  readonly payload?: unknown | undefined;
-  readonly [key: string]: unknown;
-};
 
 function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
   const sessions = new Map<ThreadId, ProviderSession>();
@@ -657,14 +645,14 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       ).pipe(Effect.forkChild);
       yield* sleep(20);
 
-      const completedEvent: LegacyProviderRuntimeEvent = {
+      const completedEvent: ProviderRuntimeEvent = {
         type: "turn.completed",
         eventId: asEventId("evt-1"),
         provider: "codex",
         createdAt: new Date().toISOString(),
         threadId: session.threadId,
         turnId: asTurnId("turn-1"),
-        status: "completed",
+        payload: { state: "completed" },
       };
 
       fanout.codex.emit(completedEvent);
@@ -697,24 +685,22 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       yield* sleep(20);
 
       fanout.codex.emit({
-        type: "tool.started",
+        type: "tool.progress",
         eventId: asEventId("evt-seq-1"),
         provider: "codex",
         createdAt: new Date().toISOString(),
         threadId: session.threadId,
         turnId: asTurnId("turn-1"),
-        toolKind: "command",
-        title: "Command run",
+        payload: { summary: "running command" },
       });
       fanout.codex.emit({
-        type: "tool.completed",
+        type: "tool.summary",
         eventId: asEventId("evt-seq-2"),
         provider: "codex",
         createdAt: new Date().toISOString(),
         threadId: session.threadId,
         turnId: asTurnId("turn-1"),
-        toolKind: "command",
-        title: "Command run",
+        payload: { summary: "command finished" },
       });
       fanout.codex.emit({
         type: "turn.completed",
@@ -723,7 +709,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         createdAt: new Date().toISOString(),
         threadId: session.threadId,
         turnId: asTurnId("turn-1"),
-        status: "completed",
+        payload: { state: "completed" },
       });
 
       yield* Fiber.join(consumer);
@@ -760,26 +746,29 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       );
       yield* sleep(20);
 
-      const events: ReadonlyArray<LegacyProviderRuntimeEvent> = [
+      const events: ReadonlyArray<ProviderRuntimeEvent> = [
         {
-          type: "tool.completed",
+          type: "tool.summary",
           eventId: asEventId("evt-ordered-1"),
           provider: "codex",
           createdAt: new Date().toISOString(),
           threadId: session.threadId,
           turnId: asTurnId("turn-1"),
-          toolKind: "command",
-          title: "Command run",
-          detail: "echo one",
+          payload: {
+            summary: "echo one",
+          },
         },
         {
-          type: "message.delta",
+          type: "content.delta",
           eventId: asEventId("evt-ordered-2"),
           provider: "codex",
           createdAt: new Date().toISOString(),
           threadId: session.threadId,
           turnId: asTurnId("turn-1"),
-          delta: "hello",
+          payload: {
+            streamKind: "assistant_text",
+            delta: "hello",
+          },
         },
         {
           type: "turn.completed",
@@ -788,7 +777,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           createdAt: new Date().toISOString(),
           threadId: session.threadId,
           turnId: asTurnId("turn-1"),
-          status: "completed",
+          payload: { state: "completed" },
         },
       ];
 

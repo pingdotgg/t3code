@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { ThreadId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterAll, it, vi } from "@effect/vitest";
-import { Effect, Layer, Option, Stream } from "effect";
+import { Cause, Effect, Layer, Option, Stream } from "effect";
 
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import { OpenCodeAdapter } from "../Services/OpenCodeAdapter.ts";
+import { ProviderAdapterProcessError } from "../Errors.ts";
 import { makeOpenCodeAdapterLive } from "./OpenCodeAdapter.ts";
 import { checkOpencodeProviderStatus } from "./ProviderHealth.ts";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -160,6 +161,48 @@ testLayer("OpenCodeAdapterLive", (it) => {
       });
     }),
   );
+});
+
+
+testLayer("OpenCodeAdapterLive unavailable fallback", (it) => {
+  const unavailableLayer = it.layer(
+    makeOpenCodeAdapterLive({
+      createClient: async () => {
+        throw new Error("spawn opencode ENOENT");
+      },
+    }).pipe(
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    ),
+  );
+
+  unavailableLayer("degrades gracefully when the OpenCode runtime cannot start", (it) => {
+    it.effect("returns an adapter that fails calls without crashing layer startup", () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const exit = yield* Effect.exit(
+          adapter.startSession({
+            provider: "opencode",
+            threadId: asThreadId("thread-unavailable"),
+            runtimeMode: "full-access",
+          }),
+        );
+
+        assert.equal(exit._tag, "Failure");
+        if (exit._tag !== "Failure") {
+          return;
+        }
+
+        const failure = Cause.failureOption(exit.cause);
+        assert.equal(Option.isSome(failure), true);
+        if (Option.isNone(failure)) {
+          return;
+        }
+
+        assert.equal(failure.value instanceof ProviderAdapterProcessError, true);
+      }),
+    );
+  });
 });
 
 it.effect("health probe reports opencode availability", () =>
