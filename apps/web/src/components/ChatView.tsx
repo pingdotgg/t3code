@@ -15,6 +15,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ProviderApprovalDecision,
   type ServerProviderModel,
+  type ServerProviderQuotaSnapshot,
   type ServerProviderStatus,
   type ProviderKind,
   type ProviderModelOptions,
@@ -266,6 +267,7 @@ const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
 const EMPTY_PROVIDER_MODELS: ServerProviderModel[] = [];
+const COPILOT_QUOTA_PRIORITY = ["premium_interactions", "chat", "completions"] as const;
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
@@ -813,8 +815,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const selectedProvider: ProviderKind = lockedProvider ?? selectedProviderByThreadId ?? "codex";
   const selectedServiceTier =
     selectedProvider === "codex" ? resolveAppServiceTier(selectedServiceTierSetting) : null;
-  const copilotProviderModels =
-    providerStatuses.find((status) => status.provider === "copilot")?.models ?? EMPTY_PROVIDER_MODELS;
+  const copilotProviderStatus =
+    providerStatuses.find((status) => status.provider === "copilot") ?? null;
+  const copilotProviderModels = copilotProviderStatus?.models ?? EMPTY_PROVIDER_MODELS;
+  const copilotQuotaSummary = useMemo(
+    () => deriveCopilotQuotaSummary(copilotProviderStatus?.quotaSnapshots),
+    [copilotProviderStatus?.quotaSnapshots],
+  );
   const builtInModelOptionsByProvider = useMemo<Record<ProviderKind, ReadonlyArray<BuiltInAppModelOption>>>(
     () => ({
       codex: getModelOptions("codex"),
@@ -3742,6 +3749,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     model={selectedModelForPickerWithCustomFallback}
                     lockedProvider={lockedProvider}
                     modelOptionsByProvider={modelOptionsByProvider}
+                    copilotModels={copilotProviderModels}
+                    copilotQuotaSummary={copilotQuotaSummary}
                     serviceTierSetting={selectedServiceTierSetting}
                     onProviderModelChange={onProviderModelSelect}
                   />
@@ -5487,11 +5496,88 @@ function resolveModelForProviderPicker(
   return null;
 }
 
+function formatCopilotBillingMultiplier(multiplier: number): string {
+  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(multiplier)}x`;
+}
+
+function formatCopilotQuotaLabel(key: string): string {
+  return key
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((segment) => segment[0]?.toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
+function normalizeCopilotRemainingPercentage(value: number): number {
+  const normalized = value <= 1 ? value * 100 : value;
+  return Math.min(100, Math.max(0, normalized));
+}
+
+function getCopilotQuotaPriority(key: string): number {
+  const index = COPILOT_QUOTA_PRIORITY.findIndex((candidate) => candidate === key);
+  return index === -1 ? Number.POSITIVE_INFINITY : index;
+}
+
+function pickCopilotQuotaSnapshot(
+  quotaSnapshots: ReadonlyArray<ServerProviderQuotaSnapshot> | undefined,
+): ServerProviderQuotaSnapshot | null {
+  if (!quotaSnapshots || quotaSnapshots.length === 0) return null;
+
+  return quotaSnapshots.toSorted((left, right) => {
+    const priorityDiff = getCopilotQuotaPriority(left.key) - getCopilotQuotaPriority(right.key);
+    if (priorityDiff !== 0) return priorityDiff;
+    return left.key.localeCompare(right.key);
+  })[0] ?? null;
+}
+
+function formatCopilotQuotaResetDate(value: string | undefined): string | null {
+  if (!value) return null;
+  const resetDate = new Date(value);
+  if (Number.isNaN(resetDate.getTime())) return null;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: resetDate.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+  }).format(resetDate);
+}
+
+function deriveCopilotQuotaSummary(
+  quotaSnapshots: ReadonlyArray<ServerProviderQuotaSnapshot> | undefined,
+): { title: string; detail: string } | null {
+  const snapshot = pickCopilotQuotaSnapshot(quotaSnapshots);
+  if (!snapshot) return null;
+
+  const detailParts: string[] = [];
+  if (snapshot.entitlementRequests > 0) {
+    detailParts.push(`${snapshot.remainingRequests}/${snapshot.entitlementRequests} left`);
+  } else {
+    detailParts.push(
+      `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(
+        normalizeCopilotRemainingPercentage(snapshot.remainingPercentage),
+      )}% remaining`,
+    );
+  }
+  if (snapshot.overage > 0) {
+    detailParts.push(`${snapshot.overage} overage`);
+  }
+  const resetDate = formatCopilotQuotaResetDate(snapshot.resetDate);
+  if (resetDate) {
+    detailParts.push(`resets ${resetDate}`);
+  }
+
+  return {
+    title: formatCopilotQuotaLabel(snapshot.key),
+    detail: detailParts.join(" · "),
+  };
+}
+
 const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   provider: ProviderKind;
   model: ModelSlug;
   lockedProvider: ProviderKind | null;
   modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
+  copilotModels: ReadonlyArray<ServerProviderModel>;
+  copilotQuotaSummary: { title: string; detail: string } | null;
   serviceTierSetting: AppServiceTier;
   disabled?: boolean;
   onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
@@ -5500,6 +5586,12 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const selectedProviderOptions = props.modelOptionsByProvider[props.provider];
   const selectedModelLabel =
     selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
+  const copilotModelById = useMemo(
+    () => new Map(props.copilotModels.map((model) => [model.id, model])),
+    [props.copilotModels],
+  );
+  const selectedCopilotModel =
+    props.provider === "copilot" ? copilotModelById.get(props.model) ?? null : null;
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.provider];
 
   return (
@@ -5529,6 +5621,11 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
           ) : null}
           <span className="truncate">{selectedModelLabel}</span>
+          {selectedCopilotModel?.billingMultiplier != null ? (
+            <span className="rounded-full border border-border/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+              {formatCopilotBillingMultiplier(selectedCopilotModel.billingMultiplier)}
+            </span>
+          ) : null}
           <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
         </span>
       </MenuTrigger>
@@ -5547,6 +5644,19 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 {option.label}
               </MenuSubTrigger>
               <MenuSubPopup className="[--available-height:min(24rem,70vh)]">
+                {option.value === "copilot" && props.copilotQuotaSummary ? (
+                  <div className="border-b border-border/60 px-3 py-2">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+                      Usage remaining
+                    </p>
+                    <p className="mt-1 text-xs font-medium text-foreground/90">
+                      {props.copilotQuotaSummary.title}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground/80">
+                      {props.copilotQuotaSummary.detail}
+                    </p>
+                  </div>
+                ) : null}
                 <MenuGroup>
                   <MenuRadioGroup
                     value={props.provider === option.value ? props.model : ""}
@@ -5564,19 +5674,30 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                       setIsMenuOpen(false);
                     }}
                   >
-                    {props.modelOptionsByProvider[option.value].map((modelOption) => (
-                      <MenuRadioItem
-                        key={`${option.value}:${modelOption.slug}`}
-                        value={modelOption.slug}
-                        onClick={() => setIsMenuOpen(false)}
-                      >
-                        {option.value === "codex" &&
-                        shouldShowFastTierIcon(modelOption.slug, props.serviceTierSetting) ? (
-                          <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
-                        ) : null}
-                        {modelOption.name}
-                      </MenuRadioItem>
-                    ))}
+                    {props.modelOptionsByProvider[option.value].map((modelOption) => {
+                      const copilotModel =
+                        option.value === "copilot"
+                          ? (copilotModelById.get(modelOption.slug) ?? null)
+                          : null;
+                      return (
+                        <MenuRadioItem
+                          key={`${option.value}:${modelOption.slug}`}
+                          value={modelOption.slug}
+                          onClick={() => setIsMenuOpen(false)}
+                        >
+                          {option.value === "codex" &&
+                          shouldShowFastTierIcon(modelOption.slug, props.serviceTierSetting) ? (
+                            <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
+                          ) : null}
+                          <span className="truncate">{modelOption.name}</span>
+                          {copilotModel?.billingMultiplier != null ? (
+                            <span className="ms-auto text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+                              {formatCopilotBillingMultiplier(copilotModel.billingMultiplier)}
+                            </span>
+                          ) : null}
+                        </MenuRadioItem>
+                      );
+                    })}
                   </MenuRadioGroup>
                 </MenuGroup>
               </MenuSubPopup>

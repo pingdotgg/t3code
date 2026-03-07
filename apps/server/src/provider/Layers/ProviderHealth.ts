@@ -11,6 +11,7 @@
 import type {
   ServerProviderAuthStatus,
   ServerProviderModel,
+  ServerProviderQuotaSnapshot,
   ServerProviderStatus,
   ServerProviderStatusState,
 } from "@t3tools/contracts";
@@ -38,7 +39,9 @@ interface CopilotHealthProbeError {
   readonly cause: unknown;
 }
 
-function mapCopilotModel(model: ModelInfo): ServerProviderModel {
+const COPILOT_QUOTA_PRIORITY = ["premium_interactions", "chat", "completions"] as const;
+
+export function mapCopilotModel(model: ModelInfo): ServerProviderModel {
   return {
     id: model.id,
     name: model.name,
@@ -47,7 +50,52 @@ function mapCopilotModel(model: ModelInfo): ServerProviderModel {
       ? { supportedReasoningEfforts: [...model.supportedReasoningEfforts] }
       : {}),
     ...(model.defaultReasoningEffort ? { defaultReasoningEffort: model.defaultReasoningEffort } : {}),
+    ...(typeof model.billing?.multiplier === "number"
+      ? { billingMultiplier: model.billing.multiplier }
+      : {}),
   } satisfies ServerProviderModel;
+}
+
+interface CopilotQuotaSnapshotInfo {
+  readonly entitlementRequests: number;
+  readonly usedRequests: number;
+  readonly remainingPercentage: number;
+  readonly overage: number;
+  readonly overageAllowedWithExhaustedQuota: boolean;
+  readonly resetDate?: string;
+}
+
+function compareCopilotQuotaKeys(left: string, right: string): number {
+  const leftPriority = COPILOT_QUOTA_PRIORITY.indexOf(left as (typeof COPILOT_QUOTA_PRIORITY)[number]);
+  const rightPriority = COPILOT_QUOTA_PRIORITY.indexOf(right as (typeof COPILOT_QUOTA_PRIORITY)[number]);
+  const normalizedLeftPriority = leftPriority === -1 ? Number.POSITIVE_INFINITY : leftPriority;
+  const normalizedRightPriority = rightPriority === -1 ? Number.POSITIVE_INFINITY : rightPriority;
+  return normalizedLeftPriority - normalizedRightPriority || left.localeCompare(right);
+}
+
+export function mapCopilotQuotaSnapshots(
+  quotaSnapshots: Record<string, CopilotQuotaSnapshotInfo> | undefined,
+): ReadonlyArray<ServerProviderQuotaSnapshot> {
+  if (!quotaSnapshots) return [];
+
+  return Object.entries(quotaSnapshots)
+    .toSorted(([leftKey], [rightKey]) => compareCopilotQuotaKeys(leftKey, rightKey))
+    .map(([key, snapshot]) => {
+      const entitlementRequests = Math.max(0, Math.trunc(snapshot.entitlementRequests));
+      const usedRequests = Math.max(0, Math.trunc(snapshot.usedRequests));
+      const mapped: ServerProviderQuotaSnapshot = {
+        key,
+        entitlementRequests,
+        usedRequests,
+        remainingRequests: Math.max(0, entitlementRequests - usedRequests),
+        remainingPercentage: snapshot.remainingPercentage,
+        overage: Math.max(0, Math.trunc(snapshot.overage)),
+        overageAllowedWithExhaustedQuota: snapshot.overageAllowedWithExhaustedQuota,
+      };
+      return snapshot.resetDate
+        ? Object.assign({}, mapped, { resetDate: snapshot.resetDate })
+        : mapped;
+    });
 }
 
 function nonEmptyTrimmed(value: string | undefined): string | undefined {
@@ -327,9 +375,14 @@ export const checkCopilotProviderStatus: Effect.Effect<ServerProviderStatus> = E
             client.getStatus(),
             client.getAuthStatus().catch(() => undefined),
           ]);
-          const models =
-            authStatus?.isAuthenticated === true ? await client.listModels().catch(() => undefined) : undefined;
-          return { status, authStatus, models };
+          const [models, quota] =
+            authStatus?.isAuthenticated === true
+              ? await Promise.all([
+                  client.listModels().catch(() => undefined),
+                  client.rpc.account.getQuota().catch(() => undefined),
+                ])
+              : [undefined, undefined];
+          return { status, authStatus, models, quota };
         } finally {
           await client.stop().catch(() => []);
         }
@@ -375,6 +428,7 @@ export const checkCopilotProviderStatus: Effect.Effect<ServerProviderStatus> = E
           : "unknown";
     const status: ServerProviderStatusState =
       authStatus === "unauthenticated" ? "error" : authStatus === "unknown" ? "warning" : "ready";
+    const quotaSnapshots = mapCopilotQuotaSnapshots(probe.success.value.quota?.quotaSnapshots);
 
     return {
       provider: COPILOT_PROVIDER,
@@ -385,6 +439,7 @@ export const checkCopilotProviderStatus: Effect.Effect<ServerProviderStatus> = E
       ...(probe.success.value.models && probe.success.value.models.length > 0
         ? { models: probe.success.value.models.map(mapCopilotModel) }
         : {}),
+      ...(quotaSnapshots.length > 0 ? { quotaSnapshots } : {}),
       ...(probe.success.value.authStatus?.statusMessage
         ? { message: probe.success.value.authStatus.statusMessage }
         : probe.success.value.status?.version
