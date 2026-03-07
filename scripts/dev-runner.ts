@@ -43,157 +43,6 @@ class DevRunnerError extends Data.TaggedError("DevRunnerError")<{
   readonly cause?: unknown;
 }> {}
 
-type ForwardedSignal = "SIGINT" | "SIGTERM" | "SIGHUP";
-
-function signalToExitCode(signal: NodeJS.Signals): number {
-  switch (signal) {
-    case "SIGINT":
-      return 130;
-    case "SIGHUP":
-      return 129;
-    case "SIGTERM":
-      return 143;
-    default:
-      return 1;
-  }
-}
-
-function runTurboProcess(
-  args: ReadonlyArray<string>,
-  env: NodeJS.ProcessEnv,
-) {
-  return Effect.gen(function* () {
-    const child = yield* ChildProcess.make("turbo", [...args], {
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-      env,
-      extendEnv: false,
-      forceKillAfter: "1500 millis",
-    });
-
-    return yield* Effect.callback<number, DevRunnerError>((resume) => {
-      let settled = false;
-      let forwardedSignal: ForwardedSignal | undefined;
-
-      const settle = (effect: Effect.Effect<number, DevRunnerError>) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        cleanup();
-        resume(effect);
-      };
-
-      const stopChild = (signal: ForwardedSignal) =>
-        child.kill({ killSignal: signal, forceKillAfter: "1500 millis" }).pipe(
-          Effect.match({
-            onFailure: (cause) => {
-              settle(
-                Effect.fail(
-                  new DevRunnerError({
-                    message: cause instanceof Error ? cause.message : "failed to stop turbo",
-                    cause,
-                  }),
-                ),
-              );
-              return Effect.void;
-            },
-            onSuccess: () => {
-              settle(Effect.succeed(0));
-              return Effect.void;
-            },
-          }),
-        );
-
-      const forwardSignal = (signal: ForwardedSignal) => {
-        if (forwardedSignal !== undefined) {
-          return;
-        }
-
-        forwardedSignal = signal;
-        process.exitCode = signalToExitCode(signal);
-        Effect.runFork(stopChild(signal));
-      };
-
-      const signalHandlers = {
-        SIGINT: () => {
-          forwardSignal("SIGINT");
-        },
-        SIGTERM: () => {
-          forwardSignal("SIGTERM");
-        },
-        SIGHUP: () => {
-          forwardSignal("SIGHUP");
-        },
-      } satisfies Record<ForwardedSignal, () => void>;
-
-      const updateSignalHandlers = (method: "on" | "off") => {
-        for (const [signal, handler] of Object.entries(signalHandlers) as Array<
-          [ForwardedSignal, () => void]
-        >) {
-          process[method](signal, handler);
-        }
-      };
-
-      const cleanup = () => {
-        updateSignalHandlers("off");
-      };
-
-      updateSignalHandlers("on");
-
-      Effect.runFork(
-        child.exitCode.pipe(
-          Effect.match({
-            onFailure: (cause) => {
-              if (forwardedSignal !== undefined) {
-                settle(Effect.succeed(0));
-                return Effect.void;
-              }
-
-              settle(
-                Effect.fail(
-                  new DevRunnerError({
-                    message: cause instanceof Error ? cause.message : "turbo process failed",
-                    cause,
-                  }),
-                ),
-              );
-              return Effect.void;
-            },
-            onSuccess: (code) => {
-              settle(Effect.succeed(code));
-              return Effect.void;
-            },
-          }),
-        ),
-      );
-
-      return Effect.sync(() => {
-        cleanup();
-        if (forwardedSignal === undefined) {
-          Effect.runFork(
-            Effect.ignore(
-              child.kill({
-                killSignal: "SIGTERM",
-                forceKillAfter: "1500 millis",
-              }),
-            ),
-          );
-        }
-      });
-    });
-  }).pipe(
-    Effect.mapError((cause) =>
-      cause instanceof DevRunnerError
-        ? cause
-        : new DevRunnerError({
-            message: cause instanceof Error ? cause.message : "failed to spawn turbo",
-            cause,
-          }),
-    ),
-  );
-}
 
 const optionalStringConfig = (name: string): Config.Config<string | undefined> =>
   Config.string(name).pipe(
@@ -598,13 +447,39 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       return;
     }
 
-    const exitCode = yield* runTurboProcess([...MODE_ARGS[input.mode], ...input.turboArgs], env);
+    const child = yield* ChildProcess.make(
+      "turbo",
+      [...MODE_ARGS[input.mode], ...input.turboArgs],
+      {
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+        env,
+        extendEnv: false,
+        // Keep turbo in the same process group so terminal signals (Ctrl+C)
+        // reach it directly. Effect defaults to detached: true on non-Windows,
+        // which would put turbo in a new group and require manual forwarding.
+        detached: false,
+        forceKillAfter: "1500 millis",
+      },
+    );
+
+    const exitCode = yield* child.exitCode;
     if (exitCode !== 0) {
       return yield* new DevRunnerError({
         message: `turbo exited with code ${exitCode}`,
       });
     }
-  });
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof DevRunnerError
+        ? cause
+        : new DevRunnerError({
+            message: cause instanceof Error ? cause.message : "dev-runner failed",
+            cause,
+          }),
+    ),
+  );
 }
 
 const devRunnerCli = Command.make("dev-runner", {
