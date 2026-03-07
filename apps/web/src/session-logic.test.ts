@@ -7,6 +7,7 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
   deriveTimelineEntries,
+  deriveVisibleWorkTurnId,
   deriveWorkLogEntries,
   findLatestProposedPlan,
   hasToolActivityForTurn,
@@ -74,6 +75,7 @@ describe("derivePendingApprovals", () => {
         requestId: "req-1",
         requestKind: "command",
         createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: null,
         detail: "bun run lint",
       },
     ]);
@@ -100,6 +102,7 @@ describe("derivePendingApprovals", () => {
         requestId: "req-request-type",
         requestKind: "command",
         createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: null,
         detail: "pwd",
       },
     ]);
@@ -203,6 +206,7 @@ describe("derivePendingUserInputs", () => {
       {
         requestId: "req-user-input-1",
         createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: null,
         questions: [
           {
             id: "sandbox_mode",
@@ -218,6 +222,68 @@ describe("derivePendingUserInputs", () => {
         ],
       },
     ]);
+  });
+});
+
+describe("deriveVisibleWorkTurnId", () => {
+  it("keeps showing the pending approval turn when the latest turn has not logged work yet", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-open",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "approval.requested",
+        summary: "Command approval requested",
+        tone: "approval",
+        turnId: "turn-2",
+        payload: {
+          requestId: "req-approval",
+          requestKind: "command",
+          detail: "bun run lint",
+        },
+      }),
+    ];
+
+    expect(
+      deriveVisibleWorkTurnId({
+        activities,
+        latestTurnId: TurnId.makeUnsafe("turn-3"),
+        session: { orchestrationStatus: "running" },
+      }),
+    ).toBe("turn-2");
+  });
+
+  it("falls back to the latest visible work turn while a newer turn is still waiting on output", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-resolved",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "approval.resolved",
+        summary: "Approval resolved",
+        tone: "approval",
+        turnId: "turn-2",
+        payload: {
+          requestId: "req-approval",
+          requestKind: "command",
+          decision: "acceptForSession",
+        },
+      }),
+      makeActivity({
+        id: "tool-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "bash complete",
+        tone: "tool",
+        turnId: "turn-2",
+      }),
+    ];
+
+    expect(
+      deriveVisibleWorkTurnId({
+        activities,
+        latestTurnId: TurnId.makeUnsafe("turn-3"),
+        session: { orchestrationStatus: "running" },
+      }),
+    ).toBe("turn-2");
   });
 });
 

@@ -56,6 +56,7 @@ interface PendingApprovalRequest {
     | "file_read_approval"
     | "dynamic_tool_call"
     | "unknown";
+  readonly turnId: TurnId | undefined;
   readonly resolve: (result: PermissionRequestResult) => void;
 }
 
@@ -72,6 +73,7 @@ interface CopilotUserInputResponse {
 
 interface PendingUserInputRequest {
   readonly request: CopilotUserInputRequest;
+  readonly turnId: TurnId | undefined;
   readonly resolve: (result: CopilotUserInputResponse) => void;
 }
 
@@ -819,8 +821,10 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
       const onPermissionRequest = (request: PermissionRequest) =>
         new Promise<PermissionRequestResult>((resolve) => {
           const requestId = `copilot-approval-${randomUUID()}`;
+          const turnId = getCurrentTurnId();
           pendingApprovalResolvers.set(requestId, {
             requestType: requestTypeFromPermissionRequest(request),
+            turnId,
             resolve,
           });
           void emitRuntimeEvents([
@@ -834,7 +838,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
                   : {}),
                 args: request,
                 },
-                { requestId, turnId: getCurrentTurnId() },
+                { requestId, turnId },
               ),
             ]);
         });
@@ -842,8 +846,10 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
       const onUserInputRequest = (request: CopilotUserInputRequest) =>
         new Promise<CopilotUserInputResponse>((resolve) => {
           const requestId = `copilot-user-input-${randomUUID()}`;
+          const turnId = getCurrentTurnId();
           pendingUserInputResolvers.set(requestId, {
             request,
+            turnId,
             resolve,
           });
           void emitRuntimeEvents([
@@ -863,7 +869,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
                   },
                 ],
               },
-              { requestId, turnId: getCurrentTurnId() },
+              { requestId, turnId },
             ),
           ]);
         });
@@ -1354,7 +1360,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
                 decision,
                 resolution: approvalDecisionToPermissionResult(decision),
               },
-              { requestId, turnId: record.currentTurnId },
+              { requestId, turnId: pending.turnId },
             ),
           );
         });
@@ -1384,7 +1390,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
               {
                 answers,
               },
-              { requestId, turnId: record.currentTurnId },
+              { requestId, turnId: pending.turnId },
             ),
           );
         });

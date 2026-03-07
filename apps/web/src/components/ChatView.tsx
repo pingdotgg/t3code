@@ -70,6 +70,7 @@ import {
   derivePhase,
   deriveTimelineEntries,
   deriveActivePlanState,
+  deriveVisibleWorkTurnId,
   findLatestProposedPlan,
   type PendingApproval,
   type PendingUserInput,
@@ -928,14 +929,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
   const nowIso = new Date(nowTick).toISOString();
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
-  const workLogEntries = useMemo(
-    () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
-    [activeLatestTurn?.turnId, threadActivities],
-  );
-  const latestTurnHasToolActivity = useMemo(
-    () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),
-    [activeLatestTurn?.turnId, threadActivities],
-  );
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -943,6 +936,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const pendingUserInputs = useMemo(
     () => derivePendingUserInputs(threadActivities),
     [threadActivities],
+  );
+  const visibleWorkTurnId = useMemo(
+    () =>
+      deriveVisibleWorkTurnId({
+        activities: threadActivities,
+        latestTurnId: activeLatestTurn?.turnId ?? undefined,
+        session: activeThread?.session ?? null,
+        pendingApprovals,
+        pendingUserInputs,
+      }),
+    [activeLatestTurn?.turnId, activeThread?.session, pendingApprovals, pendingUserInputs, threadActivities],
+  );
+  const workLogEntries = useMemo(
+    () => deriveWorkLogEntries(threadActivities, visibleWorkTurnId),
+    [threadActivities, visibleWorkTurnId],
+  );
+  const latestTurnHasToolActivity = useMemo(
+    () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),
+    [activeLatestTurn?.turnId, threadActivities],
   );
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingDraftAnswers = useMemo(
