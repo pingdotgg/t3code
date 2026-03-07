@@ -3454,8 +3454,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
               markdownCwd={gitCwd ?? undefined}
               resolvedTheme={resolvedTheme}
               workspaceRoot={activeProject?.cwd ?? undefined}
+              hideProposedPlans={settings.horizontalTabs && activeProposedPlan !== null}
             />
-            {settings.horizontalTabs && <div className="h-44 shrink-0" aria-hidden="true" />}
+            {settings.horizontalTabs && <div className="h-56 shrink-0" aria-hidden="true" />}
           </div>
 
           {/* Input bar */}
@@ -3917,10 +3918,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
       })()}
 
         </div>
-        {settings.horizontalTabs && activePlan && (
-          <aside className="w-[clamp(20rem,30vw,28rem)] shrink-0 overflow-y-auto border-l border-border bg-card/50 p-4">
-            <PlanModePanel activePlan={activePlan} />
-          </aside>
+        {settings.horizontalTabs && (activePlan || activeProposedPlan) && (
+          <ResizablePlanPanel>
+            {activePlan && <PlanModePanel activePlan={activePlan} />}
+            {activeProposedPlan && (
+              <div className={activePlan ? "mt-4" : ""}>
+                <ProposedPlanCard
+                  planMarkdown={activeProposedPlan.planMarkdown}
+                  cwd={gitCwd ?? undefined}
+                  workspaceRoot={activeProject?.cwd ?? undefined}
+                />
+              </div>
+            )}
+          </ResizablePlanPanel>
         )}
       </div>
 
@@ -4222,6 +4232,65 @@ const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActi
         Approve once
       </Button>
     </>
+  );
+});
+
+const PLAN_PANEL_WIDTH_KEY = "t3code:plan-panel-width";
+const PLAN_PANEL_MIN_WIDTH = 280;
+const PLAN_PANEL_MAX_WIDTH = 700;
+const PLAN_PANEL_DEFAULT_WIDTH = 380;
+
+function readPersistedPlanWidth(): number {
+  try {
+    const stored = localStorage.getItem(PLAN_PANEL_WIDTH_KEY);
+    if (stored) {
+      const val = Number(stored);
+      if (val >= PLAN_PANEL_MIN_WIDTH && val <= PLAN_PANEL_MAX_WIDTH) return val;
+    }
+  } catch {}
+  return PLAN_PANEL_DEFAULT_WIDTH;
+}
+
+const ResizablePlanPanel = memo(function ResizablePlanPanel({ children }: { children: React.ReactNode }) {
+  const [width, setWidth] = useState(readPersistedPlanWidth);
+  const dragging = useRef(false);
+  const startX = useRef(0);
+  const startWidth = useRef(0);
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    dragging.current = true;
+    startX.current = e.clientX;
+    startWidth.current = width;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }, [width]);
+
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragging.current) return;
+    const delta = startX.current - e.clientX;
+    const next = Math.min(PLAN_PANEL_MAX_WIDTH, Math.max(PLAN_PANEL_MIN_WIDTH, startWidth.current + delta));
+    setWidth(next);
+  }, []);
+
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    const delta = startX.current - e.clientX;
+    const final = Math.min(PLAN_PANEL_MAX_WIDTH, Math.max(PLAN_PANEL_MIN_WIDTH, startWidth.current + delta));
+    try { localStorage.setItem(PLAN_PANEL_WIDTH_KEY, String(final)); } catch {}
+  }, []);
+
+  return (
+    <aside className="relative shrink-0 overflow-y-auto border-l border-border bg-card/50" style={{ width }}>
+      <div
+        className="absolute inset-y-0 left-0 z-10 w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+      />
+      <div className="p-4">{children}</div>
+    </aside>
   );
 });
 
@@ -4731,6 +4800,7 @@ interface MessagesTimelineProps {
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
+  hideProposedPlans?: boolean;
 }
 
 type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
@@ -4785,6 +4855,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   markdownCwd,
   resolvedTheme,
   workspaceRoot,
+  hideProposedPlans,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
@@ -5258,7 +5329,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
           );
         })()}
 
-      {row.kind === "proposed-plan" && (
+      {row.kind === "proposed-plan" && !hideProposedPlans && (
         <div className="min-w-0 px-1 py-0.5">
           <ProposedPlanCard
             planMarkdown={row.proposedPlan.planMarkdown}
