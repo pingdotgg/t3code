@@ -112,7 +112,7 @@ function mapProjectsFromReadModel(
       name: project.title,
       cwd: project.workspaceRoot,
       model: resolveModelSlug(
-        project.defaultModel ?? existing?.model ?? DEFAULT_MODEL_BY_PROVIDER.codex,
+        existing?.model ?? project.defaultModel ?? DEFAULT_MODEL_BY_PROVIDER.codex,
       ),
       expanded:
         existing?.expanded ??
