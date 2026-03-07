@@ -94,7 +94,7 @@ function stripQuotes(s: string): string {
 
 /** Extract `name` and `description` from SKILL.md YAML frontmatter. */
 function parseSkillFrontmatter(content: string): { name: string; description: string } {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return { name: "", description: "" };
 
   const frontmatter = match[1]!;
@@ -151,7 +151,9 @@ function readSkillsConfigEntries(configPath: string): Map<string, boolean> {
     const pathMatch = block.match(/^path\s*=\s*"(.+?)"/m);
     const enabledMatch = block.match(/^enabled\s*=\s*(true|false)/m);
     if (pathMatch) {
-      entries.set(pathMatch[1]!, enabledMatch ? enabledMatch[1] === "true" : true);
+      // Unescape TOML basic string sequences relevant to file paths
+      const unescapedPath = pathMatch[1]!.replace(/\\\\/g, "\\").replace(/\\"/g, '"');
+      entries.set(unescapedPath, enabledMatch ? enabledMatch[1] === "true" : true);
     }
   }
   return entries;
