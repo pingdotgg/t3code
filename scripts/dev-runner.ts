@@ -58,13 +58,6 @@ function signalToExitCode(signal: NodeJS.Signals): number {
   }
 }
 
-function toDevRunnerError(message: string, cause: unknown): DevRunnerError {
-  return new DevRunnerError({
-    message: cause instanceof Error ? cause.message : message,
-    cause,
-  });
-}
-
 function runTurboProcess(
   args: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv,
@@ -96,7 +89,14 @@ function runTurboProcess(
         child.kill({ killSignal: signal, forceKillAfter: "1500 millis" }).pipe(
           Effect.match({
             onFailure: (cause) => {
-              settle(Effect.fail(toDevRunnerError("failed to stop turbo", cause)));
+              settle(
+                Effect.fail(
+                  new DevRunnerError({
+                    message: cause instanceof Error ? cause.message : "failed to stop turbo",
+                    cause,
+                  }),
+                ),
+              );
               return Effect.void;
             },
             onSuccess: () => {
@@ -151,7 +151,14 @@ function runTurboProcess(
                 return Effect.void;
               }
 
-              settle(Effect.fail(toDevRunnerError("turbo process failed", cause)));
+              settle(
+                Effect.fail(
+                  new DevRunnerError({
+                    message: cause instanceof Error ? cause.message : "turbo process failed",
+                    cause,
+                  }),
+                ),
+              );
               return Effect.void;
             },
             onSuccess: (code) => {
@@ -178,7 +185,12 @@ function runTurboProcess(
     });
   }).pipe(
     Effect.mapError((cause) =>
-      cause instanceof DevRunnerError ? cause : toDevRunnerError("failed to spawn turbo", cause),
+      cause instanceof DevRunnerError
+        ? cause
+        : new DevRunnerError({
+            message: cause instanceof Error ? cause.message : "failed to spawn turbo",
+            cause,
+          }),
     ),
   );
 }
