@@ -5047,10 +5047,10 @@ const MessagesTimeline = memo(function MessagesTimeline({
           const userImages = row.message.attachments ?? [];
           const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
           return (
-            <div className="flex justify-end">
-              <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
+            <div className="group flex flex-col items-end">
+              <div className="max-w-[80%] rounded-xl rounded-br-sm border border-border bg-secondary px-3 py-2">
                 {userImages.length > 0 && (
-                  <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+                  <div className="mb-1.5 grid max-w-[420px] grid-cols-2 gap-2">
                     {userImages.map(
                       (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
                         <div
@@ -5087,30 +5087,31 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   </div>
                 )}
                 {row.message.text && (
-                  <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+                  <pre className="whitespace-pre-wrap wrap-break-word text-[13px] leading-normal text-foreground">
                     {row.message.text}
                   </pre>
                 )}
-                <div className="mt-1.5 flex items-center justify-end gap-2">
-                  <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                    {row.message.text && <MessageCopyButton text={row.message.text} />}
-                    {canRevertAgentWork && (
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="outline"
-                        disabled={isRevertingCheckpoint || isWorking}
-                        onClick={() => onRevertUserMessage(row.message.id)}
-                        title="Revert to this message"
-                      >
-                        <Undo2Icon className="size-3" />
-                      </Button>
-                    )}
-                  </div>
-                  <p className="text-right text-[10px] text-muted-foreground/30">
-                    {formatTimestamp(row.message.createdAt)}
-                  </p>
-                </div>
+              </div>
+              <div className="mt-1 flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+                {row.message.text && <MessageCopyButton text={row.message.text} />}
+                {canRevertAgentWork && (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    disabled={isRevertingCheckpoint || isWorking}
+                    onClick={() => onRevertUserMessage(row.message.id)}
+                    title="Revert to this message"
+                  >
+                    <Undo2Icon className="size-3" />
+                  </Button>
+                )}
+                <span
+                  className="text-[10px] text-muted-foreground/40"
+                  title={formatTimestamp(row.message.createdAt)}
+                >
+                  {formatTimestamp(row.message.createdAt)}
+                </span>
               </div>
             </div>
           );

@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 
-type Theme = "light" | "dark" | "system";
+type Theme = "light" | "dark" | "night" | "system";
 type ThemeSnapshot = {
   theme: Theme;
   systemDark: boolean;
 };
+
+export const THEME_OPTIONS = [
+  { value: "light", label: "Light", description: "Light mode" },
+  { value: "dark", label: "Dark", description: "Balanced dark mode" },
+  { value: "night", label: "Night", description: "Darkest mode" },
+  { value: "system", label: "System", description: "Follow system preference" },
+] as const;
 
 const STORAGE_KEY = "t3code:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
@@ -21,7 +28,7 @@ function getSystemDark(): boolean {
 
 function getStored(): Theme {
   const raw = localStorage.getItem(STORAGE_KEY);
-  if (raw === "light" || raw === "dark" || raw === "system") return raw;
+  if (raw === "light" || raw === "dark" || raw === "night" || raw === "system") return raw;
   return "system";
 }
 
@@ -29,8 +36,22 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
   if (suppressTransitions) {
     document.documentElement.classList.add("no-transitions");
   }
-  const isDark = theme === "dark" || (theme === "system" && getSystemDark());
-  document.documentElement.classList.toggle("dark", isDark);
+  
+  // Determine which CSS classes to apply
+  // - "dark" class = dark mode (middle ground)
+  // - "night" class = darkest mode
+  // - neither = light mode
+  const resolvedTheme = theme === "system" 
+    ? (getSystemDark() ? "dark" : "light") 
+    : theme;
+  
+  document.documentElement.classList.remove("dark", "night");
+  if (resolvedTheme === "dark") {
+    document.documentElement.classList.add("dark");
+  } else if (resolvedTheme === "night") {
+    document.documentElement.classList.add("dark", "night");
+  }
+  
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
     // oxlint-disable-next-line no-unused-expressions
@@ -87,8 +108,14 @@ export function useTheme() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot);
   const theme = snapshot.theme;
 
+  // resolvedTheme returns "light" or "dark" for components that only care about light/dark distinction
+  // (night is treated as dark for icon/color purposes)
   const resolvedTheme: "light" | "dark" =
-    theme === "system" ? (snapshot.systemDark ? "dark" : "light") : theme;
+    theme === "system" 
+      ? (snapshot.systemDark ? "dark" : "light") 
+      : theme === "night" 
+        ? "dark" 
+        : theme;
 
   const setTheme = useCallback((next: Theme) => {
     localStorage.setItem(STORAGE_KEY, next);
@@ -103,3 +130,5 @@ export function useTheme() {
 
   return { theme, setTheme, resolvedTheme } as const;
 }
+
+export type { Theme };

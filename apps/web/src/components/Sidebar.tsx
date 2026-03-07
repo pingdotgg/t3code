@@ -2,8 +2,11 @@ import {
   ChevronRightIcon,
   FolderIcon,
   GitPullRequestIcon,
+  MoonIcon,
+  MoonStarIcon,
   RocketIcon,
   SquarePenIcon,
+  SunIcon,
   TerminalIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -60,6 +63,14 @@ import {
 } from "./ui/sidebar";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
+import { useTheme, THEME_OPTIONS, type Theme } from "../hooks/useTheme";
+import {
+  Menu,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuTrigger,
+} from "./ui/menu";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -257,7 +268,14 @@ function ProjectFavicon({ cwd }: { cwd: string }) {
   );
 }
 
+function ThemeIcon({ theme }: { theme: Theme }) {
+  if (theme === "light") return <SunIcon className="size-3.5" />;
+  if (theme === "night") return <MoonStarIcon className="size-3.5" />;
+  return <MoonIcon className="size-3.5" />;
+}
+
 export default function Sidebar() {
+  const { theme, setTheme } = useTheme();
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
@@ -990,36 +1008,79 @@ export default function Sidebar() {
     </div>
   );
 
+  const themeSelector = (
+    <Menu>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="Change theme"
+                  className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <ThemeIcon theme={theme} />
+                </button>
+              }
+            />
+          }
+        />
+        <TooltipPopup side="bottom">Theme</TooltipPopup>
+      </Tooltip>
+      <MenuPopup side="bottom" align="end" className="min-w-[140px]">
+        <MenuRadioGroup
+          value={theme}
+          onValueChange={(value) => setTheme(value as Theme)}
+        >
+          {THEME_OPTIONS.map((option) => (
+            <MenuRadioItem key={option.value} value={option.value}>
+              {option.label}
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuPopup>
+    </Menu>
+  );
+
   return (
     <>
       {isElectron ? (
         <>
-          <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[82px]">
+          <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-1 px-4 py-0 pl-[82px]">
             {wordmark}
-            {showDesktopUpdateButton && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label={desktopUpdateTooltip}
-                      aria-disabled={desktopUpdateButtonDisabled || undefined}
-                      disabled={desktopUpdateButtonDisabled}
-                      className={`inline-flex size-7 ml-auto mt-2 items-center justify-center rounded-md text-muted-foreground transition-colors ${desktopUpdateButtonInteractivityClasses} ${desktopUpdateButtonClasses}`}
-                      onClick={handleDesktopUpdateButtonClick}
-                    >
-                      <RocketIcon className="size-3.5" />
-                    </button>
-                  }
-                />
-                <TooltipPopup side="bottom">{desktopUpdateTooltip}</TooltipPopup>
-              </Tooltip>
-            )}
+            <div className="ml-auto mt-2 flex items-center gap-0.5">
+              {themeSelector}
+              {showDesktopUpdateButton && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label={desktopUpdateTooltip}
+                        aria-disabled={desktopUpdateButtonDisabled || undefined}
+                        disabled={desktopUpdateButtonDisabled}
+                        className={`inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors ${desktopUpdateButtonInteractivityClasses} ${desktopUpdateButtonClasses}`}
+                        onClick={handleDesktopUpdateButtonClick}
+                      >
+                        <RocketIcon className="size-3.5" />
+                      </button>
+                    }
+                  />
+                  <TooltipPopup side="bottom">{desktopUpdateTooltip}</TooltipPopup>
+                </Tooltip>
+              )}
+            </div>
           </SidebarHeader>
         </>
       ) : (
         <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
-          {wordmark}
+          <div className="flex items-center gap-2">
+            {wordmark}
+            <div className="ml-auto">
+              {themeSelector}
+            </div>
+          </div>
         </SidebarHeader>
       )}
 
