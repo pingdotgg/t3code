@@ -1,16 +1,17 @@
 import {
   CODEX_REASONING_EFFORT_OPTIONS,
   DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_REASONING_EFFORT_BY_PROVIDER,
   MODEL_OPTIONS_BY_PROVIDER,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
+  REASONING_EFFORT_OPTIONS_BY_PROVIDER,
   type CodexReasoningEffort,
   type ModelSlug,
   type ProviderKind,
 } from "@t3tools/contracts";
 
-type CatalogProvider = keyof typeof MODEL_OPTIONS_BY_PROVIDER;
-
-const MODEL_SLUG_SET_BY_PROVIDER: Record<CatalogProvider, ReadonlySet<ModelSlug>> = {
+const MODEL_SLUG_SET_BY_PROVIDER: Record<ProviderKind, ReadonlySet<ModelSlug>> = {
+  claudeCode: new Set(MODEL_OPTIONS_BY_PROVIDER.claudeCode.map((option) => option.slug)),
   codex: new Set(MODEL_OPTIONS_BY_PROVIDER.codex.map((option) => option.slug)),
 };
 
@@ -35,9 +36,7 @@ export function normalizeModelSlug(
     return null;
   }
 
-  const aliases = MODEL_SLUG_ALIASES_BY_PROVIDER[provider] as Record<string, ModelSlug>;
-  const aliased = aliases[trimmed];
-  return typeof aliased === "string" ? aliased : (trimmed as ModelSlug);
+  return MODEL_SLUG_ALIASES_BY_PROVIDER[provider][trimmed] ?? (trimmed as ModelSlug);
 }
 
 export function resolveModelSlug(
@@ -51,7 +50,7 @@ export function resolveModelSlug(
 
   return MODEL_SLUG_SET_BY_PROVIDER[provider].has(normalized)
     ? normalized
-    : getDefaultModel(provider);
+    : DEFAULT_MODEL_BY_PROVIDER[provider];
 }
 
 export function resolveModelSlugForProvider(
@@ -64,7 +63,7 @@ export function resolveModelSlugForProvider(
 export function getReasoningEffortOptions(
   provider: ProviderKind = "codex",
 ): ReadonlyArray<CodexReasoningEffort> {
-  return provider === "codex" ? CODEX_REASONING_EFFORT_OPTIONS : [];
+  return REASONING_EFFORT_OPTIONS_BY_PROVIDER[provider];
 }
 
 export function getDefaultReasoningEffort(provider: "codex"): CodexReasoningEffort;
@@ -72,7 +71,7 @@ export function getDefaultReasoningEffort(provider: ProviderKind): CodexReasonin
 export function getDefaultReasoningEffort(
   provider: ProviderKind = "codex",
 ): CodexReasoningEffort | null {
-  return provider === "codex" ? "high" : null;
+  return DEFAULT_REASONING_EFFORT_BY_PROVIDER[provider];
 }
 
 export { CODEX_REASONING_EFFORT_OPTIONS };
