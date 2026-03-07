@@ -87,7 +87,7 @@ const hasAssets = !!(downloads.macosArm64 || downloads.macosX64 || downloads.lin
         var detected;
         var label;
         if (platform.includes("mac") || ua.includes("macintosh")) {
-          detected = downloads.macosArm64 || downloads.macosX64;
+          detected = downloads.macosX64 || downloads.macosArm64;
           label = "Download for macOS";
         } else if (platform.includes("win") || ua.includes("windows")) {
           detected = downloads.windows;
