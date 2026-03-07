@@ -1,4 +1,4 @@
-name: Release Desktop
+name: Release Desktop (Fork)
 
 on:
   push:
@@ -13,7 +13,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write
 
 jobs:
   preflight:
@@ -116,68 +115,15 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build desktop artifact
+      - name: Build desktop artifact (unsigned)
         shell: bash
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
-          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
-          AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
         run: |
-          args=(
-            --platform "${{ matrix.platform }}"
-            --target "${{ matrix.target }}"
-            --arch "${{ matrix.arch }}"
-            --build-version "${{ needs.preflight.outputs.version }}"
+          bun run dist:desktop:artifact -- \
+            --platform "${{ matrix.platform }}" \
+            --target "${{ matrix.target }}" \
+            --arch "${{ matrix.arch }}" \
+            --build-version "${{ needs.preflight.outputs.version }}" \
             --verbose
-          )
-
-          has_all() {
-            for value in "$@"; do
-              if [[ -z "$value" ]]; then
-                return 1
-              fi
-            done
-            return 0
-          }
-
-          if [[ "${{ matrix.platform }}" == "mac" ]]; then
-            if has_all "$CSC_LINK" "$CSC_KEY_PASSWORD" "$APPLE_API_KEY" "$APPLE_API_KEY_ID" "$APPLE_API_ISSUER"; then
-              key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
-              printf '%s' "$APPLE_API_KEY" > "$key_path"
-              export APPLE_API_KEY="$key_path"
-              echo "macOS signing enabled."
-              args+=(--signed)
-            else
-              echo "macOS signing disabled (missing one or more Apple signing secrets)."
-            fi
-          elif [[ "${{ matrix.platform }}" == "win" ]]; then
-            if has_all \
-              "$AZURE_TENANT_ID" \
-              "$AZURE_CLIENT_ID" \
-              "$AZURE_CLIENT_SECRET" \
-              "$AZURE_TRUSTED_SIGNING_ENDPOINT" \
-              "$AZURE_TRUSTED_SIGNING_ACCOUNT_NAME" \
-              "$AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME" \
-              "$AZURE_TRUSTED_SIGNING_PUBLISHER_NAME"; then
-              echo "Windows signing enabled (Azure Trusted Signing)."
-              args+=(--signed)
-            else
-              echo "Windows signing disabled (missing one or more Azure Trusted Signing secrets)."
-            fi
-          else
-            echo "Signing disabled for ${{ matrix.platform }}."
-          fi
-
-          bun run dist:desktop:artifact -- "${args[@]}"
 
       - name: Collect release assets
         shell: bash
@@ -211,39 +157,9 @@ jobs:
           path: release-publish/*
           if-no-files-found: error
 
-  publish_cli:
-    name: Publish CLI to npm
-    needs: [preflight, build]
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.preflight.outputs.ref }}
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: package.json
-          registry-url: https://registry.npmjs.org
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build CLI package
-        run: bun run build --filter=@t3tools/web --filter=t3
-
-      - name: Publish CLI package
-        run: node apps/server/scripts/cli.ts publish --tag latest --app-version "${{ needs.preflight.outputs.version }}" --verbose
-
   release:
     name: Publish GitHub Release
-    needs: [preflight, build, publish_cli]
+    needs: [preflight, build]
     runs-on: ubuntu-24.04
     steps:
       - name: Download all desktop artifacts
@@ -258,7 +174,7 @@ jobs:
         with:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.ref }}
-          name: T3 Code v${{ needs.preflight.outputs.version }}
+          name: T3 Code (Fork) v${{ needs.preflight.outputs.version }}
           generate_release_notes: true
           make_latest: true
           files: |
@@ -269,82 +185,3 @@ jobs:
             release-assets/*.blockmap
             release-assets/latest*.yml
           fail_on_unmatched_files: true
-
-  finalize:
-    name: Finalize release
-    needs: [preflight, release]
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: package.json
-
-      - id: update_versions
-        name: Update version strings
-        env:
-          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
-        run: |
-          node --input-type=module -e '
-            import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
-
-            const files = [
-              "apps/server/package.json",
-              "apps/desktop/package.json",
-              "apps/web/package.json",
-              "packages/contracts/package.json",
-            ];
-
-            let changed = false;
-            for (const file of files) {
-              const packageJson = JSON.parse(readFileSync(file, "utf8"));
-              if (packageJson.version !== process.env.RELEASE_VERSION) {
-                packageJson.version = process.env.RELEASE_VERSION;
-                writeFileSync(file, `${JSON.stringify(packageJson, null, 2)}\n`);
-                changed = true;
-              }
-            }
-
-            if (!changed) {
-              console.log("All package.json versions already match release version.");
-            }
-
-            appendFileSync(process.env.GITHUB_OUTPUT, `changed=${changed}\n`);
-          '
-
-      - name: Format package.json files
-        if: steps.update_versions.outputs.changed == 'true'
-        run: bunx oxfmt apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
-
-      - name: Refresh lockfile
-        if: steps.update_versions.outputs.changed == 'true'
-        run: bun install
-
-      - name: Commit and push version bump
-        if: steps.update_versions.outputs.changed == 'true'
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
-        run: |
-          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json bun.lock; then
-            echo "No version changes to commit."
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json bun.lock
-          git commit -m "chore(release): prepare $RELEASE_TAG"
-          git push origin HEAD:main
