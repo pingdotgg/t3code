@@ -43,6 +43,8 @@ export function showContextMenuFallback<T extends string>(
       if (target instanceof Node && menu.contains(target)) {
         return;
       }
+      event.preventDefault();
+      event.stopPropagation();
       cleanup(null);
     }
 
