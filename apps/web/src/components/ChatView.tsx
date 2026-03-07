@@ -17,6 +17,8 @@ import {
   type ServerProviderModel,
   type ServerProviderStatus,
   type ProviderKind,
+  type ProviderModelOptions,
+  type ProviderStartOptions,
   type ThreadId,
   type TurnId,
   OrchestrationThreadActivity,
@@ -3497,6 +3499,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
           activeThreadId={activeThread.id}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
+          provider={selectedProvider}
+          model={selectedModel}
+          modelOptions={selectedModelOptionsForDispatch}
+          providerOptions={selectedProviderOptionsForDispatch}
           isGitRepo={isGitRepo}
           openInCwd={activeThread.worktreePath ?? activeProject?.cwd ?? null}
           activeProjectScripts={activeProject?.scripts}
@@ -4081,6 +4087,10 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  provider: ProviderKind;
+  model: ModelSlug;
+  modelOptions: ProviderModelOptions | undefined;
+  providerOptions: ProviderStartOptions | undefined;
   isGitRepo: boolean;
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
@@ -4100,6 +4110,10 @@ const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   activeThreadTitle,
   activeProjectName,
+  provider,
+  model,
+  modelOptions,
+  providerOptions,
   isGitRepo,
   openInCwd,
   activeProjectScripts,
@@ -4153,7 +4167,16 @@ const ChatHeader = memo(function ChatHeader({
             openInCwd={openInCwd}
           />
         )}
-        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+        {activeProjectName && (
+          <GitActionsControl
+            gitCwd={gitCwd}
+            activeThreadId={activeThreadId}
+            provider={provider}
+            model={model}
+            modelOptions={modelOptions}
+            providerOptions={providerOptions}
+          />
+        )}
         <Tooltip>
           <TooltipTrigger
             render={
