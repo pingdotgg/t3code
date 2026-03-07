@@ -6,6 +6,7 @@ This document covers how to run desktop releases from one tag, first without sig
 
 - Trigger: push tag matching `v*.*.*`.
 - Runs quality gates first: lint, typecheck, test.
+- Validates Homebrew release contract (tag/version/product name + required macOS DMGs).
 - Builds four artifacts in parallel:
   - macOS `arm64` DMG
   - macOS `x64` DMG
@@ -15,6 +16,8 @@ This document covers how to run desktop releases from one tag, first without sig
 - Includes Electron auto-update metadata (for example `latest*.yml` and `*.blockmap`) in release assets.
 - Publishes the CLI package (`apps/server`, npm package `t3`) with OIDC trusted publishing.
 - Signing is optional and auto-detected per platform from secrets.
+
+See also: [Homebrew release contract](./homebrew-release-contract.md).
 
 ## Desktop auto-update notes
 
