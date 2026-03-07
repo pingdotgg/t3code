@@ -4,13 +4,14 @@ import path from "node:path";
 
 import type { OrchestrationReadModel, ProviderRuntimeEvent } from "@t3tools/contracts";
 import {
-  ApprovalRequestId,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
   ProjectId,
-  ProviderItemId,
+  RuntimeItemId,
+  RuntimeRequestId,
+  RuntimeTaskId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -36,11 +37,13 @@ import { ServerConfig } from "../../config.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
-const asItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
+const asItemId = (value: string): RuntimeItemId => RuntimeItemId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
+const asRequestId = (value: string): RuntimeRequestId => RuntimeRequestId.makeUnsafe(value);
+const asTaskId = (value: string): RuntimeTaskId => RuntimeTaskId.makeUnsafe(value);
 
 
 function createProviderServiceHarness() {
@@ -1017,7 +1020,7 @@ describe("ProviderRuntimeIngestion", () => {
       provider: "codex",
       createdAt: now,
       threadId: asThreadId("thread-1"),
-      requestId: ApprovalRequestId.makeUnsafe("req-open"),
+      requestId: asRequestId("req-open"),
       payload: {
         requestType: "command_execution_approval",
         detail: "pwd",
@@ -1030,7 +1033,7 @@ describe("ProviderRuntimeIngestion", () => {
       provider: "codex",
       createdAt: now,
       threadId: asThreadId("thread-1"),
-      requestId: ApprovalRequestId.makeUnsafe("req-open"),
+      requestId: asRequestId("req-open"),
       payload: {
         requestType: "command_execution_approval",
         decision: "accept",
@@ -1106,12 +1109,13 @@ describe("ProviderRuntimeIngestion", () => {
 
     harness.emit({
       type: "session.started",
-      payload: {},
+      payload: {
+        message: "session started",
+      },
       eventId: asEventId("evt-session-started"),
       provider: "codex",
       createdAt: now,
       threadId: asThreadId("thread-1"),
-      message: "session started",
     });
     harness.emit({
       type: "thread.started",
@@ -1130,7 +1134,7 @@ describe("ProviderRuntimeIngestion", () => {
       turnId: asTurnId("turn-9"),
       payload: {
         itemType: "command_execution",
-        status: "in_progress",
+        status: "inProgress",
         title: "Read file",
         detail: "/tmp/file.ts",
       },
@@ -1181,7 +1185,7 @@ describe("ProviderRuntimeIngestion", () => {
         explanation: "Working through the plan",
         plan: [
           { step: "Inspect files", status: "completed" },
-          { step: "Apply patch", status: "in_progress" },
+          { step: "Apply patch", status: "inProgress" },
         ],
       },
     });
@@ -1196,7 +1200,7 @@ describe("ProviderRuntimeIngestion", () => {
       itemId: asItemId("item-p1-tool"),
       payload: {
         itemType: "command_execution",
-        status: "in_progress",
+        status: "inProgress",
         title: "Run tests",
         detail: "bun test",
         data: { pid: 123 },
@@ -1268,7 +1272,7 @@ describe("ProviderRuntimeIngestion", () => {
         : undefined;
     expect(toolUpdate?.kind).toBe("tool.updated");
     expect(toolUpdatePayload?.itemType).toBe("command_execution");
-    expect(toolUpdatePayload?.status).toBe("in_progress");
+    expect(toolUpdatePayload?.status).toBe("inProgress");
 
     const warning = thread.activities.find(
       (activity: ProviderRuntimeTestActivity) => activity.id === "evt-runtime-warning",
@@ -1300,7 +1304,7 @@ describe("ProviderRuntimeIngestion", () => {
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-task-1"),
       payload: {
-        taskId: "turn-task-1",
+        taskId: asTaskId("turn-task-1"),
         taskType: "plan",
       },
     });
@@ -1313,7 +1317,7 @@ describe("ProviderRuntimeIngestion", () => {
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-task-1"),
       payload: {
-        taskId: "turn-task-1",
+        taskId: asTaskId("turn-task-1"),
         description: "Comparing the desktop rollout chunks to the app-server stream.",
       },
     });
@@ -1326,7 +1330,7 @@ describe("ProviderRuntimeIngestion", () => {
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-task-1"),
       payload: {
-        taskId: "turn-task-1",
+        taskId: asTaskId("turn-task-1"),
         status: "completed",
         summary: "<proposed_plan>\n# Plan title\n</proposed_plan>",
       },
@@ -1400,7 +1404,7 @@ describe("ProviderRuntimeIngestion", () => {
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-user-input"),
-      requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
+      requestId: asRequestId("req-user-input-1"),
       payload: {
         questions: [
           {
@@ -1425,7 +1429,7 @@ describe("ProviderRuntimeIngestion", () => {
       createdAt: new Date().toISOString(),
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-user-input"),
-      requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
+      requestId: asRequestId("req-user-input-1"),
       payload: {
         answers: {
           sandbox_mode: "workspace-write",
