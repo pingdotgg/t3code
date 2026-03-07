@@ -113,15 +113,29 @@ export function formatElapsed(startIso: string, endIso: string | undefined): str
   return formatDuration(endedAt - startedAt);
 }
 
+type LatestTurnTiming = Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "completedAt">;
+type SessionActivityState = Pick<ThreadSession, "orchestrationStatus" | "activeTurnId">;
+
 export function isLatestTurnSettled(
-  latestTurn: Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "completedAt"> | null,
-  session: Pick<ThreadSession, "orchestrationStatus" | "activeTurnId"> | null,
+  latestTurn: LatestTurnTiming | null,
+  session: SessionActivityState | null,
 ): boolean {
   if (!latestTurn?.startedAt) return false;
   if (!latestTurn.completedAt) return false;
   if (!session) return true;
   if (session.orchestrationStatus === "running") return false;
   return true;
+}
+
+export function deriveActiveWorkStartedAt(
+  latestTurn: LatestTurnTiming | null,
+  session: SessionActivityState | null,
+  sendStartedAt: string | null,
+): string | null {
+  if (!isLatestTurnSettled(latestTurn, session)) {
+    return latestTurn?.startedAt ?? sendStartedAt;
+  }
+  return sendStartedAt;
 }
 
 function requestKindFromRequestType(

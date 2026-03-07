@@ -67,6 +67,7 @@ import {
   derivePendingUserInputs,
   derivePhase,
   deriveTimelineEntries,
+  deriveActiveWorkStartedAt,
   deriveActivePlanState,
   findLatestProposedPlan,
   type PendingApproval,
@@ -862,7 +863,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isPreparingWorktree = sendPhase === "preparing-worktree";
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
   const nowIso = new Date(nowTick).toISOString();
-  const activeWorkStartedAt = activeLatestTurn?.startedAt ?? sendStartedAt;
+  const activeWorkStartedAt = deriveActiveWorkStartedAt(
+    activeLatestTurn,
+    activeThread?.session ?? null,
+    sendStartedAt,
+  );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),

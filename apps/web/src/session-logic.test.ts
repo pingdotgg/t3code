@@ -2,6 +2,7 @@ import { EventId, MessageId, TurnId, type OrchestrationThreadActivity } from "@t
 import { describe, expect, it } from "vitest";
 
 import {
+  deriveActiveWorkStartedAt,
   deriveActivePlanState,
   PROVIDER_OPTIONS,
   derivePendingApprovals,
@@ -587,6 +588,54 @@ describe("isLatestTurnSettled", () => {
         null,
       ),
     ).toBe(false);
+  });
+});
+
+describe("deriveActiveWorkStartedAt", () => {
+  const latestTurn = {
+    turnId: TurnId.makeUnsafe("turn-1"),
+    startedAt: "2026-02-27T21:10:00.000Z",
+    completedAt: "2026-02-27T21:10:06.000Z",
+  } as const;
+
+  it("prefers the in-flight turn start when the latest turn is not settled", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        latestTurn,
+        {
+          orchestrationStatus: "running",
+          activeTurnId: TurnId.makeUnsafe("turn-1"),
+        },
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:10:00.000Z");
+  });
+
+  it("falls back to sendStartedAt once the latest turn is settled", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        latestTurn,
+        {
+          orchestrationStatus: "ready",
+          activeTurnId: undefined,
+        },
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:11:00.000Z");
+  });
+
+  it("uses sendStartedAt for a fresh send after the prior turn completed", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        {
+          turnId: TurnId.makeUnsafe("turn-1"),
+          startedAt: "2026-02-27T21:10:00.000Z",
+          completedAt: "2026-02-27T21:10:06.000Z",
+        },
+        null,
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:11:00.000Z");
   });
 });
 
