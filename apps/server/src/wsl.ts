@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+
 export interface WslWorkspacePath {
   readonly windowsPath: string;
   readonly distribution: string;
@@ -32,6 +34,10 @@ interface WorkspaceLaunchInput {
 
 const WSL_LOCALHOST_PREFIX = "\\\\wsl.localhost\\";
 const WSL_DOLLAR_PREFIX = "\\\\wsl$\\";
+const WSL_SHELL_LOOKUP_COMMAND =
+  'shell="${SHELL:-/bin/sh}"; exec "$shell" -l -i -c \'command -v "$1"\' wsl-shell "$@"';
+const WSL_SHELL_EXEC_COMMAND =
+  'shell="${SHELL:-/bin/sh}"; exec "$shell" -l -i -c \'exec "$@"\' wsl-shell "$@"';
 
 function normalizeWindowsSeparators(value: string): string {
   return value.replace(/\//g, "\\");
@@ -39,6 +45,28 @@ function normalizeWindowsSeparators(value: string): string {
 
 function isWindowsAbsolutePath(value: string): boolean {
   return /^[A-Za-z]:\\/.test(value);
+}
+
+function isPosixAbsolutePath(value: string): boolean {
+  return value.startsWith("/");
+}
+
+function shouldProbeWslCommandPath(command: string): boolean {
+  return (
+    command.trim().length > 0 &&
+    !isWindowsAbsolutePath(normalizeWindowsSeparators(command)) &&
+    !isPosixAbsolutePath(command) &&
+    !command.includes("/") &&
+    !command.includes("\\")
+  );
+}
+
+function lastNonEmptyLine(value: string): string | null {
+  const lines = value
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return lines.at(-1) ?? null;
 }
 
 export function parseWslWorkspacePath(
@@ -155,10 +183,96 @@ export function resolveWindowsSpawnCwd(input: WindowsSpawnCwdOptions = {}): stri
 }
 
 function resolveCommandForWsl(command: string, workspace: WslWorkspacePath): string {
-  return toWslPath(command, {
-    platform: "win32",
-    distribution: workspace.distribution,
-  }) ?? command;
+  const translatedCommand =
+    toWslPath(command, {
+      platform: "win32",
+      distribution: workspace.distribution,
+    }) ?? command;
+  if (
+    process.platform !== "win32" ||
+    !shouldProbeWslCommandPath(translatedCommand)
+  ) {
+    return translatedCommand;
+  }
+
+  const probe = spawnSync(
+    "wsl.exe",
+    buildWslShellLookupArgs({
+      distribution: workspace.distribution,
+      linuxCwd: workspace.linuxPath,
+      command: translatedCommand,
+    }),
+    {
+      cwd: resolveWindowsSpawnCwd({
+        platform: "win32",
+      }),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    },
+  );
+
+  if (probe.status !== 0) {
+    return translatedCommand;
+  }
+
+  const resolvedCommand = lastNonEmptyLine(probe.stdout);
+  if (!resolvedCommand || !isPosixAbsolutePath(resolvedCommand)) {
+    return translatedCommand;
+  }
+
+  return resolvedCommand;
+}
+
+export function buildWslExecArgs(input: {
+  readonly distribution?: string;
+  readonly linuxCwd?: string;
+  readonly command: string;
+  readonly args?: ReadonlyArray<string>;
+}): ReadonlyArray<string> {
+  return [
+    ...(input.distribution ? ["--distribution", input.distribution] : []),
+    ...(input.linuxCwd ? ["--cd", input.linuxCwd] : []),
+    "--exec",
+    input.command,
+    ...(input.args ?? []),
+  ];
+}
+
+function buildWslShellLookupArgs(input: {
+  readonly distribution?: string;
+  readonly linuxCwd?: string;
+  readonly command: string;
+}): ReadonlyArray<string> {
+  return [
+    ...(input.distribution ? ["--distribution", input.distribution] : []),
+    ...(input.linuxCwd ? ["--cd", input.linuxCwd] : []),
+    "--exec",
+    "/bin/sh",
+    "-lc",
+    WSL_SHELL_LOOKUP_COMMAND,
+    "wsl-shell",
+    input.command,
+  ];
+}
+
+export function buildWslShellExecArgs(input: {
+  readonly distribution?: string;
+  readonly linuxCwd?: string;
+  readonly command: string;
+  readonly args?: ReadonlyArray<string>;
+}): ReadonlyArray<string> {
+  return [
+    ...(input.distribution ? ["--distribution", input.distribution] : []),
+    ...(input.linuxCwd ? ["--cd", input.linuxCwd] : []),
+    "--exec",
+    "/bin/sh",
+    "-lc",
+    WSL_SHELL_EXEC_COMMAND,
+    "wsl-shell",
+    input.command,
+    ...(input.args ?? []),
+  ];
 }
 
 export function resolveWorkspaceCommandLaunch(input: WorkspaceLaunchInput): WslLaunchConfig | null {
@@ -170,15 +284,12 @@ export function resolveWorkspaceCommandLaunch(input: WorkspaceLaunchInput): WslL
 
   return {
     command: "wsl.exe",
-    args: [
-      "--distribution",
-      workspace.distribution,
-      "--cd",
-      workspace.linuxPath,
-      "--exec",
-      resolveCommandForWsl(input.command, workspace),
-      ...(input.args ?? []),
-    ],
+    args: buildWslExecArgs({
+      distribution: workspace.distribution,
+      linuxCwd: workspace.linuxPath,
+      command: resolveCommandForWsl(input.command, workspace),
+      ...(input.args ? { args: input.args } : {}),
+    }),
     cwd: resolveWindowsSpawnCwd({
       platform,
       preferredCwd: input.preferredWindowsCwd,
@@ -206,7 +317,12 @@ export function resolveWorkspaceShellLaunch(input: {
 
   return {
     command: "wsl.exe",
-    args: ["--distribution", workspace.distribution, "--cd", workspace.linuxPath],
+    args: [
+      "--distribution",
+      workspace.distribution,
+      "--cd",
+      workspace.linuxPath,
+    ],
     cwd: resolveWindowsSpawnCwd({
       platform,
       preferredCwd: input.preferredWindowsCwd,

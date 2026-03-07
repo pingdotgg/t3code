@@ -193,14 +193,18 @@ it.effect("falls back to WSL when codex is only available there on Windows", () 
   }).pipe(
     Effect.provide(
       mockSpawnerLayer(({ args }) => {
+        const expectedVersionProbe =
+          '--exec /bin/sh -lc shell="${SHELL:-/bin/sh}"; exec "$shell" -l -i -c \'exec "$@"\' wsl-shell "$@" wsl-shell codex --version';
+        const expectedAuthProbe =
+          '--exec /bin/sh -lc shell="${SHELL:-/bin/sh}"; exec "$shell" -l -i -c \'exec "$@"\' wsl-shell "$@" wsl-shell codex login status';
         const joined = args.join(" ");
         if (joined === "--version") {
           throw new Error("spawn codex ENOENT");
         }
-        if (joined === "--exec codex --version") {
+        if (joined === expectedVersionProbe) {
           return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
         }
-        if (joined === "--exec codex login status") {
+        if (joined === expectedAuthProbe) {
           return { stdout: "Logged in\n", stderr: "", code: 0 };
         }
         throw new Error(`Unexpected args: ${joined}`);

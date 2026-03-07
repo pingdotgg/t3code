@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildWslShellExecArgs,
   parseWslWorkspacePath,
   resolveWindowsSpawnCwd,
   resolveWorkspaceCommandLaunch,
@@ -124,6 +125,31 @@ describe("resolveWorkspaceCommandLaunch", () => {
         ],
       }),
     );
+  });
+});
+
+describe("buildWslShellExecArgs", () => {
+  it("runs commands through the WSL user's interactive login shell", () => {
+    expect(
+      buildWslShellExecArgs({
+        distribution: "Ubuntu",
+        linuxCwd: "/home/fazi/project",
+        command: "codex",
+        args: ["app-server"],
+      }),
+    ).toEqual([
+      "--distribution",
+      "Ubuntu",
+      "--cd",
+      "/home/fazi/project",
+      "--exec",
+      "/bin/sh",
+      "-lc",
+      'shell="${SHELL:-/bin/sh}"; exec "$shell" -l -i -c \'exec "$@"\' wsl-shell "$@"',
+      "wsl-shell",
+      "codex",
+      "app-server",
+    ]);
   });
 });
 

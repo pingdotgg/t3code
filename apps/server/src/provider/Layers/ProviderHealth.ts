@@ -17,7 +17,7 @@ import { Effect, Layer, Option, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
-import { resolveWindowsSpawnCwd } from "../../wsl";
+import { buildWslShellExecArgs, resolveWindowsSpawnCwd } from "../../wsl";
 
 const DEFAULT_TIMEOUT_MS = 4_000;
 const CODEX_PROVIDER = "codex" as const;
@@ -210,7 +210,10 @@ const runWslCodexCommand = (
 ) =>
   runCommand({
     command: "wsl.exe",
-    args: ["--exec", "codex", ...args],
+    args: buildWslShellExecArgs({
+      command: "codex",
+      args,
+    }),
     cwd: resolveWindowsSpawnCwd({ platform }),
   });
 
