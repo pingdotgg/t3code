@@ -20,12 +20,12 @@ export function fixPath(): void {
 }
 
 export const expandHomePath = Effect.fn(function* (input: string) {
-  const { join, sep } = yield* Path.Path;
+  const { join } = yield* Path.Path;
   if (input === "~") {
     return OS.homedir();
   }
-  if (input.startsWith(`~${sep}`)) {
-    return join(OS.homedir(), input.slice(sep.length));
+  if (input.startsWith("~/") || input.startsWith("~\\")) {
+    return join(OS.homedir(), input.slice(2));
   }
   return input;
 });
