@@ -336,6 +336,7 @@ describe("CheckpointReactor", () => {
 
     harness.provider.emit({
       type: "turn.started",
+      payload: {},
       eventId: EventId.makeUnsafe("evt-turn-started-1"),
       provider: "codex",
       
@@ -412,6 +413,7 @@ describe("CheckpointReactor", () => {
 
     harness.provider.emit({
       type: "turn.started",
+      payload: {},
       eventId: EventId.makeUnsafe("evt-turn-started-main"),
       provider: "codex",
       
@@ -597,7 +599,7 @@ describe("CheckpointReactor", () => {
     ).toBe("v2\n");
   });
 
-  it("ignores non-v2 checkpoint.captured runtime events", async () => {
+  it("ignores runtime events that are not turn lifecycle events", async () => {
     const harness = await createHarness();
     const createdAt = new Date().toISOString();
 
@@ -620,15 +622,14 @@ describe("CheckpointReactor", () => {
     );
 
     harness.provider.emit({
-      type: "checkpoint.captured",
-      eventId: EventId.makeUnsafe("evt-checkpoint-captured-3"),
+      type: "runtime.warning",
+      eventId: EventId.makeUnsafe("evt-runtime-warning-3"),
       provider: "codex",
-      
       createdAt: new Date().toISOString(),
       threadId: ThreadId.makeUnsafe("thread-1"),
-      turnId: asTurnId("turn-3"),
-      turnCount: 3,
-      status: "completed",
+      payload: {
+        message: "non-turn event",
+      },
     });
 
     await Effect.runPromise(Effect.sleep("40 millis"));
@@ -682,6 +683,7 @@ describe("CheckpointReactor", () => {
 
     harness.provider.emit({
       type: "turn.started",
+      payload: {},
       eventId: EventId.makeUnsafe("evt-turn-started-after-runtime-failure"),
       provider: "codex",
       
