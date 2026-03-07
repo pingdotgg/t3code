@@ -5,8 +5,10 @@ import { Effect, Schema } from "effect";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  OrchestrationContextWindow,
   OrchestrationGetTurnDiffInput,
   OrchestrationSession,
+  OrchestrationThread,
   ProjectCreateCommand,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
@@ -22,6 +24,8 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
+const decodeOrchestrationContextWindow = Schema.decodeUnknownSync(OrchestrationContextWindow);
+const decodeOrchestrationThread = Schema.decodeUnknownSync(OrchestrationThread);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
@@ -214,5 +218,67 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+  }),
+);
+
+it.effect("decodes normalized orchestration context-window snapshots", () =>
+  Effect.sync(() => {
+    const parsed = decodeOrchestrationContextWindow({
+      provider: "codex",
+      usedTokens: 119000,
+      maxTokens: 258000,
+      remainingTokens: 139000,
+      usedPercent: 46,
+      inputTokens: 110000,
+      cachedInputTokens: 65000,
+      outputTokens: 9000,
+      reasoningOutputTokens: 320,
+      updatedAt: "2026-03-07T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.usedPercent, 46);
+    assert.strictEqual(parsed.maxTokens, 258000);
+  }),
+);
+
+it.effect("accepts orchestration threads with null or populated context windows", () =>
+  Effect.sync(() => {
+    const baseThread = {
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread",
+      model: "gpt-5-codex",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-03-07T00:00:00.000Z",
+      updatedAt: "2026-03-07T00:00:00.000Z",
+      deletedAt: null,
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      session: null,
+    };
+
+    const withoutContextWindow = decodeOrchestrationThread({
+      ...baseThread,
+      contextWindow: null,
+    });
+    const withContextWindow = decodeOrchestrationThread({
+      ...baseThread,
+      contextWindow: {
+        provider: "codex",
+        usedTokens: 119000,
+        maxTokens: 258000,
+        remainingTokens: 139000,
+        usedPercent: 46,
+        updatedAt: "2026-03-07T00:00:00.000Z",
+      },
+    });
+
+    assert.strictEqual(withoutContextWindow.contextWindow, null);
+    assert.strictEqual(withContextWindow.contextWindow?.usedPercent, 46);
   }),
 );

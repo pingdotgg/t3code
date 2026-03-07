@@ -427,6 +427,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            contextWindow: null,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -480,6 +481,21 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             ...existingRow.value,
             interactionMode: event.payload.interactionMode,
             updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.context-window-set": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            contextWindow: event.payload.contextWindow,
+            updatedAt: event.occurredAt,
           });
           return;
         }
@@ -555,6 +571,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           }
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
+            contextWindow: null,
             latestTurnId: null,
             updatedAt: event.occurredAt,
           });

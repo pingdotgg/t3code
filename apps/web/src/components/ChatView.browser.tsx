@@ -214,6 +214,7 @@ function createSnapshotForTargetUser(options: {
         updatedAt: NOW_ISO,
         deletedAt: null,
         messages,
+        contextWindow: null,
         activities: [],
         proposedPlans: [],
         checkpoints: [],
@@ -863,6 +864,87 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows a context-window badge and tooltip when the active codex thread has usage data", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: (() => {
+        const snapshot = createSnapshotForTargetUser({
+          targetMessageId: "msg-user-context-window" as MessageId,
+          targetText: "context target",
+        });
+        const [thread] = snapshot.threads;
+        if (!thread) {
+          return snapshot;
+        }
+        return {
+          ...snapshot,
+          threads: [
+            {
+              ...thread,
+              contextWindow: {
+                provider: "codex" as const,
+                usedTokens: 119000,
+              maxTokens: 258000,
+              remainingTokens: 139000,
+              usedPercent: 46,
+              inputTokens: 110000,
+              cachedInputTokens: 65000,
+              outputTokens: 9000,
+                reasoningOutputTokens: 320,
+                updatedAt: NOW_ISO,
+              },
+            },
+          ],
+        };
+      })(),
+    });
+
+    try {
+      const badge = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.getAttribute("aria-label") === "Context window usage",
+          ) as HTMLButtonElement | null,
+        "Unable to find context-window badge.",
+      );
+      expect(badge.textContent?.trim()).toBe("46%");
+
+      badge.focus();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Context window");
+          expect(document.body.textContent).toContain("46% used (54% left)");
+          expect(document.body.textContent).toContain("119k / 258k tokens used");
+          expect(document.body.textContent).toContain("Input 110k, cached 65k, output 9k, reasoning 320");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("hides the context-window badge when the active thread has no usage snapshot", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-no-context-window" as MessageId,
+        targetText: "no context target",
+      }),
+    });
+
+    try {
+      await waitForLayout();
+      const badge = Array.from(document.querySelectorAll("button")).find(
+        (button) => button.getAttribute("aria-label") === "Context window usage",
+      );
+      expect(badge).toBeUndefined();
     } finally {
       await mounted.cleanup();
     }

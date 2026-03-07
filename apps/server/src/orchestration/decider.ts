@@ -530,6 +530,27 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.context-window.set": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.context-window-set",
+        payload: {
+          threadId: command.threadId,
+          contextWindow: command.contextWindow,
+        },
+      };
+    }
+
     case "thread.turn.diff.complete": {
       yield* requireThread({
         readModel,

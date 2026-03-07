@@ -595,6 +595,82 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("projects thread token usage into normalized thread context-window state", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-context-window"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        usage: {
+          threadId: "provider-thread-1",
+          turnId: "provider-turn-1",
+          tokenUsage: {
+            total: {
+              inputTokens: 124862,
+              cachedInputTokens: 92672,
+              outputTokens: 1654,
+              reasoningOutputTokens: 277,
+              totalTokens: 126516,
+            },
+            last: {
+              inputTokens: 124862,
+              cachedInputTokens: 92672,
+              outputTokens: 1654,
+              reasoningOutputTokens: 277,
+              totalTokens: 126516,
+            },
+            modelContextWindow: 258400,
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.contextWindow?.usedTokens === 126516 && entry.contextWindow?.usedPercent === 49,
+    );
+    expect(thread.contextWindow).toMatchObject({
+      provider: "codex",
+      usedTokens: 126516,
+      maxTokens: 258400,
+      remainingTokens: 131884,
+      usedPercent: 49,
+    });
+  });
+
+  it("ignores malformed thread token usage payloads", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-context-window-invalid"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        usage: {
+          info: {
+            total_token_usage: {
+              input_tokens: 124862,
+            },
+          },
+        },
+      },
+    });
+
+    await Effect.runPromise(Effect.sleep("40 millis"));
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(thread?.contextWindow).toBeNull();
+  });
+
   it("projects completed plan items into first-class proposed plans", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

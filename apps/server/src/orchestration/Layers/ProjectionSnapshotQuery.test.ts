@@ -66,6 +66,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           model,
           branch,
           worktree_path,
+          context_window_json,
           latest_turn_id,
           created_at,
           updated_at,
@@ -78,6 +79,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'gpt-5-codex',
           NULL,
           NULL,
+          '{"provider":"codex","usedTokens":119000,"maxTokens":258000,"remainingTokens":139000,"usedPercent":46,"updatedAt":"2026-02-24T00:00:03.000Z"}',
           'turn-1',
           '2026-02-24T00:00:02.000Z',
           '2026-02-24T00:00:03.000Z',
@@ -261,6 +263,14 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             },
           ],
           proposedPlans: [],
+          contextWindow: {
+            provider: "codex",
+            usedTokens: 119000,
+            maxTokens: 258000,
+            remainingTokens: 139000,
+            usedPercent: 46,
+            updatedAt: "2026-02-24T00:00:03.000Z",
+          },
           activities: [
             {
               id: asEventId("activity-1"),

@@ -1,4 +1,5 @@
 import type {
+  OrchestrationContextWindow,
   OrchestrationLatestTurn,
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
@@ -100,6 +101,7 @@ export interface Thread {
   lastVisitedAt?: string | undefined;
   branch: string | null;
   worktreePath: string | null;
+  contextWindow: OrchestrationContextWindow | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
 }

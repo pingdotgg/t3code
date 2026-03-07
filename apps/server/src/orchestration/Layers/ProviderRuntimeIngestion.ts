@@ -13,6 +13,7 @@ import {
 import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Ref, Stream } from "effect";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { normalizeCodexContextWindow } from "../../provider/codexContextWindow.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { isGitRepository } from "../../git/isRepo.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -983,6 +984,19 @@ const make = Effect.gen(function* () {
           fallbackMarkdown: proposedPlanCompletion.planMarkdown,
           updatedAt: now,
         });
+      }
+
+      if (event.type === "thread.token-usage.updated") {
+        const contextWindow = normalizeCodexContextWindow(event.payload.usage, now);
+        if (contextWindow) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.context-window.set",
+            commandId: providerCommandId(event, "thread-context-window-set"),
+            threadId: thread.id,
+            contextWindow,
+            createdAt: now,
+          });
+        }
       }
 
       if (event.type === "turn.completed") {

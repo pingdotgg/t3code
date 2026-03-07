@@ -217,6 +217,7 @@ import {
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { clamp } from "effect/Number";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
+import ContextWindowIndicator from "./ContextWindowIndicator";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
@@ -362,6 +363,7 @@ function buildLocalDraftThread(
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
+    contextWindow: null,
   };
 }
 
@@ -757,6 +759,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
+  const activeContextWindow =
+    isServerThread && activeThread?.session?.provider === "codex" ? activeThread.contextWindow : null;
   const diffSearch = useMemo(
     () => parseDiffRouteSearch(rawSearch as Record<string, unknown>),
     [rawSearch],
@@ -3697,6 +3701,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
                 {/* Right side: send / stop button */}
                 <div className="flex shrink-0 items-center gap-2">
+                  {activeContextWindow ? (
+                    <ContextWindowIndicator contextWindow={activeContextWindow} />
+                  ) : null}
                   {isPreparingWorktree ? (
                     <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
                   ) : null}

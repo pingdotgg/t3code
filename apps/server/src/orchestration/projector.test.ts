@@ -84,6 +84,7 @@ describe("orchestration projector", () => {
         deletedAt: null,
         messages: [],
         proposedPlans: [],
+        contextWindow: null,
         activities: [],
         checkpoints: [],
         session: null,
@@ -212,6 +213,86 @@ describe("orchestration projector", () => {
     const thread = afterRunning.threads[0];
     expect(thread?.latestTurn?.turnId).toBe("turn-1");
     expect(thread?.session?.status).toBe("running");
+  });
+
+  it("projects thread context-window updates and clears them on revert", async () => {
+    const now = "2026-03-07T00:00:00.000Z";
+    const model = createEmptyReadModel(now);
+
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            model: "gpt-5.3-codex",
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+
+    const afterContextWindow = await Effect.runPromise(
+      projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.context-window-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-context-window",
+          payload: {
+            threadId: "thread-1",
+            contextWindow: {
+              provider: "codex",
+              usedTokens: 119000,
+              maxTokens: 258000,
+              remainingTokens: 139000,
+              usedPercent: 46,
+              updatedAt: now,
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(afterContextWindow.threads[0]?.contextWindow).toMatchObject({
+      provider: "codex",
+      usedPercent: 46,
+    });
+
+    const afterRevert = await Effect.runPromise(
+      projectEvent(
+        afterContextWindow,
+        makeEvent({
+          sequence: 3,
+          type: "thread.reverted",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-revert",
+          payload: {
+            threadId: "thread-1",
+            turnCount: 0,
+          },
+        }),
+      ),
+    );
+
+    expect(afterRevert.threads[0]?.contextWindow).toBeNull();
   });
 
   it("updates canonical thread runtime mode from thread.runtime-mode-set", async () => {

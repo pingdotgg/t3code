@@ -53,7 +53,11 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
-const ProjectionThreadDbRowSchema = ProjectionThread;
+const ProjectionThreadSnapshotDbRowSchema = ProjectionThread.mapFields(
+  Struct.assign({
+    contextWindow: Schema.NullOr(Schema.fromJsonString(ProjectionThread.fields.contextWindow)),
+  }),
+);
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   Struct.assign({
     payload: Schema.fromJsonString(Schema.Unknown),
@@ -149,7 +153,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
   const listThreadRows = SqlSchema.findAll({
     Request: Schema.Void,
-    Result: ProjectionThreadDbRowSchema,
+    Result: ProjectionThreadSnapshotDbRowSchema,
     execute: () =>
       sql`
         SELECT
@@ -161,6 +165,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          context_window_json AS "contextWindow",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -539,6 +544,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             deletedAt: row.deletedAt,
             messages: messagesByThread.get(row.threadId) ?? [],
             proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
+            contextWindow: row.contextWindow,
             activities: activitiesByThread.get(row.threadId) ?? [],
             checkpoints: checkpointsByThread.get(row.threadId) ?? [],
             session: sessionsByThread.get(row.threadId) ?? null,

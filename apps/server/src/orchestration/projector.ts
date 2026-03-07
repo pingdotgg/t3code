@@ -14,6 +14,7 @@ import {
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
   ThreadActivityAppendedPayload,
+  ThreadContextWindowSetPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
@@ -262,6 +263,8 @@ export function projectEvent(
             updatedAt: payload.updatedAt,
             deletedAt: null,
             messages: [],
+            proposedPlans: [],
+            contextWindow: null,
             activities: [],
             checkpoints: [],
             session: null,
@@ -477,6 +480,22 @@ export function projectEvent(
         };
       });
 
+    case "thread.context-window-set":
+      return decodeForEvent(
+        ThreadContextWindowSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            contextWindow: payload.contextWindow,
+            updatedAt: event.occurredAt,
+          }),
+        })),
+      );
+
     case "thread.turn-diff-completed":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
@@ -579,6 +598,7 @@ export function projectEvent(
               messages,
               proposedPlans,
               activities,
+              contextWindow: null,
               latestTurn,
               updatedAt: event.occurredAt,
             }),
