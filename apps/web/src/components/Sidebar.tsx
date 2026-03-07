@@ -2,6 +2,7 @@ import {
   ChevronRightIcon,
   FolderIcon,
   GitPullRequestIcon,
+  PuzzleIcon,
   RocketIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -17,7 +18,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL } from "../branding";
@@ -278,6 +279,7 @@ export default function Sidebar() {
     (store) => store.clearProjectDraftThreadById,
   );
   const navigate = useNavigate();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { settings: appSettings } = useAppSettings();
   const routeThreadId = useParams({
     strict: false,
@@ -1016,6 +1018,26 @@ export default function Sidebar() {
           {wordmark}
         </SidebarHeader>
       )}
+
+      <div className="px-2 py-2">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<button type="button" />}
+              isActive={pathname === "/skills"}
+              size="sm"
+              className={`cursor-pointer gap-2 px-2 py-1.5 text-xs font-medium hover:bg-accent hover:text-foreground data-[active=true]:bg-accent data-[active=true]:text-foreground ${
+                pathname === "/skills" ? "" : "text-muted-foreground"
+              }`}
+              onClick={() => void navigate({ to: "/skills" })}
+            >
+              <PuzzleIcon className="size-3.5 shrink-0" />
+              <span>Skills</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </div>
+      <SidebarSeparator />
 
       <SidebarContent className="gap-0">
         <SidebarGroup className="px-2 py-2">
