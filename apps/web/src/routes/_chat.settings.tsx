@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { ZapIcon } from "lucide-react";
@@ -110,6 +110,36 @@ function SettingsRouteView() {
   const terminalFontFamily = settings.terminalFontFamily;
   const terminalFontSize = settings.terminalFontSize;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
+  const [terminalFontSizeInput, setTerminalFontSizeInput] = useState(() =>
+    String(terminalFontSize),
+  );
+
+  useEffect(() => {
+    setTerminalFontSizeInput(String(terminalFontSize));
+  }, [terminalFontSize]);
+
+  const commitTerminalFontSize = useCallback(
+    (rawValue: string) => {
+      const trimmed = rawValue.trim();
+      if (!trimmed) {
+        setTerminalFontSizeInput(String(terminalFontSize));
+        return;
+      }
+
+      const next = Number(trimmed);
+      if (!Number.isFinite(next)) {
+        setTerminalFontSizeInput(String(terminalFontSize));
+        return;
+      }
+
+      const normalized = clampTerminalFontSize(next);
+      setTerminalFontSizeInput(String(normalized));
+      if (normalized !== terminalFontSize) {
+        updateSettings({ terminalFontSize: normalized });
+      }
+    },
+    [terminalFontSize, updateSettings],
+  );
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -334,17 +364,21 @@ function SettingsRouteView() {
                     id="terminal-font-size"
                     type="number"
                     nativeInput
-                    value={terminalFontSize}
+                    value={terminalFontSizeInput}
                     min={MIN_TERMINAL_FONT_SIZE}
                     max={MAX_TERMINAL_FONT_SIZE}
                     step={1}
                     inputMode="numeric"
                     onChange={(event) => {
-                      const next = event.target.valueAsNumber;
-                      if (!Number.isFinite(next)) {
-                        return;
+                      setTerminalFontSizeInput(event.target.value);
+                    }}
+                    onBlur={(event) => {
+                      commitTerminalFontSize(event.target.value);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.currentTarget.blur();
                       }
-                      updateSettings({ terminalFontSize: clampTerminalFontSize(next) });
                     }}
                   />
                   <span className="text-xs text-muted-foreground">

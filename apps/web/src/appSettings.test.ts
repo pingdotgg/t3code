@@ -5,11 +5,26 @@ import {
   getAppModelOptions,
   getSlashModelOptions,
   normalizeCustomModelSlugs,
+  parsePersistedSettings,
   resolveTerminalFontFamily,
   resolveAppServiceTier,
   shouldShowFastTierIcon,
   resolveAppModelSelection,
 } from "./appSettings";
+
+function createPersistedSettings(overrides: Record<string, unknown>): string {
+  return JSON.stringify({
+    codexBinaryPath: "",
+    codexHomePath: "",
+    confirmThreadDelete: true,
+    enableAssistantStreaming: false,
+    codexServiceTier: "auto",
+    customCodexModels: [],
+    terminalFontFamily: '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
+    terminalFontSize: 12,
+    ...overrides,
+  });
+}
 
 describe("normalizeCustomModelSlugs", () => {
   it("normalizes aliases, removes built-ins, and deduplicates values", () => {
@@ -124,5 +139,33 @@ describe("clampTerminalFontSize", () => {
 
   it("rounds valid values to whole pixels", () => {
     expect(clampTerminalFontSize(12.6)).toBe(13);
+  });
+});
+
+describe("parsePersistedSettings", () => {
+  it("clamps persisted terminal font sizes instead of discarding the settings payload", () => {
+    expect(
+      parsePersistedSettings(
+        createPersistedSettings({
+          confirmThreadDelete: false,
+          terminalFontFamily: "Fira Code, monospace",
+          terminalFontSize: 99,
+        }),
+      ),
+    ).toMatchObject({
+      confirmThreadDelete: false,
+      terminalFontFamily: "Fira Code, monospace",
+      terminalFontSize: 32,
+    });
+  });
+
+  it("accepts fractional persisted terminal font sizes and rounds them", () => {
+    expect(
+      parsePersistedSettings(
+        createPersistedSettings({
+          terminalFontSize: 12.6,
+        }),
+      ).terminalFontSize,
+    ).toBe(13);
   });
 });

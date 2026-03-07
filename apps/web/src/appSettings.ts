@@ -54,12 +54,9 @@ const AppSettingsSchema = Schema.Struct({
   terminalFontFamily: Schema.String.check(Schema.isMaxLength(MAX_TERMINAL_FONT_FAMILY_LENGTH)).pipe(
     Schema.withConstructorDefault(() => Option.some(DEFAULT_TERMINAL_FONT_FAMILY)),
   ),
-  terminalFontSize: Schema.Int.check(
-    Schema.isBetween({
-      minimum: MIN_TERMINAL_FONT_SIZE,
-      maximum: MAX_TERMINAL_FONT_SIZE,
-    }),
-  ).pipe(Schema.withConstructorDefault(() => Option.some(DEFAULT_TERMINAL_FONT_SIZE))),
+  terminalFontSize: Schema.Number.pipe(
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_TERMINAL_FONT_SIZE)),
+  ),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
 export interface AppModelOption {
@@ -238,7 +235,7 @@ function emitChange(): void {
   }
 }
 
-function parsePersistedSettings(value: string | null): AppSettings {
+export function parsePersistedSettings(value: string | null): AppSettings {
   if (!value) {
     return DEFAULT_APP_SETTINGS;
   }
