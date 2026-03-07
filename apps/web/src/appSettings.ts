@@ -28,6 +28,7 @@ const AppServiceTierSchema = Schema.Literals(["auto", "fast", "flex"]);
 const MODELS_WITH_FAST_SUPPORT = new Set(["gpt-5.4"]);
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
+  opencode: new Set(getModelOptions("opencode").map((option) => option.slug)),
 };
 
 const AppSettingsSchema = Schema.Struct({
@@ -43,6 +44,9 @@ const AppSettingsSchema = Schema.Struct({
   ),
   codexServiceTier: AppServiceTierSchema.pipe(Schema.withConstructorDefault(() => Option.some("auto"))),
   customCodexModels: Schema.Array(Schema.String).pipe(
+    Schema.withConstructorDefault(() => Option.some([])),
+  ),
+  customOpencodeModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
 });
@@ -108,6 +112,7 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
+    customOpencodeModels: normalizeCustomModelSlugs(settings.customOpencodeModels, "opencode"),
   };
 }
 
@@ -115,8 +120,9 @@ export function getAppModelOptions(
   provider: ProviderKind,
   customModels: readonly string[],
   selectedModel?: string | null,
+  builtInModels: ReadonlyArray<{ slug: string; name: string }> = getModelOptions(provider),
 ): AppModelOption[] {
-  const options: AppModelOption[] = getModelOptions(provider).map(({ slug, name }) => ({
+  const options: AppModelOption[] = builtInModels.map(({ slug, name }) => ({
     slug,
     name,
     isCustom: false,
@@ -152,8 +158,9 @@ export function resolveAppModelSelection(
   provider: ProviderKind,
   customModels: readonly string[],
   selectedModel: string | null | undefined,
+  builtInModels: ReadonlyArray<{ slug: string; name: string }> = getModelOptions(provider),
 ): string {
-  const options = getAppModelOptions(provider, customModels, selectedModel);
+  const options = getAppModelOptions(provider, customModels, selectedModel, builtInModels);
   const trimmedSelectedModel = selectedModel?.trim();
   if (trimmedSelectedModel) {
     const direct = options.find((option) => option.slug === trimmedSelectedModel);
@@ -185,9 +192,10 @@ export function getSlashModelOptions(
   customModels: readonly string[],
   query: string,
   selectedModel?: string | null,
+  builtInModels: ReadonlyArray<{ slug: string; name: string }> = getModelOptions(provider),
 ): AppModelOption[] {
   const normalizedQuery = query.trim().toLowerCase();
-  const options = getAppModelOptions(provider, customModels, selectedModel);
+  const options = getAppModelOptions(provider, customModels, selectedModel, builtInModels);
   if (!normalizedQuery) {
     return options;
   }

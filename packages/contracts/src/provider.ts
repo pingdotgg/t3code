@@ -53,8 +53,19 @@ const CodexProviderStartOptions = Schema.Struct({
   homePath: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 
+const OpencodeProviderStartOptions = Schema.Struct({
+  serverUrl: Schema.optional(TrimmedNonEmptyStringSchema),
+  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
+  hostname: Schema.optional(TrimmedNonEmptyStringSchema),
+  port: Schema.optional(Schema.Number),
+  workspace: Schema.optional(TrimmedNonEmptyStringSchema),
+  username: Schema.optional(TrimmedNonEmptyStringSchema),
+  password: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+
 const ProviderStartOptions = Schema.Struct({
   codex: Schema.optional(CodexProviderStartOptions),
+  opencode: Schema.optional(OpencodeProviderStartOptions),
 });
 
 export const ProviderSessionStartInput = Schema.Struct({

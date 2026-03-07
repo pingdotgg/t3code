@@ -10,8 +10,16 @@ export const CodexModelOptions = Schema.Struct({
 });
 export type CodexModelOptions = typeof CodexModelOptions.Type;
 
+export const OpencodeModelOptions = Schema.Struct({
+  providerId: Schema.optional(Schema.String),
+  modelId: Schema.optional(Schema.String),
+  agent: Schema.optional(Schema.String),
+});
+export type OpencodeModelOptions = typeof OpencodeModelOptions.Type;
+
 export const ProviderModelOptions = Schema.Struct({
   codex: Schema.optional(CodexModelOptions),
+  opencode: Schema.optional(OpencodeModelOptions),
 });
 export type ProviderModelOptions = typeof ProviderModelOptions.Type;
 
@@ -28,6 +36,7 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
     { slug: "gpt-5.2", name: "GPT-5.2" },
   ],
+  opencode: [] as readonly ModelOption[],
 } as const satisfies Record<ProviderKind, readonly ModelOption[]>;
 export type ModelOptionsByProvider = typeof MODEL_OPTIONS_BY_PROVIDER;
 
@@ -36,6 +45,7 @@ export type ModelSlug = BuiltInModelSlug | (string & {});
 
 export const DEFAULT_MODEL_BY_PROVIDER = {
   codex: "gpt-5.4",
+  opencode: "gpt-5",
 } as const satisfies Record<ProviderKind, ModelSlug>;
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER = {
@@ -46,12 +56,15 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER = {
     "5.3-spark": "gpt-5.3-codex-spark",
     "gpt-5.3-spark": "gpt-5.3-codex-spark",
   },
+  opencode: {},
 } as const satisfies Record<ProviderKind, Record<string, ModelSlug>>;
 
 export const REASONING_EFFORT_OPTIONS_BY_PROVIDER = {
   codex: CODEX_REASONING_EFFORT_OPTIONS,
+  opencode: [],
 } as const satisfies Record<ProviderKind, readonly CodexReasoningEffort[]>;
 
 export const DEFAULT_REASONING_EFFORT_BY_PROVIDER = {
   codex: "high",
+  opencode: null,
 } as const satisfies Record<ProviderKind, CodexReasoningEffort | null>;

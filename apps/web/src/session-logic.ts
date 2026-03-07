@@ -6,20 +6,27 @@ import {
   type ProviderKind,
   type UserInputQuestion,
   type TurnId,
-} from "@t3tools/contracts";
+} from '@t3tools/contracts';
 
-import type { ChatMessage, ProposedPlan, SessionPhase, ThreadSession, TurnDiffSummary } from "./types";
+import type {
+  ChatMessage,
+  ProposedPlan,
+  SessionPhase,
+  ThreadSession,
+  TurnDiffSummary,
+} from './types';
 
-export type ProviderPickerKind = ProviderKind | "claudeCode" | "cursor";
+export type ProviderPickerKind = ProviderKind | 'claudeCode' | 'cursor';
 
 export const PROVIDER_OPTIONS: Array<{
   value: ProviderPickerKind;
   label: string;
   available: boolean;
 }> = [
-  { value: "codex", label: "Codex", available: true },
-  { value: "claudeCode", label: "Claude Code", available: false },
-  { value: "cursor", label: "Cursor", available: false },
+  { value: 'codex', label: 'Codex', available: true },
+  { value: 'opencode', label: 'OpenCode', available: true },
+  { value: 'claudeCode', label: 'Claude Code', available: false },
+  { value: 'cursor', label: 'Cursor', available: false },
 ];
 
 export interface WorkLogEntry {
@@ -29,12 +36,12 @@ export interface WorkLogEntry {
   detail?: string;
   command?: string;
   changedFiles?: ReadonlyArray<string>;
-  tone: "thinking" | "tool" | "info" | "error";
+  tone: 'thinking' | 'tool' | 'info' | 'error';
 }
 
 export interface PendingApproval {
   requestId: ApprovalRequestId;
-  requestKind: "command" | "file-read" | "file-change";
+  requestKind: 'command' | 'file-read' | 'file-change';
   createdAt: string;
   detail?: string;
 }
@@ -51,7 +58,7 @@ export interface ActivePlanState {
   explanation?: string | null;
   steps: Array<{
     step: string;
-    status: "pending" | "inProgress" | "completed";
+    status: 'pending' | 'inProgress' | 'completed';
   }>;
 }
 
@@ -66,33 +73,33 @@ export interface LatestProposedPlanState {
 export type TimelineEntry =
   | {
       id: string;
-      kind: "message";
+      kind: 'message';
       createdAt: string;
       message: ChatMessage;
     }
   | {
       id: string;
-      kind: "proposed-plan";
+      kind: 'proposed-plan';
       createdAt: string;
       proposedPlan: ProposedPlan;
     }
   | {
       id: string;
-      kind: "work";
+      kind: 'work';
       createdAt: string;
       entry: WorkLogEntry;
     };
 
 export function formatTimestamp(isoDate: string): string {
   return new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
   }).format(new Date(isoDate));
 }
 
 export function formatDuration(durationMs: number): string {
-  if (!Number.isFinite(durationMs) || durationMs < 0) return "0ms";
+  if (!Number.isFinite(durationMs) || durationMs < 0) return '0ms';
   if (durationMs < 1_000) return `${Math.max(1, Math.round(durationMs))}ms`;
   if (durationMs < 10_000) return `${(durationMs / 1_000).toFixed(1)}s`;
   if (durationMs < 60_000) return `${Math.round(durationMs / 1_000)}s`;
@@ -103,7 +110,10 @@ export function formatDuration(durationMs: number): string {
   return `${minutes}m ${seconds}s`;
 }
 
-export function formatElapsed(startIso: string, endIso: string | undefined): string | null {
+export function formatElapsed(
+  startIso: string,
+  endIso: string | undefined,
+): string | null {
   if (!endIso) return null;
   const startedAt = Date.parse(startIso);
   const endedAt = Date.parse(endIso);
@@ -113,8 +123,14 @@ export function formatElapsed(startIso: string, endIso: string | undefined): str
   return formatDuration(endedAt - startedAt);
 }
 
-type LatestTurnTiming = Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "completedAt">;
-type SessionActivityState = Pick<ThreadSession, "orchestrationStatus" | "activeTurnId">;
+type LatestTurnTiming = Pick<
+  OrchestrationLatestTurn,
+  'turnId' | 'startedAt' | 'completedAt'
+>;
+type SessionActivityState = Pick<
+  ThreadSession,
+  'orchestrationStatus' | 'activeTurnId'
+>;
 
 export function isLatestTurnSettled(
   latestTurn: LatestTurnTiming | null,
@@ -123,7 +139,7 @@ export function isLatestTurnSettled(
   if (!latestTurn?.startedAt) return false;
   if (!latestTurn.completedAt) return false;
   if (!session) return true;
-  if (session.orchestrationStatus === "running") return false;
+  if (session.orchestrationStatus === 'running') return false;
   return true;
 }
 
@@ -140,16 +156,16 @@ export function deriveActiveWorkStartedAt(
 
 function requestKindFromRequestType(
   requestType: unknown,
-): PendingApproval["requestKind"] | null {
+): PendingApproval['requestKind'] | null {
   switch (requestType) {
-    case "command_execution_approval":
-    case "exec_command_approval":
-      return "command";
-    case "file_read_approval":
-      return "file-read";
-    case "file_change_approval":
-    case "apply_patch_approval":
-      return "file-change";
+    case 'command_execution_approval':
+    case 'exec_command_approval':
+      return 'command';
+    case 'file_read_approval':
+      return 'file-read';
+    case 'file_change_approval':
+    case 'apply_patch_approval':
+      return 'file-change';
     default:
       return null;
   }
@@ -163,25 +179,28 @@ export function derivePendingApprovals(
 
   for (const activity of ordered) {
     const payload =
-      activity.payload && typeof activity.payload === "object"
+      activity.payload && typeof activity.payload === 'object'
         ? (activity.payload as Record<string, unknown>)
         : null;
     const requestId =
-      payload && typeof payload.requestId === "string"
+      payload && typeof payload.requestId === 'string'
         ? ApprovalRequestId.makeUnsafe(payload.requestId)
         : null;
     const requestKind =
       payload &&
-      (payload.requestKind === "command" ||
-        payload.requestKind === "file-read" ||
-        payload.requestKind === "file-change")
+      (payload.requestKind === 'command' ||
+        payload.requestKind === 'file-read' ||
+        payload.requestKind === 'file-change')
         ? payload.requestKind
         : payload
           ? requestKindFromRequestType(payload.requestType)
           : null;
-    const detail = payload && typeof payload.detail === "string" ? payload.detail : undefined;
+    const detail =
+      payload && typeof payload.detail === 'string'
+        ? payload.detail
+        : undefined;
 
-    if (activity.kind === "approval.requested" && requestId && requestKind) {
+    if (activity.kind === 'approval.requested' && requestId && requestKind) {
       openByRequestId.set(requestId, {
         requestId,
         requestKind,
@@ -191,15 +210,15 @@ export function derivePendingApprovals(
       continue;
     }
 
-    if (activity.kind === "approval.resolved" && requestId) {
+    if (activity.kind === 'approval.resolved' && requestId) {
       openByRequestId.delete(requestId);
       continue;
     }
 
     if (
-      activity.kind === "provider.approval.respond.failed" &&
+      activity.kind === 'provider.approval.respond.failed' &&
       requestId &&
-      detail?.includes("Unknown pending permission request")
+      detail?.includes('Unknown pending permission request')
     ) {
       openByRequestId.delete(requestId);
       continue;
@@ -220,23 +239,23 @@ function parseUserInputQuestions(
   }
   const parsed = questions
     .map<UserInputQuestion | null>((entry) => {
-      if (!entry || typeof entry !== "object") return null;
+      if (!entry || typeof entry !== 'object') return null;
       const question = entry as Record<string, unknown>;
       if (
-        typeof question.id !== "string" ||
-        typeof question.header !== "string" ||
-        typeof question.question !== "string" ||
+        typeof question.id !== 'string' ||
+        typeof question.header !== 'string' ||
+        typeof question.question !== 'string' ||
         !Array.isArray(question.options)
       ) {
         return null;
       }
       const options = question.options
-        .map<UserInputQuestion["options"][number] | null>((option) => {
-          if (!option || typeof option !== "object") return null;
+        .map<UserInputQuestion['options'][number] | null>((option) => {
+          if (!option || typeof option !== 'object') return null;
           const optionRecord = option as Record<string, unknown>;
           if (
-            typeof optionRecord.label !== "string" ||
-            typeof optionRecord.description !== "string"
+            typeof optionRecord.label !== 'string' ||
+            typeof optionRecord.description !== 'string'
           ) {
             return null;
           }
@@ -245,7 +264,10 @@ function parseUserInputQuestions(
             description: optionRecord.description,
           };
         })
-        .filter((option): option is UserInputQuestion["options"][number] => option !== null);
+        .filter(
+          (option): option is UserInputQuestion['options'][number] =>
+            option !== null,
+        );
       if (options.length === 0) {
         return null;
       }
@@ -268,15 +290,15 @@ export function derivePendingUserInputs(
 
   for (const activity of ordered) {
     const payload =
-      activity.payload && typeof activity.payload === "object"
+      activity.payload && typeof activity.payload === 'object'
         ? (activity.payload as Record<string, unknown>)
         : null;
     const requestId =
-      payload && typeof payload.requestId === "string"
+      payload && typeof payload.requestId === 'string'
         ? ApprovalRequestId.makeUnsafe(payload.requestId)
         : null;
 
-    if (activity.kind === "user-input.requested" && requestId) {
+    if (activity.kind === 'user-input.requested' && requestId) {
       const questions = parseUserInputQuestions(payload);
       if (!questions) {
         continue;
@@ -289,7 +311,7 @@ export function derivePendingUserInputs(
       continue;
     }
 
-    if (activity.kind === "user-input.resolved" && requestId) {
+    if (activity.kind === 'user-input.resolved' && requestId) {
       openByRequestId.delete(requestId);
     }
   }
@@ -305,7 +327,7 @@ export function deriveActivePlanState(
 ): ActivePlanState | null {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const candidates = ordered.filter((activity) => {
-    if (activity.kind !== "turn.plan.updated") {
+    if (activity.kind !== 'turn.plan.updated') {
       return false;
     }
     if (!latestTurnId) {
@@ -318,7 +340,7 @@ export function deriveActivePlanState(
     return null;
   }
   const payload =
-    latest.payload && typeof latest.payload === "object"
+    latest.payload && typeof latest.payload === 'object'
       ? (latest.payload as Record<string, unknown>)
       : null;
   const rawPlan = payload?.plan;
@@ -327,15 +349,15 @@ export function deriveActivePlanState(
   }
   const steps = rawPlan
     .map((entry) => {
-      if (!entry || typeof entry !== "object") return null;
+      if (!entry || typeof entry !== 'object') return null;
       const record = entry as Record<string, unknown>;
-      if (typeof record.step !== "string") {
+      if (typeof record.step !== 'string') {
         return null;
       }
       const status =
-        record.status === "completed" || record.status === "inProgress"
+        record.status === 'completed' || record.status === 'inProgress'
           ? record.status
-          : "pending";
+          : 'pending';
       return {
         step: record.step,
         status,
@@ -346,7 +368,7 @@ export function deriveActivePlanState(
         step,
       ): step is {
         step: string;
-        status: "pending" | "inProgress" | "completed";
+        status: 'pending' | 'inProgress' | 'completed';
       } => step !== null,
     );
   if (steps.length === 0) {
@@ -355,7 +377,9 @@ export function deriveActivePlanState(
   return {
     createdAt: latest.createdAt,
     turnId: latest.turnId,
-    ...(payload && "explanation" in payload ? { explanation: payload.explanation as string | null } : {}),
+    ...(payload && 'explanation' in payload
+      ? { explanation: payload.explanation as string | null }
+      : {}),
     steps,
   };
 }
@@ -369,7 +393,8 @@ export function findLatestProposedPlan(
       .filter((proposedPlan) => proposedPlan.turnId === latestTurnId)
       .toSorted(
         (left, right) =>
-          left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id),
+          left.updatedAt.localeCompare(right.updatedAt) ||
+          left.id.localeCompare(right.id),
       )
       .at(-1);
     if (matchingTurnPlan) {
@@ -386,7 +411,8 @@ export function findLatestProposedPlan(
   const latestPlan = [...proposedPlans]
     .toSorted(
       (left, right) =>
-        left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id),
+        left.updatedAt.localeCompare(right.updatedAt) ||
+        left.id.localeCompare(right.id),
     )
     .at(-1);
   if (!latestPlan) {
@@ -408,13 +434,18 @@ export function deriveWorkLogEntries(
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   return ordered
-    .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
-    .filter((activity) => activity.kind !== "tool.started")
-    .filter((activity) => activity.kind !== "task.started" && activity.kind !== "task.completed")
-    .filter((activity) => activity.summary !== "Checkpoint captured")
+    .filter((activity) =>
+      latestTurnId ? activity.turnId === latestTurnId : true,
+    )
+    .filter((activity) => activity.kind !== 'tool.started')
+    .filter(
+      (activity) =>
+        activity.kind !== 'task.started' && activity.kind !== 'task.completed',
+    )
+    .filter((activity) => activity.summary !== 'Checkpoint captured')
     .map((activity) => {
       const payload =
-        activity.payload && typeof activity.payload === "object"
+        activity.payload && typeof activity.payload === 'object'
           ? (activity.payload as Record<string, unknown>)
           : null;
       const command = extractToolCommand(payload);
@@ -423,9 +454,13 @@ export function deriveWorkLogEntries(
         id: activity.id,
         createdAt: activity.createdAt,
         label: activity.summary,
-        tone: activity.tone === "approval" ? "info" : activity.tone,
+        tone: activity.tone === 'approval' ? 'info' : activity.tone,
       };
-      if (payload && typeof payload.detail === "string" && payload.detail.length > 0) {
+      if (
+        payload &&
+        typeof payload.detail === 'string' &&
+        payload.detail.length > 0
+      ) {
         entry.detail = payload.detail;
       }
       if (command) {
@@ -439,11 +474,13 @@ export function deriveWorkLogEntries(
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  return value && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function asTrimmedString(value: unknown): string | null {
-  if (typeof value !== "string") {
+  if (typeof value !== 'string') {
     return null;
   }
   const trimmed = value.trim();
@@ -461,10 +498,12 @@ function normalizeCommandValue(value: unknown): string | null {
   const parts = value
     .map((entry) => asTrimmedString(entry))
     .filter((entry): entry is string => entry !== null);
-  return parts.length > 0 ? parts.join(" ") : null;
+  return parts.length > 0 ? parts.join(' ') : null;
 }
 
-function extractToolCommand(payload: Record<string, unknown> | null): string | null {
+function extractToolCommand(
+  payload: Record<string, unknown> | null,
+): string | null {
   const data = asRecord(payload?.data);
   const item = asRecord(data?.item);
   const itemResult = asRecord(item?.result);
@@ -519,16 +558,16 @@ function collectChangedFiles(
   pushChangedFile(target, seen, record.oldPath);
 
   for (const nestedKey of [
-    "item",
-    "result",
-    "input",
-    "data",
-    "changes",
-    "files",
-    "edits",
-    "patch",
-    "patches",
-    "operations",
+    'item',
+    'result',
+    'input',
+    'data',
+    'changes',
+    'files',
+    'edits',
+    'patch',
+    'patches',
+    'operations',
   ]) {
     if (!(nestedKey in record)) {
       continue;
@@ -540,7 +579,9 @@ function collectChangedFiles(
   }
 }
 
-function extractChangedFiles(payload: Record<string, unknown> | null): string[] {
+function extractChangedFiles(
+  payload: Record<string, unknown> | null,
+): string[] {
   const data = asRecord(payload?.data);
   const changedFiles: string[] = [];
   collectChangedFiles(data, changedFiles, new Set<string>(), 0);
@@ -561,7 +602,10 @@ function compareActivitiesByOrder(
     return -1;
   }
 
-  return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
+  return (
+    left.createdAt.localeCompare(right.createdAt) ||
+    left.id.localeCompare(right.id)
+  );
 }
 
 export function hasToolActivityForTurn(
@@ -569,7 +613,9 @@ export function hasToolActivityForTurn(
   turnId: TurnId | null | undefined,
 ): boolean {
   if (!turnId) return false;
-  return activities.some((activity) => activity.turnId === turnId && activity.tone === "tool");
+  return activities.some(
+    (activity) => activity.turnId === turnId && activity.tone === 'tool',
+  );
 }
 
 export function deriveTimelineEntries(
@@ -579,19 +625,21 @@ export function deriveTimelineEntries(
 ): TimelineEntry[] {
   const messageRows: TimelineEntry[] = messages.map((message) => ({
     id: message.id,
-    kind: "message",
+    kind: 'message',
     createdAt: message.createdAt,
     message,
   }));
-  const proposedPlanRows: TimelineEntry[] = proposedPlans.map((proposedPlan) => ({
-    id: proposedPlan.id,
-    kind: "proposed-plan",
-    createdAt: proposedPlan.createdAt,
-    proposedPlan,
-  }));
+  const proposedPlanRows: TimelineEntry[] = proposedPlans.map(
+    (proposedPlan) => ({
+      id: proposedPlan.id,
+      kind: 'proposed-plan',
+      createdAt: proposedPlan.createdAt,
+      proposedPlan,
+    }),
+  );
   const workRows: TimelineEntry[] = workEntries.map((entry) => ({
     id: entry.id,
-    kind: "work",
+    kind: 'work',
     createdAt: entry.createdAt,
     entry,
   }));
@@ -603,7 +651,9 @@ export function deriveTimelineEntries(
 export function inferCheckpointTurnCountByTurnId(
   summaries: TurnDiffSummary[],
 ): Record<TurnId, number> {
-  const sorted = [...summaries].toSorted((a, b) => a.completedAt.localeCompare(b.completedAt));
+  const sorted = [...summaries].toSorted((a, b) =>
+    a.completedAt.localeCompare(b.completedAt),
+  );
   const result: Record<TurnId, number> = {};
   for (let index = 0; index < sorted.length; index += 1) {
     const summary = sorted[index];
@@ -614,8 +664,8 @@ export function inferCheckpointTurnCountByTurnId(
 }
 
 export function derivePhase(session: ThreadSession | null): SessionPhase {
-  if (!session || session.status === "closed") return "disconnected";
-  if (session.status === "connecting") return "connecting";
-  if (session.status === "running") return "running";
-  return "ready";
+  if (!session || session.status === 'closed') return 'disconnected';
+  if (session.status === 'connecting') return 'connecting';
+  if (session.status === 'running') return 'running';
+  return 'ready';
 }

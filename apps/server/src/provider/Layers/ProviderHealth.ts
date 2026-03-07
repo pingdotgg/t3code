@@ -13,13 +13,37 @@ import type {
   ServerProviderStatus,
   ServerProviderStatusState,
 } from "@t3tools/contracts";
-import { Effect, Layer, Option, Result, Stream } from "effect";
+import { Data, Effect, Layer, Option, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import { ServerConfig } from "../../config";
+import { fetchOpenCodeModels } from "../../opencodeServerManager";
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
 
 const DEFAULT_TIMEOUT_MS = 4_000;
+const DEFAULT_OPENCODE_SERVER_URL = "http://127.0.0.1:4033";
 const CODEX_PROVIDER = "codex" as const;
+const OPENCODE_PROVIDER = "opencode" as const;
+
+class OpenCodeModelDiscoveryError extends Data.TaggedError("OpenCodeModelDiscoveryError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
+const discoverOpenCodeModels = (input: { directory: string; serverUrl?: string }) =>
+  Effect.tryPromise({
+    try: () =>
+      fetchOpenCodeModels({
+        directory: input.directory,
+        ...(input.serverUrl ? { serverUrl: input.serverUrl } : {}),
+      }),
+    catch: (cause) =>
+      new OpenCodeModelDiscoveryError({
+        message:
+          cause instanceof Error ? cause.message : "OpenCode model discovery failed.",
+        cause,
+      }),
+  });
 
 // ── Pure helpers ────────────────────────────────────────────────────
 
@@ -41,6 +65,17 @@ function isCommandMissingCause(error: unknown): boolean {
   return (
     lower.includes("command not found: codex") ||
     lower.includes("spawn codex enoent") ||
+    lower.includes("enoent") ||
+    lower.includes("notfound")
+  );
+}
+
+function isSpecificCommandMissingCause(command: string, error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const lower = error.message.toLowerCase();
+  return (
+    lower.includes(`command not found: ${command}`) ||
+    lower.includes(`spawn ${command} enoent`) ||
     lower.includes("enoent") ||
     lower.includes("notfound")
   );
@@ -171,10 +206,10 @@ const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.
     (acc, chunk) => acc + new TextDecoder().decode(chunk),
   );
 
-const runCodexCommand = (args: ReadonlyArray<string>) =>
+const runCommand = (commandName: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const command = ChildProcess.make("codex", [...args], {
+    const command = ChildProcess.make(commandName, [...args], {
       shell: process.platform === "win32",
     });
 
@@ -191,6 +226,9 @@ const runCodexCommand = (args: ReadonlyArray<string>) =>
 
     return { stdout, stderr, code: exitCode } satisfies CommandResult;
   }).pipe(Effect.scoped);
+
+const runCodexCommand = (args: ReadonlyArray<string>) => runCommand("codex", args);
+const runOpenCodeCommand = (args: ReadonlyArray<string>) => runCommand("opencode", args);
 
 // ── Health check ────────────────────────────────────────────────────
 
@@ -290,14 +328,125 @@ export const checkCodexProviderStatus: Effect.Effect<
   } satisfies ServerProviderStatus;
 });
 
+export const checkOpenCodeProviderStatus: Effect.Effect<
+  ServerProviderStatus,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> = Effect.gen(function* () {
+  const checkedAt = new Date().toISOString();
+  const versionProbe = yield* runOpenCodeCommand(["--version"]).pipe(
+    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.result,
+  );
+
+  if (Result.isFailure(versionProbe)) {
+    const error = versionProbe.failure;
+    return {
+      provider: OPENCODE_PROVIDER,
+      status: "error" as const,
+      available: false,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message: isSpecificCommandMissingCause("opencode", error)
+        ? "OpenCode CLI (`opencode`) is not installed or not on PATH."
+        : `Failed to execute OpenCode CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
+    };
+  }
+
+  if (Option.isNone(versionProbe.success)) {
+    return {
+      provider: OPENCODE_PROVIDER,
+      status: "error" as const,
+      available: false,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message: "OpenCode CLI is installed but failed to run. Timed out while running command.",
+    };
+  }
+
+  const version = versionProbe.success.value;
+  if (version.code !== 0) {
+    const detail = detailFromResult(version);
+    return {
+      provider: OPENCODE_PROVIDER,
+      status: "error" as const,
+      available: false,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message: detail
+        ? `OpenCode CLI is installed but failed to run. ${detail}`
+        : "OpenCode CLI is installed but failed to run.",
+    };
+  }
+
+  return {
+    provider: OPENCODE_PROVIDER,
+    status: "ready" as const,
+    available: true,
+    authStatus: "unknown" as const,
+    checkedAt,
+    message: "OpenCode CLI is available.",
+  } satisfies ServerProviderStatus;
+});
+
 // ── Layer ───────────────────────────────────────────────────────────
 
 export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
+    const serverConfig = yield* ServerConfig;
     const codexStatus = yield* checkCodexProviderStatus;
+    const opencodeBaseStatus = yield* checkOpenCodeProviderStatus;
+    let opencodeStatus = opencodeBaseStatus;
+
+    if (opencodeBaseStatus.available && opencodeBaseStatus.status !== "error") {
+      opencodeStatus = yield* discoverOpenCodeModels({
+        directory: serverConfig.cwd,
+      }).pipe(
+        Effect.map((models) => ({
+          ...opencodeBaseStatus,
+          ...(models.length > 0 ? { models } : {}),
+          ...(models.length === 0
+            ? {
+                status: "warning" as const,
+                message: "OpenCode is available but did not return any models.",
+              }
+            : {}),
+        })),
+        Effect.catch((cause) =>
+          Effect.succeed({
+            ...opencodeBaseStatus,
+            status: "warning" as const,
+            message: `OpenCode is available but model discovery failed: ${cause.message}`,
+          }),
+        ),
+      );
+    }
+
+    if (!opencodeStatus.available || opencodeStatus.status === "error") {
+      const discovered = yield* discoverOpenCodeModels({
+        directory: serverConfig.cwd,
+        serverUrl: DEFAULT_OPENCODE_SERVER_URL,
+      }).pipe(Effect.result);
+      if (Result.isSuccess(discovered)) {
+        const models = discovered.success;
+        opencodeStatus = {
+          provider: OPENCODE_PROVIDER,
+          status: models.length > 0 ? "ready" : "warning",
+          available: true,
+          authStatus: "unknown",
+          checkedAt: new Date().toISOString(),
+          message:
+            models.length > 0
+              ? "Connected to a running OpenCode server at http://127.0.0.1:4033."
+              : "Connected to a running OpenCode server, but it returned no models.",
+          ...(models.length > 0 ? { models } : {}),
+        };
+      }
+    }
+
     return {
-      getStatuses: Effect.succeed([codexStatus]),
+      getStatuses: Effect.succeed([codexStatus, opencodeStatus]),
     } satisfies ProviderHealthShape;
   }),
 );

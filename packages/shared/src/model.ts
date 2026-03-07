@@ -12,6 +12,7 @@ type CatalogProvider = keyof typeof MODEL_OPTIONS_BY_PROVIDER;
 
 const MODEL_SLUG_SET_BY_PROVIDER: Record<CatalogProvider, ReadonlySet<ModelSlug>> = {
   codex: new Set(MODEL_OPTIONS_BY_PROVIDER.codex.map((option) => option.slug)),
+  opencode: new Set(MODEL_OPTIONS_BY_PROVIDER.opencode.map((option) => option.slug)),
 };
 
 export function getModelOptions(provider: ProviderKind = "codex") {

@@ -4,7 +4,11 @@ import { Effect, Layer, Sink, Stream } from "effect";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { checkCodexProviderStatus, parseAuthStatusFromOutput } from "./ProviderHealth";
+import {
+  checkCodexProviderStatus,
+  checkOpenCodeProviderStatus,
+  parseAuthStatusFromOutput,
+} from "./ProviderHealth";
 
 // ── Test helpers ────────────────────────────────────────────────────
 
@@ -83,6 +87,24 @@ it.effect("returns unavailable when codex is missing", () =>
     assert.strictEqual(status.authStatus, "unknown");
     assert.strictEqual(status.message, "Codex CLI (`codex`) is not installed or not on PATH.");
   }).pipe(Effect.provide(failingSpawnerLayer("spawn codex ENOENT"))),
+);
+
+it.effect("returns ready when opencode is installed", () =>
+  Effect.gen(function* () {
+    const status = yield* checkOpenCodeProviderStatus;
+    assert.strictEqual(status.provider, "opencode");
+    assert.strictEqual(status.status, "ready");
+    assert.strictEqual(status.available, true);
+    assert.strictEqual(status.authStatus, "unknown");
+  }).pipe(
+    Effect.provide(
+      mockSpawnerLayer((args) => {
+        const joined = args.join(" ");
+        if (joined === "--version") return { stdout: "opencode 1.0.0\n", stderr: "", code: 0 };
+        throw new Error(`Unexpected args: ${joined}`);
+      }),
+    ),
+  ),
 );
 
 it.effect("returns unauthenticated when auth probe reports login required", () =>
