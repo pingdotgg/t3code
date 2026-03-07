@@ -20,6 +20,7 @@ import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHe
 
 const DEFAULT_TIMEOUT_MS = 4_000;
 const CODEX_PROVIDER = "codex" as const;
+const OPENCODE_PROVIDER = "opencode" as const;
 
 // ── Pure helpers ────────────────────────────────────────────────────
 
@@ -171,10 +172,10 @@ const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.
     (acc, chunk) => acc + new TextDecoder().decode(chunk),
   );
 
-const runCodexCommand = (args: ReadonlyArray<string>) =>
+const runProviderCommand = (commandName: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const command = ChildProcess.make("codex", [...args], {
+    const command = ChildProcess.make(commandName, [...args], {
       shell: process.platform === "win32",
     });
 
@@ -202,7 +203,7 @@ export const checkCodexProviderStatus: Effect.Effect<
   const checkedAt = new Date().toISOString();
 
   // Probe 1: `codex --version` — is the CLI reachable?
-  const versionProbe = yield* runCodexCommand(["--version"]).pipe(
+  const versionProbe = yield* runProviderCommand("codex", ["--version"]).pipe(
     Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
     Effect.result,
   );
@@ -248,7 +249,7 @@ export const checkCodexProviderStatus: Effect.Effect<
   }
 
   // Probe 2: `codex login status` — is the user authenticated?
-  const authProbe = yield* runCodexCommand(["login", "status"]).pipe(
+  const authProbe = yield* runProviderCommand("codex", ["login", "status"]).pipe(
     Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
     Effect.result,
   );
@@ -290,14 +291,62 @@ export const checkCodexProviderStatus: Effect.Effect<
   } satisfies ServerProviderStatus;
 });
 
+
+
+export const checkOpencodeProviderStatus: Effect.Effect<
+  ServerProviderStatus,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> = Effect.gen(function* () {
+  const checkedAt = new Date().toISOString();
+  const probe = yield* runProviderCommand("opencode", ["--version"]).pipe(
+    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.result,
+  );
+
+  if (Result.isFailure(probe)) {
+    return {
+      provider: OPENCODE_PROVIDER,
+      status: "error" as const,
+      available: false,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message: "OpenCode CLI (`opencode`) is not installed or not on PATH.",
+    };
+  }
+
+  if (Option.isNone(probe.success)) {
+    return {
+      provider: OPENCODE_PROVIDER,
+      status: "error" as const,
+      available: false,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message: "OpenCode CLI probe timed out.",
+    };
+  }
+
+  return {
+    provider: OPENCODE_PROVIDER,
+    status: probe.success.value.code === 0 ? "ready" : "error",
+    available: probe.success.value.code === 0,
+    authStatus: "unknown" as const,
+    checkedAt,
+    ...(probe.success.value.code === 0
+      ? {}
+      : { message: detailFromResult(probe.success.value) ?? "OpenCode CLI probe failed." }),
+  } satisfies ServerProviderStatus;
+});
+
 // ── Layer ───────────────────────────────────────────────────────────
 
 export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
     const codexStatus = yield* checkCodexProviderStatus;
+    const opencodeStatus = yield* checkOpencodeProviderStatus;
     return {
-      getStatuses: Effect.succeed([codexStatus]),
+      getStatuses: Effect.succeed([codexStatus, opencodeStatus]),
     } satisfies ProviderHealthShape;
   }),
 );
