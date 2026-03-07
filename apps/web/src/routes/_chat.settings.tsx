@@ -199,7 +199,7 @@ function SettingsRouteView() {
               </p>
             </header>
 
-            <section className="rounded-2xl border border-border bg-card p-5">
+            <section id="settings-appearance" className="scroll-mt-20 rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Appearance</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -242,7 +242,7 @@ function SettingsRouteView() {
               </p>
             </section>
 
-            <section className="rounded-2xl border border-border bg-card p-5">
+            <section id="settings-codex-app-server" className="scroll-mt-20 rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Codex App Server</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -300,7 +300,7 @@ function SettingsRouteView() {
               </div>
             </section>
 
-            <section className="rounded-2xl border border-border bg-card p-5">
+            <section id="settings-models" className="scroll-mt-20 rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Models</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -476,7 +476,7 @@ function SettingsRouteView() {
               </div>
             </section>
 
-            <section className="rounded-2xl border border-border bg-card p-5">
+            <section id="settings-responses" className="scroll-mt-20 rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Responses</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -519,7 +519,7 @@ function SettingsRouteView() {
               ) : null}
             </section>
 
-            <section className="rounded-2xl border border-border bg-card p-5">
+            <section id="settings-keybindings" className="scroll-mt-20 rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Keybindings</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -555,7 +555,7 @@ function SettingsRouteView() {
               </div>
             </section>
 
-            <section className="rounded-2xl border border-border bg-card p-5">
+            <section id="settings-safety" className="scroll-mt-20 rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Safety</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
