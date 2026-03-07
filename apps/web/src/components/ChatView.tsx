@@ -137,6 +137,7 @@ import {
   FolderClosedIcon,
   LockIcon,
   LockOpenIcon,
+  PencilIcon,
   Undo2Icon,
   XIcon,
   CopyIcon,
@@ -147,6 +148,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Separator } from "./ui/separator";
 import { Group, GroupSeparator } from "./ui/group";
+import { Textarea } from "./ui/textarea";
 import {
   Menu,
   MenuGroup,
@@ -252,6 +254,7 @@ const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-projec
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
+const EDIT_REVERT_SYNC_TIMEOUT_MS = 3000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -659,6 +662,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
+  const [editingUserMessageId, setEditingUserMessageId] = useState<MessageId | null>(null);
+  const [editingUserMessageText, setEditingUserMessageText] = useState("");
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
     Record<string, string[]>
   >({});
@@ -1975,6 +1980,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setSendPhase("idle");
     setSendStartedAt(null);
     setComposerHighlightedItemId(null);
+    setEditingUserMessageId(null);
+    setEditingUserMessageText("");
     setComposerCursor(promptRef.current.length);
     setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
     dragDepthRef.current = 0;
@@ -2355,7 +2362,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   };
 
   const onRevertToTurnCount = useCallback(
-    async (turnCount: number) => {
+    async (
+      turnCount: number,
+      options?: {
+        confirm?: boolean;
+        confirmLines?: string[];
+      },
+    ) => {
       const api = readNativeApi();
       if (!api || !activeThread || isRevertingCheckpoint) return;
 
@@ -2363,15 +2376,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
         return;
       }
-      const confirmed = await api.dialogs.confirm(
-        [
-          `Revert this thread to checkpoint ${turnCount}?`,
-          "This will discard newer messages and turn diffs in this thread.",
-          "This action cannot be undone.",
-        ].join("\n"),
-      );
-      if (!confirmed) {
-        return;
+      if (options?.confirm !== false) {
+        const confirmed = await api.dialogs.confirm(
+          (
+            options?.confirmLines ?? [
+              `Revert this thread to checkpoint ${turnCount}?`,
+              "This will discard newer messages and turn diffs in this thread.",
+              "This action cannot be undone.",
+            ]
+          ).join("\n"),
+        );
+        if (!confirmed) {
+          return false;
+        }
       }
 
       setIsRevertingCheckpoint(true);
@@ -2384,54 +2401,39 @@ export default function ChatView({ threadId }: ChatViewProps) {
           turnCount,
           createdAt: new Date().toISOString(),
         });
+        return true;
       } catch (err) {
         setThreadError(
           activeThread.id,
           err instanceof Error ? err.message : "Failed to revert thread state.",
         );
+        return false;
+      } finally {
+        setIsRevertingCheckpoint(false);
       }
-      setIsRevertingCheckpoint(false);
     },
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
-    e?.preventDefault();
+  const onStartEditUserMessage = useCallback((message: TimelineMessage) => {
+    setEditingUserMessageId(message.id);
+    setEditingUserMessageText(message.text);
+  }, []);
+
+  const onCancelEditUserMessage = useCallback(() => {
+    setEditingUserMessageId(null);
+    setEditingUserMessageText("");
+  }, []);
+
+  const submitUserTurn = async (input: {
+    text: string;
+    images: ComposerImageAttachment[];
+    clearComposerDraft: boolean;
+  }) => {
     const api = readNativeApi();
     if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
-    if (activePendingProgress) {
-      onAdvanceActivePendingUserInput();
-      return;
-    }
-    const trimmed = prompt.trim();
-    if (showPlanFollowUpPrompt && activeProposedPlan) {
-      const followUp = resolvePlanFollowUpSubmission({
-        draftText: trimmed,
-        planMarkdown: activeProposedPlan.planMarkdown,
-      });
-      promptRef.current = "";
-      clearComposerDraftContent(activeThread.id);
-      setComposerHighlightedItemId(null);
-      setComposerCursor(0);
-      setComposerTrigger(null);
-      await onSubmitPlanFollowUp({
-        text: followUp.text,
-        interactionMode: followUp.interactionMode,
-      });
-      return;
-    }
-    const standaloneSlashCommand =
-      composerImages.length === 0 ? parseStandaloneComposerSlashCommand(trimmed) : null;
-    if (standaloneSlashCommand) {
-      await handleInteractionModeChange(standaloneSlashCommand);
-      promptRef.current = "";
-      clearComposerDraftContent(activeThread.id);
-      setComposerHighlightedItemId(null);
-      setComposerCursor(0);
-      setComposerTrigger(null);
-      return;
-    }
-    if (!trimmed && composerImages.length === 0) return;
+    const trimmed = input.text.trim();
+    if (!trimmed && input.images.length === 0) return;
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
@@ -2455,7 +2457,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     sendInFlightRef.current = true;
     beginSendPhase(baseBranchForWorktree ? "preparing-worktree" : "sending-turn");
 
-    const composerImagesSnapshot = [...composerImages];
+    const composerImagesSnapshot = [...input.images];
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const turnAttachmentsPromise = Promise.all(
@@ -2491,11 +2493,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     forceStickToBottom();
 
     setThreadError(threadIdForSend, null);
-    promptRef.current = "";
-    clearComposerDraftContent(threadIdForSend);
-    setComposerHighlightedItemId(null);
-    setComposerCursor(0);
-    setComposerTrigger(null);
+    if (input.clearComposerDraft) {
+      promptRef.current = "";
+      clearComposerDraftContent(threadIdForSend);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+    }
 
     let createdServerThreadForLocalDraft = false;
     let turnStartSucceeded = false;
@@ -2647,6 +2651,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           .catch(() => undefined);
       }
       if (
+        input.clearComposerDraft &&
         !turnStartSucceeded &&
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0
@@ -2674,6 +2679,77 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!turnStartSucceeded) {
       resetSendPhase();
     }
+  };
+
+  const onSend = async (e?: { preventDefault: () => void }) => {
+    e?.preventDefault();
+    if (activePendingProgress) {
+      onAdvanceActivePendingUserInput();
+      return;
+    }
+    const trimmed = prompt.trim();
+    if (showPlanFollowUpPrompt && activeThread && activeProposedPlan) {
+      const followUp = resolvePlanFollowUpSubmission({
+        draftText: trimmed,
+        planMarkdown: activeProposedPlan.planMarkdown,
+      });
+      promptRef.current = "";
+      clearComposerDraftContent(activeThread.id);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      await onSubmitPlanFollowUp({
+        text: followUp.text,
+        interactionMode: followUp.interactionMode,
+      });
+      return;
+    }
+    const standaloneSlashCommand =
+      composerImages.length === 0 ? parseStandaloneComposerSlashCommand(trimmed) : null;
+    if (standaloneSlashCommand && activeThread) {
+      await handleInteractionModeChange(standaloneSlashCommand);
+      promptRef.current = "";
+      clearComposerDraftContent(activeThread.id);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      return;
+    }
+    await submitUserTurn({
+      text: prompt,
+      images: composerImages,
+      clearComposerDraft: true,
+    });
+  };
+
+  const onSubmitEditUserMessage = async (message: TimelineMessage) => {
+    const nextText = editingUserMessageText.trim();
+    if (!activeThread || nextText.length === 0) {
+      return;
+    }
+
+    const targetTurnCount = revertTurnCountByUserMessageId.get(message.id);
+    if (typeof targetTurnCount !== "number") {
+      setThreadError(activeThread.id, "This message can no longer be edited.");
+      return;
+    }
+
+    const reverted = await onRevertToTurnCount(targetTurnCount, {
+      confirm: false,
+    });
+    if (!reverted) {
+      return;
+    }
+
+    await waitForThreadMessageRemoval(activeThread.id, message.id);
+
+    setEditingUserMessageId(null);
+    setEditingUserMessageText("");
+    await submitUserTurn({
+      text: nextText,
+      images: [],
+      clearComposerDraft: false,
+    });
   };
 
   const onInterrupt = async () => {
@@ -3447,6 +3523,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onOpenTurnDiff={onOpenTurnDiff}
           revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
           onRevertUserMessage={onRevertUserMessage}
+          editingUserMessageId={editingUserMessageId}
+          editingUserMessageText={editingUserMessageText}
+          onStartEditUserMessage={onStartEditUserMessage}
+          onChangeEditingUserMessageText={setEditingUserMessageText}
+          onCancelEditUserMessage={onCancelEditUserMessage}
+          onSubmitEditUserMessage={onSubmitEditUserMessage}
           isRevertingCheckpoint={isRevertingCheckpoint}
           onImageExpand={onExpandTimelineImage}
           markdownCwd={gitCwd ?? undefined}
@@ -4362,8 +4444,227 @@ const MessageCopyButton = memo(function MessageCopyButton({ text }: { text: stri
   );
 });
 
+const EditableUserMessageBubble = memo(function EditableUserMessageBubble(props: {
+  message: TimelineMessage;
+  canRevertAgentWork: boolean;
+  isEditing: boolean;
+  editingText: string;
+  isBusy: boolean;
+  isRevertingCheckpoint: boolean;
+  onImageExpand: (preview: ExpandedImagePreview) => void;
+  onTimelineImageLoad: () => void;
+  onRevertUserMessage: (messageId: MessageId) => void;
+  onStartEdit: (message: TimelineMessage) => void;
+  onChangeEditingText: (value: string) => void;
+  onCancelEdit: () => void;
+  onSubmitEdit: (message: TimelineMessage) => void;
+}) {
+  const {
+    message,
+    canRevertAgentWork,
+    isEditing,
+    editingText,
+    isBusy,
+    isRevertingCheckpoint,
+    onImageExpand,
+    onTimelineImageLoad,
+    onRevertUserMessage,
+    onStartEdit,
+    onChangeEditingText,
+    onCancelEdit,
+    onSubmitEdit,
+  } = props;
+  const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const userImages = message.attachments ?? [];
+
+  useEffect(() => {
+    if (!isEditing) {
+      return;
+    }
+    const textarea = editTextareaRef.current;
+    if (!textarea) {
+      return;
+    }
+    textarea.focus();
+    const selectionEnd = textarea.value.length;
+    textarea.setSelectionRange(selectionEnd, selectionEnd);
+  }, [isEditing]);
+
+  return (
+    <div className="flex justify-end">
+      <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
+        {userImages.length > 0 && (
+          <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+            {userImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+              <div
+                key={image.id}
+                className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+              >
+                {image.previewUrl ? (
+                  <button
+                    type="button"
+                    className="h-full w-full cursor-zoom-in"
+                    aria-label={`Preview ${image.name}`}
+                    onClick={() => {
+                      const preview = buildExpandedImagePreview(userImages, image.id);
+                      if (!preview) return;
+                      onImageExpand(preview);
+                    }}
+                  >
+                    <img
+                      src={image.previewUrl}
+                      alt={image.name}
+                      className="h-full max-h-[220px] w-full object-cover"
+                      onLoad={onTimelineImageLoad}
+                      onError={onTimelineImageLoad}
+                    />
+                  </button>
+                ) : (
+                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
+                    {image.name}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {isEditing ? (
+          <div className="space-y-2">
+            <Textarea
+              ref={editTextareaRef}
+              value={editingText}
+              onChange={(event) => onChangeEditingText(event.target.value)}
+              onKeyDown={(event) => {
+                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                  event.preventDefault();
+                  onSubmitEdit(message);
+                  return;
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  onCancelEdit();
+                }
+              }}
+              rows={Math.max(3, Math.min(10, editingText.split("\n").length + 1))}
+              className="w-full min-w-[18rem] rounded-xl border-border/80 bg-background/70"
+              placeholder="Edit your message"
+              disabled={isBusy}
+              aria-label="Edit message"
+            />
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[10px] text-muted-foreground/55">Ctrl/Cmd+Enter to send</p>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  onClick={onCancelEdit}
+                  disabled={isBusy}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={() => onSubmitEdit(message)}
+                  disabled={isBusy || editingText.trim().length === 0}
+                >
+                  <CheckIcon className="size-3" />
+                  Send
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
+            {message.text && (
+              <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+                {message.text}
+              </pre>
+            )}
+            <div className="mt-1.5 flex items-center justify-end gap-2">
+              <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+                {message.text && <MessageCopyButton text={message.text} />}
+                {message.text && canRevertAgentWork && (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    disabled={isBusy}
+                    onClick={() => onStartEdit(message)}
+                    title="Edit message"
+                  >
+                    <PencilIcon className="size-3" />
+                  </Button>
+                )}
+                {canRevertAgentWork && (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    disabled={isRevertingCheckpoint || isBusy}
+                    onClick={() => onRevertUserMessage(message.id)}
+                    title="Revert to this message"
+                  >
+                    <Undo2Icon className="size-3" />
+                  </Button>
+                )}
+              </div>
+              <p className="text-right text-[10px] text-muted-foreground/30">
+                {formatTimestamp(message.createdAt)}
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+});
+
 function hasNonZeroStat(stat: { additions: number; deletions: number }): boolean {
   return stat.additions > 0 || stat.deletions > 0;
+}
+
+function waitForThreadMessageRemoval(
+  threadId: ThreadId,
+  messageId: MessageId,
+  timeoutMs = EDIT_REVERT_SYNC_TIMEOUT_MS,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const hasMessage = () =>
+      useStore
+        .getState()
+        .threads.find((thread) => thread.id === threadId)
+        ?.messages.some((message) => message.id === messageId) ?? false;
+
+    if (!hasMessage()) {
+      resolve();
+      return;
+    }
+
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      unsubscribe();
+      window.clearTimeout(timeoutId);
+      resolve();
+    };
+
+    const unsubscribe = useStore.subscribe((state) => {
+      const stillPresent =
+        state.threads.find((thread) => thread.id === threadId)?.messages.some((message) => message.id === messageId) ??
+        false;
+      if (!stillPresent) {
+        finish();
+      }
+    });
+
+    const timeoutId = window.setTimeout(() => {
+      finish();
+    }, timeoutMs);
+  });
 }
 
 const DiffStatLabel = memo(function DiffStatLabel(props: {
@@ -4698,6 +4999,12 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
+  editingUserMessageId: MessageId | null;
+  editingUserMessageText: string;
+  onStartEditUserMessage: (message: TimelineMessage) => void;
+  onChangeEditingUserMessageText: (value: string) => void;
+  onCancelEditUserMessage: () => void;
+  onSubmitEditUserMessage: (message: TimelineMessage) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
@@ -4752,6 +5059,12 @@ const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
+  editingUserMessageId,
+  editingUserMessageText,
+  onStartEditUserMessage,
+  onChangeEditingUserMessageText,
+  onCancelEditUserMessage,
+  onSubmitEditUserMessage,
   isRevertingCheckpoint,
   onImageExpand,
   markdownCwd,
@@ -5044,75 +5357,23 @@ const MessagesTimeline = memo(function MessagesTimeline({
       {row.kind === "message" &&
         row.message.role === "user" &&
         (() => {
-          const userImages = row.message.attachments ?? [];
           const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
           return (
-            <div className="flex justify-end">
-              <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
-                {userImages.length > 0 && (
-                  <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-                    {userImages.map(
-                      (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
-                        <div
-                          key={image.id}
-                          className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
-                        >
-                          {image.previewUrl ? (
-                            <button
-                              type="button"
-                              className="h-full w-full cursor-zoom-in"
-                              aria-label={`Preview ${image.name}`}
-                              onClick={() => {
-                                const preview = buildExpandedImagePreview(userImages, image.id);
-                                if (!preview) return;
-                                onImageExpand(preview);
-                              }}
-                            >
-                              <img
-                                src={image.previewUrl}
-                                alt={image.name}
-                                className="h-full max-h-[220px] w-full object-cover"
-                                onLoad={onTimelineImageLoad}
-                                onError={onTimelineImageLoad}
-                              />
-                            </button>
-                          ) : (
-                            <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
-                              {image.name}
-                            </div>
-                          )}
-                        </div>
-                      ),
-                    )}
-                  </div>
-                )}
-                {row.message.text && (
-                  <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
-                    {row.message.text}
-                  </pre>
-                )}
-                <div className="mt-1.5 flex items-center justify-end gap-2">
-                  <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                    {row.message.text && <MessageCopyButton text={row.message.text} />}
-                    {canRevertAgentWork && (
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="outline"
-                        disabled={isRevertingCheckpoint || isWorking}
-                        onClick={() => onRevertUserMessage(row.message.id)}
-                        title="Revert to this message"
-                      >
-                        <Undo2Icon className="size-3" />
-                      </Button>
-                    )}
-                  </div>
-                  <p className="text-right text-[10px] text-muted-foreground/30">
-                    {formatTimestamp(row.message.createdAt)}
-                  </p>
-                </div>
-              </div>
-            </div>
+            <EditableUserMessageBubble
+              message={row.message}
+              canRevertAgentWork={canRevertAgentWork}
+              isEditing={editingUserMessageId === row.message.id}
+              editingText={editingUserMessageText}
+              isBusy={isWorking || isRevertingCheckpoint}
+              isRevertingCheckpoint={isRevertingCheckpoint}
+              onImageExpand={onImageExpand}
+              onTimelineImageLoad={onTimelineImageLoad}
+              onRevertUserMessage={onRevertUserMessage}
+              onStartEdit={onStartEditUserMessage}
+              onChangeEditingText={onChangeEditingUserMessageText}
+              onCancelEdit={onCancelEditUserMessage}
+              onSubmitEdit={onSubmitEditUserMessage}
+            />
           );
         })()}
 
