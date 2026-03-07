@@ -239,7 +239,7 @@ jobs:
         run: bun run build --filter=@t3tools/web --filter=t3
 
       - name: Publish CLI package
-        run: node apps/server/scripts/cli.ts publish --tag alpha --app-version "${{ needs.preflight.outputs.version }}" --verbose
+        run: node apps/server/scripts/cli.ts publish --tag latest --app-version "${{ needs.preflight.outputs.version }}" --verbose
 
   release:
     name: Publish GitHub Release
