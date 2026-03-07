@@ -148,12 +148,25 @@ describe("store read model sync", () => {
     expect(next.threads[0]?.model).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
   });
 
-  it("refreshes project model from read-model defaultModel updates", () => {
-    const initialState = makeState(makeThread());
+  it("hydrates project model from read-model defaultModel when no prior project exists", () => {
+    const initialState: AppState = {
+      projects: [],
+      threads: [makeThread()],
+      threadsHydrated: true,
+    };
     const readModel = makeReadModel(makeReadModelThread({}));
 
     const next = syncServerReadModel(initialState, readModel);
 
     expect(next.projects[0]?.model).toBe("gpt-5.3-codex");
+  });
+
+  it("preserves existing project model across read-model syncs", () => {
+    const initialState = makeState(makeThread());
+    const readModel = makeReadModel(makeReadModelThread({}));
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.projects[0]?.model).toBe("gpt-5.4");
   });
 });
