@@ -38,15 +38,15 @@ brew install --cask ./packaging/homebrew/Casks/t3code.rb
 
 You can also download the `.dmg` directly from [Releases](https://github.com/pingdotgg/t3code/releases).
 
-### Arch Linux (AUR)
-
-*Not yet published to AUR — PKGBUILD is in [`packaging/arch/`](packaging/arch/).*
-
-Once published:
+### Arch Linux
 
 ```bash
-yay -S t3code-bin
+git clone https://github.com/pingdotgg/t3code.git
+cd t3code/packaging/arch
+makepkg -si
 ```
+
+This builds and installs the `t3code-bin` package from the PKGBUILD, which downloads the pre-built AppImage from GitHub Releases.
 
 ### Linux (Ubuntu / Debian / Others)
 
