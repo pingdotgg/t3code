@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
+import type { ModelInfo } from "@github/copilot-sdk";
 import { it } from "@effect/vitest";
 import { Effect, Layer, Sink, Stream } from "effect";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { checkCodexProviderStatus, parseAuthStatusFromOutput } from "./ProviderHealth";
+import {
+  checkCodexProviderStatus,
+  mapCopilotModel,
+  mapCopilotQuotaSnapshots,
+  parseAuthStatusFromOutput,
+} from "./ProviderHealth";
 
 // ── Test helpers ────────────────────────────────────────────────────
 
@@ -187,4 +193,70 @@ it("parseAuthStatusFromOutput: JSON without auth marker is warning", () => {
   });
   assert.strictEqual(parsed.status, "warning");
   assert.strictEqual(parsed.authStatus, "unknown");
+});
+
+it("mapCopilotModel carries billing multipliers", () => {
+  const model: ModelInfo = {
+    id: "gpt-5.4",
+    name: "GPT-5.4",
+    capabilities: {
+      supports: {
+        vision: true,
+        reasoningEffort: true,
+      },
+      limits: {
+        max_context_window_tokens: 200_000,
+      },
+    },
+    billing: { multiplier: 30 },
+    supportedReasoningEfforts: ["medium", "high"],
+    defaultReasoningEffort: "high",
+  };
+  const mapped = mapCopilotModel(model);
+
+  assert.strictEqual(mapped.billingMultiplier, 30);
+  assert.deepStrictEqual(mapped.supportedReasoningEfforts, ["medium", "high"]);
+  assert.strictEqual(mapped.defaultReasoningEffort, "high");
+});
+
+it("mapCopilotQuotaSnapshots prioritizes premium interactions and clamps remaining requests", () => {
+  const mapped = mapCopilotQuotaSnapshots({
+    chat: {
+      entitlementRequests: 500,
+      usedRequests: 125,
+      remainingPercentage: 75,
+      overage: 0,
+      overageAllowedWithExhaustedQuota: false,
+    },
+    premium_interactions: {
+      entitlementRequests: 300,
+      usedRequests: 320,
+      remainingPercentage: 0,
+      overage: 20,
+      overageAllowedWithExhaustedQuota: true,
+      resetDate: "2026-01-02T00:00:00.000Z",
+    },
+  });
+
+  assert.deepStrictEqual(mapped, [
+    {
+      key: "premium_interactions",
+      entitlementRequests: 300,
+      usedRequests: 320,
+      remainingRequests: 0,
+      remainingPercentage: 0,
+      overage: 20,
+      overageAllowedWithExhaustedQuota: true,
+      resetDate: "2026-01-02T00:00:00.000Z",
+    },
+    {
+      key: "chat",
+      entitlementRequests: 500,
+      usedRequests: 125,
+      remainingRequests: 375,
+      remainingPercentage: 75,
+      overage: 0,
+      overageAllowedWithExhaustedQuota: false,
+    },
+  ]);
 });

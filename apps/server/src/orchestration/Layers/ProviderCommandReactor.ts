@@ -1,11 +1,14 @@
+import { existsSync } from "node:fs";
+
 import {
   type ChatAttachment,
   CommandId,
   EventId,
   type OrchestrationEvent,
   type ProviderModelOptions,
-  type ProviderKind,
+  ProviderKind,
   type ProviderServiceTier,
+  type ProviderStartOptions,
   type OrchestrationSession,
   ThreadId,
   type ProviderSession,
@@ -195,6 +198,32 @@ const make = Effect.gen(function* () {
     return readModel.threads.find((entry) => entry.id === threadId);
   });
 
+  const resolveUsableThreadWorkspaceCwd = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const thread = readModel.threads.find((entry) => entry.id === threadId);
+    if (!thread) {
+      return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
+    }
+
+    const resolvedCwd = resolveThreadWorkspaceCwd({
+      thread,
+      projects: readModel.projects,
+    });
+    if (!resolvedCwd) {
+      return { thread, cwd: undefined as string | undefined };
+    }
+
+    if (existsSync(resolvedCwd)) {
+      return { thread, cwd: resolvedCwd };
+    }
+
+    yield* Effect.logWarning("provider command reactor ignoring missing thread workspace cwd", {
+      threadId,
+      cwd: resolvedCwd,
+    });
+    return { thread, cwd: undefined as string | undefined };
+  });
+
   const ensureSessionForThread = Effect.fnUntraced(function* (
     threadId: ThreadId,
     createdAt: string,
@@ -203,23 +232,18 @@ const make = Effect.gen(function* () {
       readonly model?: string;
       readonly modelOptions?: ProviderModelOptions;
       readonly serviceTier?: ProviderServiceTier | null;
+      readonly providerOptions?: ProviderStartOptions;
     },
   ) {
-    const readModel = yield* orchestrationEngine.getReadModel();
-    const thread = readModel.threads.find((entry) => entry.id === threadId);
-    if (!thread) {
-      return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
-    }
+    const { thread, cwd: effectiveCwd } = yield* resolveUsableThreadWorkspaceCwd(threadId);
 
     const desiredRuntimeMode = thread.runtimeMode;
-    const currentProvider: ProviderKind | undefined =
-      thread.session?.providerName === "codex" ? thread.session.providerName : undefined;
+    const currentProvider =
+      thread.session?.providerName && Schema.is(ProviderKind)(thread.session.providerName)
+        ? thread.session.providerName
+        : undefined;
     const preferredProvider: ProviderKind | undefined = options?.provider ?? currentProvider;
     const desiredModel = options?.model ?? thread.model;
-    const effectiveCwd = resolveThreadWorkspaceCwd({
-      thread,
-      projects: readModel.projects,
-    });
 
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService.listSessions().pipe(
@@ -239,6 +263,7 @@ const make = Effect.gen(function* () {
         ...(desiredModel ? { model: desiredModel } : {}),
         ...(options?.serviceTier !== undefined ? { serviceTier: options.serviceTier } : {}),
         ...(options?.modelOptions !== undefined ? { modelOptions: options.modelOptions } : {}),
+        ...(options?.providerOptions !== undefined ? { providerOptions: options.providerOptions } : {}),
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: desiredRuntimeMode,
       });
@@ -322,11 +347,12 @@ const make = Effect.gen(function* () {
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly provider?: ProviderKind;
-    readonly model?: string;
-    readonly serviceTier?: ProviderServiceTier | null;
-    readonly modelOptions?: ProviderModelOptions;
-    readonly interactionMode?: "default" | "plan";
-    readonly createdAt: string;
+      readonly model?: string;
+      readonly serviceTier?: ProviderServiceTier | null;
+      readonly modelOptions?: ProviderModelOptions;
+      readonly providerOptions?: ProviderStartOptions;
+      readonly interactionMode?: "default" | "plan";
+      readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
     if (!thread) {
@@ -337,6 +363,7 @@ const make = Effect.gen(function* () {
       ...(input.model !== undefined ? { model: input.model } : {}),
       ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
       ...(input.modelOptions !== undefined ? { modelOptions: input.modelOptions } : {}),
+      ...(input.providerOptions !== undefined ? { providerOptions: input.providerOptions } : {}),
     });
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
@@ -472,6 +499,9 @@ const make = Effect.gen(function* () {
       ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
       ...(event.payload.serviceTier !== undefined ? { serviceTier: event.payload.serviceTier } : {}),
       ...(event.payload.modelOptions !== undefined ? { modelOptions: event.payload.modelOptions } : {}),
+      ...(event.payload.providerOptions !== undefined
+        ? { providerOptions: event.payload.providerOptions }
+        : {}),
       interactionMode: event.payload.interactionMode,
       createdAt: event.payload.createdAt,
     });

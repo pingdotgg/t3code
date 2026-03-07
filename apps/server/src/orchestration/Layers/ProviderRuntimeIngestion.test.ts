@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import type { OrchestrationReadModel, ProviderRuntimeEvent } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
@@ -41,7 +45,7 @@ const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
   readonly eventId: EventId;
-  readonly provider: "codex";
+  readonly provider: ProviderRuntimeEvent["provider"];
   readonly createdAt: string;
   readonly threadId: ThreadId;
   readonly turnId?: string | undefined;
@@ -112,6 +116,13 @@ describe("ProviderRuntimeIngestion", () => {
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
+  const tempDirs: string[] = [];
+
+  function makeTempDir(prefix: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    tempDirs.push(dir);
+    return dir;
+  }
 
   afterEach(async () => {
     if (scope) {
@@ -122,9 +133,14 @@ describe("ProviderRuntimeIngestion", () => {
       await runtime.dispose();
     }
     runtime = null;
+    for (const dir of tempDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   async function createHarness() {
+    const workspaceRoot = makeTempDir("t3-provider-project-");
+    fs.mkdirSync(path.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionPipelineLive),
@@ -152,7 +168,7 @@ describe("ProviderRuntimeIngestion", () => {
         commandId: CommandId.makeUnsafe("cmd-provider-project-create"),
         projectId: asProjectId("project-1"),
         title: "Provider Project",
-        workspaceRoot: "/tmp/provider-project",
+        workspaceRoot,
         defaultModel: "gpt-5-codex",
         createdAt,
       }),
@@ -531,6 +547,7 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         itemType: "assistant_message",
         status: "completed",
+        detail: "hello live",
       },
     });
 
@@ -726,6 +743,7 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         itemType: "assistant_message",
         status: "completed",
+        detail: "buffer me",
       },
     });
 
@@ -818,6 +836,7 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         itemType: "assistant_message",
         status: "completed",
+        detail: "hello live",
       },
     });
 
@@ -878,6 +897,7 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         itemType: "assistant_message",
         status: "completed",
+        detail: oversizedText,
       },
     });
 
@@ -975,6 +995,192 @@ describe("ProviderRuntimeIngestion", () => {
       }
       return (
         event.payload.messageId === "assistant:item-complete-dedup" &&
+        event.payload.streaming === false
+      );
+    });
+    expect(completionEvents).toHaveLength(1);
+  });
+
+  it("does not create an empty assistant message before later buffered content arrives", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-empty-placeholder-guard"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-empty-placeholder-guard"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-empty-placeholder-guard",
+    );
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-empty-placeholder-guard"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-empty-placeholder-guard"),
+      itemId: asItemId("item-empty-placeholder-guard"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "",
+      },
+    });
+
+    await Effect.runPromise(Effect.sleep("40 millis"));
+    let readModel = await Effect.runPromise(harness.engine.getReadModel());
+    let thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(
+      thread?.messages.some(
+        (message: ProviderRuntimeTestMessage) => message.id === "assistant:item-empty-placeholder-guard",
+      ),
+    ).toBe(false);
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-empty-placeholder-guard"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-empty-placeholder-guard"),
+      itemId: asItemId("item-empty-placeholder-guard"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "late answer",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-empty-placeholder-guard"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-empty-placeholder-guard"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-empty-placeholder-guard" &&
+            message.text === "late answer" &&
+            !message.streaming,
+        ),
+    );
+    const message = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-empty-placeholder-guard",
+    );
+    expect(message?.text).toBe("late answer");
+    expect(message?.streaming).toBe(false);
+  });
+
+  it("ignores late assistant item completion after turn completion already finalized the message", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-late-item-complete"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-late-item-complete"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-late-item-complete",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-late-item-complete"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-late-item-complete"),
+      itemId: asItemId("item-late-item-complete"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "final answer",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-late-item-complete"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-late-item-complete"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-late-item-complete" &&
+            message.text === "final answer" &&
+            !message.streaming,
+        ),
+    );
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-late-item-complete"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-late-item-complete"),
+      itemId: asItemId("item-late-item-complete"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "final answer",
+      },
+    });
+
+    await Effect.runPromise(Effect.sleep("40 millis"));
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    const matchingMessages =
+      thread?.messages.filter(
+        (message: ProviderRuntimeTestMessage) => message.id === "assistant:item-late-item-complete",
+      ) ?? [];
+    expect(matchingMessages).toHaveLength(1);
+    expect(matchingMessages[0]?.text).toBe("final answer");
+
+    const events = await Effect.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      ),
+    );
+    const completionEvents = events.filter((event) => {
+      if (event.type !== "thread.message-sent") {
+        return false;
+      }
+      return (
+        event.payload.messageId === "assistant:item-late-item-complete" &&
         event.payload.streaming === false
       );
     });

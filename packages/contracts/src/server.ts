@@ -1,8 +1,9 @@
 import { Schema } from "effect";
-import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas";
+import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas";
 import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 import { EditorId } from "./editor";
 import { ProviderKind } from "./orchestration";
+import { CODEX_REASONING_EFFORT_OPTIONS } from "./model";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -33,6 +34,31 @@ export const ServerProviderAuthStatus = Schema.Literals([
 ]);
 export type ServerProviderAuthStatus = typeof ServerProviderAuthStatus.Type;
 
+export const ServerProviderModelReasoningEffort = Schema.Literals(CODEX_REASONING_EFFORT_OPTIONS);
+export type ServerProviderModelReasoningEffort = typeof ServerProviderModelReasoningEffort.Type;
+
+export const ServerProviderModel = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  supportsReasoningEffort: Schema.Boolean,
+  supportedReasoningEfforts: Schema.optional(Schema.Array(ServerProviderModelReasoningEffort)),
+  defaultReasoningEffort: Schema.optional(ServerProviderModelReasoningEffort),
+  billingMultiplier: Schema.optional(Schema.Number),
+});
+export type ServerProviderModel = typeof ServerProviderModel.Type;
+
+export const ServerProviderQuotaSnapshot = Schema.Struct({
+  key: TrimmedNonEmptyString,
+  entitlementRequests: NonNegativeInt,
+  usedRequests: NonNegativeInt,
+  remainingRequests: NonNegativeInt,
+  remainingPercentage: Schema.Number,
+  overage: NonNegativeInt,
+  overageAllowedWithExhaustedQuota: Schema.Boolean,
+  resetDate: Schema.optional(IsoDateTime),
+});
+export type ServerProviderQuotaSnapshot = typeof ServerProviderQuotaSnapshot.Type;
+
 export const ServerProviderStatus = Schema.Struct({
   provider: ProviderKind,
   status: ServerProviderStatusState,
@@ -40,6 +66,8 @@ export const ServerProviderStatus = Schema.Struct({
   authStatus: ServerProviderAuthStatus,
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
+  models: Schema.optional(Schema.Array(ServerProviderModel)),
+  quotaSnapshots: Schema.optional(Schema.Array(ServerProviderQuotaSnapshot)),
 });
 export type ServerProviderStatus = typeof ServerProviderStatus.Type;
 

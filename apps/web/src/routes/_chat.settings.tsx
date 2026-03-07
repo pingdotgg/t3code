@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { ZapIcon } from "lucide-react";
@@ -54,6 +54,13 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     placeholder: "your-codex-model-slug",
     example: "gpt-6.7-codex-ultra-preview",
   },
+  {
+    provider: "copilot",
+    title: "GitHub Copilot",
+    description: "Save additional Copilot model slugs for the picker and `/model` command.",
+    placeholder: "your-copilot-model-slug",
+    example: "claude-sonnet-4.6",
+  },
 ] as const;
 
 function getCustomModelsForProvider(
@@ -62,8 +69,9 @@ function getCustomModelsForProvider(
 ) {
   switch (provider) {
     case "codex":
-    default:
       return settings.customCodexModels;
+    case "copilot":
+      return settings.customCopilotModels;
   }
 }
 
@@ -73,16 +81,18 @@ function getDefaultCustomModelsForProvider(
 ) {
   switch (provider) {
     case "codex":
-    default:
       return defaults.customCodexModels;
+    case "copilot":
+      return defaults.customCopilotModels;
   }
 }
 
 function patchCustomModels(provider: ProviderKind, models: string[]) {
   switch (provider) {
     case "codex":
-    default:
       return { customCodexModels: models };
+    case "copilot":
+      return { customCopilotModels: models };
   }
 }
 
@@ -96,13 +106,27 @@ function SettingsRouteView() {
     Record<ProviderKind, string>
   >({
     codex: "",
+    copilot: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
+  const builtInModelOptionsByProvider = useMemo<Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>>(
+    () => ({
+      codex: getModelOptions("codex"),
+      copilot:
+        serverConfigQuery.data?.providers.find((status) => status.provider === "copilot")?.models?.map((model) => ({
+          slug: model.id,
+          name: model.name,
+        })) ?? getModelOptions("copilot"),
+    }),
+    [serverConfigQuery.data?.providers],
+  );
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const copilotCliPath = settings.copilotCliPath;
+  const copilotConfigDir = settings.copilotConfigDir;
   const codexServiceTier = settings.codexServiceTier;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
@@ -134,7 +158,11 @@ function SettingsRouteView() {
       }));
       return;
     }
-    if (getModelOptions(provider).some((option) => option.slug === normalized)) {
+    if (
+      builtInModelOptionsByProvider[provider].some(
+        (option: { slug: string; name: string }) => option.slug === normalized,
+      )
+    ) {
       setCustomModelErrorByProvider((existing) => ({
         ...existing,
         [provider]: "That model is already built in.",
@@ -165,7 +193,7 @@ function SettingsRouteView() {
       ...existing,
       [provider]: null,
     }));
-  }, [customModelInputByProvider, settings, updateSettings]);
+  }, [builtInModelOptionsByProvider, customModelInputByProvider, settings, updateSettings]);
 
   const removeCustomModel = useCallback(
     (provider: ProviderKind, slug: string) => {
@@ -295,6 +323,65 @@ function SettingsRouteView() {
                     }
                   >
                     Reset codex overrides
+                  </Button>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">GitHub Copilot CLI</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  These overrides apply to new Copilot sessions and let you target a custom CLI
+                  install or config directory.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <label htmlFor="copilot-cli-path" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Copilot CLI path</span>
+                  <Input
+                    id="copilot-cli-path"
+                    value={copilotCliPath}
+                    onChange={(event) => updateSettings({ copilotCliPath: event.target.value })}
+                    placeholder="copilot"
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Leave blank to use <code>copilot</code> from your PATH.
+                  </span>
+                </label>
+
+                <label htmlFor="copilot-config-dir" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Copilot config dir</span>
+                  <Input
+                    id="copilot-config-dir"
+                    value={copilotConfigDir}
+                    onChange={(event) => updateSettings({ copilotConfigDir: event.target.value })}
+                    placeholder="/Users/you/.config/github-copilot"
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Optional custom Copilot configuration directory used by the SDK.
+                  </span>
+                </label>
+
+                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <p>
+                    Binary source:{" "}
+                    <span className="font-medium text-foreground">{copilotCliPath || "PATH"}</span>
+                  </p>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      updateSettings({
+                        copilotCliPath: defaults.copilotCliPath,
+                        copilotConfigDir: defaults.copilotConfigDir,
+                      })
+                    }
+                  >
+                    Reset Copilot overrides
                   </Button>
                 </div>
               </div>

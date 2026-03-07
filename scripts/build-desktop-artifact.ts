@@ -162,6 +162,24 @@ interface ResolvedBuildOptions {
   readonly verbose: boolean;
 }
 
+function resolveBundledCopilotPlatformPackages(
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+): ReadonlyArray<string> {
+  if (platform === "mac") {
+    if (arch === "universal") {
+      return ["@github/copilot-darwin-arm64", "@github/copilot-darwin-x64"];
+    }
+    return [arch === "arm64" ? "@github/copilot-darwin-arm64" : "@github/copilot-darwin-x64"];
+  }
+
+  if (platform === "linux") {
+    return [arch === "arm64" ? "@github/copilot-linux-arm64" : "@github/copilot-linux-x64"];
+  }
+
+  return [arch === "arm64" ? "@github/copilot-win32-arm64" : "@github/copilot-win32-x64"];
+}
+
 interface StagePackageJson {
   readonly name: string;
   readonly version: string;
@@ -450,6 +468,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     appId: "com.t3tools.t3code",
     productName,
     artifactName: "T3-Code-${version}-${arch}.${ext}",
+    asarUnpack: ["node_modules/@github/copilot*/**/*"],
     directories: {
       buildResources: "apps/desktop/resources",
     },
@@ -557,6 +576,18 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         cause,
       }),
   });
+  const bundledCopilotVersion = serverDependencies["@github/copilot"];
+  if (typeof bundledCopilotVersion !== "string" || bundledCopilotVersion.trim().length === 0) {
+    return yield* new BuildScriptError({
+      message: "Could not resolve bundled @github/copilot version from apps/server/package.json.",
+    });
+  }
+  const bundledCopilotPlatformDependencies = Object.fromEntries(
+    resolveBundledCopilotPlatformPackages(options.platform, options.arch).map((dependencyName) => [
+      dependencyName,
+      bundledCopilotVersion,
+    ]),
+  );
 
   const appVersion = options.version ?? serverPackageJson.version;
   const commitHash = resolveGitCommitHash(repoRoot);
@@ -627,6 +658,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     ),
     dependencies: {
       ...resolvedServerDependencies,
+      ...bundledCopilotPlatformDependencies,
       ...resolvedDesktopRuntimeDependencies,
     },
     devDependencies: {

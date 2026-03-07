@@ -80,10 +80,18 @@ describe("ProviderCommandReactor", () => {
     createdStateDirs.clear();
   });
 
-  async function createHarness(input?: { readonly stateDir?: string }) {
+  async function createHarness(input?: {
+    readonly stateDir?: string;
+    readonly projectWorkspaceRoot?: string;
+    readonly createProjectWorkspace?: boolean;
+  }) {
     const now = new Date().toISOString();
     const stateDir = input?.stateDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
     createdStateDirs.add(stateDir);
+    const projectWorkspaceRoot = input?.projectWorkspaceRoot ?? path.join(stateDir, "workspace");
+    if (input?.createProjectWorkspace !== false) {
+      fs.mkdirSync(projectWorkspaceRoot, { recursive: true });
+    }
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     let nextSessionIndex = 1;
     const runtimeSessions: Array<ProviderSession> = [];
@@ -221,7 +229,7 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.makeUnsafe("cmd-project-create"),
         projectId: asProjectId("project-1"),
         title: "Provider Project",
-        workspaceRoot: "/tmp/provider-project",
+        workspaceRoot: projectWorkspaceRoot,
         defaultModel: "gpt-5-codex",
         createdAt: now,
       }),
@@ -252,6 +260,7 @@ describe("ProviderCommandReactor", () => {
       stopSession,
       renameBranch,
       generateBranchName,
+      projectWorkspaceRoot,
       stateDir,
     };
   }
@@ -281,7 +290,7 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.startSession.mock.calls[0]?.[0]).toEqual(ThreadId.makeUnsafe("thread-1"));
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
-      cwd: "/tmp/provider-project",
+      cwd: harness.projectWorkspaceRoot,
       model: "gpt-5-codex",
       runtimeMode: "approval-required",
     });
@@ -290,6 +299,39 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("omits missing thread workspace cwd when starting a provider session", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-missing-"));
+    createdStateDirs.add(stateDir);
+    const missingWorkspaceRoot = path.join(stateDir, "missing-workspace");
+    const harness = await createHarness({
+      stateDir,
+      projectWorkspaceRoot: missingWorkspaceRoot,
+      createProjectWorkspace: false,
+    });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-missing-workspace"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-missing-workspace"),
+          role: "user",
+          text: "hello with missing workspace",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("cwd");
   });
 
   it("forwards codex model options through session start and turn send", async () => {

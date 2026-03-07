@@ -22,6 +22,12 @@ describe("normalizeCustomModelSlugs", () => {
       ]),
     ).toEqual(["custom/internal-model"]);
   });
+
+  it("tracks Copilot built-ins separately from Codex built-ins", () => {
+    expect(
+      normalizeCustomModelSlugs(["gpt-5.3-codex", "claude-sonnet-4.6", "custom/copilot"], "copilot"),
+    ).toEqual(["custom/copilot"]);
+  });
 });
 
 describe("getAppModelOptions", () => {
@@ -47,6 +53,27 @@ describe("getAppModelOptions", () => {
       isCustom: true,
     });
   });
+
+  it("returns the built-in Copilot options for the Copilot provider", () => {
+    const options = getAppModelOptions("copilot", []);
+
+    expect(options.map((option) => option.slug)).toContain("gpt-5.4");
+    expect(options.map((option) => option.slug)).toContain("gpt-5.3-codex");
+    expect(options.map((option) => option.slug)).toContain("claude-sonnet-4.6");
+    expect(options.map((option) => option.slug)).toContain("gemini-3-pro-preview");
+    expect(options.map((option) => option.slug)).toContain("gpt-4.1");
+  });
+
+  it("prefers live Copilot model lists when they are provided", () => {
+    const options = getAppModelOptions(
+      "copilot",
+      [],
+      "",
+      [{ slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" }],
+    );
+
+    expect(options.map((option) => option.slug)).toEqual(["gpt-5.3-codex"]);
+  });
 });
 
 describe("resolveAppModelSelection", () => {
@@ -58,6 +85,18 @@ describe("resolveAppModelSelection", () => {
 
   it("falls back to the provider default when no model is selected", () => {
     expect(resolveAppModelSelection("codex", [], "")).toBe("gpt-5.4");
+    expect(resolveAppModelSelection("copilot", [], "")).toBe("claude-sonnet-4.6");
+  });
+
+  it("falls back to the first live Copilot model when runtime metadata is available", () => {
+    expect(
+      resolveAppModelSelection(
+        "copilot",
+        [],
+        "",
+        [{ slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" }],
+      ),
+    ).toBe("gpt-5.3-codex");
   });
 });
 

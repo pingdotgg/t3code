@@ -1,16 +1,13 @@
 import * as OS from "node:os";
 import { Effect, Path } from "effect";
-import { execFileSync } from "node:child_process";
+import { readPathFromLoginShell } from "@t3tools/shared/shell";
 
 export function fixPath(): void {
   if (process.platform !== "darwin") return;
 
   try {
     const shell = process.env.SHELL ?? "/bin/zsh";
-    const result = execFileSync(shell, ["-ilc", "echo -n $PATH"], {
-      encoding: "utf8",
-      timeout: 5000,
-    });
+    const result = readPathFromLoginShell(shell);
     if (result) {
       process.env.PATH = result;
     }
@@ -20,12 +17,12 @@ export function fixPath(): void {
 }
 
 export const expandHomePath = Effect.fn(function* (input: string) {
-  const { join, sep } = yield* Path.Path;
+  const { join } = yield* Path.Path;
   if (input === "~") {
     return OS.homedir();
   }
-  if (input.startsWith(`~${sep}`)) {
-    return join(OS.homedir(), input.slice(sep.length));
+  if (input.startsWith("~/") || input.startsWith("~\\")) {
+    return join(OS.homedir(), input.slice(2));
   }
   return input;
 });

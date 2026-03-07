@@ -1,5 +1,7 @@
 import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas";
+import { ProviderModelOptions } from "./model";
+import { ProviderKind, ProviderStartOptions } from "./orchestration";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 
@@ -53,6 +55,10 @@ export const GitRunStackedActionInput = Schema.Struct({
   action: GitStackedAction,
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
+  provider: Schema.optional(ProviderKind),
+  model: Schema.optional(TrimmedNonEmptyStringSchema),
+  modelOptions: Schema.optional(ProviderModelOptions),
+  providerOptions: Schema.optional(ProviderStartOptions),
 });
 export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 

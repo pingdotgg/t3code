@@ -1,5 +1,4 @@
 import {
-  DEFAULT_REASONING_EFFORT_BY_PROVIDER,
   ProjectId,
   REASONING_EFFORT_OPTIONS_BY_PROVIDER,
   ThreadId,
@@ -123,7 +122,11 @@ interface ComposerDraftStoreState {
   clearDraftThread: (threadId: ThreadId) => void;
   setPrompt: (threadId: ThreadId, prompt: string) => void;
   setProvider: (threadId: ThreadId, provider: ProviderKind | null | undefined) => void;
-  setModel: (threadId: ThreadId, model: string | null | undefined) => void;
+  setModel: (
+    threadId: ThreadId,
+    model: string | null | undefined,
+    provider?: ProviderKind | null | undefined,
+  ) => void;
   setRuntimeMode: (threadId: ThreadId, runtimeMode: RuntimeMode | null | undefined) => void;
   setInteractionMode: (
     threadId: ThreadId,
@@ -208,7 +211,24 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
 }
 
 function normalizeProviderKind(value: unknown): ProviderKind | null {
-  return value === "codex" ? value : null;
+  return value === "codex" || value === "copilot" ? value : null;
+}
+
+function normalizeDraftModel(
+  value: string | null | undefined,
+  provider?: ProviderKind | null,
+): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (!provider) {
+    return trimmed;
+  }
+  return normalizeModelSlug(trimmed, provider) ?? trimmed;
 }
 
 function revokeObjectPreviewUrl(previewUrl: string): void {
@@ -805,13 +825,14 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           return { draftsByThreadId: nextDraftsByThreadId };
         });
       },
-      setModel: (threadId, model) => {
+      setModel: (threadId, model, provider) => {
         if (threadId.length === 0) {
           return;
         }
-        const normalizedModel = normalizeModelSlug(model) ?? null;
         set((state) => {
           const existing = state.draftsByThreadId[threadId];
+          const normalizedProvider = normalizeProviderKind(provider) ?? existing?.provider ?? null;
+          const normalizedModel = normalizeDraftModel(model, normalizedProvider);
           if (!existing && normalizedModel === null) {
             return state;
           }
@@ -892,12 +913,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         if (threadId.length === 0) {
           return;
         }
-        const nextEffort =
-          effort &&
-          REASONING_EFFORT_VALUES.has(effort) &&
-          effort !== DEFAULT_REASONING_EFFORT_BY_PROVIDER.codex
-            ? effort
-            : null;
+        const nextEffort = effort && REASONING_EFFORT_VALUES.has(effort) ? effort : null;
         set((state) => {
           const existing = state.draftsByThreadId[threadId];
           if (!existing && nextEffort === null) {

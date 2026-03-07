@@ -2,6 +2,7 @@ import { EventId, MessageId, TurnId, type OrchestrationThreadActivity } from "@t
 import { describe, expect, it } from "vitest";
 
 import {
+  deriveActiveWorkStartedAt,
   deriveActivePlanState,
   PROVIDER_OPTIONS,
   derivePendingApprovals,
@@ -74,6 +75,7 @@ describe("derivePendingApprovals", () => {
         requestId: "req-1",
         requestKind: "command",
         createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: null,
         detail: "bun run lint",
       },
     ]);
@@ -100,6 +102,7 @@ describe("derivePendingApprovals", () => {
         requestId: "req-request-type",
         requestKind: "command",
         createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: null,
         detail: "pwd",
       },
     ]);
@@ -203,6 +206,7 @@ describe("derivePendingUserInputs", () => {
       {
         requestId: "req-user-input-1",
         createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: null,
         questions: [
           {
             id: "sandbox_mode",
@@ -430,6 +434,84 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities, undefined);
     expect(entries.map((entry) => entry.id)).toEqual(["first", "second"]);
   });
+
+  it("keeps work from multiple provider turns after the latest user message", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "older-turn",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        summary: "Old work",
+        kind: "tool.completed",
+        turnId: "turn-1",
+      }),
+      makeActivity({
+        id: "turn-2-tool",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        summary: "apply_patch complete",
+        kind: "tool.completed",
+        turnId: "turn-2",
+      }),
+      makeActivity({
+        id: "turn-3-approval",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        summary: "Approval resolved",
+        kind: "approval.resolved",
+        tone: "approval",
+        turnId: "turn-3",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined, "2026-02-23T00:00:02.000Z");
+    expect(entries.map((entry) => entry.id)).toEqual(["turn-2-tool", "turn-3-approval"]);
+  });
+
+  it("extracts command text for command tool activities", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool",
+        kind: "tool.completed",
+        summary: "Command run complete",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            item: {
+              command: ["bun", "run", "lint"],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.command).toBe("bun run lint");
+  });
+
+  it("extracts changed file paths for file-change tool activities", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "file-tool",
+        kind: "tool.completed",
+        summary: "File change complete",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              changes: [
+                { path: "apps/web/src/components/ChatView.tsx" },
+                { filename: "apps/web/src/session-logic.ts" },
+              ],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.changedFiles).toEqual([
+      "apps/web/src/components/ChatView.tsx",
+      "apps/web/src/session-logic.ts",
+    ]);
+  });
 });
 
 describe("deriveTimelineEntries", () => {
@@ -542,12 +624,61 @@ describe("isLatestTurnSettled", () => {
   });
 });
 
+describe("deriveActiveWorkStartedAt", () => {
+  const latestTurn = {
+    turnId: TurnId.makeUnsafe("turn-1"),
+    startedAt: "2026-02-27T21:10:00.000Z",
+    completedAt: "2026-02-27T21:10:06.000Z",
+  } as const;
+
+  it("prefers the in-flight turn start when the latest turn is not settled", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        latestTurn,
+        {
+          orchestrationStatus: "running",
+          activeTurnId: TurnId.makeUnsafe("turn-1"),
+        },
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:10:00.000Z");
+  });
+
+  it("falls back to sendStartedAt once the latest turn is settled", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        latestTurn,
+        {
+          orchestrationStatus: "ready",
+          activeTurnId: undefined,
+        },
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:11:00.000Z");
+  });
+
+  it("uses sendStartedAt for a fresh send after the prior turn completed", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        {
+          turnId: TurnId.makeUnsafe("turn-1"),
+          startedAt: "2026-02-27T21:10:00.000Z",
+          completedAt: "2026-02-27T21:10:06.000Z",
+        },
+        null,
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:11:00.000Z");
+  });
+});
+
 describe("PROVIDER_OPTIONS", () => {
   it("keeps Claude Code and Cursor visible as unavailable placeholders in the stack base", () => {
     const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeCode");
     const cursor = PROVIDER_OPTIONS.find((option) => option.value === "cursor");
     expect(PROVIDER_OPTIONS).toEqual([
       { value: "codex", label: "Codex", available: true },
+      { value: "copilot", label: "GitHub Copilot", available: true },
       { value: "claudeCode", label: "Claude Code", available: false },
       { value: "cursor", label: "Cursor", available: false },
     ]);

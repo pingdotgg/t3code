@@ -609,6 +609,47 @@ describe("CheckpointReactor", () => {
     ).toBe("v2\n");
   });
 
+  it("skips invalid project workspace roots and falls back to provider session cwd", async () => {
+    const missingWorkspaceRoot = path.join(
+      os.tmpdir(),
+      `t3-missing-workspace-${crypto.randomUUID()}`,
+    );
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      threadWorktreePath: null,
+      projectWorkspaceRoot: missingWorkspaceRoot,
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-invalid-project-workspace"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: MessageId.makeUnsafe("message-user-invalid-project-workspace"),
+          role: "user",
+          text: "start turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: new Date().toISOString(),
+      }),
+    );
+
+    await waitForGitRefExists(
+      harness.cwd,
+      checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 0),
+    );
+    expect(
+      gitShowFileAtRef(
+        harness.cwd,
+        checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 0),
+        "README.md",
+      ),
+    ).toBe("v1\n");
+  });
+
   it("ignores non-v2 checkpoint.captured runtime events", async () => {
     const harness = await createHarness();
     const createdAt = new Date().toISOString();
@@ -651,7 +692,7 @@ describe("CheckpointReactor", () => {
     );
   });
 
-  it("continues processing runtime events after a single checkpoint runtime failure", async () => {
+  it("falls back from an invalid provider session cwd and keeps processing runtime events", async () => {
     const nonRepositorySessionCwd = fs.mkdtempSync(
       path.join(os.tmpdir(), "t3-checkpoint-runtime-non-repo-"),
     );
@@ -692,22 +733,29 @@ describe("CheckpointReactor", () => {
       payload: { state: "completed" },
     });
 
+    await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
+    expect(
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 1)),
+    ).toBe(true);
+
+    fs.writeFileSync(path.join(harness.cwd, "README.md"), "v2\n", "utf8");
     harness.provider.emit({
-      type: "turn.started",
-      eventId: EventId.makeUnsafe("evt-turn-started-after-runtime-failure"),
+      type: "turn.completed",
+      eventId: EventId.makeUnsafe("evt-turn-completed-after-invalid-session-cwd"),
       provider: "codex",
       
       createdAt: new Date().toISOString(),
       threadId: ThreadId.makeUnsafe("thread-1"),
-      turnId: asTurnId("turn-after-runtime-failure"),
+      turnId: asTurnId("turn-after-invalid-session-cwd"),
+      payload: { state: "completed" },
     });
 
     await waitForGitRefExists(
       harness.cwd,
-      checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 0),
+      checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 2),
     );
     expect(
-      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 0)),
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.makeUnsafe("thread-1"), 2)),
     ).toBe(true);
   });
 

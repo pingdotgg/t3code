@@ -18,6 +18,7 @@ export const PROVIDER_OPTIONS: Array<{
   available: boolean;
 }> = [
   { value: "codex", label: "Codex", available: true },
+  { value: "copilot", label: "GitHub Copilot", available: true },
   { value: "claudeCode", label: "Claude Code", available: false },
   { value: "cursor", label: "Cursor", available: false },
 ];
@@ -27,6 +28,8 @@ export interface WorkLogEntry {
   createdAt: string;
   label: string;
   detail?: string;
+  command?: string;
+  changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
 }
 
@@ -34,12 +37,14 @@ export interface PendingApproval {
   requestId: ApprovalRequestId;
   requestKind: "command" | "file-read" | "file-change";
   createdAt: string;
+  turnId: TurnId | null;
   detail?: string;
 }
 
 export interface PendingUserInput {
   requestId: ApprovalRequestId;
   createdAt: string;
+  turnId: TurnId | null;
   questions: ReadonlyArray<UserInputQuestion>;
 }
 
@@ -111,15 +116,29 @@ export function formatElapsed(startIso: string, endIso: string | undefined): str
   return formatDuration(endedAt - startedAt);
 }
 
+type LatestTurnTiming = Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "completedAt">;
+type SessionActivityState = Pick<ThreadSession, "orchestrationStatus" | "activeTurnId">;
+
 export function isLatestTurnSettled(
-  latestTurn: Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "completedAt"> | null,
-  session: Pick<ThreadSession, "orchestrationStatus" | "activeTurnId"> | null,
+  latestTurn: LatestTurnTiming | null,
+  session: SessionActivityState | null,
 ): boolean {
   if (!latestTurn?.startedAt) return false;
   if (!latestTurn.completedAt) return false;
   if (!session) return true;
   if (session.orchestrationStatus === "running") return false;
   return true;
+}
+
+export function deriveActiveWorkStartedAt(
+  latestTurn: LatestTurnTiming | null,
+  session: SessionActivityState | null,
+  sendStartedAt: string | null,
+): string | null {
+  if (!isLatestTurnSettled(latestTurn, session)) {
+    return latestTurn?.startedAt ?? sendStartedAt;
+  }
+  return sendStartedAt;
 }
 
 function requestKindFromRequestType(
@@ -170,6 +189,7 @@ export function derivePendingApprovals(
         requestId,
         requestKind,
         createdAt: activity.createdAt,
+        turnId: activity.turnId,
         ...(detail ? { detail } : {}),
       });
       continue;
@@ -268,6 +288,7 @@ export function derivePendingUserInputs(
       openByRequestId.set(requestId, {
         requestId,
         createdAt: activity.createdAt,
+        turnId: activity.turnId,
         questions,
       });
       continue;
@@ -281,6 +302,19 @@ export function derivePendingUserInputs(
   return [...openByRequestId.values()].toSorted((left, right) =>
     left.createdAt.localeCompare(right.createdAt),
   );
+}
+
+function isVisibleWorkActivity(activity: OrchestrationThreadActivity): boolean {
+  if (activity.kind === "tool.started") {
+    return false;
+  }
+  if (activity.kind === "task.started" || activity.kind === "task.completed") {
+    return false;
+  }
+  if (activity.summary === "Checkpoint captured") {
+    return false;
+  }
+  return true;
 }
 
 export function deriveActivePlanState(
@@ -389,18 +423,20 @@ export function findLatestProposedPlan(
 export function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   latestTurnId: TurnId | undefined,
+  sinceCreatedAt?: string,
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   return ordered
     .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
-    .filter((activity) => activity.kind !== "tool.started")
-    .filter((activity) => activity.kind !== "task.started" && activity.kind !== "task.completed")
-    .filter((activity) => activity.summary !== "Checkpoint captured")
+    .filter((activity) => (sinceCreatedAt ? activity.createdAt >= sinceCreatedAt : true))
+    .filter(isVisibleWorkActivity)
     .map((activity) => {
       const payload =
         activity.payload && typeof activity.payload === "object"
           ? (activity.payload as Record<string, unknown>)
           : null;
+      const command = extractToolCommand(payload);
+      const changedFiles = extractChangedFiles(payload);
       const entry: WorkLogEntry = {
         id: activity.id,
         createdAt: activity.createdAt,
@@ -410,8 +446,123 @@ export function deriveWorkLogEntries(
       if (payload && typeof payload.detail === "string" && payload.detail.length > 0) {
         entry.detail = payload.detail;
       }
+      if (command) {
+        entry.command = command;
+      }
+      if (changedFiles.length > 0) {
+        entry.changedFiles = changedFiles;
+      }
       return entry;
     });
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function asTrimmedString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeCommandValue(value: unknown): string | null {
+  const direct = asTrimmedString(value);
+  if (direct) {
+    return direct;
+  }
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const parts = value
+    .map((entry) => asTrimmedString(entry))
+    .filter((entry): entry is string => entry !== null);
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
+function extractToolCommand(payload: Record<string, unknown> | null): string | null {
+  const data = asRecord(payload?.data);
+  const item = asRecord(data?.item);
+  const itemResult = asRecord(item?.result);
+  const itemInput = asRecord(item?.input);
+  const candidates = [
+    normalizeCommandValue(item?.command),
+    normalizeCommandValue(itemInput?.command),
+    normalizeCommandValue(itemResult?.command),
+    normalizeCommandValue(data?.command),
+  ];
+  return candidates.find((candidate) => candidate !== null) ?? null;
+}
+
+function pushChangedFile(target: string[], seen: Set<string>, value: unknown) {
+  const normalized = asTrimmedString(value);
+  if (!normalized || seen.has(normalized)) {
+    return;
+  }
+  seen.add(normalized);
+  target.push(normalized);
+}
+
+function collectChangedFiles(
+  value: unknown,
+  target: string[],
+  seen: Set<string>,
+  depth: number,
+) {
+  if (depth > 4 || target.length >= 12) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectChangedFiles(entry, target, seen, depth + 1);
+      if (target.length >= 12) {
+        return;
+      }
+    }
+    return;
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return;
+  }
+
+  pushChangedFile(target, seen, record.path);
+  pushChangedFile(target, seen, record.filePath);
+  pushChangedFile(target, seen, record.relativePath);
+  pushChangedFile(target, seen, record.filename);
+  pushChangedFile(target, seen, record.newPath);
+  pushChangedFile(target, seen, record.oldPath);
+
+  for (const nestedKey of [
+    "item",
+    "result",
+    "input",
+    "data",
+    "changes",
+    "files",
+    "edits",
+    "patch",
+    "patches",
+    "operations",
+  ]) {
+    if (!(nestedKey in record)) {
+      continue;
+    }
+    collectChangedFiles(record[nestedKey], target, seen, depth + 1);
+    if (target.length >= 12) {
+      return;
+    }
+  }
+}
+
+function extractChangedFiles(payload: Record<string, unknown> | null): string[] {
+  const data = asRecord(payload?.data);
+  const changedFiles: string[] = [];
+  collectChangedFiles(data, changedFiles, new Set<string>(), 0);
+  return changedFiles;
 }
 
 function compareActivitiesByOrder(

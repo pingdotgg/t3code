@@ -1,6 +1,6 @@
 {
   "name": "t3",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "repository": {
     "type": "git",
     "url": "https://github.com/pingdotgg/t3code",
@@ -22,6 +22,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@github/copilot": "1.0.2",
+    "@github/copilot-sdk": "0.1.31-unstable.0",
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-bun": "catalog:",
     "@pierre/diffs": "^1.1.0-beta.16",

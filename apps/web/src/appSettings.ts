@@ -28,6 +28,7 @@ const AppServiceTierSchema = Schema.Literals(["auto", "fast", "flex"]);
 const MODELS_WITH_FAST_SUPPORT = new Set(["gpt-5.4"]);
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
+  copilot: new Set(getModelOptions("copilot").map((option) => option.slug)),
 };
 
 const AppSettingsSchema = Schema.Struct({
@@ -35,6 +36,12 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some("")),
   ),
   codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  copilotCliPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  copilotConfigDir: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
   ),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
@@ -45,12 +52,20 @@ const AppSettingsSchema = Schema.Struct({
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
+  customCopilotModels: Schema.Array(Schema.String).pipe(
+    Schema.withConstructorDefault(() => Option.some([])),
+  ),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
 export interface AppModelOption {
   slug: string;
   name: string;
   isCustom: boolean;
+}
+
+export interface BuiltInAppModelOption {
+  slug: string;
+  name: string;
 }
 
 export function resolveAppServiceTier(serviceTier: AppServiceTier): ProviderServiceTier | null {
@@ -78,10 +93,14 @@ let cachedSnapshot: AppSettings = DEFAULT_APP_SETTINGS;
 export function normalizeCustomModelSlugs(
   models: Iterable<string | null | undefined>,
   provider: ProviderKind = "codex",
+  builtInOptions?: readonly BuiltInAppModelOption[],
 ): string[] {
   const normalizedModels: string[] = [];
   const seen = new Set<string>();
-  const builtInModelSlugs = BUILT_IN_MODEL_SLUGS_BY_PROVIDER[provider];
+  const builtInModelSlugs =
+    builtInOptions !== undefined
+      ? new Set(builtInOptions.map((option) => option.slug))
+      : BUILT_IN_MODEL_SLUGS_BY_PROVIDER[provider];
 
   for (const candidate of models) {
     const normalized = normalizeModelSlug(candidate, provider);
@@ -108,6 +127,7 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
+    customCopilotModels: normalizeCustomModelSlugs(settings.customCopilotModels, "copilot"),
   };
 }
 
@@ -115,15 +135,17 @@ export function getAppModelOptions(
   provider: ProviderKind,
   customModels: readonly string[],
   selectedModel?: string | null,
+  builtInOptions?: readonly BuiltInAppModelOption[],
 ): AppModelOption[] {
-  const options: AppModelOption[] = getModelOptions(provider).map(({ slug, name }) => ({
+  const resolvedBuiltInOptions = builtInOptions ?? getModelOptions(provider);
+  const options: AppModelOption[] = resolvedBuiltInOptions.map(({ slug, name }) => ({
     slug,
     name,
     isCustom: false,
   }));
   const seen = new Set(options.map((option) => option.slug));
 
-  for (const slug of normalizeCustomModelSlugs(customModels, provider)) {
+  for (const slug of normalizeCustomModelSlugs(customModels, provider, resolvedBuiltInOptions)) {
     if (seen.has(slug)) {
       continue;
     }
@@ -152,8 +174,9 @@ export function resolveAppModelSelection(
   provider: ProviderKind,
   customModels: readonly string[],
   selectedModel: string | null | undefined,
+  builtInOptions?: readonly BuiltInAppModelOption[],
 ): string {
-  const options = getAppModelOptions(provider, customModels, selectedModel);
+  const options = getAppModelOptions(provider, customModels, selectedModel, builtInOptions);
   const trimmedSelectedModel = selectedModel?.trim();
   if (trimmedSelectedModel) {
     const direct = options.find((option) => option.slug === trimmedSelectedModel);
@@ -171,11 +194,12 @@ export function resolveAppModelSelection(
 
   const normalizedSelectedModel = normalizeModelSlug(selectedModel, provider);
   if (!normalizedSelectedModel) {
-    return getDefaultModel(provider);
+    return builtInOptions?.[0]?.slug ?? getDefaultModel(provider);
   }
 
   return (
     options.find((option) => option.slug === normalizedSelectedModel)?.slug ??
+    builtInOptions?.[0]?.slug ??
     getDefaultModel(provider)
   );
 }
@@ -185,9 +209,10 @@ export function getSlashModelOptions(
   customModels: readonly string[],
   query: string,
   selectedModel?: string | null,
+  builtInOptions?: readonly BuiltInAppModelOption[],
 ): AppModelOption[] {
   const normalizedQuery = query.trim().toLowerCase();
-  const options = getAppModelOptions(provider, customModels, selectedModel);
+  const options = getAppModelOptions(provider, customModels, selectedModel, builtInOptions);
   if (!normalizedQuery) {
     return options;
   }
