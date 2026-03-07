@@ -73,6 +73,7 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
+import { fetchCodexRateLimits } from "./codexRateLimits.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -886,6 +887,18 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           providers: providerStatuses,
           availableEditors,
         };
+
+      case WS_METHODS.serverGetCodexRateLimits: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => fetchCodexRateLimits(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message:
+                cause instanceof Error ? cause.message : "Failed to read Codex rate limits.",
+            }),
+        });
+      }
 
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);

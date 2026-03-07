@@ -349,6 +349,30 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards codex rate-limit requests to the websocket server method", async () => {
+    requestMock.mockResolvedValue({
+      fetchedAt: "2026-03-07T12:00:00.000Z",
+      limitId: "codex",
+      limitName: null,
+      planType: "team",
+      primary: null,
+      secondary: null,
+      credits: null,
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.server.getCodexRateLimits({
+      binaryPath: "/usr/local/bin/codex",
+      homePath: "/tmp/.codex",
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverGetCodexRateLimits, {
+      binaryPath: "/usr/local/bin/codex",
+      homePath: "/tmp/.codex",
+    });
+  });
+
   it("forwards full-thread diff requests to the orchestration websocket method", async () => {
     requestMock.mockResolvedValue({ diff: "patch" });
     const { createWsNativeApi } = await import("./wsNativeApi");

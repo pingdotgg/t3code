@@ -55,6 +55,38 @@ export const ServerConfig = Schema.Struct({
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
+export const ServerGetCodexRateLimitsInput = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyString),
+  homePath: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerGetCodexRateLimitsInput = typeof ServerGetCodexRateLimitsInput.Type;
+
+export const ServerCodexRateLimitWindow = Schema.Struct({
+  usedPercent: Schema.Number,
+  remainingPercent: Schema.Number,
+  windowDurationMins: Schema.Int,
+  resetsAt: IsoDateTime,
+});
+export type ServerCodexRateLimitWindow = typeof ServerCodexRateLimitWindow.Type;
+
+export const ServerCodexRateLimitCredits = Schema.Struct({
+  hasCredits: Schema.Boolean,
+  unlimited: Schema.Boolean,
+  balance: Schema.NullOr(Schema.Number),
+});
+export type ServerCodexRateLimitCredits = typeof ServerCodexRateLimitCredits.Type;
+
+export const ServerCodexRateLimits = Schema.Struct({
+  fetchedAt: IsoDateTime,
+  limitId: Schema.NullOr(TrimmedNonEmptyString),
+  limitName: Schema.NullOr(TrimmedNonEmptyString),
+  planType: Schema.NullOr(TrimmedNonEmptyString),
+  primary: Schema.NullOr(ServerCodexRateLimitWindow),
+  secondary: Schema.NullOr(ServerCodexRateLimitWindow),
+  credits: Schema.NullOr(ServerCodexRateLimitCredits),
+});
+export type ServerCodexRateLimits = typeof ServerCodexRateLimits.Type;
+
 export const ServerUpsertKeybindingInput = KeybindingRule;
 export type ServerUpsertKeybindingInput = typeof ServerUpsertKeybindingInput.Type;
 

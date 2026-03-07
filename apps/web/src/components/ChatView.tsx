@@ -49,7 +49,11 @@ import {
 } from "@tanstack/react-virtual";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
-import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
+import {
+  serverCodexRateLimitsQueryOptions,
+  serverConfigQueryOptions,
+  serverQueryKeys,
+} from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -1181,6 +1185,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const codexBinaryPathOverride = settings.codexBinaryPath.trim();
+  const codexHomePathOverride = settings.codexHomePath.trim();
+  const codexRateLimitsQuery = useQuery(
+    serverCodexRateLimitsQueryOptions({
+      ...(codexBinaryPathOverride ? { binaryPath: codexBinaryPathOverride } : {}),
+      ...(codexHomePathOverride ? { homePath: codexHomePathOverride } : {}),
+      enabled: selectedProvider === "codex",
+    }),
+  );
   const workspaceEntriesQuery = useQuery(
     projectSearchEntriesQueryOptions({
       cwd: gitCwd,
@@ -1189,6 +1202,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       limit: 80,
     }),
   );
+  const codexRateLimitsErrorMessage =
+    codexRateLimitsQuery.error instanceof Error ? codexRateLimitsQuery.error.message : null;
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
@@ -3630,6 +3645,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     lockedProvider={lockedProvider}
                     modelOptionsByProvider={modelOptionsByProvider}
                     serviceTierSetting={selectedServiceTierSetting}
+                    codexRateLimits={codexRateLimitsQuery.data}
                     onProviderModelChange={onProviderModelSelect}
                   />
 
@@ -5349,6 +5365,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
   serviceTierSetting: AppServiceTier;
   disabled?: boolean;
+  codexRateLimits?: ReturnType<typeof useQuery<any>>["data"];
   onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -5388,6 +5405,36 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         </span>
       </MenuTrigger>
       <MenuPopup align="start">
+        {props.provider === "codex" && props.codexRateLimits ? (
+          <div className="px-2 py-2 border-b border-border/50">
+            <div className="flex items-center gap-3 text-xs">
+              <div className="flex-1">
+                <div className="font-medium text-foreground">
+                  {Math.round(props.codexRateLimits.primary?.remainingPercent ?? 0)}%
+                </div>
+                <div className="text-muted-foreground">5h</div>
+                {props.codexRateLimits.primary?.resetsAt ? (
+                  <div className="text-[10px] text-muted-foreground/70">
+                    {new Date(props.codexRateLimits.primary.resetsAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                  </div>
+                ) : null}
+              </div>
+              {props.codexRateLimits.secondary ? (
+                <div className="flex-1">
+                  <div className="font-medium text-foreground">
+                    {Math.round(props.codexRateLimits.secondary.remainingPercent)}%
+                  </div>
+                  <div className="text-muted-foreground">Weekly</div>
+                  {props.codexRateLimits.secondary.resetsAt ? (
+                    <div className="text-[10px] text-muted-foreground/70">
+                      {new Date(props.codexRateLimits.secondary.resetsAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
         {AVAILABLE_PROVIDER_OPTIONS.map((option) => {
           const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
           const isDisabledByProviderLock =

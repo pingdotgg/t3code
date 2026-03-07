@@ -20,7 +20,11 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
-import type { ServerConfig } from "./server";
+import type {
+  ServerCodexRateLimits,
+  ServerConfig,
+  ServerGetCodexRateLimitsInput,
+} from "./server";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -136,6 +140,7 @@ export interface NativeApi {
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
+    getCodexRateLimits: (input: ServerGetCodexRateLimitsInput) => Promise<ServerCodexRateLimits>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
   };
   orchestration: {
