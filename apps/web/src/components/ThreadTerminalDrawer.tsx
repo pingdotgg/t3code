@@ -1,8 +1,9 @@
 import { FitAddon } from "@xterm/addon-fit";
-import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
+import { GripVertical, Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
 import { type ThreadId } from "@t3tools/contracts";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import {
+  type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
@@ -24,6 +25,7 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_THREAD_TERMINAL_COUNT,
   type ThreadTerminalGroup,
+  type ThreadTerminalMoveDestination,
 } from "../types";
 import { readNativeApi } from "~/nativeApi";
 
@@ -448,10 +450,13 @@ interface ThreadTerminalDrawerProps {
   splitShortcutLabel?: string | undefined;
   newShortcutLabel?: string | undefined;
   closeShortcutLabel?: string | undefined;
+  onMoveTerminal: (terminalId: string, destination: ThreadTerminalMoveDestination) => void;
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
   onHeightChange: (height: number) => void;
 }
+
+type TerminalPaneDropZone = "before" | "after" | "center";
 
 interface TerminalActionButtonProps {
   label: string;
@@ -497,6 +502,7 @@ export default function ThreadTerminalDrawer({
   splitShortcutLabel,
   newShortcutLabel,
   closeShortcutLabel,
+  onMoveTerminal,
   onActiveTerminalChange,
   onCloseTerminal,
   onHeightChange,
@@ -512,6 +518,8 @@ export default function ThreadTerminalDrawer({
     startHeight: number;
   } | null>(null);
   const didResizeDuringDragRef = useRef(false);
+  const [draggedTerminalId, setDraggedTerminalId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<ThreadTerminalMoveDestination | null>(null);
 
   const normalizedTerminalIds = useMemo(() => {
     const cleaned = [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];
@@ -634,6 +642,111 @@ export default function ThreadTerminalDrawer({
     if (hasReachedTerminalLimit) return;
     onNewTerminal();
   }, [hasReachedTerminalLimit, onNewTerminal]);
+  const clearTerminalDragState = useCallback(() => {
+    setDraggedTerminalId(null);
+    setDropTarget(null);
+  }, []);
+
+  const commitTerminalDrop = useCallback(
+    (destination: ThreadTerminalMoveDestination) => {
+      if (!draggedTerminalId) {
+        return;
+      }
+      if (
+        (destination.type === "before" || destination.type === "after") &&
+        destination.targetTerminalId === draggedTerminalId
+      ) {
+        return;
+      }
+      onMoveTerminal(draggedTerminalId, destination);
+      onActiveTerminalChange(draggedTerminalId);
+      clearTerminalDragState();
+    },
+    [clearTerminalDragState, draggedTerminalId, onActiveTerminalChange, onMoveTerminal],
+  );
+
+  const handleTerminalDragStart = useCallback(
+    (terminalId: string) => (event: ReactDragEvent<HTMLElement>) => {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", terminalId);
+      setDraggedTerminalId(terminalId);
+      setDropTarget(null);
+    },
+    [],
+  );
+
+  const handleTerminalDragEnd = useCallback(() => {
+    clearTerminalDragState();
+  }, [clearTerminalDragState]);
+
+  const handleTerminalRowDragOver = useCallback(
+    (targetTerminalId: string) => (event: ReactDragEvent<HTMLDivElement>) => {
+      if (!draggedTerminalId || draggedTerminalId === targetTerminalId) {
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      const rect = event.currentTarget.getBoundingClientRect();
+      const ratio = (event.clientY - rect.top) / Math.max(rect.height, 1);
+      setDropTarget(
+        ratio < 0.25
+          ? { type: "before", targetTerminalId }
+          : { type: "after", targetTerminalId },
+      );
+    },
+    [draggedTerminalId],
+  );
+
+  const handleTerminalGroupDragOver = useCallback(
+    (targetGroupId: string) => (event: ReactDragEvent<HTMLButtonElement>) => {
+      if (!draggedTerminalId) {
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      setDropTarget({ type: "group", targetGroupId });
+    },
+    [draggedTerminalId],
+  );
+
+  const handleTerminalDropTargetLeave = useCallback(
+    (event: ReactDragEvent<HTMLElement>) => {
+      const nextTarget = event.relatedTarget;
+      if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+        return;
+      }
+      setDropTarget(null);
+    },
+    [],
+  );
+
+  const handlePaneDragOver = useCallback(
+    (targetTerminalId: string, zone: TerminalPaneDropZone) =>
+      (event: ReactDragEvent<HTMLDivElement>) => {
+        if (!draggedTerminalId || draggedTerminalId === targetTerminalId) {
+          return;
+        }
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setDropTarget({
+          type: zone === "before" ? "before" : "after",
+          targetTerminalId,
+        });
+      },
+    [draggedTerminalId],
+  );
+
+  const handlePaneDrop = useCallback(
+    (targetTerminalId: string, zone: TerminalPaneDropZone) =>
+      (event: ReactDragEvent<HTMLDivElement>) => {
+        event.preventDefault();
+        commitTerminalDrop({
+          type: zone === "before" ? "before" : "after",
+          targetTerminalId,
+        });
+      },
+    [commitTerminalDrop],
+  );
 
   useEffect(() => {
     onHeightChangeRef.current = onHeightChange;
@@ -790,7 +903,7 @@ export default function ThreadTerminalDrawer({
                 {visibleTerminalIds.map((terminalId) => (
                   <div
                     key={terminalId}
-                    className={`min-h-0 min-w-0 border-l first:border-l-0 ${
+                    className={`relative min-h-0 min-w-0 border-l first:border-l-0 ${
                       terminalId === resolvedActiveTerminalId ? "border-border" : "border-border/70"
                     }`}
                     onMouseDown={() => {
@@ -799,6 +912,40 @@ export default function ThreadTerminalDrawer({
                       }
                     }}
                   >
+                    {draggedTerminalId && draggedTerminalId !== terminalId && (
+                      <div className="absolute inset-0 z-10 grid grid-cols-[1fr_1.2fr_1fr] gap-1 p-1">
+                        <div
+                          className={`rounded border transition ${
+                            dropTarget?.type === "before" &&
+                            dropTarget.targetTerminalId === terminalId
+                              ? "border-primary bg-primary/14"
+                              : "border-transparent bg-background/0"
+                          }`}
+                          onDragOver={handlePaneDragOver(terminalId, "before")}
+                          onDrop={handlePaneDrop(terminalId, "before")}
+                        />
+                        <div
+                          className={`rounded border transition ${
+                            dropTarget?.type === "after" &&
+                            dropTarget.targetTerminalId === terminalId
+                              ? "border-primary bg-primary/10"
+                              : "border-transparent bg-background/0"
+                          }`}
+                          onDragOver={handlePaneDragOver(terminalId, "center")}
+                          onDrop={handlePaneDrop(terminalId, "center")}
+                        />
+                        <div
+                          className={`rounded border transition ${
+                            dropTarget?.type === "after" &&
+                            dropTarget.targetTerminalId === terminalId
+                              ? "border-primary bg-primary/14"
+                              : "border-transparent bg-background/0"
+                          }`}
+                          onDragOver={handlePaneDragOver(terminalId, "after")}
+                          onDrop={handlePaneDrop(terminalId, "after")}
+                        />
+                      </div>
+                    )}
                     <div className="h-full p-1">
                       <TerminalViewport
                         threadId={threadId}
@@ -816,7 +963,41 @@ export default function ThreadTerminalDrawer({
                 ))}
               </div>
             ) : (
-              <div className="h-full p-1">
+              <div className="relative h-full p-1">
+                {draggedTerminalId && draggedTerminalId !== resolvedActiveTerminalId && (
+                  <div className="absolute inset-1 z-10 grid grid-cols-[1fr_1.2fr_1fr] gap-1">
+                    <div
+                      className={`rounded border transition ${
+                        dropTarget?.type === "before" &&
+                        dropTarget.targetTerminalId === resolvedActiveTerminalId
+                          ? "border-primary bg-primary/14"
+                          : "border-transparent bg-background/0"
+                      }`}
+                      onDragOver={handlePaneDragOver(resolvedActiveTerminalId, "before")}
+                      onDrop={handlePaneDrop(resolvedActiveTerminalId, "before")}
+                    />
+                    <div
+                      className={`rounded border transition ${
+                        dropTarget?.type === "after" &&
+                        dropTarget.targetTerminalId === resolvedActiveTerminalId
+                          ? "border-primary bg-primary/10"
+                          : "border-transparent bg-background/0"
+                      }`}
+                      onDragOver={handlePaneDragOver(resolvedActiveTerminalId, "center")}
+                      onDrop={handlePaneDrop(resolvedActiveTerminalId, "center")}
+                    />
+                    <div
+                      className={`rounded border transition ${
+                        dropTarget?.type === "after" &&
+                        dropTarget.targetTerminalId === resolvedActiveTerminalId
+                          ? "border-primary bg-primary/14"
+                          : "border-transparent bg-background/0"
+                      }`}
+                      onDragOver={handlePaneDragOver(resolvedActiveTerminalId, "after")}
+                      onDrop={handlePaneDrop(resolvedActiveTerminalId, "after")}
+                    />
+                  </div>
+                )}
                 <TerminalViewport
                   key={resolvedActiveTerminalId}
                   threadId={threadId}
@@ -883,11 +1064,19 @@ export default function ThreadTerminalDrawer({
                         <button
                           type="button"
                           className={`flex w-full items-center rounded px-1 py-0.5 text-[10px] uppercase tracking-[0.08em] ${
-                            isGroupActive
+                            dropTarget?.type === "group" && dropTarget.targetGroupId === terminalGroup.id
+                              ? "bg-primary/12 text-foreground"
+                              : isGroupActive
                               ? "bg-accent/70 text-foreground"
                               : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                           }`}
                           onClick={() => onActiveTerminalChange(groupActiveTerminalId)}
+                          onDragOver={handleTerminalGroupDragOver(terminalGroup.id)}
+                          onDragLeave={handleTerminalDropTargetLeave}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            commitTerminalDrop({ type: "group", targetGroupId: terminalGroup.id });
+                          }}
                         >
                           {terminalGroup.terminalIds.length > 1
                             ? `Split ${groupIndex + 1}`
@@ -906,14 +1095,40 @@ export default function ThreadTerminalDrawer({
                           return (
                             <div
                               key={terminalId}
-                              className={`group flex items-center gap-1 rounded px-1 py-0.5 text-[11px] ${
+                              draggable={normalizedTerminalIds.length > 1}
+                              onDragStart={handleTerminalDragStart(terminalId)}
+                              onDragEnd={handleTerminalDragEnd}
+                              onDragOver={handleTerminalRowDragOver(terminalId)}
+                              onDragLeave={handleTerminalDropTargetLeave}
+                              onDrop={(event) => {
+                                event.preventDefault();
+                                if (dropTarget) {
+                                  commitTerminalDrop(dropTarget);
+                                }
+                              }}
+                              className={`group relative flex items-center gap-1 rounded px-1 py-0.5 text-[11px] ${
                                 isActive
                                   ? "bg-accent text-foreground"
                                   : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                              } ${
+                                draggedTerminalId === terminalId ? "opacity-45" : ""
                               }`}
                             >
+                              {dropTarget?.type === "before" &&
+                                dropTarget.targetTerminalId === terminalId && (
+                                  <div className="absolute inset-x-1 top-0 h-px bg-primary" />
+                                )}
+                              {dropTarget?.type === "after" &&
+                                dropTarget.targetTerminalId === terminalId && (
+                                  <div className="absolute inset-x-1 bottom-0 h-px bg-primary" />
+                                )}
                               {showGroupHeaders && (
                                 <span className="text-[10px] text-muted-foreground/80">└</span>
+                              )}
+                              {normalizedTerminalIds.length > 1 && (
+                                <span className="inline-flex shrink-0 cursor-grab items-center text-muted-foreground/70">
+                                  <GripVertical className="size-3" />
+                                </span>
                               )}
                               <button
                                 type="button"

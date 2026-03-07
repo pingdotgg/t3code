@@ -1,11 +1,43 @@
 import { ThreadId } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { selectThreadTerminalState, useTerminalStateStore } from "./terminalStateStore";
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-1");
 
+function createMemoryStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear() {
+      values.clear();
+    },
+    getItem(key) {
+      return values.get(key) ?? null;
+    },
+    key(index) {
+      return [...values.keys()][index] ?? null;
+    },
+    removeItem(key) {
+      values.delete(key);
+    },
+    setItem(key, value) {
+      values.set(key, value);
+    },
+  };
+}
+
 describe("terminalStateStore actions", () => {
+  beforeAll(() => {
+    Object.defineProperty(globalThis, "localStorage", {
+      value: createMemoryStorage(),
+      configurable: true,
+      writable: true,
+    });
+  });
+
   beforeEach(() => {
     if (typeof localStorage !== "undefined") {
       localStorage.clear();
@@ -84,6 +116,50 @@ describe("terminalStateStore actions", () => {
     expect(terminalState.terminalIds).toEqual(["default", "terminal-2"]);
     expect(terminalState.terminalGroups).toEqual([
       { id: "group-default", terminalIds: ["default", "terminal-2"] },
+    ]);
+  });
+
+  it("reorders terminals within a split group", () => {
+    const store = useTerminalStateStore.getState();
+    store.splitTerminal(THREAD_ID, "terminal-2");
+    store.splitTerminal(THREAD_ID, "terminal-3");
+
+    store.moveTerminal(THREAD_ID, "terminal-3", {
+      type: "before",
+      targetTerminalId: "default",
+    });
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(terminalState.activeTerminalId).toBe("terminal-3");
+    expect(terminalState.terminalIds).toEqual(["terminal-3", "default", "terminal-2"]);
+    expect(terminalState.terminalGroups).toEqual([
+      { id: "group-default", terminalIds: ["terminal-3", "default", "terminal-2"] },
+    ]);
+  });
+
+  it("moves a terminal into another group and turns it into a split", () => {
+    const store = useTerminalStateStore.getState();
+    store.newTerminal(THREAD_ID, "terminal-2");
+    store.newTerminal(THREAD_ID, "terminal-3");
+
+    store.moveTerminal(THREAD_ID, "terminal-3", {
+      type: "group",
+      targetGroupId: "group-default",
+    });
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(terminalState.activeTerminalId).toBe("terminal-3");
+    expect(terminalState.activeTerminalGroupId).toBe("group-default");
+    expect(terminalState.terminalIds).toEqual(["default", "terminal-3", "terminal-2"]);
+    expect(terminalState.terminalGroups).toEqual([
+      { id: "group-default", terminalIds: ["default", "terminal-3"] },
+      { id: "group-terminal-2", terminalIds: ["terminal-2"] },
     ]);
   });
 });

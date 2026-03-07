@@ -28,6 +28,20 @@ export interface ThreadTerminalGroup {
   terminalIds: string[];
 }
 
+export type ThreadTerminalMoveDestination =
+  | {
+      type: "before";
+      targetTerminalId: string;
+    }
+  | {
+      type: "after";
+      targetTerminalId: string;
+    }
+  | {
+      type: "group";
+      targetGroupId: string;
+    };
+
 export interface ChatImageAttachment {
   type: "image";
   id: string;

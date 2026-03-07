@@ -707,6 +707,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const storeSetTerminalHeight = useTerminalStateStore((s) => s.setTerminalHeight);
   const storeSplitTerminal = useTerminalStateStore((s) => s.splitTerminal);
   const storeNewTerminal = useTerminalStateStore((s) => s.newTerminal);
+  const storeMoveTerminal = useTerminalStateStore((s) => s.moveTerminal);
   const storeSetActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
 
@@ -3889,6 +3890,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
             splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
             newShortcutLabel={newTerminalShortcutLabel ?? undefined}
             closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+            onMoveTerminal={(terminalId, destination) =>
+              storeMoveTerminal(activeThread.id, terminalId, destination)
+            }
             onActiveTerminalChange={activateTerminal}
             onCloseTerminal={closeTerminal}
             onHeightChange={setTerminalHeight}
