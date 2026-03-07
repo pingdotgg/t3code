@@ -15,6 +15,51 @@ You can also just install the desktop app. It's cooler.
 
 Install the [desktop app from the Releases page](https://github.com/pingdotgg/t3code/releases)
 
+## Install (Desktop App)
+
+> [!WARNING]
+> All install methods below require [Codex CLI](https://github.com/openai/codex) to be installed and authorized **separately**. T3 Code is a GUI frontend — it does not bundle Codex.
+
+### macOS (Homebrew Cask)
+
+*Not yet published to a tap — cask scaffolding is in [`packaging/homebrew/`](packaging/homebrew/).*
+
+Once a tap is available:
+
+```bash
+brew install --cask t3code
+```
+
+Or install locally from the repo:
+
+```bash
+brew install --cask ./packaging/homebrew/Casks/t3code.rb
+```
+
+You can also download the `.dmg` directly from [Releases](https://github.com/pingdotgg/t3code/releases).
+
+### Arch Linux (AUR)
+
+*Not yet published to AUR — PKGBUILD is in [`packaging/arch/`](packaging/arch/).*
+
+Once published:
+
+```bash
+yay -S t3code-bin
+```
+
+### Linux (Ubuntu / Debian / Others)
+
+There is no `.deb` package yet. The recommended Linux install path is the AppImage:
+
+```bash
+curl -LO "https://github.com/pingdotgg/t3code/releases/download/v0.0.3/T3-Code-0.0.3-x86_64.AppImage"
+chmod +x T3-Code-0.0.3-x86_64.AppImage
+./T3-Code-0.0.3-x86_64.AppImage
+```
+
+> **Note:** AppImage requires FUSE. On Ubuntu 22.04+: `sudo apt install libfuse2`
+
 ## Some notes
 
 We are very very early in this project. Expect bugs.

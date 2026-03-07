@@ -1,0 +1,65 @@
+# Maintainer: Your Name <your-email@example.com>
+# https://aur.archlinux.org/packages/t3code-bin
+
+pkgname=t3code-bin
+_pkgname=t3code
+pkgver=0.0.3
+pkgrel=1
+pkgdesc="A minimal desktop GUI for coding agents (Codex, Claude Code)"
+arch=('x86_64')
+url="https://t3.codes"
+license=('MIT')
+depends=('fuse2' 'hicolor-icon-theme')
+optdepends=('codex: OpenAI Codex CLI (required for agent functionality)')
+provides=('t3code')
+conflicts=('t3code')
+options=(!strip)
+
+_appimage="T3-Code-${pkgver}-${CARCH}.AppImage"
+source=("${_appimage}::https://github.com/pingdotgg/t3code/releases/download/v${pkgver}/${_appimage}"
+        "t3code.desktop")
+sha256sums=('d5f2a47c81422d3bad64184fba6aafa34d0f8e664eeb7d302e707d37919ee596'
+            'SKIP')
+noextract=("${_appimage}")
+
+prepare() {
+    chmod +x "${_appimage}"
+    ./"${_appimage}" --appimage-extract >/dev/null 2>&1
+}
+
+package() {
+    install -d "${pkgdir}/opt/${_pkgname}"
+    cp -a "${srcdir}/squashfs-root/." "${pkgdir}/opt/${_pkgname}/"
+
+    # Launcher symlink
+    install -d "${pkgdir}/usr/bin"
+    ln -s "/opt/${_pkgname}/AppRun" "${pkgdir}/usr/bin/${_pkgname}"
+
+    # Desktop entry
+    install -Dm644 "${srcdir}/t3code.desktop" \
+        "${pkgdir}/usr/share/applications/t3code.desktop"
+
+    # Icons — extract from the AppImage squashfs if available
+    for size in 16 32 48 64 128 256 512 1024; do
+        _icon="${srcdir}/squashfs-root/usr/share/icons/hicolor/${size}x${size}/apps/t3-code.png"
+        if [[ -f "$_icon" ]]; then
+            install -Dm644 "$_icon" \
+                "${pkgdir}/usr/share/icons/hicolor/${size}x${size}/apps/t3code.png"
+        fi
+    done
+
+    # Fallback: install top-level icon from squashfs if present
+    if [[ -f "${srcdir}/squashfs-root/t3-code.png" ]]; then
+        install -Dm644 "${srcdir}/squashfs-root/t3-code.png" \
+            "${pkgdir}/usr/share/icons/hicolor/256x256/apps/t3code.png"
+    fi
+
+    # License
+    if [[ -f "${srcdir}/squashfs-root/LICENSE" ]]; then
+        install -Dm644 "${srcdir}/squashfs-root/LICENSE" \
+            "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+    fi
+
+    # Fix permissions (AppImage extracts as root-owned)
+    chmod -R a+rX "${pkgdir}/opt/${_pkgname}"
+}
