@@ -79,7 +79,11 @@ import {
   formatElapsed,
   formatTimestamp,
 } from "../session-logic";
-import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX, isScrollContainerNearBottom } from "../chat-scroll";
+import {
+  AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
+  isScrollContainerNearBottom,
+  shouldShowScrollToBottomButton,
+} from "../chat-scroll";
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
@@ -124,6 +128,7 @@ import ChatMarkdown from "./ChatMarkdown";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import {
+  ArrowDownIcon,
   BotIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -638,6 +643,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     Record<string, string[]>
   >({});
   const [composerCursor, setComposerCursor] = useState(() => prompt.length);
+  const [showScrollToBottomButton, setShowScrollToBottomButton] = useState(false);
   const [composerTrigger, setComposerTrigger] = useState<ComposerTrigger | null>(() =>
     detectComposerTrigger(prompt, prompt.length),
   );
@@ -670,10 +676,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const sendInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
+  const syncScrollToBottomButtonVisibility = useCallback((scrollContainer: HTMLDivElement | null) => {
+    const nextVisible = scrollContainer ? shouldShowScrollToBottomButton(scrollContainer) : false;
+    setShowScrollToBottomButton((current) => (current === nextVisible ? current : nextVisible));
+  }, []);
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
     messagesScrollRef.current = element;
     setMessagesScrollElement(element);
-  }, []);
+    syncScrollToBottomButtonVisibility(element);
+  }, [syncScrollToBottomButtonVisibility]);
 
   const terminalState = useTerminalStateStore((state) =>
     selectThreadTerminalState(state.terminalStateByThreadId, threadId),
@@ -1693,7 +1704,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior });
     lastKnownScrollTopRef.current = scrollContainer.scrollTop;
     shouldAutoScrollRef.current = true;
-  }, []);
+    syncScrollToBottomButtonVisibility(scrollContainer);
+  }, [syncScrollToBottomButtonVisibility]);
   const cancelPendingStickToBottom = useCallback(() => {
     const pendingFrame = pendingAutoScrollFrameRef.current;
     if (pendingFrame === null) return;
@@ -1747,9 +1759,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [cancelPendingInteractionAnchorAdjustment],
   );
-  const forceStickToBottom = useCallback(() => {
+  const forceStickToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     cancelPendingStickToBottom();
-    scrollMessagesToBottom();
+    scrollMessagesToBottom(behavior);
     scheduleStickToBottom();
   }, [cancelPendingStickToBottom, scheduleStickToBottom, scrollMessagesToBottom]);
   const onMessagesScroll = useCallback(() => {
@@ -1781,7 +1793,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     lastKnownScrollTopRef.current = currentScrollTop;
-  }, []);
+    syncScrollToBottomButtonVisibility(scrollContainer);
+  }, [syncScrollToBottomButtonVisibility]);
   const onMessagesWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if (event.deltaY < 0) {
       pendingUserScrollUpIntentRef.current = true;
@@ -1813,6 +1826,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const onMessagesTouchEnd = useCallback((_event: React.TouchEvent<HTMLDivElement>) => {
     lastTouchClientYRef.current = null;
   }, []);
+  const onScrollToBottomButtonClick = useCallback(() => {
+    setShowScrollToBottomButton(false);
+    forceStickToBottom("smooth");
+  }, [forceStickToBottom]);
   useEffect(() => {
     return () => {
       cancelPendingStickToBottom();
@@ -1820,8 +1837,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     };
   }, [cancelPendingInteractionAnchorAdjustment, cancelPendingStickToBottom]);
   useLayoutEffect(() => {
-    if (!activeThread?.id) return;
+    if (!activeThread?.id) {
+      setShowScrollToBottomButton(false);
+      return;
+    }
     shouldAutoScrollRef.current = true;
+    setShowScrollToBottomButton(false);
     scheduleStickToBottom();
     const timeout = window.setTimeout(() => {
       const scrollContainer = messagesScrollRef.current;
@@ -3348,43 +3369,61 @@ export default function ChatView({ threadId }: ChatViewProps) {
       <PlanModePanel activePlan={activePlan} />
 
       {/* Messages */}
-      <div
-        ref={setMessagesScrollContainerRef}
-        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
-        onScroll={onMessagesScroll}
-        onClickCapture={onMessagesClickCapture}
-        onWheel={onMessagesWheel}
-        onPointerDown={onMessagesPointerDown}
-        onPointerUp={onMessagesPointerUp}
-        onPointerCancel={onMessagesPointerCancel}
-        onTouchStart={onMessagesTouchStart}
-        onTouchMove={onMessagesTouchMove}
-        onTouchEnd={onMessagesTouchEnd}
-        onTouchCancel={onMessagesTouchEnd}
-      >
-        <MessagesTimeline
-          key={activeThread.id}
-          hasMessages={timelineEntries.length > 0}
-          isWorking={isWorking}
-          activeTurnInProgress={!latestTurnSettled}
-          activeTurnStartedAt={activeLatestTurn?.startedAt ?? null}
-          scrollContainer={messagesScrollElement}
-          timelineEntries={timelineEntries}
-          completionDividerBeforeEntryId={completionDividerBeforeEntryId}
-          completionSummary={completionSummary}
-          turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
-          nowIso={nowIso}
-          expandedWorkGroups={expandedWorkGroups}
-          onToggleWorkGroup={onToggleWorkGroup}
-          onOpenTurnDiff={onOpenTurnDiff}
-          revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-          onRevertUserMessage={onRevertUserMessage}
-          isRevertingCheckpoint={isRevertingCheckpoint}
-          onImageExpand={onExpandTimelineImage}
-          markdownCwd={gitCwd ?? undefined}
-          resolvedTheme={resolvedTheme}
-          workspaceRoot={activeProject?.cwd ?? undefined}
-        />
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={setMessagesScrollContainerRef}
+          className="h-full min-h-0 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
+          onScroll={onMessagesScroll}
+          onClickCapture={onMessagesClickCapture}
+          onWheel={onMessagesWheel}
+          onPointerDown={onMessagesPointerDown}
+          onPointerUp={onMessagesPointerUp}
+          onPointerCancel={onMessagesPointerCancel}
+          onTouchStart={onMessagesTouchStart}
+          onTouchMove={onMessagesTouchMove}
+          onTouchEnd={onMessagesTouchEnd}
+          onTouchCancel={onMessagesTouchEnd}
+        >
+          <MessagesTimeline
+            key={activeThread.id}
+            hasMessages={timelineEntries.length > 0}
+            isWorking={isWorking}
+            activeTurnInProgress={!latestTurnSettled}
+            activeTurnStartedAt={activeLatestTurn?.startedAt ?? null}
+            scrollContainer={messagesScrollElement}
+            timelineEntries={timelineEntries}
+            completionDividerBeforeEntryId={completionDividerBeforeEntryId}
+            completionSummary={completionSummary}
+            turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+            nowIso={nowIso}
+            expandedWorkGroups={expandedWorkGroups}
+            onToggleWorkGroup={onToggleWorkGroup}
+            onOpenTurnDiff={onOpenTurnDiff}
+            revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
+            onRevertUserMessage={onRevertUserMessage}
+            isRevertingCheckpoint={isRevertingCheckpoint}
+            onImageExpand={onExpandTimelineImage}
+            markdownCwd={gitCwd ?? undefined}
+            resolvedTheme={resolvedTheme}
+            workspaceRoot={activeProject?.cwd ?? undefined}
+          />
+        </div>
+        {showScrollToBottomButton ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 px-3 sm:bottom-4 sm:px-5">
+            <div className="mx-auto flex max-w-3xl justify-center">
+              <Button
+                variant="default"
+                size="sm"
+                className="pointer-events-auto h-auto min-h-10 rounded-full border-primary px-4 py-2 shadow-lg shadow-primary/25 hover:!bg-primary hover:brightness-95 focus-visible:!bg-primary focus-visible:brightness-95 active:!bg-primary active:brightness-90"
+                onClick={onScrollToBottomButtonClick}
+                aria-label="Scroll to bottom"
+              >
+                <ArrowDownIcon aria-hidden="true" className="size-4" />
+                <span>Scroll to bottom</span>
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {/* Input bar */}

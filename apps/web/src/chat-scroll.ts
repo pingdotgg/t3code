@@ -22,3 +22,10 @@ export function isScrollContainerNearBottom(
   const distanceFromBottom = scrollHeight - clientHeight - scrollTop;
   return distanceFromBottom <= threshold;
 }
+
+export function shouldShowScrollToBottomButton(
+  position: ScrollPosition,
+  thresholdPx = AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
+): boolean {
+  return !isScrollContainerNearBottom(position, thresholdPx);
+}
