@@ -34,7 +34,7 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
-import { resolveBundledCopilotCliPath } from "./copilotCliPath.ts";
+import { normalizeCopilotCliPathOverride, resolveBundledCopilotCliPath } from "./copilotCliPath.ts";
 import { CopilotAdapter, type CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
 import type {
   ProviderThreadSnapshot,
@@ -1125,7 +1125,8 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
         }
 
         const cliPath =
-          trimToUndefined(input.providerOptions?.copilot?.cliPath) ?? resolveBundledCopilotCliPath();
+          normalizeCopilotCliPathOverride(input.providerOptions?.copilot?.cliPath) ??
+          resolveBundledCopilotCliPath();
         const configDir = trimToUndefined(input.providerOptions?.copilot?.configDir);
         const resumeSessionId = extractResumeSessionId(input.resumeCursor);
         const clientOptions: CopilotClientOptions = {

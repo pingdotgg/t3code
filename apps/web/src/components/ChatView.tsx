@@ -913,8 +913,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return Object.keys(codexOptions).length > 0 ? { codex: codexOptions } : undefined;
     }
 
+    const normalizedCopilotCliPath = normalizeCopilotCliPathOverride(settings.copilotCliPath);
     const copilotOptions = {
-      ...(settings.copilotCliPath.trim().length > 0 ? { cliPath: settings.copilotCliPath.trim() } : {}),
+      ...(normalizedCopilotCliPath ? { cliPath: normalizedCopilotCliPath } : {}),
       ...(settings.copilotConfigDir.trim().length > 0
         ? { configDir: settings.copilotConfigDir.trim() }
         : {}),
@@ -5498,6 +5499,12 @@ function resolveModelForProviderPicker(
 
 function formatCopilotBillingMultiplier(multiplier: number): string {
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(multiplier)}x`;
+}
+
+function normalizeCopilotCliPathOverride(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return /^copilot(?:\.(?:exe|cmd|bat))?$/i.test(trimmed) ? null : trimmed;
 }
 
 function formatCopilotQuotaLabel(key: string): string {

@@ -45,6 +45,10 @@ class MockWebSocket {
     this.emit("message", { data });
   }
 
+  error() {
+    this.emit("error");
+  }
+
   private emit(type: WsEventType, event?: { data?: unknown }) {
     const listeners = this.listeners.get(type);
     if (!listeners) return;
@@ -171,5 +175,38 @@ describe("WsTransport", () => {
     });
 
     transport.dispose();
+  });
+
+  it("reconnects after an initial websocket error before open", async () => {
+    vi.useFakeTimers();
+    const transport = new WsTransport("ws://localhost:3020");
+    const firstSocket = getSocket();
+
+    const requestPromise = transport.request("projects.list");
+    firstSocket.error();
+
+    vi.advanceTimersByTime(500);
+    const secondSocket = getSocket();
+    expect(secondSocket).not.toBe(firstSocket);
+
+    secondSocket.open();
+    vi.advanceTimersByTime(50);
+    const sent = secondSocket.sent.at(-1);
+    if (!sent) {
+      throw new Error("Expected request envelope to be resent after reconnect");
+    }
+
+    const requestEnvelope = JSON.parse(sent) as { id: string };
+    secondSocket.serverMessage(
+      JSON.stringify({
+        id: requestEnvelope.id,
+        result: { projects: ["ok"] },
+      }),
+    );
+
+    await expect(requestPromise).resolves.toEqual({ projects: ["ok"] });
+
+    transport.dispose();
+    vi.useRealTimers();
   });
 });

@@ -19,7 +19,10 @@ import type {
   PrContentGenerationInput,
   PrContentGenerationResult,
 } from "../Services/TextGeneration.ts";
-import { resolveBundledCopilotCliPath } from "../../provider/Layers/copilotCliPath.ts";
+import {
+  normalizeCopilotCliPathOverride,
+  resolveBundledCopilotCliPath,
+} from "../../provider/Layers/copilotCliPath.ts";
 
 const COPILOT_TIMEOUT_MS = 180_000;
 const DENY_PERMISSION_RESULT: PermissionRequestResult = {
@@ -145,7 +148,8 @@ export const makeCopilotTextGenerationLive = (options?: CopilotTextGenerationLiv
       }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
         Effect.gen(function* () {
           const cliPath =
-            input.providerOptions?.copilot?.cliPath ?? resolveBundledCopilotCliPath();
+            normalizeCopilotCliPathOverride(input.providerOptions?.copilot?.cliPath) ??
+            resolveBundledCopilotCliPath();
           const configDir = input.providerOptions?.copilot?.configDir;
           const model = input.model ?? DEFAULT_MODEL_BY_PROVIDER.copilot;
           const reasoningEffort = input.modelOptions?.copilot?.reasoningEffort;
