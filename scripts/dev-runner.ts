@@ -13,8 +13,6 @@ const BASE_SERVER_PORT = 3773;
 const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;
 const MAX_PORT = 65535;
-const TURBO_SHUTDOWN_GRACE_PERIOD = "1500 millis";
-const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
 export const DEFAULT_DEV_STATE_DIR = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(homedir(), ".t3", "dev"),
@@ -45,7 +43,7 @@ class DevRunnerError extends Data.TaggedError("DevRunnerError")<{
   readonly cause?: unknown;
 }> {}
 
-type ForwardedSignal = (typeof FORWARDED_SIGNALS)[number];
+type ForwardedSignal = "SIGINT" | "SIGTERM" | "SIGHUP";
 
 function signalToExitCode(signal: NodeJS.Signals): number {
   switch (signal) {
@@ -78,7 +76,7 @@ function runTurboProcess(
       stderr: "inherit",
       env,
       extendEnv: false,
-      forceKillAfter: TURBO_SHUTDOWN_GRACE_PERIOD,
+      forceKillAfter: "1500 millis",
     });
 
     return yield* Effect.callback<number, DevRunnerError>((resume) => {
@@ -95,7 +93,7 @@ function runTurboProcess(
       };
 
       const stopChild = (signal: ForwardedSignal) =>
-        child.kill({ killSignal: signal, forceKillAfter: TURBO_SHUTDOWN_GRACE_PERIOD }).pipe(
+        child.kill({ killSignal: signal, forceKillAfter: "1500 millis" }).pipe(
           Effect.match({
             onFailure: (cause) => {
               settle(Effect.fail(toDevRunnerError("failed to stop turbo", cause)));
@@ -118,7 +116,7 @@ function runTurboProcess(
         Effect.runFork(stopChild(signal));
       };
 
-      const handlers: Record<ForwardedSignal, () => void> = {
+      const signalHandlers = {
         SIGINT: () => {
           forwardSignal("SIGINT");
         },
@@ -128,17 +126,21 @@ function runTurboProcess(
         SIGHUP: () => {
           forwardSignal("SIGHUP");
         },
-      };
+      } satisfies Record<ForwardedSignal, () => void>;
 
-      const cleanup = () => {
-        for (const signal of FORWARDED_SIGNALS) {
-          process.off(signal, handlers[signal]);
+      const updateSignalHandlers = (method: "on" | "off") => {
+        for (const [signal, handler] of Object.entries(signalHandlers) as Array<
+          [ForwardedSignal, () => void]
+        >) {
+          process[method](signal, handler);
         }
       };
 
-      for (const signal of FORWARDED_SIGNALS) {
-        process.on(signal, handlers[signal]);
-      }
+      const cleanup = () => {
+        updateSignalHandlers("off");
+      };
+
+      updateSignalHandlers("on");
 
       Effect.runFork(
         child.exitCode.pipe(
@@ -167,7 +169,7 @@ function runTurboProcess(
             Effect.ignore(
               child.kill({
                 killSignal: "SIGTERM",
-                forceKillAfter: TURBO_SHUTDOWN_GRACE_PERIOD,
+                forceKillAfter: "1500 millis",
               }),
             ),
           );
@@ -590,16 +592,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         message: `turbo exited with code ${exitCode}`,
       });
     }
-  }).pipe(
-    Effect.mapError((cause) =>
-      cause instanceof DevRunnerError
-        ? cause
-        : new DevRunnerError({
-            message: cause instanceof Error ? cause.message : "dev-runner failed",
-            cause,
-          }),
-    ),
-  );
+  });
 }
 
 const devRunnerCli = Command.make("dev-runner", {
