@@ -334,18 +334,18 @@ In Default mode, strongly prefer making reasonable assumptions and executing the
 
 function mapCodexRuntimeMode(runtimeMode: RuntimeMode): {
   readonly approvalPolicy: "on-request" | "never";
-  readonly sandbox: "workspace-write" | "danger-full-access";
+  readonly sandbox: "workspaceWrite" | "dangerFullAccess";
 } {
   if (runtimeMode === "approval-required") {
     return {
       approvalPolicy: "on-request",
-      sandbox: "workspace-write",
+      sandbox: "workspaceWrite",
     };
   }
 
   return {
     approvalPolicy: "never",
-    sandbox: "danger-full-access",
+    sandbox: "dangerFullAccess",
   };
 }
 
