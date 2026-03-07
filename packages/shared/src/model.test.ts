@@ -14,6 +14,8 @@ describe("normalizeModelSlug", () => {
   it("maps known aliases to canonical slugs", () => {
     expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
     expect(normalizeModelSlug("gpt-5.3")).toBe("gpt-5.3-codex");
+    expect(normalizeModelSlug("5.1-mini")).toBe("gpt-5.1-codex-mini");
+    expect(normalizeModelSlug("gpt-5.1-max")).toBe("gpt-5.1-codex-max");
   });
 
   it("returns null for empty or missing values", () => {

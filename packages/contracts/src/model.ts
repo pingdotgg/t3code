@@ -23,6 +23,8 @@ type ModelOption = {
 export const MODEL_OPTIONS_BY_PROVIDER = {
   codex: [
     { slug: "gpt-5.4", name: "GPT-5.4" },
+    { slug: "gpt-5.1-codex-max", name: "GPT-5.1 Codex Max" },
+    { slug: "gpt-5.1-codex-mini", name: "GPT-5.1 Codex Mini" },
     { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
     { slug: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark" },
     { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
@@ -45,6 +47,10 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER = {
     "gpt-5.3": "gpt-5.3-codex",
     "5.3-spark": "gpt-5.3-codex-spark",
     "gpt-5.3-spark": "gpt-5.3-codex-spark",
+    "5.1-mini": "gpt-5.1-codex-mini",
+    "gpt-5.1-mini": "gpt-5.1-codex-mini",
+    "5.1-max": "gpt-5.1-codex-max",
+    "gpt-5.1-max": "gpt-5.1-codex-max",
   },
 } as const satisfies Record<ProviderKind, Record<string, ModelSlug>>;
 
