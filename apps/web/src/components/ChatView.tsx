@@ -195,7 +195,7 @@ import {
   setupProjectScript,
 } from "~/projectScripts";
 import { Toggle } from "./ui/toggle";
-import { SidebarTrigger } from "./ui/sidebar";
+import { SidebarTrigger, useSidebar } from "./ui/sidebar";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import {
@@ -590,6 +590,7 @@ interface ChatViewProps {
 }
 
 export default function ChatView({ threadId }: ChatViewProps) {
+  const { open: sidebarOpen } = useSidebar();
   const threads = useStore((store) => store.threads);
   const projects = useStore((store) => store.projects);
   const markThreadVisited = useStore((store) => store.markThreadVisited);
@@ -3364,7 +3365,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           </header>
         )}
         {isElectron && (
-          <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
+          <div className={cn("drag-region flex h-[52px] shrink-0 items-center border-b border-border pr-5", sidebarOpen ? "pl-5" : "pl-[82px]")}>
+            <SidebarTrigger className="mr-3 size-7 shrink-0" />
             <span className="text-xs text-muted-foreground/50">No active thread</span>
           </div>
         )}
@@ -3382,8 +3384,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {/* Top bar */}
       <header
         className={cn(
-          "border-b border-border px-3 sm:px-5",
-          isElectron ? "drag-region flex h-[52px] items-center" : "py-2 sm:py-3",
+          "border-b border-border",
+          isElectron ? "drag-region flex h-[52px] items-center" : "px-3 py-2 sm:px-5 sm:py-3",
+          isElectron && (sidebarOpen ? "px-3 sm:px-5" : "pl-[82px] pr-3 sm:pr-5"),
         )}
       >
         <ChatHeader

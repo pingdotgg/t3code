@@ -20,7 +20,8 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
-import { SidebarInset } from "~/components/ui/sidebar";
+import { cn } from "~/lib/utils";
+import { SidebarInset, SidebarTrigger, useSidebar } from "~/components/ui/sidebar";
 
 const THEME_OPTIONS = [
   {
@@ -87,6 +88,7 @@ function patchCustomModels(provider: ProviderKind, models: string[]) {
 }
 
 function SettingsRouteView() {
+  const { open: sidebarOpen } = useSidebar();
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
@@ -183,7 +185,8 @@ function SettingsRouteView() {
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
         {isElectron && (
-          <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
+          <div className={cn("drag-region flex h-[52px] shrink-0 items-center border-b border-border pr-5", sidebarOpen ? "pl-5" : "pl-[82px]")}>
+            <SidebarTrigger className="mr-3 size-7 shrink-0" />
             <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
               Settings
             </span>
