@@ -13,7 +13,6 @@ const BASE_SERVER_PORT = 3773;
 const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;
 const MAX_PORT = 65535;
-const TURBO_SHUTDOWN_GRACE_PERIOD_MS = "1500 millis";
 
 export const DEFAULT_DEV_STATE_DIR = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(homedir(), ".t3", "dev"),
@@ -456,7 +455,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         stderr: "inherit",
         env,
         extendEnv: false,
-        forceKillAfter: TURBO_SHUTDOWN_GRACE_PERIOD_MS,
+        forceKillAfter: "1500 millis",
       },
     );
 
