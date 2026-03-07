@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -7,12 +8,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { NetService } from "@t3tools/shared/Net";
 import { Config, Data, Effect, Hash, Layer, Logger, Option, Path, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
-import { ChildProcess } from "effect/unstable/process";
 
 const BASE_SERVER_PORT = 3773;
 const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;
 const MAX_PORT = 65535;
+const TURBO_SHUTDOWN_GRACE_PERIOD_MS = 1_500;
 
 export const DEFAULT_DEV_STATE_DIR = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(homedir(), ".t3", "dev"),
@@ -42,6 +43,158 @@ class DevRunnerError extends Data.TaggedError("DevRunnerError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
+
+function signalToExitCode(signal: NodeJS.Signals): number {
+  switch (signal) {
+    case "SIGINT":
+      return 130;
+    case "SIGHUP":
+      return 129;
+    case "SIGTERM":
+      return 143;
+    default:
+      return 1;
+  }
+}
+
+function killProcessTree(
+  child: ChildProcess,
+  signal: NodeJS.Signals = "SIGTERM",
+): void {
+  if (process.platform === "win32" && child.pid !== undefined) {
+    try {
+      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+      return;
+    } catch {
+      // Fall back to direct kill when taskkill is unavailable.
+    }
+  }
+
+  if (process.platform !== "win32" && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall back to direct kill when the process group no longer exists.
+    }
+  }
+
+  try {
+    child.kill(signal);
+  } catch {
+    // Ignore shutdown races during cleanup.
+  }
+}
+
+function spawnTurboProcess(
+  args: ReadonlyArray<string>,
+  env: NodeJS.ProcessEnv,
+): Effect.Effect<number, DevRunnerError> {
+  return Effect.callback<number, DevRunnerError>((resume) => {
+    let child: ChildProcess;
+
+    try {
+      child = spawn("turbo", [...args], {
+        stdio: "inherit",
+        env,
+        detached: process.platform !== "win32",
+      });
+    } catch (cause) {
+      resume(
+        Effect.fail(
+          new DevRunnerError({
+            message: cause instanceof Error ? cause.message : "failed to spawn turbo",
+            cause,
+          }),
+        ),
+      );
+      return Effect.void;
+    }
+
+    let settled = false;
+    let shutdownTimer: ReturnType<typeof setTimeout> | undefined;
+    let forwardedSignal: NodeJS.Signals | undefined;
+
+    const cleanup = () => {
+      process.off("SIGINT", onSigInt);
+      process.off("SIGTERM", onSigTerm);
+      process.off("SIGHUP", onSigHup);
+
+      if (shutdownTimer !== undefined) {
+        clearTimeout(shutdownTimer);
+        shutdownTimer = undefined;
+      }
+    };
+
+    const settle = (effect: Effect.Effect<number, DevRunnerError>) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resume(effect);
+    };
+
+    const beginShutdown = (signal: NodeJS.Signals) => {
+      if (forwardedSignal !== undefined) {
+        return;
+      }
+
+      forwardedSignal = signal;
+      killProcessTree(child, signal);
+      shutdownTimer = setTimeout(() => {
+        killProcessTree(child, "SIGKILL");
+      }, TURBO_SHUTDOWN_GRACE_PERIOD_MS);
+      shutdownTimer.unref();
+    };
+
+    const onSigInt = () => {
+      beginShutdown("SIGINT");
+    };
+    const onSigTerm = () => {
+      beginShutdown("SIGTERM");
+    };
+    const onSigHup = () => {
+      beginShutdown("SIGHUP");
+    };
+
+    process.on("SIGINT", onSigInt);
+    process.on("SIGTERM", onSigTerm);
+    process.on("SIGHUP", onSigHup);
+
+    child.once("error", (cause) => {
+      settle(
+        Effect.fail(
+          new DevRunnerError({
+            message: cause instanceof Error ? cause.message : "turbo process failed",
+            cause,
+          }),
+        ),
+      );
+    });
+
+    child.once("close", (code, signal) => {
+      if (forwardedSignal !== undefined) {
+        process.exitCode = signalToExitCode(forwardedSignal);
+        settle(Effect.succeed(0));
+        return;
+      }
+
+      if (signal !== null) {
+        process.exitCode = signalToExitCode(signal);
+        settle(Effect.succeed(0));
+        return;
+      }
+
+      settle(Effect.succeed(code ?? 0));
+    });
+
+    return Effect.sync(() => {
+      cleanup();
+      killProcessTree(child, "SIGTERM");
+    });
+  });
+}
 
 const optionalStringConfig = (name: string): Config.Config<string | undefined> =>
   Config.string(name).pipe(
@@ -446,34 +599,13 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       return;
     }
 
-    const child = yield* ChildProcess.make(
-      "turbo",
-      [...MODE_ARGS[input.mode], ...input.turboArgs],
-      {
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-        env,
-        extendEnv: false,
-      },
-    );
-
-    const exitCode = yield* child.exitCode;
+    const exitCode = yield* spawnTurboProcess([...MODE_ARGS[input.mode], ...input.turboArgs], env);
     if (exitCode !== 0) {
       return yield* new DevRunnerError({
         message: `turbo exited with code ${exitCode}`,
       });
     }
-  }).pipe(
-    Effect.mapError((cause) =>
-      cause instanceof DevRunnerError
-        ? cause
-        : new DevRunnerError({
-            message: cause instanceof Error ? cause.message : "dev-runner failed",
-            cause,
-          }),
-    ),
-  );
+  });
 }
 
 const devRunnerCli = Command.make("dev-runner", {
