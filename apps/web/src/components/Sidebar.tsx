@@ -312,6 +312,24 @@ export default function Sidebar() {
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
   );
+  const sortedProjects = useMemo(() => {
+    const latestUpdateByProjectId = new Map<ProjectId, number>();
+    for (const thread of threads) {
+      const threadTimestamp = Math.max(
+        new Date(thread.session?.updatedAt ?? thread.createdAt).getTime(),
+        new Date(thread.createdAt).getTime(),
+      );
+      const existing = latestUpdateByProjectId.get(thread.projectId) ?? 0;
+      if (threadTimestamp > existing) {
+        latestUpdateByProjectId.set(thread.projectId, threadTimestamp);
+      }
+    }
+    return [...projects].toSorted((a, b) => {
+      const aTime = latestUpdateByProjectId.get(a.id) ?? 0;
+      const bTime = latestUpdateByProjectId.get(b.id) ?? 0;
+      return bTime - aTime;
+    });
+  }, [projects, threads]);
   const threadGitTargets = useMemo(
     () =>
       threads.map((thread) => ({
@@ -1026,7 +1044,7 @@ export default function Sidebar() {
       <SidebarContent className="gap-0">
         <SidebarGroup className="px-2 py-2">
           <SidebarMenu>
-            {projects.map((project) => {
+            {sortedProjects.map((project) => {
               const projectThreads = threads
                 .filter((thread) => thread.projectId === project.id)
                 .toSorted((a, b) => {
