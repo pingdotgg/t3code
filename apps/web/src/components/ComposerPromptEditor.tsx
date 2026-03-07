@@ -139,6 +139,113 @@ function $createComposerMentionNode(path: string): ComposerMentionNode {
   return $applyNodeReplacement(new ComposerMentionNode(path));
 }
 
+// ── Skill Node ────────────────────────────────────────────────────────
+
+type SerializedComposerSkillNode = Spread<
+  {
+    skillName: string;
+    type: "composer-skill";
+    version: 1;
+  },
+  SerializedTextNode
+>;
+
+class ComposerSkillNode extends TextNode {
+  __skillName: string;
+
+  static override getType(): string {
+    return "composer-skill";
+  }
+
+  static override clone(node: ComposerSkillNode): ComposerSkillNode {
+    return new ComposerSkillNode(node.__skillName, node.__key);
+  }
+
+  static override importJSON(serializedNode: SerializedComposerSkillNode): ComposerSkillNode {
+    return $createComposerSkillNode(serializedNode.skillName);
+  }
+
+  constructor(skillName: string, key?: NodeKey) {
+    const normalizedName = skillName.startsWith("$") ? skillName.slice(1) : skillName;
+    super(`$${normalizedName}`, key);
+    this.__skillName = normalizedName;
+  }
+
+  override exportJSON(): SerializedComposerSkillNode {
+    return {
+      ...super.exportJSON(),
+      skillName: this.__skillName,
+      type: "composer-skill",
+      version: 1,
+    };
+  }
+
+  override createDOM(_config: EditorConfig): HTMLElement {
+    const dom = document.createElement("span");
+    dom.className =
+      "inline-flex select-none items-center gap-1 rounded-full bg-violet-500/15 px-2 py-px font-medium text-[12px] leading-[1.1] text-violet-600 dark:text-violet-400 align-middle";
+    dom.contentEditable = "false";
+    dom.setAttribute("spellcheck", "false");
+    renderSkillChipDom(dom, this.__skillName);
+    return dom;
+  }
+
+  override updateDOM(
+    prevNode: ComposerSkillNode,
+    dom: HTMLElement,
+    _config: EditorConfig,
+  ): boolean {
+    dom.contentEditable = "false";
+    if (prevNode.__text !== this.__text || prevNode.__skillName !== this.__skillName) {
+      renderSkillChipDom(dom, this.__skillName);
+    }
+    return false;
+  }
+
+  override canInsertTextBefore(): false {
+    return false;
+  }
+
+  override canInsertTextAfter(): false {
+    return false;
+  }
+
+  override isTextEntity(): true {
+    return true;
+  }
+
+  override isToken(): true {
+    return true;
+  }
+}
+
+function $createComposerSkillNode(skillName: string): ComposerSkillNode {
+  return $applyNodeReplacement(new ComposerSkillNode(skillName));
+}
+
+function renderSkillChipDom(container: HTMLElement, skillName: string): void {
+  container.textContent = "";
+  container.style.setProperty("user-select", "none");
+  container.style.setProperty("-webkit-user-select", "none");
+
+  const icon = document.createElement("span");
+  icon.className = "inline-flex items-center justify-center";
+  icon.innerHTML = `<svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>`;
+
+  const label = document.createElement("span");
+  label.className = "truncate select-none leading-tight";
+  label.textContent = formatSkillDisplayName(skillName);
+
+  container.append(icon, label);
+}
+
+function formatSkillDisplayName(name: string): string {
+  return name
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 function inferMentionPathKind(pathValue: string): "file" | "directory" {
   const base = basenameOfPath(pathValue);
   if (base.startsWith(".") && !base.slice(1).includes(".")) {
@@ -179,8 +286,12 @@ function clampCursor(value: string, cursor: number): number {
   return Math.max(0, Math.min(value.length, Math.floor(cursor)));
 }
 
+function isComposerChipNode(node: LexicalNode): boolean {
+  return node instanceof ComposerMentionNode || node instanceof ComposerSkillNode;
+}
+
 function getComposerNodeTextLength(node: LexicalNode): number {
-  if (node instanceof ComposerMentionNode) {
+  if (isComposerChipNode(node)) {
     return 1;
   }
   if ($isTextNode(node)) {
@@ -215,7 +326,7 @@ function getAbsoluteOffsetForPoint(node: LexicalNode, pointOffset: number): numb
   }
 
   if ($isTextNode(node)) {
-    if (node instanceof ComposerMentionNode) {
+    if (isComposerChipNode(node)) {
       return offset + (pointOffset > 0 ? 1 : 0);
     }
     return offset + Math.min(pointOffset, node.getTextContentSize());
@@ -243,7 +354,7 @@ function findSelectionPointAtOffset(
   node: LexicalNode,
   remainingRef: { value: number },
 ): { key: string; offset: number; type: "text" | "element" } | null {
-  if (node instanceof ComposerMentionNode) {
+  if (isComposerChipNode(node)) {
     const parent = node.getParent();
     if (!parent || !$isElementNode(parent)) return null;
     const index = node.getIndexWithinParent();
@@ -377,6 +488,10 @@ function $setComposerEditorPrompt(prompt: string): void {
   for (const segment of segments) {
     if (segment.type === "mention") {
       paragraph.append($createComposerMentionNode(segment.path));
+      continue;
+    }
+    if (segment.type === "skill") {
+      paragraph.append($createComposerSkillNode(segment.name));
       continue;
     }
     $appendTextWithLineBreaks(paragraph, segment.text);
@@ -540,7 +655,7 @@ function ComposerMentionSelectionNormalizePlugin() {
         const selection = $getSelection();
         if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
         const anchorNode = selection.anchor.getNode();
-        if (!(anchorNode instanceof ComposerMentionNode)) return;
+        if (!isComposerChipNode(anchorNode)) return;
         if (selection.anchor.offset === 0) return;
         const beforeOffset = getAbsoluteOffsetForPoint(anchorNode, 0);
         afterOffset = beforeOffset + 1;
@@ -572,7 +687,7 @@ function ComposerMentionBackspacePlugin() {
 
         const anchorNode = selection.anchor.getNode();
         const removeMentionNode = (candidate: unknown): boolean => {
-          if (!(candidate instanceof ComposerMentionNode)) {
+          if (!((candidate instanceof ComposerMentionNode) || (candidate instanceof ComposerSkillNode))) {
             return false;
           }
           const mentionStart = getAbsoluteOffsetForPoint(candidate, 0);
@@ -781,7 +896,7 @@ export const ComposerPromptEditor = forwardRef<ComposerPromptEditorHandle, Compo
       () => ({
         namespace: "t3tools-composer-editor",
         editable: true,
-        nodes: [ComposerMentionNode],
+        nodes: [ComposerMentionNode, ComposerSkillNode],
         editorState: () => {
           $setComposerEditorPrompt(initialValueRef.current);
         },
