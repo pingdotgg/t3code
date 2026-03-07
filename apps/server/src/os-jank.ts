@@ -3,20 +3,30 @@ import { Effect, Path } from "effect";
 import { execFileSync } from "node:child_process";
 
 export function fixPath(): void {
-  if (process.platform !== "darwin") return;
+  if (process.platform === "win32") return;
 
-  try {
-    const shell = process.env.SHELL ?? "/bin/zsh";
-    const result = execFileSync(shell, ["-ilc", "echo -n $PATH"], {
-      encoding: "utf8",
-      timeout: 5000,
-    });
-    if (result) {
-      process.env.PATH = result;
+  const shell = process.env.SHELL ?? (process.platform === "darwin" ? "/bin/zsh" : "/bin/sh");
+  const commandArgSets = [
+    ["-ilc", "echo -n $PATH"],
+    ["-lc", "echo -n $PATH"],
+  ] as const;
+
+  for (const args of commandArgSets) {
+    try {
+      const result = execFileSync(shell, args, {
+        encoding: "utf8",
+        timeout: 5000,
+      });
+      if (result) {
+        process.env.PATH = result;
+        return;
+      }
+    } catch {
+      // Try the next shell invocation mode.
     }
-  } catch {
-    // Silently ignore — keep default PATH
   }
+
+  // Silently ignore and keep default PATH.
 }
 
 export const expandHomePath = Effect.fn(function* (input: string) {
