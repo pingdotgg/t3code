@@ -31,6 +31,13 @@ import {
 import { KeybindingRule } from "./keybindings";
 import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
+import {
+  SkillsToggleInput,
+  SkillsSearchInput,
+  SkillsInstallInput,
+  SkillsUninstallInput,
+  SkillsReadContentInput,
+} from "./skills";
 
 // ── WebSocket RPC Method Names ───────────────────────────────────────
 
@@ -63,6 +70,14 @@ export const WS_METHODS = {
   terminalClear: "terminal.clear",
   terminalRestart: "terminal.restart",
   terminalClose: "terminal.close",
+
+  // Skills methods
+  skillsList: "skills.list",
+  skillsToggle: "skills.toggle",
+  skillsSearch: "skills.search",
+  skillsInstall: "skills.install",
+  skillsUninstall: "skills.uninstall",
+  skillsReadContent: "skills.readContent",
 
   // Server meta
   serverGetConfig: "server.getConfig",
@@ -125,6 +140,14 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.terminalClear, TerminalClearInput),
   tagRequestBody(WS_METHODS.terminalRestart, TerminalRestartInput),
   tagRequestBody(WS_METHODS.terminalClose, TerminalCloseInput),
+
+  // Skills methods
+  tagRequestBody(WS_METHODS.skillsList, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.skillsToggle, SkillsToggleInput),
+  tagRequestBody(WS_METHODS.skillsSearch, SkillsSearchInput),
+  tagRequestBody(WS_METHODS.skillsInstall, SkillsInstallInput),
+  tagRequestBody(WS_METHODS.skillsUninstall, SkillsUninstallInput),
+  tagRequestBody(WS_METHODS.skillsReadContent, SkillsReadContentInput),
 
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
