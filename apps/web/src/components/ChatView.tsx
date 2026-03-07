@@ -1860,8 +1860,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeThread?.id, scheduleStickToBottom]);
   useEffect(() => {
     if (!shouldAutoScrollRef.current) return;
-    scheduleStickToBottom();
-  }, [messageCount, scheduleStickToBottom]);
+    forceStickToBottom();
+  }, [messageCount, forceStickToBottom]);
   useEffect(() => {
     if (phase !== "running") return;
     if (!shouldAutoScrollRef.current) return;
