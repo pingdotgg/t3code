@@ -13,6 +13,7 @@ import { NetService } from "@t3tools/shared/Net";
 import { CliConfig, recordStartupHeartbeat, t3Cli, type CliConfigShape } from "./main";
 import { ServerConfig, type ServerConfigShape } from "./config";
 import { Open, type OpenShape } from "./open";
+import { SkillsManager, type SkillsManagerShape } from "./skills/SkillsManager";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { Server, type ServerShape } from "./wsServer";
@@ -51,6 +52,14 @@ const testLayer = Layer.mergeAll(
     openBrowser: (_target: string) => Effect.void,
     openInEditor: () => Effect.void,
   } satisfies OpenShape),
+  Layer.succeed(SkillsManager, {
+    list: Effect.succeed({ skills: [] }),
+    toggle: () => Effect.succeed({ skillName: "", enabled: false }),
+    search: () => Effect.succeed({ skills: [] }),
+    install: () => Effect.succeed({ success: true, message: "" }),
+    uninstall: () => Effect.succeed({ success: true, message: "" }),
+    readContent: () => Effect.succeed({ skillName: "", content: "" }),
+  } satisfies SkillsManagerShape),
   AnalyticsService.layerTest,
   FetchHttpClient.layer,
   NodeServices.layer,
