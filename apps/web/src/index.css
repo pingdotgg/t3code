@@ -263,9 +263,30 @@ label:has(> select#reasoning-effort) select {
   margin: 0.65rem 0;
 }
 
-.chat-markdown ul,
+.chat-markdown ul {
+  padding-left: 1.25rem;
+  list-style-type: disc;
+}
+
 .chat-markdown ol {
   padding-left: 1.25rem;
+  list-style-type: decimal;
+}
+
+.chat-markdown ul ul {
+  list-style-type: circle;
+}
+
+.chat-markdown ul ul ul {
+  list-style-type: square;
+}
+
+.chat-markdown ol ol {
+  list-style-type: lower-alpha;
+}
+
+.chat-markdown ol ol ol {
+  list-style-type: lower-roman;
 }
 
 .chat-markdown li + li {
