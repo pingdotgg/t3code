@@ -50,6 +50,7 @@ import {
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
+import { skillsListQueryOptions } from "~/lib/skillsReactQuery";
 
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -125,6 +126,7 @@ import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import {
   BotIcon,
+  BoxIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -397,6 +399,13 @@ type ComposerCommandItem =
       label: string;
       description: string;
       showFastBadge: boolean;
+    }
+  | {
+      id: string;
+      type: "skill";
+      skillName: string;
+      label: string;
+      description: string;
     };
 
 type SendPhase = "idle" | "preparing-worktree" | "sending-turn";
@@ -477,8 +486,16 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   isActive: boolean;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
+  const itemRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (props.isActive) {
+      itemRef.current?.scrollIntoView({ block: "nearest" });
+    }
+  }, [props.isActive]);
+
   return (
     <CommandItem
+      ref={itemRef}
       value={props.item.id}
       className={cn(
         "cursor-pointer select-none gap-2",
@@ -501,18 +518,21 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "slash-command" ? (
         <BotIcon className="size-4 text-muted-foreground/80" />
       ) : null}
+      {props.item.type === "skill" ? (
+        <BoxIcon className="size-4 shrink-0 text-violet-500" />
+      ) : null}
       {props.item.type === "model" ? (
         <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
           model
         </Badge>
       ) : null}
-      <span className="flex min-w-0 items-center gap-1.5 truncate">
+      <span className="flex shrink-0 items-center gap-1.5">
         {props.item.type === "model" && props.item.showFastBadge ? (
           <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
         ) : null}
-        <span className="truncate">{props.item.label}</span>
+        <span className="whitespace-nowrap font-medium">{props.item.label}</span>
       </span>
-      <span className="truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
+      <span className="min-w-0 truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
     </CommandItem>
   );
 });
@@ -529,6 +549,7 @@ const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   return (
     <Command
       mode="none"
+      autoHighlight={false}
       onItemHighlighted={(highlightedValue) => {
         props.onHighlightedItemChange(
           typeof highlightedValue === "string" ? highlightedValue : null,
@@ -1151,6 +1172,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const isSkillTrigger = composerTriggerKind === "slash-skill";
+  const skillsQuery = useQuery({ ...skillsListQueryOptions(), enabled: isSkillTrigger });
   const workspaceEntriesQuery = useQuery(
     projectSearchEntriesQueryOptions({
       cwd: gitCwd,
@@ -1196,6 +1219,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
           label: "/default",
           description: "Switch this thread back to normal chat mode",
         },
+        {
+          id: "slash:skills",
+          type: "slash-command",
+          command: "skills",
+          label: "/skills",
+          description: "Use a skill in this message",
+        },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const query = composerTrigger.query.trim().toLowerCase();
       if (!query) {
@@ -1204,6 +1234,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return slashCommandItems.filter(
         (item) => item.command.includes(query) || item.label.slice(1).includes(query),
       );
+    }
+
+    if (composerTrigger.kind === "slash-skill") {
+      const enabledSkills = skillsQuery.data?.skills.filter((s) => s.enabled) ?? [];
+      const query = composerTrigger.query.trim().toLowerCase();
+      return enabledSkills
+        .filter(
+          (s) =>
+            !query ||
+            s.name.toLowerCase().includes(query) ||
+            s.description.toLowerCase().includes(query),
+        )
+        .map((s) => ({
+          id: `skill:${s.name}`,
+          type: "skill" as const,
+          skillName: s.name,
+          label: s.name
+            .split("-")
+            .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+            .join(" "),
+          description: s.description,
+        }));
     }
 
     return searchableModelOptions
@@ -1224,7 +1276,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         showFastBadge:
           provider === "codex" && shouldShowFastTierIcon(slug, selectedServiceTierSetting),
       }));
-  }, [composerTrigger, searchableModelOptions, selectedServiceTierSetting, workspaceEntries]);
+  }, [composerTrigger, searchableModelOptions, selectedServiceTierSetting, skillsQuery.data, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -3122,9 +3174,30 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
         return;
       }
+      if (item.type === "skill") {
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          trigger.rangeEnd,
+          `$${item.skillName} `,
+          { expectedText: expectedToken },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
       if (item.type === "slash-command") {
         if (item.command === "model") {
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "/model ", {
+            expectedText: expectedToken,
+          });
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
+        if (item.command === "skills") {
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "/skills ", {
             expectedText: expectedToken,
           });
           if (applied) {
@@ -3178,10 +3251,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [composerHighlightedItemId, composerMenuItems],
   );
   const isComposerMenuLoading =
-    composerTriggerKind === "path" &&
-    ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
-      workspaceEntriesQuery.isLoading ||
-      workspaceEntriesQuery.isFetching);
+    (composerTriggerKind === "path" &&
+      ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
+        workspaceEntriesQuery.isLoading ||
+        workspaceEntriesQuery.isFetching)) ||
+    (composerTriggerKind === "slash-skill" && skillsQuery.isLoading);
 
   const onPromptChange = useCallback(
     (nextPrompt: string, nextCursor: number, cursorAdjacentToMention: boolean) => {
