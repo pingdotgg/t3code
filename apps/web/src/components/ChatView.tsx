@@ -247,16 +247,6 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
-function getLatestCodexRateLimitActivity(activities: ReadonlyArray<OrchestrationThreadActivity>) {
-  for (let index = activities.length - 1; index >= 0; index -= 1) {
-    const activity = activities[index];
-    if (activity?.kind === "account.rate-limits.updated") {
-      return activity;
-    }
-  }
-  return null;
-}
-
 const LAST_EDITOR_KEY = "t3code:last-editor";
 const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
@@ -702,7 +692,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeComposerMenuItemRef = useRef<ComposerCommandItem | null>(null);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
-  const lastLoggedCodexRateLimitActivityIdRef = useRef<string | null>(null);
   const sendInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
@@ -880,10 +869,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     sendStartedAt,
   );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
-  const latestCodexRateLimitActivity = useMemo(
-    () => getLatestCodexRateLimitActivity(threadActivities),
-    [threadActivities],
-  );
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
@@ -977,25 +962,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
-  useEffect(() => {
-    if (!activeThread || !latestCodexRateLimitActivity) {
-      return;
-    }
-    if (lastLoggedCodexRateLimitActivityIdRef.current === latestCodexRateLimitActivity.id) {
-      return;
-    }
-
-    lastLoggedCodexRateLimitActivityIdRef.current = latestCodexRateLimitActivity.id;
-    console.log("Codex rate limits updated", {
-      threadId: activeThread.id,
-      rateLimits:
-        typeof latestCodexRateLimitActivity.payload === "object" &&
-        latestCodexRateLimitActivity.payload !== null &&
-        "rateLimits" in latestCodexRateLimitActivity.payload
-          ? latestCodexRateLimitActivity.payload.rateLimits
-          : latestCodexRateLimitActivity.payload,
-    });
-  }, [activeThread, latestCodexRateLimitActivity]);
   const clearAttachmentPreviewHandoffs = useCallback(() => {
     for (const timeoutId of Object.values(attachmentPreviewHandoffTimeoutByMessageIdRef.current)) {
       window.clearTimeout(timeoutId);

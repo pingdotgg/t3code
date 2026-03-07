@@ -288,23 +288,6 @@ function runtimeEventToActivities(
       ];
     }
 
-    case "account.rate-limits.updated": {
-      return [
-        {
-          id: event.eventId,
-          createdAt: event.createdAt,
-          tone: "info",
-          kind: "account.rate-limits.updated",
-          summary: "Codex rate limits updated",
-          payload: {
-            rateLimits: event.payload.rateLimits,
-          },
-          turnId: toTurnId(event.turnId) ?? null,
-          ...maybeSequence,
-        },
-      ];
-    }
-
     case "turn.plan.updated": {
       return [
         {
