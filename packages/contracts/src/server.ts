@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas";
 import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 import { EditorId } from "./editor";
+import { CODEX_REASONING_EFFORT_OPTIONS } from "./model";
 import { ProviderKind } from "./orchestration";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
@@ -44,6 +45,68 @@ export const ServerProviderStatus = Schema.Struct({
 export type ServerProviderStatus = typeof ServerProviderStatus.Type;
 
 const ServerProviderStatuses = Schema.Array(ServerProviderStatus);
+const NonNegativeNumber = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0));
+
+export const ServerCopilotUsageSource = Schema.Literal("copilot_internal_user");
+export type ServerCopilotUsageSource = typeof ServerCopilotUsageSource.Type;
+
+const ServerCopilotUsageAvailable = Schema.Struct({
+  status: Schema.Literal("available"),
+  source: ServerCopilotUsageSource,
+  fetchedAt: IsoDateTime,
+  login: TrimmedNonEmptyString,
+  plan: Schema.optional(TrimmedNonEmptyString),
+  entitlement: NonNegativeNumber,
+  remaining: NonNegativeNumber,
+  used: NonNegativeNumber,
+  percentRemaining: Schema.Number,
+  overagePermitted: Schema.Boolean,
+  overageCount: NonNegativeNumber,
+  unlimited: Schema.Boolean,
+  resetAt: IsoDateTime,
+});
+
+const ServerCopilotUsageUnavailable = Schema.Struct({
+  status: Schema.Literals(["requires-auth", "unavailable"]),
+  fetchedAt: IsoDateTime,
+  source: Schema.optional(ServerCopilotUsageSource),
+  message: TrimmedNonEmptyString,
+});
+
+export const ServerCopilotUsage = Schema.Union([
+  ServerCopilotUsageAvailable,
+  ServerCopilotUsageUnavailable,
+]);
+export type ServerCopilotUsage = typeof ServerCopilotUsage.Type;
+
+const ServerCopilotReasoningOption = Schema.Literals(CODEX_REASONING_EFFORT_OPTIONS);
+
+export const ServerCopilotReasoningProbeInput = Schema.Struct({
+  model: TrimmedNonEmptyString,
+  binaryPath: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerCopilotReasoningProbeInput = typeof ServerCopilotReasoningProbeInput.Type;
+
+const ServerCopilotReasoningProbeSupported = Schema.Struct({
+  status: Schema.Literal("supported"),
+  fetchedAt: IsoDateTime,
+  model: TrimmedNonEmptyString,
+  options: Schema.Array(ServerCopilotReasoningOption),
+  currentValue: Schema.optional(ServerCopilotReasoningOption),
+});
+
+const ServerCopilotReasoningProbeUnavailable = Schema.Struct({
+  status: Schema.Literal("unavailable"),
+  fetchedAt: IsoDateTime,
+  model: TrimmedNonEmptyString,
+  message: TrimmedNonEmptyString,
+});
+
+export const ServerCopilotReasoningProbe = Schema.Union([
+  ServerCopilotReasoningProbeSupported,
+  ServerCopilotReasoningProbeUnavailable,
+]);
+export type ServerCopilotReasoningProbe = typeof ServerCopilotReasoningProbe.Type;
 
 export const ServerConfig = Schema.Struct({
   cwd: TrimmedNonEmptyString,

@@ -6,6 +6,7 @@ import {
   type MessageId,
   type OrchestrationReadModel,
   type ProjectId,
+  type ServerCopilotUsage,
   type ServerConfig,
   type ThreadId,
   type WsWelcomePayload,
@@ -41,6 +42,7 @@ interface WsRequestEnvelope {
 interface TestFixture {
   snapshot: OrchestrationReadModel;
   serverConfig: ServerConfig;
+  copilotUsage: ServerCopilotUsage;
   welcome: WsWelcomePayload;
 }
 
@@ -236,6 +238,12 @@ function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
   return {
     snapshot,
     serverConfig: createBaseServerConfig(),
+    copilotUsage: {
+      status: "requires-auth",
+      fetchedAt: NOW_ISO,
+      message:
+        "GitHub Copilot quota is unavailable because no reusable GitHub token was found. Run `gh auth login` or set GH_TOKEN / COPILOT_GITHUB_TOKEN.",
+    },
     welcome: {
       cwd: "/repo/project",
       projectName: "Project",
@@ -262,6 +270,9 @@ function resolveWsRpc(tag: string): unknown {
   }
   if (tag === WS_METHODS.serverGetConfig) {
     return fixture.serverConfig;
+  }
+  if (tag === WS_METHODS.serverGetCopilotUsage) {
+    return fixture.copilotUsage;
   }
   if (tag === WS_METHODS.gitListBranches) {
     return {
@@ -870,6 +881,58 @@ describe("ChatView timeline estimator parity (full app)", () => {
 });
 
 describe("ChatView provider health banner", () => {
+  it("shows Copilot premium requests and per-model overage estimates in the picker", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-copilot-usage" as MessageId,
+        targetText: "show copilot billing",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.copilotUsage = {
+          status: "available",
+          source: "copilot_internal_user",
+          fetchedAt: NOW_ISO,
+          login: "octocat",
+          plan: "pro_plus",
+          entitlement: 1500,
+          remaining: 1321,
+          used: 179,
+          percentRemaining: 88.1,
+          overagePermitted: true,
+          overageCount: 0,
+          unlimited: false,
+          resetAt: "2026-03-31T00:00:00.000Z",
+        };
+        nextFixture.snapshot = {
+          ...nextFixture.snapshot,
+          projects: nextFixture.snapshot.projects.map((project) => ({
+            ...project,
+            defaultModel: "gpt-5.4",
+          })),
+          threads: nextFixture.snapshot.threads.map((thread) => ({
+            ...thread,
+            model: "gpt-5.4",
+          })),
+        };
+      },
+    });
+
+    try {
+      await page.getByText("GPT-5.4").click();
+      await page.getByText("GitHub Copilot").click();
+
+      await expect.element(page.getByText("Usage remaining")).toBeInTheDocument();
+      await expect.element(page.getByText("Premium requests")).toBeInTheDocument();
+      await expect.element(page.getByText("1321 / 1500 left · resets Mar 31")).toBeInTheDocument();
+      await expect.element(page.getByText("Pro Plus · octocat")).toBeInTheDocument();
+      await expect.element(page.getByText("Claude Opus 4.6 Fast")).toBeInTheDocument();
+      await expect.element(page.getByText("30x · ~$1.20")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("hides non-blocking provider warnings when auth status is unknown", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

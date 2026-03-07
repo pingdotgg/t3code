@@ -9,6 +9,7 @@
 import http from "node:http";
 import type { Duplex } from "node:stream";
 
+import type * as acp from "@agentclientprotocol/sdk";
 import Mime from "@effect/platform-node/Mime";
 import {
   CommandId,
@@ -23,6 +24,8 @@ import {
   TerminalEvent,
   WS_CHANNELS,
   WS_METHODS,
+  type ServerCopilotReasoningProbe,
+  type ServerCopilotReasoningProbeInput,
   WebSocketRequest,
   WsPush,
   WsResponse,
@@ -73,6 +76,8 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
+import { createCopilotUsageReader } from "./copilotUsage.ts";
+import { CopilotAcpManager, readCopilotReasoningEffortSelector } from "./copilotAcpManager.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -115,6 +120,43 @@ function rejectUpgrade(socket: Duplex, statusCode: number, message: string): voi
       "\r\n" +
       message,
   );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function readStableCopilotReasoningSelector(
+  manager: CopilotAcpManager,
+  threadId: ThreadId,
+): Promise<ReturnType<typeof readCopilotReasoningEffortSelector>> {
+  const deadline = Date.now() + 2_500;
+  let lastSignature: string | null = null;
+  let stableSince = Date.now();
+  let latestSelector: ReturnType<typeof readCopilotReasoningEffortSelector> = null;
+
+  while (Date.now() < deadline) {
+    const configuration = await manager.getSessionConfiguration(threadId);
+    latestSelector = readCopilotReasoningEffortSelector(configuration.configOptions);
+    const signature = latestSelector
+      ? `${latestSelector.currentValue ?? ""}:${latestSelector.options.join(",")}`
+      : "missing";
+
+    if (signature !== lastSignature) {
+      lastSignature = signature;
+      stableSince = Date.now();
+    }
+
+    if (latestSelector && Date.now() - stableSince >= 250) {
+      return latestSelector;
+    }
+
+    await sleep(100);
+  }
+
+  return latestSelector;
 }
 
 function websocketRawToString(raw: unknown): string | null {
@@ -269,6 +311,59 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   );
 
   const providerStatuses = yield* providerHealth.getStatuses;
+  const readCopilotUsage = createCopilotUsageReader();
+
+  async function probeCopilotReasoning(
+    input: ServerCopilotReasoningProbeInput,
+  ): Promise<ServerCopilotReasoningProbe> {
+    const manager = new CopilotAcpManager();
+    const threadId = ThreadId.makeUnsafe(`copilot-probe-${crypto.randomUUID()}`);
+    const fetchedAt = new Date().toISOString();
+
+    try {
+      await manager.startSession({
+        threadId,
+        provider: "copilot",
+        cwd,
+        model: input.model,
+        runtimeMode: "approval-required",
+        providerOptions: input.binaryPath
+          ? { copilot: { binaryPath: input.binaryPath } }
+          : undefined,
+      });
+
+      const selector = await readStableCopilotReasoningSelector(manager, threadId);
+      if (!selector) {
+        return {
+          status: "unavailable",
+          fetchedAt,
+          model: input.model,
+          message: "GitHub Copilot CLI did not expose a reasoning-effort selector for this model.",
+        };
+      }
+
+      return {
+        status: "supported",
+        fetchedAt,
+        model: input.model,
+        options: selector.options,
+        ...(selector.currentValue ? { currentValue: selector.currentValue } : {}),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message.trim() : String(error).trim();
+      return {
+        status: "unavailable",
+        fetchedAt,
+        model: input.model,
+        message:
+          message.length > 0
+            ? message
+            : "Failed to probe GitHub Copilot reasoning options for this model.",
+      };
+    } finally {
+      await manager.stopSession(threadId).catch(() => undefined);
+    }
+  }
 
   const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
@@ -886,6 +981,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           providers: providerStatuses,
           availableEditors,
         };
+
+      case WS_METHODS.serverGetCopilotUsage:
+        return yield* Effect.tryPromise(() => readCopilotUsage());
+
+      case WS_METHODS.serverProbeCopilotReasoning: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise(() => probeCopilotReasoning(body));
+      }
 
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);

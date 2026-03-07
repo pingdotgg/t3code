@@ -333,6 +333,70 @@ describe("composerDraftStore project draft thread mapping", () => {
   });
 });
 
+describe("composerDraftStore reasoning effort normalization", () => {
+  const threadId = ThreadId.makeUnsafe("thread-reasoning");
+
+  beforeEach(() => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+  });
+
+  it("preserves copilot xhigh selections in the draft store", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "copilot");
+    store.setEffort(threadId, "xhigh");
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.effort).toBe("xhigh");
+  });
+
+  it("still drops unsupported kimi reasoning effort selections", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "kimi");
+    store.setEffort(threadId, "xhigh");
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.effort).toBeNull();
+  });
+});
+
+describe("composerDraftStore reasoning effort", () => {
+  const threadId = ThreadId.makeUnsafe("thread-effort");
+
+  beforeEach(() => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+  });
+
+  it("clears incompatible reasoning effort when switching providers", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "codex");
+    store.setEffort(threadId, "xhigh");
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.effort).toBe("xhigh");
+
+    store.setProvider(threadId, "copilot");
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.effort).toBeNull();
+  });
+
+  it("stores non-default Copilot reasoning overrides", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "copilot");
+    store.setEffort(threadId, "medium");
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.effort).toBe("medium");
+
+    store.setEffort(threadId, "high");
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.effort).toBeNull();
+  });
+});
+
 describe("composerDraftStore codex fast mode", () => {
   const threadId = ThreadId.makeUnsafe("thread-service-tier");
 

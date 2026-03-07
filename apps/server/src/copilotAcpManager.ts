@@ -6,6 +6,7 @@ import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import {
   ApprovalRequestId,
+  COPILOT_REASONING_EFFORT_VALUES,
   EventId,
   type ProviderApprovalDecision,
   type ProviderRuntimeEvent,
@@ -15,6 +16,7 @@ import {
   RuntimeRequestId,
   ThreadId,
   TurnId,
+  type CopilotReasoningEffort,
   type ProviderTurnStartResult,
 } from "@t3tools/contracts";
 
@@ -41,6 +43,7 @@ interface CopilotSessionContext {
   connection: acp.ClientSideConnection;
   acpSessionId: string;
   models: acp.SessionModelState | null;
+  configOptions: ReadonlyArray<acp.SessionConfigOption> | null;
   pendingApprovals: Map<ApprovalRequestId, PendingApprovalRequest>;
   toolSnapshots: Map<string, ToolSnapshot>;
   currentTurnId: TurnId | undefined;
@@ -53,6 +56,7 @@ export interface CopilotAppServerStartSessionInput {
   readonly provider?: "copilot";
   readonly cwd?: string;
   readonly model?: string;
+  readonly reasoningEffort?: CopilotReasoningEffort;
   readonly resumeCursor?: unknown;
   readonly providerOptions?: ProviderSessionStartInput["providerOptions"];
   readonly runtimeMode: ProviderSession["runtimeMode"];
@@ -88,6 +92,55 @@ function toMessage(error: unknown, fallback: string): string {
     return error.message;
   }
   return fallback;
+}
+
+const COPILOT_REASONING_EFFORT_SET = new Set<CopilotReasoningEffort>(
+  COPILOT_REASONING_EFFORT_VALUES,
+);
+
+interface CopilotReasoningEffortSelector {
+  readonly id: string;
+  readonly currentValue: CopilotReasoningEffort | null;
+  readonly options: ReadonlyArray<CopilotReasoningEffort>;
+}
+
+function isCopilotReasoningEffort(value: unknown): value is CopilotReasoningEffort {
+  return typeof value === "string" && COPILOT_REASONING_EFFORT_SET.has(value as CopilotReasoningEffort);
+}
+
+function flattenSessionConfigSelectOptions(
+  options: acp.SessionConfigSelectOptions,
+): ReadonlyArray<acp.SessionConfigSelectOption> {
+  return options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
+}
+
+export function readCopilotReasoningEffortSelector(
+  configOptions: ReadonlyArray<acp.SessionConfigOption> | null | undefined,
+): CopilotReasoningEffortSelector | null {
+  const selector = configOptions?.find(
+    (option) =>
+      option.type === "select" &&
+      (option.category === "thought_level" || option.id === "reasoning_effort"),
+  );
+  if (!selector) {
+    return null;
+  }
+
+  const options: CopilotReasoningEffort[] = [];
+  const seen = new Set<CopilotReasoningEffort>();
+  for (const entry of flattenSessionConfigSelectOptions(selector.options)) {
+    if (!isCopilotReasoningEffort(entry.value) || seen.has(entry.value)) {
+      continue;
+    }
+    seen.add(entry.value);
+    options.push(entry.value);
+  }
+
+  return {
+    id: selector.id,
+    currentValue: isCopilotReasoningEffort(selector.currentValue) ? selector.currentValue : null,
+    options,
+  };
 }
 
 export function readAvailableCopilotModelIds(
@@ -327,6 +380,28 @@ export class CopilotAcpManager extends EventEmitter<CopilotAcpManagerEvents> {
     return context.session;
   }
 
+  private emitSessionConfigured(context: CopilotSessionContext) {
+    if (!context.models && !context.configOptions) {
+      return;
+    }
+
+    this.emitRuntimeEvent({
+      ...this.createEventBase(context),
+      type: "session.configured",
+      payload: {
+        config: {
+          ...(context.models
+            ? {
+                currentModelId: context.models.currentModelId,
+                availableModels: context.models.availableModels,
+              }
+            : {}),
+          ...(context.configOptions ? { configOptions: context.configOptions } : {}),
+        },
+      },
+    });
+  }
+
   private emitSessionStarted(context: CopilotSessionContext) {
     const sessionStarted: ProviderRuntimeEvent = {
       ...this.createEventBase(context),
@@ -346,18 +421,7 @@ export class CopilotAcpManager extends EventEmitter<CopilotAcpManagerEvents> {
     this.emitRuntimeEvent(sessionStarted);
     this.emitRuntimeEvent(threadStarted);
 
-    if (context.models) {
-      this.emitRuntimeEvent({
-        ...this.createEventBase(context),
-        type: "session.configured",
-        payload: {
-          config: {
-            currentModelId: context.models.currentModelId,
-            availableModels: context.models.availableModels,
-          },
-        },
-      });
-    }
+    this.emitSessionConfigured(context);
   }
 
   private emitSessionExit(
@@ -456,6 +520,12 @@ export class CopilotAcpManager extends EventEmitter<CopilotAcpManagerEvents> {
             })),
           },
         });
+        return;
+      }
+
+      case "config_option_update": {
+        context.configOptions = params.update.configOptions;
+        this.emitSessionConfigured(context);
         return;
       }
 
@@ -630,9 +700,45 @@ export class CopilotAcpManager extends EventEmitter<CopilotAcpManagerEvents> {
         };
       }
       this.updateSession(context, { model });
+      this.emitSessionConfigured(context);
     } catch (error) {
       throw new Error(
         toMessage(error, `Failed to switch GitHub Copilot model to '${model}'.`),
+        { cause: error },
+      );
+    }
+  }
+
+  private async setSessionReasoningEffort(
+    context: CopilotSessionContext,
+    reasoningEffort: CopilotReasoningEffort,
+  ) {
+    const selector = readCopilotReasoningEffortSelector(context.configOptions);
+    if (!selector) {
+      throw new Error("GitHub Copilot CLI did not expose a reasoning-effort selector for this session.");
+    }
+
+    if (!selector.options.includes(reasoningEffort)) {
+      throw new Error(
+        `GitHub Copilot CLI does not expose reasoning effort '${reasoningEffort}' for this session. Available reasoning levels: ${selector.options.join(", ")}.`,
+      );
+    }
+
+    if (selector.currentValue === reasoningEffort) {
+      return;
+    }
+
+    try {
+      const response = await context.connection.setSessionConfigOption({
+        sessionId: context.acpSessionId,
+        configId: selector.id,
+        value: reasoningEffort,
+      });
+      context.configOptions = response.configOptions;
+      this.emitSessionConfigured(context);
+    } catch (error) {
+      throw new Error(
+        toMessage(error, `Failed to set GitHub Copilot reasoning effort to '${reasoningEffort}'.`),
         { cause: error },
       );
     }
@@ -687,6 +793,7 @@ export class CopilotAcpManager extends EventEmitter<CopilotAcpManagerEvents> {
       connection,
       acpSessionId: "",
       models: null,
+      configOptions: null,
       pendingApprovals: new Map(),
       toolSnapshots: new Map(),
       currentTurnId: undefined,
@@ -731,6 +838,7 @@ export class CopilotAcpManager extends EventEmitter<CopilotAcpManagerEvents> {
       }
 
       context.models = sessionResult.models ?? null;
+      context.configOptions = sessionResult.configOptions ?? null;
       this.updateSession(context, {
         status: "ready",
         model: sessionResult.models?.currentModelId ?? session.model,
@@ -745,6 +853,10 @@ export class CopilotAcpManager extends EventEmitter<CopilotAcpManagerEvents> {
         isCopilotModelAvailable(context.models, requestedModel)
       ) {
         await this.setSessionModel(context, requestedModel);
+      }
+
+      if (input.reasoningEffort) {
+        await this.setSessionReasoningEffort(context, input.reasoningEffort);
       }
 
       this.emitSessionStarted(context);
@@ -769,6 +881,7 @@ export class CopilotAcpManager extends EventEmitter<CopilotAcpManagerEvents> {
     readonly input?: string;
     readonly attachments?: ReadonlyArray<unknown>;
     readonly model?: string;
+    readonly reasoningEffort?: CopilotReasoningEffort;
   }): Promise<ProviderTurnStartResult> {
     const context = this.requireSession(input.threadId);
     const promptText = input.input?.trim();
@@ -784,6 +897,10 @@ export class CopilotAcpManager extends EventEmitter<CopilotAcpManagerEvents> {
       if (isCopilotModelAvailable(context.models, requestedModel)) {
         await this.setSessionModel(context, requestedModel);
       }
+    }
+
+    if (input.reasoningEffort) {
+      await this.setSessionReasoningEffort(context, input.reasoningEffort);
     }
 
     const turnId = TurnId.makeUnsafe(randomUUID());
@@ -911,6 +1028,17 @@ export class CopilotAcpManager extends EventEmitter<CopilotAcpManagerEvents> {
 
   async listSessions(): Promise<ReadonlyArray<ProviderSession>> {
     return Array.from(this.sessions.values(), (context) => context.session);
+  }
+
+  async getSessionConfiguration(threadId: ThreadId): Promise<{
+    readonly models: acp.SessionModelState | null;
+    readonly configOptions: ReadonlyArray<acp.SessionConfigOption> | null;
+  }> {
+    const context = this.requireSession(threadId);
+    return {
+      models: context.models,
+      configOptions: context.configOptions,
+    };
   }
 
   async hasSession(threadId: ThreadId): Promise<boolean> {

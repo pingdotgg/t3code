@@ -4,6 +4,7 @@ import {
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
+  type ServerCopilotUsage,
   ThreadId,
   WS_CHANNELS,
   WS_METHODS,
@@ -329,6 +330,30 @@ describe("wsNativeApi", () => {
     expect(requestMock).toHaveBeenCalledWith(ORCHESTRATION_WS_METHODS.dispatchCommand, {
       command,
     });
+  });
+
+  it("forwards server.getCopilotUsage requests", async () => {
+    const payload: ServerCopilotUsage = {
+      status: "available",
+      source: "copilot_internal_user",
+      fetchedAt: "2026-03-07T12:00:00.000Z",
+      login: "octocat",
+      entitlement: 1500,
+      remaining: 1321,
+      used: 179,
+      percentRemaining: 88.1,
+      overagePermitted: true,
+      overageCount: 0,
+      unlimited: false,
+      resetAt: "2026-03-31T00:00:00.000Z",
+    };
+    requestMock.mockResolvedValue(payload);
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+
+    await expect(api.server.getCopilotUsage()).resolves.toEqual(payload);
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverGetCopilotUsage);
   });
 
   it("forwards workspace file writes to the websocket project method", async () => {

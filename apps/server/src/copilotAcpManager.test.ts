@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { isCopilotModelAvailable, readAvailableCopilotModelIds } from "./copilotAcpManager";
+import {
+  isCopilotModelAvailable,
+  readAvailableCopilotModelIds,
+  readCopilotReasoningEffortSelector,
+} from "./copilotAcpManager";
 
 describe("copilotAcpManager model availability", () => {
   it("reads ACP-advertised model ids", () => {
@@ -29,5 +33,59 @@ describe("copilotAcpManager model availability", () => {
 
   it("allows requested models when ACP has not advertised any model set yet", () => {
     expect(isCopilotModelAvailable(null, "claude-sonnet-4.5")).toBe(true);
+  });
+
+  it("reads ACP-advertised Copilot reasoning selectors", () => {
+    expect(
+      readCopilotReasoningEffortSelector([
+        {
+          type: "select",
+          id: "reasoning_effort",
+          name: "Reasoning Effort",
+          category: "thought_level",
+          currentValue: "xhigh",
+          options: [
+            { value: "low", name: "low" },
+            { value: "medium", name: "medium" },
+            { value: "high", name: "high" },
+            { value: "xhigh", name: "xhigh" },
+            { value: "unsupported", name: "unsupported" },
+          ],
+        },
+      ]),
+    ).toEqual({
+      id: "reasoning_effort",
+      currentValue: "xhigh",
+      options: ["low", "medium", "high", "xhigh"],
+    });
+  });
+
+  it("supports grouped ACP reasoning selectors", () => {
+    expect(
+      readCopilotReasoningEffortSelector([
+        {
+          type: "select",
+          id: "reasoning_effort",
+          name: "Reasoning Effort",
+          category: "thought_level",
+          currentValue: "high",
+          options: [
+            {
+              group: "standard",
+              name: "Standard",
+              options: [
+                { value: "low", name: "low" },
+                { value: "medium", name: "medium" },
+                { value: "high", name: "high" },
+              ],
+            },
+          ],
+        },
+      ]),
+    ).toEqual({
+      id: "reasoning_effort",
+      currentValue: "high",
+      options: ["low", "medium", "high"],
+    });
   });
 });

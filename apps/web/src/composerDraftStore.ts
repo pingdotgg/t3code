@@ -187,6 +187,22 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
   };
 }
 
+function normalizeReasoningEffortForProvider(
+  effort: CodexReasoningEffort | null | undefined,
+  provider: ProviderKind,
+): CodexReasoningEffort | null {
+  if (!effort || !REASONING_EFFORT_VALUES.has(effort)) {
+    return null;
+  }
+
+  const providerOptions = REASONING_EFFORT_OPTIONS_BY_PROVIDER[provider];
+  if (provider !== "copilot" && !providerOptions.includes(effort)) {
+    return null;
+  }
+
+  return effort !== DEFAULT_REASONING_EFFORT_BY_PROVIDER[provider] ? effort : null;
+}
+
 function composerImageDedupKey(image: ComposerImageAttachment): string {
   // Keep this independent from File.lastModified so dedupe is stable for hydrated
   // images reconstructed from localStorage (which get a fresh lastModified value).
@@ -789,12 +805,21 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             return state;
           }
           const base = existing ?? createEmptyThreadDraft();
+          const nextEffort =
+            normalizedProvider === null
+              ? null
+              : normalizedProvider === "copilot" &&
+                  base.effort !== null &&
+                  !REASONING_EFFORT_OPTIONS_BY_PROVIDER.copilot.includes(base.effort)
+                ? null
+                : normalizeReasoningEffortForProvider(base.effort, normalizedProvider);
           if (base.provider === normalizedProvider) {
             return state;
           }
           const nextDraft: ComposerThreadDraftState = {
             ...base,
             provider: normalizedProvider,
+            effort: nextEffort,
           };
           const nextDraftsByThreadId = { ...state.draftsByThreadId };
           if (shouldRemoveDraft(nextDraft)) {
@@ -892,14 +917,10 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         if (threadId.length === 0) {
           return;
         }
-        const nextEffort =
-          effort &&
-          REASONING_EFFORT_VALUES.has(effort) &&
-          effort !== DEFAULT_REASONING_EFFORT_BY_PROVIDER.codex
-            ? effort
-            : null;
         set((state) => {
           const existing = state.draftsByThreadId[threadId];
+          const provider = existing?.provider ?? "codex";
+          const nextEffort = normalizeReasoningEffortForProvider(effort, provider);
           if (!existing && nextEffort === null) {
             return state;
           }

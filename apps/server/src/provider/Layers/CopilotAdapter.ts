@@ -87,6 +87,9 @@ export const makeCopilotAdapterLive = (options?: CopilotAdapterLiveOptions) =>
               provider: "copilot",
               ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
               ...(input.model !== undefined ? { model: input.model } : {}),
+              ...(input.modelOptions?.copilot?.reasoningEffort !== undefined
+                ? { reasoningEffort: input.modelOptions.copilot.reasoningEffort }
+                : {}),
               ...(input.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
               ...(input.providerOptions !== undefined ? { providerOptions: input.providerOptions } : {}),
               runtimeMode: input.runtimeMode,
@@ -102,6 +105,9 @@ export const makeCopilotAdapterLive = (options?: CopilotAdapterLiveOptions) =>
               ...(input.input !== undefined ? { input: input.input } : {}),
               ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
               ...(input.model !== undefined ? { model: input.model } : {}),
+              ...(input.modelOptions?.copilot?.reasoningEffort !== undefined
+                ? { reasoningEffort: input.modelOptions.copilot.reasoningEffort }
+                : {}),
             }),
           catch: (cause) => toRequestError(input.threadId, "session/prompt", cause),
         });

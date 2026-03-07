@@ -1,9 +1,11 @@
 import {
+  CODEX_REASONING_EFFORT_OPTIONS,
   ApprovalRequestId,
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
   type ProviderKind,
+  type CodexReasoningEffort,
   type UserInputQuestion,
   type TurnId,
 } from "@t3tools/contracts";
@@ -46,6 +48,15 @@ export interface PendingUserInput {
   questions: ReadonlyArray<UserInputQuestion>;
 }
 
+export interface ConfiguredModelOption {
+  slug: string;
+  name: string;
+}
+
+export interface ConfiguredReasoningEffortState {
+  options: CodexReasoningEffort[];
+  currentValue: CodexReasoningEffort | null;
+}
 export interface ActivePlanState {
   createdAt: string;
   turnId: TurnId | null;
@@ -300,6 +311,182 @@ export function derivePendingUserInputs(
   );
 }
 
+export function deriveConfiguredModelOptions(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  provider: ProviderKind,
+): ConfiguredModelOption[] {
+  return deriveConfiguredModelOptionsFromActivityGroups([activities], provider);
+}
+
+export function deriveConfiguredModelOptionsFromActivityGroups(
+  activityGroups: ReadonlyArray<ReadonlyArray<OrchestrationThreadActivity>>,
+  provider: ProviderKind,
+): ConfiguredModelOption[] {
+  const ordered = activityGroups
+    .flatMap((activities) => activities)
+    .toSorted(compareActivitiesByOrder)
+    .toReversed();
+
+  for (const activity of ordered) {
+    if (activity.kind !== "session.configured") {
+      continue;
+    }
+
+    const payload =
+      activity.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+    const payloadProvider = typeof payload?.provider === "string" ? payload.provider : null;
+    if (payloadProvider !== null && payloadProvider !== provider) {
+      continue;
+    }
+
+    const config =
+      payload?.config && typeof payload.config === "object"
+        ? (payload.config as Record<string, unknown>)
+        : null;
+    if (!config) {
+      continue;
+    }
+
+    const options: ConfiguredModelOption[] = [];
+    const seen = new Set<string>();
+    const availableModels = Array.isArray(config.availableModels) ? config.availableModels : [];
+
+    for (const entry of availableModels) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      const candidate = entry as Record<string, unknown>;
+      if (typeof candidate.modelId !== "string" || candidate.modelId.trim().length === 0) {
+        continue;
+      }
+      const slug = candidate.modelId.trim();
+      if (seen.has(slug)) {
+        continue;
+      }
+      seen.add(slug);
+      options.push({
+        slug,
+        name:
+          typeof candidate.name === "string" && candidate.name.trim().length > 0
+            ? candidate.name.trim()
+            : slug,
+      });
+    }
+
+    const currentModelId =
+      typeof config.currentModelId === "string" && config.currentModelId.trim().length > 0
+        ? config.currentModelId.trim()
+        : null;
+    if (currentModelId && !seen.has(currentModelId)) {
+      options.unshift({
+        slug: currentModelId,
+        name: currentModelId,
+      });
+    }
+
+    return options;
+  }
+
+  return [];
+}
+
+const REASONING_EFFORT_VALUE_SET = new Set<CodexReasoningEffort>(CODEX_REASONING_EFFORT_OPTIONS);
+
+function isReasoningEffortValue(value: unknown): value is CodexReasoningEffort {
+  return typeof value === "string" && REASONING_EFFORT_VALUE_SET.has(value as CodexReasoningEffort);
+}
+
+function flattenConfigSelectorOptions(options: unknown): ReadonlyArray<Record<string, unknown>> {
+  if (!Array.isArray(options)) {
+    return [];
+  }
+
+  return options.flatMap<Record<string, unknown>>((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const candidate = entry as Record<string, unknown>;
+    if (typeof candidate.value === "string") {
+      return [candidate];
+    }
+    return Array.isArray(candidate.options)
+      ? candidate.options.filter(
+          (option): option is Record<string, unknown> => !!option && typeof option === "object",
+        )
+      : [];
+  });
+}
+
+export function deriveConfiguredReasoningEffortStateFromActivityGroups(
+  activityGroups: ReadonlyArray<ReadonlyArray<OrchestrationThreadActivity>>,
+  provider: ProviderKind,
+): ConfiguredReasoningEffortState | null {
+  const ordered = activityGroups
+    .flatMap((activities) => activities)
+    .toSorted(compareActivitiesByOrder)
+    .toReversed();
+
+  for (const activity of ordered) {
+    if (activity.kind !== "session.configured") {
+      continue;
+    }
+
+    const payload =
+      activity.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+    const payloadProvider = typeof payload?.provider === "string" ? payload.provider : null;
+    if (payloadProvider !== null && payloadProvider !== provider) {
+      continue;
+    }
+
+    const config =
+      payload?.config && typeof payload.config === "object"
+        ? (payload.config as Record<string, unknown>)
+        : null;
+    const configOptions = Array.isArray(config?.configOptions) ? config.configOptions : null;
+    if (!configOptions) {
+      continue;
+    }
+
+    const selector = configOptions.find((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return false;
+      }
+      const candidate = entry as Record<string, unknown>;
+      return (
+        candidate.type === "select" &&
+        (candidate.category === "thought_level" || candidate.id === "reasoning_effort")
+      );
+    });
+    if (!selector || typeof selector !== "object") {
+      continue;
+    }
+
+    const selectorRecord = selector as Record<string, unknown>;
+    const options: CodexReasoningEffort[] = [];
+    const seen = new Set<CodexReasoningEffort>();
+    for (const entry of flattenConfigSelectorOptions(selectorRecord.options)) {
+      const value = entry.value;
+      if (!isReasoningEffortValue(value) || seen.has(value)) {
+        continue;
+      }
+      seen.add(value);
+      options.push(value);
+    }
+
+    return {
+      options,
+      currentValue: isReasoningEffortValue(selectorRecord.currentValue)
+        ? selectorRecord.currentValue
+        : null,
+    };
+  }
+
+  return null;
+}
 export function deriveActivePlanState(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   latestTurnId: TurnId | undefined,

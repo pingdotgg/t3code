@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 import {
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveConfiguredModelOptions,
+  deriveConfiguredModelOptionsFromActivityGroups,
+  deriveConfiguredReasoningEffortStateFromActivityGroups,
   PROVIDER_OPTIONS,
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -222,6 +225,194 @@ describe("derivePendingUserInputs", () => {
   });
 });
 
+describe("deriveConfiguredModelOptions", () => {
+  it("returns the latest configured model catalog for the requested provider", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "session-configured-copilot",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "session.configured",
+        summary: "Session configured",
+        tone: "info",
+        payload: {
+          provider: "copilot",
+          config: {
+            currentModelId: "claude-sonnet-4.5",
+            availableModels: [{ modelId: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" }],
+          },
+        },
+      }),
+      makeActivity({
+        id: "session-configured-codex-old",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "session.configured",
+        summary: "Session configured",
+        tone: "info",
+        payload: {
+          provider: "codex",
+          config: {
+            currentModelId: "gpt-5.4",
+            availableModels: [{ modelId: "gpt-5.4", name: "GPT-5.4" }],
+          },
+        },
+      }),
+      makeActivity({
+        id: "session-configured-codex-new",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "session.configured",
+        summary: "Session configured",
+        tone: "info",
+        payload: {
+          provider: "codex",
+          config: {
+            currentModelId: "gpt-5.3-codex",
+            availableModels: [
+              { modelId: "gpt-5.4", name: "GPT-5.4" },
+              { modelId: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
+            ],
+          },
+        },
+      }),
+    ];
+
+    expect(deriveConfiguredModelOptions(activities, "codex")).toEqual([
+      { slug: "gpt-5.4", name: "GPT-5.4" },
+      { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
+    ]);
+    expect(deriveConfiguredModelOptions(activities, "copilot")).toEqual([
+      { slug: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
+    ]);
+  });
+
+  it("reuses the newest configured catalog across different threads", () => {
+    const olderThreadActivities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "session-configured-copilot-old",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "session.configured",
+        summary: "Session configured",
+        tone: "info",
+        payload: {
+          provider: "copilot",
+          config: {
+            currentModelId: "claude-sonnet-4.5",
+            availableModels: [{ modelId: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" }],
+          },
+        },
+      }),
+    ];
+    const newerThreadActivities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "session-configured-copilot-new",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "session.configured",
+        summary: "Session configured",
+        tone: "info",
+        payload: {
+          provider: "copilot",
+          config: {
+            currentModelId: "gpt-5.4",
+            availableModels: [
+              { modelId: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
+              { modelId: "gpt-5.4", name: "GPT-5.4" },
+            ],
+          },
+        },
+      }),
+    ];
+
+    expect(
+      deriveConfiguredModelOptionsFromActivityGroups(
+        [olderThreadActivities, newerThreadActivities],
+        "copilot",
+      ),
+    ).toEqual([
+      { slug: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
+      { slug: "gpt-5.4", name: "GPT-5.4" },
+    ]);
+  });
+});
+
+describe("deriveConfiguredReasoningEffortStateFromActivityGroups", () => {
+  it("reads Copilot reasoning selectors from session configuration payloads", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "session-configured-copilot-reasoning",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "session.configured",
+        summary: "Session configured",
+        tone: "info",
+        payload: {
+          provider: "copilot",
+          config: {
+            configOptions: [
+              {
+                type: "select",
+                id: "reasoning_effort",
+                name: "Reasoning Effort",
+                category: "thought_level",
+                currentValue: "xhigh",
+                options: [
+                  { value: "low", name: "low" },
+                  { value: "medium", name: "medium" },
+                  { value: "high", name: "high" },
+                  { value: "xhigh", name: "xhigh" },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    ];
+
+    expect(deriveConfiguredReasoningEffortStateFromActivityGroups([activities], "copilot")).toEqual({
+      options: ["low", "medium", "high", "xhigh"],
+      currentValue: "xhigh",
+    });
+  });
+
+  it("supports grouped reasoning selectors", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "session-configured-copilot-reasoning-grouped",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        kind: "session.configured",
+        summary: "Session configured",
+        tone: "info",
+        payload: {
+          provider: "copilot",
+          config: {
+            configOptions: [
+              {
+                type: "select",
+                id: "reasoning_effort",
+                name: "Reasoning Effort",
+                category: "thought_level",
+                currentValue: "high",
+                options: [
+                  {
+                    group: "standard",
+                    name: "Standard",
+                    options: [
+                      { value: "low", name: "low" },
+                      { value: "medium", name: "medium" },
+                      { value: "high", name: "high" },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    ];
+
+    expect(deriveConfiguredReasoningEffortStateFromActivityGroups([activities], "copilot")).toEqual({
+      options: ["low", "medium", "high"],
+      currentValue: "high",
+    });
+  });
+});
 describe("deriveActivePlanState", () => {
   it("returns the latest plan update for the active turn", () => {
     const activities: OrchestrationThreadActivity[] = [

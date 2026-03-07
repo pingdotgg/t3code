@@ -40,6 +40,11 @@ describe("ProviderSessionStartInput", () => {
       provider: "copilot",
       cwd: "/tmp/workspace",
       model: "claude-sonnet-4.5",
+      modelOptions: {
+        copilot: {
+          reasoningEffort: "medium",
+        },
+      },
       runtimeMode: "approval-required",
       providerOptions: {
         copilot: {
@@ -50,6 +55,7 @@ describe("ProviderSessionStartInput", () => {
 
     expect(parsed.provider).toBe("copilot");
     expect(parsed.model).toBe("claude-sonnet-4.5");
+    expect(parsed.modelOptions?.copilot?.reasoningEffort).toBe("medium");
     expect(parsed.providerOptions?.copilot?.binaryPath).toBe("/usr/local/bin/copilot");
   });
 
@@ -79,5 +85,20 @@ describe("ProviderSendTurnInput", () => {
     expect(parsed.model).toBe("gpt-5.3-codex");
     expect(parsed.modelOptions?.codex?.reasoningEffort).toBe("xhigh");
     expect(parsed.modelOptions?.codex?.fastMode).toBe(true);
+  });
+
+  it("accepts copilot reasoning-effort model options", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      model: "gpt-5.4",
+      modelOptions: {
+        copilot: {
+          reasoningEffort: "low",
+        },
+      },
+    });
+
+    expect(parsed.model).toBe("gpt-5.4");
+    expect(parsed.modelOptions?.copilot?.reasoningEffort).toBe("low");
   });
 });

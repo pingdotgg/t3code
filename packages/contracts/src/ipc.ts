@@ -20,7 +20,12 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
-import type { ServerConfig } from "./server";
+import type {
+  ServerConfig,
+  ServerCopilotReasoningProbe,
+  ServerCopilotReasoningProbeInput,
+  ServerCopilotUsage,
+} from "./server";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -136,6 +141,10 @@ export interface NativeApi {
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
+    getCopilotUsage: () => Promise<ServerCopilotUsage>;
+    probeCopilotReasoning: (
+      input: ServerCopilotReasoningProbeInput,
+    ) => Promise<ServerCopilotReasoningProbe>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
   };
   orchestration: {
