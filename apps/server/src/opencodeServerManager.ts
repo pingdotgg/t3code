@@ -22,7 +22,7 @@ import type { ProviderThreadSnapshot } from './provider/Services/ProviderAdapter
 
 const PROVIDER = 'opencode' as const;
 const DEFAULT_HOSTNAME = '127.0.0.1';
-const DEFAULT_PORT = 4033;
+const DEFAULT_PORT = 6733;
 const SERVER_START_TIMEOUT_MS = 5000;
 const SERVER_PROBE_TIMEOUT_MS = 1500;
 
