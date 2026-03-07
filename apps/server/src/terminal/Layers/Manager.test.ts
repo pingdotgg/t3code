@@ -7,7 +7,7 @@ import {
   type TerminalEvent,
   type TerminalOpenInput,
 } from "@t3tools/contracts";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   PtySpawnError,
@@ -170,6 +170,7 @@ describe("TerminalManager", () => {
   function makeManager(
     historyLineLimit = 5,
     options: {
+      platform?: NodeJS.Platform;
       shellResolver?: () => string;
       subprocessChecker?: (terminalPid: number) => Promise<boolean>;
       subprocessPollIntervalMs?: number;
@@ -185,6 +186,7 @@ describe("TerminalManager", () => {
       logsDir,
       ptyAdapter,
       historyLineLimit,
+      ...(options.platform ? { platform: options.platform } : {}),
       shellResolver: options.shellResolver ?? (() => "/bin/bash"),
       ...(options.subprocessChecker ? { subprocessChecker: options.subprocessChecker } : {}),
       ...(options.subprocessPollIntervalMs
@@ -577,10 +579,19 @@ describe("TerminalManager", () => {
         ),
       ).toBe(true);
     } else {
+      const fallbackShells = new Set(
+        [
+          process.env.SHELL,
+          "/bin/zsh",
+          "/bin/bash",
+          "/bin/sh",
+          "zsh",
+          "bash",
+          "sh",
+        ].filter((value): value is string => typeof value === "string" && value.length > 0),
+      );
       expect(
-        ptyAdapter.spawnInputs.some((input) =>
-          ["/bin/zsh", "/bin/bash", "/bin/sh", "zsh", "bash", "sh"].includes(input.shell),
-        ),
+        ptyAdapter.spawnInputs.some((input) => fallbackShells.has(input.shell)),
       ).toBe(true);
     }
 
@@ -668,5 +679,37 @@ describe("TerminalManager", () => {
     expect(spawnInput.args).toEqual(["-o", "nopromptsp"]);
 
     manager.dispose();
+  });
+
+  it("uses wsl.exe for WSL workspace terminals on Windows", async () => {
+    const statSpy = vi.spyOn(fs.promises, "stat").mockResolvedValue({
+      isDirectory: () => true,
+    } as fs.Stats);
+    const { manager, ptyAdapter } = makeManager(5, {
+      platform: "win32",
+      shellResolver: () => "powershell.exe",
+    });
+    try {
+      await manager.open(
+        openInput({
+          cwd: "\\\\wsl.localhost\\Ubuntu\\home\\fazi\\project",
+        }),
+      );
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+
+      expect(spawnInput.shell).toBe("wsl.exe");
+      expect(spawnInput.args).toEqual([
+        "--distribution",
+        "Ubuntu",
+        "--cd",
+        "/home/fazi/project",
+      ]);
+      expect(spawnInput.cwd).toBe("C:\\Windows");
+    } finally {
+      statSpy.mockRestore();
+      manager.dispose();
+    }
   });
 });

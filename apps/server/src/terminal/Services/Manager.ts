@@ -46,6 +46,7 @@ export interface TerminalSessionState {
 export interface ShellCandidate {
   shell: string;
   args?: string[];
+  spawnCwd?: string;
 }
 
 export interface TerminalStartInput extends TerminalOpenInput {
