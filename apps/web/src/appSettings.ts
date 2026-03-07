@@ -39,7 +39,7 @@ const AppSettingsSchema = Schema.Struct({
   ),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
   enableAssistantStreaming: Schema.Boolean.pipe(
-    Schema.withConstructorDefault(() => Option.some(false)),
+    Schema.withConstructorDefault(() => Option.some(true)),
   ),
   codexServiceTier: AppServiceTierSchema.pipe(Schema.withConstructorDefault(() => Option.some("auto"))),
   customCodexModels: Schema.Array(Schema.String).pipe(

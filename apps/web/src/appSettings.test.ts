@@ -7,8 +7,14 @@ import {
   resolveAppServiceTier,
   shouldShowFastTierIcon,
   resolveAppModelSelection,
+  getAppSettingsSnapshot,
 } from "./appSettings";
 
+describe("default app settings", () => {
+  it("enables assistant streaming by default", () => {
+    expect(getAppSettingsSnapshot().enableAssistantStreaming).toBe(true);
+  });
+});
 describe("normalizeCustomModelSlugs", () => {
   it("normalizes aliases, removes built-ins, and deduplicates values", () => {
     expect(
