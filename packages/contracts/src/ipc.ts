@@ -30,7 +30,12 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal";
-import type { ServerUpsertKeybindingInput, ServerUpsertKeybindingResult } from "./server";
+import type {
+  ServerDeleteKeybindingInput,
+  ServerDeleteKeybindingResult,
+  ServerUpsertKeybindingInput,
+  ServerUpsertKeybindingResult,
+} from "./server";
 import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
@@ -137,6 +142,7 @@ export interface NativeApi {
   server: {
     getConfig: () => Promise<ServerConfig>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    deleteKeybinding: (input: ServerDeleteKeybindingInput) => Promise<ServerDeleteKeybindingResult>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

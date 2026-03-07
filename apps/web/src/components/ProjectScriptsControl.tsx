@@ -12,6 +12,7 @@ import {
   PlayIcon,
   PlusIcon,
   SettingsIcon,
+  Trash2Icon,
   WrenchIcon,
 } from "lucide-react";
 import React, { type FormEvent, type KeyboardEvent, useMemo, useState } from "react";
@@ -84,6 +85,7 @@ interface ProjectScriptsControlProps {
   onRunScript: (script: ProjectScript) => void;
   onAddScript: (input: NewProjectScriptInput) => Promise<void> | void;
   onUpdateScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void> | void;
+  onDeleteScript: (scriptId: string) => Promise<void> | void;
 }
 
 function normalizeShortcutKeyToken(key: string): string | null {
@@ -144,6 +146,7 @@ export default function ProjectScriptsControl({
   onRunScript,
   onAddScript,
   onUpdateScript,
+  onDeleteScript,
 }: ProjectScriptsControlProps) {
   const addScriptFormId = React.useId();
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
@@ -155,6 +158,7 @@ export default function ProjectScriptsControl({
   const [runOnWorktreeCreate, setRunOnWorktreeCreate] = useState(false);
   const [keybinding, setKeybinding] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<"save" | "delete" | null>(null);
 
   const primaryScript = useMemo(() => {
     if (preferredScriptId) {
@@ -164,8 +168,21 @@ export default function ProjectScriptsControl({
     return primaryProjectScript(scripts);
   }, [preferredScriptId, scripts]);
   const isEditing = editingScriptId !== null;
+  const isBusy = pendingAction !== null;
   const dropdownItemClassName =
     "data-highlighted:bg-transparent data-highlighted:text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:hover:bg-accent data-highlighted:hover:text-accent-foreground data-highlighted:focus-visible:bg-accent data-highlighted:focus-visible:text-accent-foreground";
+
+  const resetDialogState = () => {
+    setEditingScriptId(null);
+    setName("");
+    setCommand("");
+    setIcon("play");
+    setIconPickerOpen(false);
+    setRunOnWorktreeCreate(false);
+    setKeybinding("");
+    setValidationError(null);
+    setPendingAction(null);
+  };
 
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab") return;
@@ -181,6 +198,7 @@ export default function ProjectScriptsControl({
 
   const submitAddScript = async (event: FormEvent) => {
     event.preventDefault();
+    if (isBusy) return;
     const trimmedName = name.trim();
     const trimmedCommand = command.trim();
     if (trimmedName.length === 0) {
@@ -193,6 +211,7 @@ export default function ProjectScriptsControl({
     }
 
     setValidationError(null);
+    setPendingAction("save");
     try {
       const scriptIdForValidation =
         editingScriptId ??
@@ -220,22 +239,31 @@ export default function ProjectScriptsControl({
       setIconPickerOpen(false);
     } catch (error) {
       setValidationError(error instanceof Error ? error.message : "Failed to save action.");
+      setPendingAction(null);
+    }
+  };
+
+  const deleteScript = async () => {
+    if (!editingScriptId || isBusy) return;
+    setValidationError(null);
+    setPendingAction("delete");
+    try {
+      await onDeleteScript(editingScriptId);
+      setDialogOpen(false);
+      setIconPickerOpen(false);
+    } catch (error) {
+      setValidationError(error instanceof Error ? error.message : "Failed to delete action.");
+      setPendingAction(null);
     }
   };
 
   const openAddDialog = () => {
-    setEditingScriptId(null);
-    setName("");
-    setCommand("");
-    setIcon("play");
-    setIconPickerOpen(false);
-    setRunOnWorktreeCreate(false);
-    setKeybinding("");
-    setValidationError(null);
+    resetDialogState();
     setDialogOpen(true);
   };
 
   const openEditDialog = (script: ProjectScript) => {
+    setPendingAction(null);
     setEditingScriptId(script.id);
     setName(script.name);
     setCommand(script.command);
@@ -297,6 +325,7 @@ export default function ProjectScriptsControl({
                         size="icon-xs"
                         className="absolute right-0 top-1/2 size-6 -translate-y-1/2 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto group-focus-visible:opacity-100 group-focus-visible:pointer-events-auto"
                         aria-label={`Edit ${script.name}`}
+                        disabled={isBusy}
                         onPointerDown={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
@@ -331,6 +360,9 @@ export default function ProjectScriptsControl({
 
       <Dialog
         onOpenChange={(open) => {
+          if (!open && isBusy) {
+            return;
+          }
           setDialogOpen(open);
           if (!open) {
             setIconPickerOpen(false);
@@ -338,13 +370,7 @@ export default function ProjectScriptsControl({
         }}
         onOpenChangeComplete={(open) => {
           if (open) return;
-          setEditingScriptId(null);
-          setName("");
-          setCommand("");
-          setIcon("play");
-          setRunOnWorktreeCreate(false);
-          setKeybinding("");
-          setValidationError(null);
+          resetDialogState();
         }}
         open={dialogOpen}
       >
@@ -368,6 +394,7 @@ export default function ProjectScriptsControl({
                           variant="outline"
                           className="size-9 shrink-0 hover:bg-popover active:bg-popover data-pressed:bg-popover data-pressed:shadow-xs/5 data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] dark:data-pressed:before:shadow-[0_-1px_--theme(--color-white/6%)]"
                           aria-label="Choose icon"
+                          disabled={isBusy}
                         />
                       }
                     >
@@ -386,6 +413,7 @@ export default function ProjectScriptsControl({
                                   ? "border-primary/70 bg-primary/10"
                                   : "border-border/70 hover:bg-accent/60"
                               }`}
+                              disabled={isBusy}
                               onClick={() => {
                                 setIcon(entry.id);
                                 setIconPickerOpen(false);
@@ -403,6 +431,7 @@ export default function ProjectScriptsControl({
                     id="script-name"
                     placeholder="Test"
                     value={name}
+                    disabled={isBusy}
                     onChange={(event) => setName(event.target.value)}
                   />
                 </div>
@@ -413,6 +442,7 @@ export default function ProjectScriptsControl({
                   id="script-keybinding"
                   placeholder="Press shortcut"
                   value={keybinding}
+                  disabled={isBusy}
                   readOnly
                   onKeyDown={captureKeybinding}
                 />
@@ -426,6 +456,7 @@ export default function ProjectScriptsControl({
                   id="script-command"
                   placeholder="bun test"
                   value={command}
+                  disabled={isBusy}
                   onChange={(event) => setCommand(event.target.value)}
                 />
               </div>
@@ -433,25 +464,46 @@ export default function ProjectScriptsControl({
                 <span>Run automatically on worktree creation</span>
                 <Switch
                   checked={runOnWorktreeCreate}
+                  disabled={isBusy}
                   onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
                 />
               </label>
               {validationError && <p className="text-sm text-destructive">{validationError}</p>}
             </form>
           </DialogPanel>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setDialogOpen(false);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button form={addScriptFormId} type="submit">
-              {isEditing ? "Save changes" : "Save action"}
-            </Button>
+          <DialogFooter className={isEditing ? "sm:justify-between" : undefined}>
+            {isEditing ? (
+              <Button
+                type="button"
+                variant="destructive-outline"
+                disabled={isBusy}
+                onClick={() => {
+                  void deleteScript();
+                }}
+              >
+                <Trash2Icon className="size-3.5" />
+                {pendingAction === "delete" ? "Deleting..." : "Delete action"}
+              </Button>
+            ) : null}
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isBusy}
+                onClick={() => {
+                  setDialogOpen(false);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button form={addScriptFormId} type="submit" disabled={isBusy}>
+                {pendingAction === "save"
+                  ? "Saving..."
+                  : isEditing
+                    ? "Save changes"
+                    : "Save action"}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogPopup>
       </Dialog>

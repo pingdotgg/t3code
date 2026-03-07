@@ -1484,11 +1484,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const persistProjectScripts = useCallback(
     async (input: {
       projectId: ProjectId;
-      projectCwd: string;
-      previousScripts: ProjectScript[];
       nextScripts: ProjectScript[];
+      keybindingCommandsToDelete?: KeybindingCommand[];
       keybinding?: string | null;
-      keybindingCommand: KeybindingCommand;
+      keybindingCommand?: KeybindingCommand;
     }) => {
       const api = readNativeApi();
       if (!api) return;
@@ -1500,13 +1499,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
         scripts: input.nextScripts,
       });
 
-      const keybindingRule = decodeProjectScriptKeybindingRule({
-        keybinding: input.keybinding,
-        command: input.keybindingCommand,
-      });
+      if (isElectron) {
+        const keybindingRule = input.keybindingCommand
+          ? decodeProjectScriptKeybindingRule({
+              keybinding: input.keybinding,
+              command: input.keybindingCommand,
+            })
+          : null;
+        const keybindingCommandsToDelete = new Set(input.keybindingCommandsToDelete ?? []);
+        if (keybindingRule) {
+          keybindingCommandsToDelete.delete(keybindingRule.command);
+        } else if (input.keybindingCommand) {
+          keybindingCommandsToDelete.add(input.keybindingCommand);
+        }
 
-      if (isElectron && keybindingRule) {
-        await api.server.upsertKeybinding(keybindingRule);
+        for (const command of keybindingCommandsToDelete) {
+          await api.server.deleteKeybinding({ command });
+        }
+        if (keybindingRule) {
+          await api.server.upsertKeybinding(keybindingRule);
+        }
         await queryClient.invalidateQueries({ queryKey: serverQueryKeys.all });
       }
     },
@@ -1537,8 +1549,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       await persistProjectScripts({
         projectId: activeProject.id,
-        projectCwd: activeProject.cwd,
-        previousScripts: activeProject.scripts,
         nextScripts,
         keybinding: input.keybinding,
         keybindingCommand: commandForProjectScript(nextId),
@@ -1571,11 +1581,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       await persistProjectScripts({
         projectId: activeProject.id,
-        projectCwd: activeProject.cwd,
-        previousScripts: activeProject.scripts,
         nextScripts,
         keybinding: input.keybinding,
         keybindingCommand: commandForProjectScript(scriptId),
+      });
+    },
+    [activeProject, persistProjectScripts],
+  );
+  const deleteProjectScript = useCallback(
+    async (scriptId: string) => {
+      if (!activeProject) return;
+      const nextScripts = activeProject.scripts.filter((script) => script.id !== scriptId);
+      if (nextScripts.length === activeProject.scripts.length) {
+        throw new Error("Script not found.");
+      }
+
+      await persistProjectScripts({
+        projectId: activeProject.id,
+        nextScripts,
+        keybindingCommandsToDelete: [commandForProjectScript(scriptId)],
       });
     },
     [activeProject, persistProjectScripts],
@@ -3338,6 +3362,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
+          onDeleteProjectScript={deleteProjectScript}
           onToggleDiff={onToggleDiff}
         />
       </header>
@@ -3914,6 +3939,7 @@ interface ChatHeaderProps {
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
+  onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onToggleDiff: () => void;
 }
 
@@ -3932,6 +3958,7 @@ const ChatHeader = memo(function ChatHeader({
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
+  onDeleteProjectScript,
   onToggleDiff,
 }: ChatHeaderProps) {
   return (
@@ -3959,6 +3986,7 @@ const ChatHeader = memo(function ChatHeader({
             onRunScript={onRunProjectScript}
             onAddScript={onAddProjectScript}
             onUpdateScript={onUpdateProjectScript}
+            onDeleteScript={onDeleteProjectScript}
           />
         )}
         {activeProjectName && (

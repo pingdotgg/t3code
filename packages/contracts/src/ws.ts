@@ -29,6 +29,7 @@ import {
   TerminalWriteInput,
 } from "./terminal";
 import { KeybindingRule } from "./keybindings";
+import { ServerDeleteKeybindingInput } from "./server";
 import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
 
@@ -67,6 +68,7 @@ export const WS_METHODS = {
   // Server meta
   serverGetConfig: "server.getConfig",
   serverUpsertKeybinding: "server.upsertKeybinding",
+  serverDeleteKeybinding: "server.deleteKeybinding",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────
@@ -129,6 +131,7 @@ const WebSocketRequestBody = Schema.Union([
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
+  tagRequestBody(WS_METHODS.serverDeleteKeybinding, ServerDeleteKeybindingInput),
 ]);
 
 export const WebSocketRequest = Schema.Struct({

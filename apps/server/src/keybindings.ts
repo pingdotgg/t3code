@@ -7,6 +7,7 @@
  * @module Keybindings
  */
 import {
+  type KeybindingCommand,
   KeybindingRule,
   KeybindingsConfig,
   KeybindingShortcut,
@@ -493,6 +494,14 @@ export interface KeybindingsShape {
   readonly upsertKeybindingRule: (
     rule: KeybindingRule,
   ) => Effect.Effect<ResolvedKeybindingsConfig, KeybindingsConfigError>;
+
+  /**
+   * Remove a custom keybinding rule for the given command and persist the
+   * resulting configuration.
+   */
+  readonly deleteKeybindingRule: (
+    command: KeybindingCommand,
+  ) => Effect.Effect<ResolvedKeybindingsConfig, KeybindingsConfigError>;
 }
 
 /**
@@ -653,6 +662,18 @@ const makeKeybindings = Effect.gen(function* () {
       ),
     );
   };
+
+  const persistCustomConfigAndCache = (rules: readonly KeybindingRule[]) =>
+    Effect.gen(function* () {
+      yield* writeConfigAtomically(rules);
+      const nextResolved = mergeWithDefaultKeybindings(compileResolvedKeybindingsConfig(rules));
+      yield* Cache.set(resolvedConfigCache, resolvedConfigCacheKey, {
+        keybindings: nextResolved,
+        issues: [],
+      });
+      yield* emitChange([]);
+      return nextResolved;
+    });
 
   const loadConfigStateFromDisk = loadRuntimeCustomKeybindingsConfig().pipe(
     Effect.map(({ keybindings, issues }) => ({
@@ -825,16 +846,18 @@ const makeKeybindings = Effect.gen(function* () {
               maxEntries: MAX_KEYBINDINGS_COUNT,
             });
           }
-          yield* writeConfigAtomically(cappedConfig);
-          const nextResolved = mergeWithDefaultKeybindings(
-            compileResolvedKeybindingsConfig(cappedConfig),
-          );
-          yield* Cache.set(resolvedConfigCache, resolvedConfigCacheKey, {
-            keybindings: nextResolved,
-            issues: [],
-          });
-          yield* emitChange([]);
-          return nextResolved;
+          return yield* persistCustomConfigAndCache(cappedConfig);
+        }),
+      ),
+    deleteKeybindingRule: (command) =>
+      upsertSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const customConfig = yield* loadWritableCustomKeybindingsConfig();
+          const nextConfig = customConfig.filter((entry) => entry.command !== command);
+          if (nextConfig.length === customConfig.length) {
+            return yield* loadConfigStateFromCacheOrDisk.pipe(Effect.map((state) => state.keybindings));
+          }
+          return yield* persistCustomConfigAndCache(nextConfig);
         }),
       ),
   } satisfies KeybindingsShape;

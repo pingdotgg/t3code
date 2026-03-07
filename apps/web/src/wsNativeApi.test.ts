@@ -349,6 +349,18 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards keybinding deletions to the websocket server method", async () => {
+    requestMock.mockResolvedValue({ keybindings: [], issues: [] });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.server.deleteKeybinding({ command: "script.run-tests.run" });
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverDeleteKeybinding, {
+      command: "script.run-tests.run",
+    });
+  });
+
   it("forwards full-thread diff requests to the orchestration websocket method", async () => {
     requestMock.mockResolvedValue({ diff: "patch" });
     const { createWsNativeApi } = await import("./wsNativeApi");
