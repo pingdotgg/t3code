@@ -27,6 +27,12 @@ import { ServerLoggerLive } from "./serverLogger";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 
+// Resolve the full interactive-shell PATH early so that provider health checks
+// (which run during layer construction) can locate binaries installed via
+// Homebrew, nvm, fnm, etc.  On macOS, Electron inherits a minimal PATH that
+// typically excludes /opt/homebrew/bin and similar directories.
+fixPath();
+
 export class StartupError extends Data.TaggedError("StartupError")<{
   readonly message: string;
   readonly cause?: unknown;
