@@ -22,11 +22,21 @@ Install the [desktop app from the Releases page](https://github.com/pingdotgg/t3
 
 ### macOS
 
+**Option 1: Homebrew Cask**
+
 ```bash
-brew install --cask ./packaging/homebrew/Casks/t3code.rb
+# Clone the repo and install the cask
+git clone https://github.com/pingdotgg/t3code.git
+brew install --cask ./t3code/packaging/homebrew/Casks/t3code.rb
 ```
 
-Or download the `.dmg` directly from [Releases](https://github.com/pingdotgg/t3code/releases).
+**Option 2: Direct download**
+
+Download the `.dmg` for your Mac from [Releases](https://github.com/pingdotgg/t3code/releases):
+- **Apple Silicon (M1/M2/M3/M4):** `T3-Code-<version>-arm64.dmg`
+- **Intel:** `T3-Code-<version>-x64.dmg`
+
+Open the `.dmg` and drag T3 Code to your Applications folder.
 
 ### Arch Linux
 
