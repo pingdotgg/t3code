@@ -253,6 +253,21 @@ function flattenTerminalGroupIds(
   return [...flattenedIds, ...remainingIds];
 }
 
+function reorderTerminalIds(
+  terminalIds: string[],
+  terminalId: string,
+  destination: Extract<ThreadTerminalMoveDestination, { type: "before" | "after" }>,
+): string[] {
+  const nextTerminalIds = terminalIds.filter((id) => id !== terminalId);
+  const anchorIndex = nextTerminalIds.indexOf(destination.targetTerminalId);
+  if (anchorIndex < 0) {
+    return terminalIds;
+  }
+  const insertIndex = destination.type === "before" ? anchorIndex : anchorIndex + 1;
+  nextTerminalIds.splice(insertIndex, 0, terminalId);
+  return nextTerminalIds;
+}
+
 function moveTerminalBetweenGroups(
   state: ThreadTerminalState,
   terminalId: string,
@@ -261,6 +276,19 @@ function moveTerminalBetweenGroups(
   const normalized = normalizeThreadTerminalState(state);
   if (!normalized.terminalIds.includes(terminalId)) {
     return normalized;
+  }
+
+  if (destination.type === "before" || destination.type === "after") {
+    const sourceGroup = normalized.terminalGroups.find((group) => group.terminalIds.includes(terminalId));
+    const targetGroup = normalized.terminalGroups.find((group) =>
+      group.terminalIds.includes(destination.targetTerminalId),
+    );
+    if (sourceGroup && targetGroup && sourceGroup.id === targetGroup.id) {
+      const reorderedIds = reorderTerminalIds(sourceGroup.terminalIds, terminalId, destination);
+      if (arraysEqual(reorderedIds, sourceGroup.terminalIds)) {
+        return normalized;
+      }
+    }
   }
 
   const terminalGroups = copyTerminalGroups(normalized.terminalGroups);
@@ -283,7 +311,12 @@ function moveTerminalBetweenGroups(
   }
 
   let destinationGroupId: string | null = null;
-  if (destination.type === "group") {
+  if (destination.type === "new-group") {
+    const usedGroupIds = new Set(terminalGroups.map((group) => group.id));
+    const nextGroupId = assignUniqueGroupId(fallbackGroupId(terminalId), usedGroupIds);
+    terminalGroups.push({ id: nextGroupId, terminalIds: [terminalId] });
+    destinationGroupId = nextGroupId;
+  } else if (destination.type === "group") {
     const destinationGroup = terminalGroups.find((group) => group.id === destination.targetGroupId);
     if (!destinationGroup) {
       return normalized;
