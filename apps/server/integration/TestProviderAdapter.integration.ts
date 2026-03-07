@@ -29,7 +29,7 @@ export interface TestTurnResponse {
   readonly mutateWorkspace?: (input: {
     readonly cwd: string;
     readonly turnCount: number;
-  }) => Effect.Effect<void, never>;
+  }) => Effect.Effect<void, never, never>;
 }
 
 export type FixtureProviderRuntimeEvent = {
