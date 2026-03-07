@@ -3455,19 +3455,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
               resolvedTheme={resolvedTheme}
               workspaceRoot={activeProject?.cwd ?? undefined}
             />
-            {settings.horizontalTabs && <div className="h-28 shrink-0" aria-hidden="true" />}
+            {settings.horizontalTabs && <div className="h-44 shrink-0" aria-hidden="true" />}
           </div>
 
           {/* Input bar */}
           <div className={cn(
             settings.horizontalTabs
-              ? "pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-3 pt-1.5 sm:px-5 sm:pb-4 sm:pt-2"
+              ? "absolute inset-x-0 bottom-0 z-10 px-3 pb-3 sm:px-5 sm:pb-4"
               : cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4"),
           )}>
+            {settings.horizontalTabs && (
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-background/80 to-background" aria-hidden="true" />
+            )}
         <form
           ref={composerFormRef}
           onSubmit={onSend}
-          className={cn("mx-auto w-full min-w-0 max-w-3xl", settings.horizontalTabs && "pointer-events-auto")}
+          className={cn("mx-auto w-full min-w-0 max-w-3xl", settings.horizontalTabs && "relative")}
           data-chat-composer-form="true"
         >
           <div
@@ -3864,9 +3867,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
             )}
           </div>
         </form>
+        {settings.horizontalTabs && isGitRepo && (
+          <div className="relative">
+            <BranchToolbar
+              threadId={activeThread.id}
+              onEnvModeChange={onEnvModeChange}
+              envLocked={envLocked}
+              onComposerFocusRequest={scheduleComposerFocus}
+            />
+          </div>
+        )}
       </div>
 
-      {isGitRepo && (
+      {!settings.horizontalTabs && isGitRepo && (
         <BranchToolbar
           threadId={activeThread.id}
           onEnvModeChange={onEnvModeChange}

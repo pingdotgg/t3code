@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDownIcon, PlusIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, PlusIcon } from "lucide-react";
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useStore } from "../store";
@@ -32,13 +32,11 @@ const Tab = memo(function Tab({
   isActive,
   hasPendingApproval,
   onSelect,
-  onClose,
 }: {
   thread: TabThread;
   isActive: boolean;
   hasPendingApproval: boolean;
   onSelect: (id: ThreadId) => void;
-  onClose: (id: ThreadId) => void;
 }) {
   const dot = statusDot(thread, hasPendingApproval);
 
@@ -55,24 +53,6 @@ const Tab = memo(function Tab({
     >
       {dot && <span className={`size-1.5 shrink-0 rounded-full ${dot}`} />}
       <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
-      <span
-        role="button"
-        tabIndex={0}
-        aria-label="Close tab"
-        className="ml-auto shrink-0 rounded p-0.5 opacity-0 transition-opacity hover:bg-secondary group-hover:opacity-100"
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose(thread.id);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.stopPropagation();
-            onClose(thread.id);
-          }
-        }}
-      >
-        <XIcon className="size-3" />
-      </span>
       {isActive && (
         <span className="absolute inset-x-0 bottom-0 h-0.5 bg-primary" />
       )}
@@ -237,27 +217,6 @@ export default function HorizontalTabBar() {
     [navigate],
   );
 
-  const clearThreadDraft = useComposerDraftStore((s) => s.clearThreadDraft);
-
-  const closeTab = useCallback(
-    (threadId: ThreadId) => {
-      const tab = projectThreads.find((t) => t.id === threadId);
-      if (tab?.isDraft) {
-        clearThreadDraft(threadId);
-      }
-      if (routeThreadId === threadId) {
-        const idx = projectThreads.findIndex((t) => t.id === threadId);
-        const next = projectThreads[idx + 1] ?? projectThreads[idx - 1];
-        if (next) {
-          void navigate({ to: "/$threadId", params: { threadId: next.id } });
-        } else {
-          void navigate({ to: "/" });
-        }
-      }
-    },
-    [routeThreadId, projectThreads, navigate, clearThreadDraft],
-  );
-
   const switchProject = useCallback(
     (projectId: ProjectId) => {
       const firstThread = threads
@@ -309,7 +268,6 @@ export default function HorizontalTabBar() {
             isActive={routeThreadId === thread.id}
             hasPendingApproval={pendingApprovalByThreadId.get(thread.id) === true}
             onSelect={selectThread}
-            onClose={closeTab}
           />
         ))}
         <button
