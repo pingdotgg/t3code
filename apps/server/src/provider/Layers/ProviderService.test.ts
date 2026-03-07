@@ -191,7 +191,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     streamEvents: Stream.fromPubSub(runtimeEventPubSub),
   };
 
-  const emit = (event: LegacyProviderRuntimeEvent): void => {
+  const emit = (event: ProviderRuntimeEvent): void => {
     Effect.runSync(PubSub.publish(runtimeEventPubSub, event as unknown as ProviderRuntimeEvent));
   };
 

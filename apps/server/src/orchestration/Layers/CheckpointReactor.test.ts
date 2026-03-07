@@ -40,18 +40,6 @@ import { ServerConfig } from "../../config.ts";
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
-type LegacyProviderRuntimeEvent = {
-  readonly type: string;
-  readonly eventId: EventId;
-  readonly provider: "codex";
-  readonly createdAt: string;
-  readonly threadId: ThreadId;
-  readonly turnId?: string | undefined;
-  readonly itemId?: string | undefined;
-  readonly requestId?: string | undefined;
-  readonly payload?: unknown | undefined;
-  readonly [key: string]: unknown;
-};
 
 function createProviderServiceHarness(
   cwd: string,
@@ -94,7 +82,7 @@ function createProviderServiceHarness(
     streamEvents: Stream.fromPubSub(runtimeEventPubSub),
   };
 
-  const emit = (event: LegacyProviderRuntimeEvent): void => {
+  const emit = (event: ProviderRuntimeEvent): void => {
     Effect.runSync(PubSub.publish(runtimeEventPubSub, event as unknown as ProviderRuntimeEvent));
   };
 
