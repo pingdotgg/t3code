@@ -1,10 +1,12 @@
 import {
   DEFAULT_REASONING_EFFORT_BY_PROVIDER,
+  DEFAULT_PROVIDER_KIND,
   ProjectId,
   REASONING_EFFORT_OPTIONS_BY_PROVIDER,
   ThreadId,
   type CodexReasoningEffort,
   type ProviderKind,
+  normalizeProviderKind,
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
@@ -59,6 +61,7 @@ interface PersistedComposerDraftStoreState {
   draftsByThreadId: Record<ThreadId, PersistedComposerThreadDraftState>;
   draftThreadsByThreadId: Record<ThreadId, PersistedDraftThreadState>;
   projectDraftThreadIdByProjectId: Record<ProjectId, ThreadId>;
+  lastProviderByProjectId: Record<ProjectId, ProviderKind>;
 }
 
 interface ComposerThreadDraftState {
@@ -92,8 +95,11 @@ interface ComposerDraftStoreState {
   draftsByThreadId: Record<ThreadId, ComposerThreadDraftState>;
   draftThreadsByThreadId: Record<ThreadId, DraftThreadState>;
   projectDraftThreadIdByProjectId: Record<ProjectId, ThreadId>;
+  lastProviderByProjectId: Record<ProjectId, ProviderKind>;
   getDraftThreadByProjectId: (projectId: ProjectId) => ProjectDraftThread | null;
   getDraftThread: (threadId: ThreadId) => DraftThreadState | null;
+  getLastProviderForProject: (projectId: ProjectId) => ProviderKind | null;
+  setLastProviderForProject: (projectId: ProjectId, provider: ProviderKind) => void;
   setProjectDraftThreadId: (
     projectId: ProjectId,
     threadId: ThreadId,
@@ -147,6 +153,7 @@ const EMPTY_PERSISTED_DRAFT_STORE_STATE: PersistedComposerDraftStoreState = {
   draftsByThreadId: {},
   draftThreadsByThreadId: {},
   projectDraftThreadIdByProjectId: {},
+  lastProviderByProjectId: {},
 };
 
 const EMPTY_IMAGES: ComposerImageAttachment[] = [];
@@ -205,10 +212,6 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     draft.effort === null &&
     draft.codexFastMode === false
   );
-}
-
-function normalizeProviderKind(value: unknown): ProviderKind | null {
-  return value === "codex" ? value : null;
 }
 
 function revokeObjectPreviewUrl(previewUrl: string): void {
@@ -270,6 +273,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
   const rawDraftMap = candidate.draftsByThreadId;
   const rawDraftThreadsByThreadId = candidate.draftThreadsByThreadId;
   const rawProjectDraftThreadIdByProjectId = candidate.projectDraftThreadIdByProjectId;
+  const rawLastProviderByProjectId = candidate.lastProviderByProjectId;
   const draftThreadsByThreadId: PersistedComposerDraftStoreState["draftThreadsByThreadId"] = {};
   if (rawDraftThreadsByThreadId && typeof rawDraftThreadsByThreadId === "object") {
     for (const [threadId, rawDraftThread] of Object.entries(
@@ -348,7 +352,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
     }
   }
   if (!rawDraftMap || typeof rawDraftMap !== "object") {
-    return { draftsByThreadId: {}, draftThreadsByThreadId, projectDraftThreadIdByProjectId };
+    return { draftsByThreadId: {}, draftThreadsByThreadId, projectDraftThreadIdByProjectId, lastProviderByProjectId: {} };
   }
   const nextDraftsByThreadId: PersistedComposerDraftStoreState["draftsByThreadId"] = {};
   for (const [threadId, draftValue] of Object.entries(rawDraftMap as Record<string, unknown>)) {
@@ -369,7 +373,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
     const provider = normalizeProviderKind(draftCandidate.provider);
     const model =
       typeof draftCandidate.model === "string"
-        ? normalizeModelSlug(draftCandidate.model, provider ?? "codex")
+        ? normalizeModelSlug(draftCandidate.model, provider ?? DEFAULT_PROVIDER_KIND)
         : null;
     const runtimeMode =
       draftCandidate.runtimeMode === "approval-required" ||
@@ -412,10 +416,26 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
       ...(codexFastMode ? { codexFastMode } : {}),
     };
   }
+  const lastProviderByProjectId: PersistedComposerDraftStoreState["lastProviderByProjectId"] = {};
+  if (rawLastProviderByProjectId && typeof rawLastProviderByProjectId === "object") {
+    for (const [projectId, rawProvider] of Object.entries(
+      rawLastProviderByProjectId as Record<string, unknown>,
+    )) {
+      if (typeof projectId !== "string" || projectId.length === 0) {
+        continue;
+      }
+      const provider = normalizeProviderKind(rawProvider);
+      if (provider) {
+        lastProviderByProjectId[projectId as ProjectId] = provider;
+      }
+    }
+  }
+
   return {
     draftsByThreadId: nextDraftsByThreadId,
     draftThreadsByThreadId,
     projectDraftThreadIdByProjectId,
+    lastProviderByProjectId,
   };
 }
 
@@ -526,6 +546,30 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
       draftsByThreadId: {},
       draftThreadsByThreadId: {},
       projectDraftThreadIdByProjectId: {},
+      lastProviderByProjectId: {},
+      getLastProviderForProject: (projectId) => {
+        if (projectId.length === 0) {
+          return null;
+        }
+        return get().lastProviderByProjectId[projectId] ?? null;
+      },
+      setLastProviderForProject: (projectId, provider) => {
+        if (projectId.length === 0) {
+          return;
+        }
+        set((state) => {
+          if (state.lastProviderByProjectId[projectId] === provider) {
+            return state;
+          }
+          return {
+            ...state,
+            lastProviderByProjectId: {
+              ...state.lastProviderByProjectId,
+              [projectId]: provider,
+            },
+          };
+        });
+      },
       getDraftThreadByProjectId: (projectId) => {
         if (projectId.length === 0) {
           return null;
@@ -1216,6 +1260,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           draftsByThreadId: persistedDraftsByThreadId,
           draftThreadsByThreadId: state.draftThreadsByThreadId,
           projectDraftThreadIdByProjectId: state.projectDraftThreadIdByProjectId,
+          lastProviderByProjectId: state.lastProviderByProjectId,
         };
       },
       merge: (persistedState, currentState) => {
@@ -1231,6 +1276,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           draftsByThreadId,
           draftThreadsByThreadId: normalizedPersisted.draftThreadsByThreadId,
           projectDraftThreadIdByProjectId: normalizedPersisted.projectDraftThreadIdByProjectId,
+          lastProviderByProjectId: normalizedPersisted.lastProviderByProjectId,
         };
       },
     },

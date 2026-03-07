@@ -5,6 +5,7 @@ import { assertFailure } from "@effect/vitest/utils";
 import { Effect, Layer, Stream } from "effect";
 
 import { CodexAdapter, CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import { AugmentAdapter, AugmentAdapterShape } from "../Services/AugmentAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderAdapterRegistryLive } from "./ProviderAdapterRegistry.ts";
 import { ProviderUnsupportedError } from "../Errors.ts";
@@ -27,11 +28,31 @@ const fakeCodexAdapter: CodexAdapterShape = {
   streamEvents: Stream.empty,
 };
 
+const fakeAugmentAdapter: AugmentAdapterShape = {
+  provider: "augment",
+  capabilities: { sessionModelSwitch: "restart-session" },
+  startSession: vi.fn(),
+  sendTurn: vi.fn(),
+  interruptTurn: vi.fn(),
+  respondToRequest: vi.fn(),
+  respondToUserInput: vi.fn(),
+  stopSession: vi.fn(),
+  listSessions: vi.fn(),
+  hasSession: vi.fn(),
+  readThread: vi.fn(),
+  rollbackThread: vi.fn(),
+  stopAll: vi.fn(),
+  streamEvents: Stream.empty,
+};
+
 const layer = it.layer(
   Layer.mergeAll(
     Layer.provide(
       ProviderAdapterRegistryLive,
-      Layer.succeed(CodexAdapter, fakeCodexAdapter),
+      Layer.mergeAll(
+        Layer.succeed(CodexAdapter, fakeCodexAdapter),
+        Layer.succeed(AugmentAdapter, fakeAugmentAdapter),
+      ),
     ),
     NodeServices.layer,
   ),
@@ -44,8 +65,13 @@ layer("ProviderAdapterRegistryLive", (it) => {
       const codex = yield* registry.getByProvider("codex");
       assert.equal(codex, fakeCodexAdapter);
 
+      const augment = yield* registry.getByProvider("augment");
+      assert.equal(augment, fakeAugmentAdapter);
+
       const providers = yield* registry.listProviders();
-      assert.deepEqual(providers, ["codex"]);
+      assert.ok(providers.includes("codex"));
+      assert.ok(providers.includes("augment"));
+      assert.equal(providers.length, 2);
     }),
   );
 

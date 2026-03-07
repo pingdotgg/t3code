@@ -1,6 +1,7 @@
 import {
   type ApprovalRequestId,
   DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_PROVIDER_KIND,
   EDITORS,
   type EditorId,
   type KeybindingCommand,
@@ -161,6 +162,7 @@ import {
   MenuTrigger,
 } from "./ui/menu";
 import {
+  AugmentIcon,
   ClaudeAI,
   CursorIcon,
   Gemini,
@@ -606,6 +608,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const clearDraftThread = useComposerDraftStore((store) => store.clearDraftThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const setLastProviderForProject = useComposerDraftStore((store) => store.setLastProviderForProject);
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
   );
@@ -762,6 +765,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const sessionProvider = activeThread?.session?.provider ?? null;
   const selectedProviderByThreadId = composerDraft.provider;
+  const lastProviderForProject = useComposerDraftStore(
+    (state) => activeThread?.projectId ? state.lastProviderByProjectId[activeThread.projectId] : null,
+  );
   const hasThreadStarted = Boolean(
     activeThread &&
     (activeThread.latestTurn !== null ||
@@ -773,7 +779,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const lockedProvider: ProviderKind | null = hasThreadStarted
     ? (sessionProvider ?? selectedProviderByThreadId ?? null)
     : null;
-  const selectedProvider: ProviderKind = lockedProvider ?? selectedProviderByThreadId ?? "codex";
+  // Use the last provider for this project as a fallback for new threads
+  const selectedProvider: ProviderKind = lockedProvider ?? selectedProviderByThreadId ?? lastProviderForProject ?? DEFAULT_PROVIDER_KIND;
   const baseThreadModel = resolveModelSlugForProvider(
     selectedProvider,
     activeThread?.model ?? activeProject?.model ?? getDefaultModel(selectedProvider),
@@ -2573,6 +2580,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       turnStartSucceeded = true;
       if (isFirstMessage) {
         clearDraftThread(threadIdForSend);
+      }
+      // Remember the last used provider for this project
+      if (activeProject?.id) {
+        setLastProviderForProject(activeProject.id, selectedProvider);
       }
     })().catch(async (err: unknown) => {
       if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
@@ -5197,11 +5208,14 @@ function getCustomModelOptionsByProvider(settings: {
 }): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
   return {
     codex: getAppModelOptions("codex", settings.customCodexModels),
+    // Augment models are fetched dynamically from ACP, custom models not supported yet
+    augment: getAppModelOptions("augment", []),
   };
 }
 
 const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
   codex: OpenAI,
+  augment: AugmentIcon,
   claudeCode: ClaudeAI,
   cursor: CursorIcon,
 };

@@ -1,7 +1,10 @@
 import { Fragment, type ReactNode, createElement, useEffect } from "react";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_PROVIDER_KIND,
   type ProviderKind,
+  normalizeProviderKind,
+  isProviderKind,
   ThreadId,
   type OrchestrationReadModel,
   type OrchestrationSessionStatus,
@@ -143,26 +146,32 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex") {
-    return providerName;
-  }
-  return "codex";
+  const normalized = normalizeProviderKind(providerName);
+  return normalized ?? DEFAULT_PROVIDER_KIND;
 }
 
 const CODEX_MODEL_SLUGS = new Set<string>(getModelOptions("codex").map((option) => option.slug));
+
+const AUGMENT_MODEL_SLUGS = new Set<string>(getModelOptions("augment").map((option) => option.slug));
 
 function inferProviderForThreadModel(input: {
   readonly model: string;
   readonly sessionProviderName: string | null;
 }): ProviderKind {
-  if (input.sessionProviderName === "codex") {
+  // If session already has a valid provider, use it
+  if (isProviderKind(input.sessionProviderName)) {
     return input.sessionProviderName;
   }
+  // Try to infer provider from model slug
   const normalizedCodex = normalizeModelSlug(input.model, "codex");
   if (normalizedCodex && CODEX_MODEL_SLUGS.has(normalizedCodex)) {
     return "codex";
   }
-  return "codex";
+  const normalizedAugment = normalizeModelSlug(input.model, "augment");
+  if (normalizedAugment && AUGMENT_MODEL_SLUGS.has(normalizedAugment)) {
+    return "augment";
+  }
+  return DEFAULT_PROVIDER_KIND;
 }
 
 function resolveWsHttpOrigin(): string {

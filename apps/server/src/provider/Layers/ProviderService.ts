@@ -12,6 +12,7 @@
 import {
   NonNegativeInt,
   ThreadId,
+  DEFAULT_PROVIDER_KIND,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
@@ -261,7 +262,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         const input = {
           ...parsed,
           threadId,
-          provider: parsed.provider ?? "codex",
+          provider: parsed.provider ?? DEFAULT_PROVIDER_KIND,
         };
         const adapter = yield* registry.getByProvider(input.provider);
         const session = yield* adapter.startSession(input);

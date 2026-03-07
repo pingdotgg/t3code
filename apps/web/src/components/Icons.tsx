@@ -2,6 +2,12 @@ import { type SVGProps, useId } from "react";
 
 export type Icon = React.FC<SVGProps<SVGSVGElement>>;
 
+export const AugmentIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 2L2 22h4l2-4h8l2 4h4L12 2zm0 6l3 8H9l3-8z" />
+  </svg>
+);
+
 export const GitHubIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 1024 1024" fill="none">
     <path

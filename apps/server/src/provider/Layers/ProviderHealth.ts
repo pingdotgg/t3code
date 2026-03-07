@@ -20,6 +20,7 @@ import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHe
 
 const DEFAULT_TIMEOUT_MS = 4_000;
 const CODEX_PROVIDER = "codex" as const;
+const AUGMENT_PROVIDER = "augment" as const;
 
 // ── Pure helpers ────────────────────────────────────────────────────
 
@@ -35,12 +36,23 @@ function nonEmptyTrimmed(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function isCommandMissingCause(error: unknown): boolean {
+function isCodexCommandMissingCause(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const lower = error.message.toLowerCase();
   return (
     lower.includes("command not found: codex") ||
     lower.includes("spawn codex enoent") ||
+    lower.includes("enoent") ||
+    lower.includes("notfound")
+  );
+}
+
+function isAugmentCommandMissingCause(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const lower = error.message.toLowerCase();
+  return (
+    lower.includes("command not found: auggie") ||
+    lower.includes("spawn auggie enoent") ||
     lower.includes("enoent") ||
     lower.includes("notfound")
   );
@@ -215,7 +227,7 @@ export const checkCodexProviderStatus: Effect.Effect<
       available: false,
       authStatus: "unknown" as const,
       checkedAt,
-      message: isCommandMissingCause(error)
+      message: isCodexCommandMissingCause(error)
         ? "Codex CLI (`codex`) is not installed or not on PATH."
         : `Failed to execute Codex CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
     };
@@ -290,14 +302,147 @@ export const checkCodexProviderStatus: Effect.Effect<
   } satisfies ServerProviderStatus;
 });
 
+// ── Augment health check ─────────────────────────────────────────────
+
+const runAugmentCommand = (args: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const command = ChildProcess.make("auggie", [...args], {
+      shell: process.platform === "win32",
+    });
+
+    const child = yield* spawner.spawn(command);
+
+    const [stdout, stderr, exitCode] = yield* Effect.all(
+      [
+        collectStreamAsString(child.stdout),
+        collectStreamAsString(child.stderr),
+        child.exitCode.pipe(Effect.map(Number)),
+      ],
+      { concurrency: "unbounded" },
+    );
+
+    return { stdout, stderr, code: exitCode } satisfies CommandResult;
+  }).pipe(Effect.scoped);
+
+export const checkAugmentProviderStatus: Effect.Effect<
+  ServerProviderStatus,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> = Effect.gen(function* () {
+  const checkedAt = new Date().toISOString();
+
+  // Probe 1: `auggie --version` — is the CLI reachable?
+  const versionProbe = yield* runAugmentCommand(["--version"]).pipe(
+    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.result,
+  );
+
+  if (Result.isFailure(versionProbe)) {
+    const error = versionProbe.failure;
+    return {
+      provider: AUGMENT_PROVIDER,
+      status: "error" as const,
+      available: false,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message: isAugmentCommandMissingCause(error)
+        ? "Auggie CLI (`auggie`) is not installed or not on PATH."
+        : `Failed to execute Auggie CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
+    };
+  }
+
+  if (Option.isNone(versionProbe.success)) {
+    return {
+      provider: AUGMENT_PROVIDER,
+      status: "error" as const,
+      available: false,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message: "Auggie CLI is installed but failed to run. Timed out while running command.",
+    };
+  }
+
+  const version = versionProbe.success.value;
+  if (version.code !== 0) {
+    const detail = detailFromResult(version);
+    return {
+      provider: AUGMENT_PROVIDER,
+      status: "error" as const,
+      available: false,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message: detail
+        ? `Auggie CLI is installed but failed to run. ${detail}`
+        : "Auggie CLI is installed but failed to run.",
+    };
+  }
+
+  // Probe 2: Check authentication by looking for session file or using `auggie token status`
+  // Since Auggie doesn't have a simple `login status` command, we check via `auggie token status`
+  const authProbe = yield* runAugmentCommand(["token", "status"]).pipe(
+    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.result,
+  );
+
+  // If auth probe fails or times out, the CLI is still available
+  if (Result.isFailure(authProbe) || Option.isNone(authProbe.success)) {
+    // CLI works, assume auth is ok (will fail at session start if not)
+    return {
+      provider: AUGMENT_PROVIDER,
+      status: "ready" as const,
+      available: true,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message: "Auggie CLI is available. Authentication will be verified when starting a session.",
+    };
+  }
+
+  const authResult = authProbe.success.value;
+  const combinedOutput = `${authResult.stdout}\n${authResult.stderr}`.toLowerCase();
+
+  // Check for common unauthenticated patterns
+  if (
+    combinedOutput.includes("not logged in") ||
+    combinedOutput.includes("login required") ||
+    combinedOutput.includes("authentication required") ||
+    combinedOutput.includes("run `auggie login`") ||
+    combinedOutput.includes("run auggie login") ||
+    combinedOutput.includes("no token") ||
+    combinedOutput.includes("not authenticated")
+  ) {
+    return {
+      provider: AUGMENT_PROVIDER,
+      status: "error" as const,
+      available: true,
+      authStatus: "unauthenticated" as const,
+      checkedAt,
+      message: "Auggie CLI is not authenticated. Run `auggie login` and try again.",
+    };
+  }
+
+  // If command succeeded or didn't indicate auth failure, assume authenticated
+  // Authentication will be verified when actually starting a session
+  return {
+    provider: AUGMENT_PROVIDER,
+    status: "ready" as const,
+    available: true,
+    authStatus: authResult.code === 0 ? ("authenticated" as const) : ("unknown" as const),
+    checkedAt,
+  };
+});
+
 // ── Layer ───────────────────────────────────────────────────────────
 
 export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
-    const codexStatus = yield* checkCodexProviderStatus;
+    const [codexStatus, augmentStatus] = yield* Effect.all(
+      [checkCodexProviderStatus, checkAugmentProviderStatus],
+      { concurrency: "unbounded" },
+    );
     return {
-      getStatuses: Effect.succeed([codexStatus]),
+      getStatuses: Effect.succeed([codexStatus, augmentStatus]),
     } satisfies ProviderHealthShape;
   }),
 );

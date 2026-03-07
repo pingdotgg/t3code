@@ -27,8 +27,23 @@ export const ORCHESTRATION_WS_CHANNELS = {
   domainEvent: "orchestration.domainEvent",
 } as const;
 
-export const ProviderKind = Schema.Literal("codex");
+export const PROVIDER_KINDS = ["codex", "augment"] as const;
+export const ProviderKind = Schema.Literals(PROVIDER_KINDS);
 export type ProviderKind = typeof ProviderKind.Type;
+
+/**
+ * Check if a value is a valid ProviderKind.
+ */
+export function isProviderKind(value: unknown): value is ProviderKind {
+  return PROVIDER_KINDS.includes(value as ProviderKind);
+}
+
+/**
+ * Normalize a string to a ProviderKind, returning null if invalid.
+ */
+export function normalizeProviderKind(value: unknown): ProviderKind | null {
+  return isProviderKind(value) ? value : null;
+}
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
   "on-failure",
