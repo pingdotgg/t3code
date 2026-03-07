@@ -3986,6 +3986,8 @@ interface ChatHeaderProps {
   onToggleDiff: () => void;
 }
 
+const MAX_HEADER_PROJECT_NAME_LENGTH = 24;
+
 const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   activeThreadTitle,
@@ -4004,6 +4006,10 @@ const ChatHeader = memo(function ChatHeader({
   onUpdateProjectScript,
   onToggleDiff,
 }: ChatHeaderProps) {
+  const truncatedProjectName = activeProjectName
+    ? truncateTitle(activeProjectName, MAX_HEADER_PROJECT_NAME_LENGTH)
+    : null;
+
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
@@ -4014,9 +4020,13 @@ const ChatHeader = memo(function ChatHeader({
         >
           {activeThreadTitle}
         </h2>
-        {activeProjectName && (
-          <Badge variant="outline" className="max-w-28 shrink-0 truncate">
-            {activeProjectName}
+        {activeProjectName && truncatedProjectName && (
+          <Badge
+            variant="outline"
+            className="max-w-32 min-w-0 shrink-0 justify-start overflow-hidden"
+            title={activeProjectName}
+          >
+            <span className="block truncate">{truncatedProjectName}</span>
           </Badge>
         )}
         {activeProjectName && !isGitRepo && (

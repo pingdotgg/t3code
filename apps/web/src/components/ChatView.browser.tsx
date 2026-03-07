@@ -22,6 +22,7 @@ import { render } from "vitest-browser-react";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { getRouter } from "../router";
 import { useStore } from "../store";
+import { truncateTitle } from "../truncateTitle";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
@@ -798,6 +799,44 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("truncates long project names in the header badge with an ellipsis", async () => {
+    const longProjectName = "snack-and-slice-demo-project-name";
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-project-name" as MessageId,
+        targetText: "project name target",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.snapshot = {
+          ...nextFixture.snapshot,
+          projects: nextFixture.snapshot.projects.map((project) =>
+            project.id === PROJECT_ID ? { ...project, title: longProjectName } : project,
+          ),
+        };
+        nextFixture.welcome = {
+          ...nextFixture.welcome,
+          projectName: longProjectName,
+        };
+      },
+    });
+
+    try {
+      const projectBadge = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="badge"]')).find(
+            (element) => element.title === longProjectName,
+          ) ?? null,
+        "Unable to find truncated project badge.",
+      );
+
+      expect(projectBadge.textContent?.trim()).toBe(truncateTitle(longProjectName, 24));
+      expect(projectBadge.title).toBe(longProjectName);
     } finally {
       await mounted.cleanup();
     }
