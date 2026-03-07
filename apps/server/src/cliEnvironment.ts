@@ -73,11 +73,11 @@ export function buildNonInteractiveGitEnv(
   overrides: NodeJS.ProcessEnv = {},
 ): NodeJS.ProcessEnv {
   return buildPopupSafeEnv(baseEnv, {
-    GIT_TERMINAL_PROMPT: baseEnv.GIT_TERMINAL_PROMPT ?? "0",
-    GCM_INTERACTIVE: baseEnv.GCM_INTERACTIVE ?? "never",
-    GCM_MODAL_PROMPT: baseEnv.GCM_MODAL_PROMPT ?? "false",
-    GIT_ASKPASS: baseEnv.GIT_ASKPASS ?? "echo",
-    SSH_ASKPASS: baseEnv.SSH_ASKPASS ?? "echo",
+    GIT_TERMINAL_PROMPT: "0",
+    GCM_INTERACTIVE: "never",
+    GCM_MODAL_PROMPT: "false",
+    GIT_ASKPASS: "echo",
+    SSH_ASKPASS: "echo",
     ...overrides,
   });
 }

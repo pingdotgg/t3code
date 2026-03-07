@@ -1173,7 +1173,11 @@ function inputPromptBlocks(
   prompt: ReadonlyArray<GeminiAcpPromptBlock> | undefined,
 ): ReadonlyArray<GeminiAcpPromptBlock> {
   if (prompt && prompt.length > 0) {
-    return prompt;
+    const promptHasText = prompt.some(
+      (entry): entry is Extract<GeminiAcpPromptBlock, { type: "text" }> =>
+        entry.type === "text" && entry.text.trim().length > 0,
+    );
+    return promptHasText ? prompt : [{ type: "text", text }, ...prompt];
   }
   return [{ type: "text", text }];
 }

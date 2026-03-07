@@ -323,4 +323,56 @@ describe("GeminiCliManager", () => {
     await waitFor(() => seenPrompts.length === 1);
     expect(seenPrompts[0]?.some((entry) => entry.type === "image")).toBe(true);
   });
+
+  it("preserves the text instruction when prompt attachments omit a text block", async () => {
+    const seenPrompts: Array<ReadonlyArray<Record<string, unknown>>> = [];
+    const manager = new GeminiCliManager({
+      prewarmSessions: false,
+      runtimeFactory: async (_model, handlers) => ({
+        model: "gemini-2.5-pro",
+        initialize: async () => undefined,
+        newSession: vi.fn(async () => ({
+          sessionId: "session-image-no-text",
+          modes: { currentModeId: "default" },
+        })),
+        loadSession: vi.fn(async (sessionId: string) => ({
+          sessionId,
+          modes: { currentModeId: "default" },
+        })),
+        setSessionMode: vi.fn(async () => undefined),
+        prompt: vi.fn(async (_sessionId: string, prompt) => {
+          seenPrompts.push(prompt as ReadonlyArray<Record<string, unknown>>);
+          handlers.onSessionUpdate({
+            sessionId: "session-image-no-text",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "processed prompt" },
+            },
+          });
+          return { stopReason: "end_turn" };
+        }),
+        cancel: vi.fn(async () => undefined),
+        close: vi.fn(() => undefined),
+      }),
+    });
+
+    manager.startSession({
+      threadId: "thread-image-no-text",
+      model: "gemini-2.5-pro",
+      cwd: process.cwd(),
+    });
+
+    manager.sendTurn({
+      threadId: "thread-image-no-text",
+      text: "analyze the attached screenshot",
+      prompt: [{ type: "image", data: "ZmFrZQ==", mimeType: "image/png" }],
+      approvalMode: "yolo",
+    });
+
+    await waitFor(() => seenPrompts.length === 1);
+    expect(seenPrompts[0]).toEqual([
+      { type: "text", text: "analyze the attached screenshot" },
+      { type: "image", data: "ZmFrZQ==", mimeType: "image/png" },
+    ]);
+  });
 });

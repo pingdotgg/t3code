@@ -539,9 +539,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const codexHomePath = codexOptions.homePath;
       const child = spawn(codexBinaryPath, ["app-server"], {
         cwd: resolvedCwd,
-        env: buildPopupSafeEnv(process.env, {
-          CODEX_HOME: codexHomePath,
-        }),
+        env: buildPopupSafeEnv(process.env, codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",
       });
