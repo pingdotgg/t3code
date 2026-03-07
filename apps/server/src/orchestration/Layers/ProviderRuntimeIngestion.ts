@@ -1059,10 +1059,17 @@ const make = Effect.gen(function* () {
 
       if (event.type === "turn.diff.updated") {
         const turnId = toTurnId(event.turnId);
-        if (turnId && (yield* isGitRepoForThread(thread.id))) {
+        const hasRealCheckpoint = turnId
+          ? thread.checkpoints.some((c) => c.turnId === turnId && c.status !== "missing")
+          : false;
+        if (turnId && !hasRealCheckpoint && (yield* isGitRepoForThread(thread.id))) {
           const assistantMessageId = MessageId.makeUnsafe(
             `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
           );
+          const placeholderTurnCount =
+            thread.checkpoints
+              .filter((c) => c.status !== "missing")
+              .reduce((max, c) => Math.max(max, c.checkpointTurnCount), 0) + 1;
           yield* orchestrationEngine.dispatch({
             type: "thread.turn.diff.complete",
             commandId: providerCommandId(event, "thread-turn-diff-complete"),
@@ -1073,7 +1080,7 @@ const make = Effect.gen(function* () {
             status: "missing",
             files: [],
             assistantMessageId,
-            checkpointTurnCount: thread.checkpoints.length + 1,
+            checkpointTurnCount: placeholderTurnCount,
             createdAt: now,
           });
         }
