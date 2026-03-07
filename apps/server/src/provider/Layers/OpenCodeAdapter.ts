@@ -6,7 +6,7 @@ import {
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import { createOpencode } from "@opencode-ai/sdk";
-import { Effect, Either, Layer, Queue, Stream } from "effect";
+import { Effect, Layer, Queue, Scope, Stream } from "effect";
 
 import {
   ProviderAdapterProcessError,
@@ -195,7 +195,7 @@ function isUnavailableOpenCodeAdapter(
 
 const makeOpenCodeAdapter = (
   options?: OpenCodeAdapterLiveOptions,
-): Effect.Effect<OpenCodeAdapterShape, never, never> =>
+): Effect.Effect<OpenCodeAdapterShape, never, Scope.Scope> =>
   Effect.gen(function* () {
     const runtime = yield* Effect.tryPromise({
       try: () =>
@@ -247,13 +247,11 @@ const makeOpenCodeAdapter = (
     const startSession: OpenCodeAdapterShape["startSession"] = (input) =>
       Effect.gen(function* () {
         if (input.provider !== undefined && input.provider !== PROVIDER) {
-          return yield* Effect.fail(
-            new ProviderAdapterValidationError({
-              provider: PROVIDER,
-              operation: "startSession",
-              issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
-            }),
-          );
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "startSession",
+            issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
+          });
         }
 
         const created = yield* Effect.tryPromise({
@@ -463,13 +461,11 @@ const makeOpenCodeAdapter = (
       Effect.gen(function* () {
         yield* getSession(threadId);
         if (!Number.isInteger(numTurns) || numTurns < 1) {
-          return yield* Effect.fail(
-            new ProviderAdapterValidationError({
-              provider: PROVIDER,
-              operation: "rollbackThread",
-              issue: "numTurns must be an integer >= 1.",
-            }),
-          );
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "rollbackThread",
+            issue: "numTurns must be an integer >= 1.",
+          });
         }
         const turns = snapshots.get(threadId) ?? [];
         const nextTurns = turns.slice(0, Math.max(0, turns.length - numTurns));
@@ -530,10 +526,10 @@ const makeOpenCodeAdapter = (
     } satisfies OpenCodeAdapterShape;
   });
 
-export const OpenCodeAdapterLive = Layer.effect(OpenCodeAdapter, makeOpenCodeAdapter());
+export const OpenCodeAdapterLive = Layer.scoped(OpenCodeAdapter, makeOpenCodeAdapter());
 
 export function makeOpenCodeAdapterLive(
   options?: OpenCodeAdapterLiveOptions,
 ): Layer.Layer<OpenCodeAdapter, never, never> {
-  return Layer.effect(OpenCodeAdapter, makeOpenCodeAdapter(options));
+  return Layer.scoped(OpenCodeAdapter, makeOpenCodeAdapter(options));
 }
