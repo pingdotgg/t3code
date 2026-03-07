@@ -55,6 +55,16 @@ function patchMainBundleInfoPlist(appBundlePath, iconPath) {
   copyFileSync(iconPath, join(resourcesDir, "electron.icns"));
 }
 
+function resignAppBundle(appBundlePath) {
+  const result = spawnSync("codesign", ["--force", "--deep", "--sign", "-", appBundlePath], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    const detail = result.stderr?.trim() || result.stdout?.trim() || "";
+    throw new Error(`Failed to re-sign app bundle at ${appBundlePath}: ${detail}`);
+  }
+}
+
 function patchHelperBundleInfoPlists(appBundlePath) {
   const frameworksDir = join(appBundlePath, "Contents", "Frameworks");
   if (!existsSync(frameworksDir)) {
@@ -127,6 +137,7 @@ function buildMacLauncher(electronBinaryPath) {
   cpSync(sourceAppBundlePath, targetAppBundlePath, { recursive: true });
   patchMainBundleInfoPlist(targetAppBundlePath, iconPath);
   patchHelperBundleInfoPlists(targetAppBundlePath);
+  resignAppBundle(targetAppBundlePath);
   writeFileSync(metadataPath, `${JSON.stringify(expectedMetadata, null, 2)}\n`);
 
   return targetBinaryPath;

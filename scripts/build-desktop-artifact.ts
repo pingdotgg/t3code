@@ -464,6 +464,26 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      extendInfo: {
+        NSMicrophoneUsageDescription:
+          "T3 Code needs microphone access so that apps launched from its integrated terminal can use audio input.",
+        NSCameraUsageDescription:
+          "T3 Code needs camera access so that apps launched from its integrated terminal can use the camera.",
+        NSAppleEventsUsageDescription:
+          "T3 Code needs to send Apple events to control other applications.",
+      },
+      ...(signed
+        ? {
+            // Signed builds: hardened runtime + entitlements (required for notarization).
+            entitlements: "apps/desktop/resources/entitlements.mac.plist",
+            entitlementsInherit: "apps/desktop/resources/entitlements.mac.plist",
+          }
+        : {
+            // Unsigned builds: ad-hoc sign without hardened runtime so macOS TCC
+            // can identify the app and show privacy permission prompts.
+            identity: "-",
+            hardenedRuntime: false,
+          }),
     };
   }
 
@@ -654,7 +674,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     }
   }
   if (!options.signed) {
-    buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = "false";
+    // On macOS, we still need at least ad-hoc signing (identity: "-" in the
+    // mac build config) so macOS TCC can attribute privacy permissions (mic,
+    // camera, etc.) to the app.  Disabling signing entirely would leave the
+    // app with an unbound Info.plist and no sealed resources, causing macOS to
+    // silently deny TCC prompts for child processes launched from the terminal.
+    if (options.platform !== "mac") {
+      buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = "false";
+    }
     delete buildEnv.CSC_LINK;
     delete buildEnv.CSC_KEY_PASSWORD;
     delete buildEnv.APPLE_API_KEY;
