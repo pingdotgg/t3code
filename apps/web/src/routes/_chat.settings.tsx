@@ -96,6 +96,7 @@ function SettingsRouteView() {
     Record<ProviderKind, string>
   >({
     codex: "",
+    opencode: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
