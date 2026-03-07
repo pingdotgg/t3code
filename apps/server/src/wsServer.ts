@@ -72,6 +72,7 @@ import {
 } from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import { expandHomePath } from "./os-jank.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -194,6 +195,13 @@ function stripRequestTag<T extends { _tag: string }>(body: T) {
   return Struct.omit(body, ["_tag"]);
 }
 
+function messageFromCause(cause: Cause.Cause<unknown>): string {
+  const squashed = Cause.squash(cause);
+  const message =
+    squashed instanceof Error ? squashed.message.trim() : String(squashed).trim();
+  return message.length > 0 ? message : Cause.pretty(cause);
+}
+
 export type ServerCoreRuntimeServices =
   | OrchestrationEngineService
   | ProjectionSnapshotQuery
@@ -298,6 +306,41 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const normalizeDispatchCommand = Effect.fnUntraced(function* (input: {
     readonly command: ClientOrchestrationCommand;
   }) {
+    const normalizeProjectWorkspaceRoot = Effect.fnUntraced(function* (workspaceRoot: string) {
+      const normalizedWorkspaceRoot = path.resolve(yield* expandHomePath(workspaceRoot.trim()));
+      const workspaceStat = yield* fileSystem
+        .stat(normalizedWorkspaceRoot)
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+      if (!workspaceStat) {
+        return yield* new RouteRequestError({
+          message: `Project directory does not exist: ${normalizedWorkspaceRoot}`,
+        });
+      }
+      if (workspaceStat.type !== "Directory") {
+        return yield* new RouteRequestError({
+          message: `Project path is not a directory: ${normalizedWorkspaceRoot}`,
+        });
+      }
+      return normalizedWorkspaceRoot;
+    });
+
+    if (input.command.type === "project.create") {
+      return {
+        ...input.command,
+        workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
+      } satisfies OrchestrationCommand;
+    }
+
+    if (
+      input.command.type === "project.meta.update" &&
+      input.command.workspaceRoot !== undefined
+    ) {
+      return {
+        ...input.command,
+        workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
+      } satisfies OrchestrationCommand;
+    }
+
     if (input.command.type !== "thread.turn.start") {
       return input.command as OrchestrationCommand;
     }
@@ -658,7 +701,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     );
   }
 
-  const runPromise = yield* Effect.map(Effect.services<never>(), Effect.runPromiseWith);
+  const runtimeServices = yield* Effect.services<
+    ServerRuntimeServices | ServerConfig | FileSystem.FileSystem | Path.Path
+  >();
+  const runPromise = Effect.runPromiseWith(runtimeServices);
 
   const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
     (event) => void Effect.runPromise(onTerminalEvent(event)),
@@ -873,7 +919,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (request._tag === "Failure") {
       const errorResponse = yield* encodeResponse({
         id: "unknown",
-        error: { message: `Invalid request format: ${Cause.pretty(request.cause)}` },
+        error: { message: `Invalid request format: ${messageFromCause(request.cause)}` },
       });
       ws.send(errorResponse);
       return;
@@ -883,7 +929,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     if (result._tag === "Failure") {
       const errorResponse = yield* encodeResponse({
         id: request.value.id,
-        error: { message: Cause.pretty(result.cause) },
+        error: { message: messageFromCause(result.cause) },
       });
       ws.send(errorResponse);
       return;

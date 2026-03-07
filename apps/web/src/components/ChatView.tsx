@@ -619,6 +619,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     Record<ThreadId, string | null>
   >({});
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
+  const [sendStartedAt, setSendStartedAt] = useState<string | null>(null);
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
@@ -838,6 +839,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isPreparingWorktree = sendPhase === "preparing-worktree";
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
   const nowIso = new Date(nowTick).toISOString();
+  const activeWorkStartedAt = activeLatestTurn?.startedAt ?? sendStartedAt;
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
@@ -1943,6 +1945,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return [];
     });
     setSendPhase("idle");
+    setSendStartedAt(null);
     setComposerHighlightedItemId(null);
     setComposerCursor(promptRef.current.length);
     setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
@@ -2081,6 +2084,37 @@ export default function ChatView({ threadId }: ChatViewProps) {
       window.clearInterval(timer);
     };
   }, [phase]);
+
+  const beginSendPhase = useCallback((nextPhase: Exclude<SendPhase, "idle">) => {
+    setSendStartedAt((current) => current ?? new Date().toISOString());
+    setSendPhase(nextPhase);
+  }, []);
+
+  const resetSendPhase = useCallback(() => {
+    setSendPhase("idle");
+    setSendStartedAt(null);
+  }, []);
+
+  useEffect(() => {
+    if (sendPhase === "idle") {
+      return;
+    }
+    if (
+      phase === "running" ||
+      activePendingApproval !== null ||
+      activePendingUserInput !== null ||
+      activeThread?.error
+    ) {
+      resetSendPhase();
+    }
+  }, [
+    activePendingApproval,
+    activePendingUserInput,
+    activeThread?.error,
+    phase,
+    resetSendPhase,
+    sendPhase,
+  ]);
 
   useEffect(() => {
     if (!activeThreadId) return;
@@ -2391,7 +2425,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     sendInFlightRef.current = true;
-    setSendPhase(baseBranchForWorktree ? "preparing-worktree" : "sending-turn");
+    beginSendPhase(baseBranchForWorktree ? "preparing-worktree" : "sending-turn");
 
     const composerImagesSnapshot = [...composerImages];
     const messageIdForSend = newMessageId();
@@ -2442,7 +2476,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     await (async () => {
       // On first message: lock in branch + create worktree if needed.
       if (baseBranchForWorktree) {
-        setSendPhase("preparing-worktree");
+        beginSendPhase("preparing-worktree");
         const newBranch = buildTemporaryWorktreeBranchName();
         const result = await createWorktreeMutation.mutateAsync({
           cwd: activeProject.cwd,
@@ -2547,7 +2581,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
       }
 
-      setSendPhase("sending-turn");
+      beginSendPhase("sending-turn");
       const turnAttachments = await turnAttachmentsPromise;
       await api.orchestration.dispatchCommand({
         type: "thread.turn.start",
@@ -2609,7 +2643,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       );
     });
     sendInFlightRef.current = false;
-    setSendPhase("idle");
+    if (!turnStartSucceeded) {
+      resetSendPhase();
+    }
   };
 
   const onInterrupt = async () => {
@@ -2796,7 +2832,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const messageCreatedAt = new Date().toISOString();
 
       sendInFlightRef.current = true;
-      setSendPhase("sending-turn");
+      beginSendPhase("sending-turn");
       setThreadError(threadIdForSend, null);
       setOptimisticUserMessages((existing) => [
         ...existing,
@@ -2845,7 +2881,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           createdAt: messageCreatedAt,
         });
         sendInFlightRef.current = false;
-        setSendPhase("idle");
       } catch (err) {
         setOptimisticUserMessages((existing) =>
           existing.filter((message) => message.id !== messageIdForSend),
@@ -2855,16 +2890,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
           err instanceof Error ? err.message : "Failed to send plan follow-up.",
         );
         sendInFlightRef.current = false;
-        setSendPhase("idle");
+        resetSendPhase();
       }
     },
     [
       activeThread,
+      beginSendPhase,
       forceStickToBottom,
       isConnecting,
       isSendBusy,
       isServerThread,
       persistThreadSettingsForNextTurn,
+      resetSendPhase,
       runtimeMode,
       selectedModel,
       selectedModelOptionsForDispatch,
@@ -2902,10 +2939,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       DEFAULT_MODEL_BY_PROVIDER.codex;
 
     sendInFlightRef.current = true;
-    setSendPhase("sending-turn");
+    beginSendPhase("sending-turn");
     const finish = () => {
       sendInFlightRef.current = false;
-      setSendPhase("idle");
+      resetSendPhase();
     };
 
     await api.orchestration
@@ -2978,10 +3015,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeProject,
     activeProposedPlan,
     activeThread,
+    beginSendPhase,
     isConnecting,
     isSendBusy,
     isServerThread,
     navigate,
+    resetSendPhase,
     runtimeMode,
     selectedModel,
     selectedModelOptionsForDispatch,
@@ -3323,6 +3362,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           activeThreadId={activeThread.id}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
+          isGitRepo={isGitRepo}
           openInCwd={activeThread.worktreePath ?? activeProject?.cwd ?? null}
           activeProjectScripts={activeProject?.scripts}
           preferredScriptId={
@@ -3366,8 +3406,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           key={activeThread.id}
           hasMessages={timelineEntries.length > 0}
           isWorking={isWorking}
-          activeTurnInProgress={!latestTurnSettled}
-          activeTurnStartedAt={activeLatestTurn?.startedAt ?? null}
+          activeTurnInProgress={isWorking || !latestTurnSettled}
+          activeTurnStartedAt={activeWorkStartedAt}
           scrollContainer={messagesScrollElement}
           timelineEntries={timelineEntries}
           completionDividerBeforeEntryId={completionDividerBeforeEntryId}
@@ -3903,6 +3943,7 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  isGitRepo: boolean;
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
   preferredScriptId: string | null;
@@ -3921,6 +3962,7 @@ const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   activeThreadTitle,
   activeProjectName,
+  isGitRepo,
   openInCwd,
   activeProjectScripts,
   preferredScriptId,
@@ -3947,6 +3989,11 @@ const ChatHeader = memo(function ChatHeader({
         {activeProjectName && (
           <Badge variant="outline" className="max-w-28 shrink-0 truncate">
             {activeProjectName}
+          </Badge>
+        )}
+        {activeProjectName && !isGitRepo && (
+          <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
+            No Git
           </Badge>
         )}
       </div>
@@ -3979,15 +4026,18 @@ const ChatHeader = memo(function ChatHeader({
                 aria-label="Toggle diff panel"
                 variant="outline"
                 size="xs"
+                disabled={!isGitRepo}
               >
                 <DiffIcon className="size-3" />
               </Toggle>
             }
           />
           <TooltipPopup side="bottom">
-            {diffToggleShortcutLabel
-              ? `Toggle diff panel (${diffToggleShortcutLabel})`
-              : "Toggle diff panel"}
+            {!isGitRepo
+              ? "Diff panel is unavailable because this project is not a git repository."
+              : diffToggleShortcutLabel
+                ? `Toggle diff panel (${diffToggleShortcutLabel})`
+                : "Toggle diff panel"}
           </TooltipPopup>
         </Tooltip>
       </div>
@@ -4919,23 +4969,43 @@ const MessagesTimeline = memo(function MessagesTimeline({
                 {visibleEntries.map((workEntry) => (
                   <div key={`work-row:${workEntry.id}`} className="flex items-start gap-2 py-0.5">
                     <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
-                    <p
-                      className={`py-[2px] text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}
-                    >
-                      {workEntry.detail ? (
-                        <>
-                          {workEntry.label}
-                          <span
-                            className="ml-1.5 inline-block max-w-[70ch] truncate align-bottom font-mono text-[11px] opacity-60"
+                    <div className="min-w-0 flex-1 py-[2px]">
+                      <p className={`text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}>
+                        {workEntry.label}
+                      </p>
+                      {workEntry.command && (
+                        <pre className="mt-1 overflow-x-auto rounded-md border border-border/70 bg-background/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-foreground/80">
+                          {workEntry.command}
+                        </pre>
+                      )}
+                      {workEntry.changedFiles && workEntry.changedFiles.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {workEntry.changedFiles.slice(0, 6).map((filePath) => (
+                            <span
+                              key={`${workEntry.id}:${filePath}`}
+                              className="rounded-md border border-border/70 bg-background/65 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/85"
+                              title={filePath}
+                            >
+                              {filePath}
+                            </span>
+                          ))}
+                          {workEntry.changedFiles.length > 6 && (
+                            <span className="px-1 text-[10px] text-muted-foreground/65">
+                              +{workEntry.changedFiles.length - 6} more
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {workEntry.detail &&
+                        (!workEntry.command || workEntry.detail !== workEntry.command) && (
+                          <p
+                            className="mt-1 text-[11px] leading-relaxed text-muted-foreground/75"
                             title={workEntry.detail}
                           >
                             {workEntry.detail}
-                          </span>
-                        </>
-                      ) : (
-                        workEntry.label
-                      )}
-                    </p>
+                          </p>
+                        )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -5121,11 +5191,16 @@ const MessagesTimeline = memo(function MessagesTimeline({
       {row.kind === "working" && (
         <div className="flex items-center gap-2 py-0.5 pl-1.5">
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
-          <div className="flex items-center pt-1">
+          <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70">
             <span className="inline-flex items-center gap-[3px]">
               <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
               <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
               <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
+            </span>
+            <span>
+              {row.createdAt
+                ? `Working for ${formatElapsed(row.createdAt, nowIso) ?? "0ms"}`
+                : "Working..."}
             </span>
           </div>
         </div>
