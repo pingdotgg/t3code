@@ -217,6 +217,8 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { clamp } from "effect/Number";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
+import { readThreadScrollSnapshot, writeThreadScrollSnapshot } from "../threadScrollMemory";
+import { consumePendingSettingsScrollRestore } from "../settingsScrollRestore";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
   if (!duration) return formatTimestamp(createdAt);
@@ -657,6 +659,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     top: number;
   } | null>(null);
   const pendingInteractionAnchorFrameRef = useRef<number | null>(null);
+  const pendingScrollRestoreFrameRef = useRef<number | null>(null);
+  const pendingScrollRestoreTimeoutRef = useRef<number | null>(null);
+  const shouldRestoreSettingsScrollRef = useRef(false);
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerFormHeightRef = useRef(0);
@@ -1687,13 +1692,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   // Auto-scroll on new messages
   const messageCount = timelineMessages.length;
+  const persistThreadScrollSnapshot = useCallback(
+    (scrollTop: number, shouldAutoScroll: boolean) => {
+      if (!activeThreadId) return;
+
+      writeThreadScrollSnapshot(activeThreadId, {
+        scrollTop,
+        shouldAutoScroll,
+      });
+    },
+    [activeThreadId],
+  );
   const scrollMessagesToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const scrollContainer = messagesScrollRef.current;
     if (!scrollContainer) return;
     scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior });
     lastKnownScrollTopRef.current = scrollContainer.scrollTop;
     shouldAutoScrollRef.current = true;
-  }, []);
+    persistThreadScrollSnapshot(scrollContainer.scrollTop, true);
+  }, [persistThreadScrollSnapshot]);
   const cancelPendingStickToBottom = useCallback(() => {
     const pendingFrame = pendingAutoScrollFrameRef.current;
     if (pendingFrame === null) return;
@@ -1705,6 +1722,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (pendingFrame === null) return;
     pendingInteractionAnchorFrameRef.current = null;
     window.cancelAnimationFrame(pendingFrame);
+  }, []);
+  const cancelPendingScrollRestore = useCallback(() => {
+    const pendingFrame = pendingScrollRestoreFrameRef.current;
+    if (pendingFrame !== null) {
+      pendingScrollRestoreFrameRef.current = null;
+      window.cancelAnimationFrame(pendingFrame);
+    }
+
+    const pendingTimeout = pendingScrollRestoreTimeoutRef.current;
+    if (pendingTimeout !== null) {
+      pendingScrollRestoreTimeoutRef.current = null;
+      window.clearTimeout(pendingTimeout);
+    }
   }, []);
   const scheduleStickToBottom = useCallback(() => {
     if (pendingAutoScrollFrameRef.current !== null) return;
@@ -1743,9 +1773,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
         activeScrollContainer.scrollTop += delta;
         lastKnownScrollTopRef.current = activeScrollContainer.scrollTop;
+        persistThreadScrollSnapshot(
+          activeScrollContainer.scrollTop,
+          shouldAutoScrollRef.current,
+        );
       });
     },
-    [cancelPendingInteractionAnchorAdjustment],
+    [cancelPendingInteractionAnchorAdjustment, persistThreadScrollSnapshot],
   );
   const forceStickToBottom = useCallback(() => {
     cancelPendingStickToBottom();
@@ -1781,7 +1815,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     lastKnownScrollTopRef.current = currentScrollTop;
-  }, []);
+    persistThreadScrollSnapshot(currentScrollTop, shouldAutoScrollRef.current);
+  }, [persistThreadScrollSnapshot]);
   const onMessagesWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if (event.deltaY < 0) {
       pendingUserScrollUpIntentRef.current = true;
@@ -1817,10 +1852,29 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return () => {
       cancelPendingStickToBottom();
       cancelPendingInteractionAnchorAdjustment();
+      cancelPendingScrollRestore();
     };
-  }, [cancelPendingInteractionAnchorAdjustment, cancelPendingStickToBottom]);
+  }, [
+    cancelPendingInteractionAnchorAdjustment,
+    cancelPendingScrollRestore,
+    cancelPendingStickToBottom,
+  ]);
   useLayoutEffect(() => {
-    if (!activeThread?.id) return;
+    if (!activeThread?.id) {
+      shouldRestoreSettingsScrollRef.current = false;
+      return;
+    }
+
+    shouldRestoreSettingsScrollRef.current = consumePendingSettingsScrollRestore(activeThread.id);
+    const scrollSnapshot = shouldRestoreSettingsScrollRef.current
+      ? readThreadScrollSnapshot(activeThread.id)
+      : null;
+    if (scrollSnapshot && !scrollSnapshot.shouldAutoScroll) {
+      shouldAutoScrollRef.current = false;
+      lastKnownScrollTopRef.current = scrollSnapshot.scrollTop;
+      return;
+    }
+
     shouldAutoScrollRef.current = true;
     scheduleStickToBottom();
     const timeout = window.setTimeout(() => {
@@ -1833,6 +1887,42 @@ export default function ChatView({ threadId }: ChatViewProps) {
       window.clearTimeout(timeout);
     };
   }, [activeThread?.id, scheduleStickToBottom]);
+  useLayoutEffect(() => {
+    if (!activeThread?.id || !messagesScrollElement || !shouldRestoreSettingsScrollRef.current) {
+      return;
+    }
+
+    const scrollSnapshot = readThreadScrollSnapshot(activeThread.id);
+    if (!scrollSnapshot || scrollSnapshot.shouldAutoScroll) {
+      return;
+    }
+
+    const applySnapshot = () => {
+      const scrollContainer = messagesScrollRef.current;
+      if (!scrollContainer) return;
+      const maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+      const nextScrollTop = Math.min(scrollSnapshot.scrollTop, maxScrollTop);
+      scrollContainer.scrollTop = nextScrollTop;
+      lastKnownScrollTopRef.current = scrollContainer.scrollTop;
+      shouldAutoScrollRef.current = false;
+      persistThreadScrollSnapshot(scrollContainer.scrollTop, false);
+    };
+
+    cancelPendingScrollRestore();
+    applySnapshot();
+    pendingScrollRestoreFrameRef.current = window.requestAnimationFrame(() => {
+      pendingScrollRestoreFrameRef.current = null;
+      applySnapshot();
+    });
+    pendingScrollRestoreTimeoutRef.current = window.setTimeout(() => {
+      pendingScrollRestoreTimeoutRef.current = null;
+      applySnapshot();
+    }, 96);
+
+    return () => {
+      cancelPendingScrollRestore();
+    };
+  }, [activeThread?.id, cancelPendingScrollRestore, messagesScrollElement, persistThreadScrollSnapshot]);
   useLayoutEffect(() => {
     const composerForm = composerFormRef.current;
     if (!composerForm) return;
