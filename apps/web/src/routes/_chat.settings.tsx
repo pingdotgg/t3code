@@ -7,7 +7,10 @@ import { ZapIcon } from "lucide-react";
 
 import {
   APP_SERVICE_TIER_OPTIONS,
+  MAX_TERMINAL_FONT_SIZE,
+  MIN_TERMINAL_FONT_SIZE,
   MAX_CUSTOM_MODEL_LENGTH,
+  clampTerminalFontSize,
   shouldShowFastTierIcon,
   useAppSettings,
 } from "../appSettings";
@@ -104,6 +107,8 @@ function SettingsRouteView() {
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const codexServiceTier = settings.codexServiceTier;
+  const terminalFontFamily = settings.terminalFontFamily;
+  const terminalFontSize = settings.terminalFontSize;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
   const openKeybindingsFile = useCallback(() => {
@@ -297,6 +302,73 @@ function SettingsRouteView() {
                     Reset codex overrides
                   </Button>
                 </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Terminal</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Customize terminal typography for all terminal panes.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <label htmlFor="terminal-font-family" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Terminal font family</span>
+                  <Input
+                    id="terminal-font-family"
+                    value={terminalFontFamily}
+                    onChange={(event) => updateSettings({ terminalFontFamily: event.target.value })}
+                    placeholder='Fira Code, "SF Mono", monospace'
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Enter a CSS <code>font-family</code> stack. Installed fonts are used first.
+                  </span>
+                </label>
+
+                <label htmlFor="terminal-font-size" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Terminal font size</span>
+                  <Input
+                    id="terminal-font-size"
+                    type="number"
+                    nativeInput
+                    value={terminalFontSize}
+                    min={MIN_TERMINAL_FONT_SIZE}
+                    max={MAX_TERMINAL_FONT_SIZE}
+                    step={1}
+                    inputMode="numeric"
+                    onChange={(event) => {
+                      const next = event.target.valueAsNumber;
+                      if (!Number.isFinite(next)) {
+                        return;
+                      }
+                      updateSettings({ terminalFontSize: clampTerminalFontSize(next) });
+                    }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Allowed range: {MIN_TERMINAL_FONT_SIZE} - {MAX_TERMINAL_FONT_SIZE}px.
+                  </span>
+                </label>
+
+                {terminalFontFamily !== defaults.terminalFontFamily ||
+                terminalFontSize !== defaults.terminalFontSize ? (
+                  <div className="flex justify-end">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        updateSettings({
+                          terminalFontFamily: defaults.terminalFontFamily,
+                          terminalFontSize: defaults.terminalFontSize,
+                        })
+                      }
+                    >
+                      Restore default
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             </section>
 

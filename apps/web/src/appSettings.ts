@@ -6,6 +6,12 @@ import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/s
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
+const MAX_TERMINAL_FONT_FAMILY_LENGTH = 512;
+export const DEFAULT_TERMINAL_FONT_FAMILY =
+  '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace';
+export const DEFAULT_TERMINAL_FONT_SIZE = 12;
+export const MIN_TERMINAL_FONT_SIZE = 8;
+export const MAX_TERMINAL_FONT_SIZE = 32;
 export const APP_SERVICE_TIER_OPTIONS = [
   {
     value: "auto",
@@ -45,6 +51,15 @@ const AppSettingsSchema = Schema.Struct({
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
+  terminalFontFamily: Schema.String.check(Schema.isMaxLength(MAX_TERMINAL_FONT_FAMILY_LENGTH)).pipe(
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_TERMINAL_FONT_FAMILY)),
+  ),
+  terminalFontSize: Schema.Int.check(
+    Schema.isBetween({
+      minimum: MIN_TERMINAL_FONT_SIZE,
+      maximum: MAX_TERMINAL_FONT_SIZE,
+    }),
+  ).pipe(Schema.withConstructorDefault(() => Option.some(DEFAULT_TERMINAL_FONT_SIZE))),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
 export interface AppModelOption {
@@ -104,10 +119,28 @@ export function normalizeCustomModelSlugs(
   return normalizedModels;
 }
 
+export function resolveTerminalFontFamily(fontFamily: string | null | undefined): string {
+  const trimmed = fontFamily?.trim();
+  if (!trimmed) {
+    return DEFAULT_TERMINAL_FONT_FAMILY;
+  }
+  return trimmed;
+}
+
+export function clampTerminalFontSize(fontSize: number | null | undefined): number {
+  if (typeof fontSize !== "number" || !Number.isFinite(fontSize)) {
+    return DEFAULT_TERMINAL_FONT_SIZE;
+  }
+  const rounded = Math.round(fontSize);
+  return Math.min(Math.max(rounded, MIN_TERMINAL_FONT_SIZE), MAX_TERMINAL_FONT_SIZE);
+}
+
 function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
+    terminalFontFamily: resolveTerminalFontFamily(settings.terminalFontFamily),
+    terminalFontSize: clampTerminalFontSize(settings.terminalFontSize),
   };
 }
 

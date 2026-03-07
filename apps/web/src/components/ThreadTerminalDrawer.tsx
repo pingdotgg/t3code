@@ -18,6 +18,7 @@ import {
   preferredTerminalEditor,
   resolvePathLinkTarget,
 } from "../terminal-links";
+import { useAppSettings } from "../appSettings";
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
@@ -112,6 +113,8 @@ interface TerminalViewportProps {
   terminalId: string;
   cwd: string;
   runtimeEnv?: Record<string, string>;
+  terminalFontFamily: string;
+  terminalFontSize: number;
   onSessionExited: () => void;
   focusRequestId: number;
   autoFocus: boolean;
@@ -124,6 +127,8 @@ function TerminalViewport({
   terminalId,
   cwd,
   runtimeEnv,
+  terminalFontFamily,
+  terminalFontSize,
   onSessionExited,
   focusRequestId,
   autoFocus,
@@ -150,9 +155,9 @@ function TerminalViewport({
     const terminal = new Terminal({
       cursorBlink: true,
       lineHeight: 1.2,
-      fontSize: 12,
+      fontSize: terminalFontSize,
       scrollback: 5_000,
-      fontFamily: '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
+      fontFamily: terminalFontFamily,
       theme: terminalThemeFromApp(),
     });
     terminal.loadAddon(fitAddon);
@@ -410,6 +415,45 @@ function TerminalViewport({
     const api = readNativeApi();
     const terminal = terminalRef.current;
     const fitAddon = fitAddonRef.current;
+    if (!terminal || !fitAddon) return;
+
+    const fontFamilyChanged = terminal.options.fontFamily !== terminalFontFamily;
+    const fontSizeChanged = terminal.options.fontSize !== terminalFontSize;
+    if (!fontFamilyChanged && !fontSizeChanged) {
+      return;
+    }
+
+    terminal.options.fontFamily = terminalFontFamily;
+    terminal.options.fontSize = terminalFontSize;
+
+    const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
+    const frame = window.requestAnimationFrame(() => {
+      fitAddon.fit();
+      if (wasAtBottom) {
+        terminal.scrollToBottom();
+      }
+      if (!api) {
+        return;
+      }
+      void api.terminal
+        .resize({
+          threadId,
+          terminalId,
+          cols: terminal.cols,
+          rows: terminal.rows,
+        })
+        .catch(() => undefined);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [terminalFontFamily, terminalFontSize, terminalId, threadId]);
+
+  useEffect(() => {
+    const api = readNativeApi();
+    const terminal = terminalRef.current;
+    const fitAddon = fitAddonRef.current;
     if (!api || !terminal || !fitAddon) return;
     const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
     const frame = window.requestAnimationFrame(() => {
@@ -501,6 +545,7 @@ export default function ThreadTerminalDrawer({
   onCloseTerminal,
   onHeightChange,
 }: ThreadTerminalDrawerProps) {
+  const { settings: appSettings } = useAppSettings();
   const [drawerHeight, setDrawerHeight] = useState(() => clampDrawerHeight(height));
   const [resizeEpoch, setResizeEpoch] = useState(0);
   const drawerHeightRef = useRef(drawerHeight);
@@ -626,6 +671,8 @@ export default function ThreadTerminalDrawer({
   const closeTerminalActionLabel = closeShortcutLabel
     ? `Close Terminal (${closeShortcutLabel})`
     : "Close Terminal";
+  const terminalFontFamily = appSettings.terminalFontFamily;
+  const terminalFontSize = appSettings.terminalFontSize;
   const onSplitTerminalAction = useCallback(() => {
     if (hasReachedTerminalLimit) return;
     onSplitTerminal();
@@ -805,6 +852,8 @@ export default function ThreadTerminalDrawer({
                         terminalId={terminalId}
                         cwd={cwd}
                         {...(runtimeEnv ? { runtimeEnv } : {})}
+                        terminalFontFamily={terminalFontFamily}
+                        terminalFontSize={terminalFontSize}
                         onSessionExited={() => onCloseTerminal(terminalId)}
                         focusRequestId={focusRequestId}
                         autoFocus={terminalId === resolvedActiveTerminalId}
@@ -823,6 +872,8 @@ export default function ThreadTerminalDrawer({
                   terminalId={resolvedActiveTerminalId}
                   cwd={cwd}
                   {...(runtimeEnv ? { runtimeEnv } : {})}
+                  terminalFontFamily={terminalFontFamily}
+                  terminalFontSize={terminalFontSize}
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
                   focusRequestId={focusRequestId}
                   autoFocus

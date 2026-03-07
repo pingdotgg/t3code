@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  clampTerminalFontSize,
   getAppModelOptions,
   getSlashModelOptions,
   normalizeCustomModelSlugs,
+  resolveTerminalFontFamily,
   resolveAppServiceTier,
   shouldShowFastTierIcon,
   resolveAppModelSelection,
@@ -101,5 +103,26 @@ describe("shouldShowFastTierIcon", () => {
     expect(shouldShowFastTierIcon("gpt-5.4", "fast")).toBe(true);
     expect(shouldShowFastTierIcon("gpt-5.4", "auto")).toBe(false);
     expect(shouldShowFastTierIcon("gpt-5.3-codex", "fast")).toBe(false);
+  });
+});
+
+describe("resolveTerminalFontFamily", () => {
+  it("falls back to the default family for blank values", () => {
+    expect(resolveTerminalFontFamily("   ")).toContain("monospace");
+  });
+
+  it("preserves non-empty values after trimming", () => {
+    expect(resolveTerminalFontFamily("  Fira Code, monospace  ")).toBe("Fira Code, monospace");
+  });
+});
+
+describe("clampTerminalFontSize", () => {
+  it("clamps values to the supported terminal font size range", () => {
+    expect(clampTerminalFontSize(5)).toBe(8);
+    expect(clampTerminalFontSize(99)).toBe(32);
+  });
+
+  it("rounds valid values to whole pixels", () => {
+    expect(clampTerminalFontSize(12.6)).toBe(13);
   });
 });
