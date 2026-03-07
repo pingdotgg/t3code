@@ -223,6 +223,29 @@ function formatMessageMeta(createdAt: string, duration: string | null): string {
   return `${formatTimestamp(createdAt)} • ${duration}`;
 }
 
+function formatWorkingTimer(startIso: string, endIso: string): string | null {
+  const startedAtMs = Date.parse(startIso);
+  const endedAtMs = Date.parse(endIso);
+  if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs)) {
+    return null;
+  }
+
+  const elapsedSeconds = Math.max(0, Math.floor((endedAtMs - startedAtMs) / 1000));
+  if (elapsedSeconds < 60) {
+    return `${elapsedSeconds}s`;
+  }
+
+  const hours = Math.floor(elapsedSeconds / 3600);
+  const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+  const seconds = elapsedSeconds % 60;
+
+  if (hours > 0) {
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
 const LAST_EDITOR_KEY = "t3code:last-editor";
 const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
@@ -5199,7 +5222,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
             </span>
             <span>
               {row.createdAt
-                ? `Working for ${formatElapsed(row.createdAt, nowIso) ?? "0ms"}`
+                ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
                 : "Working..."}
             </span>
           </div>
