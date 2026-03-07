@@ -163,7 +163,6 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       }
     }));
 
-
   it("rehydrates persisted mappings across layer restart", () =>
     Effect.gen(function* () {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-directory-"));

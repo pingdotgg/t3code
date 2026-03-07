@@ -41,7 +41,10 @@ const asApprovalRequestId = (value: string): ApprovalRequestId =>
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
-async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 2000): Promise<void> {
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 2000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   const poll = async (): Promise<void> => {
     if (await predicate()) {
@@ -103,7 +106,10 @@ describe("ProviderCommandReactor", () => {
           ? input.resumeCursor
           : undefined;
       const model =
-        typeof input === "object" && input !== null && "model" in input && typeof input.model === "string"
+        typeof input === "object" &&
+        input !== null &&
+        "model" in input &&
+        typeof input.model === "string"
           ? input.model
           : undefined;
       const threadId =
@@ -665,7 +671,9 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(async () => {
       const readModel = await Effect.runPromise(harness.engine.getReadModel());
-      const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+      const thread = readModel.threads.find(
+        (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
+      );
       return thread?.runtimeMode === "approval-required";
     });
     await waitFor(() => harness.startSession.mock.calls.length === 2);
@@ -814,7 +822,9 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(async () => {
       const readModel = await Effect.runPromise(harness.engine.getReadModel());
-      const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+      const thread = readModel.threads.find(
+        (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
+      );
       return thread?.runtimeMode === "approval-required";
     });
     await waitFor(() => harness.startSession.mock.calls.length === 2);
@@ -1018,9 +1028,13 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(async () => {
       const readModel = await Effect.runPromise(harness.engine.getReadModel());
-      const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+      const thread = readModel.threads.find(
+        (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
+      );
       if (!thread) return false;
-      return thread.activities.some((activity) => activity.kind === "provider.approval.respond.failed");
+      return thread.activities.some(
+        (activity) => activity.kind === "provider.approval.respond.failed",
+      );
     });
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());

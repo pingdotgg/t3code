@@ -938,7 +938,8 @@ it.live("recovers claudeCode sessions after provider stopAll using persisted res
 
         yield* harness.waitForThread(
           THREAD_ID,
-          (entry) => entry.latestTurn?.turnId === "turn-1" && entry.session?.threadId === "thread-1",
+          (entry) =>
+            entry.latestTurn?.turnId === "turn-1" && entry.session?.threadId === "thread-1",
         );
 
         yield* harness.adapterHarness!.adapter.stopAll();
@@ -1123,7 +1124,9 @@ it.live("forwards thread.turn.interrupt to claudeCode provider sessions", () =>
           threadId: THREAD_ID,
           createdAt: nowIso(),
         });
-        yield* harness.waitForDomainEvent((event) => event.type === "thread.turn-interrupt-requested");
+        yield* harness.waitForDomainEvent(
+          (event) => event.type === "thread.turn-interrupt-requested",
+        );
 
         const interruptCalls = yield* waitForSync(
           () => harness.adapterHarness!.getInterruptCalls(THREAD_ID),
@@ -1181,7 +1184,8 @@ it.live("reverts claudeCode turns and rolls back provider conversation state", (
 
         yield* harness.waitForThread(
           THREAD_ID,
-          (entry) => entry.latestTurn?.turnId === "turn-1" && entry.session?.threadId === "thread-1",
+          (entry) =>
+            entry.latestTurn?.turnId === "turn-1" && entry.session?.threadId === "thread-1",
         );
 
         yield* harness.adapterHarness!.queueTurnResponse(THREAD_ID, {

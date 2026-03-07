@@ -16,10 +16,7 @@ export function buildPlanImplementationPrompt(planMarkdown: string): string {
   return `PLEASE IMPLEMENT THIS PLAN:\n${planMarkdown.trim()}`;
 }
 
-export function resolvePlanFollowUpSubmission(input: {
-  draftText: string;
-  planMarkdown: string;
-}): {
+export function resolvePlanFollowUpSubmission(input: { draftText: string; planMarkdown: string }): {
   text: string;
   interactionMode: "default" | "plan";
 } {

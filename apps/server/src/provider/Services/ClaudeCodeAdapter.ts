@@ -29,4 +29,3 @@ export class ClaudeCodeAdapter extends ServiceMap.Service<
   ClaudeCodeAdapter,
   ClaudeCodeAdapterShape
 >()("t3/provider/Services/ClaudeCodeAdapter") {}
-

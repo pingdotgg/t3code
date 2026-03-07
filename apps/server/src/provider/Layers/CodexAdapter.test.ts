@@ -542,7 +542,6 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
-
   it.effect("maps windowsSandbox/setupCompleted to session state and warning on failure", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;

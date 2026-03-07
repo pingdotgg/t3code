@@ -248,9 +248,9 @@ describe("composerDraftStore project draft thread mapping", () => {
     store.clearProjectDraftThreadId(projectId);
 
     expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)).toBeNull();
-    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(otherProjectId)?.threadId).toBe(
-      threadId,
-    );
+    expect(
+      useComposerDraftStore.getState().getDraftThreadByProjectId(otherProjectId)?.threadId,
+    ).toBe(threadId);
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.prompt).toBe("keep me");
   });
 
@@ -376,7 +376,9 @@ describe("composerDraftStore setModel", () => {
 
     store.setModel(threadId, "gpt-5.3-codex");
 
-    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.model).toBe("gpt-5.3-codex");
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.model).toBe(
+      "gpt-5.3-codex",
+    );
   });
 });
 
@@ -396,7 +398,9 @@ describe("composerDraftStore setProvider", () => {
 
     store.setProvider(threadId, "claudeCode");
 
-    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.provider).toBe("claudeCode");
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.provider).toBe(
+      "claudeCode",
+    );
   });
 
   it("removes empty provider-only draft when provider is reset", () => {

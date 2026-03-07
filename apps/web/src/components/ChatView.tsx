@@ -3600,70 +3600,72 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 </div>
               )}
 
-              {!isComposerApprovalState && pendingUserInputs.length === 0 && composerImages.length > 0 && (
-                <div className="mb-3 flex flex-wrap gap-2">
-                  {composerImages.map((image) => (
-                    <div
-                      key={image.id}
-                      className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
-                    >
-                      {image.previewUrl ? (
-                        <button
-                          type="button"
-                          className="h-full w-full cursor-zoom-in"
-                          aria-label={`Preview ${image.name}`}
-                          onClick={() => {
-                            const preview = buildExpandedImagePreview(composerImages, image.id);
-                            if (!preview) return;
-                            setExpandedImage(preview);
-                          }}
-                        >
-                          <img
-                            src={image.previewUrl}
-                            alt={image.name}
-                            className="h-full w-full object-cover"
-                          />
-                        </button>
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
-                          {image.name}
-                        </div>
-                      )}
-                      {nonPersistedComposerImageIdSet.has(image.id) && (
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <span
-                                role="img"
-                                aria-label="Draft attachment may not persist"
-                                className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
-                              >
-                                <CircleAlertIcon className="size-3" />
-                              </span>
-                            }
-                          />
-                          <TooltipPopup
-                            side="top"
-                            className="max-w-64 whitespace-normal leading-tight"
-                          >
-                            Draft attachment could not be saved locally and may be lost on
-                            navigation.
-                          </TooltipPopup>
-                        </Tooltip>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
-                        onClick={() => removeComposerImage(image.id)}
-                        aria-label={`Remove ${image.name}`}
+              {!isComposerApprovalState &&
+                pendingUserInputs.length === 0 &&
+                composerImages.length > 0 && (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {composerImages.map((image) => (
+                      <div
+                        key={image.id}
+                        className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
                       >
-                        <XIcon />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
+                        {image.previewUrl ? (
+                          <button
+                            type="button"
+                            className="h-full w-full cursor-zoom-in"
+                            aria-label={`Preview ${image.name}`}
+                            onClick={() => {
+                              const preview = buildExpandedImagePreview(composerImages, image.id);
+                              if (!preview) return;
+                              setExpandedImage(preview);
+                            }}
+                          >
+                            <img
+                              src={image.previewUrl}
+                              alt={image.name}
+                              className="h-full w-full object-cover"
+                            />
+                          </button>
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
+                            {image.name}
+                          </div>
+                        )}
+                        {nonPersistedComposerImageIdSet.has(image.id) && (
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <span
+                                  role="img"
+                                  aria-label="Draft attachment may not persist"
+                                  className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
+                                >
+                                  <CircleAlertIcon className="size-3" />
+                                </span>
+                              }
+                            />
+                            <TooltipPopup
+                              side="top"
+                              className="max-w-64 whitespace-normal leading-tight"
+                            >
+                              Draft attachment could not be saved locally and may be lost on
+                              navigation.
+                            </TooltipPopup>
+                          </Tooltip>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
+                          onClick={() => removeComposerImage(image.id)}
+                          aria-label={`Remove ${image.name}`}
+                        >
+                          <XIcon />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               <ComposerPromptEditor
                 ref={composerEditorRef}
                 value={
@@ -3681,12 +3683,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   isComposerApprovalState
                     ? (activePendingApproval?.detail ?? "Resolve this approval request to continue")
                     : activePendingProgress
-                    ? "Type your own answer, or leave this blank to use the selected option"
-                    : showPlanFollowUpPrompt && activeProposedPlan
-                      ? "Add feedback to refine the plan, or leave this blank to implement it"
-                      : phase === "disconnected"
-                        ? "Ask for follow-up changes or attach images"
-                        : "Ask anything, @tag files/folders, or use /model"
+                      ? "Type your own answer, or leave this blank to use the selected option"
+                      : showPlanFollowUpPrompt && activeProposedPlan
+                        ? "Add feedback to refine the plan, or leave this blank to implement it"
+                        : phase === "disconnected"
+                          ? "Ask for follow-up changes or attach images"
+                          : "Ask anything, @tag files/folders, or use /model"
                 }
                 disabled={isConnecting || isComposerApprovalState}
               />
@@ -5434,9 +5436,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   );
 });
 
-function isAvailableProviderOption(
-  option: (typeof PROVIDER_OPTIONS)[number],
-): option is {
+function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
   value: ProviderKind;
   label: string;
   available: true;
@@ -5557,7 +5557,8 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               props.provider === "claudeCode" ? "" : "text-muted-foreground/70",
             )}
           />
-          {props.provider === "codex" && shouldShowFastTierIcon(props.model, props.serviceTierSetting) ? (
+          {props.provider === "codex" &&
+          shouldShowFastTierIcon(props.model, props.serviceTierSetting) ? (
             <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
           ) : null}
           <span className="truncate">{selectedModelLabel}</span>

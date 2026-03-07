@@ -379,7 +379,9 @@ describe("ProviderRuntimeIngestion", () => {
 
     await Effect.runPromise(Effect.sleep("40 millis"));
     const midReadModel = await Effect.runPromise(harness.engine.getReadModel());
-    const midThread = midReadModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    const midThread = midReadModel.threads.find(
+      (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
+    );
     expect(midThread?.session?.status).toBe("running");
     expect(midThread?.session?.activeTurnId).toBe("turn-midturn-lifecycle");
 
@@ -452,7 +454,6 @@ describe("ProviderRuntimeIngestion", () => {
       (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
     );
   });
-
 
   it("ignores auxiliary turn completions from a different provider thread", async () => {
     const harness = await createHarness();
@@ -675,7 +676,9 @@ describe("ProviderRuntimeIngestion", () => {
     const proposedPlan = thread.proposedPlans.find(
       (entry: ProviderRuntimeTestProposedPlan) => entry.id === "plan:thread-1:turn:turn-plan-final",
     );
-    expect(proposedPlan?.planMarkdown).toBe("## Ship plan\n\n- wire projection\n- render follow-up");
+    expect(proposedPlan?.planMarkdown).toBe(
+      "## Ship plan\n\n- wire projection\n- render follow-up",
+    );
   });
 
   it("finalizes buffered proposed-plan deltas into a first-class proposed plan on turn completion", async () => {
@@ -738,7 +741,8 @@ describe("ProviderRuntimeIngestion", () => {
       ),
     );
     const proposedPlan = thread.proposedPlans.find(
-      (entry: ProviderRuntimeTestProposedPlan) => entry.id === "plan:thread-1:turn:turn-plan-buffer",
+      (entry: ProviderRuntimeTestProposedPlan) =>
+        entry.id === "plan:thread-1:turn:turn-plan-buffer",
     );
     expect(proposedPlan?.planMarkdown).toBe("## Buffered plan\n\n- first\n- second");
   });

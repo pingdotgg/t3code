@@ -415,7 +415,6 @@ export const makeOrchestrationIntegrationHarness = (
             ? disposeRuntimeExit.cause
             : null;
 
-
         if (failureCause) {
           return yield* Effect.failCause(failureCause);
         }

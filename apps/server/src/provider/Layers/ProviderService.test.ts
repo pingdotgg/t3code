@@ -224,7 +224,7 @@ function makeProviderServiceLayer() {
         ? Effect.succeed(codex.adapter)
         : provider === "claudeCode"
           ? Effect.succeed(claude.adapter)
-        : Effect.fail(new ProviderUnsupportedError({ provider })),
+          : Effect.fail(new ProviderUnsupportedError({ provider })),
     listProviders: () => Effect.succeed(["codex", "claudeCode"]),
   };
 
@@ -618,7 +618,9 @@ routing.layer("ProviderServiceLive routing", (it) => {
       yield* routing.codex.stopAll();
 
       const remaining = yield* provider.listSessions();
-      const activeSessions = remaining.filter((s) => s.status === "running" || s.status === "connecting");
+      const activeSessions = remaining.filter(
+        (s) => s.status === "running" || s.status === "connecting",
+      );
       assert.equal(activeSessions.length, 0);
     }),
   );
@@ -663,7 +665,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
           assert.equal(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
         }
       }
-
     }),
   );
 });
