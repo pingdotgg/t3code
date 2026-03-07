@@ -107,8 +107,14 @@ const isServerNotRunningError = (error: unknown): boolean => {
 };
 
 function rejectUpgrade(socket: Duplex, statusCode: number, message: string): void {
+  const statusText =
+    statusCode === 401
+      ? "Unauthorized"
+      : statusCode === 403
+        ? "Forbidden"
+        : "Bad Request";
   socket.end(
-    `HTTP/1.1 ${statusCode} ${statusCode === 401 ? "Unauthorized" : "Bad Request"}\r\n` +
+    `HTTP/1.1 ${statusCode} ${statusText}\r\n` +
       "Connection: close\r\n" +
       "Content-Type: text/plain\r\n" +
       `Content-Length: ${Buffer.byteLength(message)}\r\n` +
@@ -238,6 +244,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 > {
   const serverConfig = yield* ServerConfig;
   const {
+    mode,
     port,
     cwd,
     keybindingsConfigPath,
@@ -943,6 +950,37 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ws.send(response);
   });
 
+  function isTrustedBrowserOrigin(request: http.IncomingMessage): boolean {
+    if (mode !== "web") {
+      return true;
+    }
+
+    const originHeader = request.headers.origin;
+    if (!originHeader) {
+      // Non-browser clients typically omit Origin. Browser clients should present one.
+      return true;
+    }
+
+    let parsedOrigin: URL;
+    try {
+      parsedOrigin = new URL(originHeader);
+    } catch {
+      return false;
+    }
+
+    const requestHost = request.headers.host?.trim().toLowerCase();
+    const originHost = parsedOrigin.host.trim().toLowerCase();
+    if (
+      (parsedOrigin.protocol === "http:" || parsedOrigin.protocol === "https:") &&
+      requestHost &&
+      originHost === requestHost
+    ) {
+      return true;
+    }
+
+    return devUrl !== undefined && parsedOrigin.origin === devUrl.origin;
+  }
+
   httpServer.on("upgrade", (request, socket, head) => {
     socket.on("error", () => {}); // Prevent unhandled `EPIPE`/`ECONNRESET` from crashing the process if the client disconnects mid-handshake
 
@@ -960,6 +998,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         rejectUpgrade(socket, 401, "Unauthorized WebSocket connection");
         return;
       }
+    }
+
+    if (!isTrustedBrowserOrigin(request)) {
+      rejectUpgrade(socket, 403, "Forbidden WebSocket origin");
+      return;
     }
 
     wss.handleUpgrade(request, socket, head, (ws) => {

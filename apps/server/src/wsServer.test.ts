@@ -236,6 +236,35 @@ function connectWs(port: number, token?: string): Promise<WebSocket> {
   });
 }
 
+function connectWsWithOrigin(
+  port: number,
+  options: { token?: string; origin: string },
+): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    const query = options.token ? `?token=${encodeURIComponent(options.token)}` : "";
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/${query}`, {
+      headers: {
+        Origin: options.origin,
+      },
+    });
+    const pending: PendingMessages = { queue: [], waiters: [] };
+    pendingBySocket.set(ws, pending);
+
+    ws.on("message", (raw) => {
+      const parsed = JSON.parse(String(raw));
+      const waiter = pending.waiters.shift();
+      if (waiter) {
+        waiter(parsed);
+        return;
+      }
+      pending.queue.push(parsed);
+    });
+
+    ws.once("open", () => resolve(ws));
+    ws.once("error", () => reject(new Error("WebSocket connection failed")));
+  });
+}
+
 function waitForMessage(ws: WebSocket): Promise<unknown> {
   const pending = pendingBySocket.get(ws);
   if (!pending) {
@@ -388,6 +417,7 @@ describe("WebSocket Server", () => {
       logWebSocketEvents?: boolean;
       devUrl?: string;
       authToken?: string;
+      host?: string;
       stateDir?: string;
       staticDir?: string;
       providerLayer?: Layer.Layer<ProviderService, never>;
@@ -414,7 +444,7 @@ describe("WebSocket Server", () => {
     const serverConfigLayer = Layer.succeed(ServerConfig, {
       mode: "web",
       port: 0,
-      host: undefined,
+      host: options.host ?? "127.0.0.1",
       cwd: options.cwd ?? "/test/project",
       keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
       stateDir,
@@ -1702,6 +1732,35 @@ describe("WebSocket Server", () => {
     const authorizedWs = await connectWs(port, "secret-token");
     connections.push(authorizedWs);
     const welcome = (await waitForMessage(authorizedWs)) as WsPush;
+    expect(welcome.channel).toBe(WS_CHANNELS.serverWelcome);
+  });
+
+  it("rejects browser websocket upgrades from foreign origins", async () => {
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    await expect(
+      connectWsWithOrigin(port, {
+        origin: "https://evil.example",
+      }),
+    ).rejects.toThrow("WebSocket connection failed");
+  });
+
+  it("accepts browser websocket upgrades from the configured dev origin", async () => {
+    server = await createTestServer({
+      cwd: "/test",
+      devUrl: "http://localhost:5173",
+    });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWsWithOrigin(port, {
+      origin: "http://localhost:5173",
+    });
+    connections.push(ws);
+
+    const welcome = (await waitForMessage(ws)) as WsPush;
     expect(welcome.channel).toBe(WS_CHANNELS.serverWelcome);
   });
 });

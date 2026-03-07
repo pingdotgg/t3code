@@ -20,9 +20,11 @@ The T3 Code CLI accepts the following configuration options, available either as
 
 ## Security First
 
+- The server now binds to `127.0.0.1` by default in `web` mode. Remote access requires an explicit `--host`.
 - Always set `--auth-token` before exposing the server outside localhost.
 - Treat the token like a password.
 - Prefer binding to trusted interfaces (LAN IP or Tailnet IP) instead of opening all interfaces unless needed.
+- Non-loopback binds without `--auth-token` are rejected at startup.
 
 ## 1) Build + run server for remote access
 
