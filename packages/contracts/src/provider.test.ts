@@ -1,146 +1,64 @@
 import { describe, expect, it } from "vitest";
+import { Schema } from "effect";
 
-import {
-  providerEventSchema,
-  providerRespondToRequestInputSchema,
-  providerSendTurnInputSchema,
-  providerSessionStartInputSchema,
-} from "./provider";
+import { ProviderSendTurnInput, ProviderSessionStartInput } from "./provider";
 
-describe("providerSessionStartInputSchema", () => {
-  it("defaults to codex with safe policies", () => {
-    const parsed = providerSessionStartInputSchema.parse({});
-    expect(parsed.provider).toBe("codex");
-    expect(parsed.approvalPolicy).toBe("never");
-    expect(parsed.sandboxMode).toBe("workspace-write");
-  });
+const decodeProviderSessionStartInput = Schema.decodeUnknownSync(ProviderSessionStartInput);
+const decodeProviderSendTurnInput = Schema.decodeUnknownSync(ProviderSendTurnInput);
 
-  it("accepts optional resumeThreadId", () => {
-    const parsed = providerSessionStartInputSchema.parse({
-      resumeThreadId: "thread_123",
-    });
-    expect(parsed.resumeThreadId).toBe("thread_123");
-  });
-
-  it("rejects blank resumeThreadId", () => {
-    expect(() =>
-      providerSessionStartInputSchema.parse({
-        resumeThreadId: "   ",
-      }),
-    ).toThrow();
-  });
-
-  it("rejects unexpected startSession input properties", () => {
-    expect(() =>
-      providerSessionStartInputSchema.parse({
-        provider: "codex",
-        unexpected: true,
-      }),
-    ).toThrow();
-  });
-});
-
-describe("providerSendTurnInputSchema", () => {
-  it("trims input text and optional model/effort", () => {
-    const parsed = providerSendTurnInputSchema.parse({
-      sessionId: "sess_1",
-      input: "  summarize this repo  ",
-      model: "  gpt-5.2-codex  ",
-      effort: "  high  ",
-    });
-    expect(parsed.input).toBe("summarize this repo");
-    expect(parsed.model).toBe("gpt-5.2-codex");
-    expect(parsed.effort).toBe("high");
-  });
-
-  it("rejects unexpected sendTurn properties", () => {
-    expect(() =>
-      providerSendTurnInputSchema.parse({
-        sessionId: "sess_1",
-        input: "hello",
-        unexpected: true,
-      }),
-    ).toThrow();
-  });
-});
-
-describe("providerEventSchema", () => {
-  it("accepts notification events with routing metadata", () => {
-    const parsed = providerEventSchema.parse({
-      id: "evt_1",
-      kind: "notification",
+describe("ProviderSessionStartInput", () => {
+  it("accepts codex-compatible payloads", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-1",
       provider: "codex",
-      sessionId: "sess_1",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      method: "item/agentMessage/delta",
-      threadId: "thr_1",
-      turnId: "turn_1",
-      itemId: "item_1",
-      textDelta: "hi",
+      cwd: "/tmp/workspace",
+      model: "gpt-5.3-codex",
+      modelOptions: {
+        codex: {
+          reasoningEffort: "high",
+          fastMode: true,
+        },
+      },
+      runtimeMode: "full-access",
+      providerOptions: {
+        codex: {
+          binaryPath: "/usr/local/bin/codex",
+          homePath: "/tmp/.codex",
+        },
+      },
     });
-    expect(parsed.method).toBe("item/agentMessage/delta");
+    expect(parsed.runtimeMode).toBe("full-access");
+    expect(parsed.modelOptions?.codex?.reasoningEffort).toBe("high");
+    expect(parsed.modelOptions?.codex?.fastMode).toBe(true);
+    expect(parsed.providerOptions?.codex?.binaryPath).toBe("/usr/local/bin/codex");
+    expect(parsed.providerOptions?.codex?.homePath).toBe("/tmp/.codex");
   });
 
-  it("accepts request approval metadata", () => {
-    const parsed = providerEventSchema.parse({
-      id: "evt_2",
-      kind: "request",
-      provider: "codex",
-      sessionId: "sess_1",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      method: "item/commandExecution/requestApproval",
-      requestId: "req_123",
-      requestKind: "command",
-    });
-    expect(parsed.requestId).toBe("req_123");
-    expect(parsed.requestKind).toBe("command");
-  });
-
-  it("rejects unexpected event properties", () => {
+  it("rejects payloads without runtime mode", () => {
     expect(() =>
-      providerEventSchema.parse({
-        id: "evt_2",
-        kind: "request",
+      decodeProviderSessionStartInput({
+        threadId: "thread-1",
         provider: "codex",
-        sessionId: "sess_1",
-        createdAt: "2026-01-01T00:00:00.000Z",
-        method: "item/commandExecution/requestApproval",
-        requestId: "req_123",
-        requestKind: "command",
-        unexpected: true,
       }),
     ).toThrow();
   });
 });
 
-describe("providerRespondToRequestInputSchema", () => {
-  it("accepts valid decisions", () => {
-    const parsed = providerRespondToRequestInputSchema.parse({
-      sessionId: "sess_1",
-      requestId: "req_1",
-      decision: "acceptForSession",
+describe("ProviderSendTurnInput", () => {
+  it("accepts provider-scoped model options", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      model: "gpt-5.3-codex",
+      modelOptions: {
+        codex: {
+          reasoningEffort: "xhigh",
+          fastMode: true,
+        },
+      },
     });
-    expect(parsed.decision).toBe("acceptForSession");
-  });
 
-  it("rejects unknown decisions", () => {
-    expect(() =>
-      providerRespondToRequestInputSchema.parse({
-        sessionId: "sess_1",
-        requestId: "req_1",
-        decision: "always",
-      }),
-    ).toThrow();
-  });
-
-  it("rejects unexpected respondToRequest properties", () => {
-    expect(() =>
-      providerRespondToRequestInputSchema.parse({
-        sessionId: "sess_1",
-        requestId: "req_1",
-        decision: "accept",
-        unexpected: true,
-      }),
-    ).toThrow();
+    expect(parsed.model).toBe("gpt-5.3-codex");
+    expect(parsed.modelOptions?.codex?.reasoningEffort).toBe("xhigh");
+    expect(parsed.modelOptions?.codex?.fastMode).toBe(true);
   });
 });

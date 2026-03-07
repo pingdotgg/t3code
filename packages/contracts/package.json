@@ -1,13 +1,13 @@
 {
-  "name": "@acme/contracts",
-  "version": "0.0.0",
+  "name": "@t3tools/contracts",
+  "version": "0.0.4-alpha.1",
   "private": true,
   "files": [
     "dist"
   ],
   "type": "module",
   "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
+  "module": "./dist/index.mjs",
   "types": "./src/index.ts",
   "exports": {
     ".": {
@@ -17,16 +17,20 @@
     }
   },
   "scripts": {
-    "dev": "tsup src/index.ts --format esm,cjs --dts --watch --clean",
-    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "dev": "tsdown src/index.ts --format esm,cjs --dts --watch --clean",
+    "build": "tsdown src/index.ts --format esm,cjs --dts --clean",
+    "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
-    "zod": "^3.24.1"
+    "effect": "catalog:"
   },
   "devDependencies": {
-    "tsup": "^8.3.5",
-    "typescript": "^5.7.3"
+    "@effect/language-service": "catalog:",
+    "@effect/vitest": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }

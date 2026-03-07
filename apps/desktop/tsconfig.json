@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "types": ["node", "electron"],
+    "lib": ["ES2023", "DOM", "esnext.disposable"]
+  },
+  "include": ["src", "tsdown.config.ts"]
+}

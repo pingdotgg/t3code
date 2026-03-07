@@ -1,139 +1,171 @@
-import { z } from "zod";
-import { agentExitSchema, outputChunkSchema } from "./agent";
-import { providerEventSchema } from "./provider";
+import { Schema, Struct } from "effect";
+import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
 
-export const WS_EVENT_CHANNELS = {
-  providerEvent: "provider:event",
-  agentOutput: "agent:output",
-  agentExit: "agent:exit",
+import {
+  ClientOrchestrationCommand,
+  OrchestrationGetFullThreadDiffInput,
+  ORCHESTRATION_WS_METHODS,
+  OrchestrationGetSnapshotInput,
+  OrchestrationGetTurnDiffInput,
+  OrchestrationReplayEventsInput,
+} from "./orchestration";
+import {
+  GitCheckoutInput,
+  GitCreateBranchInput,
+  GitCreateWorktreeInput,
+  GitInitInput,
+  GitListBranchesInput,
+  GitPullInput,
+  GitRemoveWorktreeInput,
+  GitRunStackedActionInput,
+  GitStatusInput,
+} from "./git";
+import {
+  TerminalClearInput,
+  TerminalCloseInput,
+  TerminalOpenInput,
+  TerminalResizeInput,
+  TerminalRestartInput,
+  TerminalWriteInput,
+} from "./terminal";
+import { KeybindingRule } from "./keybindings";
+import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
+import { OpenInEditorInput } from "./editor";
+
+// ── WebSocket RPC Method Names ───────────────────────────────────────
+
+export const WS_METHODS = {
+  // Project registry methods
+  projectsList: "projects.list",
+  projectsAdd: "projects.add",
+  projectsRemove: "projects.remove",
+  projectsSearchEntries: "projects.searchEntries",
+  projectsWriteFile: "projects.writeFile",
+
+  // Shell methods
+  shellOpenInEditor: "shell.openInEditor",
+
+  // Git methods
+  gitPull: "git.pull",
+  gitStatus: "git.status",
+  gitRunStackedAction: "git.runStackedAction",
+  gitListBranches: "git.listBranches",
+  gitCreateWorktree: "git.createWorktree",
+  gitRemoveWorktree: "git.removeWorktree",
+  gitCreateBranch: "git.createBranch",
+  gitCheckout: "git.checkout",
+  gitInit: "git.init",
+
+  // Terminal methods
+  terminalOpen: "terminal.open",
+  terminalWrite: "terminal.write",
+  terminalResize: "terminal.resize",
+  terminalClear: "terminal.clear",
+  terminalRestart: "terminal.restart",
+  terminalClose: "terminal.close",
+
+  // Server meta
+  serverGetConfig: "server.getConfig",
+  serverUpsertKeybinding: "server.upsertKeybinding",
 } as const;
 
-export const WS_CLOSE_CODES = {
-  replacedByNewClient: 4000,
-  unauthorized: 4001,
+// ── Push Event Channels ──────────────────────────────────────────────
+
+export const WS_CHANNELS = {
+  terminalEvent: "terminal.event",
+  serverWelcome: "server.welcome",
+  serverConfigUpdated: "server.configUpdated",
 } as const;
 
-export const WS_CLOSE_REASONS = {
-  replacedByNewClient: "replaced-by-new-client",
-  unauthorized: "unauthorized",
-} as const;
+// -- Tagged Union of all request body schemas ─────────────────────────
 
-export const WS_REQUEST_ID_MAX_CHARS = 256;
-export const WS_METHOD_MAX_CHARS = 256;
-export const WS_ERROR_CODE_MAX_CHARS = 128;
-export const WS_ERROR_MESSAGE_MAX_CHARS = 8_192;
+const tagRequestBody = <const Tag extends string, const Fields extends Schema.Struct.Fields>(
+  tag: Tag,
+  schema: Schema.Struct<Fields>,
+) =>
+  schema.mapFields(
+    Struct.assign({ _tag: Schema.tag(tag) }),
+    // PreserveChecks is safe here. No existing schema should have checks depending on the tag
+    { unsafePreserveChecks: true },
+  );
 
-const wsRequestIdSchema = z
-  .string()
-  .min(1)
-  .max(WS_REQUEST_ID_MAX_CHARS)
-  .refine((value) => value.trim().length > 0, {
-    message: "request.id must not be blank",
-  });
-const wsMethodSchema = z
-  .string()
-  .min(1)
-  .max(WS_METHOD_MAX_CHARS)
-  .refine((value) => value.trim().length > 0, {
-    message: "request.method must not be blank",
-  });
-const wsErrorCodeSchema = z
-  .string()
-  .min(1)
-  .max(WS_ERROR_CODE_MAX_CHARS)
-  .refine((value) => value.trim().length > 0, {
-    message: "response.error.code must not be blank",
-  });
-const wsErrorMessageSchema = z
-  .string()
-  .min(1)
-  .max(WS_ERROR_MESSAGE_MAX_CHARS)
-  .refine((value) => value.trim().length > 0, {
-    message: "response.error.message must not be blank",
-  });
+const WebSocketRequestBody = Schema.Union([
+  // Orchestration methods
+  tagRequestBody(
+    ORCHESTRATION_WS_METHODS.dispatchCommand,
+    Schema.Struct({ command: ClientOrchestrationCommand }),
+  ),
+  tagRequestBody(ORCHESTRATION_WS_METHODS.getSnapshot, OrchestrationGetSnapshotInput),
+  tagRequestBody(ORCHESTRATION_WS_METHODS.getTurnDiff, OrchestrationGetTurnDiffInput),
+  tagRequestBody(ORCHESTRATION_WS_METHODS.getFullThreadDiff, OrchestrationGetFullThreadDiffInput),
+  tagRequestBody(ORCHESTRATION_WS_METHODS.replayEvents, OrchestrationReplayEventsInput),
 
-const wsRequestSchema = z.object({
-  type: z.literal("request"),
-  id: wsRequestIdSchema,
-  method: wsMethodSchema,
-  params: z.unknown().optional(),
-}).strict();
+  // Project Search
+  tagRequestBody(WS_METHODS.projectsSearchEntries, ProjectSearchEntriesInput),
+  tagRequestBody(WS_METHODS.projectsWriteFile, ProjectWriteFileInput),
 
-const wsResponseErrorSchema = z.object({
-  code: wsErrorCodeSchema,
-  message: wsErrorMessageSchema,
-}).strict();
+  // Shell methods
+  tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),
 
-const wsResponseSchema = z
-  .object({
-    type: z.literal("response"),
-    id: wsRequestIdSchema,
-    ok: z.boolean(),
-    result: z.unknown().optional(),
-    error: wsResponseErrorSchema.optional(),
-  })
-  .strict()
-  .superRefine((value, ctx) => {
-    if (value.ok && value.error) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "response.error must be undefined when ok=true",
-      });
-    }
+  // Git methods
+  tagRequestBody(WS_METHODS.gitPull, GitPullInput),
+  tagRequestBody(WS_METHODS.gitStatus, GitStatusInput),
+  tagRequestBody(WS_METHODS.gitRunStackedAction, GitRunStackedActionInput),
+  tagRequestBody(WS_METHODS.gitListBranches, GitListBranchesInput),
+  tagRequestBody(WS_METHODS.gitCreateWorktree, GitCreateWorktreeInput),
+  tagRequestBody(WS_METHODS.gitRemoveWorktree, GitRemoveWorktreeInput),
+  tagRequestBody(WS_METHODS.gitCreateBranch, GitCreateBranchInput),
+  tagRequestBody(WS_METHODS.gitCheckout, GitCheckoutInput),
+  tagRequestBody(WS_METHODS.gitInit, GitInitInput),
 
-    if (value.ok && value.result === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "response.result is required when ok=true",
-      });
-    }
+  // Terminal methods
+  tagRequestBody(WS_METHODS.terminalOpen, TerminalOpenInput),
+  tagRequestBody(WS_METHODS.terminalWrite, TerminalWriteInput),
+  tagRequestBody(WS_METHODS.terminalResize, TerminalResizeInput),
+  tagRequestBody(WS_METHODS.terminalClear, TerminalClearInput),
+  tagRequestBody(WS_METHODS.terminalRestart, TerminalRestartInput),
+  tagRequestBody(WS_METHODS.terminalClose, TerminalCloseInput),
 
-    if (!value.ok && !value.error) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "response.error is required when ok=false",
-      });
-    }
-
-    if (!value.ok && value.result !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "response.result must be undefined when ok=false",
-      });
-    }
-  });
-
-const wsEventSchema = z.union([
-  z.object({
-    type: z.literal("event"),
-    channel: z.literal(WS_EVENT_CHANNELS.providerEvent),
-    payload: providerEventSchema,
-  }).strict(),
-  z.object({
-    type: z.literal("event"),
-    channel: z.literal(WS_EVENT_CHANNELS.agentOutput),
-    payload: outputChunkSchema,
-  }).strict(),
-  z.object({
-    type: z.literal("event"),
-    channel: z.literal(WS_EVENT_CHANNELS.agentExit),
-    payload: agentExitSchema,
-  }).strict(),
+  // Server meta
+  tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
 ]);
 
-const wsHelloSchema = z.object({
-  type: z.literal("hello"),
-  version: z.literal(1),
-  launchCwd: z.string().min(1),
-}).strict();
+export const WebSocketRequest = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  body: WebSocketRequestBody,
+});
+export type WebSocketRequest = typeof WebSocketRequest.Type;
 
-export const wsClientMessageSchema = wsRequestSchema;
-export const wsServerMessageSchema = z.union([wsResponseSchema, wsEventSchema, wsHelloSchema]);
+export const WebSocketResponse = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  result: Schema.optional(Schema.Unknown),
+  error: Schema.optional(
+    Schema.Struct({
+      message: Schema.String,
+    }),
+  ),
+});
+export type WebSocketResponse = typeof WebSocketResponse.Type;
 
-export type WsEventChannel = z.infer<typeof wsEventSchema>["channel"];
-export type WsRequestMessage = z.infer<typeof wsRequestSchema>;
-export type WsResponseMessage = z.infer<typeof wsResponseSchema>;
-export type WsEventMessage = z.infer<typeof wsEventSchema>;
-export type WsHelloMessage = z.infer<typeof wsHelloSchema>;
-export type WsClientMessage = z.infer<typeof wsClientMessageSchema>;
-export type WsServerMessage = z.infer<typeof wsServerMessageSchema>;
+export const WsPush = Schema.Struct({
+  type: Schema.Literal("push"),
+  channel: TrimmedNonEmptyString,
+  data: Schema.Unknown,
+});
+export type WsPush = typeof WsPush.Type;
+
+// ── Union of all server → client messages ─────────────────────────────
+
+export const WsResponse = Schema.Union([WebSocketResponse, WsPush]);
+export type WsResponse = typeof WsResponse.Type;
+
+// ── Server welcome payload ───────────────────────────────────────────
+
+export const WsWelcomePayload = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  projectName: TrimmedNonEmptyString,
+  bootstrapProjectId: Schema.optional(ProjectId),
+  bootstrapThreadId: Schema.optional(ThreadId),
+});
+export type WsWelcomePayload = typeof WsWelcomePayload.Type;

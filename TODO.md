@@ -1,12 +1,13 @@
-## TODO
+# TODO
 
-- [ ] 1 click copy in codeblocks
-- [ ] Pasting/adding images to submit with prompts
+## Small things
+
+- [ ] Submitting new messages should scroll to bottom
 - [ ] Only show last 10 threads for a given project
 - [ ] Thread archiving
-- [ ] Selecting folder should instantly create project
 - [ ] New projects should go on top
 - [ ] Projects should be sorted by latest thread update
-- [ ] "Response" bar should ONLY appear on work completed
-- [ ] "Response" bar should ONLY appear above the FINAL message in a series
-- [ ] Reduce noise of tool calls (combine "command run" and "command completed", make tool calls a "box" with limited # of calls shown at a time, etc)
+
+## Bigger things
+
+- [ ] Queueing messages

@@ -1,0 +1,31 @@
+{
+  "name": "@t3tools/desktop",
+  "version": "0.0.4-alpha.1",
+  "private": true,
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "bun run --parallel dev:bundle dev:electron",
+    "dev:bundle": "tsdown --watch",
+    "dev:electron": "bun run scripts/dev-electron.mjs",
+    "build": "tsdown",
+    "start": "bun run scripts/start-electron.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "smoke-test": "node scripts/smoke-test.mjs"
+  },
+  "dependencies": {
+    "effect": "catalog:",
+    "electron": "40.6.0",
+    "electron-updater": "^6.6.2"
+  },
+  "devDependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "wait-on": "^8.0.2"
+  },
+  "productName": "T3 Code (Alpha)"
+}
