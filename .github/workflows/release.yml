@@ -262,6 +262,13 @@ jobs:
           merge-multiple: true
           path: release-assets
 
+      - name: Merge macOS updater manifests
+        run: |
+          node scripts/merge-mac-update-manifests.ts \
+            release-assets/latest-mac.yml \
+            release-assets/latest-mac-x64.yml
+          rm -f release-assets/latest-mac-x64.yml
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
