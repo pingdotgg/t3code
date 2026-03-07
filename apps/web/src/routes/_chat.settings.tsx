@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { ZapIcon } from "lucide-react";
@@ -8,9 +8,12 @@ import { ZapIcon } from "lucide-react";
 import {
   APP_SERVICE_TIER_OPTIONS,
   MAX_TERMINAL_FONT_SIZE,
+  MAX_TERMINAL_LINE_HEIGHT,
   MIN_TERMINAL_FONT_SIZE,
+  MIN_TERMINAL_LINE_HEIGHT,
   MAX_CUSTOM_MODEL_LENGTH,
   clampTerminalFontSize,
+  resolveTerminalLineHeight,
   shouldShowFastTierIcon,
   useAppSettings,
 } from "../appSettings";
@@ -109,36 +112,53 @@ function SettingsRouteView() {
   const codexServiceTier = settings.codexServiceTier;
   const terminalFontFamily = settings.terminalFontFamily;
   const terminalFontSize = settings.terminalFontSize;
+  const terminalLineHeight = settings.terminalLineHeight;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
-  const [terminalFontSizeInput, setTerminalFontSizeInput] = useState(() =>
-    String(terminalFontSize),
-  );
-
-  useEffect(() => {
-    setTerminalFontSizeInput(String(terminalFontSize));
-  }, [terminalFontSize]);
 
   const commitTerminalFontSize = useCallback(
-    (rawValue: string) => {
-      const trimmed = rawValue.trim();
+    (input: HTMLInputElement): void => {
+      const trimmed = input.value.trim();
       if (!trimmed) {
-        setTerminalFontSizeInput(String(terminalFontSize));
+        input.value = String(terminalFontSize);
         return;
       }
 
       const next = Number(trimmed);
       if (!Number.isFinite(next)) {
-        setTerminalFontSizeInput(String(terminalFontSize));
+        input.value = String(terminalFontSize);
         return;
       }
 
       const normalized = clampTerminalFontSize(next);
-      setTerminalFontSizeInput(String(normalized));
+      input.value = String(normalized);
       if (normalized !== terminalFontSize) {
         updateSettings({ terminalFontSize: normalized });
       }
     },
     [terminalFontSize, updateSettings],
+  );
+
+  const commitTerminalLineHeight = useCallback(
+    (input: HTMLInputElement): void => {
+      const trimmed = input.value.trim();
+      if (!trimmed) {
+        input.value = String(terminalLineHeight);
+        return;
+      }
+
+      const next = Number(trimmed);
+      if (!Number.isFinite(next)) {
+        input.value = String(terminalLineHeight);
+        return;
+      }
+
+      const normalized = resolveTerminalLineHeight(next);
+      input.value = String(normalized);
+      if (normalized !== terminalLineHeight) {
+        updateSettings({ terminalLineHeight: normalized });
+      }
+    },
+    [terminalLineHeight, updateSettings],
   );
 
   const openKeybindingsFile = useCallback(() => {
@@ -361,19 +381,17 @@ function SettingsRouteView() {
                 <label htmlFor="terminal-font-size" className="block space-y-1">
                   <span className="text-xs font-medium text-foreground">Terminal font size</span>
                   <Input
+                    key={terminalFontSize}
                     id="terminal-font-size"
                     type="number"
                     nativeInput
-                    value={terminalFontSizeInput}
+                    defaultValue={String(terminalFontSize)}
                     min={MIN_TERMINAL_FONT_SIZE}
                     max={MAX_TERMINAL_FONT_SIZE}
                     step={1}
                     inputMode="numeric"
-                    onChange={(event) => {
-                      setTerminalFontSizeInput(event.target.value);
-                    }}
                     onBlur={(event) => {
-                      commitTerminalFontSize(event.target.value);
+                      commitTerminalFontSize(event.currentTarget);
                     }}
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
@@ -386,8 +404,35 @@ function SettingsRouteView() {
                   </span>
                 </label>
 
+                <label htmlFor="terminal-line-height" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Terminal line height</span>
+                  <Input
+                    key={terminalLineHeight}
+                    id="terminal-line-height"
+                    type="number"
+                    nativeInput
+                    defaultValue={String(terminalLineHeight)}
+                    min={MIN_TERMINAL_LINE_HEIGHT}
+                    max={MAX_TERMINAL_LINE_HEIGHT}
+                    step={0.05}
+                    inputMode="decimal"
+                    onBlur={(event) => {
+                      commitTerminalLineHeight(event.currentTarget);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.currentTarget.blur();
+                      }
+                    }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Allowed range: {MIN_TERMINAL_LINE_HEIGHT} - {MAX_TERMINAL_LINE_HEIGHT}x.
+                  </span>
+                </label>
+
                 {terminalFontFamily !== defaults.terminalFontFamily ||
-                terminalFontSize !== defaults.terminalFontSize ? (
+                terminalFontSize !== defaults.terminalFontSize ||
+                terminalLineHeight !== defaults.terminalLineHeight ? (
                   <div className="flex justify-end">
                     <Button
                       size="xs"
@@ -396,6 +441,7 @@ function SettingsRouteView() {
                         updateSettings({
                           terminalFontFamily: defaults.terminalFontFamily,
                           terminalFontSize: defaults.terminalFontSize,
+                          terminalLineHeight: defaults.terminalLineHeight,
                         })
                       }
                     >

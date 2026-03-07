@@ -115,6 +115,7 @@ interface TerminalViewportProps {
   runtimeEnv?: Record<string, string>;
   terminalFontFamily: string;
   terminalFontSize: number;
+  terminalLineHeight: number;
   onSessionExited: () => void;
   focusRequestId: number;
   autoFocus: boolean;
@@ -129,6 +130,7 @@ function TerminalViewport({
   runtimeEnv,
   terminalFontFamily,
   terminalFontSize,
+  terminalLineHeight,
   onSessionExited,
   focusRequestId,
   autoFocus,
@@ -154,7 +156,7 @@ function TerminalViewport({
     const fitAddon = new FitAddon();
     const terminal = new Terminal({
       cursorBlink: true,
-      lineHeight: 1.2,
+      lineHeight: terminalLineHeight,
       fontSize: terminalFontSize,
       scrollback: 5_000,
       fontFamily: terminalFontFamily,
@@ -419,12 +421,14 @@ function TerminalViewport({
 
     const fontFamilyChanged = terminal.options.fontFamily !== terminalFontFamily;
     const fontSizeChanged = terminal.options.fontSize !== terminalFontSize;
-    if (!fontFamilyChanged && !fontSizeChanged) {
+    const lineHeightChanged = terminal.options.lineHeight !== terminalLineHeight;
+    if (!fontFamilyChanged && !fontSizeChanged && !lineHeightChanged) {
       return;
     }
 
     terminal.options.fontFamily = terminalFontFamily;
     terminal.options.fontSize = terminalFontSize;
+    terminal.options.lineHeight = terminalLineHeight;
 
     const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
     const frame = window.requestAnimationFrame(() => {
@@ -448,7 +452,7 @@ function TerminalViewport({
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [terminalFontFamily, terminalFontSize, terminalId, threadId]);
+  }, [terminalFontFamily, terminalFontSize, terminalLineHeight, terminalId, threadId]);
 
   useEffect(() => {
     const api = readNativeApi();
@@ -673,6 +677,7 @@ export default function ThreadTerminalDrawer({
     : "Close Terminal";
   const terminalFontFamily = appSettings.terminalFontFamily;
   const terminalFontSize = appSettings.terminalFontSize;
+  const terminalLineHeight = appSettings.terminalLineHeight;
   const onSplitTerminalAction = useCallback(() => {
     if (hasReachedTerminalLimit) return;
     onSplitTerminal();
@@ -790,11 +795,10 @@ export default function ThreadTerminalDrawer({
         <div className="pointer-events-none absolute right-2 top-2 z-20">
           <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background/70">
             <TerminalActionButton
-              className={`p-1 text-foreground/90 transition-colors ${
-                hasReachedTerminalLimit
-                  ? "cursor-not-allowed opacity-45 hover:bg-transparent"
-                  : "hover:bg-accent"
-              }`}
+              className={`p-1 text-foreground/90 transition-colors ${hasReachedTerminalLimit
+                ? "cursor-not-allowed opacity-45 hover:bg-transparent"
+                : "hover:bg-accent"
+                }`}
               onClick={onSplitTerminalAction}
               label={splitTerminalActionLabel}
             >
@@ -802,11 +806,10 @@ export default function ThreadTerminalDrawer({
             </TerminalActionButton>
             <div className="h-4 w-px bg-border/80" />
             <TerminalActionButton
-              className={`p-1 text-foreground/90 transition-colors ${
-                hasReachedTerminalLimit
-                  ? "cursor-not-allowed opacity-45 hover:bg-transparent"
-                  : "hover:bg-accent"
-              }`}
+              className={`p-1 text-foreground/90 transition-colors ${hasReachedTerminalLimit
+                ? "cursor-not-allowed opacity-45 hover:bg-transparent"
+                : "hover:bg-accent"
+                }`}
               onClick={onNewTerminalAction}
               label={newTerminalActionLabel}
             >
@@ -837,9 +840,8 @@ export default function ThreadTerminalDrawer({
                 {visibleTerminalIds.map((terminalId) => (
                   <div
                     key={terminalId}
-                    className={`min-h-0 min-w-0 border-l first:border-l-0 ${
-                      terminalId === resolvedActiveTerminalId ? "border-border" : "border-border/70"
-                    }`}
+                    className={`min-h-0 min-w-0 border-l first:border-l-0 ${terminalId === resolvedActiveTerminalId ? "border-border" : "border-border/70"
+                      }`}
                     onMouseDown={() => {
                       if (terminalId !== resolvedActiveTerminalId) {
                         onActiveTerminalChange(terminalId);
@@ -854,6 +856,7 @@ export default function ThreadTerminalDrawer({
                         {...(runtimeEnv ? { runtimeEnv } : {})}
                         terminalFontFamily={terminalFontFamily}
                         terminalFontSize={terminalFontSize}
+                        terminalLineHeight={terminalLineHeight}
                         onSessionExited={() => onCloseTerminal(terminalId)}
                         focusRequestId={focusRequestId}
                         autoFocus={terminalId === resolvedActiveTerminalId}
@@ -874,6 +877,7 @@ export default function ThreadTerminalDrawer({
                   {...(runtimeEnv ? { runtimeEnv } : {})}
                   terminalFontFamily={terminalFontFamily}
                   terminalFontSize={terminalFontSize}
+                  terminalLineHeight={terminalLineHeight}
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
                   focusRequestId={focusRequestId}
                   autoFocus
@@ -889,22 +893,20 @@ export default function ThreadTerminalDrawer({
               <div className="flex h-[22px] items-stretch justify-end border-b border-border/70">
                 <div className="inline-flex h-full items-stretch">
                   <TerminalActionButton
-                    className={`inline-flex h-full items-center px-1 text-foreground/90 transition-colors ${
-                      hasReachedTerminalLimit
-                        ? "cursor-not-allowed opacity-45 hover:bg-transparent"
-                        : "hover:bg-accent/70"
-                    }`}
+                    className={`inline-flex h-full items-center px-1 text-foreground/90 transition-colors ${hasReachedTerminalLimit
+                      ? "cursor-not-allowed opacity-45 hover:bg-transparent"
+                      : "hover:bg-accent/70"
+                      }`}
                     onClick={onSplitTerminalAction}
                     label={splitTerminalActionLabel}
                   >
                     <SquareSplitHorizontal className="size-3.25" />
                   </TerminalActionButton>
                   <TerminalActionButton
-                    className={`inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors ${
-                      hasReachedTerminalLimit
-                        ? "cursor-not-allowed opacity-45 hover:bg-transparent"
-                        : "hover:bg-accent/70"
-                    }`}
+                    className={`inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors ${hasReachedTerminalLimit
+                      ? "cursor-not-allowed opacity-45 hover:bg-transparent"
+                      : "hover:bg-accent/70"
+                      }`}
                     onClick={onNewTerminalAction}
                     label={newTerminalActionLabel}
                   >
@@ -933,11 +935,10 @@ export default function ThreadTerminalDrawer({
                       {showGroupHeaders && (
                         <button
                           type="button"
-                          className={`flex w-full items-center rounded px-1 py-0.5 text-[10px] uppercase tracking-[0.08em] ${
-                            isGroupActive
-                              ? "bg-accent/70 text-foreground"
-                              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                          }`}
+                          className={`flex w-full items-center rounded px-1 py-0.5 text-[10px] uppercase tracking-[0.08em] ${isGroupActive
+                            ? "bg-accent/70 text-foreground"
+                            : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                            }`}
                           onClick={() => onActiveTerminalChange(groupActiveTerminalId)}
                         >
                           {terminalGroup.terminalIds.length > 1
@@ -951,17 +952,15 @@ export default function ThreadTerminalDrawer({
                       >
                         {terminalGroup.terminalIds.map((terminalId) => {
                           const isActive = terminalId === resolvedActiveTerminalId;
-                          const closeTerminalLabel = `Close ${
-                            terminalLabelById.get(terminalId) ?? "terminal"
-                          }${isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""}`;
+                          const closeTerminalLabel = `Close ${terminalLabelById.get(terminalId) ?? "terminal"
+                            }${isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""}`;
                           return (
                             <div
                               key={terminalId}
-                              className={`group flex items-center gap-1 rounded px-1 py-0.5 text-[11px] ${
-                                isActive
-                                  ? "bg-accent text-foreground"
-                                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                              }`}
+                              className={`group flex items-center gap-1 rounded px-1 py-0.5 text-[11px] ${isActive
+                                ? "bg-accent text-foreground"
+                                : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                                }`}
                             >
                               {showGroupHeaders && (
                                 <span className="text-[10px] text-muted-foreground/80">└</span>

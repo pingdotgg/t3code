@@ -12,6 +12,9 @@ export const DEFAULT_TERMINAL_FONT_FAMILY =
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
 export const MIN_TERMINAL_FONT_SIZE = 8;
 export const MAX_TERMINAL_FONT_SIZE = 32;
+export const DEFAULT_TERMINAL_LINE_HEIGHT = 1.2;
+export const MIN_TERMINAL_LINE_HEIGHT = 1;
+export const MAX_TERMINAL_LINE_HEIGHT = 2;
 export const APP_SERVICE_TIER_OPTIONS = [
   {
     value: "auto",
@@ -56,6 +59,9 @@ const AppSettingsSchema = Schema.Struct({
   ),
   terminalFontSize: Schema.Number.pipe(
     Schema.withConstructorDefault(() => Option.some(DEFAULT_TERMINAL_FONT_SIZE)),
+  ),
+  terminalLineHeight: Schema.Number.pipe(
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_TERMINAL_LINE_HEIGHT)),
   ),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
@@ -132,12 +138,21 @@ export function clampTerminalFontSize(fontSize: number | null | undefined): numb
   return Math.min(Math.max(rounded, MIN_TERMINAL_FONT_SIZE), MAX_TERMINAL_FONT_SIZE);
 }
 
+export function resolveTerminalLineHeight(lineHeight: number | null | undefined): number {
+  if (typeof lineHeight !== "number" || !Number.isFinite(lineHeight)) {
+    return DEFAULT_TERMINAL_LINE_HEIGHT;
+  }
+  const rounded = Math.round(lineHeight * 100) / 100;
+  return Math.min(Math.max(rounded, MIN_TERMINAL_LINE_HEIGHT), MAX_TERMINAL_LINE_HEIGHT);
+}
+
 function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
     terminalFontFamily: resolveTerminalFontFamily(settings.terminalFontFamily),
     terminalFontSize: clampTerminalFontSize(settings.terminalFontSize),
+    terminalLineHeight: resolveTerminalLineHeight(settings.terminalLineHeight),
   };
 }
 

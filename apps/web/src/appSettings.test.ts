@@ -2,10 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import {
   clampTerminalFontSize,
+  DEFAULT_TERMINAL_FONT_FAMILY,
+  DEFAULT_TERMINAL_FONT_SIZE,
+  DEFAULT_TERMINAL_LINE_HEIGHT,
+  MAX_TERMINAL_LINE_HEIGHT,
+  MIN_TERMINAL_LINE_HEIGHT,
   getAppModelOptions,
   getSlashModelOptions,
   normalizeCustomModelSlugs,
   parsePersistedSettings,
+  resolveTerminalLineHeight,
   resolveTerminalFontFamily,
   resolveAppServiceTier,
   shouldShowFastTierIcon,
@@ -20,8 +26,9 @@ function createPersistedSettings(overrides: Record<string, unknown>): string {
     enableAssistantStreaming: false,
     codexServiceTier: "auto",
     customCodexModels: [],
-    terminalFontFamily: '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
-    terminalFontSize: 12,
+    terminalFontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
+    terminalFontSize: DEFAULT_TERMINAL_FONT_SIZE,
+    terminalLineHeight: DEFAULT_TERMINAL_LINE_HEIGHT,
     ...overrides,
   });
 }
@@ -142,6 +149,18 @@ describe("clampTerminalFontSize", () => {
   });
 });
 
+describe("resolveTerminalLineHeight", () => {
+  it("falls back to the default option for invalid values", () => {
+    expect(resolveTerminalLineHeight(undefined)).toBe(DEFAULT_TERMINAL_LINE_HEIGHT);
+  });
+
+  it("clamps and rounds persisted values to the supported range", () => {
+    expect(resolveTerminalLineHeight(0.8)).toBe(MIN_TERMINAL_LINE_HEIGHT);
+    expect(resolveTerminalLineHeight(2.4)).toBe(MAX_TERMINAL_LINE_HEIGHT);
+    expect(resolveTerminalLineHeight(1.236)).toBe(1.24);
+  });
+});
+
 describe("parsePersistedSettings", () => {
   it("clamps persisted terminal font sizes instead of discarding the settings payload", () => {
     expect(
@@ -150,12 +169,14 @@ describe("parsePersistedSettings", () => {
           confirmThreadDelete: false,
           terminalFontFamily: "Fira Code, monospace",
           terminalFontSize: 99,
+          terminalLineHeight: 2.4,
         }),
       ),
     ).toMatchObject({
       confirmThreadDelete: false,
       terminalFontFamily: "Fira Code, monospace",
       terminalFontSize: 32,
+      terminalLineHeight: 2,
     });
   });
 
