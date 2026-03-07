@@ -147,4 +147,13 @@ describe("store read model sync", () => {
 
     expect(next.threads[0]?.model).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
   });
+
+  it("refreshes project model from read-model defaultModel updates", () => {
+    const initialState = makeState(makeThread());
+    const readModel = makeReadModel(makeReadModelThread({}));
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.projects[0]?.model).toBe("gpt-5.3-codex");
+  });
 });

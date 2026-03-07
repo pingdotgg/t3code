@@ -6,8 +6,11 @@ import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { ZapIcon } from "lucide-react";
 
 import {
+  APP_DEFAULT_MODEL_AUTO,
   APP_SERVICE_TIER_OPTIONS,
+  getAppModelOptions,
   MAX_CUSTOM_MODEL_LENGTH,
+  normalizeAppDefaultModelSetting,
   shouldShowFastTierIcon,
   useAppSettings,
 } from "../appSettings";
@@ -18,7 +21,13 @@ import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../components/ui/select";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { SidebarInset } from "~/components/ui/sidebar";
 
@@ -104,6 +113,15 @@ function SettingsRouteView() {
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const codexServiceTier = settings.codexServiceTier;
+  const defaultCodexModel = normalizeAppDefaultModelSetting(settings.defaultCodexModel);
+  const defaultCodexModelOptions = getAppModelOptions(
+    "codex",
+    settings.customCodexModels,
+    defaultCodexModel === APP_DEFAULT_MODEL_AUTO ? null : defaultCodexModel,
+  );
+  const defaultCodexModelLabel =
+    defaultCodexModelOptions.find((option) => option.slug === defaultCodexModel)?.name ??
+    defaultCodexModel;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
   const openKeybindingsFile = useCallback(() => {
@@ -123,54 +141,69 @@ function SettingsRouteView() {
       });
   }, [keybindingsConfigPath]);
 
-  const addCustomModel = useCallback((provider: ProviderKind) => {
-    const customModelInput = customModelInputByProvider[provider];
-    const customModels = getCustomModelsForProvider(settings, provider);
-    const normalized = normalizeModelSlug(customModelInput, provider);
-    if (!normalized) {
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: "Enter a model slug.",
-      }));
-      return;
-    }
-    if (getModelOptions(provider).some((option) => option.slug === normalized)) {
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: "That model is already built in.",
-      }));
-      return;
-    }
-    if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
-      }));
-      return;
-    }
-    if (customModels.includes(normalized)) {
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: "That custom model is already saved.",
-      }));
-      return;
-    }
+  const addCustomModel = useCallback(
+    (provider: ProviderKind) => {
+      const customModelInput = customModelInputByProvider[provider];
+      const customModels = getCustomModelsForProvider(settings, provider);
+      const normalized = normalizeModelSlug(customModelInput, provider);
+      if (!normalized) {
+        setCustomModelErrorByProvider((existing) => ({
+          ...existing,
+          [provider]: "Enter a model slug.",
+        }));
+        return;
+      }
+      if (normalized.toLowerCase() === APP_DEFAULT_MODEL_AUTO) {
+        setCustomModelErrorByProvider((existing) => ({
+          ...existing,
+          [provider]: "The slug `auto` is reserved.",
+        }));
+        return;
+      }
+      if (getModelOptions(provider).some((option) => option.slug === normalized)) {
+        setCustomModelErrorByProvider((existing) => ({
+          ...existing,
+          [provider]: "That model is already built in.",
+        }));
+        return;
+      }
+      if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
+        setCustomModelErrorByProvider((existing) => ({
+          ...existing,
+          [provider]: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
+        }));
+        return;
+      }
+      if (customModels.includes(normalized)) {
+        setCustomModelErrorByProvider((existing) => ({
+          ...existing,
+          [provider]: "That custom model is already saved.",
+        }));
+        return;
+      }
 
-    updateSettings(patchCustomModels(provider, [...customModels, normalized]));
-    setCustomModelInputByProvider((existing) => ({
-      ...existing,
-      [provider]: "",
-    }));
-    setCustomModelErrorByProvider((existing) => ({
-      ...existing,
-      [provider]: null,
-    }));
-  }, [customModelInputByProvider, settings, updateSettings]);
+      updateSettings(patchCustomModels(provider, [...customModels, normalized]));
+      setCustomModelInputByProvider((existing) => ({
+        ...existing,
+        [provider]: "",
+      }));
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: null,
+      }));
+    },
+    [customModelInputByProvider, settings, updateSettings],
+  );
 
   const removeCustomModel = useCallback(
     (provider: ProviderKind, slug: string) => {
       const customModels = getCustomModelsForProvider(settings, provider);
-      updateSettings(patchCustomModels(provider, customModels.filter((model) => model !== slug)));
+      updateSettings(
+        patchCustomModels(
+          provider,
+          customModels.filter((model) => model !== slug),
+        ),
+      );
       setCustomModelErrorByProvider((existing) => ({
         ...existing,
         [provider]: null,
@@ -311,6 +344,69 @@ function SettingsRouteView() {
 
               <div className="space-y-5">
                 <label className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">
+                    Default model for new chats
+                  </span>
+                  <Select
+                    items={[
+                      { label: "Auto", value: APP_DEFAULT_MODEL_AUTO },
+                      ...defaultCodexModelOptions.map((option) => ({
+                        label: option.name,
+                        value: option.slug,
+                      })),
+                    ]}
+                    value={defaultCodexModel}
+                    onValueChange={(value) => {
+                      if (!value) return;
+                      updateSettings({ defaultCodexModel: value });
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectPopup alignItemWithTrigger={false}>
+                      <SelectItem value={APP_DEFAULT_MODEL_AUTO}>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="size-3.5 shrink-0" aria-hidden="true" />
+                          <span className="truncate">Auto</span>
+                        </div>
+                      </SelectItem>
+                      {defaultCodexModelOptions.map((option) => (
+                        <SelectItem key={option.slug} value={option.slug}>
+                          <div className="flex min-w-0 items-center gap-2">
+                            {shouldShowFastTierIcon(option.slug, codexServiceTier) ? (
+                              <ZapIcon className="size-3.5 text-amber-500" />
+                            ) : (
+                              <span className="size-3.5 shrink-0" aria-hidden="true" />
+                            )}
+                            <span className="truncate">{option.name}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                  <span className="text-xs text-muted-foreground">
+                    {defaultCodexModel === APP_DEFAULT_MODEL_AUTO
+                      ? "Auto uses the most-used model across existing chats in each project."
+                      : `Always start new chats with ${defaultCodexModelLabel}.`}
+                  </span>
+                </label>
+
+                {defaultCodexModel !== defaults.defaultCodexModel ? (
+                  <div className="flex justify-end">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        updateSettings({ defaultCodexModel: defaults.defaultCodexModel })
+                      }
+                    >
+                      Restore default model setting
+                    </Button>
+                  </div>
+                ) : null}
+
+                <label className="block space-y-1">
                   <span className="text-xs font-medium text-foreground">Default service tier</span>
                   <Select
                     items={APP_SERVICE_TIER_OPTIONS.map((option) => ({
@@ -426,10 +522,9 @@ function SettingsRouteView() {
                                 variant="outline"
                                 onClick={() =>
                                   updateSettings(
-                                    patchCustomModels(
-                                      provider,
-                                      [...getDefaultCustomModelsForProvider(defaults, provider)],
-                                    ),
+                                    patchCustomModels(provider, [
+                                      ...getDefaultCustomModelsForProvider(defaults, provider),
+                                    ]),
                                   )
                                 }
                               >
@@ -446,7 +541,8 @@ function SettingsRouteView() {
                                   className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2"
                                 >
                                   <div className="flex min-w-0 flex-1 items-center gap-2">
-                                    {provider === "codex" && shouldShowFastTierIcon(slug, codexServiceTier) ? (
+                                    {provider === "codex" &&
+                                    shouldShowFastTierIcon(slug, codexServiceTier) ? (
                                       <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
                                     ) : null}
                                     <code className="min-w-0 flex-1 truncate text-xs text-foreground">

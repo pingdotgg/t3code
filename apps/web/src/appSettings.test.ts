@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  APP_DEFAULT_MODEL_AUTO,
   getAppModelOptions,
   getSlashModelOptions,
+  normalizeAppDefaultModelSetting,
   normalizeCustomModelSlugs,
+  resolveProjectDefaultModelForNewThread,
   resolveAppServiceTier,
   shouldShowFastTierIcon,
   resolveAppModelSelection,
@@ -21,6 +24,24 @@ describe("normalizeCustomModelSlugs", () => {
         null,
       ]),
     ).toEqual(["custom/internal-model"]);
+  });
+
+  it("treats auto as a reserved non-custom value", () => {
+    expect(normalizeCustomModelSlugs(["auto", "AUTO", "custom/internal-model"])).toEqual([
+      "custom/internal-model",
+    ]);
+  });
+});
+
+describe("normalizeAppDefaultModelSetting", () => {
+  it("defaults to auto when blank or missing", () => {
+    expect(normalizeAppDefaultModelSetting(undefined)).toBe(APP_DEFAULT_MODEL_AUTO);
+    expect(normalizeAppDefaultModelSetting(" ")).toBe(APP_DEFAULT_MODEL_AUTO);
+  });
+
+  it("normalizes auto case and preserves model slugs", () => {
+    expect(normalizeAppDefaultModelSetting(" AUTO ")).toBe(APP_DEFAULT_MODEL_AUTO);
+    expect(normalizeAppDefaultModelSetting("gpt-5.3-codex")).toBe("gpt-5.3-codex");
   });
 });
 
@@ -61,25 +82,68 @@ describe("resolveAppModelSelection", () => {
   });
 });
 
+describe("resolveProjectDefaultModelForNewThread", () => {
+  it("uses explicit default model setting when auto is not selected", () => {
+    const resolved = resolveProjectDefaultModelForNewThread({
+      projectId: "project-1",
+      projectModel: "gpt-5.4",
+      threads: [
+        {
+          projectId: "project-1",
+          model: "gpt-5.2",
+          createdAt: "2026-03-01T00:00:00.000Z",
+        },
+      ],
+      defaultModelSetting: "gpt-5.3-codex",
+      customModels: [],
+    });
+
+    expect(resolved).toBe("gpt-5.3-codex");
+  });
+
+  it("picks the most-used model for a project when auto is enabled", () => {
+    const resolved = resolveProjectDefaultModelForNewThread({
+      projectId: "project-1",
+      projectModel: "gpt-5.4",
+      threads: [
+        {
+          projectId: "project-1",
+          model: "gpt-5.3-codex",
+          createdAt: "2026-03-01T00:00:00.000Z",
+        },
+        {
+          projectId: "project-1",
+          model: "gpt-5.2",
+          createdAt: "2026-03-02T00:00:00.000Z",
+        },
+        {
+          projectId: "project-1",
+          model: "gpt-5.3-codex",
+          createdAt: "2026-03-03T00:00:00.000Z",
+        },
+        {
+          projectId: "project-2",
+          model: "gpt-5.2",
+          createdAt: "2026-03-04T00:00:00.000Z",
+        },
+      ],
+      defaultModelSetting: APP_DEFAULT_MODEL_AUTO,
+      customModels: [],
+    });
+
+    expect(resolved).toBe("gpt-5.3-codex");
+  });
+});
+
 describe("getSlashModelOptions", () => {
   it("includes saved custom model slugs for /model command suggestions", () => {
-    const options = getSlashModelOptions(
-      "codex",
-      ["custom/internal-model"],
-      "",
-      "gpt-5.3-codex",
-    );
+    const options = getSlashModelOptions("codex", ["custom/internal-model"], "", "gpt-5.3-codex");
 
     expect(options.some((option) => option.slug === "custom/internal-model")).toBe(true);
   });
 
   it("filters slash-model suggestions across built-in and custom model names", () => {
-    const options = getSlashModelOptions(
-      "codex",
-      ["openai/gpt-oss-120b"],
-      "oss",
-      "gpt-5.3-codex",
-    );
+    const options = getSlashModelOptions("codex", ["openai/gpt-oss-120b"], "oss", "gpt-5.3-codex");
 
     expect(options.map((option) => option.slug)).toEqual(["openai/gpt-oss-120b"]);
   });
