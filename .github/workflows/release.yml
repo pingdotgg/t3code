@@ -50,7 +50,9 @@ jobs:
         run: |
           node scripts/validate-homebrew-release-contract.ts \
             --version "${{ steps.release_meta.outputs.version }}" \
-            --tag "${{ steps.release_meta.outputs.tag }}"
+            --tag "${{ steps.release_meta.outputs.tag }}" \
+            --repository "${{ github.repository }}" \
+            --expected-repository "pingdotgg/t3code"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -274,6 +276,8 @@ jobs:
           node scripts/validate-homebrew-release-contract.ts \
             --version "${{ needs.preflight.outputs.version }}" \
             --tag "${{ needs.preflight.outputs.tag }}" \
+            --repository "${{ github.repository }}" \
+            --expected-repository "pingdotgg/t3code" \
             --assets-dir "release-assets"
 
       - name: Publish release

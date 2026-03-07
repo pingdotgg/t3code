@@ -23,6 +23,9 @@ const { values } = parseArgs({
   options: {
     version: { type: "string" },
     tag: { type: "string" },
+    repository: { type: "string" },
+    "expected-repository": { type: "string", default: "pingdotgg/t3code" },
+    expectedRepository: { type: "string" },
     "assets-dir": { type: "string" },
     assetsDir: { type: "string" },
     "expected-product-name": { type: "string", default: "T3 Code (Alpha)" },
@@ -34,6 +37,8 @@ const { values } = parseArgs({
 
 const version = values.version;
 const tag = values.tag;
+const repository = values.repository;
+const expectedRepository = values["expected-repository"] ?? values.expectedRepository;
 const assetsDirInput = values["assets-dir"] ?? values.assetsDir;
 const expectedProductName = values["expected-product-name"] ?? values.expectedProductName;
 const desktopPackagePathInput = values["desktop-package-path"] ?? values.desktopPackagePath;
@@ -52,6 +57,12 @@ if (!tag) {
 
 if (tag !== `v${version}`) {
   fail(`Tag '${tag}' must exactly match 'v${version}'.`);
+}
+
+if (repository && repository !== expectedRepository) {
+  fail(
+    `Release repository must be '${expectedRepository}' for Homebrew compatibility (current: '${repository}').`,
+  );
 }
 
 const desktopPackagePath = isAbsolute(desktopPackagePathInput)
@@ -104,5 +115,5 @@ if (assetsDirInput) {
 }
 
 process.stdout.write(
-  `[homebrew-release-contract] OK version=${version} tag=${tag} productName='${expectedProductName}'\n`,
+  `[homebrew-release-contract] OK version=${version} tag=${tag} repository='${repository ?? "n/a"}' productName='${expectedProductName}'\n`,
 );

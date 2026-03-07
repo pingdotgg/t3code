@@ -6,7 +6,7 @@ This document covers how to run desktop releases from one tag, first without sig
 
 - Trigger: push tag matching `v*.*.*`.
 - Runs quality gates first: lint, typecheck, test.
-- Validates Homebrew release contract (tag/version/product name + required macOS DMGs).
+- Validates Homebrew release contract (tag/version, upstream repository, product name, and required macOS DMGs).
 - Builds four artifacts in parallel:
   - macOS `arm64` DMG
   - macOS `x64` DMG
