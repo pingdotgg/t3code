@@ -6,6 +6,7 @@ import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/s
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
+export const APP_DEFAULT_MODEL_AUTO = "auto" as const;
 export const APP_SERVICE_TIER_OPTIONS = [
   {
     value: "auto",
@@ -41,7 +42,12 @@ const AppSettingsSchema = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
-  codexServiceTier: AppServiceTierSchema.pipe(Schema.withConstructorDefault(() => Option.some("auto"))),
+  codexServiceTier: AppServiceTierSchema.pipe(
+    Schema.withConstructorDefault(() => Option.some("auto")),
+  ),
+  defaultCodexModel: Schema.String.check(Schema.isMaxLength(MAX_CUSTOM_MODEL_LENGTH)).pipe(
+    Schema.withConstructorDefault(() => Option.some(APP_DEFAULT_MODEL_AUTO)),
+  ),
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
@@ -51,6 +57,11 @@ export interface AppModelOption {
   slug: string;
   name: string;
   isCustom: boolean;
+}
+export interface AppProjectModelHistoryEntry {
+  projectId: string;
+  model: string;
+  createdAt: string;
 }
 
 export function resolveAppServiceTier(serviceTier: AppServiceTier): ProviderServiceTier | null {
@@ -88,6 +99,7 @@ export function normalizeCustomModelSlugs(
     if (
       !normalized ||
       normalized.length > MAX_CUSTOM_MODEL_LENGTH ||
+      normalized.toLowerCase() === APP_DEFAULT_MODEL_AUTO ||
       builtInModelSlugs.has(normalized) ||
       seen.has(normalized)
     ) {
@@ -104,10 +116,27 @@ export function normalizeCustomModelSlugs(
   return normalizedModels;
 }
 
+export function normalizeAppDefaultModelSetting(value: string | null | undefined): string {
+  if (typeof value !== "string") {
+    return APP_DEFAULT_MODEL_AUTO;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return APP_DEFAULT_MODEL_AUTO;
+  }
+  return trimmed.toLowerCase() === APP_DEFAULT_MODEL_AUTO ? APP_DEFAULT_MODEL_AUTO : trimmed;
+}
+
 function normalizeAppSettings(settings: AppSettings): AppSettings {
+  const customCodexModels = normalizeCustomModelSlugs(settings.customCodexModels, "codex");
+  const normalizedDefaultCodexModel = normalizeAppDefaultModelSetting(settings.defaultCodexModel);
   return {
     ...settings,
-    customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
+    customCodexModels,
+    defaultCodexModel:
+      normalizedDefaultCodexModel === APP_DEFAULT_MODEL_AUTO
+        ? APP_DEFAULT_MODEL_AUTO
+        : resolveAppModelSelection("codex", customCodexModels, normalizedDefaultCodexModel),
   };
 }
 
@@ -177,6 +206,74 @@ export function resolveAppModelSelection(
   return (
     options.find((option) => option.slug === normalizedSelectedModel)?.slug ??
     getDefaultModel(provider)
+  );
+}
+
+export function resolveProjectDefaultModelForNewThread(input: {
+  projectId: string;
+  projectModel: string | null | undefined;
+  threads: ReadonlyArray<AppProjectModelHistoryEntry>;
+  defaultModelSetting: string | null | undefined;
+  customModels: readonly string[];
+  provider?: ProviderKind;
+}): string {
+  const provider = input.provider ?? "codex";
+  const defaultModelSetting = normalizeAppDefaultModelSetting(input.defaultModelSetting);
+  if (defaultModelSetting !== APP_DEFAULT_MODEL_AUTO) {
+    return resolveAppModelSelection(provider, input.customModels, defaultModelSetting);
+  }
+
+  const usageByModel = new Map<string, { count: number; latestCreatedAtMs: number }>();
+  for (const thread of input.threads) {
+    if (thread.projectId !== input.projectId) {
+      continue;
+    }
+    const normalizedModel = normalizeModelSlug(thread.model, provider);
+    if (!normalizedModel) {
+      continue;
+    }
+    const createdAtMsRaw = Date.parse(thread.createdAt);
+    const createdAtMs = Number.isFinite(createdAtMsRaw) ? createdAtMsRaw : Number.NEGATIVE_INFINITY;
+    const existing = usageByModel.get(normalizedModel);
+    if (!existing) {
+      usageByModel.set(normalizedModel, {
+        count: 1,
+        latestCreatedAtMs: createdAtMs,
+      });
+      continue;
+    }
+    existing.count += 1;
+    if (createdAtMs > existing.latestCreatedAtMs) {
+      existing.latestCreatedAtMs = createdAtMs;
+    }
+  }
+
+  let mostUsedModel: string | null = null;
+  let mostUsedCount = -1;
+  let mostRecentUseMs = Number.NEGATIVE_INFINITY;
+
+  for (const [model, usage] of usageByModel.entries()) {
+    if (
+      usage.count > mostUsedCount ||
+      (usage.count === mostUsedCount &&
+        (usage.latestCreatedAtMs > mostRecentUseMs ||
+          (usage.latestCreatedAtMs === mostRecentUseMs &&
+            (mostUsedModel === null || model.localeCompare(mostUsedModel) < 0))))
+    ) {
+      mostUsedModel = model;
+      mostUsedCount = usage.count;
+      mostRecentUseMs = usage.latestCreatedAtMs;
+    }
+  }
+
+  if (mostUsedModel) {
+    return resolveAppModelSelection(provider, input.customModels, mostUsedModel);
+  }
+
+  return resolveAppModelSelection(
+    provider,
+    input.customModels,
+    input.projectModel ?? getDefaultModel(provider),
   );
 }
 

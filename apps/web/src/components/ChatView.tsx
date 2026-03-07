@@ -205,6 +205,7 @@ import { readNativeApi } from "~/nativeApi";
 import {
   getAppModelOptions,
   resolveAppModelSelection,
+  resolveProjectDefaultModelForNewThread,
   resolveAppServiceTier,
   shouldShowFastTierIcon,
   type AppServiceTier,
@@ -734,17 +735,36 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const serverThread = threads.find((t) => t.id === threadId);
   const fallbackDraftProject = projects.find((project) => project.id === draftThread?.projectId);
   const localDraftError = serverThread ? null : (localDraftErrorsByThreadId[threadId] ?? null);
+  const localDraftDefaultModel = useMemo(() => {
+    if (!draftThread) {
+      return DEFAULT_MODEL_BY_PROVIDER.codex;
+    }
+
+    return resolveProjectDefaultModelForNewThread({
+      projectId: draftThread.projectId,
+      projectModel: fallbackDraftProject?.model,
+      threads: threads.map((thread) => ({
+        projectId: thread.projectId,
+        model: thread.model,
+        createdAt: thread.createdAt,
+      })),
+      defaultModelSetting: settings.defaultCodexModel,
+      customModels: settings.customCodexModels,
+      provider: "codex",
+    });
+  }, [
+    draftThread,
+    fallbackDraftProject?.model,
+    settings.customCodexModels,
+    settings.defaultCodexModel,
+    threads,
+  ]);
   const localDraftThread = useMemo(
     () =>
       draftThread
-        ? buildLocalDraftThread(
-            threadId,
-            draftThread,
-            fallbackDraftProject?.model ?? DEFAULT_MODEL_BY_PROVIDER.codex,
-            localDraftError,
-          )
+        ? buildLocalDraftThread(threadId, draftThread, localDraftDefaultModel, localDraftError)
         : undefined,
-    [draftThread, fallbackDraftProject?.model, localDraftError, threadId],
+    [draftThread, localDraftDefaultModel, localDraftError, threadId],
   );
   const activeThread = serverThread ?? localDraftThread;
   const runtimeMode =
@@ -1685,14 +1705,53 @@ export default function ChatView({ threadId }: ChatViewProps) {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
 
+  const persistProjectDefaultModel = useCallback(
+    async (input: { projectId: ProjectId; model: string }) => {
+      const api = readNativeApi();
+      if (!api) {
+        return;
+      }
+
+      const nextModel = normalizeModelSlug(input.model, "codex");
+      if (!nextModel) {
+        return;
+      }
+      const currentProjectModel = normalizeModelSlug(
+        projects.find((project) => project.id === input.projectId)?.model,
+        "codex",
+      );
+      if (nextModel === currentProjectModel) {
+        return;
+      }
+
+      await api.orchestration
+        .dispatchCommand({
+          type: "project.meta.update",
+          commandId: newCommandId(),
+          projectId: input.projectId,
+          defaultModel: nextModel,
+        })
+        .catch(() => undefined);
+    },
+    [projects],
+  );
+
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {
       threadId: ThreadId;
+      projectId: ProjectId;
       createdAt: string;
       model?: string;
       runtimeMode: RuntimeMode;
       interactionMode: ProviderInteractionMode;
     }) => {
+      if (input.model !== undefined) {
+        await persistProjectDefaultModel({
+          projectId: input.projectId,
+          model: input.model,
+        });
+      }
+
       if (!serverThread) {
         return;
       }
@@ -1730,7 +1789,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
       }
     },
-    [serverThread],
+    [persistProjectDefaultModel, serverThread],
   );
 
   useEffect(() => {
@@ -2641,15 +2700,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
       }
 
-      if (isServerThread) {
-        await persistThreadSettingsForNextTurn({
-          threadId: threadIdForSend,
-          createdAt: messageCreatedAt,
-          ...(selectedModel ? { model: selectedModel } : {}),
-          runtimeMode,
-          interactionMode,
-        });
-      }
+      await persistThreadSettingsForNextTurn({
+        threadId: threadIdForSend,
+        projectId: activeProject.id,
+        createdAt: messageCreatedAt,
+        ...(selectedModel ? { model: selectedModel } : {}),
+        runtimeMode,
+        interactionMode,
+      });
 
       beginSendPhase("sending-turn");
       const turnAttachments = await turnAttachmentsPromise;
@@ -2923,6 +2981,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       try {
         await persistThreadSettingsForNextTurn({
           threadId: threadIdForSend,
+          projectId: activeThread.projectId,
           createdAt: messageCreatedAt,
           ...(selectedModel ? { model: selectedModel } : {}),
           runtimeMode,
@@ -3029,6 +3088,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
       resetSendPhase();
     };
 
+    await persistProjectDefaultModel({
+      projectId: activeProject.id,
+      model: nextThreadModel,
+    });
+
     await api.orchestration
       .dispatchCommand({
         type: "thread.create",
@@ -3109,6 +3173,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     isSendBusy,
     isServerThread,
     navigate,
+    persistProjectDefaultModel,
     resetSendPhase,
     runtimeMode,
     selectedModel,
@@ -3589,70 +3654,72 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 </div>
               )}
 
-              {!isComposerApprovalState && pendingUserInputs.length === 0 && composerImages.length > 0 && (
-                <div className="mb-3 flex flex-wrap gap-2">
-                  {composerImages.map((image) => (
-                    <div
-                      key={image.id}
-                      className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
-                    >
-                      {image.previewUrl ? (
-                        <button
-                          type="button"
-                          className="h-full w-full cursor-zoom-in"
-                          aria-label={`Preview ${image.name}`}
-                          onClick={() => {
-                            const preview = buildExpandedImagePreview(composerImages, image.id);
-                            if (!preview) return;
-                            setExpandedImage(preview);
-                          }}
-                        >
-                          <img
-                            src={image.previewUrl}
-                            alt={image.name}
-                            className="h-full w-full object-cover"
-                          />
-                        </button>
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
-                          {image.name}
-                        </div>
-                      )}
-                      {nonPersistedComposerImageIdSet.has(image.id) && (
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <span
-                                role="img"
-                                aria-label="Draft attachment may not persist"
-                                className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
-                              >
-                                <CircleAlertIcon className="size-3" />
-                              </span>
-                            }
-                          />
-                          <TooltipPopup
-                            side="top"
-                            className="max-w-64 whitespace-normal leading-tight"
-                          >
-                            Draft attachment could not be saved locally and may be lost on
-                            navigation.
-                          </TooltipPopup>
-                        </Tooltip>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
-                        onClick={() => removeComposerImage(image.id)}
-                        aria-label={`Remove ${image.name}`}
+              {!isComposerApprovalState &&
+                pendingUserInputs.length === 0 &&
+                composerImages.length > 0 && (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {composerImages.map((image) => (
+                      <div
+                        key={image.id}
+                        className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
                       >
-                        <XIcon />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
+                        {image.previewUrl ? (
+                          <button
+                            type="button"
+                            className="h-full w-full cursor-zoom-in"
+                            aria-label={`Preview ${image.name}`}
+                            onClick={() => {
+                              const preview = buildExpandedImagePreview(composerImages, image.id);
+                              if (!preview) return;
+                              setExpandedImage(preview);
+                            }}
+                          >
+                            <img
+                              src={image.previewUrl}
+                              alt={image.name}
+                              className="h-full w-full object-cover"
+                            />
+                          </button>
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
+                            {image.name}
+                          </div>
+                        )}
+                        {nonPersistedComposerImageIdSet.has(image.id) && (
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <span
+                                  role="img"
+                                  aria-label="Draft attachment may not persist"
+                                  className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
+                                >
+                                  <CircleAlertIcon className="size-3" />
+                                </span>
+                              }
+                            />
+                            <TooltipPopup
+                              side="top"
+                              className="max-w-64 whitespace-normal leading-tight"
+                            >
+                              Draft attachment could not be saved locally and may be lost on
+                              navigation.
+                            </TooltipPopup>
+                          </Tooltip>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
+                          onClick={() => removeComposerImage(image.id)}
+                          aria-label={`Remove ${image.name}`}
+                        >
+                          <XIcon />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               <ComposerPromptEditor
                 ref={composerEditorRef}
                 value={
@@ -3670,12 +3737,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   isComposerApprovalState
                     ? (activePendingApproval?.detail ?? "Resolve this approval request to continue")
                     : activePendingProgress
-                    ? "Type your own answer, or leave this blank to use the selected option"
-                    : showPlanFollowUpPrompt && activeProposedPlan
-                      ? "Add feedback to refine the plan, or leave this blank to implement it"
-                      : phase === "disconnected"
-                        ? "Ask for follow-up changes or attach images"
-                        : "Ask anything, @tag files/folders, or use /model"
+                      ? "Type your own answer, or leave this blank to use the selected option"
+                      : showPlanFollowUpPrompt && activeProposedPlan
+                        ? "Add feedback to refine the plan, or leave this blank to implement it"
+                        : phase === "disconnected"
+                          ? "Ask for follow-up changes or attach images"
+                          : "Ask anything, @tag files/folders, or use /model"
                 }
                 disabled={isConnecting || isComposerApprovalState}
               />
@@ -5575,7 +5642,8 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       >
         <span className="flex min-w-0 items-center gap-2">
           <ProviderIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/70" />
-          {props.provider === "codex" && shouldShowFastTierIcon(props.model, props.serviceTierSetting) ? (
+          {props.provider === "codex" &&
+          shouldShowFastTierIcon(props.model, props.serviceTierSetting) ? (
             <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
           ) : null}
           <span className="truncate">{selectedModelLabel}</span>
