@@ -43,7 +43,6 @@ class DevRunnerError extends Data.TaggedError("DevRunnerError")<{
   readonly cause?: unknown;
 }> {}
 
-
 const optionalStringConfig = (name: string): Config.Config<string | undefined> =>
   Config.string(name).pipe(
     Config.option,
