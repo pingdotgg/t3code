@@ -654,7 +654,7 @@ it.layer(TestLayer)("git integration", (it) => {
 
         const realGitService = yield* GitService;
         let fetchStarted = false;
-        let releaseFetch: () => void = () => undefined;
+        let releaseFetch!: () => void;
         const waitForReleasePromise = new Promise<void>((resolve) => {
           releaseFetch = resolve;
         });
