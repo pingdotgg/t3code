@@ -1,15 +1,18 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDownIcon, PlusIcon } from "lucide-react";
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { ChevronDownIcon, FolderPlusIcon, PlusIcon } from "lucide-react";
+import { DEFAULT_MODEL_BY_PROVIDER, ProjectId, ThreadId } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useStore } from "../store";
 import { useComposerDraftStore } from "../composerDraftStore";
-import { newThreadId } from "../lib/utils";
+import { newCommandId, newProjectId, newThreadId } from "../lib/utils";
 import { DEFAULT_RUNTIME_MODE } from "../types";
 import { isElectron } from "../env";
 import type { Thread, Project } from "../types";
 import { derivePendingApprovals } from "../session-logic";
+import { readNativeApi } from "../nativeApi";
+import { isNonEmpty as isNonEmptyString } from "effect/String";
+import { toastManager } from "./ui/toast";
 
 interface TabThread {
   id: ThreadId;
@@ -64,10 +67,12 @@ const ProjectDropdown = memo(function ProjectDropdown({
   projects,
   activeProjectId,
   onSelect,
+  onAddProject,
 }: {
   projects: Project[];
   activeProjectId: ProjectId | null;
   onSelect: (id: ProjectId) => void;
+  onAddProject: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -143,6 +148,18 @@ const ProjectDropdown = memo(function ProjectDropdown({
                 )}
               </button>
             ))}
+            <div className="mx-2 my-1 h-px bg-border" />
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              onClick={() => {
+                onAddProject();
+                setOpen(false);
+              }}
+            >
+              <FolderPlusIcon className="size-3" />
+              <span>Add project</span>
+            </button>
           </div>,
           document.body,
         )}
@@ -243,6 +260,54 @@ export default function HorizontalTabBar() {
     void navigate({ to: "/$threadId", params: { threadId } });
   }, [activeProjectId, navigate, setProjectDraftThreadId]);
 
+  const addProject = useCallback(async () => {
+    const api = readNativeApi();
+    if (!api) return;
+    let pickedPath: string | null = null;
+    try {
+      pickedPath = await api.dialogs.pickFolder();
+    } catch {}
+    if (!pickedPath) return;
+
+    const cwd = pickedPath.trim();
+    if (!cwd) return;
+
+    const existing = projects.find((p) => p.cwd === cwd);
+    if (existing) {
+      switchProject(existing.id);
+      return;
+    }
+
+    const projectId = newProjectId();
+    const title = cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd;
+    try {
+      await api.orchestration.dispatchCommand({
+        type: "project.create",
+        commandId: newCommandId(),
+        projectId,
+        title,
+        workspaceRoot: cwd,
+        defaultModel: DEFAULT_MODEL_BY_PROVIDER.codex,
+        createdAt: new Date().toISOString(),
+      });
+      const threadId = newThreadId();
+      setProjectDraftThreadId(projectId, threadId, {
+        createdAt: new Date().toISOString(),
+        branch: null,
+        worktreePath: null,
+        envMode: "local",
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+      });
+      void navigate({ to: "/$threadId", params: { threadId } });
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Unable to add project",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    }
+  }, [projects, switchProject, navigate, setProjectDraftThreadId]);
+
   return (
     <div
       className={`relative z-10 flex h-9 shrink-0 items-stretch border-b border-border bg-card ${
@@ -255,6 +320,7 @@ export default function HorizontalTabBar() {
         projects={projects}
         activeProjectId={activeProjectId}
         onSelect={switchProject}
+        onAddProject={addProject}
       />
 
       <div
