@@ -515,7 +515,7 @@ function SkillsRouteView() {
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                       {onlineResults.map((result) => (
                         <SearchResultCard
-                          key={result.source}
+                          key={`${result.source}:${result.name}`}
                           result={result}
                           onInstall={handleInstall}
                           isInstalling={

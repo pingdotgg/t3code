@@ -8,7 +8,6 @@
  *
  * @module SkillsManager
  */
-import { execFile } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
@@ -30,6 +29,7 @@ import type {
   SkillsReadContentResult,
 } from "@t3tools/contracts";
 import { Effect, Layer, Schema, ServiceMap } from "effect";
+import { runProcess } from "../processRunner";
 
 // ── Error ────────────────────────────────────────────────────────────
 
@@ -77,6 +77,14 @@ const SKILLS_PLATFORMS: readonly SkillsPlatform[] = [
 // ── Helpers ──────────────────────────────────────────────────────────
 
 const AGENTS_SKILLS_DIR = path.join(home, ".agents", "skills");
+
+const VALID_SKILL_SLUG = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
+
+function assertValidSkillSlug(name: string): void {
+  if (!VALID_SKILL_SLUG.test(name)) {
+    throw new Error(`Invalid skill name: ${name}`);
+  }
+}
 
 function stripQuotes(s: string): string {
   return (s.startsWith("'") && s.endsWith("'")) || (s.startsWith('"') && s.endsWith('"'))
@@ -214,13 +222,7 @@ function runCommand(
   timeoutMs: number,
 ): Effect.Effect<string, SkillsError> {
   return Effect.tryPromise({
-    try: () =>
-      new Promise<string>((resolve, reject) => {
-        execFile(command, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (error, stdout) => {
-          if (error) reject(error);
-          else resolve(stdout);
-        });
-      }),
+    try: () => runProcess(command, args, { timeoutMs }).then((r) => r.stdout),
     catch: (cause) =>
       new SkillsError({ message: `Command failed: ${command} ${args.join(" ")}`, cause }),
   });
@@ -254,14 +256,14 @@ function listSkills(): Effect.Effect<SkillsListResult, SkillsError> {
           }
         }
 
-        const { name, description } = parseSkillFrontmatter(content);
+        const { description } = parseSkillFrontmatter(content);
 
         // Skill is enabled unless explicitly disabled in a platform config.
         const agents = resolveSkillAgents(entry.name);
         const enabled = agents.length > 0;
 
         skills.push({
-          name: name || entry.name,
+          name: entry.name,
           description,
           enabled,
           agents,
@@ -280,6 +282,7 @@ function listSkills(): Effect.Effect<SkillsListResult, SkillsError> {
 function toggleSkill(input: SkillsToggleInput): Effect.Effect<SkillsToggleResult, SkillsError> {
   return Effect.tryPromise({
     try: async () => {
+      assertValidSkillSlug(input.skillName);
       const skillDir = path.join(AGENTS_SKILLS_DIR, input.skillName);
       const skillMdPath = resolveSkillMdPath(skillDir);
       if (!skillMdPath) {
@@ -365,6 +368,7 @@ function uninstallSkill(input: SkillsUninstallInput): Effect.Effect<SkillsUninst
 function readContent(input: SkillsReadContentInput): Effect.Effect<SkillsReadContentResult, SkillsError> {
   return Effect.tryPromise({
     try: async () => {
+      assertValidSkillSlug(input.skillName);
       const skillDir = path.join(AGENTS_SKILLS_DIR, input.skillName);
       const skillMdPath = resolveSkillMdPath(skillDir);
       if (!skillMdPath) {
