@@ -14,6 +14,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ResolvedKeybindingsConfig,
   type ProviderApprovalDecision,
+  type ServerProviderModelCatalog,
   type ServerProviderStatus,
   type ProviderKind,
   type ThreadId,
@@ -140,6 +141,7 @@ import {
   Undo2Icon,
   XIcon,
   CopyIcon,
+  StarIcon,
   CheckIcon,
   ZapIcon,
 } from "lucide-react";
@@ -150,6 +152,7 @@ import { Group, GroupSeparator } from "./ui/group";
 import {
   Menu,
   MenuGroup,
+  MenuGroupLabel,
   MenuItem,
   MenuPopup,
   MenuRadioGroup,
@@ -185,6 +188,7 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { toastManager } from "./ui/toast";
+import { getOpencodeModelCatalog, getOpencodeModelDisplayName } from "../opencodeModelCatalog";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
@@ -814,6 +818,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
         serverConfigQuery.data?.providers ?? EMPTY_PROVIDER_STATUSES,
       ),
     [serverConfigQuery.data?.providers, settings],
+  );
+  const opencodeModelCatalog = useMemo(
+    () =>
+      getOpencodeModelCatalog(
+        (serverConfigQuery.data?.providers ?? EMPTY_PROVIDER_STATUSES).find(
+          (status) => status.provider === "opencode",
+        ),
+      ),
+    [serverConfigQuery.data?.providers],
   );
   const customModelsForSelectedProvider = getCustomModelsForProvider(settings, selectedProvider);
   const builtInModelsForSelectedProvider = modelOptionsByProvider[selectedProvider];
@@ -3661,6 +3674,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     model={selectedModelForPickerWithCustomFallback}
                     lockedProvider={lockedProvider}
                     modelOptionsByProvider={modelOptionsByProvider}
+                    opencodeModelCatalog={opencodeModelCatalog}
                     serviceTierSetting={selectedServiceTierSetting}
                     onProviderModelChange={onProviderModelSelect}
                   />
@@ -5331,7 +5345,6 @@ function getCustomModelOptionsByProvider(
   },
   providerStatuses: ReadonlyArray<ServerProviderStatus>,
 ): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
-  console.log({ providerStatuses });
   const opencodeModels =
     providerStatuses.find((status) => status.provider === "opencode")?.models ?? [];
   return {
@@ -5343,6 +5356,70 @@ function getCustomModelOptionsByProvider(
       opencodeModels,
     ),
   };
+}
+
+function findModelGroupBySlug(
+  catalog: ServerProviderModelCatalog | null,
+  slug: string,
+): { id: string; name: string; models: ReadonlyArray<{ slug: string; name: string }> } | null {
+  if (!catalog) {
+    return null;
+  }
+
+  for (const group of catalog.groups) {
+    if (group.models.some((model) => model.slug === slug)) {
+      return group;
+    }
+  }
+
+  return null;
+}
+
+function renderProviderModelMenuItems(props: {
+  provider: ProviderKind;
+  activeProvider: ProviderKind;
+  activeModel: ModelSlug;
+  options: ReadonlyArray<{ slug: string; name: string }>;
+  serviceTierSetting: AppServiceTier;
+  disabled?: boolean;
+  isDisabledByProviderLock: boolean;
+  onClose: () => void;
+  onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
+}) {
+  return (
+    <MenuGroup>
+      <MenuRadioGroup
+        value={props.activeProvider === props.provider ? props.activeModel : ""}
+        onValueChange={(value) => {
+          if (props.disabled) return;
+          if (props.isDisabledByProviderLock) return;
+          if (!value) return;
+          const resolvedModel = resolveModelForProviderPicker(
+            props.provider,
+            value,
+            props.options,
+          );
+          if (!resolvedModel) return;
+          props.onProviderModelChange(props.provider, resolvedModel);
+          props.onClose();
+        }}
+      >
+        {props.options.map((modelOption) => (
+          <MenuRadioItem
+            key={`${props.provider}:${modelOption.slug}`}
+            value={modelOption.slug}
+            onClick={props.onClose}
+          >
+            {props.provider === "codex" &&
+            shouldShowFastTierIcon(modelOption.slug, props.serviceTierSetting) ? (
+              <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
+            ) : null}
+            {modelOption.name}
+          </MenuRadioItem>
+        ))}
+      </MenuRadioGroup>
+    </MenuGroup>
+  );
 }
 
 function getCustomModelsForProvider(
@@ -5400,6 +5477,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   model: ModelSlug;
   lockedProvider: ProviderKind | null;
   modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
+  opencodeModelCatalog: ServerProviderModelCatalog | null;
   serviceTierSetting: AppServiceTier;
   disabled?: boolean;
   onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
@@ -5407,7 +5485,11 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const selectedProviderOptions = props.modelOptionsByProvider[props.provider];
   const selectedModelLabel =
-    selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
+    (props.provider === "opencode"
+      ? getOpencodeModelDisplayName(props.opencodeModelCatalog, props.model)
+      : null) ??
+    selectedProviderOptions.find((option) => option.slug === props.model)?.name ??
+    props.model;
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.provider];
 
   return (
@@ -5446,6 +5528,11 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
           const isDisabledByProviderLock =
             props.lockedProvider !== null && props.lockedProvider !== option.value;
+          const optionModels = props.modelOptionsByProvider[option.value];
+          const selectedOpenCodeGroup =
+            option.value === "opencode"
+              ? findModelGroupBySlug(props.opencodeModelCatalog, props.model)
+              : null;
           return (
             <MenuSub key={option.value}>
               <MenuSubTrigger disabled={isDisabledByProviderLock}>
@@ -5454,40 +5541,87 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   className="size-4 shrink-0 text-muted-foreground/85"
                 />
                 {option.label}
+                {option.value === "opencode" && selectedOpenCodeGroup ? (
+                  <span className="ml-auto truncate pr-2 text-[11px] text-muted-foreground/75">
+                    {selectedOpenCodeGroup.name}
+                  </span>
+                ) : null}
               </MenuSubTrigger>
-              <MenuSubPopup className="[--available-height:min(24rem,70vh)]">
-                <MenuGroup>
-                  <MenuRadioGroup
-                    value={props.provider === option.value ? props.model : ""}
-                    onValueChange={(value) => {
-                      if (props.disabled) return;
-                      if (isDisabledByProviderLock) return;
-                      if (!value) return;
-                      const resolvedModel = resolveModelForProviderPicker(
-                        option.value,
-                        value,
-                        props.modelOptionsByProvider[option.value],
-                      );
-                      if (!resolvedModel) return;
-                      props.onProviderModelChange(option.value, resolvedModel);
-                      setIsMenuOpen(false);
-                    }}
-                  >
-                    {props.modelOptionsByProvider[option.value].map((modelOption) => (
-                      <MenuRadioItem
-                        key={`${option.value}:${modelOption.slug}`}
-                        value={modelOption.slug}
-                        onClick={() => setIsMenuOpen(false)}
-                      >
-                        {option.value === "codex" &&
-                        shouldShowFastTierIcon(modelOption.slug, props.serviceTierSetting) ? (
-                          <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
-                        ) : null}
-                        {modelOption.name}
-                      </MenuRadioItem>
+              <MenuSubPopup className="min-w-56 [--available-height:min(24rem,70vh)]">
+                {option.value === "opencode" &&
+                props.opencodeModelCatalog &&
+                props.opencodeModelCatalog.groups.length > 0 ? (
+                  <>
+                    {props.opencodeModelCatalog.favorites?.length ? (
+                      <>
+                        <MenuSub>
+                          <MenuSubTrigger disabled={isDisabledByProviderLock}>
+                            <StarIcon
+                              aria-hidden="true"
+                              className="size-4 shrink-0 text-amber-500/85"
+                            />
+                            Favorites
+                            <span className="ml-auto pr-2 text-[11px] text-muted-foreground/75">
+                              {props.opencodeModelCatalog.favorites.length}
+                            </span>
+                          </MenuSubTrigger>
+                          <MenuSubPopup className="min-w-64 [--available-height:min(24rem,70vh)]">
+                            <MenuGroupLabel>Favorite models</MenuGroupLabel>
+                            {renderProviderModelMenuItems({
+                              provider: option.value,
+                              activeProvider: props.provider,
+                              activeModel: props.model,
+                              options: props.opencodeModelCatalog.favorites,
+                              serviceTierSetting: props.serviceTierSetting,
+                              disabled: props.disabled,
+                              isDisabledByProviderLock,
+                              onClose: () => setIsMenuOpen(false),
+                              onProviderModelChange: props.onProviderModelChange,
+                            })}
+                          </MenuSubPopup>
+                        </MenuSub>
+                        <MenuDivider />
+                      </>
+                    ) : null}
+                    <MenuGroupLabel>Providers</MenuGroupLabel>
+                    {props.opencodeModelCatalog.groups.map((group) => (
+                      <MenuSub key={group.id}>
+                        <MenuSubTrigger disabled={isDisabledByProviderLock}>
+                          <span>{group.name}</span>
+                          <span className="ml-auto pr-2 text-[11px] text-muted-foreground/75">
+                            {group.models.length}
+                          </span>
+                        </MenuSubTrigger>
+                        <MenuSubPopup className="min-w-64 [--available-height:min(24rem,70vh)]">
+                          <MenuGroupLabel>{group.name}</MenuGroupLabel>
+                          {renderProviderModelMenuItems({
+                            provider: option.value,
+                            activeProvider: props.provider,
+                            activeModel: props.model,
+                            options: group.models,
+                            serviceTierSetting: props.serviceTierSetting,
+                            disabled: props.disabled,
+                            isDisabledByProviderLock,
+                            onClose: () => setIsMenuOpen(false),
+                            onProviderModelChange: props.onProviderModelChange,
+                          })}
+                        </MenuSubPopup>
+                      </MenuSub>
                     ))}
-                  </MenuRadioGroup>
-                </MenuGroup>
+                  </>
+                ) : (
+                  renderProviderModelMenuItems({
+                    provider: option.value,
+                    activeProvider: props.provider,
+                    activeModel: props.model,
+                    options: optionModels,
+                    serviceTierSetting: props.serviceTierSetting,
+                    disabled: props.disabled,
+                    isDisabledByProviderLock,
+                    onClose: () => setIsMenuOpen(false),
+                    onProviderModelChange: props.onProviderModelChange,
+                  })
+                )}
               </MenuSubPopup>
             </MenuSub>
           );

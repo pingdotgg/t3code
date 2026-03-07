@@ -39,6 +39,19 @@ export const ServerProviderModel = Schema.Struct({
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
 
+export const ServerProviderModelGroup = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  models: Schema.Array(ServerProviderModel),
+});
+export type ServerProviderModelGroup = typeof ServerProviderModelGroup.Type;
+
+export const ServerProviderModelCatalog = Schema.Struct({
+  groups: Schema.Array(ServerProviderModelGroup),
+  favorites: Schema.optional(Schema.Array(ServerProviderModel)),
+});
+export type ServerProviderModelCatalog = typeof ServerProviderModelCatalog.Type;
+
 export const ServerProviderStatus = Schema.Struct({
   provider: ProviderKind,
   status: ServerProviderStatusState,
@@ -47,6 +60,7 @@ export const ServerProviderStatus = Schema.Struct({
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
   models: Schema.optional(Schema.Array(ServerProviderModel)),
+  modelCatalog: Schema.optional(ServerProviderModelCatalog),
 });
 export type ServerProviderStatus = typeof ServerProviderStatus.Type;
 

@@ -13,12 +13,17 @@ import {
   type ProviderApprovalDecision,
   type ProviderRuntimeEvent,
   type ProviderSendTurnInput,
+  type ServerProviderModelCatalog,
   type ProviderSession,
   type ProviderSessionStartInput,
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
 } from "@t3tools/contracts";
 import type { ProviderThreadSnapshot } from "./provider/Services/ProviderAdapter.ts";
+import {
+  parseConfiguredOpenCodeModelCatalog,
+  parseConnectedOpenCodeModelCatalog,
+} from "./opencodeModelCatalog.ts";
 
 const PROVIDER = "opencode" as const;
 const DEFAULT_HOSTNAME = "127.0.0.1";
@@ -156,55 +161,6 @@ function parseOpencodeModel(model: string | undefined):
     providerId: value.slice(0, index),
     modelId: value.slice(index + 1),
   };
-}
-
-function parseProviderModels(payload: unknown): ReadonlyArray<{ slug: string; name: string }> {
-  const providers = asArray(payload) ?? [];
-  return providers.flatMap((entry) => {
-    const provider = asRecord(entry);
-    const providerId = asString(provider?.id);
-    const providerName = asString(provider?.name) ?? providerId;
-    const models = asRecord(provider?.models);
-    if (!providerId || !providerName || !models) {
-      return [];
-    }
-    return Object.values(models).flatMap((value) => {
-      const model = asRecord(value);
-      const modelId = asString(model?.id);
-      const modelName = asString(model?.name) ?? modelId;
-      if (!modelId || !modelName) {
-        return [];
-      }
-      return [
-        {
-          slug: `${providerId}/${modelId}`,
-          name: `${providerName} / ${modelName}`,
-        },
-      ];
-    });
-  });
-}
-
-function parseConnectedProviderModels(
-  payload: unknown,
-): ReadonlyArray<{ slug: string; name: string }> {
-  const body = asRecord(payload);
-  const all = asArray(body?.all) ?? [];
-  const connected = new Set(
-    (asArray(body?.connected) ?? [])
-      .map((entry) => asString(entry))
-      .filter((entry): entry is string => Boolean(entry)),
-  );
-  if (connected.size === 0) {
-    return [];
-  }
-  return parseProviderModels(
-    all.filter((entry) => {
-      const provider = asRecord(entry);
-      const id = asString(provider?.id);
-      return typeof id === "string" && connected.has(id);
-    }),
-  );
 }
 
 function toOpencodeRequestType(permission: string | undefined): CanonicalRequestType {
@@ -606,9 +562,10 @@ export class OpenCodeServerManager extends EventEmitter<OpenCodeManagerEvents> {
     throw new Error(`OpenCode rollback is not implemented for thread '${threadId}'`);
   }
 
-  async listModels(
-    options?: OpenCodeModelDiscoveryOptions,
-  ): Promise<ReadonlyArray<{ slug: string; name: string }>> {
+  async listModels(options?: OpenCodeModelDiscoveryOptions): Promise<{
+    readonly models: ReadonlyArray<{ slug: string; name: string }>;
+    readonly modelCatalog?: ServerProviderModelCatalog;
+  }> {
     const shared = await this.ensureServer(options);
     const client = await this.createClient({
       baseUrl: shared.baseUrl,
@@ -626,14 +583,14 @@ export class OpenCodeServerManager extends EventEmitter<OpenCodeManagerEvents> {
     const payload = await readJsonData(
       client.provider.list(options?.workspace ? { workspace: options.workspace } : {}),
     );
-    const listed = parseConnectedProviderModels(payload);
-    if (listed.length > 0) {
+    const listed = parseConnectedOpenCodeModelCatalog(payload);
+    if (listed.models.length > 0) {
       return listed;
     }
     const configured = await readJsonData(
       client.config.providers(options?.workspace ? { workspace: options.workspace } : {}),
     );
-    return parseProviderModels(asRecord(configured)?.providers);
+    return parseConfiguredOpenCodeModelCatalog(configured);
   }
 
   stopSession(threadId: ThreadId): void {

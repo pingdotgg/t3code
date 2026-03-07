@@ -438,9 +438,10 @@ export const ProviderHealthLive = Layer.effect(
       opencodeStatus = yield* discoverOpenCodeModels({
         directory: serverConfig.cwd,
       }).pipe(
-        Effect.map((models) => ({
+        Effect.map(({ modelCatalog, models }) => ({
           ...opencodeBaseStatus,
           ...(models.length > 0 ? { models } : {}),
+          ...(modelCatalog ? { modelCatalog } : {}),
           ...(models.length === 0
             ? {
                 status: 'warning' as const,
@@ -464,7 +465,7 @@ export const ProviderHealthLive = Layer.effect(
         serverUrl: DEFAULT_OPENCODE_SERVER_URL,
       }).pipe(Effect.result);
       if (Result.isSuccess(discovered)) {
-        const models = discovered.success;
+        const { modelCatalog, models } = discovered.success;
         opencodeStatus = {
           provider: OPENCODE_PROVIDER,
           status: models.length > 0 ? 'ready' : 'warning',
@@ -476,6 +477,7 @@ export const ProviderHealthLive = Layer.effect(
               ? 'Connected to a running OpenCode server at http://127.0.0.1:6733.'
               : 'Connected to a running OpenCode server, but it returned no models.',
           ...(models.length > 0 ? { models } : {}),
+          ...(modelCatalog ? { modelCatalog } : {}),
         };
       }
     }
