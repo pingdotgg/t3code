@@ -22,3 +22,6 @@ We are very very early in this project. Expect bugs.
 We are not accepting contributions yet.
 
 Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
+
+## Forked by @eyedautumn
+to improve the app & add cool features.
