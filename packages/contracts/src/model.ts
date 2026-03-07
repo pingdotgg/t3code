@@ -37,6 +37,7 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "openai/gpt-4o", name: "GPT-4o" },
     { slug: "openai/gpt-4.1", name: "GPT-4.1" },
     { slug: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+    { slug: "opencode/big-pickle", name: "Big Pickle" },
   ],
 } as const satisfies Record<ProviderKind, readonly ModelOption[]>;
 export type ModelOptionsByProvider = typeof MODEL_OPTIONS_BY_PROVIDER;
