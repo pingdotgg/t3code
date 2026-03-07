@@ -180,7 +180,7 @@ function SettingsRouteView() {
   );
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
+    <SidebarInset className={`${settings.horizontalTabs ? "h-full" : "h-dvh"} min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate`}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
         {isElectron && (
           <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
@@ -240,6 +240,22 @@ function SettingsRouteView() {
               <p className="mt-4 text-xs text-muted-foreground">
                 Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
               </p>
+
+              <div className="mt-4 flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Horizontal tabs</p>
+                  <p className="text-xs text-muted-foreground">
+                    Show threads as browser-style tabs at the top instead of a sidebar.
+                  </p>
+                </div>
+                <Switch
+                  checked={settings.horizontalTabs}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ horizontalTabs: Boolean(checked) })
+                  }
+                  aria-label="Horizontal tabs"
+                />
+              </div>
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">

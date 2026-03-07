@@ -3413,54 +3413,61 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {/* Error banner */}
       <ProviderHealthBanner status={activeProviderStatus} />
       <ThreadErrorBanner error={activeThread.error} />
-      <PlanModePanel activePlan={activePlan} />
+      {!settings.horizontalTabs && <PlanModePanel activePlan={activePlan} />}
 
-      {/* Messages */}
-      <div
-        ref={setMessagesScrollContainerRef}
-        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
-        onScroll={onMessagesScroll}
-        onClickCapture={onMessagesClickCapture}
-        onWheel={onMessagesWheel}
-        onPointerDown={onMessagesPointerDown}
-        onPointerUp={onMessagesPointerUp}
-        onPointerCancel={onMessagesPointerCancel}
-        onTouchStart={onMessagesTouchStart}
-        onTouchMove={onMessagesTouchMove}
-        onTouchEnd={onMessagesTouchEnd}
-        onTouchCancel={onMessagesTouchEnd}
-      >
-        <MessagesTimeline
-          key={activeThread.id}
-          hasMessages={timelineEntries.length > 0}
-          isWorking={isWorking}
-          activeTurnInProgress={isWorking || !latestTurnSettled}
-          activeTurnStartedAt={activeWorkStartedAt}
-          scrollContainer={messagesScrollElement}
-          timelineEntries={timelineEntries}
-          completionDividerBeforeEntryId={completionDividerBeforeEntryId}
-          completionSummary={completionSummary}
-          turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
-          nowIso={nowIso}
-          expandedWorkGroups={expandedWorkGroups}
-          onToggleWorkGroup={onToggleWorkGroup}
-          onOpenTurnDiff={onOpenTurnDiff}
-          revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-          onRevertUserMessage={onRevertUserMessage}
-          isRevertingCheckpoint={isRevertingCheckpoint}
-          onImageExpand={onExpandTimelineImage}
-          markdownCwd={gitCwd ?? undefined}
-          resolvedTheme={resolvedTheme}
-          workspaceRoot={activeProject?.cwd ?? undefined}
-        />
-      </div>
+      <div className={settings.horizontalTabs ? "flex min-h-0 flex-1" : "contents"}>
+        <div className={cn("flex min-h-0 flex-1 flex-col", settings.horizontalTabs && "relative")}>
+          {/* Messages */}
+          <div
+            ref={setMessagesScrollContainerRef}
+            className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
+            onScroll={onMessagesScroll}
+            onClickCapture={onMessagesClickCapture}
+            onWheel={onMessagesWheel}
+            onPointerDown={onMessagesPointerDown}
+            onPointerUp={onMessagesPointerUp}
+            onPointerCancel={onMessagesPointerCancel}
+            onTouchStart={onMessagesTouchStart}
+            onTouchMove={onMessagesTouchMove}
+            onTouchEnd={onMessagesTouchEnd}
+            onTouchCancel={onMessagesTouchEnd}
+          >
+            <MessagesTimeline
+              key={activeThread.id}
+              hasMessages={timelineEntries.length > 0}
+              isWorking={isWorking}
+              activeTurnInProgress={isWorking || !latestTurnSettled}
+              activeTurnStartedAt={activeWorkStartedAt}
+              scrollContainer={messagesScrollElement}
+              timelineEntries={timelineEntries}
+              completionDividerBeforeEntryId={completionDividerBeforeEntryId}
+              completionSummary={completionSummary}
+              turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+              nowIso={nowIso}
+              expandedWorkGroups={expandedWorkGroups}
+              onToggleWorkGroup={onToggleWorkGroup}
+              onOpenTurnDiff={onOpenTurnDiff}
+              revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
+              onRevertUserMessage={onRevertUserMessage}
+              isRevertingCheckpoint={isRevertingCheckpoint}
+              onImageExpand={onExpandTimelineImage}
+              markdownCwd={gitCwd ?? undefined}
+              resolvedTheme={resolvedTheme}
+              workspaceRoot={activeProject?.cwd ?? undefined}
+            />
+            {settings.horizontalTabs && <div className="h-28 shrink-0" aria-hidden="true" />}
+          </div>
 
-      {/* Input bar */}
-      <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
+          {/* Input bar */}
+          <div className={cn(
+            settings.horizontalTabs
+              ? "pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-3 pt-1.5 sm:px-5 sm:pb-4 sm:pt-2"
+              : cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4"),
+          )}>
         <form
           ref={composerFormRef}
           onSubmit={onSend}
-          className="mx-auto w-full min-w-0 max-w-3xl"
+          className={cn("mx-auto w-full min-w-0 max-w-3xl", settings.horizontalTabs && "pointer-events-auto")}
           data-chat-composer-form="true"
         >
           <div
@@ -3895,6 +3902,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
           />
         );
       })()}
+
+        </div>
+        {settings.horizontalTabs && activePlan && (
+          <aside className="w-[clamp(20rem,30vw,28rem)] shrink-0 overflow-y-auto border-l border-border bg-card/50 p-4">
+            <PlanModePanel activePlan={activePlan} />
+          </aside>
+        )}
+      </div>
 
       {expandedImage && expandedImageItem && (
         <div
@@ -5128,6 +5143,30 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
                     {completionSummary ? `Response • ${completionSummary}` : "Response"}
                   </span>
+                  {(() => {
+                    const diffSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);
+                    if (!diffSummary || diffSummary.files.length === 0) return null;
+                    const count = diffSummary.files.length;
+                    return (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <span className="cursor-default rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
+                              {count} {count === 1 ? "file" : "files"} changed
+                            </span>
+                          }
+                        />
+                        <TooltipPopup side="bottom" className="max-w-xs">
+                          <p className="mb-1 text-xs font-medium">{count} {count === 1 ? "file" : "files"} changed</p>
+                          <div className="space-y-0.5">
+                            {diffSummary.files.map((f) => (
+                              <p key={f.path} className="font-mono text-[11px] text-muted-foreground">{f.path}</p>
+                            ))}
+                          </div>
+                        </TooltipPopup>
+                      </Tooltip>
+                    );
+                  })()}
                   <span className="h-px flex-1 bg-border" />
                 </div>
               )}
