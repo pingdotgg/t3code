@@ -38,10 +38,10 @@ const { values } = parseArgs({
 const version = values.version;
 const tag = values.tag;
 const repository = values.repository;
-const expectedRepository = values["expected-repository"] ?? values.expectedRepository;
+const expectedRepository = values.expectedRepository ?? values["expected-repository"];
 const assetsDirInput = values["assets-dir"] ?? values.assetsDir;
-const expectedProductName = values["expected-product-name"] ?? values.expectedProductName;
-const desktopPackagePathInput = values["desktop-package-path"] ?? values.desktopPackagePath;
+const expectedProductName = values.expectedProductName ?? values["expected-product-name"];
+const desktopPackagePathInput = values.desktopPackagePath ?? values["desktop-package-path"];
 
 if (!version) {
   fail("Missing required --version argument.");
