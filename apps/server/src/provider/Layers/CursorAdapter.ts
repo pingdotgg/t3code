@@ -1542,6 +1542,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "unsupported",
+        commandExecutionTermination: "unsupported",
       },
       startSession,
       sendTurn,
@@ -1551,6 +1552,14 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
       respondToRequest,
       respondToUserInput,
       stopSession,
+      terminateCommandExecution: (input) =>
+        Effect.fail(
+          toRequestError(
+            input.threadId,
+            "item/commandExecution/terminate",
+            new Error("Per-command termination is unsupported."),
+          ),
+        ),
       listSessions,
       hasSession,
       stopAll,

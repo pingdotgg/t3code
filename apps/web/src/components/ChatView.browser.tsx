@@ -107,6 +107,7 @@ function createBaseServerConfig(): ServerConfig {
       },
     ],
     availableEditors: [],
+    availableWorkspaceTargets: [],
   };
 }
 
@@ -772,7 +773,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       configureFixture: (nextFixture) => {
         nextFixture.serverConfig = {
           ...nextFixture.serverConfig,
-          availableEditors: ["vscode"],
+          availableWorkspaceTargets: ["vscode"],
         };
       },
     });
@@ -789,11 +790,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          const openRequest = wsRequests.find((request) => request._tag === WS_METHODS.shellOpenInEditor);
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.shellOpenWorkspaceTarget,
+          );
           expect(openRequest).toMatchObject({
-            _tag: WS_METHODS.shellOpenInEditor,
-            cwd: "/repo/project",
-            editor: "vscode",
+            _tag: WS_METHODS.shellOpenWorkspaceTarget,
+            path: "/repo/project",
+            target: "vscode",
           });
         },
         { timeout: 8_000, interval: 16 },

@@ -7,6 +7,7 @@ import {
   IsoDateTime,
   NonNegativeInt,
   ProviderItemId,
+  RuntimeItemId,
   ThreadId,
   TurnId,
 } from "./baseSchemas";
@@ -117,6 +118,13 @@ export const ProviderStopSessionInput = Schema.Struct({
   threadId: ThreadId,
 });
 export type ProviderStopSessionInput = typeof ProviderStopSessionInput.Type;
+
+export const ProviderTerminateCommandExecutionInput = Schema.Struct({
+  threadId: ThreadId,
+  itemId: RuntimeItemId,
+});
+export type ProviderTerminateCommandExecutionInput =
+  typeof ProviderTerminateCommandExecutionInput.Type;
 
 export const ProviderRespondToRequestInput = Schema.Struct({
   threadId: ThreadId,

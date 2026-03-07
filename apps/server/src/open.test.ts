@@ -8,7 +8,9 @@ import {
   isCommandAvailable,
   launchDetached,
   resolveAvailableEditors,
+  resolveAvailableWorkspaceTargets,
   resolveEditorLaunch,
+  resolveWorkspaceTargetLaunch,
 } from "./open";
 import { Effect } from "effect";
 import { assertSuccess } from "@effect/vitest/utils";
@@ -117,6 +119,54 @@ describe("resolveEditorLaunch", () => {
   );
 });
 
+describe("resolveWorkspaceTargetLaunch", () => {
+  it.effect("returns path-based launchers for editor-like workspace targets", () =>
+    Effect.gen(function* () {
+      const cursorLaunch = yield* resolveWorkspaceTargetLaunch(
+        { path: "/tmp/workspace", target: "cursor" },
+        "darwin",
+      );
+      assert.deepEqual(cursorLaunch, {
+        command: "cursor",
+        args: ["/tmp/workspace"],
+      });
+
+      const fileManagerLaunch = yield* resolveWorkspaceTargetLaunch(
+        { path: "/tmp/workspace", target: "file-manager" },
+        "linux",
+      );
+      assert.deepEqual(fileManagerLaunch, {
+        command: "xdg-open",
+        args: ["/tmp/workspace"],
+      });
+    }),
+  );
+
+  it.effect("returns cwd-based launches for ghostty and cmux", () =>
+    Effect.gen(function* () {
+      const ghosttyLaunch = yield* resolveWorkspaceTargetLaunch(
+        { path: "/tmp/workspace", target: "ghostty" },
+        "darwin",
+      );
+      assert.deepEqual(ghosttyLaunch, {
+        command: "ghostty",
+        args: [],
+        cwd: "/tmp/workspace",
+      });
+
+      const cmuxLaunch = yield* resolveWorkspaceTargetLaunch(
+        { path: "/tmp/workspace", target: "cmux" },
+        "darwin",
+      );
+      assert.deepEqual(cmuxLaunch, {
+        command: "cmux",
+        args: [],
+        cwd: "/tmp/workspace",
+      });
+    }),
+  );
+});
+
 describe("launchDetached", () => {
   it.effect("resolves when command can be spawned", () =>
     Effect.gen(function* () {
@@ -215,6 +265,25 @@ describe("resolveAvailableEditors", () => {
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
       });
       assert.deepEqual(editors, ["cursor", "file-manager"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("resolveAvailableWorkspaceTargets", () => {
+  it("returns only launchers whose commands are available", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-workspace-targets-"));
+    try {
+      fs.writeFileSync(path.join(dir, "cursor.CMD"), "@echo off\r\n", "utf8");
+      fs.writeFileSync(path.join(dir, "ghostty.CMD"), "@echo off\r\n", "utf8");
+      fs.writeFileSync(path.join(dir, "cmux.CMD"), "@echo off\r\n", "utf8");
+      fs.writeFileSync(path.join(dir, "explorer.EXE"), "MZ", "utf8");
+      const targets = resolveAvailableWorkspaceTargets("win32", {
+        PATH: dir,
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      });
+      assert.deepEqual(targets, ["cursor", "file-manager", "ghostty", "cmux"]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

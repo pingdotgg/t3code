@@ -13,6 +13,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
   TurnId,
+  RuntimeItemId,
 } from "./baseSchemas";
 
 export const ORCHESTRATION_WS_METHODS = {
@@ -435,6 +436,14 @@ const ThreadSessionStopCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadCommandExecutionTerminateCommand = Schema.Struct({
+  type: Schema.Literal("thread.command-execution.terminate"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  itemId: RuntimeItemId,
+  createdAt: IsoDateTime,
+});
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -450,6 +459,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  ThreadCommandExecutionTerminateCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -469,6 +479,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  ThreadCommandExecutionTerminateCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -571,6 +582,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.checkpoint-revert-requested",
   "thread.reverted",
   "thread.session-stop-requested",
+  "thread.command-execution-terminate-requested",
   "thread.session-set",
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
@@ -709,6 +721,12 @@ export const ThreadRevertedPayload = Schema.Struct({
 
 export const ThreadSessionStopRequestedPayload = Schema.Struct({
   threadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+
+export const ThreadCommandExecutionTerminateRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  itemId: RuntimeItemId,
   createdAt: IsoDateTime,
 });
 
@@ -856,6 +874,11 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
+    type: Schema.Literal("thread.command-execution-terminate-requested"),
+    payload: ThreadCommandExecutionTerminateRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
     type: Schema.Literal("thread.session-set"),
     payload: ThreadSessionSetPayload,
   }),
@@ -957,6 +980,11 @@ export const OrchestrationPersistedEvent = Schema.Union([
     ...PersistedEventBaseFields,
     eventType: Schema.Literal("thread.session-stop-requested"),
     payload: ThreadSessionStopRequestedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.command-execution-terminate-requested"),
+    payload: ThreadCommandExecutionTerminateRequestedPayload,
   }),
   Schema.Struct({
     ...PersistedEventBaseFields,

@@ -24,6 +24,7 @@ import { Effect, Fiber, Layer, Option, PubSub, Ref, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
+  ProviderAdapterValidationError,
   ProviderAdapterSessionNotFoundError,
   ProviderUnsupportedError,
   ProviderValidationError,
@@ -176,6 +177,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     provider,
     capabilities: {
       sessionModelSwitch: "in-session",
+      commandExecutionTermination: "unsupported",
     },
     startSession,
     sendTurn,
@@ -183,6 +185,15 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     respondToRequest,
     respondToUserInput,
     stopSession,
+    terminateCommandExecution: vi.fn(() =>
+      Effect.fail(
+        new ProviderAdapterValidationError({
+          provider,
+          operation: "terminateCommandExecution",
+          issue: "Per-command termination is unsupported in this test adapter.",
+        }),
+      ),
+    ),
     listSessions,
     hasSession,
     readThread,

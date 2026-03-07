@@ -476,6 +476,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
     provider,
     capabilities: {
       sessionModelSwitch: "in-session",
+      commandExecutionTermination: "unsupported",
     },
     startSession,
     sendTurn,
@@ -483,6 +484,14 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
     respondToRequest,
     respondToUserInput,
     stopSession,
+    terminateCommandExecution: () =>
+      Effect.fail(
+        new ProviderAdapterValidationError({
+          provider,
+          operation: "terminateCommandExecution",
+          issue: "Per-command termination is unsupported in the test adapter.",
+        }),
+      ),
     listSessions,
     hasSession,
     readThread,

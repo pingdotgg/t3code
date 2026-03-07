@@ -18,6 +18,7 @@ import {
   ProviderSendTurnInput,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
+  ProviderTerminateCommandExecutionInput,
   type ProviderRuntimeEvent,
   type ProviderSession,
 } from "@t3tools/contracts";
@@ -403,6 +404,32 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         });
       });
 
+    const terminateCommandExecution: ProviderServiceShape["terminateCommandExecution"] = (
+      rawInput,
+    ) =>
+      Effect.gen(function* () {
+        const input = yield* decodeInputOrValidationError({
+          operation: "ProviderService.terminateCommandExecution",
+          schema: ProviderTerminateCommandExecutionInput,
+          payload: rawInput,
+        });
+        const routed = yield* resolveRoutableSession({
+          threadId: input.threadId,
+          operation: "ProviderService.terminateCommandExecution",
+          allowRecovery: false,
+        });
+        if (routed.adapter.capabilities.commandExecutionTermination !== "item-terminate") {
+          return yield* toValidationError(
+            "ProviderService.terminateCommandExecution",
+            `Provider '${routed.adapter.provider}' does not support per-command termination.`,
+          );
+        }
+        yield* routed.adapter.terminateCommandExecution(input);
+        yield* analytics.record("provider.command_execution.terminated", {
+          provider: routed.adapter.provider,
+        });
+      });
+
     const listSessions: ProviderServiceShape["listSessions"] = () =>
       Effect.gen(function* () {
         const sessionsByProvider = yield* Effect.forEach(adapters, (adapter) => adapter.listSessions());
@@ -514,6 +541,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       respondToRequest,
       respondToUserInput,
       stopSession,
+      terminateCommandExecution,
       listSessions,
       getCapabilities,
       rollbackConversation,

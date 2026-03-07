@@ -34,7 +34,8 @@ type ProviderIntentEvent = Extract<
       | "thread.turn-interrupt-requested"
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
-      | "thread.session-stop-requested";
+      | "thread.session-stop-requested"
+      | "thread.command-execution-terminate-requested";
   }
 >;
 
@@ -164,7 +165,8 @@ const make = Effect.gen(function* () {
       | "provider.turn.interrupt.failed"
       | "provider.approval.respond.failed"
       | "provider.user-input.respond.failed"
-      | "provider.session.stop.failed";
+      | "provider.session.stop.failed"
+      | "provider.command-execution.terminate.failed";
     readonly summary: string;
     readonly detail: string;
     readonly turnId: TurnId | null;
@@ -631,6 +633,48 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const processCommandExecutionTerminateRequested = Effect.fnUntraced(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.command-execution-terminate-requested" }>,
+  ) {
+    const thread = yield* resolveThread(event.payload.threadId);
+    if (!thread) {
+      return;
+    }
+
+    const hasSession = thread.session && thread.session.status !== "stopped";
+    if (!hasSession) {
+      return yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.command-execution.terminate.failed",
+        summary: "Command termination failed",
+        detail: "No active provider session is bound to this thread.",
+        turnId: thread.session?.activeTurnId ?? null,
+        createdAt: event.payload.createdAt,
+      });
+    }
+
+    yield* providerService
+      .terminateCommandExecution({
+        threadId: event.payload.threadId,
+        itemId: event.payload.itemId,
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            const error = Cause.squash(cause);
+            yield* appendProviderFailureActivity({
+              threadId: event.payload.threadId,
+              kind: "provider.command-execution.terminate.failed",
+              summary: "Command termination failed",
+              detail: toErrorMessage(error),
+              turnId: thread.session?.activeTurnId ?? null,
+              createdAt: event.payload.createdAt,
+            });
+          }),
+        ),
+      );
+  });
+
   const processDomainEvent = (event: ProviderIntentEvent) =>
     Effect.gen(function* () {
       switch (event.type) {
@@ -656,6 +700,9 @@ const make = Effect.gen(function* () {
           return;
         case "thread.session-stop-requested":
           yield* processSessionStopRequested(event);
+          return;
+        case "thread.command-execution-terminate-requested":
+          yield* processCommandExecutionTerminateRequested(event);
           return;
       }
     });
@@ -689,7 +736,8 @@ const make = Effect.gen(function* () {
           event.type !== "thread.turn-interrupt-requested" &&
           event.type !== "thread.approval-response-requested" &&
           event.type !== "thread.user-input-response-requested" &&
-          event.type !== "thread.session-stop-requested"
+          event.type !== "thread.session-stop-requested" &&
+          event.type !== "thread.command-execution-terminate-requested"
         ) {
           return Effect.void;
         }

@@ -11,6 +11,7 @@ import type {
   ApprovalRequestId,
   ProviderApprovalDecision,
   ProviderKind,
+  ProviderTerminateCommandExecutionInput,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
@@ -24,12 +25,14 @@ import type { Effect } from "effect";
 import type { Stream } from "effect";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "restart-session" | "unsupported";
+export type ProviderCommandExecutionTerminationMode = "unsupported" | "item-terminate";
 
 export interface ProviderAdapterCapabilities {
   /**
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  readonly commandExecutionTermination: ProviderCommandExecutionTerminationMode;
 }
 
 export interface ProviderThreadTurnSnapshot {
@@ -93,6 +96,13 @@ export interface ProviderAdapterShape<TError> {
    * Stop one provider session.
    */
   readonly stopSession: (threadId: ThreadId) => Effect.Effect<void, TError>;
+
+  /**
+   * Terminate a specific in-flight command execution item.
+   */
+  readonly terminateCommandExecution: (
+    input: ProviderTerminateCommandExecutionInput,
+  ) => Effect.Effect<void, TError>;
 
   /**
    * List currently active provider sessions for this adapter.

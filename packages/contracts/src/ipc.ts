@@ -21,6 +21,7 @@ import type {
   ProjectWriteFileResult,
 } from "./project";
 import type { ServerConfig } from "./server";
+import type { WorkspaceTargetId } from "./workspaceTarget";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -113,6 +114,7 @@ export interface NativeApi {
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
+    openWorkspaceTarget: (path: string, target: WorkspaceTargetId) => Promise<void>;
     openExternal: (url: string) => Promise<void>;
   };
   git: {

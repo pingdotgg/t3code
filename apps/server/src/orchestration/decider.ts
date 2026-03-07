@@ -433,6 +433,28 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.command-execution.terminate": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.command-execution-terminate-requested",
+        payload: {
+          threadId: command.threadId,
+          itemId: command.itemId,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
     case "thread.session.set": {
       yield* requireThread({
         readModel,

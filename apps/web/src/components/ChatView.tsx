@@ -1,8 +1,6 @@
 import {
   type ApprovalRequestId,
   DEFAULT_MODEL_BY_PROVIDER,
-  EDITORS,
-  type EditorId,
   type KeybindingCommand,
   type CodexReasoningEffort,
   type CursorReasoningOption,
@@ -22,6 +20,8 @@ import {
   OrchestrationThreadActivity,
   RuntimeMode,
   ProviderInteractionMode,
+  WORKSPACE_TARGETS,
+  type WorkspaceTargetId,
 } from "@t3tools/contracts";
 import {
   getCursorModelCapabilities,
@@ -84,6 +84,10 @@ import {
   formatElapsed,
   formatTimestamp,
 } from "../session-logic";
+import {
+  deriveRunningCommandExecutions,
+  type RunningCommandExecution,
+} from "../runningCommandExecutions";
 import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX, isScrollContainerNearBottom } from "../chat-scroll";
 import {
   buildPendingUserInputAnswers,
@@ -141,6 +145,7 @@ import {
   FolderClosedIcon,
   LockIcon,
   LockOpenIcon,
+  TerminalSquareIcon,
   Undo2Icon,
   XIcon,
   CopyIcon,
@@ -251,7 +256,7 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
-const LAST_EDITOR_KEY = "t3code:last-editor";
+const LAST_WORKSPACE_TARGET_KEY = "t3code:last-workspace-target";
 const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
@@ -262,12 +267,24 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
-const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
+const EMPTY_AVAILABLE_WORKSPACE_TARGETS: WorkspaceTargetId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
+
+function providerLabel(provider: ProviderKind): string {
+  switch (provider) {
+    case "claudeCode":
+      return "Claude Code";
+    case "cursor":
+      return "Cursor";
+    case "codex":
+    default:
+      return "Codex";
+  }
+}
 const WORKTREE_BRANCH_PREFIX = "t3code";
 
 function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
@@ -1314,7 +1331,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [nonPersistedComposerImageIds],
   );
   const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
-  const availableEditors = serverConfigQuery.data?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
+  const availableWorkspaceTargets =
+    serverConfigQuery.data?.availableWorkspaceTargets ?? EMPTY_AVAILABLE_WORKSPACE_TARGETS;
   const providerStatuses = serverConfigQuery.data?.providers ?? EMPTY_PROVIDER_STATUSES;
   const activeProvider = activeThread?.session?.provider ?? "codex";
   const activeProviderStatus = useMemo(
@@ -1323,6 +1341,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
+  const runningCommandExecutions = useMemo(
+    () => deriveRunningCommandExecutions(threadActivities, activeThread?.session ?? null),
+    [activeThread?.session, threadActivities],
+  );
   const threadTerminalRuntimeEnv = useMemo(() => {
     if (!activeProjectCwd) return {};
     return projectScriptRuntimeEnv({
@@ -3497,7 +3519,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
           }
           keybindings={keybindings}
-          availableEditors={availableEditors}
+          availableWorkspaceTargets={availableWorkspaceTargets}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
           diffOpen={diffOpen}
@@ -3974,6 +3996,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
         </form>
       </div>
 
+      <RunningCommandsStrip
+        commands={runningCommandExecutions}
+        nowIso={nowIso}
+        provider={activeProvider}
+      />
+
       {isGitRepo && (
         <BranchToolbar
           threadId={activeThread.id}
@@ -4091,7 +4119,7 @@ interface ChatHeaderProps {
   activeProjectScripts: ProjectScript[] | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
-  availableEditors: ReadonlyArray<EditorId>;
+  availableWorkspaceTargets: ReadonlyArray<WorkspaceTargetId>;
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
   diffOpen: boolean;
@@ -4110,7 +4138,7 @@ const ChatHeader = memo(function ChatHeader({
   activeProjectScripts,
   preferredScriptId,
   keybindings,
-  availableEditors,
+  availableWorkspaceTargets,
   diffToggleShortcutLabel,
   gitCwd,
   diffOpen,
@@ -4154,7 +4182,7 @@ const ChatHeader = memo(function ChatHeader({
         {activeProjectName && (
           <OpenInPicker
             keybindings={keybindings}
-            availableEditors={availableEditors}
+            availableWorkspaceTargets={availableWorkspaceTargets}
             openInCwd={openInCwd}
           />
         )}
@@ -4183,6 +4211,59 @@ const ChatHeader = memo(function ChatHeader({
                 : "Toggle diff panel"}
           </TooltipPopup>
         </Tooltip>
+      </div>
+    </div>
+  );
+});
+
+const RunningCommandsStrip = memo(function RunningCommandsStrip({
+  commands,
+  nowIso,
+  provider,
+}: {
+  commands: ReadonlyArray<RunningCommandExecution>;
+  nowIso: string;
+  provider: ProviderKind;
+}) {
+  if (commands.length === 0) {
+    return null;
+  }
+
+  const providerName = providerLabel(provider);
+
+  return (
+    <div className="px-3 pb-3 sm:px-5">
+      <div className="mx-auto flex max-w-5xl flex-col gap-2 rounded-xl border border-border/70 bg-muted/20 px-3 py-3">
+        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+          <TerminalSquareIcon className="size-3.5" />
+          <span>Running commands</span>
+        </div>
+        <div className="flex flex-col gap-2">
+          {commands.map((command) => (
+            <div
+              key={command.itemId}
+              className="flex flex-col gap-2 rounded-lg border border-border/60 bg-background/80 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-mono text-[12px] text-foreground">{command.command}</p>
+                {command.detail && command.detail !== command.command ? (
+                  <p className="truncate text-[11px] text-muted-foreground">{command.detail}</p>
+                ) : null}
+              </div>
+              <div className="flex items-center gap-2 text-[11px]">
+                <Badge variant="outline" size="sm">
+                  {providerName}
+                </Badge>
+                <Badge variant="success" size="sm">
+                  running
+                </Badge>
+                <span className="tabular-nums text-muted-foreground">
+                  {formatWorkingTimer(command.startedAt, nowIso) ?? "0s"}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -5808,19 +5889,21 @@ const CursorTraitsPicker = memo(function CursorTraitsPicker(props: {
 
 const OpenInPicker = memo(function OpenInPicker({
   keybindings,
-  availableEditors,
+  availableWorkspaceTargets,
   openInCwd,
 }: {
   keybindings: ResolvedKeybindingsConfig;
-  availableEditors: ReadonlyArray<EditorId>;
+  availableWorkspaceTargets: ReadonlyArray<WorkspaceTargetId>;
   openInCwd: string | null;
 }) {
-  const [lastEditor, setLastEditor] = useState<EditorId>(() => {
-    const stored = localStorage.getItem(LAST_EDITOR_KEY);
-    return EDITORS.some((e) => e.id === stored) ? (stored as EditorId) : EDITORS[0].id;
+  const [lastWorkspaceTarget, setLastWorkspaceTarget] = useState<WorkspaceTargetId>(() => {
+    const stored = localStorage.getItem(LAST_WORKSPACE_TARGET_KEY);
+    return WORKSPACE_TARGETS.some((target) => target.id === stored)
+      ? (stored as WorkspaceTargetId)
+      : WORKSPACE_TARGETS[0].id;
   });
 
-  const allOptions = useMemo<Array<{ label: string; Icon: Icon; value: EditorId }>>(
+  const allOptions = useMemo<Array<{ label: string; Icon: Icon; value: WorkspaceTargetId }>>(
     () => [
       {
         label: "Cursor",
@@ -5846,30 +5929,40 @@ const OpenInPicker = memo(function OpenInPicker({
         Icon: FolderClosedIcon,
         value: "file-manager",
       },
+      {
+        label: "Ghostty",
+        Icon: TerminalSquareIcon,
+        value: "ghostty",
+      },
+      {
+        label: "cmux",
+        Icon: TerminalSquareIcon,
+        value: "cmux",
+      },
     ],
     [],
   );
   const options = useMemo(
-    () => allOptions.filter((option) => availableEditors.includes(option.value)),
-    [allOptions, availableEditors],
+    () => allOptions.filter((option) => availableWorkspaceTargets.includes(option.value)),
+    [allOptions, availableWorkspaceTargets],
   );
 
-  const effectiveEditor = options.some((option) => option.value === lastEditor)
-    ? lastEditor
+  const effectiveWorkspaceTarget = options.some((option) => option.value === lastWorkspaceTarget)
+    ? lastWorkspaceTarget
     : (options[0]?.value ?? null);
-  const primaryOption = options.find(({ value }) => value === effectiveEditor) ?? null;
+  const primaryOption = options.find(({ value }) => value === effectiveWorkspaceTarget) ?? null;
 
-  const openInEditor = useCallback(
-    (editorId: EditorId | null) => {
+  const openWorkspaceTarget = useCallback(
+    (targetId: WorkspaceTargetId | null) => {
       const api = readNativeApi();
       if (!api || !openInCwd) return;
-      const editor = editorId ?? effectiveEditor;
-      if (!editor) return;
-      void api.shell.openInEditor(openInCwd, editor);
-      localStorage.setItem(LAST_EDITOR_KEY, editor);
-      setLastEditor(editor);
+      const target = targetId ?? effectiveWorkspaceTarget;
+      if (!target) return;
+      void api.shell.openWorkspaceTarget(openInCwd, target);
+      localStorage.setItem(LAST_WORKSPACE_TARGET_KEY, target);
+      setLastWorkspaceTarget(target);
     },
-    [effectiveEditor, openInCwd, setLastEditor],
+    [effectiveWorkspaceTarget, openInCwd],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -5882,22 +5975,22 @@ const OpenInPicker = memo(function OpenInPicker({
       const api = readNativeApi();
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
       if (!api || !openInCwd) return;
-      if (!effectiveEditor) return;
+      if (!effectiveWorkspaceTarget) return;
 
       e.preventDefault();
-      void api.shell.openInEditor(openInCwd, effectiveEditor);
+      void api.shell.openWorkspaceTarget(openInCwd, effectiveWorkspaceTarget);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [effectiveEditor, keybindings, openInCwd]);
+  }, [effectiveWorkspaceTarget, keybindings, openInCwd]);
 
   return (
-    <Group aria-label="Subscription actions">
+    <Group aria-label="Open workspace actions">
       <Button
         size="xs"
         variant="outline"
-        disabled={!effectiveEditor || !openInCwd}
-        onClick={() => openInEditor(effectiveEditor)}
+        disabled={!effectiveWorkspaceTarget || !openInCwd}
+        onClick={() => openWorkspaceTarget(effectiveWorkspaceTarget)}
       >
         {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
         <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
@@ -5906,16 +5999,16 @@ const OpenInPicker = memo(function OpenInPicker({
       </Button>
       <GroupSeparator className="hidden @sm/header-actions:block" />
       <Menu>
-        <MenuTrigger render={<Button aria-label="Copy options" size="icon-xs" variant="outline" />}>
+        <MenuTrigger render={<Button aria-label="Open options" size="icon-xs" variant="outline" />}>
           <ChevronDownIcon aria-hidden="true" className="size-4" />
         </MenuTrigger>
         <MenuPopup align="end">
-          {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
+          {options.length === 0 && <MenuItem disabled>No installed launchers found</MenuItem>}
           {options.map(({ label, Icon, value }) => (
-            <MenuItem key={value} onClick={() => openInEditor(value)}>
+            <MenuItem key={value} onClick={() => openWorkspaceTarget(value)}>
               <Icon aria-hidden="true" className="text-muted-foreground" />
               {label}
-              {value === effectiveEditor && openFavoriteEditorShortcutLabel && (
+              {value === effectiveWorkspaceTarget && openFavoriteEditorShortcutLabel && (
                 <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
               )}
             </MenuItem>

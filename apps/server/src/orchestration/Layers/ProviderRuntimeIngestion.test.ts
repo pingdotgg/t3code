@@ -70,8 +70,13 @@ function createProviderServiceHarness() {
     respondToRequest: () => unsupported(),
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
+    terminateCommandExecution: () => unsupported(),
     listSessions: () => Effect.succeed([]),
-    getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+    getCapabilities: () =>
+      Effect.succeed({
+        sessionModelSwitch: "in-session",
+        commandExecutionTermination: "unsupported",
+      }),
     rollbackConversation: () => unsupported(),
     streamEvents: Stream.fromPubSub(runtimeEventPubSub),
   };
@@ -1120,11 +1125,15 @@ describe("ProviderRuntimeIngestion", () => {
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-9"),
+      itemId: asItemId("item-tool-started"),
       payload: {
         itemType: "command_execution",
         status: "in_progress",
         title: "Read file",
         detail: "/tmp/file.ts",
+        data: {
+          command: ["cat", "/tmp/file.ts"],
+        },
       },
     });
 
@@ -1144,6 +1153,16 @@ describe("ProviderRuntimeIngestion", () => {
         (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.started",
       ),
     ).toBe(true);
+
+    const toolStarted = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-tool-started",
+    );
+    const toolStartedPayload =
+      toolStarted?.payload && typeof toolStarted.payload === "object"
+        ? (toolStarted.payload as Record<string, unknown>)
+        : undefined;
+    expect(toolStartedPayload?.runtimeItemId).toBe("item-tool-started");
+    expect(toolStartedPayload?.command).toBe("cat /tmp/file.ts");
   });
 
   it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {
@@ -1261,6 +1280,8 @@ describe("ProviderRuntimeIngestion", () => {
     expect(toolUpdate?.kind).toBe("tool.updated");
     expect(toolUpdatePayload?.itemType).toBe("command_execution");
     expect(toolUpdatePayload?.status).toBe("in_progress");
+    expect(toolUpdatePayload?.runtimeItemId).toBe("item-p1-tool");
+    expect(toolUpdatePayload?.command).toBe("bun test");
 
     const warning = thread.activities.find(
       (activity: ProviderRuntimeTestActivity) => activity.id === "evt-runtime-warning",

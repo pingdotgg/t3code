@@ -10,4 +10,5 @@ export * from "./server";
 export * from "./git";
 export * from "./orchestration";
 export * from "./editor";
+export * from "./workspaceTarget";
 export * from "./project";

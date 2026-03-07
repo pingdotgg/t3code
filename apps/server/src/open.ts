@@ -10,7 +10,12 @@ import { spawn } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { extname, join } from "node:path";
 
-import { EDITORS, type EditorId } from "@t3tools/contracts";
+import {
+  EDITORS,
+  WORKSPACE_TARGETS,
+  type EditorId,
+  type WorkspaceTargetId,
+} from "@t3tools/contracts";
 import { ServiceMap, Schema, Effect, Layer } from "effect";
 
 // ==============================
@@ -27,9 +32,15 @@ export interface OpenInEditorInput {
   readonly editor: EditorId;
 }
 
+export interface OpenWorkspaceTargetInput {
+  readonly path: string;
+  readonly target: WorkspaceTargetId;
+}
+
 interface EditorLaunch {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  readonly cwd?: string;
 }
 
 interface CommandAvailabilityOptions {
@@ -175,6 +186,25 @@ export function resolveAvailableEditors(
   return available;
 }
 
+export function resolveAvailableWorkspaceTargets(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): ReadonlyArray<WorkspaceTargetId> {
+  const available: WorkspaceTargetId[] = [];
+
+  for (const target of WORKSPACE_TARGETS) {
+    const command =
+      target.command ??
+      (target.id === "file-manager" ? fileManagerCommandForPlatform(platform) : null);
+    if (!command) continue;
+    if (isCommandAvailable(command, { platform, env })) {
+      available.push(target.id);
+    }
+  }
+
+  return available;
+}
+
 /**
  * OpenShape - Service API for browser and editor launch actions.
  */
@@ -190,6 +220,11 @@ export interface OpenShape {
    * Launches the editor as a detached process so server startup is not blocked.
    */
   readonly openInEditor: (input: OpenInEditorInput) => Effect.Effect<void, OpenError>;
+
+  /**
+   * Open a workspace directory in a selected launcher target.
+   */
+  readonly openWorkspaceTarget: (input: OpenWorkspaceTargetInput) => Effect.Effect<void, OpenError>;
 }
 
 /**
@@ -223,6 +258,43 @@ export const resolveEditorLaunch = Effect.fnUntraced(function* (
   return { command: fileManagerCommandForPlatform(platform), args: [input.cwd] };
 });
 
+export const resolveWorkspaceTargetLaunch = Effect.fnUntraced(function* (
+  input: OpenWorkspaceTargetInput,
+  platform: NodeJS.Platform = process.platform,
+): Effect.fn.Return<EditorLaunch, OpenError> {
+  const targetDef = WORKSPACE_TARGETS.find((target) => target.id === input.target);
+  if (!targetDef) {
+    return yield* new OpenError({ message: `Unknown workspace target: ${input.target}` });
+  }
+
+  if (input.target === "ghostty" || input.target === "cmux") {
+    if (!targetDef.command) {
+      return yield* new OpenError({ message: `Unsupported workspace target: ${input.target}` });
+    }
+    return {
+      command: targetDef.command,
+      args: [],
+      cwd: input.path,
+    };
+  }
+
+  if (targetDef.command) {
+    return {
+      command: targetDef.command,
+      args: [input.path],
+    };
+  }
+
+  if (targetDef.id !== "file-manager") {
+    return yield* new OpenError({ message: `Unsupported workspace target: ${input.target}` });
+  }
+
+  return {
+    command: fileManagerCommandForPlatform(platform),
+    args: [input.path],
+  };
+});
+
 export const launchDetached = (launch: EditorLaunch) =>
   Effect.gen(function* () {
     if (!isCommandAvailable(launch.command)) {
@@ -236,6 +308,7 @@ export const launchDetached = (launch: EditorLaunch) =>
           detached: true,
           stdio: "ignore",
           shell: process.platform === "win32",
+          ...(launch.cwd ? { cwd: launch.cwd } : {}),
         });
       } catch (error) {
         return resume(
@@ -270,6 +343,8 @@ const make = Effect.gen(function* () {
         catch: (cause) => new OpenError({ message: "Browser auto-open failed", cause }),
       }),
     openInEditor: (input) => Effect.flatMap(resolveEditorLaunch(input), launchDetached),
+    openWorkspaceTarget: (input) =>
+      Effect.flatMap(resolveWorkspaceTargetLaunch(input), launchDetached),
   } satisfies OpenShape;
 });
 

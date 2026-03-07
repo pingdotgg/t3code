@@ -96,12 +96,53 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
 function runtimePayloadRecord(event: ProviderRuntimeEvent): Record<string, unknown> | undefined {
   const payload = (event as { payload?: unknown }).payload;
   if (!payload || typeof payload !== "object") {
     return undefined;
   }
   return payload as Record<string, unknown>;
+}
+
+function normalizeCommandValue(value: unknown): string | undefined {
+  const direct = asString(value)?.trim();
+  if (direct) {
+    return direct;
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const segments = value
+    .map((entry) => asString(entry)?.trim())
+    .filter((entry): entry is string => Boolean(entry));
+  return segments.length > 0 ? segments.join(" ") : undefined;
+}
+
+function commandFromRuntimeItemPayload(
+  payload: Record<string, unknown>,
+): string | undefined {
+  const data = asRecord(payload.data);
+  const item = asRecord(data?.item);
+  const input = asRecord(data?.input);
+  const result = asRecord(data?.result);
+
+  return [
+    normalizeCommandValue(payload.command),
+    normalizeCommandValue(data?.command),
+    normalizeCommandValue(data?.cmd),
+    normalizeCommandValue(item?.command),
+    normalizeCommandValue(input?.command),
+    normalizeCommandValue(input?.cmd),
+    normalizeCommandValue(result?.command),
+    normalizeCommandValue(payload.detail),
+  ].find((value): value is string => Boolean(value));
 }
 
 function normalizeRuntimeTurnState(
@@ -415,6 +456,10 @@ function runtimeEventToActivities(
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
+      const command =
+        event.payload.itemType === "command_execution"
+          ? commandFromRuntimeItemPayload(event.payload)
+          : undefined;
       return [
         {
           id: event.eventId,
@@ -423,7 +468,9 @@ function runtimeEventToActivities(
           kind: "tool.updated",
           summary: event.payload.title ?? "Tool updated",
           payload: {
+            ...(event.itemId ? { runtimeItemId: event.itemId } : {}),
             itemType: event.payload.itemType,
+            ...(command ? { command } : {}),
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
@@ -438,6 +485,10 @@ function runtimeEventToActivities(
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
+      const command =
+        event.payload.itemType === "command_execution"
+          ? commandFromRuntimeItemPayload(event.payload)
+          : undefined;
       return [
         {
           id: event.eventId,
@@ -446,7 +497,9 @@ function runtimeEventToActivities(
           kind: "tool.completed",
           summary: `${event.payload.title ?? "Tool"} complete`,
           payload: {
+            ...(event.itemId ? { runtimeItemId: event.itemId } : {}),
             itemType: event.payload.itemType,
+            ...(command ? { command } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -459,6 +512,10 @@ function runtimeEventToActivities(
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
+      const command =
+        event.payload.itemType === "command_execution"
+          ? commandFromRuntimeItemPayload(event.payload)
+          : undefined;
       return [
         {
           id: event.eventId,
@@ -467,7 +524,9 @@ function runtimeEventToActivities(
           kind: "tool.started",
           summary: `${event.payload.title ?? "Tool"} started`,
           payload: {
+            ...(event.itemId ? { runtimeItemId: event.itemId } : {}),
             itemType: event.payload.itemType,
+            ...(command ? { command } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,

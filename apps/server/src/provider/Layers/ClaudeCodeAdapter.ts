@@ -34,7 +34,17 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { Cause, DateTime, Deferred, Effect, Layer, Queue, Random, Ref, Stream } from "effect";
+import {
+  Cause,
+  DateTime,
+  Deferred,
+  Effect,
+  Layer,
+  Queue,
+  Random,
+  Ref,
+  Stream,
+} from "effect";
 
 import {
   ProviderAdapterProcessError,
@@ -1323,7 +1333,9 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           yield* completeTurn(context, "interrupted", "Session stopped.");
         }
 
-        yield* Queue.shutdown(context.promptQueue);
+        yield* Queue.offer(context.promptQueue, {
+          type: "terminate",
+        }).pipe(Effect.catchCause(() => Effect.void));
 
         context.query.close();
 
@@ -1393,8 +1405,10 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
 
         const promptQueue = yield* Queue.unbounded<PromptQueueItem>();
         const prompt = Stream.fromQueue(promptQueue).pipe(
-          Stream.filter((item) => item.type === "message"),
-          Stream.map((item) => item.message),
+          Stream.takeWhile((item) => item.type !== "terminate"),
+          Stream.map(
+            (item) => (item as Extract<PromptQueueItem, { readonly type: "message" }>).message,
+          ),
           Stream.toAsyncIterable,
         );
 
@@ -1559,7 +1573,6 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           includePartialMessages: true,
           canUseTool,
           env: process.env,
-          ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         };
 
         const queryRuntime = yield* Effect.try({
@@ -1833,6 +1846,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        commandExecutionTermination: "unsupported",
       },
       startSession,
       sendTurn,
@@ -1842,6 +1856,14 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
       respondToRequest,
       respondToUserInput,
       stopSession,
+      terminateCommandExecution: (input) =>
+        Effect.fail(
+          toRequestError(
+            input.threadId,
+            "item/commandExecution/terminate",
+            new Error("Per-command termination is unsupported."),
+          ),
+        ),
       listSessions,
       hasSession,
       stopAll,

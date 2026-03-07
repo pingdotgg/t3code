@@ -1494,6 +1494,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        commandExecutionTermination: "unsupported",
       },
       startSession,
       sendTurn,
@@ -1503,6 +1504,14 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
       respondToRequest,
       respondToUserInput,
       stopSession,
+      terminateCommandExecution: (input) =>
+        Effect.fail(
+          toRequestError(
+            input.threadId,
+            "item/commandExecution/terminate",
+            new Error("Per-command termination is unsupported."),
+          ),
+        ),
       listSessions,
       hasSession,
       stopAll,
