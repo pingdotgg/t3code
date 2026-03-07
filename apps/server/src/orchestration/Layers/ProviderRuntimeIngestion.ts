@@ -30,6 +30,8 @@ const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
+const EMITTED_ASSISTANT_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
+const EMITTED_ASSISTANT_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
@@ -75,6 +77,20 @@ function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string
     return undefined;
   }
   return trimmed;
+}
+
+function resolveAssistantCompletionText(input: {
+  bufferedText: string;
+  fallbackText: string | undefined;
+  hasEmittedText: boolean;
+}): string {
+  if (input.bufferedText.length > 0) {
+    return input.bufferedText;
+  }
+  if (input.hasEmittedText) {
+    return "";
+  }
+  return input.fallbackText?.trim().length ? input.fallbackText : "";
 }
 
 function proposedPlanIdForTurn(threadId: ThreadId, turnId: TurnId): string {
@@ -502,6 +518,11 @@ const make = Effect.gen(function* () {
     timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
     lookup: () => Effect.succeed(""),
   });
+  const emittedAssistantTextByMessageId = yield* Cache.make<MessageId, boolean>({
+    capacity: EMITTED_ASSISTANT_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: EMITTED_ASSISTANT_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.succeed(false),
+  });
 
   const bufferedProposedPlanById = yield* Cache.make<string, { text: string; createdAt: string }>({
     capacity: BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY,
@@ -610,6 +631,14 @@ const make = Effect.gen(function* () {
   const clearBufferedAssistantText = (messageId: MessageId) =>
     Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
 
+  const markAssistantTextAsEmitted = (messageId: MessageId) =>
+    Cache.set(emittedAssistantTextByMessageId, messageId, true);
+
+  const hasAssistantTextBeenEmitted = (messageId: MessageId) =>
+    Cache.getOption(emittedAssistantTextByMessageId, messageId).pipe(
+      Effect.map((existingValue) => Option.getOrElse(existingValue, () => false)),
+    );
+
   const appendBufferedProposedPlan = (planId: string, delta: string, createdAt: string) =>
     Cache.getOption(bufferedProposedPlanById, planId).pipe(
       Effect.flatMap((existingEntry) => {
@@ -633,7 +662,11 @@ const make = Effect.gen(function* () {
   const clearBufferedProposedPlan = (planId: string) =>
     Cache.invalidate(bufferedProposedPlanById, planId);
 
-  const clearAssistantMessageState = (messageId: MessageId) => clearBufferedAssistantText(messageId);
+  const clearAssistantMessageState = (messageId: MessageId) =>
+    Effect.all([
+      clearBufferedAssistantText(messageId),
+      Cache.invalidate(emittedAssistantTextByMessageId, messageId),
+    ]).pipe(Effect.asVoid);
 
   const finalizeAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
@@ -646,13 +679,13 @@ const make = Effect.gen(function* () {
     fallbackText?: string;
   }) =>
     Effect.gen(function* () {
+      const hasEmittedText = yield* hasAssistantTextBeenEmitted(input.messageId);
       const bufferedText = yield* takeBufferedAssistantText(input.messageId);
-      const text =
-        bufferedText.length > 0
-          ? bufferedText
-          : (input.fallbackText?.trim().length ?? 0) > 0
-            ? input.fallbackText!
-            : "";
+      const text = resolveAssistantCompletionText({
+        bufferedText,
+        fallbackText: input.fallbackText,
+        hasEmittedText,
+      });
 
       if (text.length > 0) {
         yield* orchestrationEngine.dispatch({
@@ -664,6 +697,7 @@ const make = Effect.gen(function* () {
           ...(input.turnId ? { turnId: input.turnId } : {}),
           createdAt: input.createdAt,
         });
+        yield* markAssistantTextAsEmitted(input.messageId);
       }
 
       yield* orchestrationEngine.dispatch({
@@ -913,6 +947,7 @@ const make = Effect.gen(function* () {
               ...(turnId ? { turnId } : {}),
               createdAt: now,
             });
+            yield* markAssistantTextAsEmitted(assistantMessageId);
           }
         } else {
           yield* orchestrationEngine.dispatch({
@@ -924,6 +959,7 @@ const make = Effect.gen(function* () {
             ...(turnId ? { turnId } : {}),
             createdAt: now,
           });
+          yield* markAssistantTextAsEmitted(assistantMessageId);
         }
       }
 
