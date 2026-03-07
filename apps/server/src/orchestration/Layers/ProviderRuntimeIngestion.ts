@@ -155,6 +155,36 @@ function orchestrationSessionStatusFromRuntimeState(
   }
 }
 
+function statusFromLifecycleEvent(
+  event:
+    | Extract<ProviderRuntimeEvent, { type: "session.state.changed" }>
+    | Extract<ProviderRuntimeEvent, { type: "turn.started" }>
+    | Extract<ProviderRuntimeEvent, { type: "session.exited" }>
+    | Extract<ProviderRuntimeEvent, { type: "turn.completed" }>
+    | Extract<ProviderRuntimeEvent, { type: "session.started" }>
+    | Extract<ProviderRuntimeEvent, { type: "thread.started" }>,
+  activeTurnId: string | null,
+): "starting" | "running" | "ready" | "interrupted" | "stopped" | "error" {
+  switch (event.type) {
+    case "session.state.changed":
+      // Some providers emit a "ready" heartbeat while a turn is still actively running.
+      // Preserve the run lock until the active turn closes.
+      if (activeTurnId !== null && event.payload.state === "ready") {
+        return "running";
+      }
+      return orchestrationSessionStatusFromRuntimeState(event.payload.state);
+    case "turn.started":
+      return "running";
+    case "session.exited":
+      return "stopped";
+    case "turn.completed":
+      return runtimeTurnState(event) === "failed" ? "error" : "ready";
+    case "session.started":
+    case "thread.started":
+      return activeTurnId !== null ? "running" : "ready";
+  }
+}
+
 function requestKindFromCanonicalRequestType(
   requestType: string | undefined,
 ): "command" | "file-read" | "file-change" | undefined {
@@ -839,23 +869,7 @@ const make = Effect.gen(function* () {
             : event.type === "turn.completed" || event.type === "session.exited"
               ? null
               : activeTurnId;
-        const status = (() => {
-          switch (event.type) {
-            case "session.state.changed":
-              return orchestrationSessionStatusFromRuntimeState(event.payload.state);
-            case "turn.started":
-              return "running";
-            case "session.exited":
-              return "stopped";
-            case "turn.completed":
-              return runtimeTurnState(event) === "failed" ? "error" : "ready";
-            case "session.started":
-            case "thread.started":
-              // Provider thread/session start notifications can arrive during an
-              // active turn; preserve turn-running state in that case.
-              return activeTurnId !== null ? "running" : "ready";
-          }
-        })();
+        const status = statusFromLifecycleEvent(event, activeTurnId);
         const lastError =
           event.type === "session.state.changed" && event.payload.state === "error"
             ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")

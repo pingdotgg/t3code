@@ -28,6 +28,7 @@ const AppServiceTierSchema = Schema.Literals(["auto", "fast", "flex"]);
 const MODELS_WITH_FAST_SUPPORT = new Set(["gpt-5.4"]);
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
+  gemini: new Set(getModelOptions("gemini").map((option) => option.slug)),
 };
 
 const AppSettingsSchema = Schema.Struct({
@@ -43,6 +44,9 @@ const AppSettingsSchema = Schema.Struct({
   ),
   codexServiceTier: AppServiceTierSchema.pipe(Schema.withConstructorDefault(() => Option.some("auto"))),
   customCodexModels: Schema.Array(Schema.String).pipe(
+    Schema.withConstructorDefault(() => Option.some([])),
+  ),
+  customGeminiModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
 });
@@ -108,7 +112,31 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
+    customGeminiModels: normalizeCustomModelSlugs(settings.customGeminiModels, "gemini"),
   };
+}
+
+export function getCustomModelsForProvider(
+  settings: Pick<AppSettings, "customCodexModels" | "customGeminiModels">,
+  provider: ProviderKind,
+): readonly string[] {
+  switch (provider) {
+    case "gemini":
+      return settings.customGeminiModels;
+    case "codex":
+    default:
+      return settings.customCodexModels;
+  }
+}
+
+export function patchCustomModelsForProvider(provider: ProviderKind, models: string[]) {
+  switch (provider) {
+    case "gemini":
+      return { customGeminiModels: models } satisfies Partial<AppSettings>;
+    case "codex":
+    default:
+      return { customCodexModels: models } satisfies Partial<AppSettings>;
+  }
 }
 
 export function getAppModelOptions(

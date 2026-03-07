@@ -8,6 +8,7 @@ import {
   getReasoningEffortOptions,
   normalizeModelSlug,
   resolveModelSlug,
+  resolveProviderForModel,
 } from "./model";
 
 describe("normalizeModelSlug", () => {
@@ -65,5 +66,16 @@ describe("getReasoningEffortOptions", () => {
 describe("getDefaultReasoningEffort", () => {
   it("returns provider-scoped defaults", () => {
     expect(getDefaultReasoningEffort("codex")).toBe("high");
+  });
+});
+
+describe("resolveProviderForModel", () => {
+  it("returns the matching provider for built-in Gemini models", () => {
+    expect(resolveProviderForModel("gemini-2.5-pro")).toBe("gemini");
+    expect(resolveProviderForModel("3-flash")).toBe("gemini");
+  });
+
+  it("falls back to codex for unknown models", () => {
+    expect(resolveProviderForModel("unknown-model")).toBe("codex");
   });
 });

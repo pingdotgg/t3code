@@ -7,8 +7,7 @@ import {
   type OrchestrationSessionStatus,
 } from "@t3tools/contracts";
 import {
-  getModelOptions,
-  normalizeModelSlug,
+  resolveProviderForModel,
   resolveModelSlug,
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
@@ -143,26 +142,20 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex") {
+  if (providerName === "codex" || providerName === "gemini") {
     return providerName;
   }
   return "codex";
 }
 
-const CODEX_MODEL_SLUGS = new Set<string>(getModelOptions("codex").map((option) => option.slug));
-
 function inferProviderForThreadModel(input: {
   readonly model: string;
   readonly sessionProviderName: string | null;
 }): ProviderKind {
-  if (input.sessionProviderName === "codex") {
+  if (input.sessionProviderName === "codex" || input.sessionProviderName === "gemini") {
     return input.sessionProviderName;
   }
-  const normalizedCodex = normalizeModelSlug(input.model, "codex");
-  if (normalizedCodex && CODEX_MODEL_SLUGS.has(normalizedCodex)) {
-    return "codex";
-  }
-  return "codex";
+  return resolveProviderForModel(input.model);
 }
 
 function resolveWsHttpOrigin(): string {

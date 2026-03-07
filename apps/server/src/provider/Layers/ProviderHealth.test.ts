@@ -1,212 +1,88 @@
 import assert from "node:assert/strict";
-import { it } from "@effect/vitest";
-import { Effect, Layer, Sink, Stream } from "effect";
-import * as PlatformError from "effect/PlatformError";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { Effect } from "effect";
+import { afterEach, describe, it, vi } from "vitest";
 
-import { checkCodexProviderStatus, parseAuthStatusFromOutput } from "./ProviderHealth";
+import * as CliEnvironment from "../../cliEnvironment";
+import {
+  checkCodexProviderStatus,
+  checkGeminiProviderStatus,
+  parseAuthStatusFromOutput,
+} from "./ProviderHealth";
 
-// ── Test helpers ────────────────────────────────────────────────────
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
-const encoder = new TextEncoder();
+describe("ProviderHealth", () => {
+  it("returns ready when codex CLI is available", async () => {
+    vi.spyOn(CliEnvironment, "isCodexCliAvailable").mockReturnValue(true);
 
-function mockHandle(result: { stdout: string; stderr: string; code: number }) {
-  return ChildProcessSpawner.makeHandle({
-    pid: ChildProcessSpawner.ProcessId(1),
-    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.code)),
-    isRunning: Effect.succeed(false),
-    kill: () => Effect.void,
-    stdin: Sink.drain,
-    stdout: Stream.make(encoder.encode(result.stdout)),
-    stderr: Stream.make(encoder.encode(result.stderr)),
-    all: Stream.empty,
-    getInputFd: () => Sink.drain,
-    getOutputFd: () => Stream.empty,
-  });
-}
-
-function mockSpawnerLayer(
-  handler: (args: ReadonlyArray<string>) => { stdout: string; stderr: string; code: number },
-) {
-  return Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command) => {
-      const cmd = command as unknown as { args: ReadonlyArray<string> };
-      return Effect.succeed(mockHandle(handler(cmd.args)));
-    }),
-  );
-}
-
-function failingSpawnerLayer(description: string) {
-  return Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make(() =>
-      Effect.fail(
-        PlatformError.systemError({
-          _tag: "NotFound",
-          module: "ChildProcess",
-          method: "spawn",
-          description,
-        }),
-      ),
-    ),
-  );
-}
-
-// ── Tests ───────────────────────────────────────────────────────────
-
-it.effect("returns ready when codex is installed and authenticated", () =>
-  Effect.gen(function* () {
-    const status = yield* checkCodexProviderStatus;
+    const status = await Effect.runPromise(checkCodexProviderStatus);
     assert.strictEqual(status.provider, "codex");
     assert.strictEqual(status.status, "ready");
     assert.strictEqual(status.available, true);
-    assert.strictEqual(status.authStatus, "authenticated");
-  }).pipe(
-    Effect.provide(
-      mockSpawnerLayer((args) => {
-        const joined = args.join(" ");
-        if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-        if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
-        throw new Error(`Unexpected args: ${joined}`);
-      }),
-    ),
-  ),
-);
+    assert.strictEqual(status.authStatus, "unknown");
+  });
 
-it.effect("returns unavailable when codex is missing", () =>
-  Effect.gen(function* () {
-    const status = yield* checkCodexProviderStatus;
+  it("returns unavailable when codex CLI is missing", async () => {
+    vi.spyOn(CliEnvironment, "isCodexCliAvailable").mockReturnValue(false);
+
+    const status = await Effect.runPromise(checkCodexProviderStatus);
     assert.strictEqual(status.provider, "codex");
     assert.strictEqual(status.status, "error");
     assert.strictEqual(status.available, false);
     assert.strictEqual(status.authStatus, "unknown");
     assert.strictEqual(status.message, "Codex CLI (`codex`) is not installed or not on PATH.");
-  }).pipe(Effect.provide(failingSpawnerLayer("spawn codex ENOENT"))),
-);
+  });
 
-it.effect("returns unavailable when codex is below the minimum supported version", () =>
-  Effect.gen(function* () {
-    const status = yield* checkCodexProviderStatus;
-    assert.strictEqual(status.provider, "codex");
-    assert.strictEqual(status.status, "error");
-    assert.strictEqual(status.available, false);
-    assert.strictEqual(status.authStatus, "unknown");
-    assert.strictEqual(
-      status.message,
-      "Codex CLI v0.36.0 is too old for T3 Code. Upgrade to v0.37.0 or newer and restart T3 Code.",
-    );
-  }).pipe(
-    Effect.provide(
-      mockSpawnerLayer((args) => {
-        const joined = args.join(" ");
-        if (joined === "--version") return { stdout: "codex 0.36.0\n", stderr: "", code: 0 };
-        throw new Error(`Unexpected args: ${joined}`);
-      }),
-    ),
-  ),
-);
+  it("returns ready when gemini CLI is available without forcing auth", async () => {
+    vi.spyOn(CliEnvironment, "isGeminiCliAvailable").mockReturnValue(true);
+    vi.stubEnv("GEMINI_API_KEY", "");
 
-it.effect("returns unauthenticated when auth probe reports login required", () =>
-  Effect.gen(function* () {
-    const status = yield* checkCodexProviderStatus;
-    assert.strictEqual(status.provider, "codex");
-    assert.strictEqual(status.status, "error");
-    assert.strictEqual(status.available, true);
-    assert.strictEqual(status.authStatus, "unauthenticated");
-    assert.strictEqual(
-      status.message,
-      "Codex CLI is not authenticated. Run `codex login` and try again.",
-    );
-  }).pipe(
-    Effect.provide(
-      mockSpawnerLayer((args) => {
-        const joined = args.join(" ");
-        if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-        if (joined === "login status") {
-          return { stdout: "", stderr: "Not logged in. Run codex login.", code: 1 };
-        }
-        throw new Error(`Unexpected args: ${joined}`);
-      }),
-    ),
-  ),
-);
-
-it.effect(
-  "returns unauthenticated when login status output includes 'not logged in'",
-  () =>
-    Effect.gen(function* () {
-      const status = yield* checkCodexProviderStatus;
-      assert.strictEqual(status.provider, "codex");
-      assert.strictEqual(status.status, "error");
-      assert.strictEqual(status.available, true);
-      assert.strictEqual(status.authStatus, "unauthenticated");
-      assert.strictEqual(
-        status.message,
-        "Codex CLI is not authenticated. Run `codex login` and try again.",
-      );
-    }).pipe(
-      Effect.provide(
-        mockSpawnerLayer((args) => {
-          const joined = args.join(" ");
-          if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-          if (joined === "login status")
-            return { stdout: "Not logged in\n", stderr: "", code: 1 };
-          throw new Error(`Unexpected args: ${joined}`);
-        }),
-      ),
-    ),
-);
-
-it.effect("returns warning when login status command is unsupported", () =>
-  Effect.gen(function* () {
-    const status = yield* checkCodexProviderStatus;
-    assert.strictEqual(status.provider, "codex");
-    assert.strictEqual(status.status, "warning");
+    const status = await Effect.runPromise(checkGeminiProviderStatus);
+    assert.strictEqual(status.provider, "gemini");
+    assert.strictEqual(status.status, "ready");
     assert.strictEqual(status.available, true);
     assert.strictEqual(status.authStatus, "unknown");
-    assert.strictEqual(
-      status.message,
-      "Codex CLI authentication status command is unavailable in this Codex version.",
-    );
-  }).pipe(
-    Effect.provide(
-      mockSpawnerLayer((args) => {
-        const joined = args.join(" ");
-        if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-        if (joined === "login status") {
-          return { stdout: "", stderr: "error: unknown command 'login'", code: 2 };
-        }
-        throw new Error(`Unexpected args: ${joined}`);
-      }),
-    ),
-  ),
-);
+  });
 
-// ── Pure function tests ─────────────────────────────────────────────
+  it("marks gemini as authenticated when GEMINI_API_KEY is present", async () => {
+    vi.spyOn(CliEnvironment, "isGeminiCliAvailable").mockReturnValue(true);
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
 
-it("parseAuthStatusFromOutput: exit code 0 with no auth markers is ready", () => {
-  const parsed = parseAuthStatusFromOutput({ stdout: "OK\n", stderr: "", code: 0 });
-  assert.strictEqual(parsed.status, "ready");
-  assert.strictEqual(parsed.authStatus, "authenticated");
+    const status = await Effect.runPromise(checkGeminiProviderStatus);
+    assert.strictEqual(status.provider, "gemini");
+    assert.strictEqual(status.status, "ready");
+    assert.strictEqual(status.available, true);
+    assert.strictEqual(status.authStatus, "authenticated");
+  });
 });
 
-it("parseAuthStatusFromOutput: JSON with authenticated=false is unauthenticated", () => {
-  const parsed = parseAuthStatusFromOutput({
-    stdout: '[{"authenticated":false}]\n',
-    stderr: "",
-    code: 0,
+describe("parseAuthStatusFromOutput", () => {
+  it("treats exit code 0 with no auth markers as ready", () => {
+    const parsed = parseAuthStatusFromOutput({ stdout: "OK\n", stderr: "", code: 0 });
+    assert.strictEqual(parsed.status, "ready");
+    assert.strictEqual(parsed.authStatus, "authenticated");
   });
-  assert.strictEqual(parsed.status, "error");
-  assert.strictEqual(parsed.authStatus, "unauthenticated");
-});
 
-it("parseAuthStatusFromOutput: JSON without auth marker is warning", () => {
-  const parsed = parseAuthStatusFromOutput({
-    stdout: '[{"ok":true}]\n',
-    stderr: "",
-    code: 0,
+  it("detects authenticated=false in JSON", () => {
+    const parsed = parseAuthStatusFromOutput({
+      stdout: '[{"authenticated":false}]\n',
+      stderr: "",
+      code: 0,
+    });
+    assert.strictEqual(parsed.status, "error");
+    assert.strictEqual(parsed.authStatus, "unauthenticated");
   });
-  assert.strictEqual(parsed.status, "warning");
-  assert.strictEqual(parsed.authStatus, "unknown");
+
+  it("returns warning for JSON without auth markers", () => {
+    const parsed = parseAuthStatusFromOutput({
+      stdout: '[{"ok":true}]\n',
+      stderr: "",
+      code: 0,
+    });
+    assert.strictEqual(parsed.status, "warning");
+    assert.strictEqual(parsed.authStatus, "unknown");
+  });
 });

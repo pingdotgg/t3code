@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   getAppModelOptions,
+  getCustomModelsForProvider,
   getSlashModelOptions,
   normalizeCustomModelSlugs,
+  patchCustomModelsForProvider,
   resolveAppServiceTier,
   shouldShowFastTierIcon,
   resolveAppModelSelection,
@@ -21,6 +23,16 @@ describe("normalizeCustomModelSlugs", () => {
         null,
       ]),
     ).toEqual(["custom/internal-model"]);
+  });
+
+  it("supports provider-specific Gemini custom models", () => {
+    const options = getAppModelOptions("gemini", ["gemini/internal-preview"]);
+
+    expect(options.at(-1)).toEqual({
+      slug: "gemini/internal-preview",
+      name: "gemini/internal-preview",
+      isCustom: true,
+    });
   });
 });
 
@@ -93,6 +105,26 @@ describe("resolveAppServiceTier", () => {
   it("preserves explicit service tier overrides", () => {
     expect(resolveAppServiceTier("fast")).toBe("fast");
     expect(resolveAppServiceTier("flex")).toBe("flex");
+  });
+});
+
+describe("provider-specific custom models", () => {
+  it("reads custom models for the requested provider", () => {
+    expect(
+      getCustomModelsForProvider(
+        {
+          customCodexModels: ["gpt-custom"],
+          customGeminiModels: ["gemini-custom"],
+        },
+        "gemini",
+      ),
+    ).toEqual(["gemini-custom"]);
+  });
+
+  it("patches the correct settings key for Gemini custom models", () => {
+    expect(patchCustomModelsForProvider("gemini", ["gemini-custom"])).toEqual({
+      customGeminiModels: ["gemini-custom"],
+    });
   });
 });
 

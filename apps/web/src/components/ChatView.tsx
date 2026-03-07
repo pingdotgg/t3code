@@ -73,6 +73,7 @@ import {
   type PendingApproval,
   type PendingUserInput,
   type ProviderPickerKind,
+  type WorkLogEntry,
   PROVIDER_OPTIONS,
   deriveWorkLogEntries,
   hasToolActivityForTurn,
@@ -103,17 +104,12 @@ import {
   MAX_THREAD_TERMINAL_COUNT,
   type ChatMessage,
   type Thread,
-  type TurnDiffFileChange,
   type TurnDiffSummary,
 } from "../types";
 import { basenameOfPath, getVscodeIconUrlForEntry } from "../vscode-icons";
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
-import {
-  buildTurnDiffTree,
-  summarizeTurnDiffStats,
-  type TurnDiffTreeNode,
-} from "../lib/turnDiffTree";
+import { summarizeTurnDiffStats } from "../lib/turnDiffTree";
 import BranchToolbar from "./BranchToolbar";
 import GitActionsControl from "./GitActionsControl";
 import {
@@ -200,6 +196,7 @@ import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import {
   getAppModelOptions,
+  getCustomModelsForProvider,
   resolveAppModelSelection,
   resolveAppServiceTier,
   shouldShowFastTierIcon,
@@ -218,6 +215,7 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { clamp } from "effect/Number";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
+import { useThreadRunStateStore } from "../threadRunStateStore";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
   if (!duration) return formatTimestamp(createdAt);
@@ -249,7 +247,6 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
-const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -284,11 +281,29 @@ function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
   }
 }
 
-function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
-  if (tone === "error") return "text-rose-300/50 dark:text-rose-300/50";
-  if (tone === "tool") return "text-muted-foreground/70";
-  if (tone === "thinking") return "text-muted-foreground/50";
-  return "text-muted-foreground/40";
+function providerDisplayName(provider: ProviderKind | null | undefined): string {
+  if (provider === "gemini") return "Gemini";
+  if (provider === "codex") return "Codex";
+  return "Assistant";
+}
+
+function summarizeActiveWorkEntry(entry: WorkLogEntry | null): { title: string; detail: string | null } {
+  if (!entry) {
+    return {
+      title: "Preparing response",
+      detail: null,
+    };
+  }
+
+  const title = entry.label.trim().length > 0 ? entry.label : "Working";
+  const detailSource =
+    entry.command ??
+    entry.detail ??
+    (entry.changedFiles && entry.changedFiles.length > 0
+      ? entry.changedFiles.slice(0, 3).join(", ")
+      : null);
+  const detail = detailSource?.trim().length ? detailSource.trim() : null;
+  return { title, detail };
 }
 
 function normalizePlanMarkdownForExport(planMarkdown: string): string {
@@ -643,7 +658,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     Record<ThreadId, string | null>
   >({});
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
-  const [sendStartedAt, setSendStartedAt] = useState<string | null>(null);
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
@@ -657,6 +671,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     useState<Record<string, number>>({});
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [nowTick, setNowTick] = useState(() => Date.now());
+  const [animatedAssistantMessageId, setAnimatedAssistantMessageId] = useState<MessageId | null>(
+    null,
+  );
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
@@ -693,6 +710,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
+  const previousWorkingRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
@@ -709,6 +727,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const storeNewTerminal = useTerminalStateStore((s) => s.newTerminal);
   const storeSetActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
+  const optimisticThreadRun = useThreadRunStateStore(
+    (state) => state.pendingRunByThreadId[threadId] ?? null,
+  );
+  const startPendingRun = useThreadRunStateStore((state) => state.startPendingRun);
+  const clearPendingRun = useThreadRunStateStore((state) => state.clearPendingRun);
 
   const setPrompt = useCallback(
     (nextPrompt: string) => {
@@ -803,7 +826,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedProvider,
     activeThread?.model ?? activeProject?.model ?? getDefaultModel(selectedProvider),
   );
-  const customModelsForSelectedProvider = settings.customCodexModels;
+  const customModelsForSelectedProvider = getCustomModelsForProvider(settings, selectedProvider);
   const selectedModel = useMemo(() => {
     const draftModel = composerDraft.model;
     if (!draftModel) {
@@ -861,12 +884,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const phase = derivePhase(activeThread?.session ?? null);
   const isSendBusy = sendPhase !== "idle";
   const isPreparingWorktree = sendPhase === "preparing-worktree";
-  const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const isPendingThreadRun = optimisticThreadRun !== null;
+  const isWorking =
+    phase === "running" ||
+    isPendingThreadRun ||
+    isSendBusy ||
+    isConnecting ||
+    isRevertingCheckpoint;
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
-    sendStartedAt,
+    optimisticThreadRun?.startedAt ?? null,
   );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
@@ -938,6 +967,33 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeProposedPlan !== null;
   const activePendingApproval = pendingApprovals[0] ?? null;
   const isComposerApprovalState = activePendingApproval !== null;
+  const activeAssistantLabel = providerDisplayName(activeThread?.session?.provider ?? selectedProvider);
+  const activeWorkEntry = workLogEntries.at(-1) ?? null;
+  const activeWorkSummary = useMemo(() => {
+    if (activeWorkEntry) {
+      return summarizeActiveWorkEntry(activeWorkEntry);
+    }
+    if (optimisticThreadRun?.phase === "preparing-worktree") {
+      return {
+        title: "Preparing workspace",
+        detail: "Creating and configuring an isolated worktree before the turn starts.",
+      };
+    }
+    if (optimisticThreadRun?.phase === "sending-turn") {
+      return {
+        title: "Starting turn",
+        detail: "Handing the request to the provider and waiting for live events.",
+      };
+    }
+    return summarizeActiveWorkEntry(null);
+  }, [activeWorkEntry, optimisticThreadRun?.phase]);
+  const composerLocked =
+    isConnecting ||
+    isPendingThreadRun ||
+    isComposerApprovalState ||
+    phase === "running" ||
+    isSendBusy ||
+    isRevertingCheckpoint;
   const hasComposerHeader =
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
@@ -1138,6 +1194,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
     latestTurnHasToolActivity,
     latestTurnSettled,
   ]);
+  const latestCompletedAssistantMessage = useMemo(
+    () =>
+      timelineMessages
+        .toReversed()
+        .find((message) => message.role === "assistant" && !message.streaming) ?? null,
+    [timelineMessages],
+  );
+  useEffect(() => {
+    const wasWorking = previousWorkingRef.current;
+    if (wasWorking && !isWorking && latestCompletedAssistantMessage?.id) {
+      setAnimatedAssistantMessageId(latestCompletedAssistantMessage.id);
+    }
+    previousWorkingRef.current = isWorking;
+  }, [isWorking, latestCompletedAssistantMessage?.id]);
   const completionDividerBeforeEntryId = useMemo(() => {
     if (!latestTurnSettled) return null;
     if (!activeLatestTurn?.startedAt) return null;
@@ -1973,14 +2043,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return [];
     });
     setSendPhase("idle");
-    setSendStartedAt(null);
+    clearPendingRun(threadId);
     setComposerHighlightedItemId(null);
     setComposerCursor(promptRef.current.length);
     setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     setExpandedImage(null);
-  }, [threadId]);
+  }, [clearPendingRun, threadId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2104,24 +2174,31 @@ export default function ChatView({ threadId }: ChatViewProps) {
       : "local";
 
   useEffect(() => {
-    if (phase !== "running") return;
+    if (!isWorking) return;
     const timer = window.setInterval(() => {
       setNowTick(Date.now());
     }, 1000);
     return () => {
       window.clearInterval(timer);
     };
-  }, [phase]);
+  }, [isWorking]);
 
   const beginSendPhase = useCallback((nextPhase: Exclude<SendPhase, "idle">) => {
-    setSendStartedAt((current) => current ?? new Date().toISOString());
+    if (!activeThreadId) return;
+    startPendingRun(activeThreadId, {
+      phase: nextPhase,
+      provider: selectedProvider,
+      startedAt: new Date().toISOString(),
+    });
     setSendPhase(nextPhase);
-  }, []);
+  }, [activeThreadId, selectedProvider, startPendingRun]);
 
   const resetSendPhase = useCallback(() => {
     setSendPhase("idle");
-    setSendStartedAt(null);
-  }, []);
+    if (activeThreadId) {
+      clearPendingRun(activeThreadId);
+    }
+  }, [activeThreadId, clearPendingRun]);
 
   useEffect(() => {
     if (sendPhase === "idle") {
@@ -2398,7 +2475,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     const api = readNativeApi();
-    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (
+      !api ||
+      !activeThread ||
+      phase === "running" ||
+      isPendingThreadRun ||
+      isSendBusy ||
+      isConnecting ||
+      sendInFlightRef.current
+    ) {
+      return;
+    }
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
@@ -2626,7 +2713,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ...(selectedModelOptionsForDispatch
           ? { modelOptions: selectedModelOptionsForDispatch }
           : {}),
-        provider: selectedProvider,
+        ...(isFirstMessage ? { provider: selectedProvider } : {}),
         assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
         runtimeMode,
         interactionMode,
@@ -2843,6 +2930,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         !api ||
         !activeThread ||
         !isServerThread ||
+        isPendingThreadRun ||
         isSendBusy ||
         isConnecting ||
         sendInFlightRef.current
@@ -2898,7 +2986,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
             text: trimmed,
             attachments: [],
           },
-          provider: selectedProvider,
           model: selectedModel || undefined,
           ...(selectedModelOptionsForDispatch
             ? { modelOptions: selectedModelOptionsForDispatch }
@@ -2926,6 +3013,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       beginSendPhase,
       forceStickToBottom,
       isConnecting,
+      isPendingThreadRun,
       isSendBusy,
       isServerThread,
       persistThreadSettingsForNextTurn,
@@ -2933,7 +3021,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       runtimeMode,
       selectedModel,
       selectedModelOptionsForDispatch,
-      selectedProvider,
       setComposerDraftInteractionMode,
       setThreadError,
       settings.enableAssistantStreaming,
@@ -2946,11 +3033,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       !api ||
       !activeThread ||
       !activeProject ||
-      !activeProposedPlan ||
-      !isServerThread ||
-      isSendBusy ||
-      isConnecting ||
-      sendInFlightRef.current
+        !activeProposedPlan ||
+        !isServerThread ||
+        isPendingThreadRun ||
+        isSendBusy ||
+        isConnecting ||
+        sendInFlightRef.current
     ) {
       return;
     }
@@ -3045,6 +3133,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeThread,
     beginSendPhase,
     isConnecting,
+    isPendingThreadRun,
     isSendBusy,
     isServerThread,
     navigate,
@@ -3067,7 +3156,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerDraftProvider(activeThread.id, provider);
       setComposerDraftModel(
         activeThread.id,
-        resolveAppModelSelection(provider, settings.customCodexModels, model),
+        resolveAppModelSelection(provider, getCustomModelsForProvider(settings, provider), model),
       );
       scheduleComposerFocus();
     },
@@ -3077,7 +3166,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       scheduleComposerFocus,
       setComposerDraftModel,
       setComposerDraftProvider,
-      settings.customCodexModels,
+      settings,
     ],
   );
   const onEffortSelect = useCallback(
@@ -3436,10 +3525,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
           isWorking={isWorking}
           activeTurnInProgress={isWorking || !latestTurnSettled}
           activeTurnStartedAt={activeWorkStartedAt}
+          activeAssistantLabel={activeAssistantLabel}
+          activeWorkSummary={activeWorkSummary}
+          liveWorkEntries={workLogEntries}
+          optimisticRunPhase={optimisticThreadRun?.phase ?? null}
           scrollContainer={messagesScrollElement}
           timelineEntries={timelineEntries}
           completionDividerBeforeEntryId={completionDividerBeforeEntryId}
           completionSummary={completionSummary}
+          animatedAssistantMessageId={animatedAssistantMessageId}
+          onAnimatedAssistantMessageComplete={() => setAnimatedAssistantMessageId(null)}
           turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
           nowIso={nowIso}
           expandedWorkGroups={expandedWorkGroups}
@@ -3450,7 +3545,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           isRevertingCheckpoint={isRevertingCheckpoint}
           onImageExpand={onExpandTimelineImage}
           markdownCwd={gitCwd ?? undefined}
-          resolvedTheme={resolvedTheme}
           workspaceRoot={activeProject?.cwd ?? undefined}
         />
       </div>
@@ -3607,7 +3701,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         ? "Ask for follow-up changes or attach images"
                         : "Ask anything, @tag files/folders, or use /model"
                 }
-                disabled={isConnecting || isComposerApprovalState}
+                disabled={composerLocked}
               />
             </div>
 
@@ -4383,134 +4477,6 @@ const DiffStatLabel = memo(function DiffStatLabel(props: {
   );
 });
 
-function collectDirectoryPaths(nodes: ReadonlyArray<TurnDiffTreeNode>): string[] {
-  const paths: string[] = [];
-  for (const node of nodes) {
-    if (node.kind !== "directory") continue;
-    paths.push(node.path);
-    paths.push(...collectDirectoryPaths(node.children));
-  }
-  return paths;
-}
-
-function buildDirectoryExpansionState(
-  directoryPaths: ReadonlyArray<string>,
-  expanded: boolean,
-): Record<string, boolean> {
-  const expandedState: Record<string, boolean> = {};
-  for (const directoryPath of directoryPaths) {
-    expandedState[directoryPath] = expanded;
-  }
-  return expandedState;
-}
-
-const ChangedFilesTree = memo(function ChangedFilesTree(props: {
-  turnId: TurnId;
-  files: ReadonlyArray<TurnDiffFileChange>;
-  allDirectoriesExpanded: boolean;
-  resolvedTheme: "light" | "dark";
-  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
-}) {
-  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId } = props;
-  const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
-  const directoryPathsKey = useMemo(
-    () => collectDirectoryPaths(treeNodes).join("\u0000"),
-    [treeNodes],
-  );
-  const allDirectoryExpansionState = useMemo(
-    () =>
-      buildDirectoryExpansionState(
-        directoryPathsKey ? directoryPathsKey.split("\u0000") : [],
-        allDirectoriesExpanded,
-      ),
-    [allDirectoriesExpanded, directoryPathsKey],
-  );
-  const [expandedDirectories, setExpandedDirectories] = useState<Record<string, boolean>>(() =>
-    buildDirectoryExpansionState(directoryPathsKey ? directoryPathsKey.split("\u0000") : [], true),
-  );
-  useEffect(() => {
-    setExpandedDirectories(allDirectoryExpansionState);
-  }, [allDirectoryExpansionState]);
-
-  const toggleDirectory = useCallback((pathValue: string, fallbackExpanded: boolean) => {
-    setExpandedDirectories((current) => ({
-      ...current,
-      [pathValue]: !(current[pathValue] ?? fallbackExpanded),
-    }));
-  }, []);
-
-  const renderTreeNode = (node: TurnDiffTreeNode, depth: number) => {
-    const leftPadding = 8 + depth * 14;
-    if (node.kind === "directory") {
-      const isExpanded = expandedDirectories[node.path] ?? depth === 0;
-      return (
-        <div key={`dir:${node.path}`}>
-          <button
-            type="button"
-            className="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
-            style={{ paddingLeft: `${leftPadding}px` }}
-            onClick={() => toggleDirectory(node.path, depth === 0)}
-          >
-            <ChevronRightIcon
-              aria-hidden="true"
-              className={cn(
-                "size-3.5 shrink-0 text-muted-foreground/70 transition-transform group-hover:text-foreground/80",
-                isExpanded && "rotate-90",
-              )}
-            />
-            {isExpanded ? (
-              <FolderIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
-            ) : (
-              <FolderClosedIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
-            )}
-            <span className="truncate font-mono text-[11px] text-muted-foreground/90 group-hover:text-foreground/90">
-              {node.name}
-            </span>
-            {hasNonZeroStat(node.stat) && (
-              <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
-                <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
-              </span>
-            )}
-          </button>
-          {isExpanded && (
-            <div className="space-y-0.5">
-              {node.children.map((childNode) => renderTreeNode(childNode, depth + 1))}
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    return (
-      <button
-        key={`file:${node.path}`}
-        type="button"
-        className="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
-        style={{ paddingLeft: `${leftPadding}px` }}
-        onClick={() => onOpenTurnDiff(turnId, node.path)}
-      >
-        <span aria-hidden="true" className="size-3.5 shrink-0" />
-        <VscodeEntryIcon
-          pathValue={node.path}
-          kind="file"
-          theme={resolvedTheme}
-          className="size-3.5 text-muted-foreground/70"
-        />
-        <span className="truncate font-mono text-[11px] text-muted-foreground/80 group-hover:text-foreground/90">
-          {node.name}
-        </span>
-        {node.stat && (
-          <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
-            <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
-          </span>
-        )}
-      </button>
-    );
-  };
-
-  return <div className="space-y-0.5">{treeNodes.map((node) => renderTreeNode(node, 0))}</div>;
-});
-
 const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
   cwd,
@@ -4687,10 +4653,16 @@ interface MessagesTimelineProps {
   isWorking: boolean;
   activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
+  activeAssistantLabel: string;
+  activeWorkSummary: { title: string; detail: string | null };
+  liveWorkEntries: ReadonlyArray<WorkLogEntry>;
+  optimisticRunPhase: "sending-turn" | "preparing-worktree" | null;
   scrollContainer: HTMLDivElement | null;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   completionDividerBeforeEntryId: string | null;
   completionSummary: string | null;
+  animatedAssistantMessageId: MessageId | null;
+  onAnimatedAssistantMessageComplete: () => void;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   nowIso: string;
   expandedWorkGroups: Record<string, boolean>;
@@ -4701,7 +4673,6 @@ interface MessagesTimelineProps {
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
-  resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
 }
 
@@ -4713,8 +4684,8 @@ type TimelineRow =
   | {
       kind: "work";
       id: string;
-      createdAt: string;
-      groupedEntries: TimelineWorkEntry[];
+      createdAt: string | null;
+      groupedEntries: ReadonlyArray<TimelineWorkEntry>;
     }
   | {
       kind: "message";
@@ -4722,6 +4693,7 @@ type TimelineRow =
       createdAt: string;
       message: TimelineMessage;
       showCompletionDivider: boolean;
+      changedFilesSummary: TurnDiffSummary | null;
     }
   | {
       kind: "proposed-plan";
@@ -4730,6 +4702,240 @@ type TimelineRow =
       proposedPlan: TimelineProposedPlan;
     }
   | { kind: "working"; id: string; createdAt: string | null };
+
+const AnimatedActivityText = memo(function AnimatedActivityText(props: {
+  text: string;
+  className?: string;
+}) {
+  const { text, className } = props;
+  const [visibleLength, setVisibleLength] = useState(text.length > 0 ? 1 : 0);
+
+  useEffect(() => {
+    setVisibleLength(text.length > 0 ? 1 : 0);
+  }, [text]);
+
+  useEffect(() => {
+    if (visibleLength >= text.length) {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      setVisibleLength((current) => Math.min(text.length, current + Math.max(1, Math.ceil(text.length / 24))));
+    }, 22);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [text.length, visibleLength]);
+
+  return <span className={className}>{text.slice(0, visibleLength)}</span>;
+});
+
+const CompactActivityStrip = memo(function CompactActivityStrip(props: {
+  assistantLabel: string;
+  title: string;
+  detail: string | null;
+  statusLabel: string;
+  elapsed: string | null;
+  entries: ReadonlyArray<TimelineWorkEntry>;
+  expanded: boolean;
+  onToggleExpanded: () => void;
+}) {
+  const { assistantLabel, title, detail, statusLabel, elapsed, entries, expanded, onToggleExpanded } = props;
+  const eventCount = entries.length;
+  const canExpand = eventCount > 1 || Boolean(detail) || entries.some((entry) => entry.command || entry.detail);
+  const visibleEntries = expanded ? entries : entries.slice(-3);
+
+  return (
+    <div className="rounded-2xl border border-border/80 bg-card/45 px-4 py-3 shadow-sm">
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-full border border-border/70 bg-background/80 text-muted-foreground/75">
+          <BotIcon className="size-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-medium text-foreground/92">{assistantLabel} is working</p>
+            <span className="rounded-full border border-border/70 bg-background/70 px-2 py-0.5 text-[10px] text-muted-foreground/72">
+              {statusLabel}
+            </span>
+            {elapsed ? (
+              <span className="text-[11px] text-muted-foreground/58">{elapsed}</span>
+            ) : null}
+          </div>
+          <div className="mt-1 flex min-w-0 items-center gap-2">
+            <span className="inline-flex items-center gap-[4px] text-muted-foreground/55" aria-hidden="true">
+              <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
+              <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse [animation-delay:180ms]" />
+              <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse [animation-delay:360ms]" />
+            </span>
+            <AnimatedActivityText
+              text={detail ? `${title} — ${detail}` : title}
+              className="min-w-0 truncate text-sm leading-relaxed text-foreground/84"
+            />
+          </div>
+          {canExpand ? (
+            <div className="mt-2">
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground/60 transition-colors hover:text-muted-foreground/85"
+                onClick={onToggleExpanded}
+              >
+                <ChevronDownIcon
+                  className={cn("size-3 transition-transform duration-150", expanded ? "rotate-180" : "")}
+                />
+                {expanded ? "Hide activity" : `${eventCount} live event${eventCount === 1 ? "" : "s"}`}
+              </button>
+            </div>
+          ) : null}
+          {expanded ? (
+            <div className="mt-2 space-y-1.5 border-t border-border/65 pt-2">
+              {visibleEntries.map((entry) => (
+                <div key={entry.id} className="flex items-start gap-2 text-[11px] leading-relaxed">
+                  <span className="mt-[6px] h-1 w-1 shrink-0 rounded-full bg-muted-foreground/35" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-muted-foreground/86">{entry.label}</p>
+                    {entry.command ? (
+                      <p className="truncate font-mono text-muted-foreground/66" title={entry.command}>
+                        {entry.command}
+                      </p>
+                    ) : entry.detail ? (
+                      <p className="truncate text-muted-foreground/62" title={entry.detail}>
+                        {entry.detail}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const CompactChangedFilesSummary = memo(function CompactChangedFilesSummary(props: {
+  turnSummary: TurnDiffSummary;
+  expanded: boolean;
+  onToggleExpanded: () => void;
+  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+}) {
+  const { turnSummary, expanded, onToggleExpanded, onOpenTurnDiff } = props;
+  const summaryStat = summarizeTurnDiffStats(turnSummary.files);
+  const visibleFiles = expanded ? turnSummary.files : turnSummary.files.slice(0, 3);
+
+  return (
+    <div className="mt-3 overflow-hidden rounded-xl border border-border/75 bg-card/40">
+      <div className="flex items-center justify-between gap-3 px-3 py-2 text-[11px]">
+        <button
+          type="button"
+          className="inline-flex min-w-0 items-center gap-2 text-left text-foreground/82 transition-colors hover:text-foreground"
+          onClick={onToggleExpanded}
+        >
+          <span>{turnSummary.files.length} file{turnSummary.files.length === 1 ? "" : "s"} changed</span>
+          {hasNonZeroStat(summaryStat) ? (
+            <span className="font-mono tabular-nums">
+              <DiffStatLabel additions={summaryStat.additions} deletions={summaryStat.deletions} />
+            </span>
+          ) : null}
+          <ChevronDownIcon
+            className={cn("size-3 shrink-0 transition-transform duration-150", expanded ? "rotate-180" : "")}
+          />
+        </button>
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          onClick={() => onOpenTurnDiff(turnSummary.turnId, turnSummary.files[0]?.path)}
+        >
+          View diff
+        </Button>
+      </div>
+      <div className="divide-y divide-border/60 border-t border-border/60">
+        {visibleFiles.map((file) => (
+          (() => {
+            const additions = file.additions ?? 0;
+            const deletions = file.deletions ?? 0;
+            return (
+              <button
+                key={`${turnSummary.turnId}:${file.path}`}
+                type="button"
+                className="flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-background/40"
+                onClick={() => onOpenTurnDiff(turnSummary.turnId, file.path)}
+              >
+                <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-foreground/84">
+                  {file.path}
+                </span>
+                {hasNonZeroStat({ additions, deletions }) ? (
+                  <span className="shrink-0 font-mono text-[11px] tabular-nums">
+                    <DiffStatLabel additions={additions} deletions={deletions} />
+                  </span>
+                ) : null}
+              </button>
+            );
+          })()
+        ))}
+        {!expanded && turnSummary.files.length > visibleFiles.length ? (
+          <button
+            type="button"
+            className="w-full px-3 py-2 text-left text-[11px] text-muted-foreground/62 transition-colors hover:bg-background/40 hover:text-muted-foreground/85"
+            onClick={onToggleExpanded}
+          >
+            Show {turnSummary.files.length - visibleFiles.length} more files
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+});
+
+
+const AnimatedAssistantMessage = memo(function AnimatedAssistantMessage({
+  message,
+  cwd,
+  animate,
+  onComplete,
+}: {
+  message: TimelineMessage;
+  cwd: string | undefined;
+  animate: boolean;
+  onComplete: () => void;
+}) {
+  const targetText = message.text || "(empty response)";
+  const [visibleLength, setVisibleLength] = useState(
+    animate ? Math.min(Math.max(10, Math.ceil(targetText.length * 0.08)), targetText.length) : targetText.length,
+  );
+
+  useEffect(() => {
+    if (!animate) {
+      setVisibleLength(targetText.length);
+      return;
+    }
+    const initialLength = Math.min(Math.max(10, Math.ceil(targetText.length * 0.08)), targetText.length);
+    setVisibleLength(initialLength);
+  }, [animate, targetText.length]);
+
+  useEffect(() => {
+    if (!animate) return;
+    if (visibleLength >= targetText.length) {
+      onComplete();
+      return;
+    }
+    const step = Math.max(8, Math.ceil(targetText.length / 28));
+    const timeout = window.setTimeout(() => {
+      setVisibleLength((current) => Math.min(targetText.length, current + step));
+    }, 20);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [animate, onComplete, targetText.length, visibleLength]);
+
+  return (
+    <ChatMarkdown
+      text={animate ? targetText.slice(0, visibleLength) : targetText}
+      cwd={cwd}
+      isStreaming={Boolean(message.streaming) || (animate && visibleLength < targetText.length)}
+    />
+  );
+});
 
 function estimateTimelineProposedPlanHeight(proposedPlan: TimelineProposedPlan): number {
   const estimatedLines = Math.max(1, Math.ceil(proposedPlan.planMarkdown.length / 72));
@@ -4741,10 +4947,16 @@ const MessagesTimeline = memo(function MessagesTimeline({
   isWorking,
   activeTurnInProgress,
   activeTurnStartedAt,
+  activeAssistantLabel,
+  activeWorkSummary,
+  liveWorkEntries,
+  optimisticRunPhase,
   scrollContainer,
   timelineEntries,
   completionDividerBeforeEntryId,
   completionSummary,
+  animatedAssistantMessageId,
+  onAnimatedAssistantMessageComplete,
   turnDiffSummaryByAssistantMessageId,
   nowIso,
   expandedWorkGroups,
@@ -4755,7 +4967,6 @@ const MessagesTimeline = memo(function MessagesTimeline({
   isRevertingCheckpoint,
   onImageExpand,
   markdownCwd,
-  resolvedTheme,
   workspaceRoot,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
@@ -4796,21 +5007,6 @@ const MessagesTimeline = memo(function MessagesTimeline({
       }
 
       if (timelineEntry.kind === "work") {
-        const groupedEntries = [timelineEntry.entry];
-        let cursor = index + 1;
-        while (cursor < timelineEntries.length) {
-          const nextEntry = timelineEntries[cursor];
-          if (!nextEntry || nextEntry.kind !== "work") break;
-          groupedEntries.push(nextEntry.entry);
-          cursor += 1;
-        }
-        nextRows.push({
-          kind: "work",
-          id: timelineEntry.id,
-          createdAt: timelineEntry.createdAt,
-          groupedEntries,
-        });
-        index = cursor - 1;
         continue;
       }
 
@@ -4832,19 +5028,40 @@ const MessagesTimeline = memo(function MessagesTimeline({
         showCompletionDivider:
           timelineEntry.message.role === "assistant" &&
           completionDividerBeforeEntryId === timelineEntry.id,
+        changedFilesSummary:
+          timelineEntry.message.role === "assistant"
+            ? (turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id) ?? null)
+            : null,
       });
     }
 
-    if (isWorking) {
-      nextRows.push({
-        kind: "working",
-        id: "working-indicator-row",
-        createdAt: activeTurnStartedAt,
-      });
+    if (activeTurnInProgress) {
+      if (liveWorkEntries.length > 0) {
+        nextRows.push({
+          kind: "work",
+          id: `live-work:${liveWorkEntries.at(-1)?.id ?? "current"}`,
+          createdAt: liveWorkEntries[0]?.createdAt ?? activeTurnStartedAt ?? null,
+          groupedEntries: liveWorkEntries,
+        });
+      } else if (isWorking) {
+        nextRows.push({
+          kind: "working",
+          id: "working-indicator-row",
+          createdAt: activeTurnStartedAt,
+        });
+      }
     }
 
     return nextRows;
-  }, [timelineEntries, completionDividerBeforeEntryId, isWorking, activeTurnStartedAt]);
+  }, [
+    timelineEntries,
+    completionDividerBeforeEntryId,
+    activeTurnInProgress,
+    isWorking,
+    activeTurnStartedAt,
+    liveWorkEntries,
+    turnDiffSummaryByAssistantMessageId,
+  ]);
 
   const firstUnvirtualizedRowIndex = useMemo(() => {
     const firstTailRowIndex = Math.max(rows.length - ALWAYS_UNVIRTUALIZED_TAIL_ROWS, 0);
@@ -4899,7 +5116,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
       if (!row) return 96;
       if (row.kind === "work") return 112;
       if (row.kind === "proposed-plan") return estimateTimelineProposedPlanHeight(row.proposedPlan);
-      if (row.kind === "working") return 40;
+      if (row.kind === "working") return 132;
       return estimateTimelineMessageHeight(row.message, { timelineWidthPx });
     },
     measureElement: measureVirtualElement,
@@ -4940,15 +5157,6 @@ const MessagesTimeline = memo(function MessagesTimeline({
 
   const virtualRows = rowVirtualizer.getVirtualItems();
   const nonVirtualizedRows = rows.slice(virtualizedRowCount);
-  const [allDirectoriesExpandedByTurnId, setAllDirectoriesExpandedByTurnId] = useState<
-    Record<string, boolean>
-  >({});
-  const onToggleAllDirectories = useCallback((turnId: TurnId) => {
-    setAllDirectoriesExpandedByTurnId((current) => ({
-      ...current,
-      [turnId]: !(current[turnId] ?? true),
-    }));
-  }, []);
 
   const renderRowContent = (row: TimelineRow) => (
     <div
@@ -4962,82 +5170,27 @@ const MessagesTimeline = memo(function MessagesTimeline({
           const groupId = row.id;
           const groupedEntries = row.groupedEntries;
           const isExpanded = expandedWorkGroups[groupId] ?? false;
-          const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
-          const visibleEntries =
-            hasOverflow && !isExpanded
-              ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
-              : groupedEntries;
-          const hiddenCount = groupedEntries.length - visibleEntries.length;
-          const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
-          const groupLabel = onlyToolEntries
-            ? groupedEntries.length === 1
-              ? "Tool call"
-              : `Tool calls (${groupedEntries.length})`
-            : groupedEntries.length === 1
-              ? "Work event"
-              : `Work log (${groupedEntries.length})`;
+          const latestEntry = groupedEntries.at(-1) ?? null;
+          const status = latestEntry?.tone === "error" ? "Attention" : "Live";
+          const elapsed =
+            row.createdAt !== null ? formatWorkingTimer(row.createdAt, nowIso) : null;
 
           return (
-            <div className="rounded-lg border border-border/80 bg-card/45 px-3 py-2">
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
-                  {groupLabel}
-                </p>
-                {hasOverflow && (
-                  <button
-                    type="button"
-                    className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-muted-foreground/80"
-                    onClick={() => onToggleWorkGroup(groupId)}
-                  >
-                    {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
-                  </button>
-                )}
-              </div>
-              <div className="space-y-1">
-                {visibleEntries.map((workEntry) => (
-                  <div key={`work-row:${workEntry.id}`} className="flex items-start gap-2 py-0.5">
-                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
-                    <div className="min-w-0 flex-1 py-[2px]">
-                      <p className={`text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}>
-                        {workEntry.label}
-                      </p>
-                      {workEntry.command && (
-                        <pre className="mt-1 overflow-x-auto rounded-md border border-border/70 bg-background/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-foreground/80">
-                          {workEntry.command}
-                        </pre>
-                      )}
-                      {workEntry.changedFiles && workEntry.changedFiles.length > 0 && (
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {workEntry.changedFiles.slice(0, 6).map((filePath) => (
-                            <span
-                              key={`${workEntry.id}:${filePath}`}
-                              className="rounded-md border border-border/70 bg-background/65 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/85"
-                              title={filePath}
-                            >
-                              {filePath}
-                            </span>
-                          ))}
-                          {workEntry.changedFiles.length > 6 && (
-                            <span className="px-1 text-[10px] text-muted-foreground/65">
-                              +{workEntry.changedFiles.length - 6} more
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      {workEntry.detail &&
-                        (!workEntry.command || workEntry.detail !== workEntry.command) && (
-                          <p
-                            className="mt-1 text-[11px] leading-relaxed text-muted-foreground/75"
-                            title={workEntry.detail}
-                          >
-                            {workEntry.detail}
-                          </p>
-                        )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <CompactActivityStrip
+              assistantLabel={activeAssistantLabel}
+              title={latestEntry?.label ?? activeWorkSummary.title}
+              detail={
+                latestEntry?.command ??
+                latestEntry?.detail ??
+                latestEntry?.changedFiles?.slice(0, 2).join(", ") ??
+                activeWorkSummary.detail
+              }
+              statusLabel={status}
+              elapsed={elapsed ? `Working for ${elapsed}` : null}
+              entries={groupedEntries}
+              expanded={isExpanded}
+              onToggleExpanded={() => onToggleWorkGroup(groupId)}
+            />
           );
         })()}
 
@@ -5132,67 +5285,26 @@ const MessagesTimeline = memo(function MessagesTimeline({
                 </div>
               )}
               <div className="min-w-0 px-1 py-0.5">
-                <ChatMarkdown
-                  text={messageText}
+                <AnimatedAssistantMessage
+                  message={{ ...row.message, text: messageText }}
                   cwd={markdownCwd}
-                  isStreaming={Boolean(row.message.streaming)}
+                  animate={
+                    !row.message.streaming &&
+                    animatedAssistantMessageId === row.message.id &&
+                    messageText.length > 0
+                  }
+                  onComplete={onAnimatedAssistantMessageComplete}
                 />
-                {(() => {
-                  const turnSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);
-                  if (!turnSummary) return null;
-                  const checkpointFiles = turnSummary.files;
-                  if (checkpointFiles.length === 0) return null;
-                  const summaryStat = summarizeTurnDiffStats(checkpointFiles);
-                  const changedFileCountLabel = String(checkpointFiles.length);
-                  const allDirectoriesExpanded =
-                    allDirectoriesExpandedByTurnId[turnSummary.turnId] ?? true;
-                  return (
-                    <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
-                      <div className="mb-1.5 flex items-center justify-between gap-2">
-                        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
-                          <span>Changed files ({changedFileCountLabel})</span>
-                          {hasNonZeroStat(summaryStat) && (
-                            <>
-                              <span className="mx-1">•</span>
-                              <DiffStatLabel
-                                additions={summaryStat.additions}
-                                deletions={summaryStat.deletions}
-                              />
-                            </>
-                          )}
-                        </p>
-                        <div className="flex items-center gap-1.5">
-                          <Button
-                            type="button"
-                            size="xs"
-                            variant="outline"
-                            onClick={() => onToggleAllDirectories(turnSummary.turnId)}
-                          >
-                            {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
-                          </Button>
-                          <Button
-                            type="button"
-                            size="xs"
-                            variant="outline"
-                            onClick={() =>
-                              onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)
-                            }
-                          >
-                            View diff
-                          </Button>
-                        </div>
-                      </div>
-                      <ChangedFilesTree
-                        key={`changed-files-tree:${turnSummary.turnId}`}
-                        turnId={turnSummary.turnId}
-                        files={checkpointFiles}
-                        allDirectoriesExpanded={allDirectoriesExpanded}
-                        resolvedTheme={resolvedTheme}
-                        onOpenTurnDiff={onOpenTurnDiff}
-                      />
-                    </div>
-                  );
-                })()}
+                {row.changedFilesSummary && row.changedFilesSummary.files.length > 0 ? (
+                  <CompactChangedFilesSummary
+                    turnSummary={row.changedFilesSummary}
+                    expanded={expandedWorkGroups[`changed:${row.changedFilesSummary.turnId}`] ?? false}
+                    onToggleExpanded={() =>
+                      onToggleWorkGroup(`changed:${row.changedFilesSummary?.turnId ?? row.message.id}`)
+                    }
+                    onOpenTurnDiff={onOpenTurnDiff}
+                  />
+                ) : null}
                 <p className="mt-1.5 text-[10px] text-muted-foreground/30">
                   {formatMessageMeta(
                     row.message.createdAt,
@@ -5217,20 +5329,19 @@ const MessagesTimeline = memo(function MessagesTimeline({
       )}
 
       {row.kind === "working" && (
-        <div className="flex items-center gap-2 py-0.5 pl-1.5">
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
-          <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70">
-            <span className="inline-flex items-center gap-[3px]">
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
-            </span>
-            <span>
-              {row.createdAt
-                ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
-                : "Working..."}
-            </span>
-          </div>
+        <div className="min-w-0 px-1 py-0.5">
+          <CompactActivityStrip
+            assistantLabel={activeAssistantLabel}
+            title={activeWorkSummary.title}
+            detail={activeWorkSummary.detail ?? "Thinking"}
+            statusLabel={optimisticRunPhase === "preparing-worktree" ? "Preparing" : "Thinking"}
+            elapsed={
+              row.createdAt ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}` : null
+            }
+            entries={[]}
+            expanded={false}
+            onToggleExpanded={() => {}}
+          />
         </div>
       )}
     </div>
@@ -5292,19 +5403,21 @@ const AVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter(isAvailableProviderOp
 const UNAVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter((option) => !option.available);
 const COMING_SOON_PROVIDER_OPTIONS = [
   { id: "opencode", label: "OpenCode", icon: OpenCodeIcon },
-  { id: "gemini", label: "Gemini", icon: Gemini },
 ] as const;
 
 function getCustomModelOptionsByProvider(settings: {
   customCodexModels: readonly string[];
+  customGeminiModels: readonly string[];
 }): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
   return {
     codex: getAppModelOptions("codex", settings.customCodexModels),
+    gemini: getAppModelOptions("gemini", settings.customGeminiModels),
   };
 }
 
 const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
   codex: OpenAI,
+  gemini: Gemini,
   claudeCode: ClaudeAI,
   cursor: CursorIcon,
 };

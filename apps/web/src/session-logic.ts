@@ -18,6 +18,7 @@ export const PROVIDER_OPTIONS: Array<{
   available: boolean;
 }> = [
   { value: "codex", label: "Codex", available: true },
+  { value: "gemini", label: "Gemini", available: true },
   { value: "claudeCode", label: "Claude Code", available: false },
   { value: "cursor", label: "Cursor", available: false },
 ];
@@ -409,7 +410,6 @@ export function deriveWorkLogEntries(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   return ordered
     .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
-    .filter((activity) => activity.kind !== "tool.started")
     .filter((activity) => activity.kind !== "task.started" && activity.kind !== "task.completed")
     .filter((activity) => activity.summary !== "Checkpoint captured")
     .map((activity) => {
@@ -419,14 +419,15 @@ export function deriveWorkLogEntries(
           : null;
       const command = extractToolCommand(payload);
       const changedFiles = extractChangedFiles(payload);
+      const detail = extractWorkDetail(payload, changedFiles);
       const entry: WorkLogEntry = {
         id: activity.id,
         createdAt: activity.createdAt,
-        label: activity.summary,
+        label: deriveWorkLabel(activity.summary, payload, command, changedFiles, detail),
         tone: activity.tone === "approval" ? "info" : activity.tone,
       };
-      if (payload && typeof payload.detail === "string" && payload.detail.length > 0) {
-        entry.detail = payload.detail;
+      if (detail) {
+        entry.detail = detail;
       }
       if (command) {
         entry.command = command;
@@ -476,6 +477,120 @@ function extractToolCommand(payload: Record<string, unknown> | null): string | n
     normalizeCommandValue(data?.command),
   ];
   return candidates.find((candidate) => candidate !== null) ?? null;
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function summarizeVerboseText(value: string, maxLength = 180): string {
+  const normalized = normalizeWhitespace(value);
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function looksLikeCodeOrMarkup(value: string): boolean {
+  return /<!DOCTYPE|<html|<head|<body|function\s|\bconst\b|\blet\b|\bclass\b/.test(value);
+}
+
+function extractLocationPaths(payload: Record<string, unknown> | null): string[] {
+  const data = asRecord(payload?.data);
+  const locations = data?.locations;
+  if (!Array.isArray(locations)) {
+    return [];
+  }
+  return locations
+    .map((entry) => {
+      const record = asRecord(entry);
+      return (
+        asTrimmedString(record?.path) ??
+        asTrimmedString(record?.filePath) ??
+        asTrimmedString(record?.uri)
+      );
+    })
+    .filter((value): value is string => value !== null);
+}
+
+function extractToolName(payload: Record<string, unknown> | null): string | null {
+  const data = asRecord(payload?.data);
+  const item = asRecord(data?.item);
+  const candidates = [
+    asTrimmedString(payload?.title),
+    asTrimmedString(data?.title),
+    asTrimmedString(data?.tool_name),
+    asTrimmedString(data?.toolName),
+    asTrimmedString(item?.title),
+    asTrimmedString(item?.name),
+  ];
+  return candidates.find((candidate) => candidate !== null) ?? null;
+}
+
+function extractWorkDetail(
+  payload: Record<string, unknown> | null,
+  changedFiles: ReadonlyArray<string>,
+): string | null {
+  const data = asRecord(payload?.data);
+  const rawDetail =
+    asTrimmedString(payload?.detail) ??
+    asTrimmedString(data?.detail) ??
+    asTrimmedString(data?.output) ??
+    asTrimmedString(data?.rawOutput);
+
+  if (rawDetail) {
+    if (looksLikeCodeOrMarkup(rawDetail) && changedFiles.length > 0) {
+      return `Updated ${changedFiles.slice(0, 3).join(", ")}`;
+    }
+    return summarizeVerboseText(rawDetail);
+  }
+
+  const locationPaths = extractLocationPaths(payload);
+  if (locationPaths.length > 0) {
+    return `Working in ${locationPaths.slice(0, 3).join(", ")}`;
+  }
+
+  if (changedFiles.length > 0) {
+    return `Updated ${changedFiles.slice(0, 3).join(", ")}`;
+  }
+
+  return null;
+}
+
+function deriveWorkLabel(
+  summary: string,
+  payload: Record<string, unknown> | null,
+  command: string | null,
+  changedFiles: ReadonlyArray<string>,
+  detail: string | null,
+): string {
+  const normalizedSummary = normalizeWhitespace(summary);
+  const toolName = extractToolName(payload);
+  const genericGeminiSummary = /^gemini tool(?: complete)?$/i.test(normalizedSummary);
+
+  if (!genericGeminiSummary && normalizedSummary.length > 0) {
+    return normalizedSummary;
+  }
+
+  if (toolName && toolName.toLowerCase() !== "gemini tool") {
+    return toolName;
+  }
+
+  if (command) {
+    return summarizeVerboseText(command, 72);
+  }
+
+  if (changedFiles.length > 0) {
+    return changedFiles.length === 1
+      ? `Updating ${changedFiles[0]}`
+      : `Updating ${changedFiles.length} files`;
+  }
+
+  if (detail) {
+    return summarizeVerboseText(detail, 72);
+  }
+
+  return normalizedSummary.length > 0 ? normalizedSummary : "Working";
 }
 
 function pushChangedFile(target: string[], seen: Set<string>, value: unknown) {

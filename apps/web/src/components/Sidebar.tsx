@@ -31,6 +31,7 @@ import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import { useThreadRunStateStore } from "../threadRunStateStore";
 import { toastManager } from "./ui/toast";
 import {
   getDesktopUpdateActionError,
@@ -82,7 +83,7 @@ function formatRelativeTime(iso: string): string {
 }
 
 interface ThreadStatusPill {
-  label: "Working" | "Connecting" | "Completed" | "Pending Approval";
+  label: "Working" | "Connecting" | "Preparing" | "Completed" | "Pending Approval";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -114,13 +115,36 @@ function hasUnseenCompletion(thread: Thread): boolean {
   return completedAt > lastVisitedAt;
 }
 
-function threadStatusPill(thread: Thread, hasPendingApprovals: boolean): ThreadStatusPill | null {
+function threadStatusPill(
+  thread: Thread,
+  hasPendingApprovals: boolean,
+  hasPendingRun: boolean,
+  pendingRunPhase: "sending-turn" | "preparing-worktree" | null,
+): ThreadStatusPill | null {
   if (hasPendingApprovals) {
     return {
       label: "Pending Approval",
       colorClass: "text-amber-600 dark:text-amber-300/90",
       dotClass: "bg-amber-500 dark:bg-amber-300/90",
       pulse: false,
+    };
+  }
+
+  if (hasPendingRun && pendingRunPhase === "preparing-worktree") {
+    return {
+      label: "Preparing",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
+  if (hasPendingRun) {
+    return {
+      label: "Connecting",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
     };
   }
 
@@ -268,6 +292,7 @@ export default function Sidebar() {
   );
   const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
   const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
+  const pendingRunByThreadId = useThreadRunStateStore((state) => state.pendingRunByThreadId);
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
   const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
@@ -1112,10 +1137,17 @@ export default function Sidebar() {
                       <SidebarMenuSub className="mx-1 my-0 w-full translate-x-0 gap-0 px-1.5 py-0">
                         {visibleThreads.map((thread) => {
                           const isActive = routeThreadId === thread.id;
+                          const pendingRun = pendingRunByThreadId[thread.id] ?? null;
                           const threadStatus = threadStatusPill(
                             thread,
                             pendingApprovalByThreadId.get(thread.id) === true,
+                            pendingRun !== null,
+                            pendingRun?.phase ?? null,
                           );
+                          const threadTimestamp =
+                            threadStatus?.label === "Completed" && thread.latestTurn?.completedAt
+                              ? thread.latestTurn.completedAt
+                              : thread.createdAt;
                           const prStatus = prStatusIndicator(prByThreadId.get(thread.id) ?? null);
                           const terminalStatus = terminalStatusFromRunningIds(
                             selectThreadTerminalState(terminalStateByThreadId, thread.id)
@@ -1242,7 +1274,7 @@ export default function Sidebar() {
                                       isActive ? "text-foreground/65" : "text-muted-foreground/40"
                                     }`}
                                   >
-                                    {formatRelativeTime(thread.createdAt)}
+                                    {formatRelativeTime(threadTimestamp)}
                                   </span>
                                 </div>
                               </SidebarMenuSubButton>

@@ -45,7 +45,7 @@ const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
   readonly eventId: EventId;
-  readonly provider: "codex";
+  readonly provider: "codex" | "gemini";
   readonly createdAt: string;
   readonly threadId: ThreadId;
   readonly turnId?: string | undefined;
@@ -391,6 +391,62 @@ describe("ProviderRuntimeIngestion", () => {
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-midturn-lifecycle"),
       status: "completed",
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+    );
+  });
+
+  it("preserves running status when provider emits session ready during an active turn", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-ready-heartbeat"),
+      provider: "gemini",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-ready-heartbeat"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" && thread.session?.activeTurnId === "turn-ready-heartbeat",
+    );
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-ready-midturn"),
+      provider: "gemini",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-ready-heartbeat"),
+      payload: {
+        state: "ready",
+        reason: "runtime warm",
+      },
+    });
+
+    await Effect.runPromise(Effect.sleep("40 millis"));
+    const midReadModel = await Effect.runPromise(harness.engine.getReadModel());
+    const midThread = midReadModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(midThread?.session?.status).toBe("running");
+    expect(midThread?.session?.activeTurnId).toBe("turn-ready-heartbeat");
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-ready-heartbeat"),
+      provider: "gemini",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-ready-heartbeat"),
+      payload: {
+        state: "completed",
+      },
     });
 
     await waitForThread(

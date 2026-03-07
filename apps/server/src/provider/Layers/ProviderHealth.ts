@@ -1,10 +1,12 @@
 /**
  * ProviderHealthLive - Startup-time provider health checks.
  *
- * Performs one-time provider readiness probes when the server starts and
+ * Performs one-time provider readiness checks when the server starts and
  * keeps the resulting snapshot in memory for `server.getConfig`.
  *
- * Uses effect's ChildProcessSpawner to run CLI probes natively.
+ * Startup checks must stay non-interactive. We only verify local CLI
+ * availability here and defer real authentication/runtime failures to the
+ * first provider session/turn.
  *
  * @module ProviderHealthLive
  */
@@ -13,20 +15,13 @@ import type {
   ServerProviderStatus,
   ServerProviderStatusState,
 } from "@t3tools/contracts";
-import { Effect, Layer, Option, Result, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Effect, Layer } from "effect";
 
-import {
-  formatCodexCliUpgradeMessage,
-  isCodexCliVersionSupported,
-  parseCodexCliVersion,
-} from "../codexCliVersion";
+import { isCodexCliAvailable, isGeminiCliAvailable } from "../../cliEnvironment";
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
 
-const DEFAULT_TIMEOUT_MS = 4_000;
 const CODEX_PROVIDER = "codex" as const;
-
-// ── Pure helpers ────────────────────────────────────────────────────
+const GEMINI_PROVIDER = "gemini" as const;
 
 export interface CommandResult {
   readonly stdout: string;
@@ -40,20 +35,7 @@ function nonEmptyTrimmed(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function isCommandMissingCause(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const lower = error.message.toLowerCase();
-  return (
-    lower.includes("command not found: codex") ||
-    lower.includes("spawn codex enoent") ||
-    lower.includes("enoent") ||
-    lower.includes("notfound")
-  );
-}
-
-function detailFromResult(
-  result: CommandResult & { readonly timedOut?: boolean },
-): string | undefined {
+function detailFromResult(result: CommandResult & { readonly timedOut?: boolean }): string | undefined {
   if (result.timedOut) return "Timed out while running command.";
   const stderr = nonEmptyTrimmed(result.stderr);
   if (stderr) return stderr;
@@ -167,154 +149,62 @@ export function parseAuthStatusFromOutput(result: CommandResult): {
   };
 }
 
-// ── Effect-native command execution ─────────────────────────────────
-
-const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
-  Stream.runFold(
-    stream,
-    () => "",
-    (acc, chunk) => acc + new TextDecoder().decode(chunk),
-  );
-
-const runCodexCommand = (args: ReadonlyArray<string>) =>
-  Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const command = ChildProcess.make("codex", [...args], {
-      shell: process.platform === "win32",
-    });
-
-    const child = yield* spawner.spawn(command);
-
-    const [stdout, stderr, exitCode] = yield* Effect.all(
-      [
-        collectStreamAsString(child.stdout),
-        collectStreamAsString(child.stderr),
-        child.exitCode.pipe(Effect.map(Number)),
-      ],
-      { concurrency: "unbounded" },
-    );
-
-    return { stdout, stderr, code: exitCode } satisfies CommandResult;
-  }).pipe(Effect.scoped);
-
-// ── Health check ────────────────────────────────────────────────────
-
-export const checkCodexProviderStatus: Effect.Effect<
-  ServerProviderStatus,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner
-> = Effect.gen(function* () {
+export const checkCodexProviderStatus: Effect.Effect<ServerProviderStatus, never> = Effect.sync(() => {
   const checkedAt = new Date().toISOString();
 
-  // Probe 1: `codex --version` — is the CLI reachable?
-  const versionProbe = yield* runCodexCommand(["--version"]).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
-    Effect.result,
-  );
-
-  if (Result.isFailure(versionProbe)) {
-    const error = versionProbe.failure;
+  if (!isCodexCliAvailable()) {
     return {
       provider: CODEX_PROVIDER,
       status: "error" as const,
       available: false,
       authStatus: "unknown" as const,
       checkedAt,
-      message: isCommandMissingCause(error)
-        ? "Codex CLI (`codex`) is not installed or not on PATH."
-        : `Failed to execute Codex CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
+      message: "Codex CLI (`codex`) is not installed or not on PATH.",
     };
   }
 
-  if (Option.isNone(versionProbe.success)) {
-    return {
-      provider: CODEX_PROVIDER,
-      status: "error" as const,
-      available: false,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message: "Codex CLI is installed but failed to run. Timed out while running command.",
-    };
-  }
-
-  const version = versionProbe.success.value;
-  if (version.code !== 0) {
-    const detail = detailFromResult(version);
-    return {
-      provider: CODEX_PROVIDER,
-      status: "error" as const,
-      available: false,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message: detail
-        ? `Codex CLI is installed but failed to run. ${detail}`
-        : "Codex CLI is installed but failed to run.",
-    };
-  }
-
-  const parsedVersion = parseCodexCliVersion(`${version.stdout}\n${version.stderr}`);
-  if (parsedVersion && !isCodexCliVersionSupported(parsedVersion)) {
-    return {
-      provider: CODEX_PROVIDER,
-      status: "error" as const,
-      available: false,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message: formatCodexCliUpgradeMessage(parsedVersion),
-    };
-  }
-
-  // Probe 2: `codex login status` — is the user authenticated?
-  const authProbe = yield* runCodexCommand(["login", "status"]).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
-    Effect.result,
-  );
-
-  if (Result.isFailure(authProbe)) {
-    const error = authProbe.failure;
-    return {
-      provider: CODEX_PROVIDER,
-      status: "warning" as const,
-      available: true,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message:
-        error instanceof Error
-          ? `Could not verify Codex authentication status: ${error.message}.`
-          : "Could not verify Codex authentication status.",
-    };
-  }
-
-  if (Option.isNone(authProbe.success)) {
-    return {
-      provider: CODEX_PROVIDER,
-      status: "warning" as const,
-      available: true,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message: "Could not verify Codex authentication status. Timed out while running command.",
-    };
-  }
-
-  const parsed = parseAuthStatusFromOutput(authProbe.success.value);
   return {
     provider: CODEX_PROVIDER,
-    status: parsed.status,
+    status: "ready" as const,
     available: true,
-    authStatus: parsed.authStatus,
+    authStatus: "unknown" as const,
     checkedAt,
-    ...(parsed.message ? { message: parsed.message } : {}),
   } satisfies ServerProviderStatus;
 });
 
-// ── Layer ───────────────────────────────────────────────────────────
+export const checkGeminiProviderStatus: Effect.Effect<ServerProviderStatus, never> = Effect.sync(() => {
+  const checkedAt = new Date().toISOString();
+
+  if (!isGeminiCliAvailable()) {
+    return {
+      provider: GEMINI_PROVIDER,
+      status: "error" as const,
+      available: false,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message: "Gemini CLI (`gemini`) is not installed or not on PATH.",
+    };
+  }
+
+  return {
+    provider: GEMINI_PROVIDER,
+    status: "ready" as const,
+    available: true,
+    authStatus: process.env.GEMINI_API_KEY ? "authenticated" : "unknown",
+    checkedAt,
+  };
+});
 
 export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
-    const codexStatus = yield* checkCodexProviderStatus;
+    const [codexStatus, geminiStatus] = yield* Effect.all(
+      [checkCodexProviderStatus, checkGeminiProviderStatus],
+      { concurrency: 2 },
+    );
+
     return {
-      getStatuses: Effect.succeed([codexStatus]),
+      getStatuses: Effect.succeed([codexStatus, geminiStatus]),
     } satisfies ProviderHealthShape;
   }),
 );
