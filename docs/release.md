@@ -12,6 +12,8 @@ This document covers how to run desktop releases from one tag, first without sig
   - Linux `x64` AppImage
   - Windows `x64` NSIS installer
 - Publishes one GitHub Release with all produced files.
+  - Versions with a suffix after `X.Y.Z` (for example `1.2.3-alpha.1`) are published as GitHub prereleases.
+  - Only plain `X.Y.Z` releases are marked as the repository's latest release.
 - Includes Electron auto-update metadata (for example `latest*.yml` and `*.blockmap`) in release assets.
 - Publishes the CLI package (`apps/server`, npm package `t3`) with OIDC trusted publishing.
 - Signing is optional and auto-detected per platform from secrets.
