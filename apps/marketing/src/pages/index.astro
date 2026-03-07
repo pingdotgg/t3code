@@ -1,4 +1,8 @@
 ---
+import { fetchLatestRelease } from "../lib/github-releases";
+
+const downloads = await fetchLatestRelease();
+const hasAssets = !!(downloads.macosArm64 || downloads.macosX64 || downloads.linux || downloads.windows);
 ---
 
 <html lang="en">
@@ -38,14 +42,25 @@
       <main class="main">
         <h1 class="tagline">T3 Code is the best way to code with AI.</h1>
 
-        <a
-          href="https://github.com/pingdotgg/t3code/releases"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="hero-button"
-        >
-          Download now
-        </a>
+        <div class="download-section">
+          <a
+            href={downloads.releasesUrl}
+            class="hero-button"
+            id="download-btn"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Download now
+          </a>
+          {hasAssets && (
+            <div class="platform-links">
+              {downloads.macosArm64 && <a href={downloads.macosArm64.url}>macOS (Apple Silicon)</a>}
+              {downloads.macosX64 && <a href={downloads.macosX64.url}>macOS (Intel)</a>}
+              {downloads.windows && <a href={downloads.windows.url}>Windows</a>}
+              {downloads.linux && <a href={downloads.linux.url}>Linux</a>}
+            </div>
+          )}
+        </div>
 
         <div class="screenshot-wrap">
           <img src="/screenshot.jpeg" alt="T3 Code" class="screenshot" />
@@ -61,6 +76,35 @@
         </div>
       </footer>
     </div>
+    <script is:inline define:vars={{ downloads }}>
+      (function () {
+        var btn = document.getElementById("download-btn");
+        if (!btn) return;
+
+        var ua = navigator.userAgent.toLowerCase();
+        var platform = (navigator.platform || "").toLowerCase();
+
+        var detected;
+        var label;
+        if (platform.includes("mac") || ua.includes("macintosh")) {
+          detected = downloads.macosArm64 || downloads.macosX64;
+          label = "Download for macOS";
+        } else if (platform.includes("win") || ua.includes("windows")) {
+          detected = downloads.windows;
+          label = "Download for Windows";
+        } else if (platform.includes("linux") || ua.includes("linux")) {
+          detected = downloads.linux;
+          label = "Download for Linux";
+        }
+
+        if (detected) {
+          btn.href = detected.url;
+          btn.textContent = label;
+          btn.removeAttribute("target");
+          btn.removeAttribute("rel");
+        }
+      })();
+    </script>
   </body>
 </html>
 
@@ -195,7 +239,16 @@
     animation: fade-in 1s ease-out forwards;
   }
 
-  /* ── Hero button ── */
+  /* ── Download section ── */
+
+  .download-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 5vh;
+    opacity: 0;
+    animation: fade-in 1s ease-out 0.15s forwards;
+  }
 
   .hero-button {
     display: inline-block;
@@ -205,9 +258,6 @@
     border-radius: 999px;
     font-weight: 600;
     font-size: 0.9rem;
-    margin-bottom: 5vh;
-    opacity: 0;
-    animation: fade-in 1s ease-out 0.15s forwards;
     transition: transform 0.25s ease, box-shadow 0.25s ease;
   }
 
@@ -218,6 +268,22 @@
 
   .hero-button:active {
     transform: scale(0.98);
+  }
+
+  .platform-links {
+    display: flex;
+    gap: 1rem;
+    margin-top: 0.75rem;
+    font-size: 0.8rem;
+  }
+
+  .platform-links a {
+    color: var(--fg-dim);
+    transition: color 0.3s ease;
+  }
+
+  .platform-links a:hover {
+    color: var(--fg);
   }
 
   /* ── Screenshot ── */

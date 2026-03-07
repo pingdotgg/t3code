@@ -358,3 +358,9 @@ jobs:
           git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json bun.lock
           git commit -m "chore(release): prepare $RELEASE_TAG"
           git push origin HEAD:main
+
+      - name: Trigger marketing site rebuild
+        if: env.MARKETING_DEPLOY_HOOK != ''
+        env:
+          MARKETING_DEPLOY_HOOK: ${{ secrets.MARKETING_DEPLOY_HOOK }}
+        run: curl -sf -X POST "$MARKETING_DEPLOY_HOOK"
