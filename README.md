@@ -20,23 +20,13 @@ Install the [desktop app from the Releases page](https://github.com/pingdotgg/t3
 > [!WARNING]
 > All install methods below require [Codex CLI](https://github.com/openai/codex) to be installed and authorized **separately**. T3 Code is a GUI frontend — it does not bundle Codex.
 
-### macOS (Homebrew Cask)
-
-*Not yet published to a tap — cask scaffolding is in [`packaging/homebrew/`](packaging/homebrew/).*
-
-Once a tap is available:
-
-```bash
-brew install --cask t3code
-```
-
-Or install locally from the repo:
+### macOS
 
 ```bash
 brew install --cask ./packaging/homebrew/Casks/t3code.rb
 ```
 
-You can also download the `.dmg` directly from [Releases](https://github.com/pingdotgg/t3code/releases).
+Or download the `.dmg` directly from [Releases](https://github.com/pingdotgg/t3code/releases).
 
 ### Arch Linux
 
