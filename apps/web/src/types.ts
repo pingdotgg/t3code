@@ -40,6 +40,9 @@ export type ThreadTerminalMoveDestination =
   | {
       type: "group";
       targetGroupId: string;
+    }
+  | {
+      type: "new-group";
     };
 
 export interface ChatImageAttachment {

@@ -432,7 +432,7 @@ function TerminalViewport({
       window.cancelAnimationFrame(frame);
     };
   }, [drawerHeight, resizeEpoch, terminalId, threadId]);
-  return <div ref={containerRef} className="h-full w-full overflow-hidden rounded-[4px]" />;
+  return <div ref={containerRef} data-terminal-id={terminalId} className="h-full w-full overflow-hidden rounded-[4px]" />;
 }
 
 interface ThreadTerminalDrawerProps {
@@ -454,9 +454,22 @@ interface ThreadTerminalDrawerProps {
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
   onHeightChange: (height: number) => void;
+  /** Ref populated with the animated close handler for use by keyboard shortcuts */
+  animatedCloseRef?: React.MutableRefObject<((terminalId: string) => void) | null>;
 }
 
-type TerminalPaneDropZone = "before" | "after" | "center";
+type TerminalPaneDropZone = "before" | "after";
+
+interface TerminalDropPreview {
+  destination: ThreadTerminalMoveDestination;
+  surface:
+    | "row-before"
+    | "row-after"
+    | "group"
+    | "pane-reorder-before"
+    | "pane-reorder-after"
+    | "new-group";
+}
 
 interface TerminalActionButtonProps {
   label: string;
@@ -506,6 +519,7 @@ export default function ThreadTerminalDrawer({
   onActiveTerminalChange,
   onCloseTerminal,
   onHeightChange,
+  animatedCloseRef,
 }: ThreadTerminalDrawerProps) {
   const [drawerHeight, setDrawerHeight] = useState(() => clampDrawerHeight(height));
   const [resizeEpoch, setResizeEpoch] = useState(0);
@@ -519,7 +533,11 @@ export default function ThreadTerminalDrawer({
   } | null>(null);
   const didResizeDuringDragRef = useRef(false);
   const [draggedTerminalId, setDraggedTerminalId] = useState<string | null>(null);
-  const [dropTarget, setDropTarget] = useState<ThreadTerminalMoveDestination | null>(null);
+  const [dropPreview, setDropPreview] = useState<TerminalDropPreview | null>(null);
+  const [droppedTerminalId, setDroppedTerminalId] = useState<string | null>(null);
+  const [closingTerminalId, setClosingTerminalId] = useState<string | null>(null);
+  const dragImageRef = useRef<HTMLDivElement | null>(null);
+  const prevVisibleTerminalIdsRef = useRef<string[]>([]);
 
   const normalizedTerminalIds = useMemo(() => {
     const cleaned = [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];
@@ -605,15 +623,34 @@ export default function ThreadTerminalDrawer({
     return indexByTerminal >= 0 ? indexByTerminal : 0;
   }, [activeTerminalGroupId, resolvedActiveTerminalId, resolvedTerminalGroups]);
 
-  const visibleTerminalIds = resolvedTerminalGroups[resolvedActiveGroupIndex]?.terminalIds ?? [
-    resolvedActiveTerminalId,
-  ];
+  const visibleTerminalIds = useMemo(
+    () =>
+      resolvedTerminalGroups[resolvedActiveGroupIndex]?.terminalIds ?? [resolvedActiveTerminalId],
+    [resolvedActiveGroupIndex, resolvedActiveTerminalId, resolvedTerminalGroups],
+  );
   const hasTerminalSidebar = normalizedTerminalIds.length > 1;
   const isSplitView = visibleTerminalIds.length > 1;
   const showGroupHeaders =
     resolvedTerminalGroups.length > 1 ||
     resolvedTerminalGroups.some((terminalGroup) => terminalGroup.terminalIds.length > 1);
   const hasReachedTerminalLimit = normalizedTerminalIds.length >= MAX_THREAD_TERMINAL_COUNT;
+  const terminalGroupIdByTerminalId = useMemo(
+    () =>
+      new Map(
+        resolvedTerminalGroups.flatMap((group) =>
+          group.terminalIds.map((terminalId) => [terminalId, group.id] as const),
+        ),
+      ),
+    [resolvedTerminalGroups],
+  );
+  const draggedTerminalGroupSize = useMemo(
+    () =>
+      draggedTerminalId
+        ? (resolvedTerminalGroups.find((group) => group.terminalIds.includes(draggedTerminalId))?.terminalIds
+            .length ?? 0)
+        : 0,
+    [draggedTerminalId, resolvedTerminalGroups],
+  );
   const terminalLabelById = useMemo(
     () =>
       new Map(
@@ -644,7 +681,7 @@ export default function ThreadTerminalDrawer({
   }, [hasReachedTerminalLimit, onNewTerminal]);
   const clearTerminalDragState = useCallback(() => {
     setDraggedTerminalId(null);
-    setDropTarget(null);
+    setDropPreview(null);
   }, []);
 
   const commitTerminalDrop = useCallback(
@@ -658,9 +695,11 @@ export default function ThreadTerminalDrawer({
       ) {
         return;
       }
-      onMoveTerminal(draggedTerminalId, destination);
-      onActiveTerminalChange(draggedTerminalId);
+      const droppedId = draggedTerminalId;
+      onMoveTerminal(droppedId, destination);
+      onActiveTerminalChange(droppedId);
       clearTerminalDragState();
+      setDroppedTerminalId(droppedId);
     },
     [clearTerminalDragState, draggedTerminalId, onActiveTerminalChange, onMoveTerminal],
   );
@@ -669,13 +708,47 @@ export default function ThreadTerminalDrawer({
     (terminalId: string) => (event: ReactDragEvent<HTMLElement>) => {
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/plain", terminalId);
+
+      // Capture a snapshot of the terminal as the drag image
+      const terminalEl = document.querySelector(`[data-terminal-id="${terminalId}"]`);
+      const canvas = terminalEl?.querySelector("canvas") as HTMLCanvasElement | null;
+      if (canvas) {
+        const dragImage = document.createElement("div");
+        dragImage.style.cssText =
+          "position:fixed;top:-9999px;left:-9999px;width:180px;height:110px;border-radius:8px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,0.3);opacity:0.92;pointer-events:none";
+        const img = document.createElement("img");
+        try {
+          img.src = canvas.toDataURL();
+        } catch {
+          // Canvas tainted — fall back to default drag ghost
+        }
+        img.style.cssText = "width:100%;height:100%;object-fit:cover";
+        dragImage.appendChild(img);
+        document.body.appendChild(dragImage);
+        event.dataTransfer.setDragImage(dragImage, 90, 55);
+        dragImageRef.current = dragImage;
+        requestAnimationFrame(() => {
+          // Keep the element alive for the browser to snapshot, remove after a tick
+          requestAnimationFrame(() => {
+            if (dragImageRef.current === dragImage) {
+              document.body.removeChild(dragImage);
+              dragImageRef.current = null;
+            }
+          });
+        });
+      }
+
       setDraggedTerminalId(terminalId);
-      setDropTarget(null);
+      setDropPreview(null);
     },
     [],
   );
 
   const handleTerminalDragEnd = useCallback(() => {
+    if (dragImageRef.current) {
+      dragImageRef.current.remove();
+      dragImageRef.current = null;
+    }
     clearTerminalDragState();
   }, [clearTerminalDragState]);
 
@@ -688,10 +761,16 @@ export default function ThreadTerminalDrawer({
       event.dataTransfer.dropEffect = "move";
       const rect = event.currentTarget.getBoundingClientRect();
       const ratio = (event.clientY - rect.top) / Math.max(rect.height, 1);
-      setDropTarget(
+      setDropPreview(
         ratio < 0.25
-          ? { type: "before", targetTerminalId }
-          : { type: "after", targetTerminalId },
+          ? {
+              destination: { type: "before", targetTerminalId },
+              surface: "row-before",
+            }
+          : {
+              destination: { type: "after", targetTerminalId },
+              surface: "row-after",
+            },
       );
     },
     [draggedTerminalId],
@@ -704,10 +783,25 @@ export default function ThreadTerminalDrawer({
       }
       event.preventDefault();
       event.dataTransfer.dropEffect = "move";
-      setDropTarget({ type: "group", targetGroupId });
+      setDropPreview({
+        destination: { type: "group", targetGroupId },
+        surface: "group",
+      });
     },
     [draggedTerminalId],
   );
+
+  const handleNewGroupDragOver = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    if (!draggedTerminalId) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropPreview({
+      destination: { type: "new-group" },
+      surface: "new-group",
+    });
+  }, [draggedTerminalId]);
 
   const handleTerminalDropTargetLeave = useCallback(
     (event: ReactDragEvent<HTMLElement>) => {
@@ -715,7 +809,7 @@ export default function ThreadTerminalDrawer({
       if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
         return;
       }
-      setDropTarget(null);
+      setDropPreview(null);
     },
     [],
   );
@@ -728,12 +822,27 @@ export default function ThreadTerminalDrawer({
         }
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
-        setDropTarget({
-          type: zone === "before" ? "before" : "after",
-          targetTerminalId,
+        const draggedGroupId = terminalGroupIdByTerminalId.get(draggedTerminalId);
+        const targetGroupId = terminalGroupIdByTerminalId.get(targetTerminalId);
+        if (draggedGroupId && targetGroupId && draggedGroupId === targetGroupId) {
+          setDropPreview({
+            destination: {
+              type: zone,
+              targetTerminalId,
+            },
+            surface: zone === "before" ? "pane-reorder-before" : "pane-reorder-after",
+          });
+          return;
+        }
+        setDropPreview({
+          destination: {
+            type: zone,
+            targetTerminalId,
+          },
+          surface: zone === "before" ? "pane-reorder-before" : "pane-reorder-after",
         });
       },
-    [draggedTerminalId],
+    [draggedTerminalId, terminalGroupIdByTerminalId],
   );
 
   const handlePaneDrop = useCallback(
@@ -741,7 +850,7 @@ export default function ThreadTerminalDrawer({
       (event: ReactDragEvent<HTMLDivElement>) => {
         event.preventDefault();
         commitTerminalDrop({
-          type: zone === "before" ? "before" : "after",
+          type: zone,
           targetTerminalId,
         });
       },
@@ -839,6 +948,56 @@ export default function ThreadTerminalDrawer({
     };
   }, [syncHeight]);
 
+  // Clear drop/expand animation after it finishes and refit terminals
+  useEffect(() => {
+    if (!droppedTerminalId) return;
+    const timer = window.setTimeout(() => {
+      setDroppedTerminalId(null);
+      setResizeEpoch((v) => v + 1);
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [droppedTerminalId]);
+
+  // Detect new terminals appearing (split, new terminal) and trigger expand animation
+  useEffect(() => {
+    const prev = prevVisibleTerminalIdsRef.current;
+    prevVisibleTerminalIdsRef.current = visibleTerminalIds;
+    if (prev.length === 0) return;
+    const prevSet = new Set(prev);
+    const newId = visibleTerminalIds.find((id) => !prevSet.has(id));
+    if (newId) {
+      setDroppedTerminalId(newId);
+    }
+  }, [visibleTerminalIds]);
+
+  const CLOSE_ANIMATION_MS = 250;
+
+  const handleCloseTerminal = useCallback(
+    (terminalId: string) => {
+      if (closingTerminalId) return;
+      setClosingTerminalId(terminalId);
+      window.setTimeout(() => {
+        setClosingTerminalId(null);
+        onCloseTerminal(terminalId);
+        // Refit remaining terminals after they finish expanding into freed space
+        window.setTimeout(() => setResizeEpoch((v) => v + 1), 50);
+      }, CLOSE_ANIMATION_MS);
+    },
+    [closingTerminalId, onCloseTerminal],
+  );
+
+  // Expose animated close handler for keyboard shortcuts
+  useEffect(() => {
+    if (animatedCloseRef) {
+      animatedCloseRef.current = handleCloseTerminal;
+    }
+    return () => {
+      if (animatedCloseRef) {
+        animatedCloseRef.current = null;
+      }
+    };
+  }, [animatedCloseRef, handleCloseTerminal]);
+
   return (
     <aside
       className="thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-background"
@@ -881,7 +1040,7 @@ export default function ThreadTerminalDrawer({
             <div className="h-4 w-px bg-border/80" />
             <TerminalActionButton
               className="p-1 text-foreground/90 transition-colors hover:bg-accent"
-              onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
+              onClick={() => handleCloseTerminal(resolvedActiveTerminalId)}
               label={closeTerminalActionLabel}
             >
               <Trash2 className="size-3.25" />
@@ -894,17 +1053,22 @@ export default function ThreadTerminalDrawer({
         <div className={`flex h-full min-h-0 ${hasTerminalSidebar ? "gap-1.5" : ""}`}>
           <div className="min-w-0 flex-1">
             {isSplitView ? (
-              <div
-                className="grid h-full w-full min-w-0 gap-0 overflow-hidden"
-                style={{
-                  gridTemplateColumns: `repeat(${visibleTerminalIds.length}, minmax(0, 1fr))`,
-                }}
-              >
+              <div className="flex h-full w-full min-w-0 overflow-hidden">
                 {visibleTerminalIds.map((terminalId) => (
                   <div
                     key={terminalId}
-                    className={`relative min-h-0 min-w-0 border-l first:border-l-0 ${
-                      terminalId === resolvedActiveTerminalId ? "border-border" : "border-border/70"
+                    className={`relative min-h-0 min-w-0 border-l first:border-l-0 terminal-pane-flex ${
+                      closingTerminalId === terminalId
+                        ? "terminal-pane-closing"
+                        : droppedTerminalId === terminalId
+                          ? "terminal-pane-opening"
+                          : ""
+                    } ${
+                      draggedTerminalId
+                        ? "border-border/50"
+                        : terminalId === resolvedActiveTerminalId
+                          ? "border-border"
+                          : "border-border/70"
                     }`}
                     onMouseDown={() => {
                       if (terminalId !== resolvedActiveTerminalId) {
@@ -913,37 +1077,41 @@ export default function ThreadTerminalDrawer({
                     }}
                   >
                     {draggedTerminalId && draggedTerminalId !== terminalId && (
-                      <div className="absolute inset-0 z-10 grid grid-cols-[1fr_1.2fr_1fr] gap-1 p-1">
+                      <div className="absolute inset-0 z-10 grid grid-cols-2 gap-1 p-1">
                         <div
-                          className={`rounded border transition ${
-                            dropTarget?.type === "before" &&
-                            dropTarget.targetTerminalId === terminalId
-                              ? "border-primary bg-primary/14"
+                          className={`relative rounded border transition ${
+                            dropPreview?.surface === "pane-reorder-before" &&
+                            dropPreview.destination.type === "before" &&
+                            dropPreview.destination.targetTerminalId === terminalId
+                              ? "border-transparent bg-background/0"
                               : "border-transparent bg-background/0"
                           }`}
                           onDragOver={handlePaneDragOver(terminalId, "before")}
                           onDrop={handlePaneDrop(terminalId, "before")}
-                        />
+                        >
+                          {dropPreview?.surface === "pane-reorder-before" &&
+                            dropPreview.destination.type === "before" &&
+                            dropPreview.destination.targetTerminalId === terminalId && (
+                              <div className="absolute inset-y-1 left-1 w-0.5 rounded-full bg-primary" />
+                            )}
+                        </div>
                         <div
-                          className={`rounded border transition ${
-                            dropTarget?.type === "after" &&
-                            dropTarget.targetTerminalId === terminalId
-                              ? "border-primary bg-primary/10"
-                              : "border-transparent bg-background/0"
-                          }`}
-                          onDragOver={handlePaneDragOver(terminalId, "center")}
-                          onDrop={handlePaneDrop(terminalId, "center")}
-                        />
-                        <div
-                          className={`rounded border transition ${
-                            dropTarget?.type === "after" &&
-                            dropTarget.targetTerminalId === terminalId
-                              ? "border-primary bg-primary/14"
+                          className={`relative rounded border transition ${
+                            dropPreview?.surface === "pane-reorder-after" &&
+                            dropPreview.destination.type === "after" &&
+                            dropPreview.destination.targetTerminalId === terminalId
+                              ? "border-transparent bg-background/0"
                               : "border-transparent bg-background/0"
                           }`}
                           onDragOver={handlePaneDragOver(terminalId, "after")}
                           onDrop={handlePaneDrop(terminalId, "after")}
-                        />
+                        >
+                          {dropPreview?.surface === "pane-reorder-after" &&
+                            dropPreview.destination.type === "after" &&
+                            dropPreview.destination.targetTerminalId === terminalId && (
+                              <div className="absolute inset-y-1 right-1 w-0.5 rounded-full bg-primary" />
+                            )}
+                        </div>
                       </div>
                     )}
                     <div className="h-full p-1">
@@ -963,39 +1131,43 @@ export default function ThreadTerminalDrawer({
                 ))}
               </div>
             ) : (
-              <div className="relative h-full p-1">
+              <div className={`relative h-full p-1${droppedTerminalId === resolvedActiveTerminalId ? " terminal-drop-expand" : ""}${closingTerminalId === resolvedActiveTerminalId ? " terminal-pane-closing" : ""}`}>
                 {draggedTerminalId && draggedTerminalId !== resolvedActiveTerminalId && (
-                  <div className="absolute inset-1 z-10 grid grid-cols-[1fr_1.2fr_1fr] gap-1">
+                  <div className="absolute inset-1 z-10 grid grid-cols-2 gap-1">
                     <div
-                      className={`rounded border transition ${
-                        dropTarget?.type === "before" &&
-                        dropTarget.targetTerminalId === resolvedActiveTerminalId
-                          ? "border-primary bg-primary/14"
+                      className={`relative rounded border transition ${
+                        dropPreview?.surface === "pane-reorder-before" &&
+                        dropPreview.destination.type === "before" &&
+                        dropPreview.destination.targetTerminalId === resolvedActiveTerminalId
+                          ? "border-transparent bg-background/0"
                           : "border-transparent bg-background/0"
                       }`}
                       onDragOver={handlePaneDragOver(resolvedActiveTerminalId, "before")}
                       onDrop={handlePaneDrop(resolvedActiveTerminalId, "before")}
-                    />
+                    >
+                      {dropPreview?.surface === "pane-reorder-before" &&
+                        dropPreview.destination.type === "before" &&
+                        dropPreview.destination.targetTerminalId === resolvedActiveTerminalId && (
+                          <div className="absolute inset-y-1 left-1 w-0.5 rounded-full bg-primary" />
+                        )}
+                    </div>
                     <div
-                      className={`rounded border transition ${
-                        dropTarget?.type === "after" &&
-                        dropTarget.targetTerminalId === resolvedActiveTerminalId
-                          ? "border-primary bg-primary/10"
-                          : "border-transparent bg-background/0"
-                      }`}
-                      onDragOver={handlePaneDragOver(resolvedActiveTerminalId, "center")}
-                      onDrop={handlePaneDrop(resolvedActiveTerminalId, "center")}
-                    />
-                    <div
-                      className={`rounded border transition ${
-                        dropTarget?.type === "after" &&
-                        dropTarget.targetTerminalId === resolvedActiveTerminalId
-                          ? "border-primary bg-primary/14"
+                      className={`relative rounded border transition ${
+                        dropPreview?.surface === "pane-reorder-after" &&
+                        dropPreview.destination.type === "after" &&
+                        dropPreview.destination.targetTerminalId === resolvedActiveTerminalId
+                          ? "border-transparent bg-background/0"
                           : "border-transparent bg-background/0"
                       }`}
                       onDragOver={handlePaneDragOver(resolvedActiveTerminalId, "after")}
                       onDrop={handlePaneDrop(resolvedActiveTerminalId, "after")}
-                    />
+                    >
+                      {dropPreview?.surface === "pane-reorder-after" &&
+                        dropPreview.destination.type === "after" &&
+                        dropPreview.destination.targetTerminalId === resolvedActiveTerminalId && (
+                          <div className="absolute inset-y-1 right-1 w-0.5 rounded-full bg-primary" />
+                        )}
+                    </div>
                   </div>
                 )}
                 <TerminalViewport
@@ -1042,7 +1214,7 @@ export default function ThreadTerminalDrawer({
                   </TerminalActionButton>
                   <TerminalActionButton
                     className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
-                    onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
+                    onClick={() => handleCloseTerminal(resolvedActiveTerminalId)}
                     label={closeTerminalActionLabel}
                   >
                     <Trash2 className="size-3.25" />
@@ -1064,7 +1236,9 @@ export default function ThreadTerminalDrawer({
                         <button
                           type="button"
                           className={`flex w-full items-center rounded px-1 py-0.5 text-[10px] uppercase tracking-[0.08em] ${
-                            dropTarget?.type === "group" && dropTarget.targetGroupId === terminalGroup.id
+                            dropPreview?.surface === "group" &&
+                            dropPreview.destination.type === "group" &&
+                            dropPreview.destination.targetGroupId === terminalGroup.id
                               ? "bg-primary/12 text-foreground"
                               : isGroupActive
                               ? "bg-accent/70 text-foreground"
@@ -1102,8 +1276,8 @@ export default function ThreadTerminalDrawer({
                               onDragLeave={handleTerminalDropTargetLeave}
                               onDrop={(event) => {
                                 event.preventDefault();
-                                if (dropTarget) {
-                                  commitTerminalDrop(dropTarget);
+                                if (dropPreview) {
+                                  commitTerminalDrop(dropPreview.destination);
                                 }
                               }}
                               className={`group relative flex items-center gap-1 rounded px-1 py-0.5 text-[11px] ${
@@ -1114,12 +1288,14 @@ export default function ThreadTerminalDrawer({
                                 draggedTerminalId === terminalId ? "opacity-45" : ""
                               }`}
                             >
-                              {dropTarget?.type === "before" &&
-                                dropTarget.targetTerminalId === terminalId && (
+                              {dropPreview?.surface === "row-before" &&
+                                dropPreview.destination.type === "before" &&
+                                dropPreview.destination.targetTerminalId === terminalId && (
                                   <div className="absolute inset-x-1 top-0 h-px bg-primary" />
                                 )}
-                              {dropTarget?.type === "after" &&
-                                dropTarget.targetTerminalId === terminalId && (
+                              {dropPreview?.surface === "row-after" &&
+                                dropPreview.destination.type === "after" &&
+                                dropPreview.destination.targetTerminalId === terminalId && (
                                   <div className="absolute inset-x-1 bottom-0 h-px bg-primary" />
                                 )}
                               {showGroupHeaders && (
@@ -1148,7 +1324,7 @@ export default function ThreadTerminalDrawer({
                                       <button
                                         type="button"
                                         className="inline-flex size-3.5 items-center justify-center rounded text-xs font-medium leading-none text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground group-hover:opacity-100"
-                                        onClick={() => onCloseTerminal(terminalId)}
+                                        onClick={() => handleCloseTerminal(terminalId)}
                                         aria-label={closeTerminalLabel}
                                       />
                                     }
@@ -1173,6 +1349,23 @@ export default function ThreadTerminalDrawer({
                     </div>
                   );
                 })}
+                {draggedTerminalId && draggedTerminalGroupSize > 1 && (
+                  <div
+                    className={`mt-1 rounded border border-dashed px-2 py-1 text-[10px] uppercase tracking-[0.08em] transition ${
+                      dropPreview?.surface === "new-group"
+                        ? "border-primary bg-primary/12 text-foreground"
+                        : "border-border/70 text-muted-foreground"
+                    }`}
+                    onDragOver={handleNewGroupDragOver}
+                    onDragLeave={handleTerminalDropTargetLeave}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      commitTerminalDrop({ type: "new-group" });
+                    }}
+                  >
+                    Move to own split
+                  </div>
+                )}
               </div>
             </aside>
           )}

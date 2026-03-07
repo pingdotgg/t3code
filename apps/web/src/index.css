@@ -212,6 +212,63 @@ input {
   display: none;
 }
 
+/* Terminal drag-and-drop animations */
+@keyframes terminal-drop-expand {
+  from {
+    transform: scale(0.4);
+    opacity: 0.3;
+    border-radius: 12px;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+    border-radius: 0;
+  }
+}
+
+.terminal-drop-expand {
+  animation: terminal-drop-expand 280ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+  transform-origin: center center;
+}
+
+/* Terminal pane flex layout for animated add/remove */
+.terminal-pane-flex {
+  flex: 1 1 0%;
+  transition: flex 280ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              opacity 280ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.terminal-pane-opening {
+  animation: terminal-pane-grow 280ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+
+@keyframes terminal-pane-grow {
+  from {
+    flex: 0 0 0%;
+    opacity: 0;
+  }
+  to {
+    flex: 1 1 0%;
+    opacity: 1;
+  }
+}
+
+@keyframes terminal-pane-shrink {
+  from {
+    flex: 1 1 0%;
+    opacity: 1;
+  }
+  to {
+    flex: 0 0 0%;
+    opacity: 0;
+  }
+}
+
+.terminal-pane-closing {
+  overflow: hidden;
+  animation: terminal-pane-shrink 250ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+
 /* Terminal drawer scrollbar parity with chat */
 .thread-terminal-drawer .xterm .xterm-scrollable-element > .scrollbar.vertical {
   width: 6px !important;

@@ -140,6 +140,28 @@ describe("terminalStateStore actions", () => {
     ]);
   });
 
+  it("treats same-split adjacent drops as a no-op reorder", () => {
+    const store = useTerminalStateStore.getState();
+    store.splitTerminal(THREAD_ID, "terminal-2");
+    store.splitTerminal(THREAD_ID, "terminal-3");
+
+    const beforeMove = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+
+    store.moveTerminal(THREAD_ID, "terminal-2", {
+      type: "after",
+      targetTerminalId: "default",
+    });
+
+    const afterMove = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(afterMove).toEqual(beforeMove);
+  });
+
   it("moves a terminal into another group and turns it into a split", () => {
     const store = useTerminalStateStore.getState();
     store.newTerminal(THREAD_ID, "terminal-2");
@@ -156,6 +178,28 @@ describe("terminalStateStore actions", () => {
     );
     expect(terminalState.activeTerminalId).toBe("terminal-3");
     expect(terminalState.activeTerminalGroupId).toBe("group-default");
+    expect(terminalState.terminalIds).toEqual(["default", "terminal-3", "terminal-2"]);
+    expect(terminalState.terminalGroups).toEqual([
+      { id: "group-default", terminalIds: ["default", "terminal-3"] },
+      { id: "group-terminal-2", terminalIds: ["terminal-2"] },
+    ]);
+  });
+
+  it("separates a terminal out of a split into its own group", () => {
+    const store = useTerminalStateStore.getState();
+    store.splitTerminal(THREAD_ID, "terminal-2");
+    store.splitTerminal(THREAD_ID, "terminal-3");
+
+    store.moveTerminal(THREAD_ID, "terminal-2", {
+      type: "new-group",
+    });
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(terminalState.activeTerminalId).toBe("terminal-2");
+    expect(terminalState.activeTerminalGroupId).toBe("group-terminal-2");
     expect(terminalState.terminalIds).toEqual(["default", "terminal-3", "terminal-2"]);
     expect(terminalState.terminalGroups).toEqual([
       { id: "group-default", terminalIds: ["default", "terminal-3"] },

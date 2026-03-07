@@ -710,6 +710,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const storeMoveTerminal = useTerminalStateStore((s) => s.moveTerminal);
   const storeSetActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
+  const animatedCloseRef = useRef<((terminalId: string) => void) | null>(null);
 
   const setPrompt = useCallback(
     (nextPrompt: string) => {
@@ -2206,7 +2207,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         if (!terminalState.terminalOpen) return;
-        closeTerminal(terminalState.activeTerminalId);
+        const animatedClose = animatedCloseRef.current;
+        if (animatedClose) {
+          animatedClose(terminalState.activeTerminalId);
+        } else {
+          closeTerminal(terminalState.activeTerminalId);
+        }
         return;
       }
 
@@ -3896,6 +3902,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             onActiveTerminalChange={activateTerminal}
             onCloseTerminal={closeTerminal}
             onHeightChange={setTerminalHeight}
+            animatedCloseRef={animatedCloseRef}
           />
         );
       })()}
