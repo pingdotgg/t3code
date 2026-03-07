@@ -9,7 +9,6 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RELEASE_DIR="$REPO_ROOT/release"
-APP_NAME="T3 Code (Alpha).app"
 INSTALL_DIR="/Applications"
 
 SKIP_BUILD=false
@@ -22,6 +21,9 @@ done
 
 # ── Build ──────────────────────────────────────────────────────────
 if [ "$SKIP_BUILD" = false ]; then
+  echo "==> Cleaning old release artifacts..."
+  rm -rf "$RELEASE_DIR"
+
   echo "==> Building desktop DMG..."
   cd "$REPO_ROOT"
   bun run dist:desktop:dmg
@@ -37,21 +39,39 @@ fi
 
 echo "==> Found DMG: $(basename "$DMG_FILE")"
 
+# ── Kill running instance ──────────────────────────────────────────
+if pgrep -f "T3 Code" >/dev/null 2>&1; then
+  echo "==> Closing running T3 Code..."
+  pkill -f "T3 Code" 2>/dev/null || true
+  sleep 2
+fi
+
 # ── Mount DMG ──────────────────────────────────────────────────────
-MOUNT_POINT=$(hdiutil attach "$DMG_FILE" -nobrowse -noverify -noautoopen 2>/dev/null | grep "/Volumes/" | awk -F'\t' '{print $NF}')
+echo "==> Mounting DMG..."
+MOUNT_OUTPUT=$(hdiutil attach "$DMG_FILE" -nobrowse -noverify -noautoopen)
+MOUNT_POINT=$(echo "$MOUNT_OUTPUT" | grep -o '/Volumes/.*' | head -1)
 
 if [ -z "$MOUNT_POINT" ]; then
   echo "ERROR: Failed to mount $DMG_FILE"
+  echo "hdiutil output: $MOUNT_OUTPUT"
   exit 1
 fi
 
 echo "==> Mounted at: $MOUNT_POINT"
 
 # ── Locate .app inside DMG ─────────────────────────────────────────
-SOURCE_APP=$(find "$MOUNT_POINT" -maxdepth 1 -name "*.app" -type d | head -1)
+SOURCE_APP=""
+for entry in "$MOUNT_POINT"/*.app; do
+  if [ -d "$entry" ]; then
+    SOURCE_APP="$entry"
+    break
+  fi
+done
 
 if [ -z "$SOURCE_APP" ]; then
   echo "ERROR: No .app found inside DMG"
+  echo "DMG contents:"
+  ls -la "$MOUNT_POINT"
   hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || true
   exit 1
 fi
@@ -59,12 +79,7 @@ fi
 APP_BASENAME="$(basename "$SOURCE_APP")"
 TARGET_APP="$INSTALL_DIR/$APP_BASENAME"
 
-# ── Kill running instance ──────────────────────────────────────────
-if pgrep -f "$APP_BASENAME" >/dev/null 2>&1; then
-  echo "==> Closing running $APP_BASENAME..."
-  pkill -f "$APP_BASENAME" 2>/dev/null || true
-  sleep 1
-fi
+echo "==> Found app: $APP_BASENAME"
 
 # ── Replace existing app ──────────────────────────────────────────
 if [ -d "$TARGET_APP" ]; then
@@ -72,7 +87,7 @@ if [ -d "$TARGET_APP" ]; then
   rm -rf "$TARGET_APP"
 fi
 
-echo "==> Installing to $TARGET_APP..."
+echo "==> Copying to $TARGET_APP..."
 cp -R "$SOURCE_APP" "$TARGET_APP"
 
 # ── Cleanup ────────────────────────────────────────────────────────
