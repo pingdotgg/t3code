@@ -1,0 +1,9 @@
+.git
+node_modules
+.turbo
+dist
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
