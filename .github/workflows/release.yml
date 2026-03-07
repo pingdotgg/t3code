@@ -10,6 +10,11 @@ on:
         description: "Release version (for example 1.2.3 or v1.2.3)"
         required: true
         type: string
+      targets:
+        description: "Platforms to build (comma-separated: linux, mac-arm64, mac-x64, windows)"
+        required: false
+        default: "linux"
+        type: string
 
 permissions:
   contents: write
@@ -22,6 +27,10 @@ jobs:
       version: ${{ steps.release_meta.outputs.version }}
       tag: ${{ steps.release_meta.outputs.tag }}
       ref: ${{ github.sha }}
+      build_linux: ${{ steps.targets.outputs.build_linux }}
+      build_mac_arm64: ${{ steps.targets.outputs.build_mac_arm64 }}
+      build_mac_x64: ${{ steps.targets.outputs.build_mac_x64 }}
+      build_windows: ${{ steps.targets.outputs.build_windows }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,6 +54,24 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
+      - id: targets
+        name: Resolve target platforms
+        shell: bash
+        run: |
+          # On tag push, build all platforms. On workflow_dispatch, use input.
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            targets="${{ github.event.inputs.targets }}"
+          else
+            targets="linux,mac-arm64,mac-x64,windows"
+          fi
+
+          echo "Building targets: $targets"
+
+          [[ "$targets" == *"linux"*     ]] && echo "build_linux=true"     >> "$GITHUB_OUTPUT" || echo "build_linux=false"     >> "$GITHUB_OUTPUT"
+          [[ "$targets" == *"mac-arm64"* ]] && echo "build_mac_arm64=true" >> "$GITHUB_OUTPUT" || echo "build_mac_arm64=false" >> "$GITHUB_OUTPUT"
+          [[ "$targets" == *"mac-x64"*   ]] && echo "build_mac_x64=true"   >> "$GITHUB_OUTPUT" || echo "build_mac_x64=false"   >> "$GITHUB_OUTPUT"
+          [[ "$targets" == *"windows"*   ]] && echo "build_windows=true"   >> "$GITHUB_OUTPUT" || echo "build_windows=false"   >> "$GITHUB_OUTPUT"
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -67,34 +94,162 @@ jobs:
       - name: Test
         run: bun run test
 
-  build:
-    name: Build ${{ matrix.label }}
+  build_linux:
+    name: Build Linux x64
     needs: preflight
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: macOS arm64
-            runner: macos-14
-            platform: mac
-            target: dmg
-            arch: arm64
-          - label: macOS x64
-            runner: macos-15-intel
-            platform: mac
-            target: dmg
-            arch: x64
-          - label: Linux x64
-            runner: ubuntu-24.04
-            platform: linux
-            target: AppImage
-            arch: x64
-          - label: Windows x64
-            runner: windows-2022
-            platform: win
-            target: nsis
-            arch: x64
+    if: needs.preflight.outputs.build_linux == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build desktop artifact (unsigned)
+        run: |
+          bun run dist:desktop:artifact -- \
+            --platform linux \
+            --target AppImage \
+            --arch x64 \
+            --build-version "${{ needs.preflight.outputs.version }}" \
+            --verbose
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          mkdir -p release-publish
+          shopt -s nullglob
+          for f in release/*.AppImage release/*.blockmap release/latest*.yml; do
+            cp "$f" release-publish/
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux-x64
+          path: release-publish/*
+          if-no-files-found: error
+
+  build_mac_arm64:
+    name: Build macOS arm64
+    needs: preflight
+    if: needs.preflight.outputs.build_mac_arm64 == 'true'
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build desktop artifact (unsigned)
+        run: |
+          bun run dist:desktop:artifact -- \
+            --platform mac \
+            --target dmg \
+            --arch arm64 \
+            --build-version "${{ needs.preflight.outputs.version }}" \
+            --verbose
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          mkdir -p release-publish
+          shopt -s nullglob
+          for f in release/*.dmg release/*.zip release/*.blockmap release/latest*.yml; do
+            cp "$f" release-publish/
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-mac-arm64
+          path: release-publish/*
+          if-no-files-found: error
+
+  build_mac_x64:
+    name: Build macOS x64
+    needs: preflight
+    if: needs.preflight.outputs.build_mac_x64 == 'true'
+    runs-on: macos-15-intel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build desktop artifact (unsigned)
+        run: |
+          bun run dist:desktop:artifact -- \
+            --platform mac \
+            --target dmg \
+            --arch x64 \
+            --build-version "${{ needs.preflight.outputs.version }}" \
+            --verbose
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          mkdir -p release-publish
+          shopt -s nullglob
+          for f in release/*.dmg release/*.zip release/*.blockmap release/latest-mac.yml; do
+            cp "$f" release-publish/
+          done
+          [[ -f release-publish/latest-mac.yml ]] && mv release-publish/latest-mac.yml release-publish/latest-mac-x64.yml
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-mac-x64
+          path: release-publish/*
+          if-no-files-found: error
+
+  build_windows:
+    name: Build Windows x64
+    needs: preflight
+    if: needs.preflight.outputs.build_windows == 'true'
+    runs-on: windows-2022
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -119,47 +274,33 @@ jobs:
         shell: bash
         run: |
           bun run dist:desktop:artifact -- \
-            --platform "${{ matrix.platform }}" \
-            --target "${{ matrix.target }}" \
-            --arch "${{ matrix.arch }}" \
+            --platform win \
+            --target nsis \
+            --arch x64 \
             --build-version "${{ needs.preflight.outputs.version }}" \
             --verbose
 
       - name: Collect release assets
         shell: bash
         run: |
-          set -euo pipefail
           mkdir -p release-publish
-
           shopt -s nullglob
-          for pattern in \
-            "release/*.dmg" \
-            "release/*.zip" \
-            "release/*.AppImage" \
-            "release/*.exe" \
-            "release/*.blockmap" \
-            "release/latest*.yml"; do
-            for file in $pattern; do
-              cp "$file" release-publish/
-            done
+          for f in release/*.exe release/*.blockmap release/latest*.yml; do
+            cp "$f" release-publish/
           done
 
-          if [[ "${{ matrix.platform }}" == "mac" && "${{ matrix.arch }}" != "arm64" ]]; then
-            if [[ -f release-publish/latest-mac.yml ]]; then
-              mv release-publish/latest-mac.yml "release-publish/latest-mac-${{ matrix.arch }}.yml"
-            fi
-          fi
-
-      - name: Upload build artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          name: desktop-windows-x64
           path: release-publish/*
           if-no-files-found: error
 
   release:
     name: Publish GitHub Release
-    needs: [preflight, build]
+    needs: [preflight, build_linux, build_mac_arm64, build_mac_x64, build_windows]
+    # Run even if some build jobs were skipped
+    if: always() && !failure() && !cancelled()
     runs-on: ubuntu-24.04
     steps:
       - name: Download all desktop artifacts
@@ -178,10 +319,5 @@ jobs:
           generate_release_notes: true
           make_latest: true
           files: |
-            release-assets/*.dmg
-            release-assets/*.zip
-            release-assets/*.AppImage
-            release-assets/*.exe
-            release-assets/*.blockmap
-            release-assets/latest*.yml
-          fail_on_unmatched_files: true
+            release-assets/**
+          fail_on_unmatched_files: false
