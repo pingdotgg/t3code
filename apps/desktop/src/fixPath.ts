@@ -5,10 +5,10 @@ export function fixPath(): void {
 
   try {
     const shell = process.env.SHELL ?? "/bin/zsh";
-    const result = ChildProcess.execFileSync(shell, ["-ilc", "echo -n $PATH"], {
+    const result = ChildProcess.execFileSync(shell, ["-ilc", 'printf "%s" "$PATH"'], {
       encoding: "utf8",
       timeout: 5000,
-    });
+    }).trim();
     if (result) {
       process.env.PATH = result;
     }
