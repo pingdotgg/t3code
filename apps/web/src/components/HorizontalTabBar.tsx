@@ -11,7 +11,16 @@ import { isElectron } from "../env";
 import type { Thread, Project } from "../types";
 import { derivePendingApprovals } from "../session-logic";
 
-function statusDot(thread: Thread, hasPendingApproval: boolean): string | null {
+interface TabThread {
+  id: ThreadId;
+  title: string;
+  session: Thread["session"] | null;
+  activities: Thread["activities"];
+  createdAt: string;
+  isDraft: boolean;
+}
+
+function statusDot(thread: TabThread, hasPendingApproval: boolean): string | null {
   if (hasPendingApproval) return "bg-amber-500";
   if (thread.session?.status === "running" || thread.session?.status === "connecting")
     return "bg-sky-500 animate-pulse";
@@ -25,7 +34,7 @@ const Tab = memo(function Tab({
   onSelect,
   onClose,
 }: {
-  thread: Thread;
+  thread: TabThread;
   isActive: boolean;
   hasPendingApproval: boolean;
   onSelect: (id: ThreadId) => void;
@@ -171,26 +180,52 @@ export default function HorizontalTabBar() {
   });
   const setProjectDraftThreadId = useComposerDraftStore((s) => s.setProjectDraftThreadId);
   const getDraftThread = useComposerDraftStore((s) => s.getDraftThread);
+  const draftThreadsByThreadId = useComposerDraftStore((s) => s.draftThreadsByThreadId);
 
   const activeThread = threads.find((t) => t.id === routeThreadId);
   const draftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
   const activeProjectId = activeThread?.projectId ?? draftThread?.projectId ?? projects[0]?.id ?? null;
 
-  const projectThreads = useMemo(
-    () =>
-      threads
-        .filter((t) => t.projectId === activeProjectId)
-        .toSorted((a, b) => {
-          const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-          return byDate !== 0 ? byDate : b.id.localeCompare(a.id);
-        }),
-    [threads, activeProjectId],
-  );
+  const projectThreads = useMemo(() => {
+    const persistedThreadIds = new Set<ThreadId>();
+    const tabThreads: TabThread[] = threads
+      .filter((t) => t.projectId === activeProjectId)
+      .map((t) => {
+        persistedThreadIds.add(t.id);
+        return {
+          id: t.id,
+          title: t.title,
+          session: t.session,
+          activities: t.activities,
+          createdAt: t.createdAt,
+          isDraft: false,
+        };
+      });
+
+    for (const [threadId, draft] of Object.entries(draftThreadsByThreadId)) {
+      const tid = ThreadId.makeUnsafe(threadId);
+      if (draft.projectId === activeProjectId && !persistedThreadIds.has(tid)) {
+        tabThreads.push({
+          id: tid,
+          title: "New thread",
+          session: null,
+          activities: [],
+          createdAt: draft.createdAt,
+          isDraft: true,
+        });
+      }
+    }
+
+    return tabThreads.toSorted((a, b) => {
+      const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      return byDate !== 0 ? byDate : b.id.localeCompare(a.id);
+    });
+  }, [threads, activeProjectId, draftThreadsByThreadId]);
 
   const pendingApprovalByThreadId = useMemo(() => {
     const map = new Map<ThreadId, boolean>();
     for (const thread of projectThreads) {
-      map.set(thread.id, derivePendingApprovals(thread.activities).length > 0);
+      map.set(thread.id, thread.isDraft ? false : derivePendingApprovals(thread.activities).length > 0);
     }
     return map;
   }, [projectThreads]);
@@ -202,8 +237,14 @@ export default function HorizontalTabBar() {
     [navigate],
   );
 
+  const clearThreadDraft = useComposerDraftStore((s) => s.clearThreadDraft);
+
   const closeTab = useCallback(
     (threadId: ThreadId) => {
+      const tab = projectThreads.find((t) => t.id === threadId);
+      if (tab?.isDraft) {
+        clearThreadDraft(threadId);
+      }
       if (routeThreadId === threadId) {
         const idx = projectThreads.findIndex((t) => t.id === threadId);
         const next = projectThreads[idx + 1] ?? projectThreads[idx - 1];
@@ -214,7 +255,7 @@ export default function HorizontalTabBar() {
         }
       }
     },
-    [routeThreadId, projectThreads, navigate],
+    [routeThreadId, projectThreads, navigate, clearThreadDraft],
   );
 
   const switchProject = useCallback(
