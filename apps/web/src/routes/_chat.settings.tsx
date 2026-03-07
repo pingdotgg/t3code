@@ -114,6 +114,7 @@ function SettingsRouteView() {
   const codexHomePath = settings.codexHomePath;
   const codexServiceTier = settings.codexServiceTier;
   const defaultCodexModel = normalizeAppDefaultModelSetting(settings.defaultCodexModel);
+  const normalizedDefaultCodexModel = normalizeAppDefaultModelSetting(defaults.defaultCodexModel);
   const defaultCodexModelOptions = getAppModelOptions(
     "codex",
     settings.customCodexModels,
@@ -392,13 +393,13 @@ function SettingsRouteView() {
                   </span>
                 </label>
 
-                {defaultCodexModel !== defaults.defaultCodexModel ? (
+                {defaultCodexModel !== normalizedDefaultCodexModel ? (
                   <div className="flex justify-end">
                     <Button
                       size="xs"
                       variant="outline"
                       onClick={() =>
-                        updateSettings({ defaultCodexModel: defaults.defaultCodexModel })
+                        updateSettings({ defaultCodexModel: normalizedDefaultCodexModel })
                       }
                     >
                       Restore default model setting
