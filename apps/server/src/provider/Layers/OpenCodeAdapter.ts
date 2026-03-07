@@ -56,17 +56,19 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function parseProviderModel(model: string): { providerID: string; modelID: string } {
+function parseProviderModel(model: string): Effect.Effect<{ providerID: string; modelID: string }, ProviderAdapterValidationError> {
   const [providerID, ...rest] = model.split("/");
   const modelID = rest.join("/");
   if (!providerID || !modelID) {
-    throw new ProviderAdapterValidationError({
-      provider: PROVIDER,
-      operation: "sendTurn",
-      issue: `Invalid OpenCode model '${model}'. Expected 'provider/model'.`,
-    });
+    return Effect.fail(
+      new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: "sendTurn",
+        issue: `Invalid OpenCode model '${model}'. Expected 'provider/model'.`,
+      }),
+    );
   }
-  return { providerID, modelID };
+  return Effect.succeed({ providerID, modelID });
 }
 
 function baseEvent(threadId: ThreadId): Pick<ProviderRuntimeEvent, "eventId" | "provider" | "threadId" | "createdAt"> {
@@ -130,15 +132,17 @@ const makeOpenCodeAdapter = (options?: OpenCodeAdapterLiveOptions) =>
         const created = yield* Effect.tryPromise({
           try: () =>
             client.session.create({
+              throwOnError: true,
               body: { title: input.threadId },
               ...(input.cwd ? { query: { directory: input.cwd } } : {}),
             }),
           catch: (cause) => toRequestError("session.create", cause),
         });
 
+        const providerSessionId = created.data.id;
         const at = nowIso();
         const state: SessionState = {
-          providerSessionId: created.id,
+          providerSessionId,
           threadId: input.threadId,
           createdAt: at,
           updatedAt: at,
@@ -154,7 +158,7 @@ const makeOpenCodeAdapter = (options?: OpenCodeAdapterLiveOptions) =>
         yield* Queue.offer(queue, {
           ...baseEvent(input.threadId),
           type: "thread.started",
-          payload: { providerThreadId: created.id },
+          payload: { providerThreadId: providerSessionId },
         });
 
         return {
@@ -165,7 +169,7 @@ const makeOpenCodeAdapter = (options?: OpenCodeAdapterLiveOptions) =>
           ...(input.cwd ? { cwd: input.cwd } : {}),
           createdAt: at,
           updatedAt: at,
-          resumeCursor: { providerSessionId: created.id },
+          resumeCursor: { providerSessionId },
           ...(input.model ? { model: resolveModelSlugForProvider(PROVIDER, input.model) } : {}),
         };
       });
@@ -178,7 +182,7 @@ const makeOpenCodeAdapter = (options?: OpenCodeAdapterLiveOptions) =>
         session.updatedAt = nowIso();
 
         const resolvedModel = resolveModelSlugForProvider(PROVIDER, input.model);
-        const model = parseProviderModel(resolvedModel);
+        const model = yield* parseProviderModel(resolvedModel);
 
         const turnList = snapshots.get(input.threadId) ?? [];
         turnList.push({ id: turnId, items: [] });
@@ -199,6 +203,7 @@ const makeOpenCodeAdapter = (options?: OpenCodeAdapterLiveOptions) =>
         yield* Effect.tryPromise({
           try: () =>
             client.session.prompt({
+              throwOnError: true,
               path: { id: session.providerSessionId },
               body: {
                 model,
@@ -208,91 +213,99 @@ const makeOpenCodeAdapter = (options?: OpenCodeAdapterLiveOptions) =>
           catch: (cause) => toRequestError("session.prompt", cause),
         });
 
-        yield* Effect.forkScoped(
-          Effect.tryPromise({
-            try: async () => {
-              for await (const sseEvent of subscription.stream) {
-                const event = sseEvent as { type?: string; properties?: Record<string, unknown> };
-                if (event.type === "message.part.updated") {
-                  const part = event.properties?.part as { id?: string; type?: string; tool?: string } | undefined;
-                  const delta = event.properties?.delta;
-                  if (typeof delta === "string" && delta.length > 0) {
-                    await Effect.runPromise(
-                      Queue.offer(queue, {
-                        ...baseEvent(input.threadId),
-                        turnId,
-                        itemId: RuntimeItemId.makeUnsafe(part?.id ?? `item_${Date.now()}`),
-                        type: "content.delta",
-                        payload: { streamKind: "output", delta },
-                      }),
-                    );
-                  }
-                  if (part?.type === "tool" || part?.type === "tool-call") {
-                    await Effect.runPromise(
-                      Queue.offer(queue, {
-                        ...baseEvent(input.threadId),
-                        turnId,
-                        itemId: RuntimeItemId.makeUnsafe(part?.id ?? `tool_${Date.now()}`),
-                        type: "item.started",
-                        payload: {
-                          itemType: "dynamic_tool_call",
-                          title: part.tool ?? "Tool call",
-                          data: event.properties,
-                        },
-                      }),
-                    );
-                  }
-                  if (part?.type === "tool-result") {
-                    await Effect.runPromise(
-                      Queue.offer(queue, {
-                        ...baseEvent(input.threadId),
-                        turnId,
-                        itemId: RuntimeItemId.makeUnsafe(part?.id ?? `tool_${Date.now()}`),
-                        type: "item.completed",
-                        payload: {
-                          itemType: "dynamic_tool_call",
-                          status: "completed",
-                          detail: "Tool result",
-                          data: event.properties,
-                        },
-                      }),
-                    );
-                  }
-                }
-
-                if (event.type === "session.updated") {
+        const streamPump = Effect.tryPromise({
+          try: async () => {
+            for await (const sseEvent of subscription.stream) {
+              const event = sseEvent as { type?: string; properties?: Record<string, unknown> };
+              if (event.type === "message.part.updated") {
+                const part = event.properties?.part as { id?: string; type?: string; tool?: string } | undefined;
+                const delta = event.properties?.delta;
+                if (typeof delta === "string" && delta.length > 0) {
                   await Effect.runPromise(
                     Queue.offer(queue, {
                       ...baseEvent(input.threadId),
                       turnId,
-                      type: "turn.completed",
-                      payload: { state: "completed" },
+                      itemId: RuntimeItemId.makeUnsafe(part?.id ?? `item_${Date.now()}`),
+                      type: "content.delta",
+                      payload: { streamKind: "assistant_text", delta },
                     }),
                   );
-                  session.activeTurnId = undefined;
-                  break;
                 }
-
-                if (event.type === "session.error") {
+                if (part?.type === "tool" || part?.type === "tool-call") {
                   await Effect.runPromise(
                     Queue.offer(queue, {
                       ...baseEvent(input.threadId),
                       turnId,
-                      type: "turn.completed",
+                      itemId: RuntimeItemId.makeUnsafe(part?.id ?? `tool_${Date.now()}`),
+                      type: "item.started",
                       payload: {
-                        state: "failed",
-                        errorMessage: "OpenCode session error",
+                        itemType: "dynamic_tool_call",
+                        title: part.tool ?? "Tool call",
+                        data: event.properties,
                       },
                     }),
                   );
-                  session.activeTurnId = undefined;
-                  break;
+                }
+                if (part?.type === "tool-result") {
+                  await Effect.runPromise(
+                    Queue.offer(queue, {
+                      ...baseEvent(input.threadId),
+                      turnId,
+                      itemId: RuntimeItemId.makeUnsafe(part?.id ?? `tool_${Date.now()}`),
+                      type: "item.completed",
+                      payload: {
+                        itemType: "dynamic_tool_call",
+                        status: "completed",
+                        detail: "Tool result",
+                        data: event.properties,
+                      },
+                    }),
+                  );
                 }
               }
-            },
-            catch: (cause) => cause,
-          }).pipe(Effect.ignore),
-        );
+
+              if (event.type === "session.updated") {
+                await Effect.runPromise(
+                  Queue.offer(queue, {
+                    ...baseEvent(input.threadId),
+                    turnId,
+                    type: "turn.completed",
+                    payload: { state: "completed" },
+                  }),
+                );
+                delete session.activeTurnId;
+                break;
+              }
+
+              if (event.type === "session.error") {
+                await Effect.runPromise(
+                  Queue.offer(queue, {
+                    ...baseEvent(input.threadId),
+                    turnId,
+                    type: "turn.completed",
+                    payload: {
+                      state: "failed",
+                      errorMessage: "OpenCode session error",
+                    },
+                  }),
+                );
+                delete session.activeTurnId;
+                break;
+              }
+            }
+          },
+          catch: (cause) =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "event.subscribe.stream",
+              detail: toMessage(cause, "OpenCode event stream failed."),
+              cause,
+            }),
+        }).pipe(Effect.ignore);
+
+        yield* Effect.sync(() => {
+          Effect.runFork(streamPump);
+        });
 
         return {
           threadId: input.threadId,
@@ -304,10 +317,10 @@ const makeOpenCodeAdapter = (options?: OpenCodeAdapterLiveOptions) =>
       Effect.gen(function* () {
         const session = yield* getSession(threadId);
         yield* Effect.tryPromise({
-          try: () => client.session.abort({ path: { id: session.providerSessionId } }),
+          try: () => client.session.abort({ throwOnError: true, path: { id: session.providerSessionId } }),
           catch: (cause) => toRequestError("session.abort", cause),
         });
-        session.activeTurnId = undefined;
+        delete session.activeTurnId;
       });
 
     const readThread: OpenCodeAdapterShape["readThread"] = (threadId) =>
@@ -344,7 +357,7 @@ const makeOpenCodeAdapter = (options?: OpenCodeAdapterLiveOptions) =>
       Effect.gen(function* () {
         const session = yield* getSession(threadId);
         yield* Effect.tryPromise({
-          try: () => client.session.delete({ path: { id: session.providerSessionId } }),
+          try: () => client.session.delete({ throwOnError: true, path: { id: session.providerSessionId } }),
           catch: (cause) => toRequestError("session.delete", cause),
         });
         sessions.delete(threadId);
@@ -378,8 +391,8 @@ const makeOpenCodeAdapter = (options?: OpenCodeAdapterLiveOptions) =>
       startSession,
       sendTurn,
       interruptTurn,
-      respondToRequest: () => Effect.void,
-      respondToUserInput: () => Effect.void,
+      respondToRequest: () => Effect.succeed(undefined),
+      respondToUserInput: () => Effect.succeed(undefined),
       stopSession,
       listSessions,
       hasSession,

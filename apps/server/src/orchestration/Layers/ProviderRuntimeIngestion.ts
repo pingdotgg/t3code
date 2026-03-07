@@ -651,7 +651,9 @@ const make = Effect.gen(function* () {
     Cache.invalidate(bufferedProposedPlanById, planId);
 
   const clearAssistantMessageState = (messageId: MessageId) =>
-    Effect.zipRight(clearBufferedAssistantText(messageId), clearStreamedAssistantDelta(messageId));
+    clearBufferedAssistantText(messageId).pipe(
+      Effect.flatMap(() => clearStreamedAssistantDelta(messageId)),
+    );
 
   const finalizeAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
