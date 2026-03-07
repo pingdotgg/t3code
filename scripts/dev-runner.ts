@@ -3,10 +3,15 @@
 import { homedir } from "node:os";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeChildProcessSpawner from "@effect/platform-node/NodeChildProcessSpawner";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as NodePath from "@effect/platform-node/NodePath";
+import * as NodeStdio from "@effect/platform-node/NodeStdio";
+import * as NodeTerminal from "@effect/platform-node/NodeTerminal";
 import { NetService } from "@t3tools/shared/Net";
 import { Config, Data, Effect, Hash, Layer, Logger, Option, Path, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
+import type { Environment as CliEnvironment } from "effect/unstable/cli/Command";
 import { ChildProcess } from "effect/unstable/process";
 
 const BASE_SERVER_PORT = 3773;
@@ -536,15 +541,22 @@ const devRunnerCli = Command.make("dev-runner", {
   Command.withHandler((input) => runDevRunnerWithInput(input)),
 );
 
-const cliRuntimeLayer = Layer.mergeAll(
-  Logger.layer([Logger.consolePretty()]),
-  NodeServices.layer,
-  NetService.layer,
+const childProcessRuntimeLayer = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(NodeFileSystem.layer),
+  Layer.provideMerge(NodePath.layer),
 );
 
-const runtimeProgram = Command.run(devRunnerCli, { version: "0.0.0" }).pipe(
-  Effect.scoped,
-  Effect.provide(cliRuntimeLayer),
+const cliRuntimeLayer = Layer.mergeAll(
+  childProcessRuntimeLayer,
+  NodeStdio.layer,
+  NodeTerminal.layer,
+  NetService.layer,
+  Logger.layer([Logger.consolePretty()]),
+);
+
+const runtimeProgram = Effect.provide(
+  Effect.scoped(Command.run(devRunnerCli, { version: "0.0.0" })),
+  cliRuntimeLayer as Layer.Layer<CliEnvironment | NetService>,
 );
 
 if (import.meta.main) {

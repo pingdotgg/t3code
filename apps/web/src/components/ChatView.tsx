@@ -168,6 +168,7 @@ import {
   Icon,
   OpenAI,
   OpenCodeIcon,
+  TraeIcon,
   VisualStudioCode,
   Zed,
 } from "./Icons";
@@ -5576,6 +5577,11 @@ const OpenInPicker = memo(function OpenInPicker({
         value: "cursor",
       },
       {
+        label: "Trae",
+        Icon: TraeIcon,
+        value: "trae",
+      },
+      {
         label: "VS Code",
         Icon: VisualStudioCode,
         value: "vscode",
@@ -5606,6 +5612,15 @@ const OpenInPicker = memo(function OpenInPicker({
     ? lastEditor
     : (options[0]?.value ?? null);
   const primaryOption = options.find(({ value }) => value === effectiveEditor) ?? null;
+  const getEditorIconClassName = useCallback(
+    (editor: EditorId, surface: "button" | "menu") => {
+      if (surface === "button") {
+        return editor === "trae" ? "size-4" : "size-3.5";
+      }
+      return cn("text-muted-foreground", editor === "trae" && "size-5 sm:size-4.5");
+    },
+    [],
+  );
 
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
@@ -5647,7 +5662,12 @@ const OpenInPicker = memo(function OpenInPicker({
         disabled={!effectiveEditor || !openInCwd}
         onClick={() => openInEditor(effectiveEditor)}
       >
-        {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
+        {primaryOption?.Icon && (
+          <primaryOption.Icon
+            aria-hidden="true"
+            className={getEditorIconClassName(primaryOption.value, "button")}
+          />
+        )}
         <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
           Open
         </span>
@@ -5661,7 +5681,7 @@ const OpenInPicker = memo(function OpenInPicker({
           {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
           {options.map(({ label, Icon, value }) => (
             <MenuItem key={value} onClick={() => openInEditor(value)}>
-              <Icon aria-hidden="true" className="text-muted-foreground" />
+              <Icon aria-hidden="true" className={getEditorIconClassName(value, "menu")} />
               {label}
               {value === effectiveEditor && openFavoriteEditorShortcutLabel && (
                 <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>

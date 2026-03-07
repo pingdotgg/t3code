@@ -20,6 +20,16 @@ export const CursorIcon: Icon = (props) => (
   </svg>
 );
 
+export const TraeIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 24 24" fill="currentColor">
+    <path
+      fillRule="evenodd"
+      clipRule="evenodd"
+      d="M24 20.541H3.428v-3.426H0V3.4h24V20.54zM3.428 17.115h17.144V6.827H3.428v10.288zm8.573-5.196-2.425 2.424-2.424-2.424 2.424-2.424 2.425 2.424zm6.857-.001-2.424 2.423-2.425-2.423 2.425-2.425 2.424 2.425z"
+    />
+  </svg>
+);
+
 export const VisualStudioCode: Icon = (props) => {
   const id = useId();
   const maskId = `${id}-vscode-a`;

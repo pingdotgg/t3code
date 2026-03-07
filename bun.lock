@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "@t3tools/monorepo",
@@ -159,6 +158,9 @@
         "vitest": "catalog:",
       },
     },
+  },
+  "overrides": {
+    "effect": "catalog:",
   },
   "catalog": {
     "@effect/language-service": "0.75.1",
@@ -1962,14 +1964,6 @@
     "@babel/traverse/@babel/parser": ["@babel/parser@7.29.0", "", { "dependencies": { "@babel/types": "^7.29.0" }, "bin": "./bin/babel-parser.js" }, "sha512-IyDgFV5GeDUVX4YdF/3CPULtVGSXXMLh1xVIgdCgxApktqnQV0r7/8Nqthg+8YLGaAtdyIlo2qIdZrbCv4+7ww=="],
 
     "@babel/types/@babel/helper-validator-identifier": ["@babel/helper-validator-identifier@7.28.5", "", {}, "sha512-qSs4ifwzKJSV39ucNjsvc6WVHs6b7S03sOh2OcHF9UHfVPqWWALUsNUVzhSBiItjRZoLHx7nIarVjqKVusUZ1Q=="],
-
-    "@effect/platform-node/effect": ["effect@4.0.0-beta.27", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "fast-check": "^4.5.3", "find-my-way-ts": "^0.1.6", "ini": "^6.0.0", "kubernetes-types": "^1.30.0", "msgpackr": "^1.11.8", "multipasta": "^0.2.7", "toml": "^3.0.0", "uuid": "^13.0.0", "yaml": "^2.8.2" } }, "sha512-bNQEF3vaVGF8jAJ+HW1A4DaxVNmujgEu89sO+VNW1AvUYtPGMtKPTBU15K9inu1rG+hkxNFFRlVvLAJsdaE2mg=="],
-
-    "@effect/platform-node-shared/effect": ["effect@4.0.0-beta.27", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "fast-check": "^4.5.3", "find-my-way-ts": "^0.1.6", "ini": "^6.0.0", "kubernetes-types": "^1.30.0", "msgpackr": "^1.11.8", "multipasta": "^0.2.7", "toml": "^3.0.0", "uuid": "^13.0.0", "yaml": "^2.8.2" } }, "sha512-bNQEF3vaVGF8jAJ+HW1A4DaxVNmujgEu89sO+VNW1AvUYtPGMtKPTBU15K9inu1rG+hkxNFFRlVvLAJsdaE2mg=="],
-
-    "@effect/sql-sqlite-bun/effect": ["effect@4.0.0-beta.27", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "fast-check": "^4.5.3", "find-my-way-ts": "^0.1.6", "ini": "^6.0.0", "kubernetes-types": "^1.30.0", "msgpackr": "^1.11.8", "multipasta": "^0.2.7", "toml": "^3.0.0", "uuid": "^13.0.0", "yaml": "^2.8.2" } }, "sha512-bNQEF3vaVGF8jAJ+HW1A4DaxVNmujgEu89sO+VNW1AvUYtPGMtKPTBU15K9inu1rG+hkxNFFRlVvLAJsdaE2mg=="],
-
-    "@effect/vitest/effect": ["effect@4.0.0-beta.27", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "fast-check": "^4.5.3", "find-my-way-ts": "^0.1.6", "ini": "^6.0.0", "kubernetes-types": "^1.30.0", "msgpackr": "^1.11.8", "multipasta": "^0.2.7", "toml": "^3.0.0", "uuid": "^13.0.0", "yaml": "^2.8.2" } }, "sha512-bNQEF3vaVGF8jAJ+HW1A4DaxVNmujgEu89sO+VNW1AvUYtPGMtKPTBU15K9inu1rG+hkxNFFRlVvLAJsdaE2mg=="],
 
     "@electron/get/fs-extra": ["fs-extra@8.1.0", "", { "dependencies": { "graceful-fs": "^4.2.0", "jsonfile": "^4.0.0", "universalify": "^0.1.0" } }, "sha512-yhlQgA6mnOJUKOsRUFsgJdQCvkKhcz8tlZG5HBQfReYZy46OwLcY+Zia0mtdHsOo9y/hP+CxMN0TU9QxoOtG4g=="],
 
