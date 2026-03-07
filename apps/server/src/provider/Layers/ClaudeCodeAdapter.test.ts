@@ -546,14 +546,14 @@ describe("ClaudeCodeAdapterLive", () => {
         provider: "claudeCode",
         runtimeMode: "full-access",
       });
-      assert.equal(session.threadId, undefined);
+      assert.equal(String(session.threadId), String(THREAD_ID));
 
       const turn = yield* adapter.sendTurn({
         threadId: session.threadId,
         input: "hello",
         attachments: [],
       });
-      assert.equal(turn.threadId, undefined);
+      assert.equal(String(turn.threadId), String(THREAD_ID));
 
       harness.query.emit({
         type: "stream_event",
@@ -592,13 +592,14 @@ describe("ClaudeCodeAdapterLive", () => {
       const sessionStarted = runtimeEvents[0];
       assert.equal(sessionStarted?.type, "session.started");
       if (sessionStarted?.type === "session.started") {
-        assert.equal("threadId" in sessionStarted, false);
+        assert.equal(String(sessionStarted.threadId), String(THREAD_ID));
       }
 
       const threadStarted = runtimeEvents[4];
       assert.equal(threadStarted?.type, "thread.started");
       if (threadStarted?.type === "thread.started") {
-        assert.equal(threadStarted.threadId, "sdk-thread-real");
+        assert.equal(String(threadStarted.threadId), String(THREAD_ID));
+        assert.equal(threadStarted.payload.providerThreadId, "sdk-thread-real");
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -700,9 +701,9 @@ describe("ClaudeCodeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      assert.equal(session.threadId, "resume-thread-1");
+      assert.equal(String(session.threadId), String(RESUME_THREAD_ID));
       assert.deepEqual(session.resumeCursor, {
-        threadId: "resume-thread-1",
+        threadId: String(RESUME_THREAD_ID),
         resume: "550e8400-e29b-41d4-a716-446655440000",
         resumeSessionAt: "assistant-99",
         turnCount: 3,
@@ -849,7 +850,7 @@ describe("ClaudeCodeAdapterLive", () => {
       event?: {
         provider?: string;
         method?: string;
-        threadId?: string;
+        providerThreadId?: string;
         turnId?: string;
       };
     }> = [];
@@ -911,7 +912,10 @@ describe("ClaudeCodeAdapterLive", () => {
 
       assert.equal(nativeEvents.length > 0, true);
       assert.equal(nativeEvents.some((record) => record.event?.provider === "claudeCode"), true);
-      assert.equal(nativeEvents.some((record) => String(record.event?.threadId) === String(session.threadId)), true);
+      assert.equal(
+        nativeEvents.some((record) => record.event?.providerThreadId === "sdk-session-native-log"),
+        true,
+      );
       assert.equal(
         nativeEvents.some((record) => String(record.event?.turnId) === String(turn.turnId)),
         true,
