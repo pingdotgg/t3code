@@ -1,7 +1,7 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 
 /**
- * Imperative DOM-based context menu for non-Electron environments.
+ * Imperative DOM-based context menu used for browser and desktop renderer surfaces.
  * Shows a positioned dropdown and returns a promise that resolves
  * with the clicked item id, or null if dismissed.
  */
@@ -10,21 +10,22 @@ export function showContextMenuFallback<T extends string>(
   position?: { x: number; y: number },
 ): Promise<T | null> {
   return new Promise<T | null>((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.style.cssText = "position:fixed;inset:0;z-index:9999";
-
     const menu = document.createElement("div");
     menu.className =
-      "fixed z-[10000] min-w-[140px] rounded-md border border-border bg-popover py-1 shadow-xl animate-in fade-in zoom-in-95";
+      "fixed z-[10000] min-w-32 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg/5";
+    menu.style.visibility = "hidden";
 
     const x = position?.x ?? 0;
     const y = position?.y ?? 0;
     menu.style.top = `${y}px`;
     menu.style.left = `${x}px`;
+    let outsidePressEnabled = false;
+    let enableOutsidePressFrame = 0;
 
     function cleanup(result: T | null) {
       document.removeEventListener("keydown", onKeyDown);
-      overlay.remove();
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      cancelAnimationFrame(enableOutsidePressFrame);
       menu.remove();
       resolve(result);
     }
@@ -36,26 +37,49 @@ export function showContextMenuFallback<T extends string>(
       }
     }
 
-    overlay.addEventListener("mousedown", () => cleanup(null));
-    document.addEventListener("keydown", onKeyDown);
+    function onPointerDown(event: PointerEvent) {
+      if (!outsidePressEnabled) return;
+      const target = event.target;
+      if (target instanceof Node && menu.contains(target)) {
+        return;
+      }
+      cleanup(null);
+    }
 
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("pointerdown", onPointerDown, true);
+
+    let hasInsertedDestructiveSeparator = false;
     for (const item of items) {
+      const isDestructiveAction = item.destructive === true || item.id === "delete";
+      if (isDestructiveAction && !hasInsertedDestructiveSeparator && menu.childElementCount > 0) {
+        const separator = document.createElement("div");
+        separator.className = "mx-2 my-1 h-px bg-border";
+        menu.appendChild(separator);
+        hasInsertedDestructiveSeparator = true;
+      }
+
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = item.label;
-      const isDestructiveAction = item.destructive === true || item.id === "delete";
+      btn.style.appearance = "none";
+      btn.style.setProperty("-webkit-appearance", "none");
+      btn.style.border = "0";
+      btn.style.background = "transparent";
+      btn.style.boxShadow = "none";
+      btn.style.outline = "none";
+      btn.style.font = "inherit";
+      btn.style.margin = "0";
       btn.className = isDestructiveAction
-        ? "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-destructive hover:bg-accent cursor-default"
-        : "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-popover-foreground hover:bg-accent cursor-default";
+        ? "flex min-h-8 w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-left text-base text-destructive outline-none hover:bg-accent hover:text-accent-foreground sm:min-h-7 sm:text-sm"
+        : "flex min-h-8 w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-left text-base text-foreground outline-none hover:bg-accent hover:text-accent-foreground sm:min-h-7 sm:text-sm";
       btn.addEventListener("click", () => cleanup(item.id));
       menu.appendChild(btn);
     }
 
-    document.body.appendChild(overlay);
     document.body.appendChild(menu);
-
-    // Adjust if menu overflows viewport
-    requestAnimationFrame(() => {
+    // Position the menu before revealing it so edge clamping does not cause a visible jump.
+    enableOutsidePressFrame = requestAnimationFrame(() => {
       const rect = menu.getBoundingClientRect();
       if (rect.right > window.innerWidth) {
         menu.style.left = `${window.innerWidth - rect.width - 4}px`;
@@ -63,6 +87,9 @@ export function showContextMenuFallback<T extends string>(
       if (rect.bottom > window.innerHeight) {
         menu.style.top = `${window.innerHeight - rect.height - 4}px`;
       }
+      menu.classList.add("animate-in", "fade-in", "zoom-in-95");
+      menu.style.visibility = "visible";
+      outsidePressEnabled = true;
     });
   });
 }

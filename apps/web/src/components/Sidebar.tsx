@@ -1439,6 +1439,7 @@ export default function Sidebar() {
                               onKeyDown={(event) => handleProjectTitleKeyDown(event, project.id)}
                               onContextMenu={(event) => {
                                 event.preventDefault();
+                                event.stopPropagation();
                                 void handleProjectContextMenu(project.id, {
                                   x: event.clientX,
                                   y: event.clientY,
@@ -1545,6 +1546,7 @@ export default function Sidebar() {
                                       }}
                                       onContextMenu={(event) => {
                                         event.preventDefault();
+                                        event.stopPropagation();
                                         if (
                                           selectedThreadIds.size > 0 &&
                                           selectedThreadIds.has(thread.id)

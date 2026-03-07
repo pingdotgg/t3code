@@ -151,9 +151,9 @@ export function createWsNativeApi(): NativeApi {
         items: readonly ContextMenuItem<T>[],
         position?: { x: number; y: number },
       ): Promise<T | null> => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
-        }
+        // Use the in-app menu on desktop too. Native Electron menus render an
+        // additional composited surface in the frameless window that clashes
+        // with the app UI and cannot be styled away from the renderer.
         return showContextMenuFallback(items, position);
       },
     },

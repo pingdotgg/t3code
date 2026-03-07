@@ -336,14 +336,12 @@ describe("wsNativeApi", () => {
     });
   });
 
-  it("forwards context menu metadata to desktop bridge", async () => {
-    const showContextMenu = vi.fn().mockResolvedValue("delete");
+  it("uses fallback context menu even when desktop bridge is available", async () => {
+    showContextMenuFallbackMock.mockResolvedValue("delete");
     Object.defineProperty(getWindowForTest(), "desktopBridge", {
       configurable: true,
       writable: true,
-      value: {
-        showContextMenu,
-      },
+      value: {},
     });
 
     const { createWsNativeApi } = await import("./wsNativeApi");
@@ -356,7 +354,7 @@ describe("wsNativeApi", () => {
       { x: 200, y: 300 },
     );
 
-    expect(showContextMenu).toHaveBeenCalledWith(
+    expect(showContextMenuFallbackMock).toHaveBeenCalledWith(
       [
         { id: "rename", label: "Rename thread" },
         { id: "delete", label: "Delete", destructive: true },
