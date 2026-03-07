@@ -143,26 +143,54 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex") {
+  if (providerName === "codex" || providerName === "claudeCode" || providerName === "cursor") {
     return providerName;
   }
   return "codex";
 }
 
 const CODEX_MODEL_SLUGS = new Set<string>(getModelOptions("codex").map((option) => option.slug));
+const CLAUDE_MODEL_SLUGS = new Set<string>(
+  getModelOptions("claudeCode").map((option) => option.slug),
+);
+const CURSOR_MODEL_SLUGS = new Set<string>(getModelOptions("cursor").map((option) => option.slug));
+const CURSOR_DISTINCT_MODEL_SLUGS = new Set(
+  [...CURSOR_MODEL_SLUGS].filter(
+    (slug) => !CODEX_MODEL_SLUGS.has(slug) && !CLAUDE_MODEL_SLUGS.has(slug),
+  ),
+);
 
 function inferProviderForThreadModel(input: {
   readonly model: string;
   readonly sessionProviderName: string | null;
 }): ProviderKind {
-  if (input.sessionProviderName === "codex") {
+  if (
+    input.sessionProviderName === "codex" ||
+    input.sessionProviderName === "claudeCode" ||
+    input.sessionProviderName === "cursor"
+  ) {
     return input.sessionProviderName;
+  }
+  const normalizedCursor = normalizeModelSlug(input.model, "cursor");
+  if (normalizedCursor && CURSOR_DISTINCT_MODEL_SLUGS.has(normalizedCursor)) {
+    return "cursor";
+  }
+  const normalizedClaude = normalizeModelSlug(input.model, "claudeCode");
+  if (normalizedClaude && CLAUDE_MODEL_SLUGS.has(normalizedClaude)) {
+    return "claudeCode";
   }
   const normalizedCodex = normalizeModelSlug(input.model, "codex");
   if (normalizedCodex && CODEX_MODEL_SLUGS.has(normalizedCodex)) {
     return "codex";
   }
-  return "codex";
+  if (
+    input.model.trim().startsWith("composer-") ||
+    input.model.trim().startsWith("gemini-") ||
+    input.model.trim().endsWith("-thinking")
+  ) {
+    return "cursor";
+  }
+  return input.model.trim().startsWith("claude-") ? "claudeCode" : "codex";
 }
 
 function resolveWsHttpOrigin(): string {

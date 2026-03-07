@@ -525,6 +525,7 @@ const make = Effect.gen(function* () {
     return isGitRepository(workspaceCwd);
   });
 
+
   const rememberAssistantMessageId = (
     threadId: ThreadId,
     turnId: TurnId,

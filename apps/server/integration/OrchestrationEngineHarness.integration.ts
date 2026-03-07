@@ -189,7 +189,7 @@ export interface OrchestrationIntegrationHarness {
 }
 
 interface MakeOrchestrationIntegrationHarnessOptions {
-  readonly provider?: "codex";
+  readonly provider?: "codex" | "claudeCode";
   readonly realCodex?: boolean;
 }
 
@@ -414,6 +414,7 @@ export const makeOrchestrationIntegrationHarness = (
           : Exit.isFailure(disposeRuntimeExit)
             ? disposeRuntimeExit.cause
             : null;
+
 
         if (failureCause) {
           return yield* Effect.failCause(failureCause);
