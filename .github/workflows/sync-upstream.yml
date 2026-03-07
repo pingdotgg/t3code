@@ -1,0 +1,58 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # Daily at 6am UTC
+  workflow_dispatch: # Manual trigger
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/pingdotgg/t3code.git || true
+          git fetch upstream main
+
+      - name: Check for upstream changes
+        id: check
+        run: |
+          BEHIND=$(git rev-list --count HEAD..upstream/main)
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          if [ "$BEHIND" -eq 0 ]; then
+            echo "Already up to date with upstream."
+          else
+            echo "$BEHIND commit(s) behind upstream/main"
+          fi
+
+      - name: Merge upstream changes
+        if: steps.check.outputs.behind != '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b sync-upstream/$(date +%Y-%m-%d)
+          git merge upstream/main --no-edit || echo "CONFLICTS=true" >> "$GITHUB_ENV"
+
+      - name: Create pull request
+        if: steps.check.outputs.behind != '0'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: sync-upstream/auto
+          title: "Sync upstream (${{ steps.check.outputs.behind }} commits)"
+          body: |
+            Automated sync from `pingdotgg/t3code` main branch.
+
+            **${{ steps.check.outputs.behind }}** new commit(s) from upstream.
+
+            ${{ env.CONFLICTS == 'true' && '⚠️ **Merge conflicts detected** — manual resolution required.' || '✅ Clean merge — safe to merge after CI passes.' }}
+          labels: upstream-sync
+          delete-branch: true
