@@ -316,6 +316,59 @@ describe("startSession", () => {
       manager.stopAll();
     }
   });
+
+  it("fails fast with an upgrade message when codex is below the minimum supported version", async () => {
+    const manager = new CodexAppServerManager();
+    const events: Array<{ method: string; kind: string; message?: string }> = [];
+    manager.on("event", (event) => {
+      events.push({
+        method: event.method,
+        kind: event.kind,
+        ...(event.message ? { message: event.message } : {}),
+      });
+    });
+
+    const versionCheck = vi
+      .spyOn(
+        manager as unknown as {
+          assertSupportedCodexCliVersion: (input: {
+            binaryPath: string;
+            cwd: string;
+            homePath?: string;
+          }) => void;
+        },
+        "assertSupportedCodexCliVersion",
+      )
+      .mockImplementation(() => {
+        throw new Error(
+          "Codex CLI v0.36.0 is too old for T3 Code. Upgrade to v0.37.0 or newer and restart T3 Code.",
+        );
+      });
+
+    try {
+      await expect(
+        manager.startSession({
+          threadId: asThreadId("thread-1"),
+          provider: "codex",
+          runtimeMode: "full-access",
+        }),
+      ).rejects.toThrow(
+        "Codex CLI v0.36.0 is too old for T3 Code. Upgrade to v0.37.0 or newer and restart T3 Code.",
+      );
+      expect(versionCheck).toHaveBeenCalledTimes(1);
+      expect(events).toEqual([
+        {
+          method: "session/startFailed",
+          kind: "error",
+          message:
+            "Codex CLI v0.36.0 is too old for T3 Code. Upgrade to v0.37.0 or newer and restart T3 Code.",
+        },
+      ]);
+    } finally {
+      versionCheck.mockRestore();
+      manager.stopAll();
+    }
+  });
 });
 
 describe("sendTurn", () => {
