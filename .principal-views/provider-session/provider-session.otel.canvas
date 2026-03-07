@@ -1,0 +1,807 @@
+{
+  "nodes": [
+    {
+      "id": "session-start-initiated",
+      "type": "text",
+      "text": "Session Start Initiated",
+      "x": 100,
+      "y": 50,
+      "width": 200,
+      "height": 100,
+      "color": "#3b82f6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "session.start.initiated",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier for the session",
+              "required": true
+            },
+            "provider.name": {
+              "type": "string",
+              "description": "Provider name (e.g., codex)",
+              "required": true
+            },
+            "runtime.mode": {
+              "type": "string",
+              "description": "Runtime mode: approval-required or full-access",
+              "required": true
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Working directory for the session",
+              "required": false
+            },
+            "model": {
+              "type": "string",
+              "description": "Requested model slug",
+              "required": false
+            },
+            "has.resume.cursor": {
+              "type": "boolean",
+              "description": "Whether resuming an existing thread",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/codexAppServerManager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "session-process-spawned",
+      "type": "text",
+      "text": "Process Spawned",
+      "x": 100,
+      "y": 200,
+      "width": 200,
+      "height": 100,
+      "color": "#3b82f6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "session.process.spawned",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "process.pid": {
+              "type": "integer",
+              "description": "Child process PID",
+              "required": false
+            },
+            "binary.path": {
+              "type": "string",
+              "description": "Path to codex binary",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/codexAppServerManager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "session-thread-open-requested",
+      "type": "text",
+      "text": "Thread Open Requested",
+      "x": 100,
+      "y": 350,
+      "width": 200,
+      "height": 100,
+      "color": "#3b82f6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "session.thread.open.requested",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "method": {
+              "type": "string",
+              "description": "RPC method: thread/start or thread/resume",
+              "required": true
+            },
+            "resume.thread.id": {
+              "type": "string",
+              "description": "Provider thread ID to resume",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/codexAppServerManager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "session-thread-open-resolved",
+      "type": "text",
+      "text": "Thread Open Resolved",
+      "x": 100,
+      "y": 500,
+      "width": 200,
+      "height": 100,
+      "color": "#22c55e",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "session.thread.open.resolved",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "method": {
+              "type": "string",
+              "description": "RPC method that succeeded",
+              "required": true
+            },
+            "provider.thread.id": {
+              "type": "string",
+              "description": "Provider-assigned thread ID",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/codexAppServerManager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "session-thread-opened-direct",
+      "type": "text",
+      "text": "Thread Opened Direct",
+      "x": 100,
+      "y": 650,
+      "width": 200,
+      "height": 100,
+      "color": "#22c55e",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "session.thread.opened.direct",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/codexAppServerManager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "session-ready",
+      "type": "text",
+      "text": "Session Ready",
+      "x": 100,
+      "y": 800,
+      "width": 200,
+      "height": 100,
+      "color": "#22c55e",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "session.ready",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "provider.thread.id": {
+              "type": "string",
+              "description": "Provider-assigned thread ID",
+              "required": true
+            },
+            "account.type": {
+              "type": "string",
+              "description": "Account type: apiKey, chatgpt, unknown",
+              "required": false
+            },
+            "spark.enabled": {
+              "type": "boolean",
+              "description": "Whether spark model is enabled",
+              "required": false
+            },
+            "duration.ms": {
+              "type": "number",
+              "description": "Time to reach ready state",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/codexAppServerManager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "session-start-failed",
+      "type": "text",
+      "text": "Session Start Failed",
+      "x": 450,
+      "y": 350,
+      "width": 200,
+      "height": 100,
+      "color": "#ef4444",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "session.start.failed",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "error.message": {
+              "type": "string",
+              "description": "Error message",
+              "required": true
+            },
+            "error.stage": {
+              "type": "string",
+              "description": "Stage where failure occurred",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/codexAppServerManager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "error"
+        }
+      }
+    },
+    {
+      "id": "session-thread-resume-fallback",
+      "type": "text",
+      "text": "Resume Fallback",
+      "x": 450,
+      "y": 500,
+      "width": 200,
+      "height": 100,
+      "color": "#f59e0b",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "session.thread.resume.fallback",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "resume.thread.id": {
+              "type": "string",
+              "description": "Thread ID that failed to resume",
+              "required": true
+            },
+            "error.message": {
+              "type": "string",
+              "description": "Resume failure reason",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/codexAppServerManager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "warning"
+        }
+      }
+    },
+    {
+      "id": "turn-start-requested",
+      "type": "text",
+      "text": "Turn Start Requested",
+      "x": 800,
+      "y": 50,
+      "width": 200,
+      "height": 100,
+      "color": "#8b5cf6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "turn.start.requested",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "has.text.input": {
+              "type": "boolean",
+              "description": "Whether turn has text input",
+              "required": true
+            },
+            "attachment.count": {
+              "type": "integer",
+              "description": "Number of attachments",
+              "required": true
+            },
+            "model": {
+              "type": "string",
+              "description": "Model slug for this turn",
+              "required": false
+            },
+            "interaction.mode": {
+              "type": "string",
+              "description": "Interaction mode: default or plan",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/codexAppServerManager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "turn-started",
+      "type": "text",
+      "text": "Turn Started",
+      "x": 800,
+      "y": 200,
+      "width": 200,
+      "height": 100,
+      "color": "#8b5cf6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "turn.started",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "turn.id": {
+              "type": "string",
+              "description": "Turn identifier assigned by provider",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/codexAppServerManager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "turn-completed",
+      "type": "text",
+      "text": "Turn Completed",
+      "x": 800,
+      "y": 350,
+      "width": 200,
+      "height": 100,
+      "color": "#22c55e",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "turn.completed",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "turn.id": {
+              "type": "string",
+              "description": "Turn identifier",
+              "required": true
+            },
+            "status": {
+              "type": "string",
+              "description": "Turn completion status",
+              "required": true
+            },
+            "duration.ms": {
+              "type": "number",
+              "description": "Turn duration in milliseconds",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/codexAppServerManager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "turn-failed",
+      "type": "text",
+      "text": "Turn Failed",
+      "x": 1100,
+      "y": 200,
+      "width": 200,
+      "height": 100,
+      "color": "#ef4444",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "turn.failed",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "turn.id": {
+              "type": "string",
+              "description": "Turn identifier",
+              "required": false
+            },
+            "error.message": {
+              "type": "string",
+              "description": "Error message",
+              "required": true
+            },
+            "will.retry": {
+              "type": "boolean",
+              "description": "Whether provider will retry",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/codexAppServerManager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "error"
+        }
+      }
+    },
+    {
+      "id": "turn-interrupted",
+      "type": "text",
+      "text": "Turn Interrupted",
+      "x": 1100,
+      "y": 350,
+      "width": 200,
+      "height": 100,
+      "color": "#f59e0b",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "turn.interrupted",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "turn.id": {
+              "type": "string",
+              "description": "Turn identifier",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/codexAppServerManager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "session-stop-requested",
+      "type": "text",
+      "text": "Stop Requested",
+      "x": 1400,
+      "y": 50,
+      "width": 200,
+      "height": 100,
+      "color": "#64748b",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "session.stop.requested",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/codexAppServerManager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "session-closed",
+      "type": "text",
+      "text": "Session Closed",
+      "x": 1400,
+      "y": 200,
+      "width": 200,
+      "height": 100,
+      "color": "#64748b",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "session.closed",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "reason": {
+              "type": "string",
+              "description": "Reason for closure: requested, process-exit, error",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/codexAppServerManager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "session-process-exited",
+      "type": "text",
+      "text": "Process Exited",
+      "x": 1400,
+      "y": 350,
+      "width": 200,
+      "height": 100,
+      "color": "#ef4444",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "session.process.exited",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "exit.code": {
+              "type": "integer",
+              "description": "Process exit code",
+              "required": false
+            },
+            "exit.signal": {
+              "type": "string",
+              "description": "Signal that caused exit",
+              "required": false
+            },
+            "expected": {
+              "type": "boolean",
+              "description": "Whether exit was expected",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/codexAppServerManager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "error"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "start-to-spawn",
+      "fromNode": "session-start-initiated",
+      "toNode": "session-process-spawned",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": {
+        "edgeType": "sequence"
+      }
+    },
+    {
+      "id": "spawn-to-thread",
+      "fromNode": "session-process-spawned",
+      "toNode": "session-thread-open-requested",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": {
+        "edgeType": "sequence"
+      }
+    },
+    {
+      "id": "thread-to-resolved",
+      "fromNode": "session-thread-open-requested",
+      "toNode": "session-thread-open-resolved",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": {
+        "edgeType": "sequence"
+      }
+    },
+    {
+      "id": "resolved-to-direct",
+      "fromNode": "session-thread-open-resolved",
+      "toNode": "session-thread-opened-direct",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": {
+        "edgeType": "sequence"
+      }
+    },
+    {
+      "id": "direct-to-ready",
+      "fromNode": "session-thread-opened-direct",
+      "toNode": "session-ready",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": {
+        "edgeType": "sequence"
+      }
+    },
+    {
+      "id": "thread-to-failed",
+      "fromNode": "session-thread-open-requested",
+      "toNode": "session-start-failed",
+      "fromSide": "right",
+      "toSide": "left",
+      "pv": {
+        "edgeType": "error"
+      }
+    },
+    {
+      "id": "thread-to-fallback",
+      "fromNode": "session-thread-open-requested",
+      "toNode": "session-thread-resume-fallback",
+      "fromSide": "right",
+      "toSide": "left",
+      "pv": {
+        "edgeType": "fallback"
+      }
+    },
+    {
+      "id": "fallback-to-resolved",
+      "fromNode": "session-thread-resume-fallback",
+      "toNode": "session-thread-open-resolved",
+      "fromSide": "bottom",
+      "toSide": "right",
+      "pv": {
+        "edgeType": "fallback"
+      }
+    },
+    {
+      "id": "fallback-resolved-to-ready",
+      "fromNode": "session-thread-open-resolved",
+      "toNode": "session-ready",
+      "fromSide": "right",
+      "toSide": "right",
+      "pv": {
+        "edgeType": "fallback"
+      }
+    },
+    {
+      "id": "turn-request-to-started",
+      "fromNode": "turn-start-requested",
+      "toNode": "turn-started",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": {
+        "edgeType": "sequence"
+      }
+    },
+    {
+      "id": "turn-started-to-completed",
+      "fromNode": "turn-started",
+      "toNode": "turn-completed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": {
+        "edgeType": "sequence"
+      }
+    },
+    {
+      "id": "turn-started-to-failed",
+      "fromNode": "turn-started",
+      "toNode": "turn-failed",
+      "fromSide": "right",
+      "toSide": "left",
+      "pv": {
+        "edgeType": "error"
+      }
+    },
+    {
+      "id": "turn-started-to-interrupted",
+      "fromNode": "turn-started",
+      "toNode": "turn-interrupted",
+      "fromSide": "right",
+      "toSide": "left",
+      "pv": {
+        "edgeType": "interrupt"
+      }
+    },
+    {
+      "id": "stop-to-closed",
+      "fromNode": "session-stop-requested",
+      "toNode": "session-closed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": {
+        "edgeType": "sequence"
+      }
+    },
+    {
+      "id": "closed-to-exited",
+      "fromNode": "session-closed",
+      "toNode": "session-process-exited",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": {
+        "edgeType": "sequence"
+      }
+    }
+  ],
+  "pv": {
+    "name": "Provider Session",
+    "version": "1.0.0",
+    "description": "Telemetry schema for T3 Code provider session lifecycle",
+    "markdown": ".principal-views/provider-session/provider-session.md",
+    "edgeTypes": {
+      "sequence": {
+        "style": "solid",
+        "color": "#64748b",
+        "width": 2
+      },
+      "error": {
+        "style": "dashed",
+        "color": "#ef4444",
+        "width": 2
+      },
+      "fallback": {
+        "style": "dashed",
+        "color": "#f59e0b",
+        "width": 2
+      },
+      "interrupt": {
+        "style": "dashed",
+        "color": "#f59e0b",
+        "width": 2
+      }
+    }
+  }
+}

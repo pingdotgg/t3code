@@ -1,0 +1,68 @@
+{
+  "version": "1.0.0",
+  "canvas": ".principal-views/websocket-routing/websocket-routing.otel.canvas",
+  "name": "Request Lifecycle",
+  "description": "WebSocket request processing from reception through routing to response",
+  "spanPattern": "ws.request.lifecycle",
+  "mode": "span-tree",
+  "status": "draft",
+  "scenarios": [
+    {
+      "id": "success",
+      "priority": 1,
+      "description": "Request processed successfully and response sent",
+      "template": {
+        "events": {
+          "ws.request.received": "Request {{request.id}} received on connection {{connection.id}} ({{message.size}} bytes)",
+          "ws.request.parsed": "Request {{request.id}}: parsed method {{method}} (has params: {{has.params}})",
+          "ws.request.routed": "Request {{request.id}}: routed {{method}} to handler {{handler.name}}",
+          "ws.handler.executed": "Request {{request.id}}: handler {{handler.name}} executed in {{duration.ms}}ms",
+          "ws.response.sent": "Request {{request.id}}: response sent ({{response.size}} bytes, total {{duration.ms}}ms)"
+        },
+        "summary": "Request {{request.id}} completed successfully"
+      }
+    },
+    {
+      "id": "parse-error",
+      "priority": 2,
+      "description": "Request failed to parse",
+      "template": {
+        "events": {
+          "ws.request.received": "Request {{request.id}} received on connection {{connection.id}}",
+          "ws.parse.failed": "Request {{request.id}}: parse failed - {{error.message}}",
+          "ws.error.response.sent": "Request {{request.id}}: error response sent (code {{error.code}}): {{error.message}}"
+        },
+        "summary": "Request {{request.id}} parse error"
+      }
+    },
+    {
+      "id": "method-not-found",
+      "priority": 3,
+      "description": "Request method not recognized",
+      "template": {
+        "events": {
+          "ws.request.received": "Request {{request.id}} received on connection {{connection.id}}",
+          "ws.request.parsed": "Request {{request.id}}: parsed method {{method}}",
+          "ws.method.not.found": "Request {{request.id}}: method {{method}} not found",
+          "ws.error.response.sent": "Request {{request.id}}: error response sent (code {{error.code}}): {{error.message}}"
+        },
+        "summary": "Request {{request.id}} method not found: {{method}}"
+      }
+    },
+    {
+      "id": "handler-error",
+      "priority": 4,
+      "description": "Handler threw an error during execution",
+      "template": {
+        "events": {
+          "ws.request.received": "Request {{request.id}} received on connection {{connection.id}}",
+          "ws.request.parsed": "Request {{request.id}}: parsed method {{method}}",
+          "ws.request.routed": "Request {{request.id}}: routed {{method}} to handler {{handler.name}}",
+          "ws.handler.failed": "Request {{request.id}}: handler {{handler.name}} failed - {{error.type}}: {{error.message}}",
+          "ws.error.response.sent": "Request {{request.id}}: error response sent (code {{error.code}}): {{error.message}}"
+        },
+        "summary": "Request {{request.id}} handler error: {{error.message}}"
+      }
+    }
+  ]
+}

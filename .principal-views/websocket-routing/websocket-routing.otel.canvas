@@ -1,0 +1,441 @@
+{
+  "nodes": [
+    {
+      "id": "ws-request-received",
+      "type": "text",
+      "text": "Request Received",
+      "x": 100,
+      "y": 50,
+      "width": 200,
+      "height": 100,
+      "color": "#3b82f6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ws.request.received",
+          "attributes": {
+            "request.id": {
+              "type": "string",
+              "description": "Unique request identifier",
+              "required": true
+            },
+            "connection.id": {
+              "type": "string",
+              "description": "WebSocket connection identifier",
+              "required": true
+            },
+            "message.size": {
+              "type": "integer",
+              "description": "Size of raw message in bytes",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/wsServer.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "ws-request-parsed",
+      "type": "text",
+      "text": "Request Parsed",
+      "x": 100,
+      "y": 200,
+      "width": 200,
+      "height": 100,
+      "color": "#3b82f6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ws.request.parsed",
+          "attributes": {
+            "request.id": {
+              "type": "string",
+              "description": "Request identifier",
+              "required": true
+            },
+            "method": {
+              "type": "string",
+              "description": "RPC method name",
+              "required": true
+            },
+            "has.params": {
+              "type": "boolean",
+              "description": "Whether request includes parameters",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/wsServer.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "ws-request-routed",
+      "type": "text",
+      "text": "Request Routed",
+      "x": 100,
+      "y": 350,
+      "width": 200,
+      "height": 100,
+      "color": "#8b5cf6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ws.request.routed",
+          "attributes": {
+            "request.id": {
+              "type": "string",
+              "description": "Request identifier",
+              "required": true
+            },
+            "method": {
+              "type": "string",
+              "description": "RPC method name",
+              "required": true
+            },
+            "handler.name": {
+              "type": "string",
+              "description": "Name of handler function",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/wsServer.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "ws-handler-executed",
+      "type": "text",
+      "text": "Handler Executed",
+      "x": 100,
+      "y": 500,
+      "width": 200,
+      "height": 100,
+      "color": "#8b5cf6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ws.handler.executed",
+          "attributes": {
+            "request.id": {
+              "type": "string",
+              "description": "Request identifier",
+              "required": true
+            },
+            "handler.name": {
+              "type": "string",
+              "description": "Handler function name",
+              "required": true
+            },
+            "duration.ms": {
+              "type": "number",
+              "description": "Handler execution time",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/wsServer.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "ws-response-sent",
+      "type": "text",
+      "text": "Response Sent",
+      "x": 100,
+      "y": 650,
+      "width": 200,
+      "height": 100,
+      "color": "#22c55e",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ws.response.sent",
+          "attributes": {
+            "request.id": {
+              "type": "string",
+              "description": "Request identifier",
+              "required": true
+            },
+            "response.size": {
+              "type": "integer",
+              "description": "Size of response in bytes",
+              "required": false
+            },
+            "duration.ms": {
+              "type": "number",
+              "description": "Total request-response time",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/wsServer.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "ws-parse-failed",
+      "type": "text",
+      "text": "Parse Failed",
+      "x": 400,
+      "y": 200,
+      "width": 200,
+      "height": 100,
+      "color": "#ef4444",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ws.parse.failed",
+          "attributes": {
+            "request.id": {
+              "type": "string",
+              "description": "Request identifier",
+              "required": true
+            },
+            "error.message": {
+              "type": "string",
+              "description": "Parse error message",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/wsServer.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "error"
+        }
+      }
+    },
+    {
+      "id": "ws-method-not-found",
+      "type": "text",
+      "text": "Method Not Found",
+      "x": 400,
+      "y": 350,
+      "width": 200,
+      "height": 100,
+      "color": "#f59e0b",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ws.method.not.found",
+          "attributes": {
+            "request.id": {
+              "type": "string",
+              "description": "Request identifier",
+              "required": true
+            },
+            "method": {
+              "type": "string",
+              "description": "Unknown method name",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/wsServer.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "warning"
+        }
+      }
+    },
+    {
+      "id": "ws-handler-failed",
+      "type": "text",
+      "text": "Handler Failed",
+      "x": 400,
+      "y": 500,
+      "width": 200,
+      "height": 100,
+      "color": "#ef4444",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ws.handler.failed",
+          "attributes": {
+            "request.id": {
+              "type": "string",
+              "description": "Request identifier",
+              "required": true
+            },
+            "handler.name": {
+              "type": "string",
+              "description": "Handler that failed",
+              "required": true
+            },
+            "error.type": {
+              "type": "string",
+              "description": "Error classification",
+              "required": true
+            },
+            "error.message": {
+              "type": "string",
+              "description": "Error message",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/wsServer.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "error"
+        }
+      }
+    },
+    {
+      "id": "ws-error-response-sent",
+      "type": "text",
+      "text": "Error Response Sent",
+      "x": 400,
+      "y": 650,
+      "width": 200,
+      "height": 100,
+      "color": "#ef4444",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ws.error.response.sent",
+          "attributes": {
+            "request.id": {
+              "type": "string",
+              "description": "Request identifier",
+              "required": true
+            },
+            "error.code": {
+              "type": "integer",
+              "description": "RPC error code",
+              "required": true
+            },
+            "error.message": {
+              "type": "string",
+              "description": "Error message sent to client",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/wsServer.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "error"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "received-to-parsed",
+      "fromNode": "ws-request-received",
+      "toNode": "ws-request-parsed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "received-to-parse-failed",
+      "fromNode": "ws-request-received",
+      "toNode": "ws-parse-failed",
+      "fromSide": "right",
+      "toSide": "left",
+      "pv": { "edgeType": "error" }
+    },
+    {
+      "id": "parsed-to-routed",
+      "fromNode": "ws-request-parsed",
+      "toNode": "ws-request-routed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "parsed-to-not-found",
+      "fromNode": "ws-request-parsed",
+      "toNode": "ws-method-not-found",
+      "fromSide": "right",
+      "toSide": "left",
+      "pv": { "edgeType": "error" }
+    },
+    {
+      "id": "routed-to-executed",
+      "fromNode": "ws-request-routed",
+      "toNode": "ws-handler-executed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "routed-to-handler-failed",
+      "fromNode": "ws-request-routed",
+      "toNode": "ws-handler-failed",
+      "fromSide": "right",
+      "toSide": "left",
+      "pv": { "edgeType": "error" }
+    },
+    {
+      "id": "executed-to-response",
+      "fromNode": "ws-handler-executed",
+      "toNode": "ws-response-sent",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "parse-failed-to-error-response",
+      "fromNode": "ws-parse-failed",
+      "toNode": "ws-error-response-sent",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "error" }
+    },
+    {
+      "id": "not-found-to-error-response",
+      "fromNode": "ws-method-not-found",
+      "toNode": "ws-error-response-sent",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "error" }
+    },
+    {
+      "id": "handler-failed-to-error-response",
+      "fromNode": "ws-handler-failed",
+      "toNode": "ws-error-response-sent",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "error" }
+    }
+  ],
+  "pv": {
+    "name": "WebSocket Command Routing",
+    "version": "1.0.0",
+    "description": "Telemetry schema for WebSocket request routing and response handling",
+    "markdown": ".principal-views/websocket-routing/websocket-routing.md",
+    "edgeTypes": {
+      "sequence": {
+        "style": "solid",
+        "color": "#64748b",
+        "width": 2
+      },
+      "error": {
+        "style": "dashed",
+        "color": "#ef4444",
+        "width": 2
+      }
+    }
+  }
+}

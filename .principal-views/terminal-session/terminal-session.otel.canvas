@@ -1,0 +1,497 @@
+{
+  "nodes": [
+    {
+      "id": "terminal-open-requested",
+      "type": "text",
+      "text": "Open Requested",
+      "x": 100,
+      "y": 50,
+      "width": 200,
+      "height": 100,
+      "color": "#3b82f6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "terminal.open.requested",
+          "attributes": {
+            "terminal.id": {
+              "type": "string",
+              "description": "Terminal session identifier",
+              "required": true
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Working directory",
+              "required": true
+            },
+            "shell.preference": {
+              "type": "string",
+              "description": "Preferred shell if specified",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/terminal/Layers/Manager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "terminal-shell-resolved",
+      "type": "text",
+      "text": "Shell Resolved",
+      "x": 100,
+      "y": 200,
+      "width": 200,
+      "height": 100,
+      "color": "#3b82f6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "terminal.shell.resolved",
+          "attributes": {
+            "terminal.id": {
+              "type": "string",
+              "description": "Terminal session identifier",
+              "required": true
+            },
+            "shell.path": {
+              "type": "string",
+              "description": "Resolved shell binary path",
+              "required": true
+            },
+            "shell.name": {
+              "type": "string",
+              "description": "Shell name (bash, zsh, etc)",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/terminal/Layers/Manager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "terminal-pty-spawned",
+      "type": "text",
+      "text": "PTY Spawned",
+      "x": 100,
+      "y": 350,
+      "width": 200,
+      "height": 100,
+      "color": "#8b5cf6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "terminal.pty.spawned",
+          "attributes": {
+            "terminal.id": {
+              "type": "string",
+              "description": "Terminal session identifier",
+              "required": true
+            },
+            "process.pid": {
+              "type": "integer",
+              "description": "PTY process ID",
+              "required": true
+            },
+            "cols": {
+              "type": "integer",
+              "description": "Terminal columns",
+              "required": true
+            },
+            "rows": {
+              "type": "integer",
+              "description": "Terminal rows",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/terminal/Layers/Manager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "terminal-session-ready",
+      "type": "text",
+      "text": "Session Ready",
+      "x": 100,
+      "y": 500,
+      "width": 200,
+      "height": 100,
+      "color": "#22c55e",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "terminal.session.ready",
+          "attributes": {
+            "terminal.id": {
+              "type": "string",
+              "description": "Terminal session identifier",
+              "required": true
+            },
+            "process.pid": {
+              "type": "integer",
+              "description": "PTY process ID",
+              "required": true
+            },
+            "duration.ms": {
+              "type": "number",
+              "description": "Time to ready state",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/terminal/Layers/Manager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "terminal-data-received",
+      "type": "text",
+      "text": "Data Received",
+      "x": 100,
+      "y": 650,
+      "width": 200,
+      "height": 100,
+      "color": "#06b6d4",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "terminal.data.received",
+          "attributes": {
+            "terminal.id": {
+              "type": "string",
+              "description": "Terminal session identifier",
+              "required": true
+            },
+            "data.size": {
+              "type": "integer",
+              "description": "Data size in bytes",
+              "required": true
+            },
+            "data.direction": {
+              "type": "string",
+              "description": "Direction: input or output",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/terminal/Layers/Manager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "terminal-resized",
+      "type": "text",
+      "text": "Terminal Resized",
+      "x": 100,
+      "y": 800,
+      "width": 200,
+      "height": 100,
+      "color": "#06b6d4",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "terminal.resized",
+          "attributes": {
+            "terminal.id": {
+              "type": "string",
+              "description": "Terminal session identifier",
+              "required": true
+            },
+            "cols": {
+              "type": "integer",
+              "description": "New column count",
+              "required": true
+            },
+            "rows": {
+              "type": "integer",
+              "description": "New row count",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/terminal/Layers/Manager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "terminal-session-closed",
+      "type": "text",
+      "text": "Session Closed",
+      "x": 100,
+      "y": 950,
+      "width": 200,
+      "height": 100,
+      "color": "#22c55e",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "terminal.session.closed",
+          "attributes": {
+            "terminal.id": {
+              "type": "string",
+              "description": "Terminal session identifier",
+              "required": true
+            },
+            "exit.code": {
+              "type": "integer",
+              "description": "Process exit code",
+              "required": false
+            },
+            "close.reason": {
+              "type": "string",
+              "description": "Reason: exit, disconnect, error",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/terminal/Layers/Manager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "terminal-shell-error",
+      "type": "text",
+      "text": "Shell Error",
+      "x": 400,
+      "y": 200,
+      "width": 200,
+      "height": 100,
+      "color": "#ef4444",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "terminal.shell.error",
+          "attributes": {
+            "terminal.id": {
+              "type": "string",
+              "description": "Terminal session identifier",
+              "required": true
+            },
+            "error.message": {
+              "type": "string",
+              "description": "Shell resolution error",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/terminal/Layers/Manager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "error"
+        }
+      }
+    },
+    {
+      "id": "terminal-spawn-error",
+      "type": "text",
+      "text": "Spawn Error",
+      "x": 400,
+      "y": 350,
+      "width": 200,
+      "height": 100,
+      "color": "#ef4444",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "terminal.spawn.error",
+          "attributes": {
+            "terminal.id": {
+              "type": "string",
+              "description": "Terminal session identifier",
+              "required": true
+            },
+            "shell.path": {
+              "type": "string",
+              "description": "Attempted shell path",
+              "required": true
+            },
+            "error.message": {
+              "type": "string",
+              "description": "Spawn error message",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/terminal/Layers/Manager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "error"
+        }
+      }
+    },
+    {
+      "id": "terminal-open-failed",
+      "type": "text",
+      "text": "Open Failed",
+      "x": 400,
+      "y": 500,
+      "width": 200,
+      "height": 100,
+      "color": "#ef4444",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "terminal.open.failed",
+          "attributes": {
+            "terminal.id": {
+              "type": "string",
+              "description": "Terminal session identifier",
+              "required": true
+            },
+            "error.stage": {
+              "type": "string",
+              "description": "Stage where failure occurred",
+              "required": true
+            },
+            "error.message": {
+              "type": "string",
+              "description": "Failure message",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/terminal/Layers/Manager.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "error"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "requested-to-resolved",
+      "fromNode": "terminal-open-requested",
+      "toNode": "terminal-shell-resolved",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "requested-to-shell-error",
+      "fromNode": "terminal-open-requested",
+      "toNode": "terminal-shell-error",
+      "fromSide": "right",
+      "toSide": "left",
+      "pv": { "edgeType": "error" }
+    },
+    {
+      "id": "resolved-to-spawned",
+      "fromNode": "terminal-shell-resolved",
+      "toNode": "terminal-pty-spawned",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "resolved-to-spawn-error",
+      "fromNode": "terminal-shell-resolved",
+      "toNode": "terminal-spawn-error",
+      "fromSide": "right",
+      "toSide": "left",
+      "pv": { "edgeType": "error" }
+    },
+    {
+      "id": "spawned-to-ready",
+      "fromNode": "terminal-pty-spawned",
+      "toNode": "terminal-session-ready",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "ready-to-data",
+      "fromNode": "terminal-session-ready",
+      "toNode": "terminal-data-received",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "data-to-resized",
+      "fromNode": "terminal-data-received",
+      "toNode": "terminal-resized",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "branch" }
+    },
+    {
+      "id": "data-to-closed",
+      "fromNode": "terminal-data-received",
+      "toNode": "terminal-session-closed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "resized-to-closed",
+      "fromNode": "terminal-resized",
+      "toNode": "terminal-session-closed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "shell-error-to-failed",
+      "fromNode": "terminal-shell-error",
+      "toNode": "terminal-open-failed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "error" }
+    },
+    {
+      "id": "spawn-error-to-failed",
+      "fromNode": "terminal-spawn-error",
+      "toNode": "terminal-open-failed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "error" }
+    }
+  ],
+  "pv": {
+    "name": "Terminal Session Lifecycle",
+    "version": "1.0.0",
+    "description": "Telemetry schema for PTY terminal session management",
+    "markdown": ".principal-views/terminal-session/terminal-session.md",
+    "edgeTypes": {
+      "sequence": {
+        "style": "solid",
+        "color": "#64748b",
+        "width": 2
+      },
+      "branch": {
+        "style": "dashed",
+        "color": "#22c55e",
+        "width": 2
+      },
+      "error": {
+        "style": "dashed",
+        "color": "#ef4444",
+        "width": 2
+      }
+    }
+  }
+}

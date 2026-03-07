@@ -1,0 +1,238 @@
+{
+  "nodes": [
+    {
+      "id": "web-client",
+      "type": "text",
+      "text": "Web Client\n\nReact/Vite UI\nSession UX\nConversation rendering",
+      "x": 100,
+      "y": 300,
+      "width": 200,
+      "height": 120,
+      "color": "#3b82f6"
+    },
+    {
+      "id": "websocket-server",
+      "type": "text",
+      "text": "WebSocket Server\n\nCommand routing\nPush messages\nHTTP endpoints",
+      "x": 400,
+      "y": 300,
+      "width": 200,
+      "height": 120,
+      "color": "#8b5cf6"
+    },
+    {
+      "id": "orchestration-engine",
+      "type": "text",
+      "text": "Orchestration Engine\n\nEvent sourcing\nCommand dispatch\nIdempotency",
+      "x": 700,
+      "y": 243,
+      "width": 200,
+      "height": 120,
+      "color": "#06b6d4"
+    },
+    {
+      "id": "provider-session",
+      "type": "text",
+      "text": "Provider Session\n\nCodex app-server\nJSON-RPC over stdio\nProcess lifecycle",
+      "x": 1000,
+      "y": 200,
+      "width": 200,
+      "height": 120,
+      "color": "#22c55e"
+    },
+    {
+      "id": "runtime-ingestion",
+      "type": "text",
+      "text": "Runtime Ingestion\n\nEvent classification\nMessage buffering\nDomain synthesis",
+      "x": 1000,
+      "y": 400,
+      "width": 200,
+      "height": 120,
+      "color": "#f59e0b"
+    },
+    {
+      "id": "terminal-manager",
+      "type": "text",
+      "text": "Terminal Manager\n\nPTY sessions\nShell execution\nI/O streaming",
+      "x": 700,
+      "y": 450,
+      "width": 200,
+      "height": 120,
+      "color": "#ec4899"
+    },
+    {
+      "id": "event-store",
+      "type": "text",
+      "text": "Event Store\n\nSQLite persistence\nEvent append\nProjections",
+      "x": 700,
+      "y": 75,
+      "width": 200,
+      "height": 100,
+      "color": "#64748b"
+    },
+    {
+      "id": "codex-process",
+      "type": "text",
+      "text": "codex app-server\n\nExternal process\nJSON-RPC protocol",
+      "x": 1300,
+      "y": 200,
+      "width": 180,
+      "height": 100,
+      "color": "#94a3b8"
+    },
+    {
+      "id": "group-server",
+      "type": "group",
+      "label": "Server (apps/server)",
+      "x": 380,
+      "y": 30,
+      "width": 860,
+      "height": 560,
+      "color": "#1e293b"
+    },
+    {
+      "id": "group-external",
+      "type": "group",
+      "label": "External",
+      "x": 1280,
+      "y": 180,
+      "width": 220,
+      "height": 140,
+      "color": "#374151"
+    }
+  ],
+  "edges": [
+    {
+      "id": "client-to-ws",
+      "fromNode": "web-client",
+      "toNode": "websocket-server",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "WebSocket",
+      "pv": {
+        "edgeType": "data-flow"
+      }
+    },
+    {
+      "id": "ws-to-orchestration",
+      "fromNode": "websocket-server",
+      "toNode": "orchestration-engine",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "commands",
+      "pv": {
+        "edgeType": "command"
+      }
+    },
+    {
+      "id": "orchestration-to-provider",
+      "fromNode": "orchestration-engine",
+      "toNode": "provider-session",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "start/stop/turn",
+      "pv": {
+        "edgeType": "command"
+      }
+    },
+    {
+      "id": "provider-to-codex",
+      "fromNode": "provider-session",
+      "toNode": "codex-process",
+      "fromSide": "right",
+      "toSide": "left",
+      "label": "JSON-RPC",
+      "pv": {
+        "edgeType": "external"
+      }
+    },
+    {
+      "id": "provider-to-ingestion",
+      "fromNode": "provider-session",
+      "toNode": "runtime-ingestion",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "label": "raw events",
+      "pv": {
+        "edgeType": "event"
+      }
+    },
+    {
+      "id": "ingestion-to-orchestration",
+      "fromNode": "runtime-ingestion",
+      "toNode": "orchestration-engine",
+      "fromSide": "left",
+      "toSide": "bottom",
+      "label": "domain events",
+      "pv": {
+        "edgeType": "event"
+      }
+    },
+    {
+      "id": "orchestration-to-ws",
+      "fromNode": "orchestration-engine",
+      "toNode": "websocket-server",
+      "fromSide": "left",
+      "toSide": "right",
+      "label": "push",
+      "pv": {
+        "edgeType": "event"
+      }
+    },
+    {
+      "id": "ws-to-terminal",
+      "fromNode": "websocket-server",
+      "toNode": "terminal-manager",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "label": "terminal I/O",
+      "pv": {
+        "edgeType": "data-flow"
+      }
+    },
+    {
+      "id": "orchestration-to-store",
+      "fromNode": "orchestration-engine",
+      "toNode": "event-store",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "label": "persist",
+      "pv": {
+        "edgeType": "persist"
+      }
+    }
+  ],
+  "pv": {
+    "name": "T3 Code Architecture",
+    "version": "1.0.0",
+    "description": "High-level architecture of T3 Code server components and data flow",
+    "markdown": ".principal-views/architecture.md",
+    "edgeTypes": {
+      "data-flow": {
+        "style": "solid",
+        "color": "#3b82f6",
+        "width": 2
+      },
+      "command": {
+        "style": "solid",
+        "color": "#8b5cf6",
+        "width": 2
+      },
+      "event": {
+        "style": "dashed",
+        "color": "#22c55e",
+        "width": 2
+      },
+      "persist": {
+        "style": "solid",
+        "color": "#64748b",
+        "width": 2
+      },
+      "external": {
+        "style": "dotted",
+        "color": "#94a3b8",
+        "width": 2
+      }
+    }
+  }
+}

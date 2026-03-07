@@ -1,0 +1,50 @@
+{
+  "version": "1.0.0",
+  "canvas": ".principal-views/provider-session/provider-session.otel.canvas",
+  "name": "Send Turn",
+  "description": "Provider turn submission from request through completion",
+  "spanPattern": "provider.turn.send",
+  "mode": "span-tree",
+  "status": "draft",
+  "scenarios": [
+    {
+      "id": "success",
+      "priority": 1,
+      "description": "Turn completed successfully",
+      "template": {
+        "events": {
+          "turn.start.requested": "Sending turn for thread {{thread.id}} (text: {{has.text.input}}, attachments: {{attachment.count}}, model: {{model}}, mode: {{interaction.mode}})",
+          "turn.started": "Turn {{turn.id}} started on thread {{thread.id}}",
+          "turn.completed": "Turn {{turn.id}} completed on {{thread.id}} with status {{status}} in {{duration.ms}}ms"
+        },
+        "summary": "Turn {{turn.id}} completed"
+      }
+    },
+    {
+      "id": "failure",
+      "priority": 2,
+      "description": "Turn failed with error",
+      "template": {
+        "events": {
+          "turn.start.requested": "Sending turn for thread {{thread.id}} (text: {{has.text.input}}, attachments: {{attachment.count}}, model: {{model}})",
+          "turn.started": "Turn {{turn.id}} started on thread {{thread.id}}",
+          "turn.failed": "Turn {{turn.id}} failed on {{thread.id}}: {{error.message}} (will retry: {{will.retry}})"
+        },
+        "summary": "Turn {{turn.id}} failed"
+      }
+    },
+    {
+      "id": "interrupted",
+      "priority": 3,
+      "description": "Turn was interrupted by user",
+      "template": {
+        "events": {
+          "turn.start.requested": "Sending turn for thread {{thread.id}} (text: {{has.text.input}}, attachments: {{attachment.count}})",
+          "turn.started": "Turn {{turn.id}} started on thread {{thread.id}}",
+          "turn.interrupted": "Turn {{turn.id}} interrupted on thread {{thread.id}}"
+        },
+        "summary": "Turn {{turn.id}} interrupted"
+      }
+    }
+  ]
+}

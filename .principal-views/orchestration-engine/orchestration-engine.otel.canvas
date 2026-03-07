@@ -1,0 +1,609 @@
+{
+  "nodes": [
+    {
+      "id": "command-dispatch-started",
+      "type": "text",
+      "text": "Command Dispatch Started",
+      "x": 100,
+      "y": 50,
+      "width": 200,
+      "height": 100,
+      "color": "#3b82f6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "command.dispatch.started",
+          "attributes": {
+            "command.id": {
+              "type": "string",
+              "description": "Unique command identifier",
+              "required": true
+            },
+            "command.type": {
+              "type": "string",
+              "description": "Command type (e.g., thread.message.add)",
+              "required": true
+            },
+            "aggregate.kind": {
+              "type": "string",
+              "description": "Aggregate type: project or thread",
+              "required": true
+            },
+            "aggregate.id": {
+              "type": "string",
+              "description": "Project or thread ID",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/OrchestrationEngine.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "command-receipt-checked",
+      "type": "text",
+      "text": "Receipt Checked",
+      "x": 100,
+      "y": 200,
+      "width": 200,
+      "height": 100,
+      "color": "#3b82f6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "command.receipt.checked",
+          "attributes": {
+            "command.id": {
+              "type": "string",
+              "description": "Command identifier",
+              "required": true
+            },
+            "receipt.found": {
+              "type": "boolean",
+              "description": "Whether an existing receipt was found",
+              "required": true
+            },
+            "receipt.status": {
+              "type": "string",
+              "description": "Receipt status if found: accepted or rejected",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/OrchestrationEngine.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "command-idempotent-hit",
+      "type": "text",
+      "text": "Idempotent Hit",
+      "x": 400,
+      "y": 200,
+      "width": 200,
+      "height": 100,
+      "color": "#22c55e",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "command.idempotent.hit",
+          "attributes": {
+            "command.id": {
+              "type": "string",
+              "description": "Command identifier",
+              "required": true
+            },
+            "cached.sequence": {
+              "type": "integer",
+              "description": "Cached result sequence number",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/OrchestrationEngine.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "command-previously-rejected",
+      "type": "text",
+      "text": "Previously Rejected",
+      "x": 400,
+      "y": 350,
+      "width": 200,
+      "height": 100,
+      "color": "#f59e0b",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "command.previously.rejected",
+          "attributes": {
+            "command.id": {
+              "type": "string",
+              "description": "Command identifier",
+              "required": true
+            },
+            "rejection.detail": {
+              "type": "string",
+              "description": "Original rejection reason",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/OrchestrationEngine.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "warning"
+        }
+      }
+    },
+    {
+      "id": "command-decision-started",
+      "type": "text",
+      "text": "Decision Started",
+      "x": 100,
+      "y": 350,
+      "width": 200,
+      "height": 100,
+      "color": "#8b5cf6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "command.decision.started",
+          "attributes": {
+            "command.id": {
+              "type": "string",
+              "description": "Command identifier",
+              "required": true
+            },
+            "command.type": {
+              "type": "string",
+              "description": "Command type",
+              "required": true
+            },
+            "readmodel.sequence": {
+              "type": "integer",
+              "description": "Current read model sequence",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/decider.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "command-decision-completed",
+      "type": "text",
+      "text": "Decision Completed",
+      "x": 100,
+      "y": 500,
+      "width": 200,
+      "height": 100,
+      "color": "#8b5cf6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "command.decision.completed",
+          "attributes": {
+            "command.id": {
+              "type": "string",
+              "description": "Command identifier",
+              "required": true
+            },
+            "event.count": {
+              "type": "integer",
+              "description": "Number of events produced",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/decider.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "command-transaction-started",
+      "type": "text",
+      "text": "Transaction Started",
+      "x": 100,
+      "y": 650,
+      "width": 200,
+      "height": 100,
+      "color": "#06b6d4",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "command.transaction.started",
+          "attributes": {
+            "command.id": {
+              "type": "string",
+              "description": "Command identifier",
+              "required": true
+            },
+            "event.count": {
+              "type": "integer",
+              "description": "Number of events to persist",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/OrchestrationEngine.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "command-event-appended",
+      "type": "text",
+      "text": "Event Appended",
+      "x": 100,
+      "y": 800,
+      "width": 200,
+      "height": 100,
+      "color": "#06b6d4",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "command.event.appended",
+          "attributes": {
+            "command.id": {
+              "type": "string",
+              "description": "Command identifier",
+              "required": true
+            },
+            "event.id": {
+              "type": "string",
+              "description": "Persisted event ID",
+              "required": true
+            },
+            "event.type": {
+              "type": "string",
+              "description": "Event type",
+              "required": true
+            },
+            "event.sequence": {
+              "type": "integer",
+              "description": "Assigned sequence number",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/persistence/Layers/OrchestrationEventStore.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "command-transaction-committed",
+      "type": "text",
+      "text": "Transaction Committed",
+      "x": 100,
+      "y": 950,
+      "width": 200,
+      "height": 100,
+      "color": "#22c55e",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "command.transaction.committed",
+          "attributes": {
+            "command.id": {
+              "type": "string",
+              "description": "Command identifier",
+              "required": true
+            },
+            "final.sequence": {
+              "type": "integer",
+              "description": "Final sequence number after commit",
+              "required": true
+            },
+            "event.count": {
+              "type": "integer",
+              "description": "Number of events committed",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/OrchestrationEngine.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "command-dispatch-completed",
+      "type": "text",
+      "text": "Dispatch Completed",
+      "x": 100,
+      "y": 1100,
+      "width": 200,
+      "height": 100,
+      "color": "#22c55e",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "command.dispatch.completed",
+          "attributes": {
+            "command.id": {
+              "type": "string",
+              "description": "Command identifier",
+              "required": true
+            },
+            "result.sequence": {
+              "type": "integer",
+              "description": "Result sequence number",
+              "required": true
+            },
+            "duration.ms": {
+              "type": "number",
+              "description": "Total dispatch duration",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/OrchestrationEngine.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "command-invariant-violated",
+      "type": "text",
+      "text": "Invariant Violated",
+      "x": 400,
+      "y": 500,
+      "width": 200,
+      "height": 100,
+      "color": "#ef4444",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "command.invariant.violated",
+          "attributes": {
+            "command.id": {
+              "type": "string",
+              "description": "Command identifier",
+              "required": true
+            },
+            "command.type": {
+              "type": "string",
+              "description": "Command type that violated invariant",
+              "required": true
+            },
+            "violation.detail": {
+              "type": "string",
+              "description": "Invariant violation message",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/OrchestrationEngine.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "error"
+        }
+      }
+    },
+    {
+      "id": "command-dispatch-failed",
+      "type": "text",
+      "text": "Dispatch Failed",
+      "x": 400,
+      "y": 650,
+      "width": 200,
+      "height": 100,
+      "color": "#ef4444",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "command.dispatch.failed",
+          "attributes": {
+            "command.id": {
+              "type": "string",
+              "description": "Command identifier",
+              "required": true
+            },
+            "error.type": {
+              "type": "string",
+              "description": "Error type classification",
+              "required": true
+            },
+            "error.message": {
+              "type": "string",
+              "description": "Error message",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/OrchestrationEngine.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "error"
+        }
+      }
+    },
+    {
+      "id": "readmodel-reconciliation-started",
+      "type": "text",
+      "text": "Reconciliation Started",
+      "x": 400,
+      "y": 800,
+      "width": 200,
+      "height": 100,
+      "color": "#f59e0b",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "readmodel.reconciliation.started",
+          "attributes": {
+            "command.id": {
+              "type": "string",
+              "description": "Command that triggered reconciliation",
+              "required": true
+            },
+            "from.sequence": {
+              "type": "integer",
+              "description": "Sequence to reconcile from",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/OrchestrationEngine.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "warning"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "dispatch-to-receipt",
+      "fromNode": "command-dispatch-started",
+      "toNode": "command-receipt-checked",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "receipt-to-hit",
+      "fromNode": "command-receipt-checked",
+      "toNode": "command-idempotent-hit",
+      "fromSide": "right",
+      "toSide": "left",
+      "pv": { "edgeType": "branch" }
+    },
+    {
+      "id": "receipt-to-rejected",
+      "fromNode": "command-receipt-checked",
+      "toNode": "command-previously-rejected",
+      "fromSide": "right",
+      "toSide": "left",
+      "pv": { "edgeType": "error" }
+    },
+    {
+      "id": "receipt-to-decision",
+      "fromNode": "command-receipt-checked",
+      "toNode": "command-decision-started",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "decision-started-to-completed",
+      "fromNode": "command-decision-started",
+      "toNode": "command-decision-completed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "decision-to-invariant",
+      "fromNode": "command-decision-started",
+      "toNode": "command-invariant-violated",
+      "fromSide": "right",
+      "toSide": "left",
+      "pv": { "edgeType": "error" }
+    },
+    {
+      "id": "decision-to-transaction",
+      "fromNode": "command-decision-completed",
+      "toNode": "command-transaction-started",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "transaction-to-append",
+      "fromNode": "command-transaction-started",
+      "toNode": "command-event-appended",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "append-to-commit",
+      "fromNode": "command-event-appended",
+      "toNode": "command-transaction-committed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "commit-to-completed",
+      "fromNode": "command-transaction-committed",
+      "toNode": "command-dispatch-completed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "invariant-to-failed",
+      "fromNode": "command-invariant-violated",
+      "toNode": "command-dispatch-failed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "error" }
+    },
+    {
+      "id": "failed-to-reconciliation",
+      "fromNode": "command-dispatch-failed",
+      "toNode": "readmodel-reconciliation-started",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "recovery" }
+    }
+  ],
+  "pv": {
+    "name": "Orchestration Engine",
+    "version": "1.0.0",
+    "description": "Telemetry schema for event sourcing command processing",
+    "markdown": ".principal-views/orchestration-engine/orchestration-engine.md",
+    "edgeTypes": {
+      "sequence": {
+        "style": "solid",
+        "color": "#64748b",
+        "width": 2
+      },
+      "branch": {
+        "style": "dashed",
+        "color": "#22c55e",
+        "width": 2
+      },
+      "error": {
+        "style": "dashed",
+        "color": "#ef4444",
+        "width": 2
+      },
+      "recovery": {
+        "style": "dashed",
+        "color": "#f59e0b",
+        "width": 2
+      }
+    }
+  }
+}

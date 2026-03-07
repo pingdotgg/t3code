@@ -1,0 +1,57 @@
+{
+  "version": "1.0.0",
+  "canvas": ".principal-views/provider-session/provider-session.otel.canvas",
+  "name": "Session Start",
+  "description": "Provider session initialization from process spawn through thread open to ready state",
+  "spanPattern": "provider.session.start",
+  "mode": "span-tree",
+  "status": "draft",
+  "scenarios": [
+    {
+      "id": "success",
+      "priority": 1,
+      "description": "Session started successfully without fallback",
+      "template": {
+        "events": {
+          "session.start.initiated": "Starting {{provider.name}} session for thread {{thread.id}} ({{runtime.mode}} mode, model: {{model}}, cwd: {{cwd}}, resume: {{has.resume.cursor}})",
+          "session.process.spawned": "Thread {{thread.id}}: Spawned process PID {{process.pid}} from {{binary.path}}",
+          "session.thread.open.requested": "Thread {{thread.id}}: Opening via {{method}} (resume ID: {{resume.thread.id}})",
+          "session.thread.open.resolved": "Thread {{thread.id}}: Provider thread {{provider.thread.id}} opened via {{method}}",
+          "session.thread.opened.direct": "Thread {{thread.id}} opened directly without fallback",
+          "session.ready": "Thread {{thread.id}} ready: provider {{provider.thread.id}}, account {{account.type}}, spark {{spark.enabled}}, took {{duration.ms}}ms"
+        },
+        "summary": "Session {{thread.id}} ready"
+      }
+    },
+    {
+      "id": "resume-fallback",
+      "priority": 2,
+      "description": "Resume failed but recovered by starting fresh thread",
+      "template": {
+        "events": {
+          "session.start.initiated": "Starting {{provider.name}} session for thread {{thread.id}} ({{runtime.mode}} mode)",
+          "session.process.spawned": "Thread {{thread.id}}: Spawned process PID {{process.pid}}",
+          "session.thread.open.requested": "Thread {{thread.id}}: Attempting to resume {{resume.thread.id}} via {{method}}",
+          "session.thread.resume.fallback": "Thread {{thread.id}}: Resume of {{resume.thread.id}} failed: {{error.message}}, falling back",
+          "session.thread.open.resolved": "Thread {{thread.id}}: Fresh provider thread {{provider.thread.id}} opened via {{method}}",
+          "session.ready": "Thread {{thread.id}} ready after fallback: provider {{provider.thread.id}}, account {{account.type}}, took {{duration.ms}}ms"
+        },
+        "summary": "Session {{thread.id}} ready via fallback"
+      }
+    },
+    {
+      "id": "failure",
+      "priority": 3,
+      "description": "Session failed to start",
+      "template": {
+        "events": {
+          "session.start.initiated": "Starting {{provider.name}} session for thread {{thread.id}}",
+          "session.process.spawned": "Thread {{thread.id}}: Spawned process PID {{process.pid}}",
+          "session.thread.open.requested": "Thread {{thread.id}}: Opening via {{method}}",
+          "session.start.failed": "Thread {{thread.id}} failed at {{error.stage}}: {{error.message}}"
+        },
+        "summary": "Session {{thread.id}} failed"
+      }
+    }
+  ]
+}

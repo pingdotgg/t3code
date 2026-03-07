@@ -1,0 +1,35 @@
+{
+  "version": "1.0.0",
+  "canvas": ".principal-views/provider-session/provider-session.otel.canvas",
+  "name": "Session Stop",
+  "description": "Provider session cleanup and termination",
+  "spanPattern": "provider.session.stop",
+  "mode": "span-tree",
+  "status": "draft",
+  "scenarios": [
+    {
+      "id": "graceful",
+      "priority": 1,
+      "description": "Session stopped gracefully on request",
+      "template": {
+        "events": {
+          "session.stop.requested": "Stopping session for thread {{thread.id}}",
+          "session.closed": "Session {{thread.id}} closed: {{reason}}"
+        },
+        "summary": "Session {{thread.id}} stopped"
+      }
+    },
+    {
+      "id": "unexpected-exit",
+      "priority": 2,
+      "description": "Process exited unexpectedly",
+      "template": {
+        "events": {
+          "session.process.exited": "Process for {{thread.id}} exited (code: {{exit.code}}, signal: {{exit.signal}}, expected: {{expected}})",
+          "session.closed": "Session {{thread.id}} closed: {{reason}}"
+        },
+        "summary": "Session terminated unexpectedly"
+      }
+    }
+  ]
+}

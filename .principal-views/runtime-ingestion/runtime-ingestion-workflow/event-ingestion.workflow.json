@@ -1,0 +1,81 @@
+{
+  "version": "1.0.0",
+  "canvas": ".principal-views/runtime-ingestion/runtime-ingestion.otel.canvas",
+  "name": "Event Ingestion",
+  "description": "Provider runtime event processing from reception to domain event emission",
+  "spanPattern": "ingestion.event.lifecycle",
+  "mode": "span-tree",
+  "status": "draft",
+  "scenarios": [
+    {
+      "id": "message-event",
+      "priority": 1,
+      "description": "Message event processed and domain event emitted",
+      "template": {
+        "events": {
+          "ingestion.event.received": "Thread {{thread.id}}: received {{event.type}} event for turn {{turn.id}}",
+          "ingestion.event.classified": "Thread {{thread.id}}: {{event.type}} classified as {{event.category}}",
+          "ingestion.message.buffered": "Thread {{thread.id}}: message {{message.id}} buffered ({{content.type}}, {{buffer.size}} bytes)",
+          "ingestion.message.complete": "Thread {{thread.id}}: message {{message.id}} complete ({{content.type}})",
+          "ingestion.domain.event.emitted": "Thread {{thread.id}}: emitted {{domain.event.type}} from {{source.event.type}}"
+        },
+        "summary": "Thread {{thread.id}} message event processed"
+      }
+    },
+    {
+      "id": "tool-event",
+      "priority": 2,
+      "description": "Tool invocation event processed",
+      "template": {
+        "events": {
+          "ingestion.event.received": "Thread {{thread.id}}: received {{event.type}} event",
+          "ingestion.event.classified": "Thread {{thread.id}}: {{event.type}} classified as {{event.category}}",
+          "ingestion.tool.started": "Thread {{thread.id}}: tool {{tool.name}} started ({{tool.id}})",
+          "ingestion.tool.completed": "Thread {{thread.id}}: tool {{tool.name}} completed with {{tool.status}} ({{tool.id}})",
+          "ingestion.domain.event.emitted": "Thread {{thread.id}}: emitted {{domain.event.type}} from {{source.event.type}}"
+        },
+        "summary": "Thread {{thread.id}} tool {{tool.name}} processed"
+      }
+    },
+    {
+      "id": "turn-complete",
+      "priority": 3,
+      "description": "Turn completed and finalized",
+      "template": {
+        "events": {
+          "ingestion.event.received": "Thread {{thread.id}}: received {{event.type}} event for turn {{turn.id}}",
+          "ingestion.event.classified": "Thread {{thread.id}}: {{event.type}} classified as {{event.category}}",
+          "ingestion.domain.event.emitted": "Thread {{thread.id}}: emitted {{domain.event.type}} from {{source.event.type}}",
+          "ingestion.turn.finalized": "Thread {{thread.id}}: turn {{turn.id}} finalized ({{message.count}} messages, {{tool.count}} tools)"
+        },
+        "summary": "Thread {{thread.id}} turn {{turn.id}} finalized"
+      }
+    },
+    {
+      "id": "event-dropped",
+      "priority": 4,
+      "description": "Event dropped without processing",
+      "template": {
+        "events": {
+          "ingestion.event.received": "Thread {{thread.id}}: received {{event.type}} event",
+          "ingestion.event.classified": "Thread {{thread.id}}: {{event.type}} classified as {{event.category}}",
+          "ingestion.event.dropped": "Thread {{thread.id}}: dropped {{event.type}} - {{drop.reason}}"
+        },
+        "summary": "Thread {{thread.id}} event dropped: {{drop.reason}}"
+      }
+    },
+    {
+      "id": "error-event",
+      "priority": 5,
+      "description": "Error event received from provider",
+      "template": {
+        "events": {
+          "ingestion.event.received": "Thread {{thread.id}}: received {{event.type}} event",
+          "ingestion.event.classified": "Thread {{thread.id}}: {{event.type}} classified as {{event.category}}",
+          "ingestion.error.received": "Thread {{thread.id}}: error received - {{error.type}}: {{error.message}}"
+        },
+        "summary": "Thread {{thread.id}} error: {{error.message}}"
+      }
+    }
+  ]
+}

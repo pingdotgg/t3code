@@ -1,0 +1,71 @@
+{
+  "version": "1.0.0",
+  "canvas": ".principal-views/orchestration-engine/orchestration-engine.otel.canvas",
+  "name": "Command Dispatch",
+  "description": "Orchestration command processing through event sourcing pipeline",
+  "spanPattern": "orchestration.command.dispatch",
+  "mode": "span-tree",
+  "status": "draft",
+  "scenarios": [
+    {
+      "id": "success",
+      "priority": 1,
+      "description": "Command processed and events committed successfully",
+      "template": {
+        "events": {
+          "command.dispatch.started": "Dispatching {{command.type}} command {{command.id}} for {{aggregate.kind}} {{aggregate.id}}",
+          "command.receipt.checked": "Command {{command.id}}: receipt found={{receipt.found}}, status={{receipt.status}}",
+          "command.decision.started": "Command {{command.id}}: starting decision for {{command.type}} at sequence {{readmodel.sequence}}",
+          "command.decision.completed": "Command {{command.id}}: decision produced {{event.count}} event(s)",
+          "command.transaction.started": "Command {{command.id}}: starting transaction for {{event.count}} event(s)",
+          "command.event.appended": "Command {{command.id}}: appended event {{event.id}} ({{event.type}}) at sequence {{event.sequence}}",
+          "command.transaction.committed": "Command {{command.id}}: committed {{event.count}} event(s), final sequence {{final.sequence}}",
+          "command.dispatch.completed": "Command {{command.id}} completed at sequence {{result.sequence}} in {{duration.ms}}ms"
+        },
+        "summary": "Command {{command.id}} committed at sequence {{result.sequence}}"
+      }
+    },
+    {
+      "id": "idempotent-hit",
+      "priority": 2,
+      "description": "Command already processed, returning cached result",
+      "template": {
+        "events": {
+          "command.dispatch.started": "Dispatching {{command.type}} command {{command.id}} for {{aggregate.kind}} {{aggregate.id}}",
+          "command.receipt.checked": "Command {{command.id}}: receipt found={{receipt.found}}, status={{receipt.status}}",
+          "command.idempotent.hit": "Command {{command.id}}: idempotent hit, returning cached sequence {{cached.sequence}}"
+        },
+        "summary": "Command {{command.id}} idempotent hit (sequence {{cached.sequence}})"
+      }
+    },
+    {
+      "id": "previously-rejected",
+      "priority": 3,
+      "description": "Command was previously rejected",
+      "template": {
+        "events": {
+          "command.dispatch.started": "Dispatching {{command.type}} command {{command.id}} for {{aggregate.kind}} {{aggregate.id}}",
+          "command.receipt.checked": "Command {{command.id}}: receipt found={{receipt.found}}, status={{receipt.status}}",
+          "command.previously.rejected": "Command {{command.id}}: previously rejected - {{rejection.detail}}"
+        },
+        "summary": "Command {{command.id}} previously rejected"
+      }
+    },
+    {
+      "id": "invariant-rejected",
+      "priority": 4,
+      "description": "Command rejected due to invariant violation",
+      "template": {
+        "events": {
+          "command.dispatch.started": "Dispatching {{command.type}} command {{command.id}} for {{aggregate.kind}} {{aggregate.id}}",
+          "command.receipt.checked": "Command {{command.id}}: receipt found={{receipt.found}}, status={{receipt.status}}",
+          "command.decision.started": "Command {{command.id}}: starting decision for {{command.type}} at sequence {{readmodel.sequence}}",
+          "command.invariant.violated": "Command {{command.id}}: invariant violated for {{command.type}} - {{violation.detail}}",
+          "command.dispatch.failed": "Command {{command.id}}: dispatch failed - {{error.type}}: {{error.message}}",
+          "readmodel.reconciliation.started": "Command {{command.id}}: reconciling read model from sequence {{from.sequence}}"
+        },
+        "summary": "Command {{command.id}} rejected: {{violation.detail}}"
+      }
+    }
+  ]
+}

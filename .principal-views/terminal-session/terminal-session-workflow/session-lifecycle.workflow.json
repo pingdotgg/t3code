@@ -1,0 +1,55 @@
+{
+  "version": "1.0.0",
+  "canvas": ".principal-views/terminal-session/terminal-session.otel.canvas",
+  "name": "Session Lifecycle",
+  "description": "Terminal session from open request through I/O to close",
+  "spanPattern": "terminal.session.lifecycle",
+  "mode": "span-tree",
+  "status": "draft",
+  "scenarios": [
+    {
+      "id": "success",
+      "priority": 1,
+      "description": "Terminal opened, used, and closed normally (may include resize events)",
+      "template": {
+        "events": {
+          "terminal.open.requested": "Terminal {{terminal.id}}: open requested in {{cwd}} (preference: {{shell.preference}})",
+          "terminal.shell.resolved": "Terminal {{terminal.id}}: shell resolved to {{shell.name}} at {{shell.path}}",
+          "terminal.pty.spawned": "Terminal {{terminal.id}}: PTY spawned PID {{process.pid}} ({{cols}}x{{rows}})",
+          "terminal.session.ready": "Terminal {{terminal.id}}: ready (PID {{process.pid}}, {{duration.ms}}ms)",
+          "terminal.data.received": "Terminal {{terminal.id}}: {{data.direction}} data ({{data.size}} bytes)",
+          "terminal.resized": "Terminal {{terminal.id}}: resized to {{cols}}x{{rows}}",
+          "terminal.session.closed": "Terminal {{terminal.id}}: closed ({{close.reason}}, exit code {{exit.code}})"
+        },
+        "summary": "Terminal {{terminal.id}} session completed"
+      }
+    },
+    {
+      "id": "shell-error",
+      "priority": 3,
+      "description": "Shell resolution failed",
+      "template": {
+        "events": {
+          "terminal.open.requested": "Terminal {{terminal.id}}: open requested in {{cwd}}",
+          "terminal.shell.error": "Terminal {{terminal.id}}: shell error - {{error.message}}",
+          "terminal.open.failed": "Terminal {{terminal.id}}: open failed at {{error.stage}} - {{error.message}}"
+        },
+        "summary": "Terminal {{terminal.id}} shell error"
+      }
+    },
+    {
+      "id": "spawn-error",
+      "priority": 4,
+      "description": "PTY spawn failed",
+      "template": {
+        "events": {
+          "terminal.open.requested": "Terminal {{terminal.id}}: open requested in {{cwd}}",
+          "terminal.shell.resolved": "Terminal {{terminal.id}}: shell resolved to {{shell.name}} at {{shell.path}}",
+          "terminal.spawn.error": "Terminal {{terminal.id}}: spawn error for {{shell.path}} - {{error.message}}",
+          "terminal.open.failed": "Terminal {{terminal.id}}: open failed at {{error.stage}} - {{error.message}}"
+        },
+        "summary": "Terminal {{terminal.id}} spawn error"
+      }
+    }
+  ]
+}

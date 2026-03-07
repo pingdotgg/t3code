@@ -1,0 +1,509 @@
+{
+  "nodes": [
+    {
+      "id": "ingestion-event-received",
+      "type": "text",
+      "text": "Event Received",
+      "x": 100,
+      "y": 50,
+      "width": 200,
+      "height": 100,
+      "color": "#3b82f6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ingestion.event.received",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "event.type": {
+              "type": "string",
+              "description": "Provider event type",
+              "required": true
+            },
+            "turn.id": {
+              "type": "string",
+              "description": "Current turn identifier",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "ingestion-event-classified",
+      "type": "text",
+      "text": "Event Classified",
+      "x": 100,
+      "y": 200,
+      "width": 200,
+      "height": 100,
+      "color": "#3b82f6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ingestion.event.classified",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "event.type": {
+              "type": "string",
+              "description": "Provider event type",
+              "required": true
+            },
+            "event.category": {
+              "type": "string",
+              "description": "Classification: message, tool, status, error",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "ingestion-message-buffered",
+      "type": "text",
+      "text": "Message Buffered",
+      "x": 100,
+      "y": 350,
+      "width": 200,
+      "height": 100,
+      "color": "#8b5cf6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ingestion.message.buffered",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "message.id": {
+              "type": "string",
+              "description": "Message identifier",
+              "required": true
+            },
+            "content.type": {
+              "type": "string",
+              "description": "Content type: text, tool_use, tool_result",
+              "required": true
+            },
+            "buffer.size": {
+              "type": "integer",
+              "description": "Current buffer size in bytes",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "ingestion-tool-started",
+      "type": "text",
+      "text": "Tool Started",
+      "x": 400,
+      "y": 350,
+      "width": 200,
+      "height": 100,
+      "color": "#06b6d4",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ingestion.tool.started",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "tool.id": {
+              "type": "string",
+              "description": "Tool invocation identifier",
+              "required": true
+            },
+            "tool.name": {
+              "type": "string",
+              "description": "Tool name",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "ingestion-tool-completed",
+      "type": "text",
+      "text": "Tool Completed",
+      "x": 400,
+      "y": 500,
+      "width": 200,
+      "height": 100,
+      "color": "#06b6d4",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ingestion.tool.completed",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "tool.id": {
+              "type": "string",
+              "description": "Tool invocation identifier",
+              "required": true
+            },
+            "tool.name": {
+              "type": "string",
+              "description": "Tool name",
+              "required": true
+            },
+            "tool.status": {
+              "type": "string",
+              "description": "Tool result status: success, error",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "ingestion-message-complete",
+      "type": "text",
+      "text": "Message Complete",
+      "x": 100,
+      "y": 500,
+      "width": 200,
+      "height": 100,
+      "color": "#8b5cf6",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ingestion.message.complete",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "message.id": {
+              "type": "string",
+              "description": "Message identifier",
+              "required": true
+            },
+            "content.type": {
+              "type": "string",
+              "description": "Final content type",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "ingestion-domain-event-emitted",
+      "type": "text",
+      "text": "Domain Event Emitted",
+      "x": 250,
+      "y": 650,
+      "width": 200,
+      "height": 100,
+      "color": "#22c55e",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ingestion.domain.event.emitted",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "domain.event.type": {
+              "type": "string",
+              "description": "Domain event type emitted",
+              "required": true
+            },
+            "source.event.type": {
+              "type": "string",
+              "description": "Original provider event type",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "ingestion-turn-finalized",
+      "type": "text",
+      "text": "Turn Finalized",
+      "x": 250,
+      "y": 800,
+      "width": 200,
+      "height": 100,
+      "color": "#22c55e",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ingestion.turn.finalized",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "turn.id": {
+              "type": "string",
+              "description": "Turn identifier",
+              "required": true
+            },
+            "message.count": {
+              "type": "integer",
+              "description": "Number of messages in turn",
+              "required": true
+            },
+            "tool.count": {
+              "type": "integer",
+              "description": "Number of tool invocations",
+              "required": false
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "lifecycle"
+        }
+      }
+    },
+    {
+      "id": "ingestion-event-dropped",
+      "type": "text",
+      "text": "Event Dropped",
+      "x": 550,
+      "y": 200,
+      "width": 200,
+      "height": 100,
+      "color": "#f59e0b",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ingestion.event.dropped",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "event.type": {
+              "type": "string",
+              "description": "Dropped event type",
+              "required": true
+            },
+            "drop.reason": {
+              "type": "string",
+              "description": "Reason for dropping event",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "warning"
+        }
+      }
+    },
+    {
+      "id": "ingestion-error-received",
+      "type": "text",
+      "text": "Error Received",
+      "x": 550,
+      "y": 350,
+      "width": 200,
+      "height": 100,
+      "color": "#ef4444",
+      "pv": {
+        "status": "draft",
+        "event": {
+          "name": "ingestion.error.received",
+          "attributes": {
+            "thread.id": {
+              "type": "string",
+              "description": "Thread identifier",
+              "required": true
+            },
+            "error.type": {
+              "type": "string",
+              "description": "Error classification",
+              "required": true
+            },
+            "error.message": {
+              "type": "string",
+              "description": "Error message",
+              "required": true
+            }
+          }
+        },
+        "references": ["apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts"],
+        "otel": {
+          "kind": "event",
+          "category": "error"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "received-to-classified",
+      "fromNode": "ingestion-event-received",
+      "toNode": "ingestion-event-classified",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "classified-to-buffered",
+      "fromNode": "ingestion-event-classified",
+      "toNode": "ingestion-message-buffered",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "branch" }
+    },
+    {
+      "id": "classified-to-tool",
+      "fromNode": "ingestion-event-classified",
+      "toNode": "ingestion-tool-started",
+      "fromSide": "right",
+      "toSide": "top",
+      "pv": { "edgeType": "branch" }
+    },
+    {
+      "id": "classified-to-dropped",
+      "fromNode": "ingestion-event-classified",
+      "toNode": "ingestion-event-dropped",
+      "fromSide": "right",
+      "toSide": "left",
+      "pv": { "edgeType": "warning" }
+    },
+    {
+      "id": "classified-to-error",
+      "fromNode": "ingestion-event-classified",
+      "toNode": "ingestion-error-received",
+      "fromSide": "right",
+      "toSide": "left",
+      "pv": { "edgeType": "error" }
+    },
+    {
+      "id": "buffered-to-complete",
+      "fromNode": "ingestion-message-buffered",
+      "toNode": "ingestion-message-complete",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "tool-started-to-completed",
+      "fromNode": "ingestion-tool-started",
+      "toNode": "ingestion-tool-completed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "message-to-emitted",
+      "fromNode": "ingestion-message-complete",
+      "toNode": "ingestion-domain-event-emitted",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "tool-to-emitted",
+      "fromNode": "ingestion-tool-completed",
+      "toNode": "ingestion-domain-event-emitted",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    },
+    {
+      "id": "emitted-to-finalized",
+      "fromNode": "ingestion-domain-event-emitted",
+      "toNode": "ingestion-turn-finalized",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "pv": { "edgeType": "sequence" }
+    }
+  ],
+  "pv": {
+    "name": "Provider Runtime Ingestion",
+    "version": "1.0.0",
+    "description": "Telemetry schema for provider runtime event ingestion and domain event synthesis",
+    "markdown": ".principal-views/runtime-ingestion/runtime-ingestion.md",
+    "edgeTypes": {
+      "sequence": {
+        "style": "solid",
+        "color": "#64748b",
+        "width": 2
+      },
+      "branch": {
+        "style": "dashed",
+        "color": "#22c55e",
+        "width": 2
+      },
+      "warning": {
+        "style": "dashed",
+        "color": "#f59e0b",
+        "width": 2
+      },
+      "error": {
+        "style": "dashed",
+        "color": "#ef4444",
+        "width": 2
+      }
+    }
+  }
+}
