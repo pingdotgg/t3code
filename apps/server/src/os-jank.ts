@@ -1,16 +1,14 @@
 import * as OS from "node:os";
 import { Effect, Path } from "effect";
-import { execFileSync } from "node:child_process";
+
+import { resolveLoginShellPath } from "@t3tools/shared/shellPath";
 
 export function fixPath(): void {
-  if (process.platform !== "darwin") return;
+  if (process.platform === "win32") return;
 
   try {
-    const shell = process.env.SHELL ?? "/bin/zsh";
-    const result = execFileSync(shell, ["-ilc", "echo -n $PATH"], {
-      encoding: "utf8",
-      timeout: 5000,
-    });
+    const shell = process.env.SHELL ?? (process.platform === "darwin" ? "/bin/zsh" : "/bin/sh");
+    const result = resolveLoginShellPath(shell, process.env);
     if (result) {
       process.env.PATH = result;
     }

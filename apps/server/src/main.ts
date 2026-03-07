@@ -235,12 +235,10 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
   });
 });
 
-const makeServerProgram = (input: CliInput) =>
+const makeServerProgram = () =>
   Effect.gen(function* () {
-    const cliConfig = yield* CliConfig;
     const { start, stopSignal } = yield* Server;
     const openDeps = yield* Open;
-    yield* cliConfig.fixPath;
 
     const config = yield* ServerConfig;
 
@@ -280,7 +278,7 @@ const makeServerProgram = (input: CliInput) =>
     }
 
     return yield* stopSignal;
-  }).pipe(Effect.provide(LayerLive(input)));
+  });
 
 /**
  * These flags mirrors the environment variables and the config shape.
@@ -343,5 +341,12 @@ export const t3Cli = Command.make("t3", {
   logWebSocketEvents: logWebSocketEventsFlag,
 }).pipe(
   Command.withDescription("Run the T3 Code server."),
-  Command.withHandler((input) => Effect.scoped(makeServerProgram(input))),
+  Command.withHandler((input) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* Effect.sync(fixPath);
+        return yield* makeServerProgram().pipe(Effect.provide(LayerLive(input)));
+      }),
+    ),
+  ),
 );
