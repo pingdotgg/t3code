@@ -2,7 +2,7 @@
 
 ## Small things
 
-- [ ] Submitting new messages should scroll to bottom
+- [x] Submitting new messages should scroll to bottom
 - [ ] Only show last 10 threads for a given project
 - [ ] Thread archiving
 - [ ] New projects should go on top
