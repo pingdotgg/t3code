@@ -4,7 +4,11 @@ import { Effect, Layer, Sink, Stream } from "effect";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { checkCodexProviderStatus, parseAuthStatusFromOutput } from "./ProviderHealth";
+import {
+  checkCodexProviderStatus,
+  makeCheckCodexProviderStatus,
+  parseAuthStatusFromOutput,
+} from "./ProviderHealth";
 
 // ── Test helpers ────────────────────────────────────────────────────
 
@@ -26,13 +30,31 @@ function mockHandle(result: { stdout: string; stderr: string; code: number }) {
 }
 
 function mockSpawnerLayer(
-  handler: (args: ReadonlyArray<string>) => { stdout: string; stderr: string; code: number },
+  handler: (input: {
+    command: string;
+    args: ReadonlyArray<string>;
+  }) => { stdout: string; stderr: string; code: number },
 ) {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
-      const cmd = command as unknown as { args: ReadonlyArray<string> };
-      return Effect.succeed(mockHandle(handler(cmd.args)));
+      const cmd = command as unknown as { command: string; args: ReadonlyArray<string> };
+      return Effect.try({
+        try: () =>
+          mockHandle(
+            handler({
+              command: cmd.command,
+              args: cmd.args,
+            }),
+          ),
+        catch: (cause) =>
+          PlatformError.systemError({
+            _tag: "BadResource",
+            module: "ChildProcess",
+            method: "spawn",
+            description: cause instanceof Error ? cause.message : String(cause),
+          }),
+      });
     }),
   );
 }
@@ -64,7 +86,7 @@ it.effect("returns ready when codex is installed and authenticated", () =>
     assert.strictEqual(status.authStatus, "authenticated");
   }).pipe(
     Effect.provide(
-      mockSpawnerLayer((args) => {
+      mockSpawnerLayer(({ args }) => {
         const joined = args.join(" ");
         if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
         if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
@@ -98,7 +120,7 @@ it.effect("returns unauthenticated when auth probe reports login required", () =
     );
   }).pipe(
     Effect.provide(
-      mockSpawnerLayer((args) => {
+      mockSpawnerLayer(({ args }) => {
         const joined = args.join(" ");
         if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
         if (joined === "login status") {
@@ -125,7 +147,7 @@ it.effect(
       );
     }).pipe(
       Effect.provide(
-        mockSpawnerLayer((args) => {
+        mockSpawnerLayer(({ args }) => {
           const joined = args.join(" ");
           if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
           if (joined === "login status")
@@ -149,11 +171,37 @@ it.effect("returns warning when login status command is unsupported", () =>
     );
   }).pipe(
     Effect.provide(
-      mockSpawnerLayer((args) => {
+      mockSpawnerLayer(({ args }) => {
         const joined = args.join(" ");
         if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
         if (joined === "login status") {
           return { stdout: "", stderr: "error: unknown command 'login'", code: 2 };
+        }
+        throw new Error(`Unexpected args: ${joined}`);
+      }),
+    ),
+  ),
+);
+
+it.effect("falls back to WSL when codex is only available there on Windows", () =>
+  Effect.gen(function* () {
+    const status = yield* makeCheckCodexProviderStatus("win32");
+    assert.strictEqual(status.provider, "codex");
+    assert.strictEqual(status.status, "ready");
+    assert.strictEqual(status.available, true);
+    assert.strictEqual(status.authStatus, "authenticated");
+  }).pipe(
+    Effect.provide(
+      mockSpawnerLayer(({ args }) => {
+        const joined = args.join(" ");
+        if (joined === "--version") {
+          throw new Error("spawn codex ENOENT");
+        }
+        if (joined === "--exec codex --version") {
+          return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+        }
+        if (joined === "--exec codex login status") {
+          return { stdout: "Logged in\n", stderr: "", code: 0 };
         }
         throw new Error(`Unexpected args: ${joined}`);
       }),

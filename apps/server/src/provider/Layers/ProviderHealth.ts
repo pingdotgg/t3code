@@ -17,6 +17,7 @@ import { Effect, Layer, Option, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
+import { resolveWindowsSpawnCwd } from "../../wsl";
 
 const DEFAULT_TIMEOUT_MS = 4_000;
 const CODEX_PROVIDER = "codex" as const;
@@ -171,11 +172,16 @@ const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.
     (acc, chunk) => acc + new TextDecoder().decode(chunk),
   );
 
-const runCodexCommand = (args: ReadonlyArray<string>) =>
+const runCommand = (input: {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly cwd?: string;
+}) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const command = ChildProcess.make("codex", [...args], {
-      shell: process.platform === "win32",
+    const command = ChildProcess.make(input.command, [...input.args], {
+      ...(input.cwd ? { cwd: input.cwd } : {}),
+      shell: false,
     });
 
     const child = yield* spawner.spawn(command);
@@ -192,103 +198,139 @@ const runCodexCommand = (args: ReadonlyArray<string>) =>
     return { stdout, stderr, code: exitCode } satisfies CommandResult;
   }).pipe(Effect.scoped);
 
+const runCodexCommand = (args: ReadonlyArray<string>) =>
+  runCommand({
+    command: "codex",
+    args,
+  });
+
+const runWslCodexCommand = (
+  args: ReadonlyArray<string>,
+  platform: NodeJS.Platform = process.platform,
+) =>
+  runCommand({
+    command: "wsl.exe",
+    args: ["--exec", "codex", ...args],
+    cwd: resolveWindowsSpawnCwd({ platform }),
+  });
+
 // ── Health check ────────────────────────────────────────────────────
+
+export const makeCheckCodexProviderStatus = (platform: NodeJS.Platform = process.platform) =>
+  Effect.gen(function* () {
+    const checkedAt = new Date().toISOString();
+
+    // Probe 1: `codex --version` — is the CLI reachable?
+    let commandMode: "native" | "wsl" = "native";
+    let versionProbe = yield* runCodexCommand(["--version"]).pipe(
+      Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+      Effect.result,
+    );
+
+    if (
+      Result.isFailure(versionProbe) &&
+      platform === "win32" &&
+      isCommandMissingCause(versionProbe.failure)
+    ) {
+      versionProbe = yield* runWslCodexCommand(["--version"], platform).pipe(
+        Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+        Effect.result,
+      );
+      if (!(Result.isFailure(versionProbe) || Option.isNone(versionProbe.success))) {
+        commandMode = "wsl";
+      }
+    }
+
+    if (Result.isFailure(versionProbe)) {
+      const error = versionProbe.failure;
+      return {
+        provider: CODEX_PROVIDER,
+        status: "error" as const,
+        available: false,
+        authStatus: "unknown" as const,
+        checkedAt,
+        message: isCommandMissingCause(error)
+          ? "Codex CLI (`codex`) is not installed or not on PATH."
+          : `Failed to execute Codex CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
+      };
+    }
+
+    if (Option.isNone(versionProbe.success)) {
+      return {
+        provider: CODEX_PROVIDER,
+        status: "error" as const,
+        available: false,
+        authStatus: "unknown" as const,
+        checkedAt,
+        message: "Codex CLI is installed but failed to run. Timed out while running command.",
+      };
+    }
+
+    const version = versionProbe.success.value;
+    if (version.code !== 0) {
+      const detail = detailFromResult(version);
+      return {
+        provider: CODEX_PROVIDER,
+        status: "error" as const,
+        available: false,
+        authStatus: "unknown" as const,
+        checkedAt,
+        message: detail
+          ? `Codex CLI is installed but failed to run. ${detail}`
+          : "Codex CLI is installed but failed to run.",
+      };
+    }
+
+    // Probe 2: `codex login status` — is the user authenticated?
+    const authProbe = yield* (commandMode === "wsl"
+      ? runWslCodexCommand(["login", "status"], platform)
+      : runCodexCommand(["login", "status"])).pipe(
+      Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+      Effect.result,
+    );
+
+    if (Result.isFailure(authProbe)) {
+      const error = authProbe.failure;
+      return {
+        provider: CODEX_PROVIDER,
+        status: "warning" as const,
+        available: true,
+        authStatus: "unknown" as const,
+        checkedAt,
+        message:
+          error instanceof Error
+            ? `Could not verify Codex authentication status: ${error.message}.`
+            : "Could not verify Codex authentication status.",
+      };
+    }
+
+    if (Option.isNone(authProbe.success)) {
+      return {
+        provider: CODEX_PROVIDER,
+        status: "warning" as const,
+        available: true,
+        authStatus: "unknown" as const,
+        checkedAt,
+        message: "Could not verify Codex authentication status. Timed out while running command.",
+      };
+    }
+
+    const parsed = parseAuthStatusFromOutput(authProbe.success.value);
+    return {
+      provider: CODEX_PROVIDER,
+      status: parsed.status,
+      available: true,
+      authStatus: parsed.authStatus,
+      checkedAt,
+      ...(parsed.message ? { message: parsed.message } : {}),
+    } satisfies ServerProviderStatus;
+  });
 
 export const checkCodexProviderStatus: Effect.Effect<
   ServerProviderStatus,
   never,
   ChildProcessSpawner.ChildProcessSpawner
-> = Effect.gen(function* () {
-  const checkedAt = new Date().toISOString();
-
-  // Probe 1: `codex --version` — is the CLI reachable?
-  const versionProbe = yield* runCodexCommand(["--version"]).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
-    Effect.result,
-  );
-
-  if (Result.isFailure(versionProbe)) {
-    const error = versionProbe.failure;
-    return {
-      provider: CODEX_PROVIDER,
-      status: "error" as const,
-      available: false,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message: isCommandMissingCause(error)
-        ? "Codex CLI (`codex`) is not installed or not on PATH."
-        : `Failed to execute Codex CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
-    };
-  }
-
-  if (Option.isNone(versionProbe.success)) {
-    return {
-      provider: CODEX_PROVIDER,
-      status: "error" as const,
-      available: false,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message: "Codex CLI is installed but failed to run. Timed out while running command.",
-    };
-  }
-
-  const version = versionProbe.success.value;
-  if (version.code !== 0) {
-    const detail = detailFromResult(version);
-    return {
-      provider: CODEX_PROVIDER,
-      status: "error" as const,
-      available: false,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message: detail
-        ? `Codex CLI is installed but failed to run. ${detail}`
-        : "Codex CLI is installed but failed to run.",
-    };
-  }
-
-  // Probe 2: `codex login status` — is the user authenticated?
-  const authProbe = yield* runCodexCommand(["login", "status"]).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
-    Effect.result,
-  );
-
-  if (Result.isFailure(authProbe)) {
-    const error = authProbe.failure;
-    return {
-      provider: CODEX_PROVIDER,
-      status: "warning" as const,
-      available: true,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message:
-        error instanceof Error
-          ? `Could not verify Codex authentication status: ${error.message}.`
-          : "Could not verify Codex authentication status.",
-    };
-  }
-
-  if (Option.isNone(authProbe.success)) {
-    return {
-      provider: CODEX_PROVIDER,
-      status: "warning" as const,
-      available: true,
-      authStatus: "unknown" as const,
-      checkedAt,
-      message: "Could not verify Codex authentication status. Timed out while running command.",
-    };
-  }
-
-  const parsed = parseAuthStatusFromOutput(authProbe.success.value);
-  return {
-    provider: CODEX_PROVIDER,
-    status: parsed.status,
-    available: true,
-    authStatus: parsed.authStatus,
-    checkedAt,
-    ...(parsed.message ? { message: parsed.message } : {}),
-  } satisfies ServerProviderStatus;
-});
+> = makeCheckCodexProviderStatus();
 
 // ── Layer ───────────────────────────────────────────────────────────
 

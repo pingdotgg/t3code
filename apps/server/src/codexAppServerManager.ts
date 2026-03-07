@@ -22,6 +22,8 @@ import {
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { Effect, ServiceMap } from "effect";
 
+import { resolveWorkspaceCommandLaunch, toWslPath } from "./wsl";
+
 type PendingRequestKey = string;
 
 interface PendingRequest {
@@ -138,6 +140,13 @@ export interface CodexThreadSnapshot {
   turns: CodexThreadTurnSnapshot[];
 }
 
+interface CodexSpawnConfig {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly cwd: string;
+  readonly distribution: string | null;
+}
+
 const ANSI_ESCAPE_CHAR = String.fromCharCode(27);
 const ANSI_ESCAPE_REGEX = new RegExp(`${ANSI_ESCAPE_CHAR}\\[[0-9;]*m`, "g");
 const CODEX_STDERR_LOG_REGEX =
@@ -166,6 +175,32 @@ function asObject(value: unknown): Record<string, unknown> | undefined {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function resolveCodexSpawnConfig(input: {
+  readonly cwd: string;
+  readonly binaryPath: string;
+}): CodexSpawnConfig {
+  const wslLaunch = resolveWorkspaceCommandLaunch({
+    workspaceRoot: input.cwd,
+    command: input.binaryPath,
+    args: ["app-server"],
+  });
+  if (wslLaunch) {
+    return {
+      command: wslLaunch.command,
+      args: wslLaunch.args,
+      cwd: wslLaunch.cwd,
+      distribution: wslLaunch.workspace.distribution,
+    };
+  }
+
+  return {
+    command: input.binaryPath,
+    args: ["app-server"],
+    cwd: input.cwd,
+    distribution: null,
+  };
 }
 
 export function readCodexAccountSnapshot(response: unknown): CodexAccountSnapshot {
@@ -535,14 +570,24 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const codexOptions = readCodexProviderOptions(input);
       const codexBinaryPath = codexOptions.binaryPath ?? "codex";
       const codexHomePath = codexOptions.homePath;
-      const child = spawn(codexBinaryPath, ["app-server"], {
+      const spawnConfig = resolveCodexSpawnConfig({
         cwd: resolvedCwd,
+        binaryPath: codexBinaryPath,
+      });
+      const translatedCodexHomePath =
+        spawnConfig.distribution && codexHomePath
+          ? toWslPath(codexHomePath, {
+              distribution: spawnConfig.distribution,
+            }) ?? codexHomePath
+          : codexHomePath;
+      const child = spawn(spawnConfig.command, [...spawnConfig.args], {
+        cwd: spawnConfig.cwd,
         env: {
           ...process.env,
-          ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
+          ...(translatedCodexHomePath ? { CODEX_HOME: translatedCodexHomePath } : {}),
         },
         stdio: ["pipe", "pipe", "pipe"],
-        shell: process.platform === "win32",
+        shell: false,
       });
       const output = readline.createInterface({ input: child.stdout });
 

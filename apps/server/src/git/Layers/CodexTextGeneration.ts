@@ -7,6 +7,7 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shar
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { resolveWorkspaceCommandLaunch, toWslPath } from "../../wsl.ts";
 import { TextGenerationError } from "../Errors.ts";
 import {
   type BranchNameGenerationInput,
@@ -204,9 +205,29 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       const outputPath = yield* writeTempFile(operation, "codex-output", "");
 
       const runCodexCommand = Effect.gen(function* () {
+        const wslLaunch = resolveWorkspaceCommandLaunch({
+          workspaceRoot: cwd,
+          command: "codex",
+          args: [
+            "exec",
+            "--ephemeral",
+            "-s",
+            "read-only",
+            "--model",
+            CODEX_MODEL,
+            "--config",
+            `model_reasoning_effort="${CODEX_REASONING_EFFORT}"`,
+            "--output-schema",
+            toWslPath(schemaPath) ?? schemaPath,
+            "--output-last-message",
+            toWslPath(outputPath) ?? outputPath,
+            ...imagePaths.flatMap((imagePath) => ["--image", toWslPath(imagePath) ?? imagePath]),
+            "-",
+          ],
+        });
         const command = ChildProcess.make(
-          "codex",
-          [
+          wslLaunch?.command ?? "codex",
+          wslLaunch?.args ?? [
             "exec",
             "--ephemeral",
             "-s",
@@ -223,8 +244,8 @@ const makeCodexTextGeneration = Effect.gen(function* () {
             "-",
           ],
           {
-            cwd,
-            shell: process.platform === "win32",
+            cwd: wslLaunch?.cwd ?? cwd,
+            shell: false,
             stdin: {
               stream: Stream.make(new TextEncoder().encode(prompt)),
             },
