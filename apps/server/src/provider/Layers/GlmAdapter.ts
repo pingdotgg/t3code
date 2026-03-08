@@ -231,7 +231,7 @@ function toolCallToCanonicalItemType(toolName: string): CanonicalItemType {
     case "search_files":
       return "file_change";
     case "spawn_agent":
-      return "command_execution";
+      return "collab_agent_tool_call";
     default:
       return "unknown";
   }
@@ -318,12 +318,38 @@ async function executeToolCall(
 
 // ── Sub-agent runner ──────────────────────────────────────────────
 
+interface SubAgentProgressContext {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly parentItemId: string;
+  readonly emit: (event: ProviderRuntimeEvent) => void;
+}
+
+function emitSubAgentProgress(
+  ctx: SubAgentProgressContext,
+  detail: string,
+  depth: number,
+) {
+  const prefix = depth > 0 ? `[sub-agent L${depth}] ` : "[sub-agent] ";
+  ctx.emit({
+    ...makeEventBase(ctx.threadId, ctx.turnId, ctx.parentItemId),
+    type: "item.updated",
+    payload: {
+      itemType: "collab_agent_tool_call" as CanonicalItemType,
+      status: "inProgress",
+      title: "spawn_agent",
+      detail: `${prefix}${detail}`.slice(0, 180),
+    },
+  } as ProviderRuntimeEvent);
+}
+
 async function runSubAgent(
   task: string,
   cwd: string,
   model: string,
   signal: AbortSignal,
   depth: number,
+  progress?: SubAgentProgressContext,
 ): Promise<string> {
   if (depth >= MAX_SUB_AGENT_DEPTH) {
     return "Error: Maximum sub-agent nesting depth reached.";
@@ -332,6 +358,17 @@ async function runSubAgent(
   const apiKey = resolveApiKey();
   if (!apiKey) return "Error: GLM API key not configured.";
   const baseUrl = resolveBaseUrl();
+
+  progress?.emit({
+    ...makeEventBase(progress.threadId, progress.turnId, progress.parentItemId),
+    type: "item.updated",
+    payload: {
+      itemType: "collab_agent_tool_call" as CanonicalItemType,
+      status: "inProgress",
+      title: "spawn_agent",
+      detail: `[sub-agent] Starting: ${task.slice(0, 140)}`,
+    },
+  } as ProviderRuntimeEvent);
 
   const messages: ChatMessage[] = [
     {
@@ -352,6 +389,10 @@ async function runSubAgent(
 
   for (let iteration = 0; iteration < MAX_SUB_AGENT_ITERATIONS; iteration++) {
     if (signal.aborted) return "Sub-agent interrupted.";
+
+    if (progress) {
+      emitSubAgentProgress(progress, `Iteration ${iteration + 1}/${MAX_SUB_AGENT_ITERATIONS} — thinking...`, depth);
+    }
 
     let response: Response;
     try {
@@ -422,6 +463,9 @@ async function runSubAgent(
     // No tool calls — sub-agent is done
     if (resolvedToolCalls.length === 0) {
       finalResponse = assistantContent;
+      if (progress) {
+        emitSubAgentProgress(progress, `Completed after ${iteration + 1} iteration(s)`, depth);
+      }
       break;
     }
 
@@ -436,12 +480,27 @@ async function runSubAgent(
         parsedArgs = {};
       }
 
+      // Emit progress for each tool the sub-agent uses
+      if (progress) {
+        const toolBrief =
+          tc.function.name === "run_command"
+            ? `run_command: ${String(parsedArgs.command ?? "").slice(0, 80)}`
+            : tc.function.name === "read_file" || tc.function.name === "write_file" || tc.function.name === "edit_file"
+              ? `${tc.function.name}: ${String(parsedArgs.path ?? "").slice(0, 80)}`
+              : tc.function.name === "search_files"
+                ? `search_files: ${String(parsedArgs.pattern ?? "").slice(0, 80)}`
+                : tc.function.name === "spawn_agent"
+                  ? `spawn_agent: ${String(parsedArgs.task ?? "").slice(0, 60)}`
+                  : tc.function.name;
+        emitSubAgentProgress(progress, toolBrief, depth);
+      }
+
       let toolResult: string;
       if (tc.function.name === "spawn_agent") {
         // Recursive sub-agent
         const subTask = String(parsedArgs.task ?? "");
         const subCwd = parsedArgs.cwd ? String(parsedArgs.cwd) : cwd;
-        toolResult = await runSubAgent(subTask, subCwd, model, signal, depth + 1);
+        toolResult = await runSubAgent(subTask, subCwd, model, signal, depth + 1, progress);
       } else {
         try {
           toolResult = await executeToolCall(tc.function.name, parsedArgs, cwd);
@@ -796,7 +855,9 @@ export function makeGlmAdapterLive(_options?: GlmAdapterLiveOptions) {
                 ? String(parsedArgs.command ?? "")
                 : tc.function.name === "read_file" || tc.function.name === "write_file" || tc.function.name === "edit_file"
                   ? String(parsedArgs.path ?? "")
-                  : tc.function.name;
+                  : tc.function.name === "spawn_agent"
+                    ? String(parsedArgs.task ?? "").slice(0, 120)
+                    : tc.function.name;
 
             // Approval flow for write/execute operations in approval-required mode
             if (
@@ -865,7 +926,13 @@ export function makeGlmAdapterLive(_options?: GlmAdapterLiveOptions) {
               if (tc.function.name === "spawn_agent") {
                 const subTask = String(parsedArgs.task ?? "");
                 const subCwd = parsedArgs.cwd ? String(parsedArgs.cwd) : session.cwd;
-                toolResult = await runSubAgent(subTask, subCwd, session.model, signal, 0);
+                const progressCtx: SubAgentProgressContext = {
+                  threadId: session.threadId,
+                  turnId,
+                  parentItemId: toolItemId,
+                  emit,
+                };
+                toolResult = await runSubAgent(subTask, subCwd, session.model, signal, 0, progressCtx);
               } else {
                 toolResult = await executeToolCall(tc.function.name, parsedArgs, session.cwd);
               }
