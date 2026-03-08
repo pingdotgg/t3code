@@ -65,4 +65,22 @@ describe("parseTurnDiffFilesFromUnifiedDiff", () => {
       { path: "a.txt", additions: 2, deletions: 1 },
     ]);
   });
+
+  it("parses inline submodule patch output", () => {
+    const diff = [
+      "Submodule packages/submodule 1111111..2222222:",
+      "diff --git a/packages/submodule/file.txt b/packages/submodule/file.txt",
+      "index 1111111..2222222 100644",
+      "--- a/packages/submodule/file.txt",
+      "+++ b/packages/submodule/file.txt",
+      "@@ -1 +1,2 @@",
+      " one",
+      "+two",
+      "",
+    ].join("\n");
+
+    expect(parseTurnDiffFilesFromUnifiedDiff(diff)).toEqual([
+      { path: "packages/submodule/file.txt", additions: 1, deletions: 0 },
+    ]);
+  });
 });

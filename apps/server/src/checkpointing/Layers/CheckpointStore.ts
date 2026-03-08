@@ -244,7 +244,16 @@ const makeCheckpointStore = Effect.gen(function* () {
       const result = yield* git.execute({
         operation,
         cwd: input.cwd,
-        args: ["diff", "--patch", "--minimal", "--no-color", fromCommitOid, toCommitOid],
+        args: [
+          "diff",
+          "--patch",
+          "--minimal",
+          "--no-color",
+          "--submodule=diff",
+          "--ignore-submodules=none",
+          fromCommitOid,
+          toCommitOid,
+        ],
       });
 
       return result.stdout;
