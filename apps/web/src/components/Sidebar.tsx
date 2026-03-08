@@ -242,18 +242,25 @@ function ProjectFavicon({ cwd }: { cwd: string }) {
 
   const src = `${serverHttpOrigin}/api/project-favicon?cwd=${encodeURIComponent(cwd)}`;
 
-  if (status === "error") {
-    return <FolderIcon className="size-3.5 shrink-0 text-muted-foreground/50" />;
-  }
+  useEffect(() => {
+    setStatus("loading");
+  }, [src]);
 
   return (
-    <img
-      src={src}
-      alt=""
-      className={`size-3.5 shrink-0 rounded-sm object-contain ${status === "loading" ? "hidden" : ""}`}
-      onLoad={() => setStatus("loaded")}
-      onError={() => setStatus("error")}
-    />
+    <span className="relative size-3.5 shrink-0">
+      {status === "error" ? (
+        <FolderIcon className="absolute inset-0 size-3.5 text-muted-foreground/50" />
+      ) : null}
+      <img
+        src={src}
+        alt=""
+        className={`absolute inset-0 size-3.5 rounded-sm object-contain ${
+          status === "loaded" ? "block" : "hidden"
+        }`}
+        onLoad={() => setStatus("loaded")}
+        onError={() => setStatus("error")}
+      />
+    </span>
   );
 }
 
