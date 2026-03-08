@@ -88,7 +88,7 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 2000);
-        await fetch(loadedUrl, { mode: "no-cors", cache: "no-store", signal: controller.signal });
+        await fetch(loadedUrl, { method: "HEAD", mode: "no-cors", cache: "no-store", signal: controller.signal });
         clearTimeout(timeoutId);
         if (!cancelled) setServerReachable(true);
       } catch {
@@ -98,8 +98,8 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
 
     // First check after a brief delay (give the iframe a moment to attempt load)
     const initialTimer = setTimeout(checkHealth, 1500);
-    // Then poll every 3 seconds
-    const interval = setInterval(checkHealth, 3000);
+    // Then poll every 10 seconds
+    const interval = setInterval(checkHealth, 10_000);
 
     return () => {
       cancelled = true;
