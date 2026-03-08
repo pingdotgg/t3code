@@ -12,9 +12,11 @@ import {
   CodexAppServerManager,
   classifyCodexStderrLine,
   isRecoverableThreadResumeError,
+  mapCodexRuntimeMode,
   normalizeCodexModelSlug,
   readCodexAccountSnapshot,
   resolveCodexModelForAccount,
+  toCodexAppServerSandboxMode,
 } from "./codexAppServerManager";
 
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
@@ -47,7 +49,9 @@ function createSendTurnHarness() {
     .mockReturnValue(context);
   const sendRequest = vi
     .spyOn(
-      manager as unknown as { sendRequest: (...args: unknown[]) => Promise<unknown> },
+      manager as unknown as {
+        sendRequest: (...args: unknown[]) => Promise<unknown>;
+      },
       "sendRequest",
     )
     .mockResolvedValue({
@@ -56,7 +60,10 @@ function createSendTurnHarness() {
       },
     });
   const updateSession = vi
-    .spyOn(manager as unknown as { updateSession: (...args: unknown[]) => void }, "updateSession")
+    .spyOn(
+      manager as unknown as { updateSession: (...args: unknown[]) => void },
+      "updateSession",
+    )
     .mockImplementation(() => {});
 
   return { manager, context, requireSession, sendRequest, updateSession };
@@ -84,11 +91,16 @@ function createThreadControlHarness() {
     )
     .mockReturnValue(context);
   const sendRequest = vi.spyOn(
-    manager as unknown as { sendRequest: (...args: unknown[]) => Promise<unknown> },
+    manager as unknown as {
+      sendRequest: (...args: unknown[]) => Promise<unknown>;
+    },
     "sendRequest",
   );
   const updateSession = vi
-    .spyOn(manager as unknown as { updateSession: (...args: unknown[]) => void }, "updateSession")
+    .spyOn(
+      manager as unknown as { updateSession: (...args: unknown[]) => void },
+      "updateSession",
+    )
     .mockImplementation(() => {});
 
   return { manager, context, requireSession, sendRequest, updateSession };
@@ -126,10 +138,16 @@ function createPendingUserInputHarness() {
     )
     .mockReturnValue(context);
   const writeMessage = vi
-    .spyOn(manager as unknown as { writeMessage: (...args: unknown[]) => void }, "writeMessage")
+    .spyOn(
+      manager as unknown as { writeMessage: (...args: unknown[]) => void },
+      "writeMessage",
+    )
     .mockImplementation(() => {});
   const emitEvent = vi
-    .spyOn(manager as unknown as { emitEvent: (...args: unknown[]) => void }, "emitEvent")
+    .spyOn(
+      manager as unknown as { emitEvent: (...args: unknown[]) => void },
+      "emitEvent",
+    )
     .mockImplementation(() => {});
 
   return { manager, context, requireSession, writeMessage, emitEvent };
@@ -153,7 +171,8 @@ describe("classifyCodexStderrLine", () => {
   });
 
   it("keeps unknown structured errors", () => {
-    const line = "2026-02-08T04:24:20.085687Z ERROR codex_core::runtime: unrecoverable failure";
+    const line =
+      "2026-02-08T04:24:20.085687Z ERROR codex_core::runtime: unrecoverable failure";
     expect(classifyCodexStderrLine(line)).toEqual({
       message: line,
     });
@@ -174,7 +193,9 @@ describe("normalizeCodexModelSlug", () => {
   });
 
   it("prefers codex id when model differs", () => {
-    expect(normalizeCodexModelSlug("gpt-5.3", "gpt-5.3-codex")).toBe("gpt-5.3-codex");
+    expect(normalizeCodexModelSlug("gpt-5.3", "gpt-5.3-codex")).toBe(
+      "gpt-5.3-codex",
+    );
   });
 
   it("keeps non-aliased models as-is", () => {
@@ -183,16 +204,46 @@ describe("normalizeCodexModelSlug", () => {
   });
 });
 
+describe("Codex app-server enum mapping", () => {
+  it("maps canonical sandbox modes to Codex app-server variants", () => {
+    expect(toCodexAppServerSandboxMode("read-only")).toBe("readOnly");
+    expect(toCodexAppServerSandboxMode("workspace-write")).toBe(
+      "workspaceWrite",
+    );
+    expect(toCodexAppServerSandboxMode("danger-full-access")).toBe(
+      "dangerFullAccess",
+    );
+  });
+
+  it("maps full-access runtime mode to Codex thread/start params", () => {
+    expect(mapCodexRuntimeMode("full-access")).toEqual({
+      approvalPolicy: "never",
+      sandbox: "dangerFullAccess",
+    });
+  });
+
+  it("maps approval-required runtime mode to Codex thread/start params", () => {
+    expect(mapCodexRuntimeMode("approval-required")).toEqual({
+      approvalPolicy: "onRequest",
+      sandbox: "workspaceWrite",
+    });
+  });
+});
+
 describe("isRecoverableThreadResumeError", () => {
   it("matches not-found resume errors", () => {
     expect(
-      isRecoverableThreadResumeError(new Error("thread/resume failed: thread not found")),
+      isRecoverableThreadResumeError(
+        new Error("thread/resume failed: thread not found"),
+      ),
     ).toBe(true);
   });
 
   it("ignores non-resume errors", () => {
     expect(
-      isRecoverableThreadResumeError(new Error("thread/start failed: permission denied")),
+      isRecoverableThreadResumeError(
+        new Error("thread/start failed: permission denied"),
+      ),
     ).toBe(false);
   });
 
@@ -285,7 +336,8 @@ describe("startSession", () => {
 
   it("emits session/startFailed when resolving cwd throws before process launch", async () => {
     const manager = new CodexAppServerManager();
-    const events: Array<{ method: string; kind: string; message?: string }> = [];
+    const events: Array<{ method: string; kind: string; message?: string }> =
+      [];
     manager.on("event", (event) => {
       events.push({
         method: event.method,
@@ -319,7 +371,8 @@ describe("startSession", () => {
 
   it("fails fast with an upgrade message when codex is below the minimum supported version", async () => {
     const manager = new CodexAppServerManager();
-    const events: Array<{ method: string; kind: string; message?: string }> = [];
+    const events: Array<{ method: string; kind: string; message?: string }> =
+      [];
     manager.on("event", (event) => {
       events.push({
         method: event.method,
@@ -549,14 +602,20 @@ describe("sendTurn", () => {
 
 describe("thread checkpoint control", () => {
   it("reads thread turns from thread/read", async () => {
-    const { manager, context, requireSession, sendRequest } = createThreadControlHarness();
+    const { manager, context, requireSession, sendRequest } =
+      createThreadControlHarness();
     sendRequest.mockResolvedValue({
       thread: {
         id: "thread_1",
         turns: [
           {
             id: "turn_1",
-            items: [{ type: "userMessage", content: [{ type: "text", text: "hello" }] }],
+            items: [
+              {
+                type: "userMessage",
+                content: [{ type: "text", text: "hello" }],
+              },
+            ],
           },
         ],
       },
@@ -574,7 +633,9 @@ describe("thread checkpoint control", () => {
       turns: [
         {
           id: "turn_1",
-          items: [{ type: "userMessage", content: [{ type: "text", text: "hello" }] }],
+          items: [
+            { type: "userMessage", content: [{ type: "text", text: "hello" }] },
+          ],
         },
       ],
     });
@@ -587,7 +648,9 @@ describe("thread checkpoint control", () => {
       turns: [
         {
           id: "turn_1",
-          items: [{ type: "userMessage", content: [{ type: "text", text: "hello" }] }],
+          items: [
+            { type: "userMessage", content: [{ type: "text", text: "hello" }] },
+          ],
         },
       ],
     });
@@ -603,14 +666,17 @@ describe("thread checkpoint control", () => {
       turns: [
         {
           id: "turn_1",
-          items: [{ type: "userMessage", content: [{ type: "text", text: "hello" }] }],
+          items: [
+            { type: "userMessage", content: [{ type: "text", text: "hello" }] },
+          ],
         },
       ],
     });
   });
 
   it("rolls back turns via thread/rollback and resets session running state", async () => {
-    const { manager, context, sendRequest, updateSession } = createThreadControlHarness();
+    const { manager, context, sendRequest, updateSession } =
+      createThreadControlHarness();
     sendRequest.mockResolvedValue({
       thread: {
         id: "thread_1",
@@ -707,6 +773,40 @@ describe("respondToUserInput", () => {
     );
   });
 
+  it("maps sandbox_mode answers to Codex app-server variants", async () => {
+    const { manager, context, requireSession, writeMessage, emitEvent } =
+      createPendingUserInputHarness();
+
+    await manager.respondToUserInput(
+      asThreadId("thread_1"),
+      ApprovalRequestId.makeUnsafe("req-user-input-1"),
+      {
+        sandbox_mode: "danger-full-access",
+      },
+    );
+
+    expect(requireSession).toHaveBeenCalledWith("thread_1");
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 42,
+      result: {
+        answers: {
+          sandbox_mode: { answers: ["dangerFullAccess"] },
+        },
+      },
+    });
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "item/tool/requestUserInput/answered",
+        payload: {
+          requestId: "req-user-input-1",
+          answers: {
+            sandbox_mode: { answers: ["dangerFullAccess"] },
+          },
+        },
+      }),
+    );
+  });
+
   it("tracks file-read approval requests with the correct method", () => {
     const manager = new CodexAppServerManager();
     const context = {
@@ -748,11 +848,13 @@ describe("respondToUserInput", () => {
   });
 });
 
-describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume", () => {
-  it(
-    "keeps prior thread history when resuming with a changed runtime mode",
-    async () => {
-      const workspaceDir = mkdtempSync(path.join(os.tmpdir(), "codex-live-resume-"));
+describe.skipIf(!process.env.CODEX_BINARY_PATH)(
+  "startSession live Codex resume",
+  () => {
+    it("keeps prior thread history when resuming with a changed runtime mode", async () => {
+      const workspaceDir = mkdtempSync(
+        path.join(os.tmpdir(), "codex-live-resume-"),
+      );
       writeFileSync(path.join(workspaceDir, "README.md"), "hello\n", "utf8");
 
       const manager = new CodexAppServerManager();
@@ -782,10 +884,13 @@ describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume"
 
         expect(firstTurn.threadId).toBe(firstSession.threadId);
 
-        await vi.waitFor(async () => {
-          const snapshot = await manager.readThread(firstSession.threadId);
-          expect(snapshot.turns.length).toBeGreaterThan(0);
-        }, { timeout: 120_000, interval: 1_000 });
+        await vi.waitFor(
+          async () => {
+            const snapshot = await manager.readThread(firstSession.threadId);
+            expect(snapshot.turns.length).toBeGreaterThan(0);
+          },
+          { timeout: 120_000, interval: 1_000 },
+        );
 
         const firstSnapshot = await manager.readThread(firstSession.threadId);
         const originalThreadId = firstSnapshot.threadId;
@@ -813,24 +918,30 @@ describe.skipIf(!process.env.CODEX_BINARY_PATH)("startSession live Codex resume"
 
         expect(resumedSession.threadId).toBe(originalThreadId);
 
-        const resumedSnapshotBeforeTurn = await manager.readThread(resumedSession.threadId);
+        const resumedSnapshotBeforeTurn = await manager.readThread(
+          resumedSession.threadId,
+        );
         expect(resumedSnapshotBeforeTurn.threadId).toBe(originalThreadId);
-        expect(resumedSnapshotBeforeTurn.turns.length).toBeGreaterThanOrEqual(originalTurnCount);
+        expect(resumedSnapshotBeforeTurn.turns.length).toBeGreaterThanOrEqual(
+          originalTurnCount,
+        );
 
         await manager.sendTurn({
           threadId: resumedSession.threadId,
           input: `Reply with exactly the word BETA ${randomUUID()}`,
         });
 
-        await vi.waitFor(async () => {
-          const snapshot = await manager.readThread(resumedSession.threadId);
-          expect(snapshot.turns.length).toBeGreaterThan(originalTurnCount);
-        }, { timeout: 120_000, interval: 1_000 });
+        await vi.waitFor(
+          async () => {
+            const snapshot = await manager.readThread(resumedSession.threadId);
+            expect(snapshot.turns.length).toBeGreaterThan(originalTurnCount);
+          },
+          { timeout: 120_000, interval: 1_000 },
+        );
       } finally {
         manager.stopAll();
         rmSync(workspaceDir, { recursive: true, force: true });
       }
-    },
-    180_000,
-  );
-});
+    }, 180_000);
+  },
+);
