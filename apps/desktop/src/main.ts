@@ -4,7 +4,17 @@ import * as FS from "node:fs";
 import * as OS from "node:os";
 import * as Path from "node:path";
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  protocol,
+  shell,
+} from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
@@ -36,6 +46,8 @@ fixPath();
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
+const WRITE_CLIPBOARD_CHANNEL = "desktop:write-clipboard";
+const READ_CLIPBOARD_CHANNEL = "desktop:read-clipboard";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
@@ -969,6 +981,17 @@ function registerIpcHandlers(): void {
     const owner = BrowserWindow.getFocusedWindow() ?? mainWindow;
     return showDesktopConfirmDialog(message, owner);
   });
+
+  ipcMain.removeHandler(WRITE_CLIPBOARD_CHANNEL);
+  ipcMain.handle(WRITE_CLIPBOARD_CHANNEL, async (_event, text: unknown) => {
+    if (typeof text !== "string") {
+      throw new TypeError("Clipboard text must be a string.");
+    }
+    clipboard.writeText(text);
+  });
+
+  ipcMain.removeHandler(READ_CLIPBOARD_CHANNEL);
+  ipcMain.handle(READ_CLIPBOARD_CHANNEL, async () => clipboard.readText());
 
   ipcMain.removeHandler(CONTEXT_MENU_CHANNEL);
   ipcMain.handle(
