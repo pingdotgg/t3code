@@ -168,3 +168,39 @@ Both the auto-detection effect and the terminal localhost-link listener filtered
 Terminal link activation requires **Cmd+click** (Mac) or **Ctrl+click** (Windows/Linux) — this is the standard terminal convention inherited from xterm.js. Regular clicks in the terminal are consumed by the shell for cursor placement.
 
 `bun lint` and `bun typecheck` both pass with 0 warnings / 0 errors.
+
+---
+
+## 2026-03-08 16:10 UTC — Dev Server Health Check (Auto-Reconnect)
+
+Added a periodic health check to BrowserPanel so it detects when the dev server goes down and automatically reconnects when it comes back.
+
+### Problem
+
+When the dev server is killed (Ctrl+C, crash, etc.), the iframe shows a broken browser error page ("connection refused"). There was no way to recover other than manually refreshing.
+
+### Solution
+
+BrowserPanel now periodically pings the loaded URL with `fetch(url, { mode: 'no-cors' })`. A network error (server unreachable) flips `serverReachable` to `false`, showing a "Dev server not responding — Reconnecting..." placeholder instead of a broken iframe. When the fetch succeeds again (server restarted), `serverReachable` flips back to `true` and the iframe reloads automatically.
+
+### How it works
+
+1. Dev server running → iframe shows the app normally.
+2. Dev server killed → within ~3 seconds, health check fails → placeholder: "Dev server not responding / Reconnecting to http://localhost:3000..."
+3. Dev server restarted → next health check succeeds → iframe loads the app again.
+4. Manual refresh button also resets the reachable state.
+
+### Implementation details
+
+- **`apps/web/src/components/BrowserPanel.tsx`**
+  - Added `serverReachable` state (default `true`).
+  - Health check effect: after 1.5s initial delay, polls every 3s with a 2s timeout using `AbortController`.
+  - Three render states: iframe (URL + reachable), reconnecting placeholder (URL + unreachable), idle placeholder (no URL).
+  - `serverReachable` resets to `true` when URL changes or on manual refresh.
+
+### Notes
+
+- `fetch` with `mode: 'no-cors'` returns an opaque response (status 0) on success, and throws on network error. This works for any HTTP server without CORS headers.
+- Polling overhead is negligible for localhost (tiny requests handled entirely by local network stack).
+
+`bun lint` and `bun typecheck` both pass with 0 warnings / 0 errors.

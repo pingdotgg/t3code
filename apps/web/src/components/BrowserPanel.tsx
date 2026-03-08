@@ -35,6 +35,7 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
   const [inputUrl, setInputUrl] = useState(() => readBrowserUrl(projectId));
   const [loadedUrl, setLoadedUrl] = useState(() => readBrowserUrl(projectId));
   const [refreshKey, setRefreshKey] = useState(0);
+  const [serverReachable, setServerReachable] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // When projectId changes, load that project's saved URL
@@ -76,6 +77,46 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
     return () => window.removeEventListener("t3code:browser-url-updated", handler);
   }, [projectId, loadedUrl]);
 
+  // Health-check: detect when the dev server goes down and when it comes back.
+  // Uses no-cors fetch to localhost — a network error means the server is unreachable.
+  useEffect(() => {
+    if (loadedUrl.length === 0) return;
+
+    let cancelled = false;
+
+    const checkHealth = async () => {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        await fetch(loadedUrl, { mode: "no-cors", cache: "no-store", signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (!cancelled) setServerReachable(true);
+      } catch {
+        if (!cancelled) setServerReachable(false);
+      }
+    };
+
+    // First check after a brief delay (give the iframe a moment to attempt load)
+    const initialTimer = setTimeout(checkHealth, 1500);
+    // Then poll every 3 seconds
+    const interval = setInterval(checkHealth, 3000);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(initialTimer);
+      clearInterval(interval);
+    };
+  }, [loadedUrl]);
+
+  // Reset reachable state when the URL changes (new URL deserves a fresh attempt)
+  const prevLoadedUrlRef = useRef(loadedUrl);
+  useEffect(() => {
+    if (prevLoadedUrlRef.current !== loadedUrl) {
+      prevLoadedUrlRef.current = loadedUrl;
+      setServerReachable(true);
+    }
+  }, [loadedUrl]);
+
   const navigateTo = useCallback(
     (url: string) => {
       const trimmed = url.trim();
@@ -94,6 +135,7 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
   };
 
   const handleRefresh = () => {
+    setServerReachable(true);
     setRefreshKey((k) => k + 1);
   };
 
@@ -129,7 +171,7 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
       </div>
       {/* Content */}
       <div className="min-h-0 flex-1 bg-white">
-        {hasUrl ? (
+        {hasUrl && serverReachable ? (
           <iframe
             key={refreshKey}
             src={loadedUrl}
@@ -137,6 +179,16 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
             title="Browser preview"
             sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-pointer-lock"
           />
+        ) : hasUrl ? (
+          <div className="flex h-full items-center justify-center p-8 text-center">
+            <div className="space-y-2 text-muted-foreground">
+              <GlobeIcon className="mx-auto size-8 opacity-30" />
+              <p className="text-sm">Dev server not responding</p>
+              <p className="text-xs opacity-70">
+                Reconnecting to {loadedUrl}...
+              </p>
+            </div>
+          </div>
         ) : (
           <div className="flex h-full items-center justify-center p-8 text-center">
             <div className="space-y-2 text-muted-foreground">
