@@ -85,6 +85,28 @@ it.effect("returns unavailable when codex is missing", () =>
   }).pipe(Effect.provide(failingSpawnerLayer("spawn codex ENOENT"))),
 );
 
+it.effect("returns unavailable when codex is below the minimum supported version", () =>
+  Effect.gen(function* () {
+    const status = yield* checkCodexProviderStatus;
+    assert.strictEqual(status.provider, "codex");
+    assert.strictEqual(status.status, "error");
+    assert.strictEqual(status.available, false);
+    assert.strictEqual(status.authStatus, "unknown");
+    assert.strictEqual(
+      status.message,
+      "Codex CLI v0.36.0 is too old for T3 Code. Upgrade to v0.37.0 or newer and restart T3 Code.",
+    );
+  }).pipe(
+    Effect.provide(
+      mockSpawnerLayer((args) => {
+        const joined = args.join(" ");
+        if (joined === "--version") return { stdout: "codex 0.36.0\n", stderr: "", code: 0 };
+        throw new Error(`Unexpected args: ${joined}`);
+      }),
+    ),
+  ),
+);
+
 it.effect("returns unauthenticated when auth probe reports login required", () =>
   Effect.gen(function* () {
     const status = yield* checkCodexProviderStatus;

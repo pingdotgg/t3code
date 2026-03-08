@@ -16,6 +16,11 @@ import type {
 import { Effect, Layer, Option, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import {
+  formatCodexCliUpgradeMessage,
+  isCodexCliVersionSupported,
+  parseCodexCliVersion,
+} from "../codexCliVersion";
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
 
 const DEFAULT_TIMEOUT_MS = 4_000;
@@ -244,6 +249,18 @@ export const checkCodexProviderStatus: Effect.Effect<
       message: detail
         ? `Codex CLI is installed but failed to run. ${detail}`
         : "Codex CLI is installed but failed to run.",
+    };
+  }
+
+  const parsedVersion = parseCodexCliVersion(`${version.stdout}\n${version.stderr}`);
+  if (parsedVersion && !isCodexCliVersionSupported(parsedVersion)) {
+    return {
+      provider: CODEX_PROVIDER,
+      status: "error" as const,
+      available: false,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message: formatCodexCliUpgradeMessage(parsedVersion),
     };
   }
 
