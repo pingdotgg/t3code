@@ -55,6 +55,14 @@ jobs:
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Validate Homebrew release contract (metadata)
+        run: |
+          node scripts/validate-homebrew-release-contract.ts \
+            --version "${{ steps.release_meta.outputs.version }}" \
+            --tag "${{ steps.release_meta.outputs.tag }}" \
+            --repository "${{ github.repository }}" \
+            --expected-repository "pingdotgg/t3code"
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -255,12 +263,31 @@ jobs:
     needs: [preflight, build, publish_cli]
     runs-on: ubuntu-24.04
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+
       - name: Download all desktop artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: desktop-*
           merge-multiple: true
           path: release-assets
+
+      - name: Validate Homebrew release contract (assets)
+        run: |
+          node scripts/validate-homebrew-release-contract.ts \
+            --version "${{ needs.preflight.outputs.version }}" \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --repository "${{ github.repository }}" \
+            --expected-repository "pingdotgg/t3code" \
+            --assets-dir "release-assets"
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
