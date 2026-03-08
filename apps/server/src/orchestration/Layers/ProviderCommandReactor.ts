@@ -332,6 +332,7 @@ const make = Effect.gen(function* () {
     readonly modelOptions?: ProviderModelOptions;
     readonly providerOptions?: ProviderStartOptions;
     readonly interactionMode?: "default" | "plan";
+    readonly planModeContext?: "new" | "follow-up";
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
@@ -368,6 +369,7 @@ const make = Effect.gen(function* () {
       ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
       ...(input.modelOptions !== undefined ? { modelOptions: input.modelOptions } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(input.planModeContext !== undefined ? { planModeContext: input.planModeContext } : {}),
     });
   });
 
@@ -484,6 +486,9 @@ const make = Effect.gen(function* () {
       ...(event.payload.modelOptions !== undefined ? { modelOptions: event.payload.modelOptions } : {}),
       ...(event.payload.providerOptions !== undefined ? { providerOptions: event.payload.providerOptions } : {}),
       interactionMode: event.payload.interactionMode,
+      ...(event.payload.planModeContext !== undefined
+        ? { planModeContext: event.payload.planModeContext }
+        : {}),
       createdAt: event.payload.createdAt,
     });
   });

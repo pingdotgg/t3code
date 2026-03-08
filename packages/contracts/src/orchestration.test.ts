@@ -140,6 +140,26 @@ it.effect("preserves explicit provider and runtime mode in thread.turn.start", (
   }),
 );
 
+it.effect("accepts plan mode context in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-plan-context",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-plan-context",
+        role: "user",
+        text: "plan this from scratch",
+        attachments: [],
+      },
+      interactionMode: "plan",
+      planModeContext: "new",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.planModeContext, "new");
+  }),
+);
+
 it.effect("decodes thread.created runtime mode for historical events", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadCreatedPayload({
@@ -199,6 +219,19 @@ it.effect(
       assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
       assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
     }),
+);
+
+it.effect("accepts plan mode context in thread.turn-start-requested payloads", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-1",
+      messageId: "msg-1",
+      interactionMode: "plan",
+      planModeContext: "follow-up",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.planModeContext, "follow-up");
+  }),
 );
 
 it.effect("decodes orchestration session runtime mode defaults", () =>

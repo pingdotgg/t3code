@@ -48,6 +48,7 @@ describe("resolvePlanFollowUpSubmission", () => {
     ).toEqual({
       text: "Refine step 2 first",
       interactionMode: "plan",
+      planModeContext: "follow-up",
     });
   });
 });

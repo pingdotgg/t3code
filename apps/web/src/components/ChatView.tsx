@@ -16,6 +16,7 @@ import {
   type ProviderApprovalDecision,
   type ServerProviderStatus,
   type ProviderKind,
+  type ProviderPlanModeContext,
   type ThreadId,
   type TurnId,
   OrchestrationThreadActivity,
@@ -95,6 +96,11 @@ import {
   proposedPlanTitle,
   resolvePlanFollowUpSubmission,
 } from "../proposedPlan";
+import {
+  defaultPlanModeContextForInteractionMode,
+  nextPlanModeContextAfterSuccessfulPlanTurn,
+  resolveEffectivePlanModeContext,
+} from "../planMode";
 import { truncateTitle } from "../truncateTitle";
 import {
   DEFAULT_INTERACTION_MODE,
@@ -616,6 +622,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
   );
+  const setComposerDraftPlanModeContext = useComposerDraftStore(
+    (store) => store.setPlanModeContext,
+  );
   const setComposerDraftEffort = useComposerDraftStore((store) => store.setEffort);
   const setComposerDraftCodexFastMode = useComposerDraftStore((store) => store.setCodexFastMode);
   const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
@@ -938,21 +947,31 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activeLatestTurn?.turnId ?? null,
     );
   }, [activeLatestTurn?.turnId, activeThread?.proposedPlans, latestTurnSettled]);
+  const activePlanModeContext = useMemo(
+    () =>
+      resolveEffectivePlanModeContext({
+        interactionMode,
+        storedPlanModeContext: composerDraft.planModeContext,
+        hasActiveProposedPlan: activeProposedPlan !== null,
+      }),
+    [activeProposedPlan, composerDraft.planModeContext, interactionMode],
+  );
   const activePlan = useMemo(
     () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
   );
-  const showPlanFollowUpPrompt =
+  const showPlanModeBanner =
     pendingUserInputs.length === 0 &&
     interactionMode === "plan" &&
     latestTurnSettled &&
     activeProposedPlan !== null;
+  const showPlanFollowUpPrompt = showPlanModeBanner && activePlanModeContext !== "new";
   const activePendingApproval = pendingApprovals[0] ?? null;
   const isComposerApprovalState = activePendingApproval !== null;
   const hasComposerHeader =
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
-    (showPlanFollowUpPrompt && activeProposedPlan !== null);
+    (showPlanModeBanner && activeProposedPlan !== null);
   useEffect(() => {
     if (!activePendingProgress) {
       return;
@@ -1644,7 +1663,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const handleInteractionModeChange = useCallback(
     (mode: ProviderInteractionMode) => {
       if (mode === interactionMode) return;
+      const nextPlanModeContext = defaultPlanModeContextForInteractionMode({
+        interactionMode: mode,
+        hasActiveProposedPlan: activeProposedPlan !== null,
+      });
       setComposerDraftInteractionMode(threadId, mode);
+      setComposerDraftPlanModeContext(threadId, nextPlanModeContext);
       if (isLocalDraftThread) {
         setDraftThreadContext(threadId, { interactionMode: mode });
       }
@@ -1652,9 +1676,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [
       interactionMode,
+      activeProposedPlan,
       isLocalDraftThread,
       scheduleComposerFocus,
       setComposerDraftInteractionMode,
+      setComposerDraftPlanModeContext,
       setDraftThreadContext,
       threadId,
     ],
@@ -2428,6 +2454,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       await onSubmitPlanFollowUp({
         text: followUp.text,
         interactionMode: followUp.interactionMode,
+        ...(followUp.planModeContext !== undefined
+          ? { planModeContext: followUp.planModeContext }
+          : {}),
       });
       return;
     }
@@ -2644,8 +2673,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
         assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
         runtimeMode,
         interactionMode,
+        ...(interactionMode === "plan" && activePlanModeContext !== null
+          ? { planModeContext: activePlanModeContext }
+          : {}),
         createdAt: messageCreatedAt,
       });
+      if (interactionMode === "plan") {
+        setComposerDraftPlanModeContext(
+          threadIdForSend,
+          nextPlanModeContextAfterSuccessfulPlanTurn(activePlanModeContext),
+        );
+      }
       turnStartSucceeded = true;
       if (isFirstMessage) {
         clearDraftThread(threadIdForSend);
@@ -2848,9 +2886,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     async ({
       text,
       interactionMode: nextInteractionMode,
+      planModeContext,
     }: {
       text: string;
       interactionMode: "default" | "plan";
+      planModeContext?: ProviderPlanModeContext;
     }) => {
       const api = readNativeApi();
       if (
@@ -2923,8 +2963,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: nextInteractionMode,
+          ...(planModeContext !== undefined ? { planModeContext } : {}),
           createdAt: messageCreatedAt,
         });
+        setComposerDraftPlanModeContext(
+          threadIdForSend,
+          nextInteractionMode === "plan"
+            ? nextPlanModeContextAfterSuccessfulPlanTurn(planModeContext)
+            : null,
+        );
         sendInFlightRef.current = false;
       } catch (err) {
         setOptimisticUserMessages((existing) =>
@@ -2953,6 +3000,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       providerOptionsForDispatch,
       selectedProvider,
       setComposerDraftInteractionMode,
+      setComposerDraftPlanModeContext,
       setThreadError,
       settings.enableAssistantStreaming,
     ],
@@ -3511,11 +3559,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   onSelectOption={onSelectActivePendingUserInputOption}
                 />
               </div>
-            ) : showPlanFollowUpPrompt && activeProposedPlan ? (
+            ) : showPlanModeBanner && activeProposedPlan && activePlanModeContext ? (
               <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
                 <ComposerPlanFollowUpBanner
                   key={activeProposedPlan.id}
+                  mode={activePlanModeContext}
                   planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
+                  onUseLatestPlan={() => {
+                    setComposerDraftPlanModeContext(threadId, "follow-up");
+                    scheduleComposerFocus();
+                  }}
+                  onStartNewPlan={() => {
+                    setComposerDraftPlanModeContext(threadId, "new");
+                    scheduleComposerFocus();
+                  }}
                 />
               </div>
             ) : null}
@@ -3623,6 +3680,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     ? (activePendingApproval?.detail ?? "Resolve this approval request to continue")
                     : activePendingProgress
                     ? "Type your own answer, or leave this blank to use the selected option"
+                    : activePlanModeContext === "new" && showPlanModeBanner
+                      ? "Describe the new plan you want. Previous plans in this thread will be ignored unless you mention them."
                     : showPlanFollowUpPrompt && activeProposedPlan
                       ? "Add feedback to refine the plan, or leave this blank to implement it"
                       : phase === "disconnected"
@@ -4349,21 +4408,37 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 });
 
 const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBanner({
+  mode,
   planTitle,
+  onUseLatestPlan,
+  onStartNewPlan,
 }: {
+  mode: "new" | "follow-up";
   planTitle: string | null;
+  onUseLatestPlan: () => void;
+  onStartNewPlan: () => void;
 }) {
   return (
     <div className="px-4 py-3.5 sm:px-5 sm:py-4">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="uppercase text-sm tracking-[0.2em]">Plan ready</span>
+        <span className="uppercase text-sm tracking-[0.2em]">
+          {mode === "new" ? "New plan mode" : "Plan ready"}
+        </span>
         {planTitle ? (
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{planTitle}</span>
         ) : null}
       </div>
-      {/* <div className="mt-2 text-xs text-muted-foreground">
-        Review the plan
-      </div> */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {mode === "new" ? (
+          <Button size="xs" variant="outline" onClick={onUseLatestPlan}>
+            Use latest plan instead
+          </Button>
+        ) : (
+          <Button size="xs" variant="outline" onClick={onStartNewPlan}>
+            Start new plan
+          </Button>
+        )}
+      </div>
     </div>
   );
 });

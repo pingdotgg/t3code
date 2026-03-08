@@ -61,4 +61,16 @@ describe("ProviderSendTurnInput", () => {
     expect(parsed.modelOptions?.codex?.reasoningEffort).toBe("xhigh");
     expect(parsed.modelOptions?.codex?.fastMode).toBe(true);
   });
+
+  it("accepts a plan mode context for plan turns", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      input: "Plan this from scratch",
+      interactionMode: "plan",
+      planModeContext: "new",
+    });
+
+    expect(parsed.interactionMode).toBe("plan");
+    expect(parsed.planModeContext).toBe("new");
+  });
 });

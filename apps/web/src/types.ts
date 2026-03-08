@@ -11,6 +11,7 @@ import type {
   CheckpointRef,
   ProviderKind,
   ProviderInteractionMode,
+  ProviderPlanModeContext,
   RuntimeMode,
 } from "@t3tools/contracts";
 
@@ -18,6 +19,7 @@ export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
 export const DEFAULT_INTERACTION_MODE: ProviderInteractionMode = "default";
+export type PlanModeContext = ProviderPlanModeContext;
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
 export const DEFAULT_THREAD_TERMINAL_ID = "default";
 export const MAX_THREAD_TERMINAL_COUNT = 4;

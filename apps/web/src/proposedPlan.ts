@@ -22,12 +22,14 @@ export function resolvePlanFollowUpSubmission(input: {
 }): {
   text: string;
   interactionMode: "default" | "plan";
+  planModeContext?: "follow-up";
 } {
   const trimmedDraftText = input.draftText.trim();
   if (trimmedDraftText.length > 0) {
     return {
       text: trimmedDraftText,
       interactionMode: "plan",
+      planModeContext: "follow-up",
     };
   }
 

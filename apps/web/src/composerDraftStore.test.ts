@@ -440,13 +440,25 @@ describe("composerDraftStore runtime and interaction settings", () => {
     );
   });
 
+  it("stores plan mode context overrides in the composer draft", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setPlanModeContext(threadId, "new");
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.planModeContext).toBe(
+      "new",
+    );
+  });
+
   it("removes empty settings-only drafts when overrides are cleared", () => {
     const store = useComposerDraftStore.getState();
 
     store.setRuntimeMode(threadId, "approval-required");
     store.setInteractionMode(threadId, "plan");
+    store.setPlanModeContext(threadId, "follow-up");
     store.setRuntimeMode(threadId, null);
     store.setInteractionMode(threadId, null);
+    store.setPlanModeContext(threadId, null);
 
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
   });

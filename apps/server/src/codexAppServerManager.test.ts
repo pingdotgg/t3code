@@ -475,6 +475,37 @@ describe("sendTurn", () => {
     });
   });
 
+  it("adds fresh-plan developer instructions for new same-thread plan turns", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "Plan the work from scratch",
+      interactionMode: "plan",
+      planModeContext: "new",
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Plan the work from scratch",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.3-codex",
+      collaborationMode: {
+        mode: "plan",
+        settings: {
+          model: "gpt-5.3-codex",
+          reasoning_effort: "medium",
+          developer_instructions: `${CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS}\n\nStart a brand new plan for the current request. Do not refine, continue, or reuse earlier plans in the thread unless the user explicitly asks.`,
+        },
+      },
+    });
+  });
+
   it("passes Codex default mode as a collaboration preset on turn/start", async () => {
     const { manager, context, sendRequest } = createSendTurnHarness();
 

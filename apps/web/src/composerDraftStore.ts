@@ -6,6 +6,7 @@ import {
   type CodexReasoningEffort,
   type ProviderKind,
   type ProviderInteractionMode,
+  type ProviderPlanModeContext,
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
@@ -40,6 +41,7 @@ interface PersistedComposerThreadDraftState {
   model?: string | null;
   runtimeMode?: RuntimeMode | null;
   interactionMode?: ProviderInteractionMode | null;
+  planModeContext?: ProviderPlanModeContext | null;
   effort?: CodexReasoningEffort | null;
   codexFastMode?: boolean | null;
   serviceTier?: string | null;
@@ -70,6 +72,7 @@ interface ComposerThreadDraftState {
   model: string | null;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
+  planModeContext: ProviderPlanModeContext | null;
   effort: CodexReasoningEffort | null;
   codexFastMode: boolean;
 }
@@ -129,6 +132,10 @@ interface ComposerDraftStoreState {
     threadId: ThreadId,
     interactionMode: ProviderInteractionMode | null | undefined,
   ) => void;
+  setPlanModeContext: (
+    threadId: ThreadId,
+    planModeContext: ProviderPlanModeContext | null | undefined,
+  ) => void;
   setEffort: (threadId: ThreadId, effort: CodexReasoningEffort | null | undefined) => void;
   setCodexFastMode: (threadId: ThreadId, enabled: boolean | null | undefined) => void;
   addImage: (threadId: ThreadId, image: ComposerImageAttachment) => void;
@@ -164,6 +171,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze({
   model: null,
   runtimeMode: null,
   interactionMode: null,
+  planModeContext: null,
   effort: null,
   codexFastMode: false,
 }) as ComposerThreadDraftState;
@@ -182,6 +190,7 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     model: null,
     runtimeMode: null,
     interactionMode: null,
+    planModeContext: null,
     effort: null,
     codexFastMode: false,
   };
@@ -202,9 +211,14 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     draft.model === null &&
     draft.runtimeMode === null &&
     draft.interactionMode === null &&
+    draft.planModeContext === null &&
     draft.effort === null &&
     draft.codexFastMode === false
   );
+}
+
+function normalizePlanModeContext(value: unknown): ProviderPlanModeContext | null {
+  return value === "new" || value === "follow-up" ? value : null;
 }
 
 function normalizeProviderKind(value: unknown): ProviderKind | null {
@@ -380,6 +394,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
       draftCandidate.interactionMode === "plan" || draftCandidate.interactionMode === "default"
         ? draftCandidate.interactionMode
         : null;
+    const planModeContext = normalizePlanModeContext(draftCandidate.planModeContext);
     const effortCandidate =
       typeof draftCandidate.effort === "string" ? draftCandidate.effort : null;
     const effort =
@@ -396,6 +411,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
       !model &&
       !runtimeMode &&
       !interactionMode &&
+      !planModeContext &&
       !effort &&
       !codexFastMode
     ) {
@@ -408,6 +424,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
       ...(model ? { model } : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
       ...(interactionMode ? { interactionMode } : {}),
+      ...(planModeContext ? { planModeContext } : {}),
       ...(effort ? { effort } : {}),
       ...(codexFastMode ? { codexFastMode } : {}),
     };
@@ -515,6 +532,7 @@ function toHydratedThreadDraft(
     model: persistedDraft.model ?? null,
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
+    planModeContext: persistedDraft.planModeContext ?? null,
     effort: persistedDraft.effort ?? null,
     codexFastMode: persistedDraft.codexFastMode === true,
   };
@@ -888,6 +906,33 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           return { draftsByThreadId: nextDraftsByThreadId };
         });
       },
+      setPlanModeContext: (threadId, planModeContext) => {
+        if (threadId.length === 0) {
+          return;
+        }
+        const nextPlanModeContext = normalizePlanModeContext(planModeContext);
+        set((state) => {
+          const existing = state.draftsByThreadId[threadId];
+          if (!existing && nextPlanModeContext === null) {
+            return state;
+          }
+          const base = existing ?? createEmptyThreadDraft();
+          if (base.planModeContext === nextPlanModeContext) {
+            return state;
+          }
+          const nextDraft: ComposerThreadDraftState = {
+            ...base,
+            planModeContext: nextPlanModeContext,
+          };
+          const nextDraftsByThreadId = { ...state.draftsByThreadId };
+          if (shouldRemoveDraft(nextDraft)) {
+            delete nextDraftsByThreadId[threadId];
+          } else {
+            nextDraftsByThreadId[threadId] = nextDraft;
+          }
+          return { draftsByThreadId: nextDraftsByThreadId };
+        });
+      },
       setEffort: (threadId, effort) => {
         if (threadId.length === 0) {
           return;
@@ -1183,6 +1228,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             draft.model === null &&
             draft.runtimeMode === null &&
             draft.interactionMode === null &&
+            draft.planModeContext === null &&
             draft.effort === null &&
             draft.codexFastMode === false
           ) {
@@ -1203,6 +1249,9 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           }
           if (draft.interactionMode) {
             persistedDraft.interactionMode = draft.interactionMode;
+          }
+          if (draft.planModeContext) {
+            persistedDraft.planModeContext = draft.planModeContext;
           }
           if (draft.effort) {
             persistedDraft.effort = draft.effort;

@@ -13,6 +13,7 @@ import {
   TurnId,
   type ProviderApprovalDecision,
   type ProviderEvent,
+  type ProviderPlanModeContext,
   type ProviderSession,
   type ProviderSessionStartInput,
   type ProviderTurnStartResult,
@@ -121,6 +122,7 @@ export interface CodexAppServerSendTurnInput {
   readonly serviceTier?: string | null;
   readonly effort?: string;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly planModeContext?: ProviderPlanModeContext;
 }
 
 export interface CodexAppServerStartSessionInput {
@@ -416,6 +418,7 @@ export function buildCodexInitializeParams() {
 
 function buildCodexCollaborationMode(input: {
   readonly interactionMode?: "default" | "plan";
+  readonly planModeContext?: ProviderPlanModeContext;
   readonly model?: string;
   readonly effort?: string;
 }):
@@ -432,15 +435,18 @@ function buildCodexCollaborationMode(input: {
     return undefined;
   }
   const model = normalizeCodexModelSlug(input.model) ?? "gpt-5.3-codex";
+  const developerInstructions =
+    input.interactionMode === "plan"
+      ? input.planModeContext === "new"
+        ? `${CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS}\n\nStart a brand new plan for the current request. Do not refine, continue, or reuse earlier plans in the thread unless the user explicitly asks.`
+        : CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
+      : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;
   return {
     mode: input.interactionMode,
     settings: {
       model,
       reasoning_effort: input.effort ?? "medium",
-      developer_instructions:
-        input.interactionMode === "plan"
-          ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
-          : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+      developer_instructions: developerInstructions,
     },
   };
 }
@@ -798,6 +804,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
     const collaborationMode = buildCodexCollaborationMode({
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(input.planModeContext !== undefined ? { planModeContext: input.planModeContext } : {}),
       ...(normalizedModel !== undefined ? { model: normalizedModel } : {}),
       ...(input.effort !== undefined ? { effort: input.effort } : {}),
     });
