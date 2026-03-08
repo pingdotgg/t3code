@@ -407,6 +407,32 @@ describe("composerDraftStore setProvider", () => {
 
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
   });
+
+  it("persists claudeCode provider selection", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "claudeCode");
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.provider).toBe("claudeCode");
+  });
+
+  it("switches provider from codex to claudeCode", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "codex");
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.provider).toBe("codex");
+
+    store.setProvider(threadId, "claudeCode");
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.provider).toBe("claudeCode");
+  });
+
+  it("rejects unknown provider values", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "unknownProvider" as never);
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
 });
 
 describe("composerDraftStore runtime and interaction settings", () => {

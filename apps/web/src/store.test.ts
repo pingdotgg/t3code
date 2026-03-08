@@ -135,7 +135,7 @@ describe("store pure functions", () => {
 });
 
 describe("store read model sync", () => {
-  it("falls back to the codex default for unsupported provider models without an active session", () => {
+  it("infers claudeCode provider for claude model slugs without an active session", () => {
     const initialState = makeState(makeThread());
     const readModel = makeReadModel(
       makeReadModelThread({
@@ -145,6 +145,6 @@ describe("store read model sync", () => {
 
     const next = syncServerReadModel(initialState, readModel);
 
-    expect(next.threads[0]?.model).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
+    expect(next.threads[0]?.model).toBe("claude-opus-4-6");
   });
 });

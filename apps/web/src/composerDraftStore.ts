@@ -208,7 +208,7 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
 }
 
 function normalizeProviderKind(value: unknown): ProviderKind | null {
-  return value === "codex" ? value : null;
+  return value === "codex" || value === "claudeCode" ? value : null;
 }
 
 function revokeObjectPreviewUrl(previewUrl: string): void {
@@ -369,7 +369,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
     const provider = normalizeProviderKind(draftCandidate.provider);
     const model =
       typeof draftCandidate.model === "string"
-        ? normalizeModelSlug(draftCandidate.model, provider ?? "codex")
+        ? normalizeModelSlug(draftCandidate.model, provider ?? undefined)
         : null;
     const runtimeMode =
       draftCandidate.runtimeMode === "approval-required" ||
