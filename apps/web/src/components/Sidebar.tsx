@@ -483,23 +483,25 @@ export default function Sidebar() {
       if (!api) return;
 
       setIsAddingProject(true);
-      const finishAddingProject = () => {
+      const finishAddingProject = (resetInput: boolean) => {
         setIsAddingProject(false);
+        if (!resetInput) return;
         setNewCwd("");
         setAddingProject(false);
       };
 
-      const existing = projects.find((project) => project.cwd === cwd);
-      if (existing) {
-        focusMostRecentThreadForProject(existing.id);
-        finishAddingProject();
-        return;
-      }
-
-      const projectId = newProjectId();
-      const createdAt = new Date().toISOString();
-      const title = cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd;
+      let shouldResetInput = false;
       try {
+        const existing = projects.find((project) => project.cwd === cwd);
+        if (existing) {
+          focusMostRecentThreadForProject(existing.id);
+          shouldResetInput = true;
+          return;
+        }
+
+        const projectId = newProjectId();
+        const createdAt = new Date().toISOString();
+        const title = cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd;
         await api.orchestration.dispatchCommand({
           type: "project.create",
           commandId: newCommandId(),
@@ -510,17 +512,17 @@ export default function Sidebar() {
           createdAt,
         });
         await handleNewThread(projectId).catch(() => undefined);
+        shouldResetInput = true;
       } catch (error) {
-        setIsAddingProject(false);
         toastManager.add({
           type: "error",
           title: "Unable to add project",
           description:
             error instanceof Error ? error.message : "An error occurred while adding the project.",
         });
-        return;
+      } finally {
+        finishAddingProject(shouldResetInput);
       }
-      finishAddingProject();
     },
     [focusMostRecentThreadForProject, handleNewThread, isAddingProject, projects],
   );

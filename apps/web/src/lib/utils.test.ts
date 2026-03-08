@@ -1,15 +1,24 @@
-import { assert, describe, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { isWindowsPlatform } from "./utils";
+const uuidV4Mock = vi.hoisted(() => vi.fn());
 
-describe("isWindowsPlatform", () => {
-  it("matches Windows platform identifiers", () => {
-    assert.isTrue(isWindowsPlatform("Win32"));
-    assert.isTrue(isWindowsPlatform("Windows"));
-    assert.isTrue(isWindowsPlatform("windows_nt"));
+vi.mock("uuid", () => ({
+  v4: uuidV4Mock,
+}));
+
+import { newCommandId, newMessageId, newProjectId, newThreadId } from "./utils";
+
+describe("utils", () => {
+  beforeEach(() => {
+    uuidV4Mock.mockReset();
+    uuidV4Mock.mockReturnValue("00010203-0405-4607-8809-0a0b0c0d0e0f");
   });
 
-  it("does not match darwin", () => {
-    assert.isFalse(isWindowsPlatform("darwin"));
+  it("delegates ID generation to uuid.v4", () => {
+    expect(newCommandId()).toBe("00010203-0405-4607-8809-0a0b0c0d0e0f");
+    expect(newProjectId()).toBe("00010203-0405-4607-8809-0a0b0c0d0e0f");
+    expect(newThreadId()).toBe("00010203-0405-4607-8809-0a0b0c0d0e0f");
+    expect(newMessageId()).toBe("00010203-0405-4607-8809-0a0b0c0d0e0f");
+    expect(uuidV4Mock).toHaveBeenCalledTimes(4);
   });
 });

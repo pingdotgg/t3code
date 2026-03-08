@@ -187,6 +187,7 @@ import {
 import { toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
+import { v4 as uuidv4 } from "uuid";
 import {
   commandForProjectScript,
   nextProjectScriptId,
@@ -444,7 +445,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 function buildTemporaryWorktreeBranchName(): string {
   // Keep the 8-hex suffix shape for backend temporary-branch detection.
-  const token = crypto.randomUUID().slice(0, 8).toLowerCase();
+  const token = uuidv4().slice(0, 8).toLowerCase();
   return `${WORKTREE_BRANCH_PREFIX}/${token}`;
 }
 
@@ -1373,13 +1374,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeThreadId, setTerminalOpen, terminalState.terminalOpen]);
   const splitTerminal = useCallback(() => {
     if (!activeThreadId || hasReachedTerminalLimit) return;
-    const terminalId = `terminal-${crypto.randomUUID()}`;
+    const terminalId = `terminal-${uuidv4()}`;
     storeSplitTerminal(activeThreadId, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
   }, [activeThreadId, storeSplitTerminal, hasReachedTerminalLimit]);
   const createNewTerminal = useCallback(() => {
     if (!activeThreadId || hasReachedTerminalLimit) return;
-    const terminalId = `terminal-${crypto.randomUUID()}`;
+    const terminalId = `terminal-${uuidv4()}`;
     storeNewTerminal(activeThreadId, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
   }, [activeThreadId, storeNewTerminal, hasReachedTerminalLimit]);
@@ -1447,9 +1448,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const wantsNewTerminal = Boolean(options?.preferNewTerminal) || isBaseTerminalBusy;
       const shouldCreateNewTerminal =
         wantsNewTerminal && terminalState.terminalIds.length < MAX_THREAD_TERMINAL_COUNT;
-      const targetTerminalId = shouldCreateNewTerminal
-        ? `terminal-${crypto.randomUUID()}`
-        : baseTerminalId;
+      const targetTerminalId = shouldCreateNewTerminal ? `terminal-${uuidv4()}` : baseTerminalId;
 
       setTerminalOpen(true);
       if (shouldCreateNewTerminal) {
@@ -2274,7 +2273,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const previewUrl = URL.createObjectURL(file);
       nextImages.push({
         type: "image",
-        id: crypto.randomUUID(),
+        id: uuidv4(),
         name: file.name || "image",
         mimeType: file.type,
         sizeBytes: file.size,
