@@ -55,7 +55,10 @@ function parseFileRecord(
 }
 
 function parseScalarValue(rawValue: string): MacUpdateScalar {
-  const value = stripSingleQuotes(rawValue.trim());
+  const trimmed = rawValue.trim();
+  const isQuoted = trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length >= 2;
+  const value = isQuoted ? trimmed.slice(1, -1).replace(/''/g, "'") : trimmed;
+  if (isQuoted) return value;
   if (value === "true") return true;
   if (value === "false") return false;
   if (/^-?\d+(?:\.\d+)?$/.test(value)) {
