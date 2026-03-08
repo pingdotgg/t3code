@@ -41,6 +41,9 @@ import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogg
 
 const PROVIDER = "codex" as const;
 
+// Module-level reference to the active CodexAppServerManager for usage queries.
+let _codexManagerRef: CodexAppServerManager | null = null;
+
 export interface CodexAdapterLiveOptions {
   readonly manager?: CodexAppServerManager;
   readonly makeManager?: (services?: ServiceMap.ServiceMap<never>) => CodexAppServerManager;
@@ -1490,6 +1493,9 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         }),
     );
 
+    // Store manager reference for usage queries (module-level singleton)
+    _codexManagerRef = manager;
+
     return {
       provider: PROVIDER,
       capabilities: {
@@ -1514,4 +1520,54 @@ export const CodexAdapterLive = Layer.effect(CodexAdapter, makeCodexAdapter());
 
 export function makeCodexAdapterLive(options?: CodexAdapterLiveOptions) {
   return Layer.effect(CodexAdapter, makeCodexAdapter(options));
+}
+
+// ── Codex usage / rate limit query ──────────────────────────────────
+
+import type { ProviderUsageQuota, ProviderUsageResult } from "@t3tools/contracts";
+
+function codexBucketToQuota(
+  bucket: { usedPercent?: number; windowDurationMins?: number; resetsAt?: number } | undefined,
+  label: string,
+): ProviderUsageQuota | undefined {
+  if (!bucket || bucket.usedPercent == null) return undefined;
+  const resetsAt = bucket.resetsAt
+    ? new Date(bucket.resetsAt * 1000).toISOString().slice(0, 10)
+    : undefined;
+  return {
+    plan: label,
+    percentUsed: bucket.usedPercent,
+    ...(resetsAt ? { resetDate: resetsAt } : {}),
+  };
+}
+
+/**
+ * Fetch Codex rate limit usage from the active app-server session.
+ * Returns a minimal stub if no active session exists.
+ */
+export async function fetchCodexUsage(): Promise<ProviderUsageResult> {
+  if (!_codexManagerRef) {
+    return { provider: "codex" };
+  }
+
+  const limits = await _codexManagerRef.readRateLimits().catch(() => null);
+  if (!limits) {
+    return { provider: "codex" };
+  }
+
+  const sessionLabel = limits.primary?.windowDurationMins
+    ? `Session (${limits.primary.windowDurationMins}min)`
+    : "Session";
+  const quotas: ProviderUsageQuota[] = [];
+  const sessionQuota = codexBucketToQuota(limits.primary, sessionLabel);
+  if (sessionQuota) quotas.push(sessionQuota);
+  const weeklyQuota = codexBucketToQuota(limits.weekly, "Weekly");
+  if (weeklyQuota) quotas.push(weeklyQuota);
+
+  return {
+    provider: "codex",
+    // Keep first quota as the primary for backwards compat
+    ...(quotas.length > 0 ? { quota: quotas[0] } : {}),
+    ...(quotas.length > 0 ? { quotas } : {}),
+  };
 }

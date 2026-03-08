@@ -439,7 +439,22 @@ export function projectEvent(
                         ? thread.latestTurn.assistantMessageId
                         : null,
                   }
-                : thread.latestTurn,
+                : // When session leaves "running", settle the latest turn
+                  // so providers without checkpoints (e.g. Copilot) still
+                  // mark the turn as completed.
+                  thread.latestTurn !== null &&
+                    thread.latestTurn.completedAt === null &&
+                    session.status !== "starting"
+                  ? {
+                      ...thread.latestTurn,
+                      state:
+                        session.status === "error"
+                          ? ("error" as const)
+                          : ("completed" as const),
+                      completedAt: event.occurredAt,
+                      ...(payload.turnUsage ? { usage: payload.turnUsage } : {}),
+                    }
+                  : thread.latestTurn,
             updatedAt: event.occurredAt,
           }),
         };

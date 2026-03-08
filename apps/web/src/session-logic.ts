@@ -18,8 +18,13 @@ export const PROVIDER_OPTIONS: Array<{
   available: boolean;
 }> = [
   { value: "codex", label: "Codex", available: true },
-  { value: "claudeCode", label: "Claude Code", available: false },
+  { value: "copilot", label: "GitHub Copilot", available: true },
+  { value: "claudeCode", label: "Claude Code", available: true },
   { value: "cursor", label: "Cursor Agent", available: true },
+  { value: "opencode", label: "OpenCode", available: true },
+  { value: "geminiCli", label: "Gemini CLI", available: true },
+  { value: "amp", label: "AMPcode", available: true },
+  { value: "kilo", label: "Kilo", available: true },
 ];
 
 export interface WorkLogEntry {

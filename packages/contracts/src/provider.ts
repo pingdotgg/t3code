@@ -64,10 +64,48 @@ const CursorProviderStartOptions = Schema.Struct({
   binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 
+const CopilotProviderStartOptions = Schema.Struct({
+  cliPath: Schema.optional(TrimmedNonEmptyStringSchema),
+  configDir: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+
+const OpencodeProviderStartOptions = Schema.Struct({
+  serverUrl: Schema.optional(TrimmedNonEmptyStringSchema),
+  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
+  hostname: Schema.optional(TrimmedNonEmptyStringSchema),
+  port: Schema.optional(Schema.Number),
+  workspace: Schema.optional(TrimmedNonEmptyStringSchema),
+  username: Schema.optional(TrimmedNonEmptyStringSchema),
+  password: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+
+const GeminiCliProviderStartOptions = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+
+const AmpProviderStartOptions = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+
+const KiloProviderStartOptions = Schema.Struct({
+  serverUrl: Schema.optional(TrimmedNonEmptyStringSchema),
+  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
+  hostname: Schema.optional(TrimmedNonEmptyStringSchema),
+  port: Schema.optional(Schema.Number),
+  workspace: Schema.optional(TrimmedNonEmptyStringSchema),
+  username: Schema.optional(TrimmedNonEmptyStringSchema),
+  password: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+
 const ProviderStartOptions = Schema.Struct({
   codex: Schema.optional(CodexProviderStartOptions),
+  copilot: Schema.optional(CopilotProviderStartOptions),
   claudeCode: Schema.optional(ClaudeCodeProviderStartOptions),
   cursor: Schema.optional(CursorProviderStartOptions),
+  opencode: Schema.optional(OpencodeProviderStartOptions),
+  geminiCli: Schema.optional(GeminiCliProviderStartOptions),
+  amp: Schema.optional(AmpProviderStartOptions),
+  kilo: Schema.optional(KiloProviderStartOptions),
 });
 
 export const ProviderSessionStartInput = Schema.Struct({
@@ -131,6 +169,61 @@ export const ProviderRespondToUserInputInput = Schema.Struct({
   answers: ProviderUserInputAnswers,
 });
 export type ProviderRespondToUserInputInput = typeof ProviderRespondToUserInputInput.Type;
+
+// ── Provider model discovery ────────────────────────────────────────
+
+export const ProviderListModelsInput = Schema.Struct({
+  provider: ProviderKind,
+});
+export type ProviderListModelsInput = typeof ProviderListModelsInput.Type;
+
+export interface ProviderModelOption {
+  readonly slug: string;
+  readonly name: string;
+  readonly pricingTier?: string;
+}
+
+export interface ProviderListModelsResult {
+  readonly models: ReadonlyArray<ProviderModelOption>;
+}
+
+// ── Provider usage / quota ──────────────────────────────────────────
+
+export const ProviderGetUsageInput = Schema.Struct({
+  provider: ProviderKind,
+});
+export type ProviderGetUsageInput = typeof ProviderGetUsageInput.Type;
+
+export interface ProviderUsageQuota {
+  readonly plan?: string;
+  readonly used?: number;
+  readonly limit?: number;
+  readonly resetDate?: string;
+  readonly percentUsed?: number;
+}
+
+export interface ProviderSessionUsage {
+  readonly totalCostUsd?: number;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly cachedTokens?: number;
+  readonly totalTokens?: number;
+  readonly turnCount?: number;
+}
+
+export interface ProviderModelMultiplier {
+  readonly model: string;
+  readonly name: string;
+  readonly multiplier: number;
+}
+
+export interface ProviderUsageResult {
+  readonly provider: string;
+  readonly quota?: ProviderUsageQuota;
+  readonly quotas?: ReadonlyArray<ProviderUsageQuota>;
+  readonly sessionUsage?: ProviderSessionUsage;
+  readonly modelMultipliers?: ReadonlyArray<ProviderModelMultiplier>;
+}
 
 const ProviderEventKind = Schema.Literals(["session", "notification", "request", "error"]);
 

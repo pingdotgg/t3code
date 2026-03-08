@@ -1,0 +1,23 @@
+{
+  "upstreamRemote": "upstream",
+  "forkRemote": "origin",
+  "baseBranch": "main",
+  "integrationBranch": "codex/alpha",
+  "trackedPrs": [
+    {
+      "number": 179,
+      "title": "Claude Code adapter",
+      "localBranch": "codex/pr-179-track"
+    },
+    {
+      "number": 295,
+      "title": "GitHub Copilot adapter",
+      "localBranch": "codex/pr-295-track"
+    },
+    {
+      "number": 364,
+      "title": "OpenCode adapter",
+      "localBranch": "codex/pr-364-track"
+    }
+  ]
+}

@@ -11,6 +11,11 @@ import {
   shouldShowFastTierIcon,
   useAppSettings,
 } from "../appSettings";
+import {
+  ACCENT_COLOR_PRESETS,
+  DEFAULT_ACCENT_COLOR,
+  normalizeAccentColor,
+} from "../accentColor";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -55,11 +60,53 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     example: "gpt-6.7-codex-ultra-preview",
   },
   {
+    provider: "copilot",
+    title: "GitHub Copilot",
+    description: "Save additional Copilot model slugs for the picker and `/model` command.",
+    placeholder: "your-copilot-model-slug",
+    example: "gpt-5.1-codex-max",
+  },
+  {
+    provider: "claudeCode",
+    title: "Claude Code",
+    description: "Save additional Claude model slugs for the picker and `/model` command.",
+    placeholder: "your-claude-model-slug",
+    example: "claude-sonnet-5-0",
+  },
+  {
     provider: "cursor",
     title: "Cursor",
     description: "Save additional Cursor model slugs for the picker and `/model` command.",
     placeholder: "your-cursor-model-slug",
     example: "openai/gpt-oss-120b",
+  },
+  {
+    provider: "opencode",
+    title: "OpenCode",
+    description: "Save additional OpenCode model slugs for the picker and `/model` command.",
+    placeholder: "your-opencode-model-slug",
+    example: "openai/gpt-5#high",
+  },
+  {
+    provider: "geminiCli",
+    title: "Gemini CLI",
+    description: "Save additional Gemini CLI model slugs for the picker and `/model` command.",
+    placeholder: "your-gemini-model-slug",
+    example: "gemini-3.1-pro",
+  },
+  {
+    provider: "amp",
+    title: "AMPcode",
+    description: "Save additional AMPcode model slugs for the picker and /model command.",
+    placeholder: "your-amp-model-slug",
+    example: "smart",
+  },
+  {
+    provider: "kilo",
+    title: "Kilo",
+    description: "Save additional Kilo model slugs for the picker and /model command.",
+    placeholder: "your-kilo-model-slug",
+    example: "openai/gpt-5#high",
   },
 ] as const;
 
@@ -68,10 +115,20 @@ function getCustomModelsForProvider(
   provider: ProviderKind,
 ) {
   switch (provider) {
+    case "copilot":
+      return settings.customCopilotModels;
     case "claudeCode":
       return settings.customClaudeModels;
     case "cursor":
       return settings.customCursorModels;
+    case "opencode":
+      return settings.customOpencodeModels;
+    case "geminiCli":
+      return settings.customGeminiCliModels;
+    case "amp":
+      return settings.customAmpModels;
+    case "kilo":
+      return settings.customKiloModels;
     case "codex":
     default:
       return settings.customCodexModels;
@@ -83,10 +140,20 @@ function getDefaultCustomModelsForProvider(
   provider: ProviderKind,
 ) {
   switch (provider) {
+    case "copilot":
+      return defaults.customCopilotModels;
     case "claudeCode":
       return defaults.customClaudeModels;
     case "cursor":
       return defaults.customCursorModels;
+    case "opencode":
+      return defaults.customOpencodeModels;
+    case "geminiCli":
+      return defaults.customGeminiCliModels;
+    case "amp":
+      return defaults.customAmpModels;
+    case "kilo":
+      return defaults.customKiloModels;
     case "codex":
     default:
       return defaults.customCodexModels;
@@ -95,10 +162,20 @@ function getDefaultCustomModelsForProvider(
 
 function patchCustomModels(provider: ProviderKind, models: string[]) {
   switch (provider) {
+    case "copilot":
+      return { customCopilotModels: models };
     case "claudeCode":
       return { customClaudeModels: models };
     case "cursor":
       return { customCursorModels: models };
+    case "opencode":
+      return { customOpencodeModels: models };
+    case "geminiCli":
+      return { customGeminiCliModels: models };
+    case "amp":
+      return { customAmpModels: models };
+    case "kilo":
+      return { customKiloModels: models };
     case "codex":
     default:
       return { customCodexModels: models };
@@ -115,8 +192,13 @@ function SettingsRouteView() {
     Record<ProviderKind, string>
   >({
     codex: "",
+    copilot: "",
     claudeCode: "",
     cursor: "",
+    opencode: "",
+    geminiCli: "",
+    amp: "",
+    kilo: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
@@ -125,6 +207,7 @@ function SettingsRouteView() {
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const codexServiceTier = settings.codexServiceTier;
+  const accentColor = settings.accentColor;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
   const openKeybindingsFile = useCallback(() => {
@@ -261,6 +344,68 @@ function SettingsRouteView() {
               <p className="mt-4 text-xs text-muted-foreground">
                 Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
               </p>
+
+              <div className="mt-5 space-y-3 border-t border-border/80 pt-4">
+                <div>
+                  <p className="text-xs font-medium text-foreground">Accent color</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Applies to primary actions, focus rings, info highlights, and terminal blue.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {ACCENT_COLOR_PRESETS.map((preset) => {
+                    const selected = accentColor === preset.value;
+                    return (
+                      <button
+                        key={preset.value}
+                        type="button"
+                        className={`inline-flex items-center gap-2 rounded-md border px-2 py-1 text-xs transition-colors ${
+                          selected
+                            ? "border-primary/60 bg-primary/8 text-foreground"
+                            : "border-border bg-background text-muted-foreground hover:bg-accent"
+                        }`}
+                        onClick={() => updateSettings({ accentColor: preset.value })}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className="size-3 rounded-full border border-black/20"
+                          style={{ backgroundColor: preset.value }}
+                        />
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-background px-3 py-2">
+                  <label
+                    htmlFor="accent-color-picker"
+                    className="text-xs font-medium text-foreground"
+                  >
+                    Custom
+                  </label>
+                  <input
+                    id="accent-color-picker"
+                    type="color"
+                    value={accentColor}
+                    className="h-8 w-12 cursor-pointer rounded border border-border bg-transparent p-0"
+                    onChange={(event) =>
+                      updateSettings({ accentColor: normalizeAccentColor(event.target.value) })
+                    }
+                  />
+                  <code className="text-xs text-muted-foreground">{accentColor}</code>
+                  {accentColor !== DEFAULT_ACCENT_COLOR ? (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() => updateSettings({ accentColor: DEFAULT_ACCENT_COLOR })}
+                    >
+                      Reset
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">
@@ -489,6 +634,45 @@ function SettingsRouteView() {
                               No custom models saved yet.
                             </div>
                           )}
+                        </div>
+
+                        <div className="border-t border-border/80 pt-3">
+                          <p className="text-xs font-medium text-foreground">Accent color override</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Custom color for this provider's usage bar. Leave unset to use the global accent color.
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-background px-3 py-2">
+                            <input
+                              type="color"
+                              value={settings.providerAccentColors[provider] ?? accentColor}
+                              className="h-7 w-10 cursor-pointer rounded border border-border bg-transparent p-0"
+                              onChange={(event) => {
+                                const color = normalizeAccentColor(event.target.value);
+                                updateSettings({
+                                  providerAccentColors: {
+                                    ...settings.providerAccentColors,
+                                    [provider]: color,
+                                  },
+                                });
+                              }}
+                            />
+                            <code className="text-xs text-muted-foreground">
+                              {settings.providerAccentColors[provider] ?? "global"}
+                            </code>
+                            {settings.providerAccentColors[provider] ? (
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                onClick={() => {
+                                  const next = { ...settings.providerAccentColors };
+                                  delete next[provider];
+                                  updateSettings({ providerAccentColors: next });
+                                }}
+                              >
+                                Reset to global
+                              </Button>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
                     </div>

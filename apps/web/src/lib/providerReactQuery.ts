@@ -2,6 +2,9 @@ import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
   ThreadId,
+  type ProviderKind,
+  type ProviderModelOption,
+  type ProviderUsageResult,
 } from "@t3tools/contracts";
 import { queryOptions } from "@tanstack/react-query";
 import { Option, Schema } from "effect";
@@ -17,6 +20,8 @@ interface CheckpointDiffQueryInput {
 
 export const providerQueryKeys = {
   all: ["providers"] as const,
+  listModels: (provider: ProviderKind) => ["providers", "listModels", provider] as const,
+  getUsage: (provider: ProviderKind) => ["providers", "getUsage", provider] as const,
   checkpointDiff: (input: CheckpointDiffQueryInput) =>
     [
       "providers",
@@ -87,6 +92,31 @@ function isCheckpointTemporarilyUnavailable(error: unknown): boolean {
     message.includes("checkpoint is unavailable for turn") ||
     message.includes("filesystem checkpoint is unavailable")
   );
+}
+
+export function providerListModelsQueryOptions(provider: ProviderKind) {
+  return queryOptions<ReadonlyArray<ProviderModelOption>>({
+    queryKey: providerQueryKeys.listModels(provider),
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      const result = await api.provider.listModels({ provider });
+      return result.models;
+    },
+    staleTime: 5 * 60_000, // Cache for 5 minutes
+    retry: 1,
+  });
+}
+
+export function providerGetUsageQueryOptions(provider: ProviderKind) {
+  return queryOptions<ProviderUsageResult>({
+    queryKey: providerQueryKeys.getUsage(provider),
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      return api.provider.getUsage({ provider });
+    },
+    staleTime: 2 * 60_000, // Cache for 2 minutes
+    retry: 1,
+  });
 }
 
 export function checkpointDiffQueryOptions(input: CheckpointDiffQueryInput) {

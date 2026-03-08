@@ -25,6 +25,11 @@ import {
   MAX_THREAD_TERMINAL_COUNT,
   type ThreadTerminalGroup,
 } from "../types";
+import {
+  contrastSafeTerminalColor,
+  normalizeAccentColor,
+  resolveAccentColorRgba,
+} from "../accentColor";
 import { readNativeApi } from "~/nativeApi";
 
 const MIN_DRAWER_HEIGHT = 180;
@@ -45,19 +50,47 @@ function writeSystemMessage(terminal: Terminal, message: string): void {
   terminal.write(`\r\n[terminal] ${message}\r\n`);
 }
 
+/** Fallback hex backgrounds used when the computed style cannot be parsed. */
+const DARK_BG_HEX = "#0e1218";
+const LIGHT_BG_HEX = "#ffffff";
+
+function clampByte(v: number): number {
+  return Math.min(255, Math.max(0, Math.round(v)));
+}
+
+/** Mix a hex color toward white by a given ratio (0 = original, 1 = white). */
+function mixHexWithWhite(hex: string, ratio: number): string {
+  const r = Number.parseInt(hex.slice(1, 3), 16);
+  const g = Number.parseInt(hex.slice(3, 5), 16);
+  const b = Number.parseInt(hex.slice(5, 7), 16);
+  const mr = clampByte(r + (255 - r) * ratio);
+  const mg = clampByte(g + (255 - g) * ratio);
+  const mb = clampByte(b + (255 - b) * ratio);
+  return `#${mr.toString(16).padStart(2, "0")}${mg.toString(16).padStart(2, "0")}${mb.toString(16).padStart(2, "0")}`;
+}
+
 function terminalThemeFromApp(): ITheme {
   const isDark = document.documentElement.classList.contains("dark");
   const bodyStyles = getComputedStyle(document.body);
+  const rootStyles = getComputedStyle(document.documentElement);
   const background =
     bodyStyles.backgroundColor || (isDark ? "rgb(14, 18, 24)" : "rgb(255, 255, 255)");
   const foreground = bodyStyles.color || (isDark ? "rgb(237, 241, 247)" : "rgb(28, 33, 41)");
+  const accentColor = normalizeAccentColor(rootStyles.getPropertyValue("--accent-color"));
+  const bgHex = isDark ? DARK_BG_HEX : LIGHT_BG_HEX;
+  const terminalBlue = contrastSafeTerminalColor(accentColor, bgHex);
+  // Brighten the accent (mix toward white) then ensure it still has
+  // sufficient contrast against the terminal background.
+  const brightMix = isDark ? 0.3 : 0.18;
+  const terminalBrightBlue = contrastSafeTerminalColor(mixHexWithWhite(accentColor, brightMix), bgHex);
+  const selectionBackground = resolveAccentColorRgba(accentColor, isDark ? 0.3 : 0.22);
 
   if (isDark) {
     return {
       background,
       foreground,
-      cursor: "rgb(180, 203, 255)",
-      selectionBackground: "rgba(180, 203, 255, 0.25)",
+      cursor: terminalBrightBlue,
+      selectionBackground,
       scrollbarSliderBackground: "rgba(255, 255, 255, 0.1)",
       scrollbarSliderHoverBackground: "rgba(255, 255, 255, 0.18)",
       scrollbarSliderActiveBackground: "rgba(255, 255, 255, 0.22)",
@@ -65,7 +98,7 @@ function terminalThemeFromApp(): ITheme {
       red: "rgb(255, 122, 142)",
       green: "rgb(134, 231, 149)",
       yellow: "rgb(244, 205, 114)",
-      blue: "rgb(137, 190, 255)",
+      blue: terminalBlue,
       magenta: "rgb(208, 176, 255)",
       cyan: "rgb(124, 232, 237)",
       white: "rgb(210, 218, 230)",
@@ -73,7 +106,7 @@ function terminalThemeFromApp(): ITheme {
       brightRed: "rgb(255, 168, 180)",
       brightGreen: "rgb(176, 245, 186)",
       brightYellow: "rgb(255, 224, 149)",
-      brightBlue: "rgb(174, 210, 255)",
+      brightBlue: terminalBrightBlue,
       brightMagenta: "rgb(229, 203, 255)",
       brightCyan: "rgb(167, 244, 247)",
       brightWhite: "rgb(244, 247, 252)",
@@ -83,8 +116,8 @@ function terminalThemeFromApp(): ITheme {
   return {
     background,
     foreground,
-    cursor: "rgb(38, 56, 78)",
-    selectionBackground: "rgba(37, 63, 99, 0.2)",
+    cursor: terminalBlue,
+    selectionBackground,
     scrollbarSliderBackground: "rgba(0, 0, 0, 0.15)",
     scrollbarSliderHoverBackground: "rgba(0, 0, 0, 0.25)",
     scrollbarSliderActiveBackground: "rgba(0, 0, 0, 0.3)",
@@ -92,7 +125,7 @@ function terminalThemeFromApp(): ITheme {
     red: "rgb(191, 70, 87)",
     green: "rgb(60, 126, 86)",
     yellow: "rgb(146, 112, 35)",
-    blue: "rgb(72, 102, 163)",
+    blue: terminalBlue,
     magenta: "rgb(132, 86, 149)",
     cyan: "rgb(53, 127, 141)",
     white: "rgb(210, 215, 223)",
@@ -100,7 +133,7 @@ function terminalThemeFromApp(): ITheme {
     brightRed: "rgb(212, 95, 112)",
     brightGreen: "rgb(85, 148, 111)",
     brightYellow: "rgb(173, 133, 45)",
-    brightBlue: "rgb(91, 124, 194)",
+    brightBlue: terminalBrightBlue,
     brightMagenta: "rgb(153, 107, 172)",
     brightCyan: "rgb(70, 149, 164)",
     brightWhite: "rgb(236, 240, 246)",

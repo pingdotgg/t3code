@@ -10,7 +10,7 @@ describe("ProviderRuntimeEvent", () => {
     const parsed = decodeRuntimeEvent({
       type: "turn.plan.updated",
       eventId: "event-1",
-      provider: "codex",
+      provider: "claudeCode",
       sessionId: "runtime-session-1",
       createdAt: "2026-02-28T00:00:00.000Z",
       threadId: "thread-1",

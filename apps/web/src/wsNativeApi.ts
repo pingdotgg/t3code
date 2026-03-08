@@ -182,6 +182,10 @@ export function createWsNativeApi(): NativeApi {
         return showContextMenuFallback(items, position);
       },
     },
+    provider: {
+      listModels: (input) => transport.request(WS_METHODS.providerListModels, input),
+      getUsage: (input) => transport.request(WS_METHODS.providerGetUsage, input),
+    },
     server: {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),

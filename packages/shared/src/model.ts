@@ -90,9 +90,14 @@ const CURSOR_MODEL_CAPABILITY_BY_FAMILY: Record<CursorModelFamily, CursorModelCa
 };
 
 const MODEL_SLUG_SET_BY_PROVIDER: Record<ProviderKind, ReadonlySet<ModelSlug>> = {
-  claudeCode: new Set(MODEL_OPTIONS_BY_PROVIDER.claudeCode.map((option) => option.slug)),
   codex: new Set(MODEL_OPTIONS_BY_PROVIDER.codex.map((option) => option.slug)),
+  copilot: new Set(MODEL_OPTIONS_BY_PROVIDER.copilot.map((option) => option.slug)),
+  claudeCode: new Set(MODEL_OPTIONS_BY_PROVIDER.claudeCode.map((option) => option.slug)),
   cursor: new Set(MODEL_OPTIONS_BY_PROVIDER.cursor.map((option) => option.slug)),
+  opencode: new Set(MODEL_OPTIONS_BY_PROVIDER.opencode.map((option) => option.slug)),
+  kilo: new Set(MODEL_OPTIONS_BY_PROVIDER.kilo.map((option) => option.slug)),
+  geminiCli: new Set(MODEL_OPTIONS_BY_PROVIDER.geminiCli.map((option) => option.slug)),
+  amp: new Set(MODEL_OPTIONS_BY_PROVIDER.amp.map((option) => option.slug)),
 };
 
 const CURSOR_MODEL_FAMILY_SET = new Set<CursorModelFamily>(
@@ -252,9 +257,12 @@ export function resolveModelSlug(
     return DEFAULT_MODEL_BY_PROVIDER[provider];
   }
 
-  return MODEL_SLUG_SET_BY_PROVIDER[provider].has(normalized)
-    ? normalized
-    : DEFAULT_MODEL_BY_PROVIDER[provider];
+  const catalog = MODEL_SLUG_SET_BY_PROVIDER[provider];
+  if (catalog.size === 0) {
+    return normalized;
+  }
+
+  return catalog.has(normalized) ? normalized : DEFAULT_MODEL_BY_PROVIDER[provider];
 }
 
 export function resolveModelSlugForProvider(

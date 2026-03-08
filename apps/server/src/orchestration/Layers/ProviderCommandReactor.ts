@@ -214,8 +214,13 @@ const make = Effect.gen(function* () {
     const desiredRuntimeMode = thread.runtimeMode;
     const currentProvider: ProviderKind | undefined =
       thread.session?.providerName === "codex" ||
+      thread.session?.providerName === "copilot" ||
       thread.session?.providerName === "claudeCode" ||
-      thread.session?.providerName === "cursor"
+      thread.session?.providerName === "cursor" ||
+      thread.session?.providerName === "opencode" ||
+      thread.session?.providerName === "geminiCli" ||
+      thread.session?.providerName === "amp" ||
+      thread.session?.providerName === "kilo"
         ? thread.session.providerName
         : undefined;
     const preferredProvider: ProviderKind | undefined = options?.provider ?? currentProvider;

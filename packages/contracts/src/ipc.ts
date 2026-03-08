@@ -20,6 +20,12 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
+import type {
+  ProviderGetUsageInput,
+  ProviderListModelsInput,
+  ProviderListModelsResult,
+  ProviderUsageResult,
+} from "./provider";
 import type { ServerConfig } from "./server";
 import type {
   TerminalClearInput,
@@ -133,6 +139,10 @@ export interface NativeApi {
       items: readonly ContextMenuItem<T>[],
       position?: { x: number; y: number },
     ) => Promise<T | null>;
+  };
+  provider: {
+    listModels: (input: ProviderListModelsInput) => Promise<ProviderListModelsResult>;
+    getUsage: (input: ProviderGetUsageInput) => Promise<ProviderUsageResult>;
   };
   server: {
     getConfig: () => Promise<ServerConfig>;

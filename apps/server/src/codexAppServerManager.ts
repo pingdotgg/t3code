@@ -1011,6 +1011,40 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     return this.sessions.has(threadId);
   }
 
+  /**
+   * Query `account/rateLimits/read` from the first active Codex session.
+   * Returns both primary (session) and weekly rate limit buckets.
+   */
+  async readRateLimits(): Promise<{
+    primary?: { usedPercent?: number; windowDurationMins?: number; resetsAt?: number };
+    weekly?: { usedPercent?: number; windowDurationMins?: number; resetsAt?: number };
+  } | null> {
+    // Pick the first active session to send the request
+    for (const [, context] of this.sessions) {
+      if (context.session.status !== "ready" && context.session.status !== "running") continue;
+      try {
+        const response = await this.sendRequest<{
+          rateLimits?: {
+            primary?: {
+              usedPercent?: number;
+              windowDurationMins?: number;
+              resetsAt?: number;
+            };
+            weekly?: {
+              usedPercent?: number;
+              windowDurationMins?: number;
+              resetsAt?: number;
+            };
+          };
+        }>(context, "account/rateLimits/read", {}, 8_000);
+        return response?.rateLimits ?? null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
   stopAll(): void {
     for (const threadId of this.sessions.keys()) {
       this.stopSession(threadId);

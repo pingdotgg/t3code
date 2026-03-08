@@ -3,6 +3,7 @@ import {
   FolderIcon,
   GitPullRequestIcon,
   RocketIcon,
+  SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
 } from "lucide-react";
@@ -11,6 +12,9 @@ import {
   DEFAULT_RUNTIME_MODE,
   DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
+  type ProviderKind,
+  type ProviderSessionUsage,
+  type ProviderUsageQuota,
   ProjectId,
   ThreadId,
   type GitStatusResult,
@@ -28,6 +32,7 @@ import { type Thread } from "../types";
 import { derivePendingApprovals } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import { providerGetUsageQueryOptions } from "../lib/providerReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
@@ -254,6 +259,215 @@ function ProjectFavicon({ cwd }: { cwd: string }) {
       onLoad={() => setStatus("loaded")}
       onError={() => setStatus("error")}
     />
+  );
+}
+
+// ── Provider Usage Section ────────────────────────────────────────────
+
+function useProviderUsage(provider: ProviderKind) {
+  return useQuery({
+    ...providerGetUsageQueryOptions(provider),
+    refetchInterval: 60_000,
+  });
+}
+
+function formatSidebarTokenCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function ProviderUsageBar({
+  label,
+  quota,
+  showCount,
+  accentColor,
+}: {
+  label: string;
+  quota: ProviderUsageQuota;
+  showCount?: boolean;
+  accentColor?: string;
+}) {
+  const percentUsed =
+    quota.percentUsed ??
+    (quota.used != null && quota.limit ? Math.round((quota.used / quota.limit) * 100) : null);
+  const remaining = quota.used != null && quota.limit != null ? quota.limit - quota.used : null;
+
+  const countSuffix =
+    showCount && remaining != null && quota.limit != null ? ` (${remaining}/${quota.limit})` : "";
+
+  const barColor =
+    percentUsed != null && percentUsed > 90
+      ? undefined
+      : percentUsed != null && percentUsed > 70
+        ? undefined
+        : accentColor;
+
+  const barClassName =
+    percentUsed != null && percentUsed > 90
+      ? "bg-destructive"
+      : percentUsed != null && percentUsed > 70
+        ? "bg-amber-500"
+        : accentColor
+          ? ""
+          : "bg-primary";
+
+  return (
+    <div className="rounded-md border border-border bg-background px-2.5 py-1.5">
+      <div className="flex items-center justify-between text-[11px]">
+        <span className="font-medium text-foreground">
+          {label}
+          {quota.plan ? <span className="ml-1 text-muted-foreground/60">{quota.plan}</span> : null}
+        </span>
+        <span className="tabular-nums text-muted-foreground">
+          {percentUsed != null ? `${percentUsed}%${countSuffix}` : "?"}
+        </span>
+      </div>
+      {percentUsed != null && (
+        <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-muted">
+          <div
+            className={`h-full rounded-full transition-all ${barClassName}`}
+            style={{
+              width: `${Math.min(100, percentUsed)}%`,
+              ...(barColor ? { backgroundColor: barColor } : {}),
+            }}
+          />
+        </div>
+      )}
+      {quota.resetDate && (
+        <p className="mt-1 text-[10px] text-muted-foreground/60">Resets {quota.resetDate}</p>
+      )}
+    </div>
+  );
+}
+
+function ProviderSessionUsageBar({
+  label,
+  usage,
+}: {
+  label: string;
+  usage: ProviderSessionUsage;
+}) {
+  const parts: string[] = [];
+  if (typeof usage.totalCostUsd === "number" && usage.totalCostUsd > 0) {
+    parts.push(`$${usage.totalCostUsd.toFixed(2)}`);
+  }
+  if (typeof usage.totalTokens === "number" && usage.totalTokens > 0) {
+    parts.push(`${formatSidebarTokenCount(usage.totalTokens)} tokens`);
+  }
+  if (typeof usage.turnCount === "number" && usage.turnCount > 0) {
+    parts.push(`${usage.turnCount} turn${usage.turnCount !== 1 ? "s" : ""}`);
+  }
+  if (parts.length === 0) return null;
+
+  return (
+    <div className="rounded-md border border-border bg-background px-2.5 py-1.5">
+      <div className="flex items-center justify-between text-[11px]">
+        <span className="font-medium text-foreground">{label}</span>
+        <span className="tabular-nums text-muted-foreground">{parts.join(" · ")}</span>
+      </div>
+    </div>
+  );
+}
+
+const USAGE_PROVIDERS: ReadonlyArray<{ provider: ProviderKind; label: string }> = [
+  { provider: "copilot", label: "Copilot" },
+  { provider: "codex", label: "Codex" },
+  { provider: "claudeCode", label: "Claude Code" },
+  { provider: "geminiCli", label: "Gemini" },
+  { provider: "amp", label: "Amp" },
+];
+
+function ProviderUsageSection() {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("sidebar-usage-collapsed") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("sidebar-usage-collapsed", String(next));
+      } catch {
+        /* noop */
+      }
+      return next;
+    });
+  }, []);
+
+  const { settings: usageSettings } = useAppSettings();
+
+  const copilotUsage = useProviderUsage("copilot");
+  const codexUsage = useProviderUsage("codex");
+  const claudeUsage = useProviderUsage("claudeCode");
+  const geminiUsage = useProviderUsage("geminiCli");
+  const ampUsage = useProviderUsage("amp");
+
+  const usageByProvider: Record<string, typeof copilotUsage.data> = {
+    copilot: copilotUsage.data,
+    codex: codexUsage.data,
+    claudeCode: claudeUsage.data,
+    geminiCli: geminiUsage.data,
+    amp: ampUsage.data,
+  };
+
+  const entries: Array<React.ReactNode> = [];
+  for (const { provider, label } of USAGE_PROVIDERS) {
+    const data = usageByProvider[provider];
+    const showCount = provider === "copilot";
+    const providerColor = usageSettings.providerAccentColors[provider] || null;
+    const colorProp = providerColor ? { accentColor: providerColor } : {};
+    // Multiple quotas (e.g. Codex session + weekly)
+    if (data?.quotas && data.quotas.length > 0) {
+      for (const q of data.quotas) {
+        if (q.percentUsed == null && q.used == null) continue;
+        const sublabel = q.plan ? `${label}` : label;
+        entries.push(
+          <ProviderUsageBar
+            key={`${provider}:${q.plan ?? "default"}`}
+            label={sublabel}
+            quota={q}
+            showCount={showCount}
+            {...colorProp}
+          />,
+        );
+      }
+    } else if (
+      data?.quota &&
+      (data.quota.used != null || data.quota.limit != null || data.quota.percentUsed != null)
+    ) {
+      entries.push(
+        <ProviderUsageBar key={provider} label={label} quota={data.quota} showCount={showCount} {...colorProp} />,
+      );
+    }
+    // Session usage (no quota) — show token/cost summary
+    if (data?.sessionUsage && (data.sessionUsage.totalTokens || data.sessionUsage.totalCostUsd)) {
+      entries.push(
+        <ProviderSessionUsageBar key={`${provider}:session`} label={label} usage={data.sessionUsage} />,
+      );
+    }
+  }
+
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="px-3 py-2">
+      <button
+        type="button"
+        onClick={toggleCollapsed}
+        className="mb-1.5 flex w-full items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-primary/70 hover:text-primary transition-colors"
+      >
+        <ChevronRightIcon
+          className={`h-3 w-3 transition-transform ${collapsed ? "" : "rotate-90"}`}
+        />
+        Usage
+      </button>
+      {!collapsed && <div className="space-y-1.5">{entries}</div>}
+    </div>
   );
 }
 
@@ -986,6 +1200,14 @@ export default function Sidebar() {
         <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
           {APP_STAGE_LABEL}
         </span>
+        <button
+          type="button"
+          aria-label="Settings"
+          className="ml-auto inline-flex size-7 items-center justify-center rounded-md text-primary/70 transition-colors hover:text-primary hover:bg-primary/10"
+          onClick={() => void navigate({ to: "/settings" })}
+        >
+          <SettingsIcon className="size-3.5" />
+        </button>
       </div>
     </div>
   );
@@ -1296,6 +1518,8 @@ export default function Sidebar() {
         </SidebarGroup>
       </SidebarContent>
 
+      <SidebarSeparator />
+      <ProviderUsageSection />
       <SidebarSeparator />
       <SidebarFooter className="gap-0 p-3">
         {addingProject ? (

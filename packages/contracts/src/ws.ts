@@ -20,6 +20,7 @@ import {
   GitRunStackedActionInput,
   GitStatusInput,
 } from "./git";
+import { ProviderGetUsageInput, ProviderListModelsInput } from "./provider";
 import {
   TerminalClearInput,
   TerminalCloseInput,
@@ -63,6 +64,10 @@ export const WS_METHODS = {
   terminalClear: "terminal.clear",
   terminalRestart: "terminal.restart",
   terminalClose: "terminal.close",
+
+  // Provider methods
+  providerListModels: "provider.listModels",
+  providerGetUsage: "provider.getUsage",
 
   // Server meta
   serverGetConfig: "server.getConfig",
@@ -125,6 +130,10 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.terminalClear, TerminalClearInput),
   tagRequestBody(WS_METHODS.terminalRestart, TerminalRestartInput),
   tagRequestBody(WS_METHODS.terminalClose, TerminalCloseInput),
+
+  // Provider methods
+  tagRequestBody(WS_METHODS.providerListModels, ProviderListModelsInput),
+  tagRequestBody(WS_METHODS.providerGetUsage, ProviderGetUsageInput),
 
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),

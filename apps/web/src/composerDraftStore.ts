@@ -208,7 +208,10 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
 }
 
 function normalizeProviderKind(value: unknown): ProviderKind | null {
-  return value === "codex" || value === "claudeCode" || value === "cursor" ? value : null;
+  return value === "codex" || value === "copilot" || value === "claudeCode" || value === "cursor"
+    || value === "opencode" || value === "geminiCli" || value === "amp" || value === "kilo"
+    ? value
+    : null;
 }
 
 function revokeObjectPreviewUrl(previewUrl: string): void {

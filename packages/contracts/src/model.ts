@@ -13,6 +13,18 @@ export const CodexModelOptions = Schema.Struct({
 });
 export type CodexModelOptions = typeof CodexModelOptions.Type;
 
+export const CopilotModelOptions = Schema.Struct({});
+export type CopilotModelOptions = typeof CopilotModelOptions.Type;
+
+export const OpencodeModelOptions = Schema.Struct({
+  providerId: Schema.optional(Schema.String),
+  modelId: Schema.optional(Schema.String),
+  variant: Schema.optional(Schema.String),
+  reasoningEffort: Schema.optional(Schema.String),
+  agent: Schema.optional(Schema.String),
+});
+export type OpencodeModelOptions = typeof OpencodeModelOptions.Type;
+
 export const ClaudeCodeModelOptions = Schema.Struct({
   thinking: Schema.optional(Schema.Boolean),
 });
@@ -25,16 +37,41 @@ export const CursorModelOptions = Schema.Struct({
 });
 export type CursorModelOptions = typeof CursorModelOptions.Type;
 
+export const GeminiCliModelOptions = Schema.Struct({
+  thinkingBudget: Schema.optional(Schema.Number),
+});
+export type GeminiCliModelOptions = typeof GeminiCliModelOptions.Type;
+
+export const AmpModelOptions = Schema.Struct({
+  mode: Schema.optional(Schema.Literals(["smart", "rush", "deep"])),
+});
+export type AmpModelOptions = typeof AmpModelOptions.Type;
+
+export const KiloModelOptions = Schema.Struct({
+  providerId: Schema.optional(Schema.String),
+  modelId: Schema.optional(Schema.String),
+  variant: Schema.optional(Schema.String),
+  reasoningEffort: Schema.optional(Schema.String),
+  agent: Schema.optional(Schema.String),
+});
+export type KiloModelOptions = typeof KiloModelOptions.Type;
+
 export const ProviderModelOptions = Schema.Struct({
   codex: Schema.optional(CodexModelOptions),
+  copilot: Schema.optional(CopilotModelOptions),
   claudeCode: Schema.optional(ClaudeCodeModelOptions),
   cursor: Schema.optional(CursorModelOptions),
+  opencode: Schema.optional(OpencodeModelOptions),
+  geminiCli: Schema.optional(GeminiCliModelOptions),
+  amp: Schema.optional(AmpModelOptions),
+  kilo: Schema.optional(KiloModelOptions),
 });
 export type ProviderModelOptions = typeof ProviderModelOptions.Type;
 
 type ModelOption = {
   readonly slug: string;
   readonly name: string;
+  readonly pricingTier?: string;
 };
 
 type CursorModelFamilyOption = {
@@ -64,6 +101,34 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
     { slug: "gpt-5.2", name: "GPT-5.2" },
   ],
+  copilot: [
+    // Multipliers sourced from https://docs.github.com/en/copilot/concepts/billing/copilot-requests
+    { slug: "gpt-5.4", name: "GPT-5.4", pricingTier: "1x" },
+    { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex", pricingTier: "1x" },
+    { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex", pricingTier: "1x" },
+    { slug: "gpt-5.2", name: "GPT-5.2", pricingTier: "1x" },
+    { slug: "gpt-5.1-codex-max", name: "GPT-5.1 Codex Max", pricingTier: "1x" },
+    { slug: "gpt-5.1-codex", name: "GPT-5.1 Codex", pricingTier: "1x" },
+    { slug: "gpt-5.1-codex-mini", name: "GPT-5.1 Codex Mini (Preview)", pricingTier: "0.33x" },
+    { slug: "gpt-5.1", name: "GPT-5.1", pricingTier: "1x" },
+    { slug: "gpt-5-mini", name: "GPT-5 mini" },  // included, no premium cost
+    { slug: "gpt-4.1", name: "GPT-4.1" },  // included, no premium cost
+    { slug: "claude-sonnet-4.6", name: "Claude Sonnet 4.6", pricingTier: "1x" },
+    { slug: "claude-sonnet-4.5", name: "Claude Sonnet 4.5", pricingTier: "1x" },
+    { slug: "claude-sonnet-4", name: "Claude Sonnet 4", pricingTier: "1x" },
+    { slug: "claude-opus-4.6", name: "Claude Opus 4.6", pricingTier: "3x" },
+    { slug: "claude-opus-4.6-fast", name: "Claude Opus 4.6 Fast (Preview)", pricingTier: "30x" },
+    { slug: "claude-opus-4.5", name: "Claude Opus 4.5", pricingTier: "3x" },
+    { slug: "claude-haiku-4.5", name: "Claude Haiku 4.5", pricingTier: "0.33x" },
+    { slug: "gemini-3.1-pro", name: "Gemini 3.1 Pro (Preview)", pricingTier: "1x" },
+    { slug: "gemini-3-pro", name: "Gemini 3 Pro (Preview)", pricingTier: "1x" },
+    { slug: "gemini-3-flash", name: "Gemini 3 Flash (Preview)", pricingTier: "0.33x" },
+    { slug: "gemini-2.5-pro", name: "Gemini 2.5 Pro", pricingTier: "1x" },
+    { slug: "grok-code-fast-1", name: "Grok Code Fast 1", pricingTier: "0.25x" },
+    { slug: "goldeneye", name: "Goldeneye (Preview)" },
+    { slug: "qwen2.5", name: "Qwen2.5" },
+    { slug: "raptor-mini", name: "Raptor mini (Preview)" },  // included, no premium cost
+  ],
   claudeCode: [
     { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
     { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
@@ -90,6 +155,20 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "sonnet-4.6-thinking", name: "Claude 4.6 Sonnet (Thinking)" },
     { slug: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
   ],
+  opencode: [] as ModelOption[],
+  geminiCli: [
+    { slug: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+    { slug: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+    { slug: "gemini-3-pro-preview", name: "Gemini 3 Pro" },
+    { slug: "gemini-3-flash-preview", name: "Gemini 3 Flash" },
+    { slug: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro" },
+  ],
+  amp: [
+    { slug: "smart", name: "Smart (Opus 4.6)" },
+    { slug: "rush", name: "Rush (Fast)" },
+    { slug: "deep", name: "Deep (GPT-5.3 Codex)" },
+  ],
+  kilo: [] as ModelOption[],
 } as const satisfies Record<ProviderKind, readonly ModelOption[]>;
 export type ModelOptionsByProvider = typeof MODEL_OPTIONS_BY_PROVIDER;
 
@@ -99,8 +178,13 @@ export type CursorModelSlug = (typeof MODEL_OPTIONS_BY_PROVIDER)["cursor"][numbe
 
 export const DEFAULT_MODEL_BY_PROVIDER = {
   codex: "gpt-5.4",
+  copilot: "gpt-5.4",
   claudeCode: "claude-sonnet-4-6",
   cursor: "opus-4.6-thinking",
+  opencode: "gpt-5",
+  geminiCli: "gemini-2.5-pro",
+  amp: "smart",
+  kilo: "gpt-5",
 } as const satisfies Record<ProviderKind, ModelSlug>;
 
 // Backward compatibility for existing Codex-only call sites.
@@ -114,6 +198,25 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "gpt-5.3": "gpt-5.3-codex",
     "5.3-spark": "gpt-5.3-codex-spark",
     "gpt-5.3-spark": "gpt-5.3-codex-spark",
+  },
+  copilot: {
+    "4.1": "gpt-4.1",
+    "5": "gpt-5.4",
+    "gpt-5": "gpt-5.4",
+    "5-mini": "gpt-5-mini",
+    "5.1": "gpt-5.1",
+    "5.1-codex": "gpt-5.1-codex",
+    "5.1-max": "gpt-5.1-codex-max",
+    "5.1-mini": "gpt-5.1-codex-mini",
+    "5.2": "gpt-5.2",
+    "5.2-codex": "gpt-5.2-codex",
+    "5.3": "gpt-5.3-codex",
+    "5.4": "gpt-5.4",
+    haiku: "claude-haiku-4.5",
+    sonnet: "claude-sonnet-4.6",
+    opus: "claude-opus-4.6",
+    gemini: "gemini-3-pro",
+    grok: "grok-code-fast-1",
   },
   claudeCode: {
     opus: "claude-opus-4-6",
@@ -144,16 +247,45 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "opus-4.6-thinking": "opus-4.6-thinking",
     "opus-4.5-thinking": "opus-4.5-thinking",
   },
+  opencode: {},
+  kilo: {},
+  geminiCli: {
+    gemini: "gemini-2.5-pro",
+    "2.5-pro": "gemini-2.5-pro",
+    "2.5-flash": "gemini-2.5-flash",
+    "3-pro": "gemini-3-pro-preview",
+    "3-flash": "gemini-3-flash-preview",
+    "3.1-pro": "gemini-3.1-pro-preview",
+    // Compatibility aliases for old slugs without -preview suffix
+    "gemini-3-pro": "gemini-3-pro-preview",
+    "gemini-3-flash": "gemini-3-flash-preview",
+    "gemini-3.1-pro": "gemini-3.1-pro-preview",
+  },
+  amp: {
+    opus: "smart",
+    fast: "rush",
+    codex: "deep",
+  },
 };
 
 export const REASONING_EFFORT_OPTIONS_BY_PROVIDER = {
   codex: CODEX_REASONING_EFFORT_OPTIONS,
+  copilot: [],
   claudeCode: [],
   cursor: [],
+  opencode: [],
+  kilo: [],
+  geminiCli: [],
+  amp: [],
 } as const satisfies Record<ProviderKind, readonly CodexReasoningEffort[]>;
 
 export const DEFAULT_REASONING_EFFORT_BY_PROVIDER = {
   codex: "high",
+  copilot: null,
   claudeCode: null,
   cursor: null,
+  opencode: null,
+  kilo: null,
+  geminiCli: null,
+  amp: null,
 } as const satisfies Record<ProviderKind, CodexReasoningEffort | null>;

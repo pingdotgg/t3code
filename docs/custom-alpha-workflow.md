@@ -14,7 +14,7 @@ This clone is intended to use:
 
 - `origin` = `https://github.com/aaditagrawal/t3code.git`
 - `upstream` = `https://github.com/pingdotgg/t3code`
-- `main` tracking `upstream/main`
+- `main` as the downstream base branch kept close to `upstream/main`
 - `codex/alpha` as the persistent custom integration branch
 - `../t3code-alpha` as the dedicated alpha worktree
 
@@ -147,7 +147,7 @@ git remote -v
 
 Keep these branch roles stable:
 
-- `main`: clean mirror of `upstream/main`
+- `main`: downstream base branch for your fork, rebased or merged forward from `upstream/main`
 - `codex/alpha`: long-lived integration branch for your custom local app
 - `codex/feat-<short-name>`: focused feature branches created from `codex/alpha`
 - `codex/pr-<number>-track`: one local tracking branch per upstream PR you want to follow
@@ -313,6 +313,31 @@ Use `bun run dev:desktop` instead when the work touched desktop behavior.
 Never merge an old open PR branch directly into `codex/alpha` without comparing it to current `main`.
 
 Instead:
+
+### Config file and refresh command
+
+The tracked PR list lives in:
+
+- `config/upstream-pr-tracks.json`
+
+Refresh all tracked PR branches with:
+
+```bash
+bun run sync:upstream-prs
+```
+
+That command:
+
+- fetches each tracked PR head from `upstream`
+- updates the matching local `codex/pr-<number>-track` branch
+- reports unique commits and diff stats versus `main`
+- reports pending commits and diff stats versus `codex/alpha`
+
+Current tracked PRs in this repo:
+
+- `#179` Claude Code adapter
+- `#295` GitHub Copilot adapter
+- `#364` OpenCode adapter
 
 ### 1. Fetch the PR into a dedicated tracking branch
 

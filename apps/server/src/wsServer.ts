@@ -26,6 +26,10 @@ import {
   WebSocketRequest,
   WsPush,
   WsResponse,
+  MODEL_OPTIONS_BY_PROVIDER,
+  type ProviderListModelsResult,
+  type ProviderModelOption,
+  type ProviderUsageResult,
 } from "@t3tools/contracts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
@@ -65,6 +69,13 @@ import {
   normalizeAttachmentRelativePath,
   resolveAttachmentRelativePath,
 } from "./attachmentPaths";
+import { fetchAmpUsage } from "./ampServerManager.ts";
+import { fetchGeminiCliUsage } from "./geminiCliServerManager.ts";
+import { fetchKiloModels } from "./kiloServerManager.ts";
+import { fetchOpenCodeModels } from "./opencodeServerManager.ts";
+import { fetchCopilotModels, fetchCopilotUsage } from "./provider/Layers/CopilotAdapter.ts";
+import { fetchClaudeCodeUsage } from "./provider/Layers/ClaudeCodeAdapter.ts";
+import { fetchCodexUsage } from "./provider/Layers/CodexAdapter.ts";
 import {
   createAttachmentId,
   resolveAttachmentPath,
@@ -874,6 +885,100 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.terminalClose: {
         const body = stripRequestTag(request.body);
         return yield* terminalManager.close(body);
+      }
+
+      case WS_METHODS.providerListModels: {
+        const { provider } = request.body;
+        if (provider === "opencode") {
+          const models = yield* Effect.tryPromise({
+            try: () => fetchOpenCodeModels(),
+            catch: (cause) =>
+              new RouteRequestError({
+                message: `Failed to list OpenCode models: ${String(cause)}`,
+              }),
+          });
+          return { models } satisfies ProviderListModelsResult;
+        }
+        if (provider === "kilo") {
+          const models = yield* Effect.tryPromise({
+            try: () => fetchKiloModels(),
+            catch: (cause) =>
+              new RouteRequestError({
+                message: `Failed to list Kilo models: ${String(cause)}`,
+              }),
+          });
+          return { models } satisfies ProviderListModelsResult;
+        }
+        if (provider === "copilot") {
+          // Try dynamic discovery from the Copilot SDK.
+          // Merge pricingTier from the static list when the SDK doesn't provide it.
+          const dynamicModels = yield* Effect.tryPromise({
+            try: () => fetchCopilotModels(),
+            catch: () => null,
+          });
+          if (dynamicModels && dynamicModels.length > 0) {
+            const staticTiers = new Map(
+              (MODEL_OPTIONS_BY_PROVIDER.copilot as ReadonlyArray<{
+                slug: string;
+                pricingTier?: string;
+              }>).map((m) => [m.slug, m.pricingTier]),
+            );
+            const enriched: ProviderModelOption[] = dynamicModels.map((m) => {
+              const tier = m.pricingTier ?? staticTiers.get(m.slug);
+              return tier
+                ? { slug: m.slug, name: m.name, pricingTier: tier }
+                : { slug: m.slug, name: m.name };
+            });
+            return { models: enriched } satisfies ProviderListModelsResult;
+          }
+        }
+        const staticModels =
+          (MODEL_OPTIONS_BY_PROVIDER[provider] ?? []) as ReadonlyArray<{
+            slug: string;
+            name: string;
+            pricingTier?: string;
+          }>;
+        const models: ProviderModelOption[] = staticModels.map((m) =>
+          m.pricingTier
+            ? { slug: m.slug, name: m.name, pricingTier: m.pricingTier }
+            : { slug: m.slug, name: m.name },
+        );
+        return { models } satisfies ProviderListModelsResult;
+      }
+
+      case WS_METHODS.providerGetUsage: {
+        const { provider } = request.body;
+        if (provider === "copilot") {
+          const usage = yield* Effect.tryPromise({
+            try: () => fetchCopilotUsage(),
+            catch: (cause) =>
+              new RouteRequestError({
+                message: `Failed to fetch Copilot usage: ${String(cause)}`,
+              }),
+          });
+          return usage satisfies ProviderUsageResult;
+        }
+        if (provider === "codex") {
+          const usage = yield* Effect.tryPromise({
+            try: () => fetchCodexUsage(),
+            catch: () =>
+              new RouteRequestError({
+                message: "Failed to fetch Codex usage.",
+              }),
+          });
+          return usage satisfies ProviderUsageResult;
+        }
+        if (provider === "claudeCode") {
+          return fetchClaudeCodeUsage() satisfies ProviderUsageResult;
+        }
+        if (provider === "geminiCli") {
+          return fetchGeminiCliUsage() satisfies ProviderUsageResult;
+        }
+        if (provider === "amp") {
+          return fetchAmpUsage() satisfies ProviderUsageResult;
+        }
+        // Other providers: return minimal stub
+        return { provider } satisfies ProviderUsageResult;
       }
 
       case WS_METHODS.serverGetConfig:

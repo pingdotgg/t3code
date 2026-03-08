@@ -27,7 +27,16 @@ export const ORCHESTRATION_WS_CHANNELS = {
   domainEvent: "orchestration.domainEvent",
 } as const;
 
-export const ProviderKind = Schema.Literals(["codex", "claudeCode", "cursor"]);
+export const ProviderKind = Schema.Union([
+  Schema.Literal("codex"),
+  Schema.Literal("copilot"),
+  Schema.Literal("claudeCode"),
+  Schema.Literal("cursor"),
+  Schema.Literal("opencode"),
+  Schema.Literal("geminiCli"),
+  Schema.Literal("amp"),
+  Schema.Literal("kilo"),
+]);
 export type ProviderKind = typeof ProviderKind.Type;
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
@@ -235,6 +244,16 @@ const OrchestrationLatestTurnState = Schema.Literals([
 ]);
 export type OrchestrationLatestTurnState = typeof OrchestrationLatestTurnState.Type;
 
+export const OrchestrationTurnUsage = Schema.Struct({
+  input_tokens: Schema.optional(Schema.Number),
+  output_tokens: Schema.optional(Schema.Number),
+  total_tokens: Schema.optional(Schema.Number),
+  cached_tokens: Schema.optional(Schema.Number),
+  duration_ms: Schema.optional(Schema.Number),
+  tool_calls: Schema.optional(Schema.Number),
+});
+export type OrchestrationTurnUsage = typeof OrchestrationTurnUsage.Type;
+
 export const OrchestrationLatestTurn = Schema.Struct({
   turnId: TurnId,
   state: OrchestrationLatestTurnState,
@@ -242,6 +261,7 @@ export const OrchestrationLatestTurn = Schema.Struct({
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
   assistantMessageId: Schema.NullOr(MessageId),
+  usage: Schema.optional(OrchestrationTurnUsage),
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
@@ -477,6 +497,7 @@ const ThreadSessionSetCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   session: OrchestrationSession,
+  turnUsage: Schema.optional(OrchestrationTurnUsage),
   createdAt: IsoDateTime,
 });
 
@@ -715,6 +736,7 @@ export const ThreadSessionStopRequestedPayload = Schema.Struct({
 export const ThreadSessionSetPayload = Schema.Struct({
   threadId: ThreadId,
   session: OrchestrationSession,
+  turnUsage: Schema.optional(OrchestrationTurnUsage),
 });
 
 export const ThreadProposedPlanUpsertedPayload = Schema.Struct({

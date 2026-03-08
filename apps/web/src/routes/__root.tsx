@@ -10,6 +10,8 @@ import { useEffect, useRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 
 import { APP_DISPLAY_NAME } from "../branding";
+import { useAppSettings } from "../appSettings";
+import { applyAccentColorToDocument } from "../accentColor";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
@@ -34,6 +36,12 @@ export const Route = createRootRouteWithContext<{
 });
 
 function RootRouteView() {
+  const { settings } = useAppSettings();
+
+  useEffect(() => {
+    applyAccentColorToDocument(settings.accentColor);
+  }, [settings.accentColor]);
+
   if (!readNativeApi()) {
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">

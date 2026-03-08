@@ -497,10 +497,13 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed(new Set<MessageId>()),
   });
 
-  const bufferedAssistantTextByMessageId = yield* Cache.make<MessageId, string>({
+  const bufferedAssistantTextByMessageId = yield* Cache.make<
+    MessageId,
+    { text: string; createdAt: string }
+  >({
     capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
-    lookup: () => Effect.succeed(""),
+    lookup: () => Effect.succeed({ text: "", createdAt: "" }),
   });
 
   const bufferedProposedPlanById = yield* Cache.make<string, { text: string; createdAt: string }>({
@@ -578,31 +581,39 @@ const make = Effect.gen(function* () {
   const clearAssistantMessageIdsForTurn = (threadId: ThreadId, turnId: TurnId) =>
     Cache.invalidate(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId));
 
-  const appendBufferedAssistantText = (messageId: MessageId, delta: string) =>
+  const appendBufferedAssistantText = (messageId: MessageId, delta: string, createdAt: string) =>
     Cache.getOption(bufferedAssistantTextByMessageId, messageId).pipe(
-      Effect.flatMap((existingText) =>
+      Effect.flatMap((existing) =>
         Effect.gen(function* () {
-          const nextText = Option.match(existingText, {
-            onNone: () => delta,
-            onSome: (text) => `${text}${delta}`,
-          });
+          const prev = Option.getOrUndefined(existing);
+          const nextText = `${prev?.text ?? ""}${delta}`;
+          const nextCreatedAt =
+            prev?.createdAt && prev.createdAt.length > 0 ? prev.createdAt : createdAt;
           if (nextText.length <= MAX_BUFFERED_ASSISTANT_CHARS) {
-            yield* Cache.set(bufferedAssistantTextByMessageId, messageId, nextText);
-            return "";
+            yield* Cache.set(bufferedAssistantTextByMessageId, messageId, {
+              text: nextText,
+              createdAt: nextCreatedAt,
+            });
+            return { spillChunk: "", createdAt: nextCreatedAt };
           }
 
           // Safety valve: flush full buffered text as an assistant delta to cap memory.
           yield* Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
-          return nextText;
+          return { spillChunk: nextText, createdAt: nextCreatedAt };
         }),
       ),
     );
 
   const takeBufferedAssistantText = (messageId: MessageId) =>
     Cache.getOption(bufferedAssistantTextByMessageId, messageId).pipe(
-      Effect.flatMap((existingText) =>
+      Effect.flatMap((existing) =>
         Cache.invalidate(bufferedAssistantTextByMessageId, messageId).pipe(
-          Effect.as(Option.getOrElse(existingText, () => "")),
+          Effect.as(
+            Option.match(existing, {
+              onNone: () => ({ text: "", createdAt: "" }),
+              onSome: (entry) => entry,
+            }),
+          ),
         ),
       ),
     );
@@ -646,13 +657,20 @@ const make = Effect.gen(function* () {
     fallbackText?: string;
   }) =>
     Effect.gen(function* () {
-      const bufferedText = yield* takeBufferedAssistantText(input.messageId);
+      const buffered = yield* takeBufferedAssistantText(input.messageId);
       const text =
-        bufferedText.length > 0
-          ? bufferedText
+        buffered.text.length > 0
+          ? buffered.text
           : (input.fallbackText?.trim().length ?? 0) > 0
             ? input.fallbackText!
             : "";
+
+      // Use the original timestamp from when the first delta arrived, not the
+      // finalization time.  This ensures assistant text messages are positioned
+      // chronologically relative to tool activities in the timeline instead of
+      // all appearing at the end when the turn completes.
+      const deltaCreatedAt =
+        buffered.createdAt.length > 0 ? buffered.createdAt : input.createdAt;
 
       if (text.length > 0) {
         yield* orchestrationEngine.dispatch({
@@ -662,7 +680,7 @@ const make = Effect.gen(function* () {
           messageId: input.messageId,
           delta: text,
           ...(input.turnId ? { turnId: input.turnId } : {}),
-          createdAt: input.createdAt,
+          createdAt: deltaCreatedAt,
         });
       }
 
@@ -784,8 +802,38 @@ const make = Effect.gen(function* () {
       ).pipe(Effect.asVoid);
     });
 
+  // Accumulate token usage from thread.token-usage.updated events so
+  // providers like Copilot and Amp (which emit usage separately from
+  // turn.completed) still get turn-level usage in the completion summary.
+  const pendingTokenUsageByThread = new Map<string, Record<string, unknown>>();
+
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
+      // Accumulate token usage events per thread
+      if (event.type === "thread.token-usage.updated") {
+        const payload = runtimePayloadRecord(event);
+        const raw = payload?.usage;
+        if (raw && typeof raw === "object") {
+          const prev = pendingTokenUsageByThread.get(event.threadId) ?? {};
+          const incoming = raw as Record<string, unknown>;
+          // Merge by summing numeric fields
+          const merged: Record<string, unknown> = { ...prev };
+          for (const [k, v] of Object.entries(incoming)) {
+            if (typeof v === "number" && typeof (prev[k] ?? 0) === "number") {
+              merged[k] = ((prev[k] as number) ?? 0) + v;
+            } else {
+              merged[k] = v;
+            }
+          }
+          pendingTokenUsageByThread.set(event.threadId, merged);
+        }
+      }
+
+      // Clear accumulated usage when a new turn starts
+      if (event.type === "turn.started") {
+        pendingTokenUsageByThread.delete(event.threadId);
+      }
+
       const readModel = yield* orchestrationEngine.getReadModel();
       const thread = readModel.threads.find((entry) => entry.id === event.threadId);
       if (!thread) return;
@@ -866,6 +914,27 @@ const make = Effect.gen(function* () {
               : (thread.session?.lastError ?? null);
 
         if (shouldApplyThreadLifecycle) {
+          const turnUsagePayload =
+            event.type === "turn.completed" ? runtimePayloadRecord(event) : undefined;
+          let turnUsage =
+            turnUsagePayload?.usage !== undefined &&
+            turnUsagePayload.usage !== null &&
+            typeof turnUsagePayload.usage === "object"
+              ? (turnUsagePayload.usage as Record<string, unknown>)
+              : undefined;
+
+          // Fall back to accumulated thread.token-usage.updated data
+          // for providers (Copilot, Amp) that emit usage separately.
+          if (!turnUsage && event.type === "turn.completed") {
+            const pending = pendingTokenUsageByThread.get(event.threadId);
+            if (pending) {
+              turnUsage = pending;
+            }
+          }
+          if (event.type === "turn.completed") {
+            pendingTokenUsageByThread.delete(event.threadId);
+          }
+
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
             commandId: providerCommandId(event, "thread-session-set"),
@@ -879,6 +948,7 @@ const make = Effect.gen(function* () {
               lastError,
               updatedAt: now,
             },
+            ...(turnUsage ? { turnUsage } : {}),
             createdAt: now,
           });
         }
@@ -902,16 +972,20 @@ const make = Effect.gen(function* () {
 
         const assistantDeliveryMode = yield* Ref.get(assistantDeliveryModeRef);
         if (assistantDeliveryMode === "buffered") {
-          const spillChunk = yield* appendBufferedAssistantText(assistantMessageId, assistantDelta);
-          if (spillChunk.length > 0) {
+          const spillResult = yield* appendBufferedAssistantText(
+            assistantMessageId,
+            assistantDelta,
+            now,
+          );
+          if (spillResult.spillChunk.length > 0) {
             yield* orchestrationEngine.dispatch({
               type: "thread.message.assistant.delta",
               commandId: providerCommandId(event, "assistant-delta-buffer-spill"),
               threadId: thread.id,
               messageId: assistantMessageId,
-              delta: spillChunk,
+              delta: spillResult.spillChunk,
               ...(turnId ? { turnId } : {}),
-              createdAt: now,
+              createdAt: spillResult.createdAt,
             });
           }
         } else {
