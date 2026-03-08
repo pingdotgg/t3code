@@ -5,6 +5,8 @@
 
 A minimal web GUI for coding agents. Supports Codex, Claude Code, and Cursor.
 
+Forked from [T3 Code](https://github.com/pingdotgg/t3code). We work on a separate project with the goal of shipping the most relevant features quickly.
+
 ## How to use
 
 > [!WARNING]
@@ -14,7 +16,7 @@ A minimal web GUI for coding agents. Supports Codex, Claude Code, and Cursor.
 npx t3
 ```
 
-Or install the [desktop app from the Releases page](https://github.com/pingdotgg/t3code/releases).
+Or install the [desktop app from the Releases page](https://github.com/DavidSeyserGit/OSSCode/releases).
 
 ## Notes
 
