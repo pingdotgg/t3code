@@ -3,57 +3,50 @@
  *
  * Uses the `provider` hint on each input to pick the right backend.
  * Falls back to whichever CLI is available when no hint is given.
+ *
+ * Both backends are always loaded (if their modules exist). The actual CLI
+ * availability is validated at call time when the process is spawned, avoiding
+ * false negatives from one-shot startup checks that may run before the user's
+ * PATH is fully resolved.
  */
 import type { ProviderKind } from "@t3tools/contracts";
 import { Effect, Layer } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { TextGenerationError } from "../Errors.ts";
 import { type TextGenerationShape, TextGeneration } from "../Services/TextGeneration.ts";
 
 const makeTextGenerationDispatcher = Effect.gen(function* () {
-  const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-
-  const isAvailable = (binary: string): Effect.Effect<boolean> =>
-    commandSpawner
-      .spawn(ChildProcess.make(binary, ["--version"]))
-      .pipe(
-        Effect.scoped,
-        Effect.flatMap((child) => child.exitCode),
-        Effect.map((code) => Number(code) === 0),
-        Effect.catch(() => Effect.succeed(false)),
-      );
-
-  const [hasClaude, hasCodex] = yield* Effect.all(
-    [isAvailable("claude"), isAvailable("codex")],
-    { concurrency: "unbounded" },
-  );
-
   let claudeBackend: TextGenerationShape | null = null;
   let codexBackend: TextGenerationShape | null = null;
 
-  if (hasClaude) {
-    const mod = yield* Effect.tryPromise({
-      try: () => import("./ClaudeTextGeneration.ts"),
-      catch: () =>
-        new TextGenerationError({
-          operation: "init",
-          detail: "Failed to load ClaudeTextGeneration module.",
-        }),
-    });
-    claudeBackend = yield* mod.makeClaudeTextGeneration;
+  const claudeResult = yield* Effect.tryPromise({
+    try: () => import("./ClaudeTextGeneration.ts"),
+    catch: () =>
+      new TextGenerationError({
+        operation: "init",
+        detail: "Failed to load ClaudeTextGeneration module.",
+      }),
+  }).pipe(
+    Effect.flatMap((mod) => mod.makeClaudeTextGeneration),
+    Effect.option,
+  );
+  if (claudeResult._tag === "Some") {
+    claudeBackend = claudeResult.value;
   }
 
-  if (hasCodex) {
-    const mod = yield* Effect.tryPromise({
-      try: () => import("./CodexTextGeneration.ts"),
-      catch: () =>
-        new TextGenerationError({
-          operation: "init",
-          detail: "Failed to load CodexTextGeneration module.",
-        }),
-    });
-    codexBackend = yield* mod.makeCodexTextGeneration;
+  const codexResult = yield* Effect.tryPromise({
+    try: () => import("./CodexTextGeneration.ts"),
+    catch: () =>
+      new TextGenerationError({
+        operation: "init",
+        detail: "Failed to load CodexTextGeneration module.",
+      }),
+  }).pipe(
+    Effect.flatMap((mod) => mod.makeCodexTextGeneration),
+    Effect.option,
+  );
+  if (codexResult._tag === "Some") {
+    codexBackend = codexResult.value;
   }
 
   const fallbackBackend = claudeBackend ?? codexBackend;
@@ -62,7 +55,6 @@ const makeTextGenerationDispatcher = Effect.gen(function* () {
     if (provider === "claudeCode" && claudeBackend) return claudeBackend;
     if (provider === "codex" && codexBackend) return codexBackend;
     if (fallbackBackend) return fallbackBackend;
-    // Unreachable if either CLI is installed, but satisfy the type system
     const fail = (operation: string) =>
       Effect.fail(
         new TextGenerationError({
