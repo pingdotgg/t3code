@@ -21,4 +21,6 @@ We are very very early in this project. Expect bugs.
 
 We are not accepting contributions yet.
 
+Maintaining a custom fork or alpha branch? See [docs/custom-alpha-workflow.md](/Users/mav/Documents/Projects/Experiments/vibes/t3code/docs/custom-alpha-workflow.md).
+
 Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
