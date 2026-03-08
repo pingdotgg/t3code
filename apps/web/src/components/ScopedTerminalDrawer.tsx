@@ -95,6 +95,12 @@ export default function ScopedTerminalDrawer({
         void fallbackExitWrite();
       }
       storeCloseTerminal(threadId, terminalId);
+      // When the last terminal is closed, reset so the component fully unmounts.
+      // This prevents the new default terminal from mounting inside a zero-height
+      // container where xterm can't determine proper dimensions.
+      if (isFinalTerminal) {
+        hasEverOpenedRef.current = false;
+      }
       setFocusRequestId((v) => v + 1);
     },
     [threadId, storeCloseTerminal, terminalState.terminalIds.length],

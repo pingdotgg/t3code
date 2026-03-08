@@ -1058,6 +1058,9 @@ export default function Sidebar() {
                   onOpenChange={(open) => {
                     if (open === project.expanded) return;
                     toggleProject(project.id);
+                    if (open) {
+                      focusMostRecentThreadForProject(project.id);
+                    }
                   }}
                 >
                   <SidebarMenuItem>

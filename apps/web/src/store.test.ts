@@ -47,6 +47,7 @@ function makeState(thread: Thread): AppState {
     ],
     threads: [thread],
     threadsHydrated: true,
+    lastExpandedProjectId: null,
   };
 }
 

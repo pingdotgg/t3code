@@ -21,6 +21,8 @@ export interface AppState {
   projects: Project[];
   threads: Thread[];
   threadsHydrated: boolean;
+  /** The project most recently expanded via the sidebar. Used by the index route to scope terminals. */
+  lastExpandedProjectId: Project["id"] | null;
 }
 
 const PERSISTED_STATE_KEY = "t3code:renderer-state:v8";
@@ -39,6 +41,7 @@ const initialState: AppState = {
   projects: [],
   threads: [],
   threadsHydrated: false,
+  lastExpandedProjectId: null,
 };
 const persistedExpandedProjectCwds = new Set<string>();
 
@@ -321,9 +324,12 @@ export function markThreadUnread(state: AppState, threadId: ThreadId): AppState 
 }
 
 export function toggleProject(state: AppState, projectId: Project["id"]): AppState {
+  const target = state.projects.find((p) => p.id === projectId);
+  const willExpand = target ? !target.expanded : false;
   return {
     ...state,
     projects: state.projects.map((p) => (p.id === projectId ? { ...p, expanded: !p.expanded } : p)),
+    lastExpandedProjectId: willExpand ? projectId : state.lastExpandedProjectId,
   };
 }
 
@@ -338,7 +344,12 @@ export function setProjectExpanded(
     changed = true;
     return { ...p, expanded };
   });
-  return changed ? { ...state, projects } : state;
+  if (!changed) return state;
+  return {
+    ...state,
+    projects,
+    lastExpandedProjectId: expanded ? projectId : state.lastExpandedProjectId,
+  };
 }
 
 export function setError(state: AppState, threadId: ThreadId, error: string | null): AppState {
