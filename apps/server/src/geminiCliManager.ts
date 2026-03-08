@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import { Readable, Writable } from "node:stream";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
 import { normalizeModelSlug } from "@t3tools/shared/model";
 
@@ -306,7 +306,7 @@ export class GeminiCliManager extends EventEmitter {
     if (this.canUseAcp()) {
       void this.runTurnViaAcp(context, turnId, trimmedText, input.prompt, desiredMode);
     } else {
-      this.runTurnViaLegacyCli(context, turnId, trimmedText, approvalMode);
+      this.runTurnViaLegacyCli(context, turnId, trimmedText, input.prompt, approvalMode);
     }
 
     return {
@@ -323,8 +323,9 @@ export class GeminiCliManager extends EventEmitter {
     }
 
     if (context.geminiSessionId && this.canUseAcp()) {
+      const sessionIdToCancel = context.geminiSessionId;
       void this.ensureAcpRuntime(context.model)
-        .then((runtime) => runtime.cancel(context.geminiSessionId!))
+        .then((runtime) => runtime.cancel(sessionIdToCancel))
         .catch(() => undefined);
       return;
     }
@@ -341,8 +342,9 @@ export class GeminiCliManager extends EventEmitter {
     }
 
     if (context.geminiSessionId && this.canUseAcp()) {
+      const sessionIdToCancel = context.geminiSessionId;
       void this.ensureAcpRuntime(context.model)
-        .then((runtime) => runtime.cancel(context.geminiSessionId!))
+        .then((runtime) => runtime.cancel(sessionIdToCancel))
         .catch(() => undefined);
     }
 
@@ -470,6 +472,7 @@ export class GeminiCliManager extends EventEmitter {
     context: GeminiSessionContext,
     turnId: string,
     text: string,
+    prompt: ReadonlyArray<GeminiAcpPromptBlock> | undefined,
     approvalMode: GeminiApprovalMode,
   ): void {
     const launch = resolveGeminiLaunch();
@@ -484,6 +487,14 @@ export class GeminiCliManager extends EventEmitter {
       "--model",
       context.model,
     ];
+
+    if (prompt) {
+      for (const block of prompt) {
+        if (block.type === "image" && block.uri) {
+          args.push("--image", fileURLToPath(block.uri));
+        }
+      }
+    }
 
     if (approvalMode !== "plan") {
       args.push("--sandbox", "false");
@@ -570,18 +581,23 @@ export class GeminiCliManager extends EventEmitter {
       }
     });
 
+    const MAX_STDERR_BUFFER = 256 * 1024;
     child.stderr?.on("data", (chunk: Buffer | string) => {
-      stderrBuffer += chunk.toString();
+      if (stderrBuffer.length < MAX_STDERR_BUFFER) {
+        stderrBuffer += chunk.toString();
+      }
     });
 
-    child.on("close", (code: number | null) => {
+    child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
       rl.close();
       context.status = "idle";
       context.activeTurnId = null;
       context.activeProcess = null;
 
       const trimmedStderr = stderrBuffer.trim();
-      if (code !== 0 && code !== null) {
+      const actualCode = signal ? 1 : (code ?? 1);
+      
+      if (actualCode !== 0) {
         this.emit("event", {
           type: "error",
           method: "turn/error",
@@ -589,8 +605,8 @@ export class GeminiCliManager extends EventEmitter {
           threadId: context.threadId,
           turnId,
           provider: "gemini",
-          exitCode: code,
-          message: trimmedStderr || `Gemini CLI exited with code ${code}.`,
+          exitCode: actualCode,
+          message: trimmedStderr || `Gemini CLI exited with code ${actualCode}.`,
         });
       }
 
@@ -601,7 +617,7 @@ export class GeminiCliManager extends EventEmitter {
         threadId: context.threadId,
         turnId,
         provider: "gemini",
-        exitCode: code ?? 0,
+        exitCode: actualCode,
         ...(trimmedStderr ? { stderr: trimmedStderr } : {}),
       });
     });
@@ -620,6 +636,16 @@ export class GeminiCliManager extends EventEmitter {
         turnId,
         provider: "gemini",
         message: error.message,
+      });
+
+      this.emit("event", {
+        type: "turn",
+        method: "turn/ended",
+        kind: "lifecycle",
+        threadId: context.threadId,
+        turnId,
+        provider: "gemini",
+        exitCode: 1,
       });
     });
   }
@@ -1010,8 +1036,11 @@ async function createGeminiAcpRuntime(
     handlers.onClose(error);
   };
 
+  const MAX_STDERR_BUFFER = 256 * 1024;
   child.stderr?.on("data", (chunk: Buffer | string) => {
-    stderrBuffer += chunk.toString();
+    if (stderrBuffer.length < MAX_STDERR_BUFFER) {
+      stderrBuffer += chunk.toString();
+    }
   });
 
   child.on("error", (error: Error) => {
@@ -1148,7 +1177,7 @@ function flattenToolCallContent(content: unknown): string | undefined {
         return `Terminal activity: ${terminalId}`;
       }
       const contentBlock = record.content;
-      return readContentText(contentBlock) ?? "";
+      return readContentText(record) ?? readContentText(contentBlock) ?? "";
     })
     .filter((entry) => entry.length > 0)
     .join("\n");

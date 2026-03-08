@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import { isCommandAvailable } from "./open";
@@ -105,26 +106,46 @@ export function resolveGeminiCliLaunchSpec(env: NodeJS.ProcessEnv = process.env)
 }
 
 export function resolveGeminiAcpModulePath(env: NodeJS.ProcessEnv = process.env): string | null {
-  const launch = resolveGeminiCliLaunchSpec(env);
-  const distPath = launch?.argsPrefix[0];
-  if (!distPath || !existsSync(distPath)) {
-    return null;
-  }
+  if (process.platform === "win32") {
+    const launch = resolveGeminiCliLaunchSpec(env);
+    const distPath = launch?.argsPrefix[0];
+    if (!distPath || !existsSync(distPath)) {
+      return null;
+    }
 
-  const packageRoot = resolveGeminiPackageRootFromDist(distPath);
-  if (!packageRoot) {
-    return null;
-  }
+    const packageRoot = resolveGeminiPackageRootFromDist(distPath);
+    if (!packageRoot) {
+      return null;
+    }
 
-  const candidate = path.join(
-    packageRoot,
-    "node_modules",
-    "@agentclientprotocol",
-    "sdk",
-    "dist",
-    "acp.js",
-  );
-  return existsSync(candidate) ? candidate : null;
+    const candidate = path.join(
+      packageRoot,
+      "node_modules",
+      "@agentclientprotocol",
+      "sdk",
+      "dist",
+      "acp.js",
+    );
+    return existsSync(candidate) ? candidate : null;
+  } else {
+    try {
+      const geminiPath = execSync("which gemini", { env, encoding: "utf-8" }).trim();
+      if (!geminiPath) return null;
+      const realPath = realpathSync(geminiPath);
+      const packageRoot = path.dirname(path.dirname(realPath));
+      const candidate = path.join(
+        packageRoot,
+        "node_modules",
+        "@agentclientprotocol",
+        "sdk",
+        "dist",
+        "acp.js",
+      );
+      return existsSync(candidate) ? candidate : null;
+    } catch {
+      return null;
+    }
+  }
 }
 
 export function isCodexCliAvailable(env: NodeJS.ProcessEnv = process.env): boolean {

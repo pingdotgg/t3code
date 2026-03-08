@@ -539,9 +539,6 @@ function extractWorkDetail(
     asTrimmedString(data?.rawOutput);
 
   if (rawDetail) {
-    if (looksLikeCodeOrMarkup(rawDetail) && changedFiles.length > 0) {
-      return `Updated ${changedFiles.slice(0, 3).join(", ")}`;
-    }
     return summarizeVerboseText(rawDetail);
   }
 

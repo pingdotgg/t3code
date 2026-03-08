@@ -43,12 +43,8 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
   codexServiceTier: AppServiceTierSchema.pipe(Schema.withConstructorDefault(() => Option.some("auto"))),
-  customCodexModels: Schema.Array(Schema.String).pipe(
-    Schema.withConstructorDefault(() => Option.some([])),
-  ),
-  customGeminiModels: Schema.Array(Schema.String).pipe(
-    Schema.withConstructorDefault(() => Option.some([])),
-  ),
+  customCodexModels: Schema.optionalWith(Schema.Array(Schema.String), { as: "Option", default: () => Option.some([]) }),
+  customGeminiModels: Schema.optionalWith(Schema.Array(Schema.String), { as: "Option", default: () => Option.some([]) }),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
 export interface AppModelOption {
