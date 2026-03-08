@@ -4,8 +4,10 @@ import {
   REASONING_EFFORT_OPTIONS_BY_PROVIDER,
   ThreadId,
   type CodexReasoningEffort,
+  type ProviderModelOptions,
   type ProviderKind,
   type ProviderInteractionMode,
+  type ProviderServiceTier,
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
@@ -31,6 +33,19 @@ export interface PersistedComposerImageAttachment {
 export interface ComposerImageAttachment extends Omit<ChatImageAttachment, "previewUrl"> {
   previewUrl: string;
   file: File;
+}
+
+export interface QueuedComposerTurn {
+  id: string;
+  queuedAt: string;
+  text: string;
+  images: ComposerImageAttachment[];
+  provider: ProviderKind;
+  model: string | null;
+  runtimeMode: RuntimeMode;
+  interactionMode: ProviderInteractionMode;
+  serviceTier: ProviderServiceTier | null;
+  modelOptions: ProviderModelOptions | null;
 }
 
 interface PersistedComposerThreadDraftState {
@@ -92,6 +107,7 @@ interface ComposerDraftStoreState {
   draftsByThreadId: Record<ThreadId, ComposerThreadDraftState>;
   draftThreadsByThreadId: Record<ThreadId, DraftThreadState>;
   projectDraftThreadIdByProjectId: Record<ProjectId, ThreadId>;
+  queuedTurnsByThreadId: Record<ThreadId, QueuedComposerTurn[]>;
   getDraftThreadByProjectId: (projectId: ProjectId) => ProjectDraftThread | null;
   getDraftThread: (threadId: ThreadId) => DraftThreadState | null;
   setProjectDraftThreadId: (
@@ -139,6 +155,11 @@ interface ComposerDraftStoreState {
     threadId: ThreadId,
     attachments: PersistedComposerImageAttachment[],
   ) => void;
+  enqueueQueuedTurn: (threadId: ThreadId, turn: QueuedComposerTurn) => void;
+  prependQueuedTurn: (threadId: ThreadId, turn: QueuedComposerTurn) => void;
+  consumeQueuedTurn: (threadId: ThreadId, queuedTurnId: string) => void;
+  removeQueuedTurn: (threadId: ThreadId, queuedTurnId: string) => void;
+  clearQueuedTurns: (threadId: ThreadId) => void;
   clearComposerContent: (threadId: ThreadId) => void;
   clearThreadDraft: (threadId: ThreadId) => void;
 }
@@ -152,9 +173,11 @@ const EMPTY_PERSISTED_DRAFT_STORE_STATE: PersistedComposerDraftStoreState = {
 const EMPTY_IMAGES: ComposerImageAttachment[] = [];
 const EMPTY_IDS: string[] = [];
 const EMPTY_PERSISTED_ATTACHMENTS: PersistedComposerImageAttachment[] = [];
+const EMPTY_QUEUED_TURNS: QueuedComposerTurn[] = [];
 Object.freeze(EMPTY_IMAGES);
 Object.freeze(EMPTY_IDS);
 Object.freeze(EMPTY_PERSISTED_ATTACHMENTS);
+Object.freeze(EMPTY_QUEUED_TURNS);
 const EMPTY_THREAD_DRAFT = Object.freeze({
   prompt: "",
   images: EMPTY_IMAGES,
@@ -219,6 +242,12 @@ function revokeObjectPreviewUrl(previewUrl: string): void {
     return;
   }
   URL.revokeObjectURL(previewUrl);
+}
+
+function revokeQueuedTurnImages(turn: QueuedComposerTurn): void {
+  for (const image of turn.images) {
+    revokeObjectPreviewUrl(image.previewUrl);
+  }
 }
 
 function normalizePersistedAttachment(value: unknown): PersistedComposerImageAttachment | null {
@@ -526,6 +555,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
       draftsByThreadId: {},
       draftThreadsByThreadId: {},
       projectDraftThreadIdByProjectId: {},
+      queuedTurnsByThreadId: {},
       getDraftThreadByProjectId: (projectId) => {
         if (projectId.length === 0) {
           return null;
@@ -1105,6 +1135,78 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           });
         });
       },
+      enqueueQueuedTurn: (threadId, turn) => {
+        if (threadId.length === 0) {
+          return;
+        }
+        set((state) => ({
+          queuedTurnsByThreadId: {
+            ...state.queuedTurnsByThreadId,
+            [threadId]: [...(state.queuedTurnsByThreadId[threadId] ?? EMPTY_QUEUED_TURNS), turn],
+          },
+        }));
+      },
+      prependQueuedTurn: (threadId, turn) => {
+        if (threadId.length === 0) {
+          return;
+        }
+        set((state) => ({
+          queuedTurnsByThreadId: {
+            ...state.queuedTurnsByThreadId,
+            [threadId]: [turn, ...(state.queuedTurnsByThreadId[threadId] ?? EMPTY_QUEUED_TURNS)],
+          },
+        }));
+      },
+      consumeQueuedTurn: (threadId, queuedTurnId) => {
+        if (threadId.length === 0 || queuedTurnId.length === 0) {
+          return;
+        }
+        set((state) => {
+          const existing = state.queuedTurnsByThreadId[threadId];
+          if (!existing) {
+            return state;
+          }
+          const nextQueuedTurns = existing.filter((turn) => turn.id !== queuedTurnId);
+          const nextQueuedTurnsByThreadId = { ...state.queuedTurnsByThreadId };
+          if (nextQueuedTurns.length === existing.length) {
+            return state;
+          }
+          if (nextQueuedTurns.length === 0) {
+            delete nextQueuedTurnsByThreadId[threadId];
+          } else {
+            nextQueuedTurnsByThreadId[threadId] = nextQueuedTurns;
+          }
+          return { queuedTurnsByThreadId: nextQueuedTurnsByThreadId };
+        });
+      },
+      removeQueuedTurn: (threadId, queuedTurnId) => {
+        if (threadId.length === 0 || queuedTurnId.length === 0) {
+          return;
+        }
+        const existing = get().queuedTurnsByThreadId[threadId];
+        const removed = existing?.find((turn) => turn.id === queuedTurnId);
+        if (removed) {
+          revokeQueuedTurnImages(removed);
+        }
+        get().consumeQueuedTurn(threadId, queuedTurnId);
+      },
+      clearQueuedTurns: (threadId) => {
+        if (threadId.length === 0) {
+          return;
+        }
+        const existing = get().queuedTurnsByThreadId[threadId] ?? EMPTY_QUEUED_TURNS;
+        for (const turn of existing) {
+          revokeQueuedTurnImages(turn);
+        }
+        set((state) => {
+          if (state.queuedTurnsByThreadId[threadId] === undefined) {
+            return state;
+          }
+          const nextQueuedTurnsByThreadId = { ...state.queuedTurnsByThreadId };
+          delete nextQueuedTurnsByThreadId[threadId];
+          return { queuedTurnsByThreadId: nextQueuedTurnsByThreadId };
+        });
+      },
       clearComposerContent: (threadId) => {
         if (threadId.length === 0) {
           return;
@@ -1140,19 +1242,26 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             revokeObjectPreviewUrl(image.previewUrl);
           }
         }
+        const queuedTurns = get().queuedTurnsByThreadId[threadId] ?? EMPTY_QUEUED_TURNS;
+        for (const queuedTurn of queuedTurns) {
+          revokeQueuedTurnImages(queuedTurn);
+        }
         set((state) => {
           const hasComposerDraft = state.draftsByThreadId[threadId] !== undefined;
           const hasDraftThread = state.draftThreadsByThreadId[threadId] !== undefined;
           const hasProjectMapping = Object.values(state.projectDraftThreadIdByProjectId).includes(
             threadId,
           );
-          if (!hasComposerDraft && !hasDraftThread && !hasProjectMapping) {
+          const hasQueuedTurns = state.queuedTurnsByThreadId[threadId] !== undefined;
+          if (!hasComposerDraft && !hasDraftThread && !hasProjectMapping && !hasQueuedTurns) {
             return state;
           }
           const { [threadId]: _removedComposerDraft, ...restComposerDraftsByThreadId } =
             state.draftsByThreadId;
           const { [threadId]: _removedDraftThread, ...restDraftThreadsByThreadId } =
             state.draftThreadsByThreadId;
+          const { [threadId]: _removedQueuedTurns, ...restQueuedTurnsByThreadId } =
+            state.queuedTurnsByThreadId;
           const nextProjectDraftThreadIdByProjectId = Object.fromEntries(
             Object.entries(state.projectDraftThreadIdByProjectId).filter(
               ([, draftThreadId]) => draftThreadId !== threadId,
@@ -1162,6 +1271,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             draftsByThreadId: restComposerDraftsByThreadId,
             draftThreadsByThreadId: restDraftThreadsByThreadId,
             projectDraftThreadIdByProjectId: nextProjectDraftThreadIdByProjectId,
+            queuedTurnsByThreadId: restQueuedTurnsByThreadId,
           };
         });
       },

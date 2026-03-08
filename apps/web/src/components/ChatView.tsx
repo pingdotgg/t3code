@@ -211,6 +211,7 @@ import {
   type DraftThreadEnvMode,
   type DraftThreadState,
   type PersistedComposerImageAttachment,
+  type QueuedComposerTurn,
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../composerDraftStore";
@@ -261,10 +262,13 @@ const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_QUEUED_COMPOSER_TURNS: QueuedComposerTurn[] = [];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 const WORKTREE_BRANCH_PREFIX = "t3code";
+const QUEUED_TURN_PREVIEW_MAX_CHARS = 72;
+Object.freeze(EMPTY_QUEUED_COMPOSER_TURNS);
 
 function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
   const stored = localStorage.getItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
@@ -424,6 +428,7 @@ type ComposerCommandItem =
     };
 
 type SendPhase = "idle" | "preparing-worktree" | "sending-turn";
+type ComposerSubmissionDisposition = "queue" | "steer";
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -460,6 +465,20 @@ function cloneComposerImageForRetry(image: ComposerImageAttachment): ComposerIma
   } catch {
     return image;
   }
+}
+
+function summarizeQueuedTurn(turn: QueuedComposerTurn): string {
+  const trimmed = turn.text.trim();
+  if (trimmed.length > 0) {
+    return trimmed.length > QUEUED_TURN_PREVIEW_MAX_CHARS
+      ? `${trimmed.slice(0, QUEUED_TURN_PREVIEW_MAX_CHARS - 1).trimEnd()}...`
+      : trimmed;
+  }
+  const imageCount = turn.images.length;
+  if (imageCount > 0) {
+    return imageCount === 1 ? "1 image attachment" : `${imageCount} image attachments`;
+  }
+  return "Queued follow-up";
 }
 
 const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
@@ -627,6 +646,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const syncComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.syncPersistedAttachments,
   );
+  const queuedTurns = useComposerDraftStore(
+    (store) => store.queuedTurnsByThreadId[threadId] ?? EMPTY_QUEUED_COMPOSER_TURNS,
+  );
+  const enqueueQueuedTurn = useComposerDraftStore((store) => store.enqueueQueuedTurn);
+  const prependQueuedTurn = useComposerDraftStore((store) => store.prependQueuedTurn);
+  const consumeQueuedTurn = useComposerDraftStore((store) => store.consumeQueuedTurn);
+  const removeQueuedTurn = useComposerDraftStore((store) => store.removeQueuedTurn);
+  const clearQueuedTurns = useComposerDraftStore((store) => store.clearQueuedTurns);
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const clearDraftThread = useComposerDraftStore((store) => store.clearDraftThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
@@ -693,6 +720,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
+  const queuedTurnFlushIdRef = useRef<string | null>(null);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
@@ -755,6 +783,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
+  const composerHasContent = prompt.trim().length > 0 || composerImages.length > 0;
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const diffSearch = useMemo(
@@ -2144,6 +2173,201 @@ export default function ChatView({ threadId }: ChatViewProps) {
     sendPhase,
   ]);
 
+  const dispatchExistingThreadTurn = useCallback(
+    async (input: {
+      text: string;
+      images: ComposerImageAttachment[];
+      runtimeMode: RuntimeMode;
+      interactionMode: ProviderInteractionMode;
+      provider: ProviderKind;
+      model: string | null;
+      serviceTier: ReturnType<typeof resolveAppServiceTier>;
+      optimisticErrorMessage: string;
+      failureMessage: string;
+      modelOptions: typeof selectedModelOptionsForDispatch | null;
+    }) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        !isServerThread ||
+        isSendBusy ||
+        isConnecting ||
+        sendInFlightRef.current
+      ) {
+        return false;
+      }
+
+      const trimmed = input.text.trim();
+      if (!trimmed && input.images.length === 0) {
+        return false;
+      }
+
+      const threadIdForSend = activeThread.id;
+      const messageIdForSend = newMessageId();
+      const messageCreatedAt = new Date().toISOString();
+      const optimisticAttachments = input.images.map((image) => ({
+        type: "image" as const,
+        id: image.id,
+        name: image.name,
+        mimeType: image.mimeType,
+        sizeBytes: image.sizeBytes,
+        previewUrl: image.previewUrl,
+      }));
+
+      sendInFlightRef.current = true;
+      beginSendPhase("sending-turn");
+      setThreadError(threadIdForSend, null);
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: trimmed,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          createdAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+      shouldAutoScrollRef.current = true;
+      forceStickToBottom();
+
+      try {
+        await persistThreadSettingsForNextTurn({
+          threadId: threadIdForSend,
+          createdAt: messageCreatedAt,
+          ...(input.model ? { model: input.model } : {}),
+          runtimeMode: input.runtimeMode,
+          interactionMode: input.interactionMode,
+        });
+
+        const turnAttachments = await Promise.all(
+          input.images.map(async (image) => ({
+            type: "image" as const,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl: await readFileAsDataUrl(image.file),
+          })),
+        );
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          message: {
+            messageId: messageIdForSend,
+            role: "user",
+            text: trimmed || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+            attachments: turnAttachments,
+          },
+          provider: input.provider,
+          model: input.model || undefined,
+          serviceTier: input.serviceTier,
+          ...(input.modelOptions ? { modelOptions: input.modelOptions } : {}),
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          runtimeMode: input.runtimeMode,
+          interactionMode: input.interactionMode,
+          createdAt: messageCreatedAt,
+        });
+        sendInFlightRef.current = false;
+        return true;
+      } catch (err) {
+        setOptimisticUserMessages((existing) =>
+          existing.filter((message) => message.id !== messageIdForSend),
+        );
+        setThreadError(
+          threadIdForSend,
+          err instanceof Error ? err.message : input.optimisticErrorMessage,
+        );
+        sendInFlightRef.current = false;
+        resetSendPhase();
+        throw err instanceof Error
+          ? new Error(err.message, { cause: err })
+          : new Error(input.failureMessage);
+      }
+    },
+    [
+      activeThread,
+      beginSendPhase,
+      forceStickToBottom,
+      isConnecting,
+      isSendBusy,
+      isServerThread,
+      persistThreadSettingsForNextTurn,
+      resetSendPhase,
+      setThreadError,
+      settings.enableAssistantStreaming,
+    ],
+  );
+
+  const queueComposerTurn = useCallback(
+    async (input?: {
+      text: string;
+      interactionMode: ProviderInteractionMode;
+    }) => {
+      if (!activeThread || !isServerThread) {
+        return false;
+      }
+
+      const trimmed = (input?.text ?? prompt).trim();
+      const queuedImages = [...composerImages];
+      if (!trimmed && queuedImages.length === 0) {
+        return false;
+      }
+
+      const queuedTurn: QueuedComposerTurn = {
+        id: crypto.randomUUID(),
+        queuedAt: new Date().toISOString(),
+        text: trimmed,
+        images: queuedImages,
+        provider: selectedProvider,
+        model: selectedModel ?? null,
+        runtimeMode,
+        interactionMode: input?.interactionMode ?? interactionMode,
+        serviceTier: selectedServiceTier,
+        modelOptions: selectedModelOptionsForDispatch
+          ? {
+              codex: {
+                ...(selectedModelOptionsForDispatch.codex?.reasoningEffort !== undefined
+                  ? {
+                      reasoningEffort: selectedModelOptionsForDispatch.codex.reasoningEffort,
+                    }
+                  : {}),
+                ...(selectedModelOptionsForDispatch.codex?.fastMode === true
+                  ? { fastMode: true }
+                  : {}),
+              },
+            }
+          : null,
+      };
+
+      enqueueQueuedTurn(activeThread.id, queuedTurn);
+      setThreadError(activeThread.id, null);
+      promptRef.current = "";
+      clearComposerDraftContent(activeThread.id);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      return true;
+    },
+    [
+      activeThread,
+      clearComposerDraftContent,
+      composerImages,
+      enqueueQueuedTurn,
+      interactionMode,
+      isServerThread,
+      prompt,
+      runtimeMode,
+      selectedModel,
+      selectedModelOptionsForDispatch,
+      selectedProvider,
+      selectedServiceTier,
+      setThreadError,
+    ],
+  );
+
   useEffect(() => {
     if (!activeThreadId) return;
     const previous = terminalOpenByThreadRef.current[activeThreadId] ?? false;
@@ -2395,7 +2619,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    disposition: ComposerSubmissionDisposition = "steer",
+  ) => {
     e?.preventDefault();
     const api = readNativeApi();
     if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
@@ -2409,6 +2636,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
       });
+      if (phase === "running" && disposition === "queue") {
+        await queueComposerTurn(followUp);
+        return;
+      }
       promptRef.current = "";
       clearComposerDraftContent(activeThread.id);
       setComposerHighlightedItemId(null);
@@ -2432,6 +2663,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
     if (!trimmed && composerImages.length === 0) return;
+    if (phase === "running" && disposition === "queue") {
+      await queueComposerTurn();
+      return;
+    }
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
@@ -2675,6 +2910,68 @@ export default function ChatView({ threadId }: ChatViewProps) {
       resetSendPhase();
     }
   };
+
+  useEffect(() => {
+    const nextQueuedTurn = queuedTurns[0];
+    if (!nextQueuedTurn) {
+      return;
+    }
+    if (
+      phase === "running" ||
+      isSendBusy ||
+      isConnecting ||
+      sendInFlightRef.current ||
+      !activeThread ||
+      !isServerThread ||
+      queuedTurnFlushIdRef.current !== null
+    ) {
+      return;
+    }
+
+    queuedTurnFlushIdRef.current = nextQueuedTurn.id;
+    consumeQueuedTurn(threadId, nextQueuedTurn.id);
+
+    void dispatchExistingThreadTurn({
+      text: nextQueuedTurn.text,
+      images: nextQueuedTurn.images,
+      runtimeMode: nextQueuedTurn.runtimeMode,
+      interactionMode: nextQueuedTurn.interactionMode,
+      provider: nextQueuedTurn.provider,
+      model: nextQueuedTurn.model,
+      serviceTier: nextQueuedTurn.serviceTier,
+      modelOptions: nextQueuedTurn.modelOptions?.codex
+        ? {
+            codex: {
+              ...(nextQueuedTurn.modelOptions.codex.reasoningEffort !== undefined
+                ? {
+                    reasoningEffort: nextQueuedTurn.modelOptions.codex.reasoningEffort,
+                  }
+                : {}),
+              ...(nextQueuedTurn.modelOptions.codex.fastMode === true ? { fastMode: true } : {}),
+            },
+          }
+        : null,
+      optimisticErrorMessage: "Failed to send queued follow-up.",
+      failureMessage: "Failed to send queued follow-up.",
+    })
+      .catch(() => {
+        prependQueuedTurn(threadId, nextQueuedTurn);
+      })
+      .finally(() => {
+        queuedTurnFlushIdRef.current = null;
+      });
+  }, [
+    activeThread,
+    consumeQueuedTurn,
+    dispatchExistingThreadTurn,
+    isConnecting,
+    isSendBusy,
+    isServerThread,
+    phase,
+    prependQueuedTurn,
+    queuedTurns,
+    threadId,
+  ]);
 
   const onInterrupt = async () => {
     const api = readNativeApi();
@@ -3312,6 +3609,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     }
 
+    if (key === "Tab" && !event.shiftKey && phase === "running" && composerHasContent) {
+      void onSend(undefined, "queue");
+      return true;
+    }
+
     if (key === "Enter" && !event.shiftKey) {
       void onSend();
       return true;
@@ -3497,6 +3799,41 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 />
               </div>
             ) : null}
+
+            {queuedTurns.length > 0 && (
+              <div className="border-b border-border/65 bg-muted/15 px-3 py-2 sm:px-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary" className="rounded-full">
+                    {queuedTurns.length === 1
+                      ? "1 queued follow-up"
+                      : `${queuedTurns.length} queued follow-ups`}
+                  </Badge>
+                  <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground/80">
+                    Next: {summarizeQueuedTurn(queuedTurns[0]!)}
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 rounded-full px-3 text-xs"
+                    onClick={() => removeQueuedTurn(threadId, queuedTurns[0]!.id)}
+                  >
+                    Remove next
+                  </Button>
+                  {queuedTurns.length > 1 ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 rounded-full px-3 text-xs"
+                      onClick={() => clearQueuedTurns(threadId)}
+                    >
+                      Clear all
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            )}
 
             {/* Textarea area */}
             <div
@@ -3732,22 +4069,46 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       </Button>
                     </div>
                   ) : phase === "running" ? (
-                    <button
-                      type="button"
-                      className="flex size-8 items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
-                      onClick={() => void onInterrupt()}
-                      aria-label="Stop generation"
-                    >
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 12 12"
-                        fill="currentColor"
-                        aria-hidden="true"
+                    <div className="flex items-center gap-2">
+                      {composerHasContent ? (
+                        <>
+                          <Button
+                            type="submit"
+                            size="sm"
+                            className="h-9 rounded-full px-4 sm:h-8"
+                            disabled={isSendBusy || isConnecting}
+                          >
+                            Steer
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-9 rounded-full px-4 sm:h-8"
+                            disabled={isSendBusy || isConnecting}
+                            onClick={() => void onSend(undefined, "queue")}
+                          >
+                            Queue
+                          </Button>
+                        </>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="flex size-8 items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
+                        onClick={() => void onInterrupt()}
+                        aria-label="Stop generation"
                       >
-                        <rect x="2" y="2" width="8" height="8" rx="1.5" />
-                      </svg>
-                    </button>
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 12 12"
+                          fill="currentColor"
+                          aria-hidden="true"
+                        >
+                          <rect x="2" y="2" width="8" height="8" rx="1.5" />
+                        </svg>
+                      </button>
+                    </div>
                   ) : pendingUserInputs.length === 0 ? (
                     showPlanFollowUpPrompt ? (
                       prompt.trim().length > 0 ? (
