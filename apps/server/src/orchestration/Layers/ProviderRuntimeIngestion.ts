@@ -32,6 +32,8 @@ const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
+const ASSISTANT_TEXT_SEEN_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
+const ASSISTANT_TEXT_SEEN_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
@@ -509,6 +511,12 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
   });
 
+  const assistantTextSeenByMessageId = yield* Cache.make<MessageId, boolean>({
+    capacity: ASSISTANT_TEXT_SEEN_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: ASSISTANT_TEXT_SEEN_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.succeed(false),
+  });
+
   const isGitRepoForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === threadId);
@@ -610,6 +618,17 @@ const make = Effect.gen(function* () {
   const clearBufferedAssistantText = (messageId: MessageId) =>
     Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
 
+  const markAssistantTextSeen = (messageId: MessageId) =>
+    Cache.set(assistantTextSeenByMessageId, messageId, true);
+
+  const hasSeenAssistantText = (messageId: MessageId) =>
+    Cache.getOption(assistantTextSeenByMessageId, messageId).pipe(
+      Effect.map((existing) => Option.getOrElse(existing, () => false)),
+    );
+
+  const clearAssistantTextSeen = (messageId: MessageId) =>
+    Cache.invalidate(assistantTextSeenByMessageId, messageId);
+
   const appendBufferedProposedPlan = (planId: string, delta: string, createdAt: string) =>
     Cache.getOption(bufferedProposedPlanById, planId).pipe(
       Effect.flatMap((existingEntry) => {
@@ -647,10 +666,11 @@ const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       const bufferedText = yield* takeBufferedAssistantText(input.messageId);
+      const sawAssistantText = yield* hasSeenAssistantText(input.messageId);
       const text =
         bufferedText.length > 0
           ? bufferedText
-          : (input.fallbackText?.trim().length ?? 0) > 0
+          : !sawAssistantText && (input.fallbackText?.trim().length ?? 0) > 0
             ? input.fallbackText!
             : "";
 
@@ -675,6 +695,7 @@ const make = Effect.gen(function* () {
         createdAt: input.createdAt,
       });
       yield* clearAssistantMessageState(input.messageId);
+      yield* clearAssistantTextSeen(input.messageId);
     });
 
   const upsertProposedPlan = (input: {
@@ -755,6 +776,7 @@ const make = Effect.gen(function* () {
       const proposedPlanPrefix = `plan:${threadId}:`;
       const turnKeys = Array.from(yield* Cache.keys(turnMessageIdsByTurnKey));
       const proposedPlanKeys = Array.from(yield* Cache.keys(bufferedProposedPlanById));
+      const assistantTextSeenKeys = Array.from(yield* Cache.keys(assistantTextSeenByMessageId));
       yield* Effect.forEach(
         turnKeys,
         (key) =>
@@ -780,6 +802,11 @@ const make = Effect.gen(function* () {
           key.startsWith(proposedPlanPrefix)
             ? Cache.invalidate(bufferedProposedPlanById, key)
             : Effect.void,
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+      yield* Effect.forEach(
+        assistantTextSeenKeys,
+        (messageId) => clearAssistantTextSeen(messageId),
         { concurrency: 1 },
       ).pipe(Effect.asVoid);
     });
@@ -895,6 +922,7 @@ const make = Effect.gen(function* () {
         const assistantMessageId = MessageId.makeUnsafe(
           `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
         );
+        yield* markAssistantTextSeen(assistantMessageId);
         const turnId = toTurnId(event.turnId);
         if (turnId) {
           yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);

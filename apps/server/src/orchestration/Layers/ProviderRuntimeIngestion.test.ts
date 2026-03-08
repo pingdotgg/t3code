@@ -850,6 +850,96 @@ describe("ProviderRuntimeIngestion", () => {
     expect(finalMessage?.streaming).toBe(false);
   });
 
+  it("does not duplicate streamed assistant text when completion includes full detail", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-streaming-detail"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("message-streaming-detail"),
+          role: "user",
+          text: "stream please",
+          attachments: [],
+        },
+        assistantDeliveryMode: "streaming",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(Effect.sleep("30 millis"));
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-streaming-detail"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-streaming-detail"),
+    });
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-streaming-detail-1"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-streaming-detail"),
+      itemId: asItemId("item-streaming-detail"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "I checked this carefully before generating junk data.",
+      },
+    });
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-streaming-detail-2"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-streaming-detail"),
+      itemId: asItemId("item-streaming-detail"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "\n\nWhat’s true right now:",
+      },
+    });
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-streaming-detail"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-streaming-detail"),
+      itemId: asItemId("item-streaming-detail"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "I checked this carefully before generating junk data.\n\nWhat’s true right now:",
+      },
+    });
+
+    const finalThread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-streaming-detail" && !message.streaming,
+      ),
+    );
+    const finalMessage = finalThread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-streaming-detail",
+    );
+    expect(finalMessage?.text).toBe(
+      "I checked this carefully before generating junk data.\n\nWhat’s true right now:",
+    );
+    expect(finalMessage?.streaming).toBe(false);
+  });
+
   it("spills oversized buffered deltas and still finalizes full assistant text", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
