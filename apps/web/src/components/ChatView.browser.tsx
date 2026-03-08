@@ -8,6 +8,7 @@ import {
   type ProjectId,
   type ServerConfig,
   type ThreadId,
+  type TurnId,
   type WsWelcomePayload,
   WS_CHANNELS,
   WS_METHODS,
@@ -29,6 +30,7 @@ const PROJECT_ID = "project-1" as ProjectId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='300'></svg>";
+const MARKDOWN_IMAGE_URL = "http://localhost:3020/markdown-image.svg";
 
 interface WsRequestEnvelope {
   id: string;
@@ -336,6 +338,13 @@ const worker = setupWorker(
       },
     }),
   ),
+  http.get("*/markdown-image.svg", () =>
+    HttpResponse.text(ATTACHMENT_SVG, {
+      headers: {
+        "Content-Type": "image/svg+xml",
+      },
+    }),
+  ),
   http.get("*/api/project-favicon", () => new HttpResponse(null, { status: 204 })),
 );
 
@@ -359,9 +368,9 @@ async function setViewport(viewport: ViewportSpec): Promise<void> {
 async function waitForProductionStyles(): Promise<void> {
   await vi.waitFor(
     () => {
-      expect(getComputedStyle(document.documentElement).getPropertyValue("--background").trim()).not.toBe(
-        "",
-      );
+      expect(
+        getComputedStyle(document.documentElement).getPropertyValue("--background").trim(),
+      ).not.toBe("");
       expect(getComputedStyle(document.body).marginTop).toBe("0px");
     },
     {
@@ -399,13 +408,25 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   );
 }
 
-async function waitForInteractionModeButton(expectedLabel: "Chat" | "Plan"): Promise<HTMLButtonElement> {
+async function waitForInteractionModeButton(
+  expectedLabel: "Chat" | "Plan",
+): Promise<HTMLButtonElement> {
   return waitForElement(
     () =>
       Array.from(document.querySelectorAll("button")).find(
         (button) => button.textContent?.trim() === expectedLabel,
       ) as HTMLButtonElement | null,
     `Unable to find ${expectedLabel} interaction mode button.`,
+  );
+}
+
+async function waitForButtonByText(expectedLabel: string): Promise<HTMLButtonElement> {
+  return waitForElement(
+    () =>
+      Array.from(document.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === expectedLabel,
+      ) as HTMLButtonElement | null,
+    `Unable to find '${expectedLabel}' button.`,
   );
 }
 
@@ -642,7 +663,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const measurements: Array<UserRowMeasurement & { viewport: ViewportSpec; estimatedHeightPx: number }> = [];
+      const measurements: Array<
+        UserRowMeasurement & { viewport: ViewportSpec; estimatedHeightPx: number }
+      > = [];
 
       for (const viewport of TEXT_VIEWPORT_MATRIX) {
         await mounted.setViewport(viewport);
@@ -659,7 +682,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
         measurements.push({ ...measurement, viewport, estimatedHeightPx });
       }
 
-      expect(new Set(measurements.map((measurement) => Math.round(measurement.timelineWidthMeasuredPx))).size).toBeGreaterThanOrEqual(3);
+      expect(
+        new Set(measurements.map((measurement) => Math.round(measurement.timelineWidthMeasuredPx)))
+          .size,
+      ).toBeGreaterThanOrEqual(3);
 
       const byMeasuredWidth = measurements.toSorted(
         (left, right) => left.timelineWidthMeasuredPx - right.timelineWidthMeasuredPx,
@@ -701,7 +727,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
       { timelineWidthPx: mobileMeasurement.timelineWidthMeasuredPx },
     );
 
-    const measuredDeltaPx = mobileMeasurement.measuredRowHeightPx - desktopMeasurement.measuredRowHeightPx;
+    const measuredDeltaPx =
+      mobileMeasurement.measuredRowHeightPx - desktopMeasurement.measuredRowHeightPx;
     const estimatedDeltaPx = estimatedMobilePx - estimatedDesktopPx;
     expect(measuredDeltaPx).toBeGreaterThan(0);
     expect(estimatedDeltaPx).toBeGreaterThan(0);
@@ -789,7 +816,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          const openRequest = wsRequests.find((request) => request._tag === WS_METHODS.shellOpenInEditor);
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.shellOpenInEditor,
+          );
           expect(openRequest).toMatchObject({
             _tag: WS_METHODS.shellOpenInEditor,
             cwd: "/repo/project",
@@ -862,6 +891,134 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect((await waitForInteractionModeButton("Chat")).title).toContain("enter plan mode");
         },
         { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows busy-turn steering controls and dispatches an interrupt before follow-up send", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "Please change course.");
+
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-running" as MessageId,
+      targetText: "running target",
+    });
+    const runningThread = snapshot.threads[0];
+    if (!runningThread) {
+      throw new Error("Expected running thread fixture.");
+    }
+    const runningSnapshot: OrchestrationReadModel = {
+      ...snapshot,
+      threads: [
+        {
+          ...runningThread,
+          latestTurn: {
+            turnId: "turn-running" as TurnId,
+            state: "running",
+            requestedAt: NOW_ISO,
+            startedAt: NOW_ISO,
+            completedAt: null,
+            assistantMessageId: null,
+          },
+          session: {
+            threadId: THREAD_ID,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: "turn-running" as TurnId,
+            lastError: null,
+            updatedAt: NOW_ISO,
+          },
+        },
+      ],
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: runningSnapshot,
+    });
+
+    try {
+      const steerButton = await waitForButtonByText("Steer now");
+      steerButton.click();
+
+      await vi.waitFor(
+        () => {
+          const interruptRequest = wsRequests.find((request) => {
+            const command = (request as { command?: { type?: string } }).command;
+            return (
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              command?.type === "thread.turn.interrupt"
+            );
+          });
+          expect(interruptRequest).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("p")).find(
+            (element) => element.textContent?.trim() === "Steer pending",
+          ) ?? null,
+        "Unable to find steer pending banner.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders assistant markdown images inline and opens the expanded preview", async () => {
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-markdown-image" as MessageId,
+      targetText: "show image preview",
+    });
+    const thread = snapshot.threads[0];
+    if (!thread) {
+      throw new Error("Expected assistant message fixture.");
+    }
+    const assistantMessageIndex = thread.messages.findLastIndex(
+      (message) => message.role === "assistant",
+    );
+    if (assistantMessageIndex < 0) {
+      throw new Error("Expected assistant message fixture.");
+    }
+    const assistantMessage = thread.messages[assistantMessageIndex];
+    if (!assistantMessage) {
+      throw new Error("Expected assistant message fixture.");
+    }
+    const messages = thread.messages.slice();
+    messages[assistantMessageIndex] = {
+      ...assistantMessage,
+      text: `Preview this image:\n\n![diagram](${MARKDOWN_IMAGE_URL})`,
+    };
+    const imageSnapshot: OrchestrationReadModel = {
+      ...snapshot,
+      threads: [
+        {
+          ...thread,
+          messages,
+        },
+      ],
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: imageSnapshot,
+    });
+
+    try {
+      const imageButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>(".chat-markdown-image-button"),
+        "Unable to find assistant markdown image preview button.",
+      );
+      await waitForImagesToLoad(document);
+      imageButton.click();
+
+      await waitForElement(
+        () => document.querySelector<HTMLElement>('[aria-label="Expanded image preview"]'),
+        "Unable to open expanded image preview.",
       );
     } finally {
       await mounted.cleanup();

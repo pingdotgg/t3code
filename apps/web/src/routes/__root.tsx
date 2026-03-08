@@ -187,6 +187,13 @@ function EventRouter() {
 
     void syncSnapshot().catch(() => undefined);
 
+    const syncSnapshotOnResume = () => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+      void syncSnapshot().catch(() => undefined);
+    };
+
     const unsubDomainEvent = api.orchestration.onDomainEvent((event) => {
       if (event.sequence <= latestSequence) {
         return;
@@ -278,12 +285,20 @@ function EventRouter() {
         },
       });
     });
+    window.addEventListener("focus", syncSnapshotOnResume);
+    window.addEventListener("pageshow", syncSnapshotOnResume);
+    window.addEventListener("online", syncSnapshotOnResume);
+    document.addEventListener("visibilitychange", syncSnapshotOnResume);
     return () => {
       disposed = true;
       unsubDomainEvent();
       unsubTerminalEvent();
       unsubWelcome();
       unsubServerConfigUpdated();
+      window.removeEventListener("focus", syncSnapshotOnResume);
+      window.removeEventListener("pageshow", syncSnapshotOnResume);
+      window.removeEventListener("online", syncSnapshotOnResume);
+      document.removeEventListener("visibilitychange", syncSnapshotOnResume);
     };
   }, [
     navigate,

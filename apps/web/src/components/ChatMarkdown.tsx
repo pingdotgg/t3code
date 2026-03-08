@@ -53,6 +53,7 @@ interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
   isStreaming?: boolean;
+  onImagePreview?: (input: { src: string; alt: string }) => void;
 }
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
@@ -232,7 +233,7 @@ function SuspenseShikiCodeBlock({
   );
 }
 
-function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
+function ChatMarkdown({ text, cwd, isStreaming = false, onImagePreview }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownComponents = useMemo<Components>(
@@ -281,12 +282,49 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
           </MarkdownCodeBlock>
         );
       },
+      img({ node: _node, src, alt, ...props }) {
+        if (typeof src !== "string" || src.length === 0) {
+          return null;
+        }
+
+        const image = (
+          <img
+            {...props}
+            src={src}
+            alt={alt ?? ""}
+            loading="lazy"
+            className="chat-markdown-image"
+          />
+        );
+
+        if (!onImagePreview) {
+          return <span className="chat-markdown-media">{image}</span>;
+        }
+
+        return (
+          <span className="chat-markdown-media">
+            <button
+              type="button"
+              className="chat-markdown-image-button"
+              onClick={() => {
+                onImagePreview({
+                  src,
+                  alt: alt ?? "Image attachment",
+                });
+              }}
+              aria-label={alt ? `Preview ${alt}` : "Preview image"}
+            >
+              {image}
+            </button>
+          </span>
+        );
+      },
     }),
-    [cwd, diffThemeName, isStreaming],
+    [cwd, diffThemeName, isStreaming, onImagePreview],
   );
 
   return (
-    <div className="chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80">
+    <div className="chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/92">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
         {text}
       </ReactMarkdown>

@@ -199,10 +199,12 @@ import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import {
+  BUSY_TURN_SUBMISSION_OPTIONS,
   getAppModelOptions,
   resolveAppModelSelection,
   resolveAppServiceTier,
   shouldShowFastTierIcon,
+  type BusyTurnSubmissionBehavior,
   type AppServiceTier,
   useAppSettings,
 } from "../appSettings";
@@ -249,7 +251,6 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
-const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -285,10 +286,10 @@ function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
 }
 
 function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
-  if (tone === "error") return "text-rose-300/50 dark:text-rose-300/50";
-  if (tone === "tool") return "text-muted-foreground/70";
-  if (tone === "thinking") return "text-muted-foreground/50";
-  return "text-muted-foreground/40";
+  if (tone === "error") return "text-rose-700 dark:text-rose-300/90";
+  if (tone === "tool") return "text-foreground/92";
+  if (tone === "thinking") return "text-foreground/86";
+  return "text-foreground/84";
 }
 
 function normalizePlanMarkdownForExport(planMarkdown: string): string {
@@ -334,6 +335,21 @@ function buildExpandedImagePreview(
   return {
     images: previewableImages.map((image) => ({ src: image.src, name: image.name })),
     index: selectedIndex,
+  };
+}
+
+function buildSingleExpandedImagePreview(input: {
+  src: string;
+  name: string;
+}): ExpandedImagePreview {
+  return {
+    images: [
+      {
+        src: input.src,
+        name: input.name,
+      },
+    ],
+    index: 0,
   };
 }
 
@@ -424,6 +440,12 @@ type ComposerCommandItem =
     };
 
 type SendPhase = "idle" | "preparing-worktree" | "sending-turn";
+interface PendingBusyTurnSubmission {
+  threadId: ThreadId;
+  text: string;
+  images: ComposerImageAttachment[];
+  behavior: BusyTurnSubmissionBehavior;
+}
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -459,6 +481,12 @@ function cloneComposerImageForRetry(image: ComposerImageAttachment): ComposerIma
     };
   } catch {
     return image;
+  }
+}
+
+function revokeComposerImagePreviewUrls(images: ReadonlyArray<ComposerImageAttachment>): void {
+  for (const image of images) {
+    revokeBlobPreviewUrl(image.previewUrl);
   }
 }
 
@@ -643,6 +671,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     Record<ThreadId, string | null>
   >({});
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
+  const [pendingBusyTurnSubmission, setPendingBusyTurnSubmission] =
+    useState<PendingBusyTurnSubmission | null>(null);
   const [sendStartedAt, setSendStartedAt] = useState<string | null>(null);
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
@@ -693,6 +723,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
+  const pendingBusyTurnDispatchRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
@@ -734,6 +765,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [removeComposerDraftImage, threadId],
   );
+  const clearComposerInput = useCallback(() => {
+    promptRef.current = "";
+    clearComposerDraftContent(threadId);
+    setComposerHighlightedItemId(null);
+    setComposerCursor(0);
+    setComposerTrigger(null);
+  }, [clearComposerDraftContent, threadId]);
 
   const serverThread = threads.find((t) => t.id === threadId);
   const fallbackDraftProject = projects.find((project) => project.id === draftThread?.projectId);
@@ -793,6 +831,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activeThread.messages.length > 0 ||
       activeThread.session !== null),
   );
+  const busyTurnSubmissionBehavior = settings.busyTurnSubmissionBehavior;
   const selectedServiceTierSetting = settings.codexServiceTier;
   const selectedServiceTier = resolveAppServiceTier(selectedServiceTierSetting);
   const lockedProvider: ProviderKind | null = hasThreadStarted
@@ -862,6 +901,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isSendBusy = sendPhase !== "idle";
   const isPreparingWorktree = sendPhase === "preparing-worktree";
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const pendingBusySubmissionForActiveThread =
+    pendingBusyTurnSubmission?.threadId === activeThread?.id ? pendingBusyTurnSubmission : null;
+  const defaultBusyTurnSubmissionOption =
+    BUSY_TURN_SUBMISSION_OPTIONS.find((option) => option.value === busyTurnSubmissionBehavior) ??
+    BUSY_TURN_SUBMISSION_OPTIONS[0];
+  const alternateBusyTurnSubmissionOption = BUSY_TURN_SUBMISSION_OPTIONS.find(
+    (option) => option.value !== defaultBusyTurnSubmissionOption?.value,
+  );
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
@@ -2395,6 +2442,360 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
 
+  const submitComposerTurn = useCallback(
+    async (input: {
+      text: string;
+      images: ComposerImageAttachment[];
+      interactionModeOverride?: ProviderInteractionMode;
+    }): Promise<boolean> => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        !activeProject ||
+        isSendBusy ||
+        isConnecting ||
+        sendInFlightRef.current
+      ) {
+        return false;
+      }
+
+      const trimmed = input.text.trim();
+      const composerImagesSnapshot = [...input.images];
+      if (!trimmed && composerImagesSnapshot.length === 0) {
+        return false;
+      }
+
+      const effectiveInteractionMode = input.interactionModeOverride ?? interactionMode;
+      const threadIdForSend = activeThread.id;
+      const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
+      const baseBranchForWorktree =
+        isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
+          ? activeThread.branch
+          : null;
+
+      const shouldCreateWorktree =
+        isFirstMessage && envMode === "worktree" && !activeThread.worktreePath;
+      if (shouldCreateWorktree && !activeThread.branch) {
+        setStoreThreadError(
+          threadIdForSend,
+          "Select a base branch before sending in New worktree mode.",
+        );
+        return false;
+      }
+
+      sendInFlightRef.current = true;
+      beginSendPhase(baseBranchForWorktree ? "preparing-worktree" : "sending-turn");
+
+      const messageIdForSend = newMessageId();
+      const messageCreatedAt = new Date().toISOString();
+      const turnAttachmentsPromise = Promise.all(
+        composerImagesSnapshot.map(async (image) => ({
+          type: "image" as const,
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          dataUrl: await readFileAsDataUrl(image.file),
+        })),
+      );
+      const optimisticAttachments = composerImagesSnapshot.map((image) => ({
+        type: "image" as const,
+        id: image.id,
+        name: image.name,
+        mimeType: image.mimeType,
+        sizeBytes: image.sizeBytes,
+        previewUrl: image.previewUrl,
+      }));
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: trimmed,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          createdAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+      shouldAutoScrollRef.current = true;
+      forceStickToBottom();
+
+      setThreadError(threadIdForSend, null);
+      clearComposerInput();
+
+      let createdServerThreadForLocalDraft = false;
+      let turnStartSucceeded = false;
+      let nextThreadBranch = activeThread.branch;
+      let nextThreadWorktreePath = activeThread.worktreePath;
+      await (async () => {
+        if (baseBranchForWorktree) {
+          beginSendPhase("preparing-worktree");
+          const newBranch = buildTemporaryWorktreeBranchName();
+          const result = await createWorktreeMutation.mutateAsync({
+            cwd: activeProject.cwd,
+            branch: baseBranchForWorktree,
+            newBranch,
+          });
+          nextThreadBranch = result.worktree.branch;
+          nextThreadWorktreePath = result.worktree.path;
+          if (isServerThread) {
+            await api.orchestration.dispatchCommand({
+              type: "thread.meta.update",
+              commandId: newCommandId(),
+              threadId: threadIdForSend,
+              branch: result.worktree.branch,
+              worktreePath: result.worktree.path,
+            });
+            setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
+          }
+        }
+
+        const firstComposerImageName = composerImagesSnapshot[0]?.name ?? null;
+        let titleSeed = trimmed;
+        if (!titleSeed) {
+          titleSeed = firstComposerImageName ? `Image: ${firstComposerImageName}` : "New thread";
+        }
+        const title = truncateTitle(titleSeed);
+        const threadCreateModel: ModelSlug =
+          selectedModel || (activeProject.model as ModelSlug) || DEFAULT_MODEL_BY_PROVIDER.codex;
+
+        if (isLocalDraftThread) {
+          await api.orchestration.dispatchCommand({
+            type: "thread.create",
+            commandId: newCommandId(),
+            threadId: threadIdForSend,
+            projectId: activeProject.id,
+            title,
+            model: threadCreateModel,
+            runtimeMode,
+            interactionMode: effectiveInteractionMode,
+            branch: nextThreadBranch,
+            worktreePath: nextThreadWorktreePath,
+            createdAt: activeThread.createdAt,
+          });
+          createdServerThreadForLocalDraft = true;
+        }
+
+        let setupScript: ProjectScript | null = null;
+        if (baseBranchForWorktree) {
+          setupScript = setupProjectScript(activeProject.scripts);
+        }
+        if (setupScript) {
+          const shouldRunSetupScript = isServerThread || createdServerThreadForLocalDraft;
+          if (shouldRunSetupScript) {
+            const setupScriptOptions: Parameters<typeof runProjectScript>[1] = {
+              worktreePath: nextThreadWorktreePath,
+              rememberAsLastInvoked: false,
+              allowLocalDraftThread: createdServerThreadForLocalDraft,
+            };
+            if (nextThreadWorktreePath) {
+              setupScriptOptions.cwd = nextThreadWorktreePath;
+            }
+            await runProjectScript(setupScript, setupScriptOptions);
+          }
+        }
+
+        if (isFirstMessage && isServerThread) {
+          await api.orchestration.dispatchCommand({
+            type: "thread.meta.update",
+            commandId: newCommandId(),
+            threadId: threadIdForSend,
+            title,
+          });
+        }
+
+        if (isServerThread) {
+          await persistThreadSettingsForNextTurn({
+            threadId: threadIdForSend,
+            createdAt: messageCreatedAt,
+            ...(selectedModel ? { model: selectedModel } : {}),
+            runtimeMode,
+            interactionMode: effectiveInteractionMode,
+          });
+        }
+
+        beginSendPhase("sending-turn");
+        const turnAttachments = await turnAttachmentsPromise;
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          message: {
+            messageId: messageIdForSend,
+            role: "user",
+            text: trimmed || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+            attachments: turnAttachments,
+          },
+          model: selectedModel || undefined,
+          serviceTier: selectedServiceTier,
+          ...(selectedModelOptionsForDispatch
+            ? { modelOptions: selectedModelOptionsForDispatch }
+            : {}),
+          provider: selectedProvider,
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          runtimeMode,
+          interactionMode: effectiveInteractionMode,
+          createdAt: messageCreatedAt,
+        });
+        turnStartSucceeded = true;
+        if (isFirstMessage) {
+          clearDraftThread(threadIdForSend);
+        }
+      })().catch(async (err: unknown) => {
+        if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
+          await api.orchestration
+            .dispatchCommand({
+              type: "thread.delete",
+              commandId: newCommandId(),
+              threadId: threadIdForSend,
+            })
+            .catch(() => undefined);
+        }
+        if (
+          !turnStartSucceeded &&
+          promptRef.current.length === 0 &&
+          composerImagesRef.current.length === 0
+        ) {
+          setOptimisticUserMessages((existing) => {
+            const removed = existing.filter((message) => message.id === messageIdForSend);
+            for (const message of removed) {
+              revokeUserMessagePreviewUrls(message);
+            }
+            const next = existing.filter((message) => message.id !== messageIdForSend);
+            return next.length === existing.length ? existing : next;
+          });
+          promptRef.current = trimmed;
+          setPrompt(trimmed);
+          setComposerCursor(trimmed.length);
+          addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageForRetry));
+          setComposerTrigger(detectComposerTrigger(trimmed, trimmed.length));
+        }
+        setThreadError(
+          threadIdForSend,
+          err instanceof Error ? err.message : "Failed to send message.",
+        );
+      });
+      sendInFlightRef.current = false;
+      if (!turnStartSucceeded) {
+        resetSendPhase();
+      }
+      return turnStartSucceeded;
+    },
+    [
+      activeProject,
+      activeThread,
+      addComposerImagesToDraft,
+      beginSendPhase,
+      clearComposerInput,
+      clearDraftThread,
+      createWorktreeMutation,
+      envMode,
+      forceStickToBottom,
+      interactionMode,
+      isConnecting,
+      isLocalDraftThread,
+      isSendBusy,
+      isServerThread,
+      persistThreadSettingsForNextTurn,
+      resetSendPhase,
+      runProjectScript,
+      runtimeMode,
+      selectedModel,
+      selectedModelOptionsForDispatch,
+      selectedProvider,
+      selectedServiceTier,
+      setPrompt,
+      setStoreThreadError,
+      setStoreThreadBranch,
+      setThreadError,
+      settings.enableAssistantStreaming,
+    ],
+  );
+
+  const onInterrupt = useCallback(async () => {
+    const api = readNativeApi();
+    if (!api || !activeThread) return;
+    await api.orchestration.dispatchCommand({
+      type: "thread.turn.interrupt",
+      commandId: newCommandId(),
+      threadId: activeThread.id,
+      createdAt: new Date().toISOString(),
+    });
+  }, [activeThread]);
+
+  const queueBusyTurnSubmission = useCallback(
+    async (behavior: BusyTurnSubmissionBehavior) => {
+      if (!activeThread) {
+        return;
+      }
+      const trimmed = prompt.trim();
+      if (!trimmed && composerImages.length === 0) {
+        return;
+      }
+      if (pendingBusySubmissionForActiveThread) {
+        setThreadError(
+          activeThread.id,
+          "A follow-up is already pending. Edit or cancel it before sending another one.",
+        );
+        return;
+      }
+
+      const images = composerImages.map(cloneComposerImageForRetry);
+      setPendingBusyTurnSubmission({
+        threadId: activeThread.id,
+        text: trimmed,
+        images,
+        behavior,
+      });
+      setThreadError(activeThread.id, null);
+      clearComposerInput();
+
+      if (behavior === "steer") {
+        await onInterrupt();
+      }
+    },
+    [
+      activeThread,
+      clearComposerInput,
+      composerImages,
+      onInterrupt,
+      pendingBusySubmissionForActiveThread,
+      prompt,
+      setThreadError,
+    ],
+  );
+
+  const restorePendingBusyTurnSubmission = useCallback(() => {
+    if (!pendingBusySubmissionForActiveThread) {
+      return;
+    }
+    const queuedPrompt = pendingBusySubmissionForActiveThread.text;
+    const queuedImages = pendingBusySubmissionForActiveThread.images;
+    setPendingBusyTurnSubmission(null);
+    promptRef.current = queuedPrompt;
+    setPrompt(queuedPrompt);
+    addComposerImagesToDraft(queuedImages.map(cloneComposerImageForRetry));
+    revokeComposerImagePreviewUrls(queuedImages);
+    setComposerHighlightedItemId(null);
+    setComposerCursor(queuedPrompt.length);
+    setComposerTrigger(detectComposerTrigger(queuedPrompt, queuedPrompt.length));
+    scheduleComposerFocus();
+  }, [
+    addComposerImagesToDraft,
+    pendingBusySubmissionForActiveThread,
+    scheduleComposerFocus,
+    setPrompt,
+  ]);
+
+  const cancelPendingBusyTurnSubmission = useCallback(() => {
+    if (!pendingBusySubmissionForActiveThread) {
+      return;
+    }
+    revokeComposerImagePreviewUrls(pendingBusySubmissionForActiveThread.images);
+    setPendingBusyTurnSubmission(null);
+    scheduleComposerFocus();
+  }, [pendingBusySubmissionForActiveThread, scheduleComposerFocus]);
+
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     const api = readNativeApi();
@@ -2409,11 +2810,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
       });
-      promptRef.current = "";
-      clearComposerDraftContent(activeThread.id);
-      setComposerHighlightedItemId(null);
-      setComposerCursor(0);
-      setComposerTrigger(null);
+      clearComposerInput();
       await onSubmitPlanFollowUp({
         text: followUp.text,
         interactionMode: followUp.interactionMode,
@@ -2424,268 +2821,58 @@ export default function ChatView({ threadId }: ChatViewProps) {
       composerImages.length === 0 ? parseStandaloneComposerSlashCommand(trimmed) : null;
     if (standaloneSlashCommand) {
       await handleInteractionModeChange(standaloneSlashCommand);
-      promptRef.current = "";
-      clearComposerDraftContent(activeThread.id);
-      setComposerHighlightedItemId(null);
-      setComposerCursor(0);
-      setComposerTrigger(null);
+      clearComposerInput();
       return;
     }
     if (!trimmed && composerImages.length === 0) return;
-    if (!activeProject) return;
-    const threadIdForSend = activeThread.id;
-    const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
-    const baseBranchForWorktree =
-      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
-        ? activeThread.branch
-        : null;
+    if (phase === "running") {
+      await queueBusyTurnSubmission(busyTurnSubmissionBehavior);
+      return;
+    }
+    await submitComposerTurn({
+      text: trimmed,
+      images: composerImages,
+    });
+  };
 
-    // In worktree mode, require an explicit base branch so we don't silently
-    // fall back to local execution when branch selection is missing.
-    const shouldCreateWorktree =
-      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThread.branch) {
-      setStoreThreadError(
-        threadIdForSend,
-        "Select a base branch before sending in New worktree mode.",
-      );
+  useEffect(() => {
+    if (!pendingBusySubmissionForActiveThread || pendingBusyTurnDispatchRef.current) {
+      return;
+    }
+    if (
+      phase === "running" ||
+      isSendBusy ||
+      isConnecting ||
+      sendInFlightRef.current ||
+      promptRef.current.length > 0 ||
+      composerImagesRef.current.length > 0
+    ) {
       return;
     }
 
-    sendInFlightRef.current = true;
-    beginSendPhase(baseBranchForWorktree ? "preparing-worktree" : "sending-turn");
-
-    const composerImagesSnapshot = [...composerImages];
-    const messageIdForSend = newMessageId();
-    const messageCreatedAt = new Date().toISOString();
-    const turnAttachmentsPromise = Promise.all(
-      composerImagesSnapshot.map(async (image) => ({
-        type: "image" as const,
-        name: image.name,
-        mimeType: image.mimeType,
-        sizeBytes: image.sizeBytes,
-        dataUrl: await readFileAsDataUrl(image.file),
-      })),
-    );
-    const optimisticAttachments = composerImagesSnapshot.map((image) => ({
-      type: "image" as const,
-      id: image.id,
-      name: image.name,
-      mimeType: image.mimeType,
-      sizeBytes: image.sizeBytes,
-      previewUrl: image.previewUrl,
-    }));
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: trimmed,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-        createdAt: messageCreatedAt,
-        streaming: false,
-      },
-    ]);
-    // Sending a message should always bring the latest user turn into view.
-    shouldAutoScrollRef.current = true;
-    forceStickToBottom();
-
-    setThreadError(threadIdForSend, null);
-    promptRef.current = "";
-    clearComposerDraftContent(threadIdForSend);
-    setComposerHighlightedItemId(null);
-    setComposerCursor(0);
-    setComposerTrigger(null);
-
-    let createdServerThreadForLocalDraft = false;
-    let turnStartSucceeded = false;
-    let nextThreadBranch = activeThread.branch;
-    let nextThreadWorktreePath = activeThread.worktreePath;
-    await (async () => {
-      // On first message: lock in branch + create worktree if needed.
-      if (baseBranchForWorktree) {
-        beginSendPhase("preparing-worktree");
-        const newBranch = buildTemporaryWorktreeBranchName();
-        const result = await createWorktreeMutation.mutateAsync({
-          cwd: activeProject.cwd,
-          branch: baseBranchForWorktree,
-          newBranch,
-        });
-        nextThreadBranch = result.worktree.branch;
-        nextThreadWorktreePath = result.worktree.path;
-        if (isServerThread) {
-          await api.orchestration.dispatchCommand({
-            type: "thread.meta.update",
-            commandId: newCommandId(),
-            threadId: threadIdForSend,
-            branch: result.worktree.branch,
-            worktreePath: result.worktree.path,
-          });
-          // Keep local thread state in sync immediately so terminal drawer opens
-          // with the worktree cwd/env instead of briefly using the project root.
-          setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
-        }
-      }
-
-      let firstComposerImageName: string | null = null;
-      if (composerImagesSnapshot.length > 0) {
-        const firstComposerImage = composerImagesSnapshot[0];
-        if (firstComposerImage) {
-          firstComposerImageName = firstComposerImage.name;
-        }
-      }
-      let titleSeed = trimmed;
-      if (!titleSeed) {
-        if (firstComposerImageName) {
-          titleSeed = `Image: ${firstComposerImageName}`;
-        } else {
-          titleSeed = "New thread";
-        }
-      }
-      const title = truncateTitle(titleSeed);
-      let threadCreateModel: ModelSlug =
-        selectedModel || (activeProject.model as ModelSlug) || DEFAULT_MODEL_BY_PROVIDER.codex;
-
-      if (isLocalDraftThread) {
-        await api.orchestration.dispatchCommand({
-          type: "thread.create",
-          commandId: newCommandId(),
-          threadId: threadIdForSend,
-          projectId: activeProject.id,
-          title,
-          model: threadCreateModel,
-          runtimeMode,
-          interactionMode,
-          branch: nextThreadBranch,
-          worktreePath: nextThreadWorktreePath,
-          createdAt: activeThread.createdAt,
-        });
-        createdServerThreadForLocalDraft = true;
-      }
-
-      let setupScript: ProjectScript | null = null;
-      if (baseBranchForWorktree) {
-        setupScript = setupProjectScript(activeProject.scripts);
-      }
-      if (setupScript) {
-        let shouldRunSetupScript = false;
-        if (isServerThread) {
-          shouldRunSetupScript = true;
-        } else {
-          if (createdServerThreadForLocalDraft) {
-            shouldRunSetupScript = true;
-          }
-        }
-        if (shouldRunSetupScript) {
-          const setupScriptOptions: Parameters<typeof runProjectScript>[1] = {
-            worktreePath: nextThreadWorktreePath,
-            rememberAsLastInvoked: false,
-            allowLocalDraftThread: createdServerThreadForLocalDraft,
-          };
-          if (nextThreadWorktreePath) {
-            setupScriptOptions.cwd = nextThreadWorktreePath;
-          }
-          await runProjectScript(setupScript, setupScriptOptions);
-        }
-      }
-
-      // Auto-title from first message
-      if (isFirstMessage && isServerThread) {
-        await api.orchestration.dispatchCommand({
-          type: "thread.meta.update",
-          commandId: newCommandId(),
-          threadId: threadIdForSend,
-          title,
-        });
-      }
-
-      if (isServerThread) {
-        await persistThreadSettingsForNextTurn({
-          threadId: threadIdForSend,
-          createdAt: messageCreatedAt,
-          ...(selectedModel ? { model: selectedModel } : {}),
-          runtimeMode,
-          interactionMode,
-        });
-      }
-
-      beginSendPhase("sending-turn");
-      const turnAttachments = await turnAttachmentsPromise;
-      await api.orchestration.dispatchCommand({
-        type: "thread.turn.start",
-        commandId: newCommandId(),
-        threadId: threadIdForSend,
-        message: {
-          messageId: messageIdForSend,
-          role: "user",
-          text: trimmed || IMAGE_ONLY_BOOTSTRAP_PROMPT,
-          attachments: turnAttachments,
-        },
-        model: selectedModel || undefined,
-        serviceTier: selectedServiceTier,
-        ...(selectedModelOptionsForDispatch
-          ? { modelOptions: selectedModelOptionsForDispatch }
-          : {}),
-        provider: selectedProvider,
-        assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
-        runtimeMode,
-        interactionMode,
-        createdAt: messageCreatedAt,
+    const pendingSubmission = pendingBusySubmissionForActiveThread;
+    pendingBusyTurnDispatchRef.current = true;
+    void (async () => {
+      const succeeded = await submitComposerTurn({
+        text: pendingSubmission.text,
+        images: pendingSubmission.images,
       });
-      turnStartSucceeded = true;
-      if (isFirstMessage) {
-        clearDraftThread(threadIdForSend);
+      if (!succeeded) {
+        revokeComposerImagePreviewUrls(pendingSubmission.images);
       }
-    })().catch(async (err: unknown) => {
-      if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
-        await api.orchestration
-          .dispatchCommand({
-            type: "thread.delete",
-            commandId: newCommandId(),
-            threadId: threadIdForSend,
-          })
-          .catch(() => undefined);
-      }
-      if (
-        !turnStartSucceeded &&
-        promptRef.current.length === 0 &&
-        composerImagesRef.current.length === 0
-      ) {
-        setOptimisticUserMessages((existing) => {
-          const removed = existing.filter((message) => message.id === messageIdForSend);
-          for (const message of removed) {
-            revokeUserMessagePreviewUrls(message);
-          }
-          const next = existing.filter((message) => message.id !== messageIdForSend);
-          return next.length === existing.length ? existing : next;
-        });
-        promptRef.current = trimmed;
-        setPrompt(trimmed);
-        setComposerCursor(trimmed.length);
-        addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageForRetry));
-        setComposerTrigger(detectComposerTrigger(trimmed, trimmed.length));
-      }
-      setThreadError(
-        threadIdForSend,
-        err instanceof Error ? err.message : "Failed to send message.",
-      );
+      setPendingBusyTurnSubmission((current) => (current === pendingSubmission ? null : current));
+      pendingBusyTurnDispatchRef.current = false;
+    })().catch(() => {
+      pendingBusyTurnDispatchRef.current = false;
     });
-    sendInFlightRef.current = false;
-    if (!turnStartSucceeded) {
-      resetSendPhase();
-    }
-  };
-
-  const onInterrupt = async () => {
-    const api = readNativeApi();
-    if (!api || !activeThread) return;
-    await api.orchestration.dispatchCommand({
-      type: "thread.turn.interrupt",
-      commandId: newCommandId(),
-      threadId: activeThread.id,
-      createdAt: new Date().toISOString(),
-    });
-  };
+  }, [
+    composerImagesRef,
+    isConnecting,
+    isSendBusy,
+    pendingBusySubmissionForActiveThread,
+    phase,
+    submitComposerTurn,
+  ]);
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
@@ -3519,70 +3706,112 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 </div>
               )}
 
-              {!isComposerApprovalState && pendingUserInputs.length === 0 && composerImages.length > 0 && (
-                <div className="mb-3 flex flex-wrap gap-2">
-                  {composerImages.map((image) => (
-                    <div
-                      key={image.id}
-                      className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
-                    >
-                      {image.previewUrl ? (
-                        <button
-                          type="button"
-                          className="h-full w-full cursor-zoom-in"
-                          aria-label={`Preview ${image.name}`}
-                          onClick={() => {
-                            const preview = buildExpandedImagePreview(composerImages, image.id);
-                            if (!preview) return;
-                            setExpandedImage(preview);
-                          }}
-                        >
-                          <img
-                            src={image.previewUrl}
-                            alt={image.name}
-                            className="h-full w-full object-cover"
-                          />
-                        </button>
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
-                          {image.name}
-                        </div>
-                      )}
-                      {nonPersistedComposerImageIdSet.has(image.id) && (
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <span
-                                role="img"
-                                aria-label="Draft attachment may not persist"
-                                className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
-                              >
-                                <CircleAlertIcon className="size-3" />
-                              </span>
-                            }
-                          />
-                          <TooltipPopup
-                            side="top"
-                            className="max-w-64 whitespace-normal leading-tight"
-                          >
-                            Draft attachment could not be saved locally and may be lost on
-                            navigation.
-                          </TooltipPopup>
-                        </Tooltip>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
-                        onClick={() => removeComposerImage(image.id)}
-                        aria-label={`Remove ${image.name}`}
+              {!isComposerApprovalState &&
+                pendingUserInputs.length === 0 &&
+                composerImages.length > 0 && (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {composerImages.map((image) => (
+                      <div
+                        key={image.id}
+                        className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
                       >
-                        <XIcon />
+                        {image.previewUrl ? (
+                          <button
+                            type="button"
+                            className="h-full w-full cursor-zoom-in"
+                            aria-label={`Preview ${image.name}`}
+                            onClick={() => {
+                              const preview = buildExpandedImagePreview(composerImages, image.id);
+                              if (!preview) return;
+                              setExpandedImage(preview);
+                            }}
+                          >
+                            <img
+                              src={image.previewUrl}
+                              alt={image.name}
+                              className="h-full w-full object-cover"
+                            />
+                          </button>
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
+                            {image.name}
+                          </div>
+                        )}
+                        {nonPersistedComposerImageIdSet.has(image.id) && (
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <span
+                                  role="img"
+                                  aria-label="Draft attachment may not persist"
+                                  className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
+                                >
+                                  <CircleAlertIcon className="size-3" />
+                                </span>
+                              }
+                            />
+                            <TooltipPopup
+                              side="top"
+                              className="max-w-64 whitespace-normal leading-tight"
+                            >
+                              Draft attachment could not be saved locally and may be lost on
+                              navigation.
+                            </TooltipPopup>
+                          </Tooltip>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
+                          onClick={() => removeComposerImage(image.id)}
+                          aria-label={`Remove ${image.name}`}
+                        >
+                          <XIcon />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              {!isComposerApprovalState &&
+                pendingUserInputs.length === 0 &&
+                pendingBusySubmissionForActiveThread && (
+                  <div className="mb-3 flex flex-wrap items-start justify-between gap-3 rounded-lg border border-border/75 bg-muted/20 px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-foreground">
+                        {pendingBusySubmissionForActiveThread.behavior === "steer"
+                          ? "Steer pending"
+                          : "Queued next turn"}
+                      </p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground/85">
+                        {pendingBusySubmissionForActiveThread.behavior === "steer"
+                          ? "The current run will be interrupted and this follow-up will send as soon as the agent stops."
+                          : "This follow-up will send automatically as soon as the current run finishes."}
+                      </p>
+                      <p className="mt-1 truncate text-[11px] text-foreground/80">
+                        {pendingBusySubmissionForActiveThread.text ||
+                          `${pendingBusySubmissionForActiveThread.images.length} image attachment${pendingBusySubmissionForActiveThread.images.length === 1 ? "" : "s"}`}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        onClick={restorePendingBusyTurnSubmission}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
+                        onClick={cancelPendingBusyTurnSubmission}
+                      >
+                        Cancel
                       </Button>
                     </div>
-                  ))}
-                </div>
-              )}
+                  </div>
+                )}
               <ComposerPromptEditor
                 ref={composerEditorRef}
                 value={
@@ -3600,12 +3829,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   isComposerApprovalState
                     ? (activePendingApproval?.detail ?? "Resolve this approval request to continue")
                     : activePendingProgress
-                    ? "Type your own answer, or leave this blank to use the selected option"
-                    : showPlanFollowUpPrompt && activeProposedPlan
-                      ? "Add feedback to refine the plan, or leave this blank to implement it"
-                      : phase === "disconnected"
-                        ? "Ask for follow-up changes or attach images"
-                        : "Ask anything, @tag files/folders, or use /model"
+                      ? "Type your own answer, or leave this blank to use the selected option"
+                      : showPlanFollowUpPrompt && activeProposedPlan
+                        ? "Add feedback to refine the plan, or leave this blank to implement it"
+                        : phase === "disconnected"
+                          ? "Ask for follow-up changes or attach images"
+                          : "Ask anything, @tag files/folders, or use /model"
                 }
                 disabled={isConnecting || isComposerApprovalState}
               />
@@ -3732,22 +3961,68 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       </Button>
                     </div>
                   ) : phase === "running" ? (
-                    <button
-                      type="button"
-                      className="flex size-8 items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
-                      onClick={() => void onInterrupt()}
-                      aria-label="Stop generation"
-                    >
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 12 12"
-                        fill="currentColor"
-                        aria-hidden="true"
+                    <div className="flex items-center gap-2">
+                      {(prompt.trim().length > 0 || composerImages.length > 0) && (
+                        <div className="flex items-center">
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
+                            disabled={Boolean(pendingBusySubmissionForActiveThread)}
+                            onClick={() =>
+                              void queueBusyTurnSubmission(defaultBusyTurnSubmissionOption.value)
+                            }
+                          >
+                            {defaultBusyTurnSubmissionOption.shortLabel}
+                          </Button>
+                          {alternateBusyTurnSubmissionOption ? (
+                            <Menu>
+                              <MenuTrigger
+                                render={
+                                  <Button
+                                    size="sm"
+                                    variant="default"
+                                    className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
+                                    aria-label="Choose busy-turn action"
+                                    disabled={Boolean(pendingBusySubmissionForActiveThread)}
+                                  />
+                                }
+                              >
+                                <ChevronDownIcon className="size-3.5" />
+                              </MenuTrigger>
+                              <MenuPopup align="end" side="top">
+                                <MenuItem
+                                  disabled={Boolean(pendingBusySubmissionForActiveThread)}
+                                  onClick={() =>
+                                    void queueBusyTurnSubmission(
+                                      alternateBusyTurnSubmissionOption.value,
+                                    )
+                                  }
+                                >
+                                  {alternateBusyTurnSubmissionOption.label}
+                                </MenuItem>
+                              </MenuPopup>
+                            </Menu>
+                          ) : null}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        className="flex size-8 items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
+                        onClick={() => void onInterrupt()}
+                        aria-label="Stop generation"
                       >
-                        <rect x="2" y="2" width="8" height="8" rx="1.5" />
-                      </svg>
-                    </button>
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 12 12"
+                          fill="currentColor"
+                          aria-hidden="true"
+                        >
+                          <rect x="2" y="2" width="8" height="8" rx="1.5" />
+                        </svg>
+                      </button>
+                    </div>
                   ) : pendingUserInputs.length === 0 ? (
                     showPlanFollowUpPrompt ? (
                       prompt.trim().length > 0 ? (
@@ -4961,14 +5236,10 @@ const MessagesTimeline = memo(function MessagesTimeline({
         (() => {
           const groupId = row.id;
           const groupedEntries = row.groupedEntries;
-          const isExpanded = expandedWorkGroups[groupId] ?? false;
-          const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
-          const visibleEntries =
-            hasOverflow && !isExpanded
-              ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
-              : groupedEntries;
-          const hiddenCount = groupedEntries.length - visibleEntries.length;
           const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
+          const canCollapse = groupedEntries.length > 1;
+          const isExpanded = expandedWorkGroups[groupId] ?? (!onlyToolEntries || !canCollapse);
+          const latestEntry = groupedEntries[groupedEntries.length - 1];
           const groupLabel = onlyToolEntries
             ? groupedEntries.length === 1
               ? "Tool call"
@@ -4980,63 +5251,95 @@ const MessagesTimeline = memo(function MessagesTimeline({
           return (
             <div className="rounded-lg border border-border/80 bg-card/45 px-3 py-2">
               <div className="mb-1.5 flex items-center justify-between gap-3">
-                <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
-                  {groupLabel}
-                </p>
-                {hasOverflow && (
+                <button
+                  type="button"
+                  disabled={!canCollapse}
+                  className={cn(
+                    "flex min-w-0 flex-1 items-center gap-2 text-left",
+                    canCollapse ? "cursor-pointer" : "cursor-default",
+                  )}
+                  onClick={() => {
+                    if (!canCollapse) return;
+                    onToggleWorkGroup(groupId);
+                  }}
+                >
+                  {canCollapse ? (
+                    <ChevronRightIcon
+                      className={cn(
+                        "size-3.5 shrink-0 text-muted-foreground/78 transition-transform",
+                        isExpanded && "rotate-90",
+                      )}
+                    />
+                  ) : (
+                    <span aria-hidden="true" className="size-3.5 shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-[0.12em] text-foreground/72">
+                      {groupLabel}
+                    </p>
+                    {!isExpanded && latestEntry ? (
+                      <p className="truncate text-[11px] text-foreground/88">{latestEntry.label}</p>
+                    ) : null}
+                  </div>
+                </button>
+                {canCollapse && (
                   <button
                     type="button"
-                    className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-muted-foreground/80"
+                    className="text-[10px] uppercase tracking-[0.12em] text-foreground/72 transition-colors duration-150 hover:text-foreground"
                     onClick={() => onToggleWorkGroup(groupId)}
                   >
-                    {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
+                    {isExpanded ? "Collapse" : "Expand"}
                   </button>
                 )}
               </div>
-              <div className="space-y-1">
-                {visibleEntries.map((workEntry) => (
-                  <div key={`work-row:${workEntry.id}`} className="flex items-start gap-2 py-0.5">
-                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
-                    <div className="min-w-0 flex-1 py-[2px]">
-                      <p className={`text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}>
-                        {workEntry.label}
-                      </p>
-                      {workEntry.command && (
-                        <pre className="mt-1 overflow-x-auto rounded-md border border-border/70 bg-background/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-foreground/80">
-                          {workEntry.command}
-                        </pre>
-                      )}
-                      {workEntry.changedFiles && workEntry.changedFiles.length > 0 && (
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {workEntry.changedFiles.slice(0, 6).map((filePath) => (
-                            <span
-                              key={`${workEntry.id}:${filePath}`}
-                              className="rounded-md border border-border/70 bg-background/65 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/85"
-                              title={filePath}
-                            >
-                              {filePath}
-                            </span>
-                          ))}
-                          {workEntry.changedFiles.length > 6 && (
-                            <span className="px-1 text-[10px] text-muted-foreground/65">
-                              +{workEntry.changedFiles.length - 6} more
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      {workEntry.detail &&
-                        (!workEntry.command || workEntry.detail !== workEntry.command) && (
-                          <p
-                            className="mt-1 text-[11px] leading-relaxed text-muted-foreground/75"
-                            title={workEntry.detail}
-                          >
-                            {workEntry.detail}
-                          </p>
+              {isExpanded ? (
+                <div className="space-y-1">
+                  {groupedEntries.map((workEntry) => (
+                    <div key={`work-row:${workEntry.id}`} className="flex items-start gap-2 py-0.5">
+                      <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
+                      <div className="min-w-0 flex-1 py-[2px]">
+                        <p
+                          className={`text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}
+                        >
+                          {workEntry.label}
+                        </p>
+                        {workEntry.command && (
+                          <pre className="mt-1 overflow-x-auto rounded-md border border-border/70 bg-background/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-foreground/92">
+                            {workEntry.command}
+                          </pre>
                         )}
+                        {workEntry.changedFiles && workEntry.changedFiles.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {workEntry.changedFiles.slice(0, 6).map((filePath) => (
+                              <span
+                                key={`${workEntry.id}:${filePath}`}
+                                className="rounded-md border border-border/70 bg-background/65 px-1.5 py-0.5 font-mono text-[10px] text-foreground/82"
+                                title={filePath}
+                              >
+                                {filePath}
+                              </span>
+                            ))}
+                            {workEntry.changedFiles.length > 6 && (
+                              <span className="px-1 text-[10px] text-foreground/80">
+                                +{workEntry.changedFiles.length - 6} more
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {workEntry.detail &&
+                          (!workEntry.command || workEntry.detail !== workEntry.command) && (
+                            <p
+                              className="mt-1 text-[11px] leading-relaxed text-foreground/80"
+                              title={workEntry.detail}
+                            >
+                              {workEntry.detail}
+                            </p>
+                          )}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
           );
         })()}
@@ -5091,8 +5394,8 @@ const MessagesTimeline = memo(function MessagesTimeline({
                     {row.message.text}
                   </pre>
                 )}
-                <div className="mt-1.5 flex items-center justify-end gap-2">
-                  <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+                <div className="mt-1.5 hidden items-center justify-end gap-2 group-focus-within:flex group-hover:flex">
+                  <div className="flex items-center gap-1.5">
                     {row.message.text && <MessageCopyButton text={row.message.text} />}
                     {canRevertAgentWork && (
                       <Button
@@ -5107,7 +5410,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                       </Button>
                     )}
                   </div>
-                  <p className="text-right text-[10px] text-muted-foreground/30">
+                  <p className="text-right text-[10px] text-muted-foreground/65">
                     {formatTimestamp(row.message.createdAt)}
                   </p>
                 </div>
@@ -5136,6 +5439,14 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   text={messageText}
                   cwd={markdownCwd}
                   isStreaming={Boolean(row.message.streaming)}
+                  onImagePreview={(image) =>
+                    onImageExpand(
+                      buildSingleExpandedImagePreview({
+                        src: image.src,
+                        name: image.alt,
+                      }),
+                    )
+                  }
                 />
                 {(() => {
                   const turnSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);
@@ -5149,7 +5460,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   return (
                     <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
                       <div className="mb-1.5 flex items-center justify-between gap-2">
-                        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+                        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/82">
                           <span>Changed files ({changedFileCountLabel})</span>
                           {hasNonZeroStat(summaryStat) && (
                             <>
@@ -5193,7 +5504,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                     </div>
                   );
                 })()}
-                <p className="mt-1.5 text-[10px] text-muted-foreground/30">
+                <p className="mt-1.5 text-[10px] text-muted-foreground/62">
                   {formatMessageMeta(
                     row.message.createdAt,
                     row.message.streaming
@@ -5217,20 +5528,21 @@ const MessagesTimeline = memo(function MessagesTimeline({
       )}
 
       {row.kind === "working" && (
-        <div className="flex items-center gap-2 py-0.5 pl-1.5">
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
-          <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70">
-            <span className="inline-flex items-center gap-[3px]">
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
-            </span>
-            <span>
-              {row.createdAt
-                ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
-                : "Working..."}
-            </span>
-          </div>
+        <div className="flex items-center gap-2.5 py-0.5 pl-1">
+          <span aria-hidden="true" className="grid grid-cols-2 gap-1">
+            {[0, 1, 2, 3].map((index) => (
+              <span
+                key={`working-dot:${index}`}
+                className="h-1.5 w-1.5 rounded-[2px] bg-muted-foreground/55 animate-pulse"
+                style={{ animationDelay: `${index * 140}ms` }}
+              />
+            ))}
+          </span>
+          <span className="pt-px text-[11px] font-medium text-foreground/82">
+            {row.createdAt
+              ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
+              : "Working..."}
+          </span>
         </div>
       )}
     </div>
@@ -5239,7 +5551,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   if (!hasMessages && !isWorking) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground/30">
+        <p className="text-sm text-muted-foreground/68">
           Send a message to start the conversation.
         </p>
       </div>
@@ -5380,7 +5692,8 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       >
         <span className="flex min-w-0 items-center gap-2">
           <ProviderIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/70" />
-          {props.provider === "codex" && shouldShowFastTierIcon(props.model, props.serviceTierSetting) ? (
+          {props.provider === "codex" &&
+          shouldShowFastTierIcon(props.model, props.serviceTierSetting) ? (
             <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
           ) : null}
           <span className="truncate">{selectedModelLabel}</span>

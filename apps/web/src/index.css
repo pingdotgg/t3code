@@ -335,6 +335,27 @@ label:has(> select#reasoning-effort) select {
   font-size: 0.875rem;
 }
 
+.chat-markdown .chat-markdown-media {
+  margin: 0.8rem 0;
+}
+
+.chat-markdown .chat-markdown-image-button {
+  display: block;
+  width: min(100%, 32rem);
+  cursor: zoom-in;
+}
+
+.chat-markdown .chat-markdown-image {
+  display: block;
+  max-width: min(100%, 32rem);
+  max-height: 22rem;
+  overflow: clip;
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, var(--muted) 72%, var(--background));
+  object-fit: contain;
+}
+
 .chat-markdown .chat-markdown-codeblock {
   position: relative;
   margin: 0.65rem 0;

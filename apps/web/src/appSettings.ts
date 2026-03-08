@@ -6,6 +6,22 @@ import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/s
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
+export const BUSY_TURN_SUBMISSION_OPTIONS = [
+  {
+    value: "steer",
+    label: "Steer current turn",
+    shortLabel: "Steer now",
+    description: "Interrupt the current run, then send your message as soon as the agent stops.",
+  },
+  {
+    value: "queue",
+    label: "Queue next turn",
+    shortLabel: "Queue next",
+    description: "Let the current run finish, then send your message automatically afterward.",
+  },
+] as const;
+export type BusyTurnSubmissionBehavior = (typeof BUSY_TURN_SUBMISSION_OPTIONS)[number]["value"];
+const BusyTurnSubmissionBehaviorSchema = Schema.Literals(["steer", "queue"]);
 export const APP_SERVICE_TIER_OPTIONS = [
   {
     value: "auto",
@@ -41,7 +57,12 @@ const AppSettingsSchema = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
-  codexServiceTier: AppServiceTierSchema.pipe(Schema.withConstructorDefault(() => Option.some("auto"))),
+  busyTurnSubmissionBehavior: BusyTurnSubmissionBehaviorSchema.pipe(
+    Schema.withConstructorDefault(() => Option.some("steer")),
+  ),
+  codexServiceTier: AppServiceTierSchema.pipe(
+    Schema.withConstructorDefault(() => Option.some("auto")),
+  ),
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
