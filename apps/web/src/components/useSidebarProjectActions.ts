@@ -46,6 +46,7 @@ export function useSidebarProjectActions({
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [selectedRemoteHostId, setSelectedRemoteHostId] = useState<RemoteHostId | null>(null);
+  const [isCreatingRemoteHost, setIsCreatingRemoteHost] = useState(false);
   const [remoteHostDraft, setRemoteHostDraft] = useState<RemoteHostDraft>(() =>
     emptyRemoteHostDraft(),
   );
@@ -78,6 +79,7 @@ export function useSidebarProjectActions({
       return api.remoteHosts.upsert(remoteHostDraftToUpsertInput(draft));
     },
     onSuccess: async (host) => {
+      setIsCreatingRemoteHost(false);
       setSelectedRemoteHostId(host.id);
       setRemoteHostDraft(draftFromRemoteHost(host));
       await queryClient.invalidateQueries({ queryKey: REMOTE_HOSTS_QUERY_KEY });
@@ -135,6 +137,7 @@ export function useSidebarProjectActions({
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: REMOTE_HOSTS_QUERY_KEY });
+      setIsCreatingRemoteHost(true);
       setSelectedRemoteHostId(null);
       setRemoteHostDraft(emptyRemoteHostDraft());
       browseRemoteHostMutation.reset();
@@ -147,6 +150,7 @@ export function useSidebarProjectActions({
 
   const handleRemoteHostSelect = useCallback(
     (remoteHostId: RemoteHostId | null) => {
+      setIsCreatingRemoteHost(remoteHostId === null);
       setSelectedRemoteHostId(remoteHostId);
       const nextHost = remoteHosts.find((host) => host.id === remoteHostId) ?? null;
       setRemoteHostDraft(nextHost ? draftFromRemoteHost(nextHost) : emptyRemoteHostDraft());
@@ -154,6 +158,13 @@ export function useSidebarProjectActions({
     },
     [browseRemoteHostMutation, remoteHosts],
   );
+
+  const handleCreateRemoteHost = useCallback(() => {
+    setIsCreatingRemoteHost(true);
+    setSelectedRemoteHostId(null);
+    setRemoteHostDraft(emptyRemoteHostDraft());
+    browseRemoteHostMutation.reset();
+  }, [browseRemoteHostMutation]);
 
   const handleSaveRemoteHost = useCallback(() => {
     void saveRemoteHostMutation.mutateAsync(remoteHostDraft).catch((error) => {
@@ -402,6 +413,7 @@ export function useSidebarProjectActions({
     setAddingProject(false);
     setAddProjectMode("local");
     setNewCwd("");
+    setIsCreatingRemoteHost(false);
     setRemotePath("");
     setRemoteBrowseQuery("");
     browseRemoteHostMutation.reset();
@@ -423,7 +435,7 @@ export function useSidebarProjectActions({
     if (!addingProject || addProjectMode !== "remote") {
       return;
     }
-    if (selectedRemoteHostId) {
+    if (selectedRemoteHostId || isCreatingRemoteHost) {
       return;
     }
     const firstHost = remoteHosts[0];
@@ -432,7 +444,7 @@ export function useSidebarProjectActions({
     }
     setSelectedRemoteHostId(firstHost.id);
     setRemoteHostDraft(draftFromRemoteHost(firstHost));
-  }, [addProjectMode, addingProject, remoteHosts, selectedRemoteHostId]);
+  }, [addProjectMode, addingProject, isCreatingRemoteHost, remoteHosts, selectedRemoteHostId]);
 
   return {
     addingProject,
@@ -448,6 +460,7 @@ export function useSidebarProjectActions({
     remoteHosts,
     selectedRemoteHost,
     handleRemoteHostSelect,
+    handleCreateRemoteHost,
     remoteHostDraft,
     setRemoteHostDraft,
     remotePath,

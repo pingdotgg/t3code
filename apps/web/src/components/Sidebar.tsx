@@ -288,6 +288,7 @@ export default function Sidebar() {
     remoteHosts,
     selectedRemoteHost,
     handleRemoteHostSelect,
+    handleCreateRemoteHost,
     remoteHostDraft,
     setRemoteHostDraft,
     remotePath,
@@ -889,6 +890,7 @@ export default function Sidebar() {
         remoteHosts={remoteHosts}
         selectedRemoteHostId={selectedRemoteHostId}
         onSelectHost={handleRemoteHostSelect}
+        onCreateHost={handleCreateRemoteHost}
         remoteHostDraft={remoteHostDraft}
         setRemoteHostDraft={setRemoteHostDraft}
         selectedRemoteHost={selectedRemoteHost}

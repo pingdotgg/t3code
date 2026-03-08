@@ -1,7 +1,16 @@
 import { RemoteHostId, type RemoteHostRecord } from "@t3tools/contracts";
 
 import { isElectron } from "../env";
-import { Dialog, DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "./ui/dialog";
+import {
+  Dialog,
+  DialogClose,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { SIDEBAR_INPUT_CLASSES } from "./Sidebar.helpers";
 import { formatRemoteHostSummary, remoteHostSelectItems } from "./Sidebar.remoteHosts";
@@ -66,6 +75,8 @@ export function SidebarAddProjectDialog({
   onSubmit,
   onReset,
 }: SidebarAddProjectDialogProps) {
+  const remoteProjectReady = remoteHosts.length > 0 && selectedRemoteHostId !== null;
+
   return (
     <Dialog
       open={open}
@@ -132,85 +143,107 @@ export function SidebarAddProjectDialog({
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="flex gap-2">
-                <div className="min-w-0 flex-1">
-                  <Select
-                    value={selectedRemoteHostId ?? ""}
-                    onValueChange={(value) =>
-                      onSelectRemoteHost(value ? RemoteHostId.makeUnsafe(value as string) : null)
-                    }
-                    items={{
-                      "": "Select saved host",
-                      ...remoteHostSelectItems(remoteHosts),
-                    }}
-                  >
-                    <SelectTrigger size="sm">
-                      <SelectValue placeholder="Select saved host" />
-                    </SelectTrigger>
-                    <SelectPopup>
-                      <SelectItem value="">Select saved host</SelectItem>
-                      {remoteHosts.map((host) => (
-                        <SelectItem key={host.id} value={host.id}>
-                          {host.label} ({formatRemoteHostSummary(host)})
-                        </SelectItem>
-                      ))}
-                    </SelectPopup>
-                  </Select>
-                </div>
-                <button
-                  type="button"
-                  className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary"
-                  onClick={onManageHosts}
-                >
-                  Manage hosts
-                </button>
-              </div>
-              <input
-                className={`w-full font-mono ${SIDEBAR_INPUT_CLASSES}`}
-                placeholder="~/project or /srv/project"
-                value={remotePath}
-                onChange={(event) => onRemotePathChange(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") onSubmit();
-                }}
-              />
-              <div className="flex gap-2">
-                <input
-                  className={`min-w-0 flex-1 ${SIDEBAR_INPUT_CLASSES}`}
-                  placeholder="Browse filter (optional)"
-                  value={remoteBrowseQuery}
-                  onChange={(event) => onRemoteBrowseQueryChange(event.target.value)}
-                />
-                <button
-                  type="button"
-                  className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                  onClick={onBrowseRemotePath}
-                  disabled={!selectedRemoteHostId || isBrowsingRemotePath}
-                >
-                  {isBrowsingRemotePath ? "Loading..." : "Browse"}
-                </button>
-              </div>
-              {remoteBrowseData && (
-                <div className="rounded-md border border-border/70 bg-secondary/50 p-1">
-                  <div className="px-1 pb-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
-                    {remoteBrowseData.cwd}
+              {remoteHosts.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-border bg-secondary/30 p-4 text-sm">
+                  <div className="font-medium text-foreground">No remote hosts saved yet</div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Create a host first, then pick the remote workspace you want to add.
+                  </p>
+                  <div className="mt-3 flex justify-start">
+                    <button
+                      type="button"
+                      className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90"
+                      onClick={onManageHosts}
+                    >
+                      Manage hosts
+                    </button>
                   </div>
-                  <div className="max-h-48 space-y-0.5 overflow-y-auto">
-                    {remoteBrowseData.entries.map((entry) => (
-                      <button
-                        key={`${entry.kind}:${entry.path}`}
-                        type="button"
-                        className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-background hover:text-foreground"
-                        onClick={() => onSelectRemoteBrowseEntry(entry)}
+                </div>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <div className="min-w-0 flex-1">
+                      <Select
+                        value={selectedRemoteHostId ?? ""}
+                        onValueChange={(value) =>
+                          onSelectRemoteHost(value ? RemoteHostId.makeUnsafe(value as string) : null)
+                        }
+                        items={{
+                          "": "Select remote host",
+                          ...remoteHostSelectItems(remoteHosts),
+                        }}
                       >
-                        <span className="truncate">{entry.path}</span>
-                        <span className="ml-2 shrink-0 text-[10px] uppercase tracking-[0.12em] text-muted-foreground/50">
-                          {entry.kind}
-                        </span>
-                      </button>
-                    ))}
+                        <SelectTrigger size="sm">
+                          <SelectValue placeholder="Select remote host" />
+                        </SelectTrigger>
+                        <SelectPopup>
+                          <SelectItem value="" disabled>
+                            Select remote host
+                          </SelectItem>
+                          {remoteHosts.map((host) => (
+                            <SelectItem key={host.id} value={host.id}>
+                              {host.label} ({formatRemoteHostSummary(host)})
+                            </SelectItem>
+                          ))}
+                        </SelectPopup>
+                      </Select>
+                    </div>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary"
+                      onClick={onManageHosts}
+                    >
+                      Manage hosts
+                    </button>
                   </div>
-                </div>
+                  <input
+                    className={`w-full font-mono ${SIDEBAR_INPUT_CLASSES}`}
+                    placeholder="~/project or /srv/project"
+                    value={remotePath}
+                    onChange={(event) => onRemotePathChange(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") onSubmit();
+                    }}
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      className={`min-w-0 flex-1 ${SIDEBAR_INPUT_CLASSES}`}
+                      placeholder="Browse filter (optional)"
+                      value={remoteBrowseQuery}
+                      onChange={(event) => onRemoteBrowseQueryChange(event.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={onBrowseRemotePath}
+                      disabled={!selectedRemoteHostId || isBrowsingRemotePath}
+                    >
+                      {isBrowsingRemotePath ? "Loading..." : "Browse"}
+                    </button>
+                  </div>
+                  {remoteBrowseData && (
+                    <div className="rounded-md border border-border/70 bg-secondary/50 p-1">
+                      <div className="px-1 pb-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
+                        {remoteBrowseData.cwd}
+                      </div>
+                      <div className="max-h-48 space-y-0.5 overflow-y-auto">
+                        {remoteBrowseData.entries.map((entry) => (
+                          <button
+                            key={`${entry.kind}:${entry.path}`}
+                            type="button"
+                            className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-background hover:text-foreground"
+                            onClick={() => onSelectRemoteBrowseEntry(entry)}
+                          >
+                            <span className="truncate">{entry.path}</span>
+                            <span className="ml-2 shrink-0 text-[10px] uppercase tracking-[0.12em] text-muted-foreground/50">
+                              {entry.kind}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -230,7 +263,7 @@ export function SidebarAddProjectDialog({
             type="button"
             className="rounded-md bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
             onClick={onSubmit}
-            disabled={isAddingProject}
+            disabled={isAddingProject || (addProjectMode === "remote" && !remoteProjectReady)}
           >
             {isAddingProject ? "Adding..." : addProjectMode === "remote" ? "Add remote" : "Add project"}
           </button>
