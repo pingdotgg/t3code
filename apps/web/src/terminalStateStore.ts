@@ -25,6 +25,8 @@ interface ThreadTerminalState {
   activeTerminalGroupId: string;
 }
 
+export type TerminalStateByThreadId = Record<ThreadId, ThreadTerminalState>;
+
 const TERMINAL_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
 
 function normalizeTerminalIds(terminalIds: string[]): string[] {
@@ -409,7 +411,7 @@ function setThreadTerminalActivity(
 }
 
 export function selectThreadTerminalState(
-  terminalStateByThreadId: Record<ThreadId, ThreadTerminalState>,
+  terminalStateByThreadId: TerminalStateByThreadId,
   threadId: ThreadId,
 ): ThreadTerminalState {
   if (threadId.length === 0) {
@@ -419,10 +421,10 @@ export function selectThreadTerminalState(
 }
 
 function updateTerminalStateByThreadId(
-  terminalStateByThreadId: Record<ThreadId, ThreadTerminalState>,
+  terminalStateByThreadId: TerminalStateByThreadId,
   threadId: ThreadId,
   updater: (state: ThreadTerminalState) => ThreadTerminalState,
-): Record<ThreadId, ThreadTerminalState> {
+): TerminalStateByThreadId {
   if (threadId.length === 0) {
     return terminalStateByThreadId;
   }
@@ -448,7 +450,7 @@ function updateTerminalStateByThreadId(
 }
 
 interface TerminalStateStoreState {
-  terminalStateByThreadId: Record<ThreadId, ThreadTerminalState>;
+  terminalStateByThreadId: TerminalStateByThreadId;
   setTerminalOpen: (threadId: ThreadId, open: boolean) => void;
   setTerminalHeight: (threadId: ThreadId, height: number) => void;
   splitTerminal: (threadId: ThreadId, terminalId: string) => void;

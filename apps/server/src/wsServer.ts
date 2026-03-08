@@ -13,16 +13,11 @@ import Mime from "@effect/platform-node/Mime";
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
-  type ClientOrchestrationCommand,
-  type OrchestrationCommand,
   ORCHESTRATION_WS_CHANNELS,
-  ORCHESTRATION_WS_METHODS,
-  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   ProjectId,
   ThreadId,
   TerminalEvent,
   WS_CHANNELS,
-  WS_METHODS,
   WebSocketRequest,
   WsPush,
   WsResponse,
@@ -34,14 +29,12 @@ import {
   Exit,
   FileSystem,
   Layer,
-  Option,
   Path,
   Ref,
   Schema,
   Scope,
   ServiceMap,
   Stream,
-  Struct,
 } from "effect";
 import { WebSocketServer, type WebSocket } from "ws";
 
@@ -55,7 +48,6 @@ import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReac
 import { ProviderService } from "./provider/Services/ProviderService";
 import { ProviderHealth } from "./provider/Services/ProviderHealth";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
-import { clamp } from "effect/Number";
 import { Open, resolveAvailableEditors } from "./open";
 import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore.ts";
@@ -65,18 +57,13 @@ import {
   normalizeAttachmentRelativePath,
   resolveAttachmentRelativePath,
 } from "./attachmentPaths";
-import {
-  createAttachmentId,
-  resolveAttachmentPath,
-  resolveAttachmentPathById,
-} from "./attachmentStore.ts";
-import { parseBase64DataUrl } from "./imageMime.ts";
+import { resolveAttachmentPathById } from "./attachmentStore.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
-import { expandHomePath } from "./os-jank.ts";
 import { WorkspaceRuntimeRouter } from "./remote/Services/WorkspaceRuntimeRouter.ts";
 import { RemoteHostRegistry } from "./remote/Services/HostRegistry.ts";
 import { RemoteHelperClient } from "./remote/Services/HelperClient.ts";
-import { REMOTE_HELPER_METHODS } from "./remote/protocol.ts";
+import { createWsRouteRequest } from "./wsServer.requestRouter.ts";
+import { makeDispatchCommandNormalizer } from "./wsServer.requestNormalization.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -151,10 +138,6 @@ function websocketRawToString(raw: unknown): string | null {
     return chunks.join("");
   }
   return null;
-}
-
-function stripRequestTag<T extends { _tag: string }>(body: T) {
-  return Struct.omit(body, ["_tag"]);
 }
 
 function messageFromCause(cause: Cause.Cause<unknown>): string {
@@ -267,138 +250,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       data: event,
     });
   });
-
-  const normalizeDispatchCommand = Effect.fnUntraced(function* (input: {
-    readonly command: ClientOrchestrationCommand;
-  }) {
-    const normalizeProjectWorkspaceRoot = Effect.fnUntraced(function* (workspaceRoot: string) {
-      const normalizedWorkspaceRoot = path.resolve(yield* expandHomePath(workspaceRoot.trim()));
-      const workspaceStat = yield* fileSystem
-        .stat(normalizedWorkspaceRoot)
-        .pipe(Effect.catch(() => Effect.succeed(null)));
-      if (!workspaceStat) {
-        return yield* new RouteRequestError({
-          message: `Project directory does not exist: ${normalizedWorkspaceRoot}`,
-        });
-      }
-      if (workspaceStat.type !== "Directory") {
-        return yield* new RouteRequestError({
-          message: `Project path is not a directory: ${normalizedWorkspaceRoot}`,
-        });
-      }
-      return normalizedWorkspaceRoot;
-    });
-
-    if (input.command.type === "project.create") {
-      if (input.command.executionTarget === "ssh-remote") {
-        return {
-          ...input.command,
-          workspaceRoot: input.command.workspaceRoot.trim(),
-          remoteHostId: input.command.remoteHostId ?? null,
-          remoteHostLabel: input.command.remoteHostLabel ?? null,
-        } satisfies OrchestrationCommand;
-      }
-      return {
-        ...input.command,
-        workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
-        remoteHostId: input.command.remoteHostId ?? null,
-        remoteHostLabel: input.command.remoteHostLabel ?? null,
-      } satisfies OrchestrationCommand;
-    }
-
-    if (
-      input.command.type === "project.meta.update" &&
-      input.command.workspaceRoot !== undefined
-    ) {
-      if (input.command.executionTarget === "ssh-remote") {
-        return {
-          ...input.command,
-          workspaceRoot: input.command.workspaceRoot.trim(),
-        } satisfies OrchestrationCommand;
-      }
-      return {
-        ...input.command,
-        workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
-      } satisfies OrchestrationCommand;
-    }
-
-    if (input.command.type !== "thread.turn.start") {
-      return input.command as OrchestrationCommand;
-    }
-    const turnStartCommand = input.command;
-
-    const normalizedAttachments = yield* Effect.forEach(
-      turnStartCommand.message.attachments,
-      (attachment) =>
-        Effect.gen(function* () {
-          const parsed = parseBase64DataUrl(attachment.dataUrl);
-          if (!parsed || !parsed.mimeType.startsWith("image/")) {
-            return yield* new RouteRequestError({
-              message: `Invalid image attachment payload for '${attachment.name}'.`,
-            });
-          }
-
-          const bytes = Buffer.from(parsed.base64, "base64");
-          if (bytes.byteLength === 0 || bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-            return yield* new RouteRequestError({
-              message: `Image attachment '${attachment.name}' is empty or too large.`,
-            });
-          }
-
-          const attachmentId = createAttachmentId(turnStartCommand.threadId);
-          if (!attachmentId) {
-            return yield* new RouteRequestError({
-              message: "Failed to create a safe attachment id.",
-            });
-          }
-
-          const persistedAttachment = {
-            type: "image" as const,
-            id: attachmentId,
-            name: attachment.name,
-            mimeType: parsed.mimeType.toLowerCase(),
-            sizeBytes: bytes.byteLength,
-          };
-
-          const attachmentPath = resolveAttachmentPath({
-            stateDir: serverConfig.stateDir,
-            attachment: persistedAttachment,
-          });
-          if (!attachmentPath) {
-            return yield* new RouteRequestError({
-              message: `Failed to resolve persisted path for '${attachment.name}'.`,
-            });
-          }
-
-          yield* fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true }).pipe(
-            Effect.mapError(
-              () =>
-                new RouteRequestError({
-                  message: `Failed to create attachment directory for '${attachment.name}'.`,
-                }),
-            ),
-          );
-          yield* fileSystem.writeFile(attachmentPath, bytes).pipe(
-            Effect.mapError(
-              () =>
-                new RouteRequestError({
-                  message: `Failed to persist attachment '${attachment.name}'.`,
-                }),
-            ),
-          );
-
-          return persistedAttachment;
-        }),
-      { concurrency: 1 },
-    );
-
-    return {
-      ...turnStartCommand,
-      message: {
-        ...turnStartCommand.message,
-        attachments: normalizedAttachments,
-      },
-    } satisfies OrchestrationCommand;
+  const failRouteRequest = (message: string) => Effect.fail(new RouteRequestError({ message }));
+  const normalizeDispatchCommand = makeDispatchCommandNormalizer({
+    fileSystem,
+    path,
+    stateDir: serverConfig.stateDir,
+    failRouteRequest,
   });
 
   // HTTP server — serves static files or redirects to Vite dev server
@@ -712,206 +569,27 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ]),
   );
 
-  const routeRequest = Effect.fnUntraced(function* (request: WebSocketRequest) {
-    switch (request.body._tag) {
-      case ORCHESTRATION_WS_METHODS.getSnapshot:
-        return yield* projectionReadModelQuery.getSnapshot();
-
-      case ORCHESTRATION_WS_METHODS.dispatchCommand: {
-        const { command } = request.body;
-        const normalizedCommand = yield* normalizeDispatchCommand({ command });
-        return yield* orchestrationEngine.dispatch(normalizedCommand);
-      }
-
-      case ORCHESTRATION_WS_METHODS.getTurnDiff: {
-        const body = stripRequestTag(request.body);
-        return yield* checkpointDiffQuery.getTurnDiff(body);
-      }
-
-      case ORCHESTRATION_WS_METHODS.getFullThreadDiff: {
-        const body = stripRequestTag(request.body);
-        return yield* checkpointDiffQuery.getFullThreadDiff(body);
-      }
-
-      case ORCHESTRATION_WS_METHODS.replayEvents: {
-        const { fromSequenceExclusive } = request.body;
-        return yield* Stream.runCollect(
-          orchestrationEngine.readEvents(
-            clamp(fromSequenceExclusive, {
-              maximum: Number.MAX_SAFE_INTEGER,
-              minimum: 0,
-            }),
-          ),
-        ).pipe(Effect.map((events) => Array.from(events)));
-      }
-
-      case WS_METHODS.projectsSearchEntries: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.projectSearchEntries(body);
-      }
-
-      case WS_METHODS.projectsWriteFile: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.projectWriteFile(body);
-      }
-
-      case WS_METHODS.remoteHostsList:
-        return yield* remoteHostRegistry.list();
-
-      case WS_METHODS.remoteHostsUpsert: {
-        const body = stripRequestTag(request.body);
-        return yield* remoteHostRegistry.upsert(body);
-      }
-
-      case WS_METHODS.remoteHostsRemove: {
-        const body = stripRequestTag(request.body);
-        return yield* remoteHostRegistry.remove(body.remoteHostId);
-      }
-
-      case WS_METHODS.remoteHostsTestConnection: {
-        const body = stripRequestTag(request.body);
-        const result = yield* remoteHelperClient.testConnection(body.remoteHostId);
-        return {
-          remoteHostId: body.remoteHostId,
-          ok: true,
-          helperVersion: result.helperVersion,
-          capabilities: result.capabilities,
-          checkedAt: new Date().toISOString(),
-        };
-      }
-
-      case WS_METHODS.remoteHostsBrowse: {
-        const body = stripRequestTag(request.body);
-        const host = yield* remoteHostRegistry.getById(body.remoteHostId);
-        if (Option.isNone(host)) {
-          return yield* new RouteRequestError({
-            message: `Remote host '${body.remoteHostId}' was not found.`,
-          });
-        }
-        const cwd = body.path ?? "~";
-        const result = yield* remoteHelperClient.call(
-          body.remoteHostId,
-          body.query
-            ? REMOTE_HELPER_METHODS.workspaceSearchEntries
-            : REMOTE_HELPER_METHODS.workspaceBrowseEntries,
-          body.query
-            ? { cwd, query: body.query, limit: body.limit }
-            : { cwd, limit: body.limit },
-        );
-        const resultCwd = "cwd" in result ? result.cwd : cwd;
-        return {
-          remoteHostId: body.remoteHostId,
-          cwd: resultCwd,
-          entries: result.entries,
-          truncated: result.truncated,
-        };
-      }
-
-      case WS_METHODS.shellOpenInEditor: {
-        const body = stripRequestTag(request.body);
-        const { openInEditor } = yield* Open;
-        return yield* openInEditor(body);
-      }
-
-      case WS_METHODS.gitStatus: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.gitStatus(body);
-      }
-
-      case WS_METHODS.gitPull: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.gitPull(body);
-      }
-
-      case WS_METHODS.gitRunStackedAction: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.gitRunStackedAction(body);
-      }
-
-      case WS_METHODS.gitListBranches: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.gitListBranches(body);
-      }
-
-      case WS_METHODS.gitCreateWorktree: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.gitCreateWorktree(body);
-      }
-
-      case WS_METHODS.gitRemoveWorktree: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.gitRemoveWorktree(body);
-      }
-
-      case WS_METHODS.gitCreateBranch: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.gitCreateBranch(body);
-      }
-
-      case WS_METHODS.gitCheckout: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.gitCheckout(body);
-      }
-
-      case WS_METHODS.gitInit: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.gitInit(body);
-      }
-
-      case WS_METHODS.terminalOpen: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.terminalOpen(body);
-      }
-
-      case WS_METHODS.terminalWrite: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.terminalWrite(body);
-      }
-
-      case WS_METHODS.terminalResize: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.terminalResize(body);
-      }
-
-      case WS_METHODS.terminalClear: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.terminalClear(body);
-      }
-
-      case WS_METHODS.terminalRestart: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.terminalRestart(body);
-      }
-
-      case WS_METHODS.terminalClose: {
-        const body = stripRequestTag(request.body);
-        return yield* runtimeRouter.terminalClose(body);
-      }
-
-      case WS_METHODS.serverGetConfig:
-        const keybindingsConfig = yield* keybindingsManager.loadConfigState;
-        return {
-          cwd,
-          keybindingsConfigPath,
-          keybindings: keybindingsConfig.keybindings,
-          issues: keybindingsConfig.issues,
-          providers: providerStatuses,
-          availableEditors,
-        };
-
-      case WS_METHODS.serverUpsertKeybinding: {
-        const body = stripRequestTag(request.body);
-        const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);
-        return { keybindings: keybindingsConfig, issues: [] };
-      }
-
-      default: {
-        const _exhaustiveCheck: never = request.body;
-        return yield* new RouteRequestError({
-          message: `Unknown method: ${String(_exhaustiveCheck)}`,
-        });
-      }
-    }
+  const { openInEditor } = yield* Open;
+  const routeRequest = createWsRouteRequest({
+    checkpointDiffQuery,
+    cwd,
+    availableEditors,
+    keybindingsConfigPath,
+    keybindingsManager,
+    normalizeDispatchCommand,
+    orchestrationEngine,
+    projectionReadModelQuery,
+    providerStatuses,
+    remoteHelperClient,
+    remoteHostRegistry,
+    runtimeRouter,
+    failRouteRequest,
+    openInEditor: (input) =>
+      openInEditor(input).pipe(
+        Effect.mapError(
+          (error) => new RouteRequestError({ message: error.message }),
+        ),
+      ),
   });
 
   const handleMessage = Effect.fnUntraced(function* (ws: WebSocket, raw: unknown) {

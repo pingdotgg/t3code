@@ -6,21 +6,21 @@ describe("resolveSshDestination", () => {
   it("prefers the ssh config host when present", () => {
     expect(
       resolveSshDestination({
-        user: "jetson",
-        host: "10.110.51.30",
-        sshConfigHost: "jat01",
+        user: "devuser",
+        host: "198.51.100.24",
+        sshConfigHost: "review-host",
       }),
-    ).toBe("jat01");
+    ).toBe("review-host");
   });
 
   it("falls back to user@host when no ssh config host is set", () => {
     expect(
       resolveSshDestination({
-        user: "jetson",
-        host: "10.110.51.30",
+        user: "devuser",
+        host: "198.51.100.24",
         sshConfigHost: undefined,
       }),
-    ).toBe("jetson@10.110.51.30");
+    ).toBe("devuser@198.51.100.24");
   });
 });
 
@@ -30,9 +30,9 @@ describe("buildSshArgs", () => {
       buildSshArgs(
         {
           port: 22,
-          identityFile: "/home/kbenkhaled/.ssh/id_rsa",
-          user: "jetson",
-          host: "10.110.51.30",
+          identityFile: "/home/example/.ssh/test_key",
+          user: "devuser",
+          host: "198.51.100.24",
           sshConfigHost: undefined,
         },
         "/usr/bin/env sh -lc 'echo hi'",
@@ -46,8 +46,8 @@ describe("buildSshArgs", () => {
       "-o",
       "IdentitiesOnly=yes",
       "-i",
-      "/home/kbenkhaled/.ssh/id_rsa",
-      "jetson@10.110.51.30",
+      "/home/example/.ssh/test_key",
+      "devuser@198.51.100.24",
       "/usr/bin/env sh -lc 'echo hi'",
     ]);
   });
@@ -57,9 +57,9 @@ describe("buildSshArgs", () => {
       buildSshArgs({
         port: 2222,
         identityFile: undefined,
-        user: "jetson",
-        host: "10.110.51.30",
-        sshConfigHost: "jat01",
+        user: "devuser",
+        host: "198.51.100.24",
+        sshConfigHost: "review-host",
       }),
     ).toEqual([
       "-T",
@@ -69,7 +69,7 @@ describe("buildSshArgs", () => {
       "ConnectTimeout=10",
       "-p",
       "2222",
-      "jat01",
+      "review-host",
     ]);
   });
 });

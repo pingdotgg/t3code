@@ -56,6 +56,28 @@ function now() {
   return new Date().toISOString();
 }
 
+function localProjectCreateCommand(input: {
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+  readonly title: string;
+  readonly workspaceRoot: string;
+  readonly defaultModel: string;
+  readonly createdAt: string;
+}) {
+  return {
+    type: "project.create" as const,
+    commandId: input.commandId,
+    projectId: input.projectId,
+    title: input.title,
+    workspaceRoot: input.workspaceRoot,
+    executionTarget: "local" as const,
+    remoteHostId: null,
+    remoteHostLabel: null,
+    defaultModel: input.defaultModel,
+    createdAt: input.createdAt,
+  };
+}
+
 describe("OrchestrationEngine", () => {
   it("returns deterministic read models for repeated reads", async () => {
     const createdAt = now();
@@ -63,15 +85,16 @@ describe("OrchestrationEngine", () => {
     const { engine } = system;
 
     await system.run(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.makeUnsafe("cmd-project-1-create"),
-        projectId: asProjectId("project-1"),
-        title: "Project 1",
-        workspaceRoot: "/tmp/project-1",
-        defaultModel: "gpt-5-codex",
-        createdAt,
-      }),
+      engine.dispatch(
+        localProjectCreateCommand({
+          commandId: CommandId.makeUnsafe("cmd-project-1-create"),
+          projectId: asProjectId("project-1"),
+          title: "Project 1",
+          workspaceRoot: "/tmp/project-1",
+          defaultModel: "gpt-5-codex",
+          createdAt,
+        }),
+      ),
     );
     await system.run(
       engine.dispatch({
@@ -107,6 +130,16 @@ describe("OrchestrationEngine", () => {
 
     const readModelA = await system.run(engine.getReadModel());
     const readModelB = await system.run(engine.getReadModel());
+    expect(readModelA.projects).toEqual([
+      expect.objectContaining({
+        id: asProjectId("project-1"),
+        title: "Project 1",
+        workspaceRoot: "/tmp/project-1",
+        executionTarget: "local",
+        remoteHostId: null,
+        remoteHostLabel: null,
+      }),
+    ]);
     expect(readModelB).toEqual(readModelA);
     await system.dispose();
   });
@@ -117,15 +150,16 @@ describe("OrchestrationEngine", () => {
     const createdAt = now();
 
     await system.run(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.makeUnsafe("cmd-project-replay-create"),
-        projectId: asProjectId("project-replay"),
-        title: "Replay Project",
-        workspaceRoot: "/tmp/project-replay",
-        defaultModel: "gpt-5-codex",
-        createdAt,
-      }),
+      engine.dispatch(
+        localProjectCreateCommand({
+          commandId: CommandId.makeUnsafe("cmd-project-replay-create"),
+          projectId: asProjectId("project-replay"),
+          title: "Replay Project",
+          workspaceRoot: "/tmp/project-replay",
+          defaultModel: "gpt-5-codex",
+          createdAt,
+        }),
+      ),
     );
     await system.run(
       engine.dispatch({
@@ -169,15 +203,16 @@ describe("OrchestrationEngine", () => {
     const createdAt = now();
 
     await system.run(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.makeUnsafe("cmd-project-stream-create"),
-        projectId: asProjectId("project-stream"),
-        title: "Stream Project",
-        workspaceRoot: "/tmp/project-stream",
-        defaultModel: "gpt-5-codex",
-        createdAt,
-      }),
+      engine.dispatch(
+        localProjectCreateCommand({
+          commandId: CommandId.makeUnsafe("cmd-project-stream-create"),
+          projectId: asProjectId("project-stream"),
+          title: "Stream Project",
+          workspaceRoot: "/tmp/project-stream",
+          defaultModel: "gpt-5-codex",
+          createdAt,
+        }),
+      ),
     );
 
     const eventTypes: string[] = [];
@@ -224,15 +259,16 @@ describe("OrchestrationEngine", () => {
     const createdAt = now();
 
     await system.run(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.makeUnsafe("cmd-project-turn-diff-create"),
-        projectId: asProjectId("project-turn-diff"),
-        title: "Turn Diff Project",
-        workspaceRoot: "/tmp/project-turn-diff",
-        defaultModel: "gpt-5-codex",
-        createdAt,
-      }),
+      engine.dispatch(
+        localProjectCreateCommand({
+          commandId: CommandId.makeUnsafe("cmd-project-turn-diff-create"),
+          projectId: asProjectId("project-turn-diff"),
+          title: "Turn Diff Project",
+          workspaceRoot: "/tmp/project-turn-diff",
+          defaultModel: "gpt-5-codex",
+          createdAt,
+        }),
+      ),
     );
     await system.run(
       engine.dispatch({
@@ -331,15 +367,16 @@ describe("OrchestrationEngine", () => {
     const createdAt = now();
 
     await runtime.runPromise(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.makeUnsafe("cmd-project-flaky-create"),
-        projectId: asProjectId("project-flaky"),
-        title: "Flaky Project",
-        workspaceRoot: "/tmp/project-flaky",
-        defaultModel: "gpt-5-codex",
-        createdAt,
-      }),
+      engine.dispatch(
+        localProjectCreateCommand({
+          commandId: CommandId.makeUnsafe("cmd-project-flaky-create"),
+          projectId: asProjectId("project-flaky"),
+          title: "Flaky Project",
+          workspaceRoot: "/tmp/project-flaky",
+          defaultModel: "gpt-5-codex",
+          createdAt,
+        }),
+      ),
     );
 
     await expect(
@@ -415,15 +452,16 @@ describe("OrchestrationEngine", () => {
     const createdAt = now();
 
     await runtime.runPromise(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.makeUnsafe("cmd-project-atomic-create"),
-        projectId: asProjectId("project-atomic"),
-        title: "Atomic Project",
-        workspaceRoot: "/tmp/project-atomic",
-        defaultModel: "gpt-5-codex",
-        createdAt,
-      }),
+      engine.dispatch(
+        localProjectCreateCommand({
+          commandId: CommandId.makeUnsafe("cmd-project-atomic-create"),
+          projectId: asProjectId("project-atomic"),
+          title: "Atomic Project",
+          workspaceRoot: "/tmp/project-atomic",
+          defaultModel: "gpt-5-codex",
+          createdAt,
+        }),
+      ),
     );
     await runtime.runPromise(
       engine.dispatch({
@@ -550,15 +588,16 @@ describe("OrchestrationEngine", () => {
     const createdAt = now();
 
     await runtime.runPromise(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.makeUnsafe("cmd-project-sync-create"),
-        projectId: asProjectId("project-sync"),
-        title: "Sync Project",
-        workspaceRoot: "/tmp/project-sync",
-        defaultModel: "gpt-5-codex",
-        createdAt,
-      }),
+      engine.dispatch(
+        localProjectCreateCommand({
+          commandId: CommandId.makeUnsafe("cmd-project-sync-create"),
+          projectId: asProjectId("project-sync"),
+          title: "Sync Project",
+          workspaceRoot: "/tmp/project-sync",
+          defaultModel: "gpt-5-codex",
+          createdAt,
+        }),
+      ),
     );
     await runtime.runPromise(
       engine.dispatch({
@@ -629,15 +668,16 @@ describe("OrchestrationEngine", () => {
     const createdAt = now();
 
     await system.run(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.makeUnsafe("cmd-project-duplicate-create"),
-        projectId: asProjectId("project-duplicate"),
-        title: "Duplicate Project",
-        workspaceRoot: "/tmp/project-duplicate",
-        defaultModel: "gpt-5-codex",
-        createdAt,
-      }),
+      engine.dispatch(
+        localProjectCreateCommand({
+          commandId: CommandId.makeUnsafe("cmd-project-duplicate-create"),
+          projectId: asProjectId("project-duplicate"),
+          title: "Duplicate Project",
+          workspaceRoot: "/tmp/project-duplicate",
+          defaultModel: "gpt-5-codex",
+          createdAt,
+        }),
+      ),
     );
 
     await system.run(

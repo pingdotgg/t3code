@@ -130,7 +130,7 @@ it.layer(testLayer)("server CLI command", (it) => {
       yield* runCli([], {
         T3CODE_MODE: "desktop",
         T3CODE_PORT: "4999",
-        T3CODE_HOST: "100.88.10.4",
+        T3CODE_HOST: "198.51.100.4",
         T3CODE_STATE_DIR: "/tmp/t3-env-state",
         VITE_DEV_SERVER_URL: "http://localhost:5173",
         T3CODE_NO_BROWSER: "true",
@@ -140,7 +140,7 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(start.mock.calls.length, 1);
       assert.equal(resolvedConfig?.mode, "desktop");
       assert.equal(resolvedConfig?.port, 4999);
-      assert.equal(resolvedConfig?.host, "100.88.10.4");
+      assert.equal(resolvedConfig?.host, "198.51.100.4");
       assert.equal(resolvedConfig?.stateDir, "/tmp/t3-env-state");
       assert.equal(resolvedConfig?.devUrl?.toString(), "http://localhost:5173/");
       assert.equal(resolvedConfig?.noBrowser, true);

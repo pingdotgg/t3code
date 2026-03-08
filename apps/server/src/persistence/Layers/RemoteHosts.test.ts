@@ -18,10 +18,10 @@ layer("RemoteHostRepository", (it) => {
 
       yield* repository.upsert({
         id: hostId,
-        label: "Jetson",
-        host: "10.110.51.30",
+        label: "Review Host",
+        host: "198.51.100.24",
         port: 22,
-        user: "jetson",
+        user: "devuser",
         helperCommand: "t3 remote-agent --stdio",
         helperVersion: null,
         lastConnectionAttemptAt: null,
@@ -41,10 +41,10 @@ layer("RemoteHostRepository", (it) => {
 
       assert.deepStrictEqual(host.value, {
         id: hostId,
-        label: "Jetson",
-        host: "10.110.51.30",
+        label: "Review Host",
+        host: "198.51.100.24",
         port: 22,
-        user: "jetson",
+        user: "devuser",
         identityFile: undefined,
         sshConfigHost: undefined,
         helperCommand: "t3 remote-agent --stdio",
@@ -66,14 +66,14 @@ layer("RemoteHostRepository", (it) => {
 
       yield* repository.upsert({
         id: hostId,
-        label: "Jetson Keyed",
-        host: "10.110.51.30",
+        label: "Review Host Keyed",
+        host: "203.0.113.12",
         port: 22,
-        user: "jetson",
-        identityFile: "/home/kbenkhaled/.ssh/id_rsa",
-        sshConfigHost: "jat01",
+        user: "reviewer",
+        identityFile: "/home/example/.ssh/review_key",
+        sshConfigHost: "review-host-alias",
         helperCommand:
-          "/usr/bin/env BUN_INSTALL=/home/jetson/.bun PATH=/home/jetson/.bun/bin:/usr/local/bin:/usr/bin:/bin sh -lc 'cd ~/t3code/apps/server && node dist/index.mjs remote-agent --stdio'",
+          "/usr/bin/env PATH=/opt/example/bin:/usr/local/bin:/usr/bin:/bin sh -lc 'cd ~/workspace/t3code/apps/server && node dist/index.mjs remote-agent --stdio'",
         helperVersion: null,
         lastConnectionAttemptAt: null,
         lastConnectionSucceededAt: null,
@@ -91,14 +91,14 @@ layer("RemoteHostRepository", (it) => {
 
       assert.deepStrictEqual(host.value, {
         id: hostId,
-        label: "Jetson Keyed",
-        host: "10.110.51.30",
+        label: "Review Host Keyed",
+        host: "203.0.113.12",
         port: 22,
-        user: "jetson",
-        identityFile: "/home/kbenkhaled/.ssh/id_rsa",
-        sshConfigHost: "jat01",
+        user: "reviewer",
+        identityFile: "/home/example/.ssh/review_key",
+        sshConfigHost: "review-host-alias",
         helperCommand:
-          "/usr/bin/env BUN_INSTALL=/home/jetson/.bun PATH=/home/jetson/.bun/bin:/usr/local/bin:/usr/bin:/bin sh -lc 'cd ~/t3code/apps/server && node dist/index.mjs remote-agent --stdio'",
+          "/usr/bin/env PATH=/opt/example/bin:/usr/local/bin:/usr/bin:/bin sh -lc 'cd ~/workspace/t3code/apps/server && node dist/index.mjs remote-agent --stdio'",
         helperVersion: null,
         lastConnectionAttemptAt: null,
         lastConnectionSucceededAt: null,
