@@ -173,7 +173,9 @@ import {
   Gemini,
   Icon,
   OpenAI,
+  OpenCodeIcon,
   VisualStudioCode,
+  WindsurfIcon,
   Zed,
 } from "./Icons";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
@@ -6084,6 +6086,16 @@ const OpenInPicker = memo(function OpenInPicker({
         label: "VS Code",
         Icon: VisualStudioCode,
         value: "vscode",
+      },
+      {
+        label: "Windsurf",
+        Icon: WindsurfIcon,
+        value: "windsurf",
+      },
+      {
+        label: "OpenCode",
+        Icon: OpenCodeIcon,
+        value: "opencode",
       },
       {
         label: "Zed",
