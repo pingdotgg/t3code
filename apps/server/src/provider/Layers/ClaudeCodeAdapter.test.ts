@@ -38,7 +38,11 @@ fs.writeFileSync(
   `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);
-fs.writeFileSync(${JSON.stringify(capturedArgsPath)}, JSON.stringify({ args, cwd: process.cwd() }));
+fs.writeFileSync(${JSON.stringify(capturedArgsPath)}, JSON.stringify({
+  args,
+  cwd: process.cwd(),
+  effort: process.env.CLAUDE_CODE_EFFORT_LEVEL ?? null
+}));
 process.stdout.write(JSON.stringify({
   type: "system",
   subtype: "init",
@@ -121,6 +125,7 @@ layer("ClaudeCodeAdapterLive", (it) => {
       const captured = JSON.parse(fs.readFileSync(capturedArgsPath, "utf8")) as {
         args: string[];
         cwd: string;
+        effort: string | null;
       };
       const promptIndex = captured.args.indexOf("-p");
       const addDirIndex = captured.args.indexOf("--add-dir");
@@ -140,6 +145,71 @@ layer("ClaudeCodeAdapterLive", (it) => {
       assert.match(prompt, /Describe the attached UI issue\./);
       assert.match(prompt, /Open and inspect these image paths directly before answering:/);
       assert.match(prompt, new RegExp(attachmentPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+      assert.equal(captured.effort, null);
+    }),
+  );
+
+  it.effect("passes Claude reasoning effort through the native env var for supported models", () =>
+    Effect.gen(function* () {
+      const adapter = yield* ClaudeCodeAdapter;
+      fs.rmSync(capturedArgsPath, { force: true });
+
+      yield* adapter.startSession({
+        provider: "claudeCode",
+        threadId: asThreadId("thread-effort-supported"),
+        cwd: workspaceDir,
+        model: "claude-sonnet-4-6",
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: asThreadId("thread-effort-supported"),
+        input: "Think harder.",
+        modelOptions: {
+          claudeCode: {
+            reasoningEffort: "high",
+          },
+        },
+      });
+
+      yield* Effect.promise(() => waitFor(() => fs.existsSync(capturedArgsPath)));
+
+      const captured = JSON.parse(fs.readFileSync(capturedArgsPath, "utf8")) as {
+        effort: string | null;
+      };
+      assert.equal(captured.effort, "high");
+    }),
+  );
+
+  it.effect("does not set Claude reasoning effort for unsupported models", () =>
+    Effect.gen(function* () {
+      const adapter = yield* ClaudeCodeAdapter;
+      fs.rmSync(capturedArgsPath, { force: true });
+
+      yield* adapter.startSession({
+        provider: "claudeCode",
+        threadId: asThreadId("thread-effort-unsupported"),
+        cwd: workspaceDir,
+        model: "claude-3-7-sonnet",
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: asThreadId("thread-effort-unsupported"),
+        input: "Think harder.",
+        modelOptions: {
+          claudeCode: {
+            reasoningEffort: "high",
+          },
+        },
+      });
+
+      yield* Effect.promise(() => waitFor(() => fs.existsSync(capturedArgsPath)));
+
+      const captured = JSON.parse(fs.readFileSync(capturedArgsPath, "utf8")) as {
+        effort: string | null;
+      };
+      assert.equal(captured.effort, null);
     }),
   );
 });

@@ -6,12 +6,17 @@ import {
   type CanonicalItemType,
   EventId,
   type ProviderRuntimeEvent,
+  type ProviderSendTurnInput,
   RuntimeItemId,
   RuntimeRequestId,
   type ProviderSession,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import {
+  resolveReasoningEffortForProvider,
+  supportsReasoningEffortForModel,
+} from "@t3tools/shared/model";
 import { Effect, Layer, PubSub, Stream } from "effect";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -241,6 +246,27 @@ function buildClaudeArgs(input: {
   return args;
 }
 
+function buildClaudeEnv(input: {
+  readonly turn: ProviderSendTurnInput;
+  readonly model: string | undefined;
+}): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  if (!supportsReasoningEffortForModel(PROVIDER, input.model)) {
+    delete env.CLAUDE_CODE_EFFORT_LEVEL;
+    return env;
+  }
+
+  const requestedEffort = input.turn.modelOptions?.claudeCode?.reasoningEffort;
+  const effort = resolveReasoningEffortForProvider(PROVIDER, requestedEffort);
+  if (!effort || effort === "xhigh") {
+    delete env.CLAUDE_CODE_EFFORT_LEVEL;
+    return env;
+  }
+
+  env.CLAUDE_CODE_EFFORT_LEVEL = effort;
+  return env;
+}
+
 function formatAttachmentPrompt(input: {
   readonly prompt: string;
   readonly attachments: ReadonlyArray<{
@@ -436,7 +462,10 @@ export function makeClaudeCodeAdapterLive(options?: ClaudeCodeAdapterLiveOptions
             {
               cwd: state.session.cwd,
               stdio: "pipe",
-              env: process.env,
+              env: buildClaudeEnv({
+                turn: input,
+                model: requestedModel,
+              }),
               shell: process.platform === "win32",
             },
           );

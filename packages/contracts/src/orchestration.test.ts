@@ -186,6 +186,32 @@ it.effect("accepts provider-scoped model options in thread.turn.start", () =>
   }),
 );
 
+it.effect("accepts Claude Code reasoning effort in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-claude-options",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-options",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      provider: "claudeCode",
+      model: "claude-sonnet-4-6",
+      modelOptions: {
+        claudeCode: {
+          reasoningEffort: "medium",
+        },
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.provider, "claudeCode");
+    assert.strictEqual(parsed.modelOptions?.claudeCode?.reasoningEffort, "medium");
+  }),
+);
+
 it.effect(
   "decodes thread.turn-start-requested defaults for provider, runtime mode, and interaction mode",
   () =>

@@ -49,11 +49,17 @@ describe("ProviderSessionStartInput", () => {
       provider: "claudeCode",
       cwd: "/tmp/workspace",
       model: "sonnet",
+      modelOptions: {
+        claudeCode: {
+          reasoningEffort: "high",
+        },
+      },
       runtimeMode: "full-access",
     });
 
     expect(parsed.provider).toBe("claudeCode");
     expect(parsed.model).toBe("sonnet");
+    expect(parsed.modelOptions?.claudeCode?.reasoningEffort).toBe("high");
   });
 });
 
@@ -73,5 +79,20 @@ describe("ProviderSendTurnInput", () => {
     expect(parsed.model).toBe("gpt-5.3-codex");
     expect(parsed.modelOptions?.codex?.reasoningEffort).toBe("xhigh");
     expect(parsed.modelOptions?.codex?.fastMode).toBe(true);
+  });
+
+  it("accepts Claude Code reasoning effort model options", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      model: "claude-sonnet-4-6",
+      modelOptions: {
+        claudeCode: {
+          reasoningEffort: "medium",
+        },
+      },
+    });
+
+    expect(parsed.model).toBe("claude-sonnet-4-6");
+    expect(parsed.modelOptions?.claudeCode?.reasoningEffort).toBe("medium");
   });
 });

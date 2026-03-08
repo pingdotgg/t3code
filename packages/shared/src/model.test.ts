@@ -8,6 +8,8 @@ import {
   getReasoningEffortOptions,
   normalizeModelSlug,
   resolveModelSlug,
+  resolveReasoningEffortForProvider,
+  supportsReasoningEffortForModel,
 } from "./model";
 
 describe("normalizeModelSlug", () => {
@@ -69,11 +71,36 @@ describe("getReasoningEffortOptions", () => {
   it("returns codex reasoning options for codex", () => {
     expect(getReasoningEffortOptions("codex")).toEqual(["xhigh", "high", "medium", "low"]);
   });
+
+  it("returns Claude Code reasoning options for Claude Code", () => {
+    expect(getReasoningEffortOptions("claudeCode")).toEqual(["high", "medium", "low"]);
+  });
 });
 
 describe("getDefaultReasoningEffort", () => {
   it("returns provider-scoped defaults", () => {
     expect(getDefaultReasoningEffort("codex")).toBe("high");
-    expect(getDefaultReasoningEffort("claudeCode")).toBeNull();
+    expect(getDefaultReasoningEffort("claudeCode")).toBe("medium");
+  });
+});
+
+describe("resolveReasoningEffortForProvider", () => {
+  it("falls back to provider defaults when the draft is empty or incompatible", () => {
+    expect(resolveReasoningEffortForProvider("codex", null)).toBe("high");
+    expect(resolveReasoningEffortForProvider("claudeCode", null)).toBe("medium");
+    expect(resolveReasoningEffortForProvider("claudeCode", "xhigh")).toBe("medium");
+  });
+});
+
+describe("supportsReasoningEffortForModel", () => {
+  it("allows Codex reasoning effort for Codex models", () => {
+    expect(supportsReasoningEffortForModel("codex", "gpt-5.4")).toBe(true);
+  });
+
+  it("detects supported Claude Code models and aliases", () => {
+    expect(supportsReasoningEffortForModel("claudeCode", "sonnet")).toBe(true);
+    expect(supportsReasoningEffortForModel("claudeCode", "claude-opus-4-6")).toBe(true);
+    expect(supportsReasoningEffortForModel("claudeCode", "sonnet[1m]")).toBe(true);
+    expect(supportsReasoningEffortForModel("claudeCode", "claude-3-7-sonnet")).toBe(false);
   });
 });
