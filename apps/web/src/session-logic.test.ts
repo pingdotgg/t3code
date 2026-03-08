@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveQueuedTurnReplayAction,
   PROVIDER_OPTIONS,
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -219,6 +220,123 @@ describe("derivePendingUserInputs", () => {
         ],
       },
     ]);
+  });
+});
+
+describe("deriveQueuedTurnReplayAction", () => {
+  it("waits while the queued turn is still active", () => {
+    expect(
+      deriveQueuedTurnReplayAction({
+        queuedAfterTurnId: TurnId.makeUnsafe("turn-1"),
+        phase: "running",
+        latestTurn: {
+          turnId: TurnId.makeUnsafe("turn-1"),
+          state: "running",
+        },
+        latestTurnSettled: false,
+        session: {
+          status: "running",
+          activeTurnId: TurnId.makeUnsafe("turn-1"),
+        },
+        isSendBusy: false,
+        isConnecting: false,
+        sendInFlight: false,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+      }),
+    ).toBe("wait");
+  });
+
+  it("sends when the queued turn completes cleanly", () => {
+    expect(
+      deriveQueuedTurnReplayAction({
+        queuedAfterTurnId: TurnId.makeUnsafe("turn-1"),
+        phase: "ready",
+        latestTurn: {
+          turnId: TurnId.makeUnsafe("turn-1"),
+          state: "completed",
+        },
+        latestTurnSettled: true,
+        session: {
+          status: "ready",
+          activeTurnId: undefined,
+        },
+        isSendBusy: false,
+        isConnecting: false,
+        sendInFlight: false,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+      }),
+    ).toBe("send");
+  });
+
+  it("sends when the queued turn was interrupted", () => {
+    expect(
+      deriveQueuedTurnReplayAction({
+        queuedAfterTurnId: TurnId.makeUnsafe("turn-1"),
+        phase: "ready",
+        latestTurn: {
+          turnId: TurnId.makeUnsafe("turn-1"),
+          state: "interrupted",
+        },
+        latestTurnSettled: true,
+        session: {
+          status: "ready",
+          activeTurnId: undefined,
+        },
+        isSendBusy: false,
+        isConnecting: false,
+        sendInFlight: false,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+      }),
+    ).toBe("send");
+  });
+
+  it("restores the queued draft when the queued turn fails", () => {
+    expect(
+      deriveQueuedTurnReplayAction({
+        queuedAfterTurnId: TurnId.makeUnsafe("turn-1"),
+        phase: "ready",
+        latestTurn: {
+          turnId: TurnId.makeUnsafe("turn-1"),
+          state: "error",
+        },
+        latestTurnSettled: true,
+        session: {
+          status: "ready",
+          activeTurnId: undefined,
+        },
+        isSendBusy: false,
+        isConnecting: false,
+        sendInFlight: false,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+      }),
+    ).toBe("restore");
+  });
+
+  it("restores the queued draft when the session enters error", () => {
+    expect(
+      deriveQueuedTurnReplayAction({
+        queuedAfterTurnId: TurnId.makeUnsafe("turn-1"),
+        phase: "ready",
+        latestTurn: {
+          turnId: TurnId.makeUnsafe("turn-1"),
+          state: "completed",
+        },
+        latestTurnSettled: true,
+        session: {
+          status: "error",
+          activeTurnId: undefined,
+        },
+        isSendBusy: false,
+        isConnecting: false,
+        sendInFlight: false,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+      }),
+    ).toBe("restore");
   });
 });
 

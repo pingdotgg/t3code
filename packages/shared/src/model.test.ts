@@ -69,11 +69,15 @@ describe("getReasoningEffortOptions", () => {
   it("returns codex reasoning options for codex", () => {
     expect(getReasoningEffortOptions("codex")).toEqual(["xhigh", "high", "medium", "low"]);
   });
+
+  it("returns Claude Code reasoning options for claudeCode", () => {
+    expect(getReasoningEffortOptions("claudeCode")).toEqual(["high", "medium", "low"]);
+  });
 });
 
 describe("getDefaultReasoningEffort", () => {
   it("returns provider-scoped defaults", () => {
     expect(getDefaultReasoningEffort("codex")).toBe("high");
-    expect(getDefaultReasoningEffort("claudeCode")).toBeNull();
+    expect(getDefaultReasoningEffort("claudeCode")).toBe("high");
   });
 });

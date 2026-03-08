@@ -63,6 +63,8 @@ export interface LatestProposedPlanState {
   planMarkdown: string;
 }
 
+export type QueuedTurnReplayAction = "wait" | "send" | "restore";
+
 export type TimelineEntry =
   | {
       id: string;
@@ -136,6 +138,56 @@ export function deriveActiveWorkStartedAt(
     return latestTurn?.startedAt ?? sendStartedAt;
   }
   return sendStartedAt;
+}
+
+export function deriveQueuedTurnReplayAction(input: {
+  queuedAfterTurnId: TurnId | null;
+  phase: SessionPhase;
+  latestTurn: Pick<OrchestrationLatestTurn, "turnId" | "state"> | null;
+  latestTurnSettled: boolean;
+  session: Pick<ThreadSession, "status" | "activeTurnId"> | null;
+  isSendBusy: boolean;
+  isConnecting: boolean;
+  sendInFlight: boolean;
+  hasPendingApproval: boolean;
+  hasPendingUserInput: boolean;
+}): QueuedTurnReplayAction {
+  if (
+    input.phase !== "ready" ||
+    input.isSendBusy ||
+    input.isConnecting ||
+    input.sendInFlight ||
+    input.hasPendingApproval ||
+    input.hasPendingUserInput
+  ) {
+    return "wait";
+  }
+
+  if (input.session?.status === "error") {
+    return "restore";
+  }
+
+  if (input.queuedAfterTurnId === null) {
+    return "send";
+  }
+
+  if (input.session?.activeTurnId === input.queuedAfterTurnId) {
+    return "wait";
+  }
+
+  if (!input.latestTurnSettled || input.latestTurn?.turnId !== input.queuedAfterTurnId) {
+    return "wait";
+  }
+
+  if (input.latestTurn.state === "error") {
+    return "restore";
+  }
+
+  if (input.latestTurn.state === "completed" || input.latestTurn.state === "interrupted") {
+    return "send";
+  }
+
+  return "wait";
 }
 
 function requestKindFromRequestType(
