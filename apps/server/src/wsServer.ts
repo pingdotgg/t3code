@@ -73,6 +73,9 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
+import { RemoteHelperClient } from "./remote/Services/HelperClient.ts";
+import { RemoteHostRegistry } from "./remote/Services/HostRegistry.ts";
+import { REMOTE_HELPER_METHODS } from "./remote/protocol.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -217,7 +220,9 @@ export type ServerRuntimeServices =
   | TerminalManager
   | Keybindings
   | Open
-  | AnalyticsService;
+  | AnalyticsService
+  | RemoteHostRegistry
+  | RemoteHelperClient;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -255,6 +260,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const keybindingsManager = yield* Keybindings;
   const providerHealth = yield* ProviderHealth;
   const git = yield* GitCore;
+  const remoteHostRegistry = yield* RemoteHostRegistry;
+  const remoteHelperClient = yield* RemoteHelperClient;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -661,6 +668,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           projectId: bootstrapProjectId,
           title: bootstrapProjectTitle,
           workspaceRoot: cwd,
+          executionTarget: "local",
+          remoteHostId: null,
+          remoteHostLabel: null,
           defaultModel: bootstrapProjectDefaultModel,
           createdAt,
         });
@@ -794,6 +804,69 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           ),
         );
         return { relativePath: target.relativePath };
+      }
+
+      case WS_METHODS.remoteHostsList:
+        return yield* remoteHostRegistry.list();
+
+      case WS_METHODS.remoteHostsUpsert: {
+        const body = stripRequestTag(request.body);
+        return yield* remoteHostRegistry.upsert(body);
+      }
+
+      case WS_METHODS.remoteHostsRemove: {
+        const body = stripRequestTag(request.body);
+        yield* remoteHostRegistry.remove(body.remoteHostId);
+        return undefined;
+      }
+
+      case WS_METHODS.remoteHostsTestConnection: {
+        const body = stripRequestTag(request.body);
+        const capabilities = yield* remoteHelperClient.testConnection(body.remoteHostId);
+        return {
+          remoteHostId: body.remoteHostId,
+          ok: true,
+          helperVersion: capabilities.helperVersion,
+          capabilities: Array.from(capabilities.capabilities),
+          checkedAt: new Date().toISOString(),
+        };
+      }
+
+      case WS_METHODS.remoteHostsBrowse: {
+        const body = stripRequestTag(request.body);
+        const cwd = body.path ?? ".";
+        if (body.query !== undefined && body.query.length > 0) {
+          const result = yield* remoteHelperClient.call(
+            body.remoteHostId,
+            REMOTE_HELPER_METHODS.workspaceSearchEntries,
+            {
+              cwd,
+              query: body.query,
+              limit: body.limit,
+            },
+          );
+          return {
+            remoteHostId: body.remoteHostId,
+            cwd,
+            entries: result.entries,
+            truncated: result.truncated,
+          };
+        }
+
+        const result = yield* remoteHelperClient.call(
+          body.remoteHostId,
+          REMOTE_HELPER_METHODS.workspaceBrowseEntries,
+          {
+            cwd,
+            limit: body.limit,
+          },
+        );
+        return {
+          remoteHostId: body.remoteHostId,
+          cwd: result.cwd,
+          entries: result.entries,
+          truncated: result.truncated,
+        };
       }
 
       case WS_METHODS.shellOpenInEditor: {

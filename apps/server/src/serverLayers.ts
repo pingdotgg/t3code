@@ -17,6 +17,7 @@ import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderComma
 import { OrchestrationProjectionPipelineLive } from "./orchestration/Layers/ProjectionPipeline";
 import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers/ProjectionSnapshotQuery";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion";
+import { RemoteHostRepositoryLive } from "./persistence/Layers/RemoteHosts";
 import { ProviderUnsupportedError } from "./provider/Errors";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
@@ -34,6 +35,8 @@ import { CodexTextGenerationLive } from "./git/Layers/CodexTextGeneration";
 import { GitServiceLive } from "./git/Layers/GitService";
 import { BunPtyAdapterLive } from "./terminal/Layers/BunPTY";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
+import { RemoteHelperClientLive } from "./remote/Layers/HelperClient";
+import { RemoteHostRegistryLive } from "./remote/Layers/HostRegistry";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 
 export function makeServerProviderLayer(): Layer.Layer<
@@ -119,11 +122,20 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provideMerge(textGenerationLayer),
   );
 
+  const remoteHostRegistryLayer = RemoteHostRegistryLive.pipe(
+    Layer.provide(RemoteHostRepositoryLive),
+  );
+  const remoteHelperClientLayer = RemoteHelperClientLive.pipe(
+    Layer.provide(remoteHostRegistryLayer),
+  );
+
   return Layer.mergeAll(
     orchestrationReactorLayer,
     gitCoreLayer,
     gitManagerLayer,
     terminalLayer,
     KeybindingsLive,
+    remoteHostRegistryLayer,
+    remoteHelperClientLayer,
   ).pipe(Layer.provideMerge(NodeServices.layer));
 }

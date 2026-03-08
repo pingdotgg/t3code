@@ -1859,6 +1859,9 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         projectId: ProjectId.makeUnsafe("project-live"),
         title: "Live Project",
         workspaceRoot: "/tmp/project-live",
+        executionTarget: "local",
+        remoteHostId: null,
+        remoteHostLabel: null,
         defaultModel: "gpt-5-codex",
         createdAt,
       });
@@ -1894,6 +1897,9 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         projectId: ProjectId.makeUnsafe("project-scripts"),
         title: "Scripts Project",
         workspaceRoot: "/tmp/project-scripts",
+        executionTarget: "local",
+        remoteHostId: null,
+        remoteHostLabel: null,
         defaultModel: "gpt-5-codex",
         createdAt,
       });

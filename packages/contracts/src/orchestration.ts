@@ -9,11 +9,13 @@ import {
   MessageId,
   NonNegativeInt,
   ProjectId,
+  RemoteHostId,
   ProviderItemId,
   ThreadId,
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas";
+import { ExecutionTarget } from "./remote";
 
 export const ORCHESTRATION_WS_METHODS = {
   getSnapshot: "orchestration.getSnapshot",
@@ -45,6 +47,7 @@ export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
 export const ProviderServiceTier = Schema.Literals(["fast", "flex"]);
 export type ProviderServiceTier = typeof ProviderServiceTier.Type;
 export const DEFAULT_PROVIDER_KIND: ProviderKind = "codex";
+export const DEFAULT_EXECUTION_TARGET: ExecutionTarget = "local";
 export const RuntimeMode = Schema.Literals(["approval-required", "full-access"]);
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
@@ -128,6 +131,13 @@ export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  executionTarget: ExecutionTarget.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_EXECUTION_TARGET),
+  ),
+  remoteHostId: Schema.NullOr(RemoteHostId).pipe(Schema.withDecodingDefault(() => null)),
+  remoteHostLabel: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   defaultModel: Schema.NullOr(TrimmedNonEmptyString),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
@@ -284,6 +294,11 @@ export const ProjectCreateCommand = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  executionTarget: ExecutionTarget.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_EXECUTION_TARGET),
+  ),
+  remoteHostId: Schema.optional(Schema.NullOr(RemoteHostId)),
+  remoteHostLabel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultModel: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
@@ -294,6 +309,9 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  executionTarget: Schema.optional(ExecutionTarget),
+  remoteHostId: Schema.optional(Schema.NullOr(RemoteHostId)),
+  remoteHostLabel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultModel: Schema.optional(TrimmedNonEmptyString),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
@@ -586,6 +604,13 @@ export const ProjectCreatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  executionTarget: ExecutionTarget.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_EXECUTION_TARGET),
+  ),
+  remoteHostId: Schema.NullOr(RemoteHostId).pipe(Schema.withDecodingDefault(() => null)),
+  remoteHostLabel: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   defaultModel: Schema.NullOr(TrimmedNonEmptyString),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
@@ -596,6 +621,9 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  executionTarget: Schema.optional(ExecutionTarget),
+  remoteHostId: Schema.optional(Schema.NullOr(RemoteHostId)),
+  remoteHostLabel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultModel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   updatedAt: IsoDateTime,

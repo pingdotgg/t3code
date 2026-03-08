@@ -506,6 +506,9 @@ export default function Sidebar() {
           projectId,
           title,
           workspaceRoot: cwd,
+          executionTarget: "local",
+          remoteHostId: null,
+          remoteHostLabel: null,
           defaultModel: DEFAULT_MODEL_BY_PROVIDER.codex,
           createdAt,
         });

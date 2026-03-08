@@ -1116,6 +1116,9 @@ describe("WebSocket Server", () => {
       projectId: "project-diff",
       title: "Diff Project",
       workspaceRoot,
+      executionTarget: "local",
+      remoteHostId: null,
+      remoteHostLabel: null,
       defaultModel: "gpt-5-codex",
       createdAt,
     });
@@ -1195,6 +1198,9 @@ describe("WebSocket Server", () => {
       projectId: "project-1",
       title: "WS Project",
       workspaceRoot,
+      executionTarget: "local",
+      remoteHostId: null,
+      remoteHostLabel: null,
       defaultModel: "gpt-5-codex",
       createdAt,
     });

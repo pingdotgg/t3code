@@ -23,6 +23,10 @@
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"
+    },
+    "./ssh": {
+      "types": "./src/ssh.ts",
+      "import": "./src/ssh.ts"
     }
   },
   "scripts": {

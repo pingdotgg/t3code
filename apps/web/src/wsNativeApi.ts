@@ -143,6 +143,13 @@ export function createWsNativeApi(): NativeApi {
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
     },
+    remoteHosts: {
+      list: () => transport.request(WS_METHODS.remoteHostsList, {}),
+      upsert: (input) => transport.request(WS_METHODS.remoteHostsUpsert, input),
+      remove: (input) => transport.request(WS_METHODS.remoteHostsRemove, input),
+      testConnection: (input) => transport.request(WS_METHODS.remoteHostsTestConnection, input),
+      browse: (input) => transport.request(WS_METHODS.remoteHostsBrowse, input),
+    },
     shell: {
       openInEditor: (cwd, editor) =>
         transport.request(WS_METHODS.shellOpenInEditor, { cwd, editor }),

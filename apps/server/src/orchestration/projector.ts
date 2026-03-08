@@ -181,6 +181,9 @@ export function projectEvent(
             id: payload.projectId,
             title: payload.title,
             workspaceRoot: payload.workspaceRoot,
+            executionTarget: payload.executionTarget,
+            remoteHostId: payload.remoteHostId,
+            remoteHostLabel: payload.remoteHostLabel,
             defaultModel: payload.defaultModel,
             scripts: payload.scripts,
             createdAt: payload.createdAt,
@@ -210,6 +213,15 @@ export function projectEvent(
                   ...(payload.title !== undefined ? { title: payload.title } : {}),
                   ...(payload.workspaceRoot !== undefined
                     ? { workspaceRoot: payload.workspaceRoot }
+                    : {}),
+                  ...(payload.executionTarget !== undefined
+                    ? { executionTarget: payload.executionTarget }
+                    : {}),
+                  ...(payload.remoteHostId !== undefined
+                    ? { remoteHostId: payload.remoteHostId }
+                    : {}),
+                  ...(payload.remoteHostLabel !== undefined
+                    ? { remoteHostLabel: payload.remoteHostLabel }
                     : {}),
                   ...(payload.defaultModel !== undefined
                     ? { defaultModel: payload.defaultModel }

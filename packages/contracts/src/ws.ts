@@ -31,6 +31,12 @@ import {
 import { KeybindingRule } from "./keybindings";
 import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
+import {
+  RemoteHostBrowseInput,
+  RemoteHostRemoveInput,
+  RemoteHostTestConnectionInput,
+  RemoteHostUpsertInput,
+} from "./remote";
 
 // ── WebSocket RPC Method Names ───────────────────────────────────────
 
@@ -41,6 +47,11 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  remoteHostsList: "remoteHosts.list",
+  remoteHostsUpsert: "remoteHosts.upsert",
+  remoteHostsRemove: "remoteHosts.remove",
+  remoteHostsTestConnection: "remoteHosts.testConnection",
+  remoteHostsBrowse: "remoteHosts.browse",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -103,6 +114,11 @@ const WebSocketRequestBody = Schema.Union([
   // Project Search
   tagRequestBody(WS_METHODS.projectsSearchEntries, ProjectSearchEntriesInput),
   tagRequestBody(WS_METHODS.projectsWriteFile, ProjectWriteFileInput),
+  tagRequestBody(WS_METHODS.remoteHostsList, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.remoteHostsUpsert, RemoteHostUpsertInput),
+  tagRequestBody(WS_METHODS.remoteHostsRemove, RemoteHostRemoveInput),
+  tagRequestBody(WS_METHODS.remoteHostsTestConnection, RemoteHostTestConnectionInput),
+  tagRequestBody(WS_METHODS.remoteHostsBrowse, RemoteHostBrowseInput),
 
   // Shell methods
   tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),

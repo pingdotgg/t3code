@@ -22,6 +22,15 @@ import type {
 } from "./project";
 import type { ServerConfig } from "./server";
 import type {
+  RemoteHostBrowseInput,
+  RemoteHostBrowseResult,
+  RemoteHostRecord,
+  RemoteHostRemoveInput,
+  RemoteHostTestConnectionInput,
+  RemoteHostTestConnectionResult,
+  RemoteHostUpsertInput,
+} from "./remote";
+import type {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
@@ -40,7 +49,7 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "./orchestration";
-import { EditorId } from "./editor";
+import { type EditorId } from "./editor";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -110,6 +119,15 @@ export interface NativeApi {
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+  };
+  remoteHosts: {
+    list: () => Promise<ReadonlyArray<RemoteHostRecord>>;
+    upsert: (input: RemoteHostUpsertInput) => Promise<RemoteHostRecord>;
+    remove: (input: RemoteHostRemoveInput) => Promise<void>;
+    testConnection: (
+      input: RemoteHostTestConnectionInput,
+    ) => Promise<RemoteHostTestConnectionResult>;
+    browse: (input: RemoteHostBrowseInput) => Promise<RemoteHostBrowseResult>;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;

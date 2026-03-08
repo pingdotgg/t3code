@@ -77,6 +77,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           title: command.title,
           workspaceRoot: command.workspaceRoot,
+          executionTarget: command.executionTarget,
+          remoteHostId: command.remoteHostId ?? null,
+          remoteHostLabel: command.remoteHostLabel ?? null,
           defaultModel: command.defaultModel ?? null,
           scripts: [],
           createdAt: command.createdAt,
@@ -104,6 +107,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.workspaceRoot !== undefined ? { workspaceRoot: command.workspaceRoot } : {}),
+          ...(command.executionTarget !== undefined
+            ? { executionTarget: command.executionTarget }
+            : {}),
+          ...(command.remoteHostId !== undefined ? { remoteHostId: command.remoteHostId } : {}),
+          ...(command.remoteHostLabel !== undefined
+            ? { remoteHostLabel: command.remoteHostLabel }
+            : {}),
           ...(command.defaultModel !== undefined ? { defaultModel: command.defaultModel } : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
           updatedAt: occurredAt,
