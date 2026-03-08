@@ -765,8 +765,8 @@ export default function ThreadTerminalDrawer({
       />
 
       {label && (
-        <div className="pointer-events-none absolute left-2 top-2 z-20">
-          <span className="select-none text-[10px] tracking-wider text-muted-foreground/60">
+        <div className="flex h-6 shrink-0 items-center px-3">
+          <span className="select-none text-[10px] tracking-wider text-muted-foreground">
             {label} <span className="opacity-60">· {abbreviatePath(cwd)}</span>
           </span>
         </div>

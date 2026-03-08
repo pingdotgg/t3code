@@ -180,8 +180,8 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
             sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-pointer-lock"
           />
         ) : hasUrl ? (
-          <div className="flex h-full items-center justify-center p-8 text-center">
-            <div className="space-y-2 text-muted-foreground">
+          <div className="flex h-full items-center justify-center bg-[#1e1e1e] p-8 text-center">
+            <div className="space-y-2 text-neutral-500">
               <GlobeIcon className="mx-auto size-8 opacity-30" />
               <p className="text-sm">Dev server not responding</p>
               <p className="text-xs opacity-70">
