@@ -1,14 +1,11 @@
-import * as ChildProcess from "node:child_process";
+import { readPathFromLoginShell } from "@t3tools/shared/shell";
 
 export function fixPath(): void {
   if (process.platform !== "darwin") return;
 
   try {
     const shell = process.env.SHELL ?? "/bin/zsh";
-    const result = ChildProcess.execFileSync(shell, ["-ilc", "echo -n $PATH"], {
-      encoding: "utf8",
-      timeout: 5000,
-    });
+    const result = readPathFromLoginShell(shell);
     if (result) {
       process.env.PATH = result;
     }

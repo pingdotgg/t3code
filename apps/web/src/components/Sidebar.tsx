@@ -499,8 +499,8 @@ export default function Sidebar() {
       const projectId = newProjectId();
       const createdAt = new Date().toISOString();
       const title = cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd;
-      const projectCreated = await api.orchestration
-        .dispatchCommand({
+      try {
+        await api.orchestration.dispatchCommand({
           type: "project.create",
           commandId: newCommandId(),
           projectId,
@@ -508,11 +508,17 @@ export default function Sidebar() {
           workspaceRoot: cwd,
           defaultModel: DEFAULT_MODEL_BY_PROVIDER.codex,
           createdAt,
-        })
-        .then(() => true)
-        .catch(() => false);
-      if (projectCreated) {
+        });
         await handleNewThread(projectId).catch(() => undefined);
+      } catch (error) {
+        setIsAddingProject(false);
+        toastManager.add({
+          type: "error",
+          title: "Unable to add project",
+          description:
+            error instanceof Error ? error.message : "An error occurred while adding the project.",
+        });
+        return;
       }
       finishAddingProject();
     },

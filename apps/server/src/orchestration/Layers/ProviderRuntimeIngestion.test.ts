@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import type { OrchestrationReadModel, ProviderRuntimeEvent } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
@@ -112,6 +116,13 @@ describe("ProviderRuntimeIngestion", () => {
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
+  const tempDirs: string[] = [];
+
+  function makeTempDir(prefix: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    tempDirs.push(dir);
+    return dir;
+  }
 
   afterEach(async () => {
     if (scope) {
@@ -122,9 +133,14 @@ describe("ProviderRuntimeIngestion", () => {
       await runtime.dispose();
     }
     runtime = null;
+    for (const dir of tempDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   async function createHarness() {
+    const workspaceRoot = makeTempDir("t3-provider-project-");
+    fs.mkdirSync(path.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionPipelineLive),
@@ -152,7 +168,7 @@ describe("ProviderRuntimeIngestion", () => {
         commandId: CommandId.makeUnsafe("cmd-provider-project-create"),
         projectId: asProjectId("project-1"),
         title: "Provider Project",
-        workspaceRoot: "/tmp/provider-project",
+        workspaceRoot,
         defaultModel: "gpt-5-codex",
         createdAt,
       }),

@@ -1150,7 +1150,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
 
   private async runWithThreadLock<T>(threadId: string, task: () => Promise<T>): Promise<T> {
     const previous = this.threadLocks.get(threadId) ?? Promise.resolve();
-    let release: () => void = () => {};
+    let release!: () => void;
     const current = new Promise<void>((resolve) => {
       release = resolve;
     });

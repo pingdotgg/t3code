@@ -22,6 +22,8 @@ jobs:
     outputs:
       version: ${{ steps.release_meta.outputs.version }}
       tag: ${{ steps.release_meta.outputs.tag }}
+      is_prerelease: ${{ steps.release_meta.outputs.is_prerelease }}
+      make_latest: ${{ steps.release_meta.outputs.make_latest }}
       ref: ${{ github.sha }}
     steps:
       - name: Checkout
@@ -45,6 +47,13 @@ jobs:
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -260,7 +269,8 @@ jobs:
           target_commitish: ${{ needs.preflight.outputs.ref }}
           name: T3 Code v${{ needs.preflight.outputs.version }}
           generate_release_notes: true
-          make_latest: true
+          prerelease: ${{ needs.preflight.outputs.is_prerelease }}
+          make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: |
             release-assets/*.dmg
             release-assets/*.zip
