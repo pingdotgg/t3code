@@ -80,7 +80,21 @@ const CURSOR_MODEL_CAPABILITY_BY_FAMILY: Record<CursorModelFamily, CursorModelCa
     defaultReasoning: "normal",
     defaultThinking: true,
   },
+  "gpt-5.4": {
+    supportsReasoning: true,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
   "gemini-3.1-pro": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  "kimi-k2.5": {
     supportsReasoning: false,
     supportsFast: false,
     supportsThinking: false,
@@ -140,6 +154,14 @@ function resolveCursorModelFamily(model: string | null | undefined): CursorModel
     normalized === "gpt-5.3-codex-xhigh-fast"
   ) {
     return "gpt-5.3-codex";
+  }
+
+  if (
+    normalized === "gpt-5.4" ||
+    normalized === "gpt-5.4-high" ||
+    normalized === "gpt-5.4-xhigh"
+  ) {
+    return "gpt-5.4";
   }
 
   if (normalized === "sonnet-4.6-thinking") {

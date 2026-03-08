@@ -51,7 +51,9 @@ export const CURSOR_MODEL_FAMILY_OPTIONS = [
   { slug: "opus-4.6", name: "Claude 4.6 Opus" },
   { slug: "opus-4.5", name: "Claude 4.5 Opus" },
   { slug: "sonnet-4.6", name: "Claude 4.6 Sonnet" },
+  { slug: "gpt-5.4", name: "GPT-5.4" },
   { slug: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
+  { slug: "kimi-k2.5", name: "Kimi K2.5" },
 ] as const satisfies readonly CursorModelFamilyOption[];
 
 export type CursorModelFamily = (typeof CURSOR_MODEL_FAMILY_OPTIONS)[number]["slug"];
@@ -88,7 +90,11 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "opus-4.5-thinking", name: "Claude 4.5 Opus (Thinking)" },
     { slug: "sonnet-4.6", name: "Claude 4.6 Sonnet" },
     { slug: "sonnet-4.6-thinking", name: "Claude 4.6 Sonnet (Thinking)" },
+    { slug: "gpt-5.4", name: "GPT-5.4" },
+    { slug: "gpt-5.4-high", name: "GPT-5.4 High" },
+    { slug: "gpt-5.4-xhigh", name: "GPT-5.4 Extra High" },
     { slug: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
+    { slug: "kimi-k2.5", name: "Kimi K2.5" },
   ],
 } as const satisfies Record<ProviderKind, readonly ModelOption[]>;
 export type ModelOptionsByProvider = typeof MODEL_OPTIONS_BY_PROVIDER;
@@ -131,7 +137,12 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER = {
     "composer-1": "composer-1",
     "gpt-5.3-codex": "gpt-5.3-codex",
     "gpt-5.3-codex-spark": "gpt-5.3-codex-spark-preview",
+    "gpt-5.4": "gpt-5.4",
+    "gpt-5.4-medium": "gpt-5.4",
+    "gpt-5.4-high": "gpt-5.4-high",
+    "gpt-5.4-xhigh": "gpt-5.4-xhigh",
     "gemini-3.1-pro": "gemini-3.1-pro",
+    "kimi-k2.5": "kimi-k2.5",
     "claude-4.6-sonnet-thinking": "sonnet-4.6-thinking",
     "claude-4.6-opus-thinking": "opus-4.6-thinking",
     "claude-4.5-opus-thinking": "opus-4.5-thinking",
