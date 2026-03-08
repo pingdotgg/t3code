@@ -153,6 +153,8 @@ export interface GeminiSessionContext {
   runtimeModel: string | null;
   sessionSetupPromise: Promise<void> | null;
   hydrating: boolean;
+  pendingApprovals: Set<string>;
+  pendingUserInputs: Set<string>;
 }
 
 export interface GeminiSessionResumeCursor {
@@ -211,6 +213,8 @@ export class GeminiCliManager extends EventEmitter {
       runtimeModel: null,
       sessionSetupPromise: null,
       hydrating: false,
+      pendingApprovals: new Set(),
+      pendingUserInputs: new Set(),
       ...(input.resumeCursor?.sessionId
         ? { geminiSessionId: input.resumeCursor.sessionId }
         : {}),
@@ -333,6 +337,50 @@ export class GeminiCliManager extends EventEmitter {
     if (context.activeProcess) {
       killChildTree(context.activeProcess);
     }
+  }
+
+  respondToRequest(threadId: string, requestId: string, decision: "approved" | "rejected"): void {
+    const context = this.sessions.get(threadId);
+    if (!context || !context.activeProcess || !context.activeProcess.stdin) {
+      throw new Error(`Cannot respond to request ${requestId}: no active process with stdin`);
+    }
+
+    if (!context.pendingApprovals.has(requestId)) {
+      throw new Error(`Unknown pending approval request: ${requestId}`);
+    }
+
+    context.pendingApprovals.delete(requestId);
+    
+    const responsePayload = JSON.stringify({
+      type: "tool_result",
+      tool_id: requestId,
+      status: decision === "approved" ? "completed" : "failed",
+      output: decision === "approved" ? "User approved the request." : "User rejected the request."
+    });
+    
+    context.activeProcess.stdin.write(responsePayload + "\n");
+  }
+
+  respondToUserInput(threadId: string, requestId: string, answers: Record<string, string | string[]>): void {
+    const context = this.sessions.get(threadId);
+    if (!context || !context.activeProcess || !context.activeProcess.stdin) {
+      throw new Error(`Cannot respond to user input ${requestId}: no active process with stdin`);
+    }
+
+    if (!context.pendingUserInputs.has(requestId)) {
+      throw new Error(`Unknown pending user input request: ${requestId}`);
+    }
+
+    context.pendingUserInputs.delete(requestId);
+    
+    const responsePayload = JSON.stringify({
+      type: "tool_result",
+      tool_id: requestId,
+      status: "completed",
+      output: JSON.stringify(answers)
+    });
+    
+    context.activeProcess.stdin.write(responsePayload + "\n");
   }
 
   stopSession(threadId: string): void {
@@ -555,6 +603,16 @@ export class GeminiCliManager extends EventEmitter {
         if (event.type === "init" && typeof event.session_id === "string") {
           this.updateGeminiSessionId(context, event.session_id, true);
           emitReady();
+        }
+
+        if (event.type === "tool_use") {
+          const toolId = typeof event.tool_id === "string" ? event.tool_id : randomUUID();
+          if (event.tool_name === "ask_user") {
+            context.pendingUserInputs.add(toolId);
+          } else if (event.tool_name !== "ask_user" && typeof event.tool_name === "string" && !event.tool_name.startsWith("browser_eval")) {
+            // Treat other unknown/dangerous tools as requiring approval if needed, though usually YOLO implies auto.
+            // Actually, we'll only intercept ask_user explicitly for mid-turn interactivity.
+          }
         }
 
         this.emit("event", {

@@ -90,6 +90,56 @@ function stringFromUnknown(value: unknown): string | undefined {
   }
 }
 
+function toUserInputQuestions(payload: Record<string, unknown> | undefined) {
+  const questions = Array.isArray(payload?.questions) ? payload?.questions : undefined;
+  if (!questions) {
+    return undefined;
+  }
+
+  const parsedQuestions = questions
+    .map((entry) => {
+      const question = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : null;
+      if (!question) return undefined;
+      const optionsArray = Array.isArray(question.options) ? question.options : undefined;
+      const options = optionsArray
+        ?.map((option) => {
+          const optionRecord = typeof option === "object" && option !== null ? (option as Record<string, unknown>) : null;
+          if (!optionRecord) return undefined;
+          const label = typeof optionRecord.label === "string" ? optionRecord.label.trim() : undefined;
+          const description = typeof optionRecord.description === "string" ? optionRecord.description.trim() : undefined;
+          if (!label || !description) {
+            return undefined;
+          }
+          return { label, description };
+        })
+        .filter((option): option is { label: string; description: string } => option !== undefined);
+      const id = typeof question.id === "string" ? question.id.trim() : undefined;
+      const header = typeof question.header === "string" ? question.header.trim() : undefined;
+      const prompt = typeof question.question === "string" ? question.question.trim() : undefined;
+      if (!id || !header || !prompt || !options || options.length === 0) {
+        return undefined;
+      }
+      return {
+        id,
+        header,
+        question: prompt,
+        options,
+      };
+    })
+    .filter(
+      (
+        question,
+      ): question is {
+        id: string;
+        header: string;
+        question: string;
+        options: { label: string; description: string }[];
+      } => question !== undefined,
+    );
+
+  return parsedQuestions.length > 0 ? parsedQuestions : undefined;
+}
+
 function buildGeminiPromptAttachment(input: {
   readonly attachment: ChatAttachment;
   readonly stateDir: string;
@@ -296,6 +346,22 @@ function mapGeminiEventToCanonical(rawEvent: Record<string, unknown>): ProviderR
 
     case "gemini/tool_use": {
       const itemId = itemIdFromRaw(rawEvent.tool_id);
+
+      if (rawEvent.tool_name === "ask_user") {
+        const payload = rawEvent.parameters as Record<string, unknown> | undefined;
+        const questions = toUserInputQuestions(payload);
+        if (questions) {
+          return {
+            ...base,
+            type: "user-input.requested",
+            payload: {
+              questions,
+            },
+            ...(itemId ? { requestId: itemId } : {}),
+          } as any; // Type override since requestId might be missing from base ProviderRuntimeEvent union but is needed for this specific event type
+        }
+      }
+
       return {
         ...base,
         ...(itemId ? { itemId } : {}),
@@ -558,25 +624,33 @@ const makeGeminiAdapter = () =>
             }),
         }) as Effect.Effect<void, ProviderAdapterError>,
 
-      respondToRequest: (_threadId, _requestId, _decision) =>
-        Effect.fail(
-          new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "respondToRequest",
-            detail:
-              "Gemini CLI does not support mid-turn approval requests. Use --approval-mode=yolo.",
-          }),
-        ) as Effect.Effect<void, ProviderAdapterError>,
+      respondToRequest: (threadId, requestId, decision) =>
+        Effect.try({
+          try: () => {
+            manager.respondToRequest(String(threadId), String(requestId), decision);
+          },
+          catch: (cause: unknown) =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "respondToRequest",
+              detail: toMessage(cause, "Failed to respond to request"),
+              cause: cause instanceof Error ? cause : undefined,
+            }),
+        }) as Effect.Effect<void, ProviderAdapterError>,
 
-      respondToUserInput: (_threadId, _requestId, _answers) =>
-        Effect.fail(
-          new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "respondToUserInput",
-            detail:
-              "Gemini CLI does not support mid-turn user input requests in headless mode.",
-          }),
-        ) as Effect.Effect<void, ProviderAdapterError>,
+      respondToUserInput: (threadId, requestId, answers) =>
+        Effect.try({
+          try: () => {
+            manager.respondToUserInput(String(threadId), String(requestId), answers);
+          },
+          catch: (cause: unknown) =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "respondToUserInput",
+              detail: toMessage(cause, "Failed to respond to user input"),
+              cause: cause instanceof Error ? cause : undefined,
+            }),
+        }) as Effect.Effect<void, ProviderAdapterError>,
 
       stopSession: (threadId) =>
         Effect.sync(() => {
