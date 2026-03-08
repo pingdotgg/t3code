@@ -48,7 +48,6 @@ export const ProviderSession = Schema.Struct({
   lastError: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ProviderSession = typeof ProviderSession.Type;
-
 export const ProviderSessionStartInput = Schema.Struct({
   threadId: ThreadId,
   provider: Schema.optional(ProviderKind),

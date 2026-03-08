@@ -3163,8 +3163,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         worktreePath: activeThread.worktreePath,
         createdAt,
       })
-      .then(() =>
-        api.orchestration.dispatchCommand({
+      .then(() => {
+        return api.orchestration.dispatchCommand({
           type: "thread.turn.start",
           commandId: newCommandId(),
           threadId: nextThreadId,
@@ -3186,8 +3186,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           runtimeMode,
           interactionMode: "default",
           createdAt,
-        }),
-      )
+        });
+      })
       .then(() => api.orchestration.getSnapshot())
       .then((snapshot) => {
         syncServerReadModel(snapshot);

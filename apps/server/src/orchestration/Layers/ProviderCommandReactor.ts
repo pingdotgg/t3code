@@ -147,6 +147,8 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const threadProviderOptions = new Map<string, ProviderStartOptions>();
+
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
     readonly kind:
@@ -347,16 +349,19 @@ const make = Effect.gen(function* () {
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly provider?: ProviderKind;
-      readonly model?: string;
-      readonly serviceTier?: ProviderServiceTier | null;
-      readonly modelOptions?: ProviderModelOptions;
-      readonly providerOptions?: ProviderStartOptions;
-      readonly interactionMode?: "default" | "plan";
-      readonly createdAt: string;
+    readonly model?: string;
+    readonly serviceTier?: ProviderServiceTier | null;
+    readonly modelOptions?: ProviderModelOptions;
+    readonly providerOptions?: ProviderStartOptions;
+    readonly interactionMode?: "default" | "plan";
+    readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
     if (!thread) {
       return;
+    }
+    if (input.providerOptions !== undefined) {
+      threadProviderOptions.set(input.threadId, input.providerOptions);
     }
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.provider !== undefined ? { provider: input.provider } : {}),
@@ -499,9 +504,7 @@ const make = Effect.gen(function* () {
       ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
       ...(event.payload.serviceTier !== undefined ? { serviceTier: event.payload.serviceTier } : {}),
       ...(event.payload.modelOptions !== undefined ? { modelOptions: event.payload.modelOptions } : {}),
-      ...(event.payload.providerOptions !== undefined
-        ? { providerOptions: event.payload.providerOptions }
-        : {}),
+      ...(event.payload.providerOptions !== undefined ? { providerOptions: event.payload.providerOptions } : {}),
       interactionMode: event.payload.interactionMode,
       createdAt: event.payload.createdAt,
     });
@@ -657,7 +660,10 @@ const make = Effect.gen(function* () {
           if (!thread?.session || thread.session.status === "stopped") {
             return;
           }
-          yield* ensureSessionForThread(event.payload.threadId, event.occurredAt);
+          const cachedProviderOptions = threadProviderOptions.get(event.payload.threadId);
+          yield* ensureSessionForThread(event.payload.threadId, event.occurredAt, {
+            ...(cachedProviderOptions !== undefined ? { providerOptions: cachedProviderOptions } : {}),
+          });
           return;
         }
         case "thread.turn-start-requested":
