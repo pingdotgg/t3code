@@ -61,4 +61,26 @@ describe("ProviderSendTurnInput", () => {
     expect(parsed.modelOptions?.codex?.reasoningEffort).toBe("xhigh");
     expect(parsed.modelOptions?.codex?.fastMode).toBe(true);
   });
+
+  it("accepts claude-compatible payloads", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-2",
+      provider: "claude",
+      cwd: "/tmp/workspace",
+      model: "sonnet",
+      modelOptions: {
+        claude: {},
+      },
+      runtimeMode: "approval-required",
+      providerOptions: {
+        claude: {
+          binaryPath: "/usr/local/bin/claude",
+        },
+      },
+    });
+
+    expect(parsed.provider).toBe("claude");
+    expect(parsed.model).toBe("sonnet");
+    expect(parsed.providerOptions?.claude?.binaryPath).toBe("/usr/local/bin/claude");
+  });
 });

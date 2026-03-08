@@ -14,6 +14,7 @@ describe("normalizeModelSlug", () => {
   it("maps known aliases to canonical slugs", () => {
     expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
     expect(normalizeModelSlug("gpt-5.3")).toBe("gpt-5.3-codex");
+    expect(normalizeModelSlug("claude-opus-4-6", "claude")).toBe("opus");
   });
 
   it("returns null for empty or missing values", () => {
@@ -26,6 +27,7 @@ describe("normalizeModelSlug", () => {
   it("preserves non-aliased model slugs", () => {
     expect(normalizeModelSlug("gpt-5.2")).toBe("gpt-5.2");
     expect(normalizeModelSlug("gpt-5.2-codex")).toBe("gpt-5.2-codex");
+    expect(normalizeModelSlug("sonnet", "claude")).toBe("sonnet");
   });
 
   it("does not leak prototype properties as aliases", () => {
@@ -49,10 +51,18 @@ describe("resolveModelSlug", () => {
     for (const model of MODEL_OPTIONS_BY_PROVIDER.codex) {
       expect(resolveModelSlug(model.slug)).toBe(model.slug);
     }
+    for (const model of MODEL_OPTIONS_BY_PROVIDER.claude) {
+      expect(resolveModelSlug(model.slug, "claude")).toBe(model.slug);
+    }
   });
   it("keeps codex defaults for backward compatibility", () => {
     expect(getDefaultModel()).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
     expect(getModelOptions()).toEqual(MODEL_OPTIONS_BY_PROVIDER.codex);
+  });
+
+  it("returns provider-scoped defaults for claude", () => {
+    expect(getDefaultModel("claude")).toBe(DEFAULT_MODEL_BY_PROVIDER.claude);
+    expect(getModelOptions("claude")).toEqual(MODEL_OPTIONS_BY_PROVIDER.claude);
   });
 });
 
@@ -60,10 +70,15 @@ describe("getReasoningEffortOptions", () => {
   it("returns codex reasoning options for codex", () => {
     expect(getReasoningEffortOptions("codex")).toEqual(["xhigh", "high", "medium", "low"]);
   });
+
+  it("returns no reasoning options for claude", () => {
+    expect(getReasoningEffortOptions("claude")).toEqual([]);
+  });
 });
 
 describe("getDefaultReasoningEffort", () => {
   it("returns provider-scoped defaults", () => {
     expect(getDefaultReasoningEffort("codex")).toBe("high");
+    expect(getDefaultReasoningEffort("claude")).toBeNull();
   });
 });
