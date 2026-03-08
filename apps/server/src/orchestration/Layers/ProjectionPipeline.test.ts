@@ -1757,6 +1757,10 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
         payload: {
           threadId,
           messageId,
+          source: {
+            kind: "message",
+            messageId,
+          },
           runtimeMode: "approval-required",
           createdAt: turnStartedAt,
         },

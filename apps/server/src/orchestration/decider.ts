@@ -16,6 +16,10 @@ import {
 const nowIso = () => new Date().toISOString();
 const DEFAULT_ASSISTANT_DELIVERY_MODE = "buffered" as const;
 
+function buildPlanImplementationPrompt(planMarkdown: string): string {
+  return `PLEASE IMPLEMENT THIS PLAN:\n${planMarkdown.trim()}`;
+}
+
 const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
   eventId: crypto.randomUUID() as OrchestrationEvent["eventId"],
   aggregateKind: "thread",
@@ -299,6 +303,78 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           messageId: command.message.messageId,
+          source: {
+            kind: "message",
+            messageId: command.message.messageId,
+          },
+          ...(command.provider !== undefined ? { provider: command.provider } : {}),
+          ...(command.model !== undefined ? { model: command.model } : {}),
+          ...(command.serviceTier !== undefined ? { serviceTier: command.serviceTier } : {}),
+          ...(command.modelOptions !== undefined ? { modelOptions: command.modelOptions } : {}),
+          assistantDeliveryMode: command.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
+          runtimeMode:
+            readModel.threads.find((entry) => entry.id === command.threadId)?.runtimeMode ??
+            command.runtimeMode,
+          interactionMode:
+            readModel.threads.find((entry) => entry.id === command.threadId)?.interactionMode ??
+            command.interactionMode,
+          createdAt: command.createdAt,
+        },
+      };
+      return [userMessageEvent, turnStartRequestedEvent];
+    }
+
+    case "thread.plan.implement": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const proposedPlan = thread.proposedPlans.find((entry) => entry.id === command.planId);
+      if (!proposedPlan) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Proposed plan '${command.planId}' does not exist for thread '${command.threadId}'.`,
+        });
+      }
+
+      const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          role: "user",
+          text: command.messageText,
+          attachments: [],
+          turnId: null,
+          streaming: false,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+      const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        causationEventId: userMessageEvent.eventId,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          source: {
+            kind: "proposed-plan",
+            planId: proposedPlan.id,
+            providerInput: buildPlanImplementationPrompt(proposedPlan.planMarkdown),
+          },
           ...(command.provider !== undefined ? { provider: command.provider } : {}),
           ...(command.model !== undefined ? { model: command.model } : {}),
           ...(command.modelOptions !== undefined ? { modelOptions: command.modelOptions } : {}),

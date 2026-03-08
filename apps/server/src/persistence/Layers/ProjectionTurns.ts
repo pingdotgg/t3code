@@ -146,7 +146,6 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
         WHERE thread_id = ${threadId}
           AND turn_id IS NULL
           AND state = 'pending'
-          AND pending_message_id IS NOT NULL
           AND checkpoint_turn_count IS NULL
         ORDER BY requested_at DESC
         LIMIT 1

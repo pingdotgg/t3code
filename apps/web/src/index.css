@@ -263,6 +263,39 @@ label:has(> select#reasoning-effort) select {
   margin: 0.65rem 0;
 }
 
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 {
+  margin: 1rem 0 0.5rem;
+  color: var(--foreground);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.chat-markdown h1 {
+  font-size: 1.25rem;
+}
+
+.chat-markdown h2 {
+  font-size: 1.125rem;
+}
+
+.chat-markdown h3 {
+  font-size: 1rem;
+}
+
+.chat-markdown h4 {
+  font-size: 0.9375rem;
+}
+
+.chat-markdown h5,
+.chat-markdown h6 {
+  font-size: 0.875rem;
+}
+
 .chat-markdown ul {
   padding-left: 1.25rem;
   list-style-type: disc;
@@ -293,6 +326,15 @@ label:has(> select#reasoning-effort) select {
   margin-top: 0.25rem;
 }
 
+.chat-markdown strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.chat-markdown em {
+  font-style: italic;
+}
+
 .chat-markdown a {
   color: var(--info-foreground);
   text-decoration: underline;
@@ -307,6 +349,12 @@ label:has(> select#reasoning-effort) select {
   border-left: 2px solid var(--border);
   padding-left: 0.8rem;
   color: var(--muted-foreground);
+}
+
+.chat-markdown hr {
+  margin: 1rem 0;
+  border: 0;
+  border-top: 1px solid var(--border);
 }
 
 .chat-markdown :not(pre) > code {

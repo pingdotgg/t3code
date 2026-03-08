@@ -774,9 +774,13 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
     Effect.gen(function* () {
       switch (event.type) {
         case "thread.turn-start-requested": {
+          const pendingMessageId =
+            event.payload.source?.kind === "message"
+              ? event.payload.source.messageId
+              : (event.payload.messageId ?? null);
           yield* projectionTurnRepository.replacePendingTurnStart({
             threadId: event.payload.threadId,
-            messageId: event.payload.messageId,
+            messageId: pendingMessageId,
             requestedAt: event.payload.createdAt,
           });
           return;
