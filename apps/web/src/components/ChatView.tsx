@@ -699,6 +699,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const sendInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
+  const activeThreadIdRef = useRef<ThreadId | null>(null);
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
     messagesScrollRef.current = element;
     setMessagesScrollElement(element);
@@ -768,6 +769,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const diffOpen = diffSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
+  activeThreadIdRef.current = activeThreadId;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
@@ -1470,13 +1472,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const cleanBackgroundCommands = useCallback(async () => {
     const api = readNativeApi();
     if (!activeThreadId || !api || isCleaningBackgroundCommands) return;
+    const targetThreadId = activeThreadId;
+    const isTargetThreadActive = () => activeThreadIdRef.current === targetThreadId;
     setIsCleaningBackgroundCommands(true);
     try {
-      await api.threadRuntime.cleanBackgroundCommands({ threadId: activeThreadId });
+      await api.threadRuntime.cleanBackgroundCommands({ threadId: targetThreadId });
+      if (!isTargetThreadActive()) {
+        return;
+      }
       const deadline = Date.now() + 12_000;
 
-      while (true) {
-        const result = await api.threadRuntime.read({ threadId: activeThreadId });
+      while (isTargetThreadActive()) {
+        const result = await api.threadRuntime.read({ threadId: targetThreadId });
+        if (!isTargetThreadActive()) {
+          return;
+        }
         setBackgroundCommands([...result.backgroundCommands]);
         if (result.backgroundCommands.length === 0 || Date.now() >= deadline) {
           break;
@@ -1487,11 +1497,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     } catch (error) {
       setThreadError(
-        activeThreadId,
+        targetThreadId,
         error instanceof Error ? error.message : "Failed to stop background terminals.",
       );
     } finally {
-      setIsCleaningBackgroundCommands(false);
+      if (isTargetThreadActive()) {
+        setIsCleaningBackgroundCommands(false);
+      }
     }
   }, [activeThreadId, isCleaningBackgroundCommands, setThreadError]);
   const runProjectScript = useCallback(
