@@ -99,6 +99,7 @@ const DEFAULT_BINDINGS = compile([
   },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
+  { shortcut: modShortcut(",", { shiftKey: true }), command: "settings.open" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
 ]);
 
@@ -238,6 +239,10 @@ describe("shortcutLabelForCommand", () => {
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.new", "MacIntel"), "⇧⌘O");
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.toggle", "Linux"), "Ctrl+D");
     assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "settings.open", "MacIntel"),
+      "⇧⌘,",
+    );
+    assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "editor.openFavorite", "Linux"),
       "Ctrl+O",
     );
@@ -268,6 +273,21 @@ describe("chat/editor shortcuts", () => {
       isChatNewLocalShortcut(event({ key: "n", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
       }),
+    );
+  });
+
+  it("matches settings.open shortcut", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: ",", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+      }),
+      "settings.open",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: ",", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+      "settings.open",
     );
   });
 
