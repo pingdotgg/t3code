@@ -1512,12 +1512,18 @@ function readCodexProviderOptions(input: CodexAppServerStartSessionInput): {
   readonly homePath?: string;
 } {
   const options = input.providerOptions?.codex;
-  if (!options) {
-    return {};
+
+  // Determine binary path with a fallback for homebrew on Linux.
+  let binaryPath: string | undefined;
+  if (options?.binaryPath) {
+    binaryPath = options.binaryPath;
+  } else if (process.platform === "linux" && FS.existsSync("/home/linuxbrew/.linuxbrew/bin/codex")) {
+    binaryPath = "/home/linuxbrew/.linuxbrew/bin/codex";
   }
+
   return {
-    ...(options.binaryPath ? { binaryPath: options.binaryPath } : {}),
-    ...(options.homePath ? { homePath: options.homePath } : {}),
+    ...(binaryPath ? { binaryPath } : {}),
+    ...(options?.homePath ? { homePath: options.homePath } : {}),
   };
 }
 
