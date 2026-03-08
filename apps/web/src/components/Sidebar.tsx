@@ -12,6 +12,10 @@ import {
   DEFAULT_RUNTIME_MODE,
   DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
+  type ProviderKind,
+  type CodexReasoningEffort,
+  type RuntimeMode,
+  type ProviderInteractionMode,
   ProjectId,
   ThreadId,
   type GitStatusResult,
@@ -272,6 +276,7 @@ export default function Sidebar() {
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
   const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const initComposerOptions = useComposerDraftStore((store) => store.initComposerOptions);
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
@@ -390,21 +395,45 @@ export default function Sidebar() {
         branch?: string | null;
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
+        provider?: ProviderKind | null;
+        model?: string | null;
+        runtimeMode?: RuntimeMode;
+        interactionMode?: ProviderInteractionMode;
+        effort?: CodexReasoningEffort | null;
+        codexFastMode?: boolean;
       },
     ): Promise<void> => {
       const hasBranchOption = options?.branch !== undefined;
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
+      const hasThreadContextOptions = hasBranchOption || hasWorktreePathOption || hasEnvModeOption;
+      const hasComposerOptions =
+        options?.provider !== undefined ||
+        options?.model !== undefined ||
+        options?.effort !== undefined ||
+        options?.codexFastMode !== undefined;
+      const applyComposerOptions = (threadId: ThreadId) => {
+        if (!hasComposerOptions) return;
+        initComposerOptions(threadId, {
+          ...(options?.provider !== undefined ? { provider: options.provider } : {}),
+          ...(options?.model !== undefined ? { model: options.model } : {}),
+          ...(options?.effort !== undefined ? { effort: options.effort } : {}),
+          ...(options?.codexFastMode !== undefined ? { codexFastMode: options.codexFastMode } : {}),
+        });
+      };
       const storedDraftThread = getDraftThreadByProjectId(projectId);
       if (storedDraftThread) {
         return (async () => {
-          if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
+          if (hasThreadContextOptions) {
             setDraftThreadContext(storedDraftThread.threadId, {
               ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
               ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
               ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+              ...(options?.runtimeMode ? { runtimeMode: options.runtimeMode } : {}),
+              ...(options?.interactionMode ? { interactionMode: options.interactionMode } : {}),
             });
           }
+          applyComposerOptions(storedDraftThread.threadId);
           setProjectDraftThreadId(projectId, storedDraftThread.threadId);
           if (routeThreadId === storedDraftThread.threadId) {
             return;
@@ -419,13 +448,16 @@ export default function Sidebar() {
 
       const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
       if (activeDraftThread && routeThreadId && activeDraftThread.projectId === projectId) {
-        if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
+        if (hasThreadContextOptions) {
           setDraftThreadContext(routeThreadId, {
             ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
             ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
             ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+            ...(options?.runtimeMode ? { runtimeMode: options.runtimeMode } : {}),
+            ...(options?.interactionMode ? { interactionMode: options.interactionMode } : {}),
           });
         }
+        applyComposerOptions(routeThreadId);
         setProjectDraftThreadId(projectId, routeThreadId);
         return Promise.resolve();
       }
@@ -437,8 +469,10 @@ export default function Sidebar() {
           branch: options?.branch ?? null,
           worktreePath: options?.worktreePath ?? null,
           envMode: options?.envMode ?? "local",
-          runtimeMode: DEFAULT_RUNTIME_MODE,
+          runtimeMode: options?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+          ...(options?.interactionMode ? { interactionMode: options.interactionMode } : {}),
         });
+        applyComposerOptions(threadId);
 
         await navigate({
           to: "/$threadId",
@@ -449,6 +483,7 @@ export default function Sidebar() {
     [
       clearProjectDraftThreadId,
       getDraftThreadByProjectId,
+      initComposerOptions,
       navigate,
       getDraftThread,
       routeThreadId,
@@ -807,6 +842,54 @@ export default function Sidebar() {
     ],
   );
 
+  const getInheritedThreadOptions = useCallback(
+    (forProjectId?: ProjectId) => {
+      const activeThread = routeThreadId
+        ? threads.find((thread) => thread.id === routeThreadId)
+        : undefined;
+      const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
+      // When the button is for a different project, find the most recent thread for that project
+      const sourceThread =
+        forProjectId && activeThread?.projectId !== forProjectId
+          ? threads
+              .filter((t) => t.projectId === forProjectId)
+              .toSorted(
+                (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+              )[0]
+          : activeThread;
+      const sourceThreadId = sourceThread?.id ?? routeThreadId;
+      const sourceDraftThread =
+        sourceThread === activeThread
+          ? activeDraftThread
+          : sourceThreadId
+            ? getDraftThread(sourceThreadId)
+            : null;
+      const composerDraft = sourceThreadId
+        ? useComposerDraftStore.getState().draftsByThreadId[sourceThreadId]
+        : null;
+      const runtimeMode =
+        composerDraft?.runtimeMode ??
+        sourceThread?.runtimeMode ??
+        sourceDraftThread?.runtimeMode;
+      const interactionMode =
+        composerDraft?.interactionMode ??
+        sourceThread?.interactionMode ??
+        sourceDraftThread?.interactionMode;
+      return {
+        provider:
+          (sourceThread?.session?.provider ?? composerDraft?.provider ?? null) as
+            | ProviderKind
+            | null,
+        model: composerDraft?.model ?? sourceThread?.model ?? null,
+        ...(runtimeMode ? { runtimeMode } : {}),
+        ...(interactionMode ? { interactionMode } : {}),
+        effort: composerDraft?.effort ?? null,
+        codexFastMode: composerDraft?.codexFastMode ?? false,
+      };
+    },
+    [getDraftThread, routeThreadId, threads],
+  );
+
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       const activeThread = routeThreadId
@@ -818,7 +901,7 @@ export default function Sidebar() {
           activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
         if (!projectId) return;
         event.preventDefault();
-        void handleNewThread(projectId);
+        void handleNewThread(projectId, getInheritedThreadOptions());
         return;
       }
 
@@ -830,6 +913,7 @@ export default function Sidebar() {
         branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,
         worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
         envMode: activeDraftThread?.envMode ?? (activeThread?.worktreePath ? "worktree" : "local"),
+        ...getInheritedThreadOptions(),
       });
     };
 
@@ -837,7 +921,7 @@ export default function Sidebar() {
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
-  }, [getDraftThread, handleNewThread, keybindings, projects, routeThreadId, threads]);
+  }, [getDraftThread, getInheritedThreadOptions, handleNewThread, keybindings, projects, routeThreadId, threads]);
 
   useEffect(() => {
     if (!isElectron) return;
@@ -1094,7 +1178,10 @@ export default function Sidebar() {
                               onClick={(event) => {
                                 event.preventDefault();
                                 event.stopPropagation();
-                                void handleNewThread(project.id);
+                                void handleNewThread(
+                                  project.id,
+                                  getInheritedThreadOptions(project.id),
+                                );
                               }}
                             >
                               <SquarePenIcon className="size-3.5" />

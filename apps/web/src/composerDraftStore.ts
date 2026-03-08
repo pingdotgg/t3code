@@ -139,6 +139,15 @@ interface ComposerDraftStoreState {
     threadId: ThreadId,
     attachments: PersistedComposerImageAttachment[],
   ) => void;
+  initComposerOptions: (
+    threadId: ThreadId,
+    options: {
+      provider?: ProviderKind | null;
+      model?: string | null;
+      effort?: CodexReasoningEffort | null;
+      codexFastMode?: boolean;
+    },
+  ) => void;
   clearComposerContent: (threadId: ThreadId) => void;
   clearThreadDraft: (threadId: ThreadId) => void;
 }
@@ -945,6 +954,43 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             nextDraftsByThreadId[threadId] = nextDraft;
           }
           return { draftsByThreadId: nextDraftsByThreadId };
+        });
+      },
+      initComposerOptions: (threadId, options) => {
+        if (threadId.length === 0) {
+          return;
+        }
+        const provider = normalizeProviderKind(options.provider);
+        const model = normalizeModelSlug(options.model, provider ?? undefined) ?? null;
+        const effort =
+          options.effort &&
+          REASONING_EFFORT_VALUES.has(options.effort) &&
+          options.effort !== DEFAULT_REASONING_EFFORT_BY_PROVIDER.codex
+            ? options.effort
+            : null;
+        const codexFastMode = options.codexFastMode === true;
+        if (!provider && !model && !effort && !codexFastMode) {
+          return;
+        }
+        set((state) => {
+          const existing = state.draftsByThreadId[threadId];
+          const base = existing ?? createEmptyThreadDraft();
+          const nextDraft: ComposerThreadDraftState = {
+            ...base,
+            ...(provider !== null ? { provider } : {}),
+            ...(model !== null ? { model } : {}),
+            ...(effort !== null ? { effort } : {}),
+            ...(codexFastMode ? { codexFastMode } : {}),
+          };
+          if (shouldRemoveDraft(nextDraft)) {
+            return state;
+          }
+          return {
+            draftsByThreadId: {
+              ...state.draftsByThreadId,
+              [threadId]: nextDraft,
+            },
+          };
         });
       },
       addImage: (threadId, image) => {
