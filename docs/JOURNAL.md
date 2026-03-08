@@ -237,3 +237,52 @@ Added a fallback `projectId` lookup from `composerDraftStore.draftThreadsByThrea
 - **`apps/web/src/routes/_chat.$threadId.tsx`** — `projectId` now falls back to `draftProjectId` from `useComposerDraftStore`.
 
 `bun lint` and `bun typecheck` both pass with 0 warnings / 0 errors.
+
+---
+
+## 2026-03-08 — Terminal Labels, Layout Fixes & Toggle Preservation
+
+Multiple improvements to the terminal drawer system across all three scopes (thread, project, global).
+
+### Terminal labels
+
+Each terminal scope now displays a label in a dedicated bar above the terminal content, showing the scope name and abbreviated cwd path (e.g. `Global · ~/` or `Project · ~/Projects/my-app`).
+
+- **`apps/web/src/components/ThreadTerminalDrawer.tsx`** — Added `label` prop. When set, renders a `h-6` label bar with scope name and abbreviated path. Added `abbreviatePath()` helper that shortens `/Users/<user>` or `/home/<user>` to `~`.
+- **`apps/web/src/components/ScopedTerminalDrawer.tsx`** — Passes `label` through to `ThreadTerminalDrawer`.
+- **`apps/web/src/routes/_chat.$threadId.tsx`** — Passes `label="Project"` and `label="Global"` to their respective `ScopedTerminalDrawer` instances.
+- **`apps/web/src/components/ChatView.tsx`** — Passes `label="Thread"` to the thread terminal drawer.
+
+### Global terminal moved inside SidebarInset
+
+The global terminal was previously rendered outside `SidebarProvider` in `_chat.tsx`, causing it to span the full viewport width (including under the sidebar) with no action icons.
+
+- **`apps/web/src/routes/_chat.$threadId.tsx`** — Global terminal now rendered inside `SidebarInset`, alongside the project terminal, in both layout branches (inline sidebar and sheet). Gets the same layout treatment, sidebar offset, and action icons as the other terminals.
+- **`apps/web/src/routes/_chat.tsx`** — Removed global terminal rendering (moved to child route). Cleaned up unused imports.
+
+### Server `homedir` for global terminal cwd
+
+The global terminal now opens in the user's home directory instead of the project cwd.
+
+- **`packages/contracts/src/server.ts`** — Added `homedir` field to `ServerConfig` schema.
+- **`apps/server/src/config.ts`** — Added `homedir` to `ServerConfigShape` interface and test layer.
+- **`apps/server/src/main.ts`** — Populates `homedir` from `os.homedir()`.
+- **`apps/server/src/wsServer.ts`** — Serves `homedir` in the config response.
+
+### Terminal toggle preservation (no more re-open timeouts)
+
+Previously, toggling a terminal closed and reopening it caused the xterm instance to unmount, destroying the pty connection. Reopening required a `terminal.open` RPC call that could time out or produce visual glitches (cursor outside normal prompt area).
+
+- **`apps/web/src/components/ThreadTerminalDrawer.tsx`** — Added `visible` prop (default `true`). When `false`, the drawer collapses to `height: 0` with no border instead of unmounting. Xterm instances and pty connections stay alive.
+- **`apps/web/src/components/ScopedTerminalDrawer.tsx`** — Tracks "has ever opened" via a ref. Once opened, the drawer stays mounted and uses `visible` to show/hide. Before first open, renders nothing.
+- **`apps/web/src/components/ChatView.tsx`** — Same pattern with `terminalMountedByThreadRef` for thread terminals.
+
+### Terminal padding & minimum height
+
+- **`apps/web/src/components/ThreadTerminalDrawer.tsx`** — Increased terminal viewport horizontal padding from `p-1` to `px-3 py-1`. Reduced `MIN_DRAWER_HEIGHT` from 180px to 100px so all three terminal scopes can fit on screen simultaneously.
+
+### Browser panel dark mode placeholder
+
+- **`apps/web/src/components/BrowserPanel.tsx`** — "Dev server not responding" placeholder now uses dark background (`bg-[#1e1e1e]`) with `neutral-500` text.
+
+`bun lint` and `bun typecheck` both pass with 0 warnings / 0 errors.

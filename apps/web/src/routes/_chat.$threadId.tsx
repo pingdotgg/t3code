@@ -16,11 +16,14 @@ import { readBrowserUrl } from "../components/BrowserPanel";
 import ScopedTerminalDrawer from "../components/ScopedTerminalDrawer";
 import { detectDevServerUrl, setDetectedBrowserUrl } from "../lib/devServerDetection";
 import { readNativeApi } from "../nativeApi";
+import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
+import { useQuery } from "@tanstack/react-query";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const BrowserPanel = lazy(() => import("../components/BrowserPanel"));
+const GLOBAL_TERMINAL_THREAD_ID = "global" as ThreadId;
 const DIFF_INLINE_LAYOUT_MEDIA_QUERY = "(max-width: 1180px)";
 const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
 const DIFF_INLINE_DEFAULT_WIDTH = "clamp(28rem,48vw,44rem)";
@@ -290,6 +293,8 @@ function ChatThreadRouteView() {
     () => (projectId !== null ? (`project:${String(projectId)}` as ThreadId) : null),
     [projectId],
   );
+  const serverConfig = useQuery(serverConfigQueryOptions());
+  const globalTerminalCwd = serverConfig.data?.homedir ?? serverConfig.data?.cwd ?? "";
   const routeThreadExists = threadExists || draftThreadExists;
   const diffOpen = search.diff === "1";
   const browserOpen = search.browser === "1";
@@ -407,6 +412,9 @@ function ChatThreadRouteView() {
               label="Project"
             />
           )}
+          {globalTerminalCwd && (
+            <ScopedTerminalDrawer threadId={GLOBAL_TERMINAL_THREAD_ID} cwd={globalTerminalCwd} label="Global" />
+          )}
         </SidebarInset>
         <DiffPanelInlineSidebar diffOpen={diffOpen} onCloseDiff={closeDiff} onOpenDiff={openDiff} />
         <BrowserPanelInlineSidebar
@@ -429,6 +437,9 @@ function ChatThreadRouteView() {
             threadId={projectTerminalThreadId}
             cwd={activeProjectCwd}
           />
+        )}
+        {globalTerminalCwd && (
+          <ScopedTerminalDrawer threadId={GLOBAL_TERMINAL_THREAD_ID} cwd={globalTerminalCwd} label="Global" />
         )}
       </SidebarInset>
       <DiffPanelSheet diffOpen={diffOpen} onCloseDiff={closeDiff}>

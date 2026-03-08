@@ -706,6 +706,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const sendInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
+  const terminalMountedByThreadRef = useRef<Record<string, boolean>>({});
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
     messagesScrollRef.current = element;
     setMessagesScrollElement(element);
@@ -2194,6 +2195,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     if (!previous && current) {
       terminalOpenByThreadRef.current[activeThreadId] = current;
+      terminalMountedByThreadRef.current[activeThreadId] = true;
       setTerminalFocusRequestId((value) => value + 1);
       return;
     } else if (previous && !current) {
@@ -3926,34 +3928,30 @@ export default function ChatView({ threadId }: ChatViewProps) {
         />
       )}
 
-      {(() => {
-        if (!terminalState.terminalOpen || !activeProject) {
-          return null;
-        }
-        return (
-          <ThreadTerminalDrawer
-            key={activeThread.id}
-            threadId={activeThread.id}
-            cwd={gitCwd ?? activeProject.cwd}
-            label="Thread"
-            runtimeEnv={threadTerminalRuntimeEnv}
-            height={terminalState.terminalHeight}
-            terminalIds={terminalState.terminalIds}
-            activeTerminalId={terminalState.activeTerminalId}
-            terminalGroups={terminalState.terminalGroups}
-            activeTerminalGroupId={terminalState.activeTerminalGroupId}
-            focusRequestId={terminalFocusRequestId}
-            onSplitTerminal={splitTerminal}
-            onNewTerminal={createNewTerminal}
-            splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-            newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-            closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-            onActiveTerminalChange={activateTerminal}
-            onCloseTerminal={closeTerminal}
-            onHeightChange={setTerminalHeight}
-          />
-        );
-      })()}
+      {activeProject && (terminalState.terminalOpen || terminalMountedByThreadRef.current[activeThread.id]) && (
+        <ThreadTerminalDrawer
+          key={activeThread.id}
+          threadId={activeThread.id}
+          cwd={gitCwd ?? activeProject.cwd}
+          label="Thread"
+          visible={terminalState.terminalOpen}
+          runtimeEnv={threadTerminalRuntimeEnv}
+          height={terminalState.terminalHeight}
+          terminalIds={terminalState.terminalIds}
+          activeTerminalId={terminalState.activeTerminalId}
+          terminalGroups={terminalState.terminalGroups}
+          activeTerminalGroupId={terminalState.activeTerminalGroupId}
+          focusRequestId={terminalFocusRequestId}
+          onSplitTerminal={splitTerminal}
+          onNewTerminal={createNewTerminal}
+          splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+          newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+          closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+          onActiveTerminalChange={activateTerminal}
+          onCloseTerminal={closeTerminal}
+          onHeightChange={setTerminalHeight}
+        />
+      )}
 
       {expandedImage && expandedImageItem && (
         <div

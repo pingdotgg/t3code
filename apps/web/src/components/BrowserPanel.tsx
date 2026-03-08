@@ -79,10 +79,13 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
 
   // Health-check: detect when the dev server goes down and when it comes back.
   // Uses no-cors fetch to localhost — a network error means the server is unreachable.
+  // Polls every 3s while reachable (fast crash detection) and every 2s while down
+  // (fast recovery detection).
   useEffect(() => {
     if (loadedUrl.length === 0) return;
 
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
     const checkHealth = async () => {
       try {
@@ -94,19 +97,19 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
       } catch {
         if (!cancelled) setServerReachable(false);
       }
+      if (!cancelled) {
+        timer = setTimeout(checkHealth, serverReachable ? 10_000 : 2_000);
+      }
     };
 
     // First check after a brief delay (give the iframe a moment to attempt load)
-    const initialTimer = setTimeout(checkHealth, 1500);
-    // Then poll every 10 seconds
-    const interval = setInterval(checkHealth, 10_000);
+    timer = setTimeout(checkHealth, 1500);
 
     return () => {
       cancelled = true;
-      clearTimeout(initialTimer);
-      clearInterval(interval);
+      if (timer !== null) clearTimeout(timer);
     };
-  }, [loadedUrl]);
+  }, [loadedUrl, serverReachable]);
 
   // Reset reachable state when the URL changes (new URL deserves a fresh attempt)
   const prevLoadedUrlRef = useRef(loadedUrl);
@@ -170,7 +173,7 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
         </Button>
       </div>
       {/* Content */}
-      <div className="min-h-0 flex-1 bg-white">
+      <div className="min-h-0 flex-1 bg-[#1e1e1e]">
         {hasUrl && serverReachable ? (
           <iframe
             key={refreshKey}
@@ -180,7 +183,7 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
             sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-pointer-lock"
           />
         ) : hasUrl ? (
-          <div className="flex h-full items-center justify-center bg-[#1e1e1e] p-8 text-center">
+          <div className="flex h-full items-center justify-center p-8 text-center">
             <div className="space-y-2 text-neutral-500">
               <GlobeIcon className="mx-auto size-8 opacity-30" />
               <p className="text-sm">Dev server not responding</p>
@@ -191,7 +194,7 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
           </div>
         ) : (
           <div className="flex h-full items-center justify-center p-8 text-center">
-            <div className="space-y-2 text-muted-foreground">
+            <div className="space-y-2 text-neutral-500">
               <GlobeIcon className="mx-auto size-8 opacity-30" />
               <p className="text-sm">No dev server running</p>
               <p className="text-xs opacity-70">

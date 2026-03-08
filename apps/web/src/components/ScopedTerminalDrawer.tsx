@@ -1,5 +1,5 @@
 import { type ThreadId } from "@t3tools/contracts";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { MAX_THREAD_TERMINAL_COUNT } from "../types";
 import { readNativeApi } from "../nativeApi";
@@ -40,6 +40,10 @@ export default function ScopedTerminalDrawer({
   const storeSetActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
   const [focusRequestId, setFocusRequestId] = useState(0);
+  const hasEverOpenedRef = useRef(terminalState.terminalOpen);
+  if (terminalState.terminalOpen) {
+    hasEverOpenedRef.current = true;
+  }
 
   const hasReachedTerminalLimit = terminalState.terminalIds.length >= MAX_THREAD_TERMINAL_COUNT;
 
@@ -95,7 +99,7 @@ export default function ScopedTerminalDrawer({
     [threadId, storeCloseTerminal, terminalState.terminalIds.length],
   );
 
-  if (!terminalState.terminalOpen) {
+  if (!hasEverOpenedRef.current) {
     return null;
   }
 
@@ -104,6 +108,7 @@ export default function ScopedTerminalDrawer({
       threadId={threadId}
       cwd={cwd}
       label={label}
+      visible={terminalState.terminalOpen}
       height={terminalState.terminalHeight}
       terminalIds={terminalState.terminalIds}
       activeTerminalId={terminalState.activeTerminalId}
