@@ -45,6 +45,7 @@ const AppSettingsSchema = Schema.Struct({
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
+  horizontalTabs: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(false))),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
 export interface AppModelOption {

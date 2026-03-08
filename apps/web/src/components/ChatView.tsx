@@ -3435,54 +3435,65 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {/* Error banner */}
       <ProviderHealthBanner status={activeProviderStatus} />
       <ThreadErrorBanner error={activeThread.error} />
-      <PlanModePanel activePlan={activePlan} />
+      {!settings.horizontalTabs && <PlanModePanel activePlan={activePlan} />}
 
-      {/* Messages */}
-      <div
-        ref={setMessagesScrollContainerRef}
-        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
-        onScroll={onMessagesScroll}
-        onClickCapture={onMessagesClickCapture}
-        onWheel={onMessagesWheel}
-        onPointerDown={onMessagesPointerDown}
-        onPointerUp={onMessagesPointerUp}
-        onPointerCancel={onMessagesPointerCancel}
-        onTouchStart={onMessagesTouchStart}
-        onTouchMove={onMessagesTouchMove}
-        onTouchEnd={onMessagesTouchEnd}
-        onTouchCancel={onMessagesTouchEnd}
-      >
-        <MessagesTimeline
-          key={activeThread.id}
-          hasMessages={timelineEntries.length > 0}
-          isWorking={isWorking}
-          activeTurnInProgress={isWorking || !latestTurnSettled}
-          activeTurnStartedAt={activeWorkStartedAt}
-          scrollContainer={messagesScrollElement}
-          timelineEntries={timelineEntries}
-          completionDividerBeforeEntryId={completionDividerBeforeEntryId}
-          completionSummary={completionSummary}
-          turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
-          nowIso={nowIso}
-          expandedWorkGroups={expandedWorkGroups}
-          onToggleWorkGroup={onToggleWorkGroup}
-          onOpenTurnDiff={onOpenTurnDiff}
-          revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-          onRevertUserMessage={onRevertUserMessage}
-          isRevertingCheckpoint={isRevertingCheckpoint}
-          onImageExpand={onExpandTimelineImage}
-          markdownCwd={gitCwd ?? undefined}
-          resolvedTheme={resolvedTheme}
-          workspaceRoot={activeProject?.cwd ?? undefined}
-        />
-      </div>
+      <div className={settings.horizontalTabs ? "flex min-h-0 flex-1" : "contents"}>
+        <div className={cn("flex min-h-0 flex-1 flex-col", settings.horizontalTabs && "relative")}>
+          {/* Messages */}
+          <div
+            ref={setMessagesScrollContainerRef}
+            className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
+            onScroll={onMessagesScroll}
+            onClickCapture={onMessagesClickCapture}
+            onWheel={onMessagesWheel}
+            onPointerDown={onMessagesPointerDown}
+            onPointerUp={onMessagesPointerUp}
+            onPointerCancel={onMessagesPointerCancel}
+            onTouchStart={onMessagesTouchStart}
+            onTouchMove={onMessagesTouchMove}
+            onTouchEnd={onMessagesTouchEnd}
+            onTouchCancel={onMessagesTouchEnd}
+          >
+            <MessagesTimeline
+              key={activeThread.id}
+              hasMessages={timelineEntries.length > 0}
+              isWorking={isWorking}
+              activeTurnInProgress={isWorking || !latestTurnSettled}
+              activeTurnStartedAt={activeWorkStartedAt}
+              scrollContainer={messagesScrollElement}
+              timelineEntries={timelineEntries}
+              completionDividerBeforeEntryId={completionDividerBeforeEntryId}
+              completionSummary={completionSummary}
+              turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+              nowIso={nowIso}
+              expandedWorkGroups={expandedWorkGroups}
+              onToggleWorkGroup={onToggleWorkGroup}
+              onOpenTurnDiff={onOpenTurnDiff}
+              revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
+              onRevertUserMessage={onRevertUserMessage}
+              isRevertingCheckpoint={isRevertingCheckpoint}
+              onImageExpand={onExpandTimelineImage}
+              markdownCwd={gitCwd ?? undefined}
+              resolvedTheme={resolvedTheme}
+              workspaceRoot={activeProject?.cwd ?? undefined}
+              hideProposedPlans={settings.horizontalTabs && activeProposedPlan !== null}
+            />
+            {settings.horizontalTabs && <div className="h-56 shrink-0" aria-hidden="true" />}
+          </div>
 
-      {/* Input bar */}
-      <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
+          {/* Input bar */}
+          <div className={cn(
+            settings.horizontalTabs
+              ? "absolute inset-x-0 bottom-0 z-10 px-3 pb-3 sm:px-5 sm:pb-4"
+              : cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4"),
+          )}>
+            {settings.horizontalTabs && (
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-background/80 to-background" aria-hidden="true" />
+            )}
         <form
           ref={composerFormRef}
           onSubmit={onSend}
-          className="mx-auto w-full min-w-0 max-w-3xl"
+          className={cn("mx-auto w-full min-w-0 max-w-3xl", settings.horizontalTabs && "relative")}
           data-chat-composer-form="true"
         >
           <div
@@ -3879,9 +3890,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
             )}
           </div>
         </form>
+        {settings.horizontalTabs && isGitRepo && (
+          <div className="relative">
+            <BranchToolbar
+              threadId={activeThread.id}
+              onEnvModeChange={onEnvModeChange}
+              envLocked={envLocked}
+              onComposerFocusRequest={scheduleComposerFocus}
+            />
+          </div>
+        )}
       </div>
 
-      {isGitRepo && (
+      {!settings.horizontalTabs && isGitRepo && (
         <BranchToolbar
           threadId={activeThread.id}
           onEnvModeChange={onEnvModeChange}
@@ -3917,6 +3938,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
           />
         );
       })()}
+
+        </div>
+        {settings.horizontalTabs && (activePlan || activeProposedPlan) && (
+          <ResizablePlanPanel>
+            {activePlan && <PlanModePanel activePlan={activePlan} />}
+            {activeProposedPlan && (
+              <div className={activePlan ? "mt-4" : ""}>
+                <ProposedPlanCard
+                  planMarkdown={activeProposedPlan.planMarkdown}
+                  cwd={gitCwd ?? undefined}
+                  workspaceRoot={activeProject?.cwd ?? undefined}
+                />
+              </div>
+            )}
+          </ResizablePlanPanel>
+        )}
+      </div>
 
       {expandedImage && expandedImageItem && (
         <div
@@ -4216,6 +4254,65 @@ const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActi
         Approve once
       </Button>
     </>
+  );
+});
+
+const PLAN_PANEL_WIDTH_KEY = "t3code:plan-panel-width";
+const PLAN_PANEL_MIN_WIDTH = 280;
+const PLAN_PANEL_MAX_WIDTH = 700;
+const PLAN_PANEL_DEFAULT_WIDTH = 380;
+
+function readPersistedPlanWidth(): number {
+  try {
+    const stored = localStorage.getItem(PLAN_PANEL_WIDTH_KEY);
+    if (stored) {
+      const val = Number(stored);
+      if (val >= PLAN_PANEL_MIN_WIDTH && val <= PLAN_PANEL_MAX_WIDTH) return val;
+    }
+  } catch {}
+  return PLAN_PANEL_DEFAULT_WIDTH;
+}
+
+const ResizablePlanPanel = memo(function ResizablePlanPanel({ children }: { children: React.ReactNode }) {
+  const [width, setWidth] = useState(readPersistedPlanWidth);
+  const dragging = useRef(false);
+  const startX = useRef(0);
+  const startWidth = useRef(0);
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    dragging.current = true;
+    startX.current = e.clientX;
+    startWidth.current = width;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }, [width]);
+
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragging.current) return;
+    const delta = startX.current - e.clientX;
+    const next = Math.min(PLAN_PANEL_MAX_WIDTH, Math.max(PLAN_PANEL_MIN_WIDTH, startWidth.current + delta));
+    setWidth(next);
+  }, []);
+
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    const delta = startX.current - e.clientX;
+    const final = Math.min(PLAN_PANEL_MAX_WIDTH, Math.max(PLAN_PANEL_MIN_WIDTH, startWidth.current + delta));
+    try { localStorage.setItem(PLAN_PANEL_WIDTH_KEY, String(final)); } catch {}
+  }, []);
+
+  return (
+    <aside className="relative shrink-0 overflow-y-auto border-l border-border bg-card/50" style={{ width }}>
+      <div
+        className="absolute inset-y-0 left-0 z-10 w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+      />
+      <div className="p-4">{children}</div>
+    </aside>
   );
 });
 
@@ -4725,6 +4822,7 @@ interface MessagesTimelineProps {
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
+  hideProposedPlans?: boolean;
 }
 
 type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
@@ -4779,6 +4877,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   markdownCwd,
   resolvedTheme,
   workspaceRoot,
+  hideProposedPlans,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
@@ -5150,6 +5249,30 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
                     {completionSummary ? `Response • ${completionSummary}` : "Response"}
                   </span>
+                  {(() => {
+                    const diffSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);
+                    if (!diffSummary || diffSummary.files.length === 0) return null;
+                    const count = diffSummary.files.length;
+                    return (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <span className="cursor-default rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
+                              {count} {count === 1 ? "file" : "files"} changed
+                            </span>
+                          }
+                        />
+                        <TooltipPopup side="bottom" className="max-w-xs">
+                          <p className="mb-1 text-xs font-medium">{count} {count === 1 ? "file" : "files"} changed</p>
+                          <div className="space-y-0.5">
+                            {diffSummary.files.map((f) => (
+                              <p key={f.path} className="font-mono text-[11px] text-muted-foreground">{f.path}</p>
+                            ))}
+                          </div>
+                        </TooltipPopup>
+                      </Tooltip>
+                    );
+                  })()}
                   <span className="h-px flex-1 bg-border" />
                 </div>
               )}
@@ -5228,7 +5351,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
           );
         })()}
 
-      {row.kind === "proposed-plan" && (
+      {row.kind === "proposed-plan" && !hideProposedPlans && (
         <div className="min-w-0 px-1 py-0.5">
           <ProposedPlanCard
             planMarkdown={row.proposedPlan.planMarkdown}
