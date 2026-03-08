@@ -15,6 +15,14 @@ You can also just install the desktop app. It's cooler.
 
 Install the [desktop app from the Releases page](https://github.com/pingdotgg/t3code/releases)
 
+Or install it with Homebrew:
+
+```bash
+brew install --cask t3-code
+```
+
+See the cask details on [Formulae](https://formulae.brew.sh/cask/t3-code#default).
+
 ## Some notes
 
 We are very very early in this project. Expect bugs.
