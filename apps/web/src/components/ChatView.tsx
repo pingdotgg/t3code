@@ -3501,8 +3501,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
             {/* Textarea area */}
             <div
               className={cn(
-                "relative px-3 pb-2 sm:px-4",
-                hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
+                "relative px-3 pb-1.5 sm:px-4 sm:pb-2",
+                hasComposerHeader ? "pt-2 sm:pt-2.5" : "pt-2.5 sm:pt-3",
               )}
             >
               {composerMenuOpen && !isComposerApprovalState && (

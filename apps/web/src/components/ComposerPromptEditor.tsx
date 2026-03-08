@@ -746,7 +746,7 @@ function ComposerPromptEditorInner({
         contentEditable={
           <ContentEditable
             className={cn(
-              "chat-composer-body-text block max-h-[200px] min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-foreground focus:outline-none",
+              "chat-composer-body-text block max-h-[200px] min-h-10 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-foreground focus:outline-none",
               className,
             )}
             aria-placeholder={placeholder}
