@@ -20,13 +20,11 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   ProjectId,
   ThreadId,
-  TerminalEvent,
   WS_CHANNELS,
   WS_METHODS,
   WebSocketRequest,
   WsPush,
   WsResponse,
-  ServerProviderStatus,
 } from "@t3tools/contracts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
@@ -36,6 +34,7 @@ import {
   FileSystem,
   Layer,
   Path,
+  PubSub,
   Ref,
   Schema,
   Scope,
@@ -74,6 +73,8 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
+import { makeServerPushBus } from "./wsServer/pushBus.ts";
+import { makeServerReadiness } from "./wsServer/readiness.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -261,38 +262,33 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ),
   );
 
+  const providerStatuses = yield* providerHealth.getStatuses;
+
   const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
+  const readiness = yield* makeServerReadiness;
 
   function logOutgoingPush(push: WsPush, recipients: number) {
     if (!logWebSocketEvents) return;
     logger.event("outgoing push", {
       channel: push.channel,
+      sequence: push.sequence,
       recipients,
       payload: push.data,
     });
   }
 
-  const encodePush = Schema.encodeEffect(Schema.fromJsonString(WsPush));
-  const broadcastPush = Effect.fnUntraced(function* (push: WsPush) {
-    const message = yield* encodePush(push);
-    let recipients = 0;
-    for (const client of yield* Ref.get(clients)) {
-      if (client.readyState === client.OPEN) {
-        client.send(message);
-        recipients += 1;
-      }
-    }
-    logOutgoingPush(push, recipients);
+  const pushBus = yield* makeServerPushBus({
+    clients,
+    logOutgoingPush,
   });
-
-  const onTerminalEvent = Effect.fnUntraced(function* (event: TerminalEvent) {
-    yield* broadcastPush({
-      type: "push",
-      channel: WS_CHANNELS.terminalEvent,
-      data: event,
-    });
-  });
+  yield* readiness.markPushBusReady;
+  yield* keybindingsManager.start.pipe(
+    Effect.mapError(
+      (cause) => new ServerLifecycleError({ operation: "keybindingsRuntimeStart", cause }),
+    ),
+  );
+  yield* readiness.markKeybindingsReady;
 
   const normalizeDispatchCommand = Effect.fnUntraced(function* (input: {
     readonly command: ClientOrchestrationCommand;
@@ -605,43 +601,29 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const subscriptionsScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
 
-  // Push updated provider statuses to connected clients once background health checks finish.
-  let providers: ReadonlyArray<ServerProviderStatus> = [];
-  yield* providerHealth.getStatuses.pipe(
-    Effect.flatMap((statuses) => {
-      providers = statuses;
-      return broadcastPush({
-        type: "push",
-        channel: WS_CHANNELS.serverConfigUpdated,
-        data: {
-          issues: [],
-          providers: statuses,
-        },
-      });
-    }),
-    Effect.forkIn(subscriptionsScope),
-  );
-
   yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
-    broadcastPush({
-      type: "push",
-      channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
-      data: event,
-    }),
+    pushBus.publishAll(ORCHESTRATION_WS_CHANNELS.domainEvent, event),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
-  yield* Stream.runForEach(keybindingsManager.changes, (event) =>
-    broadcastPush({
-      type: "push",
-      channel: WS_CHANNELS.serverConfigUpdated,
-      data: {
-        issues: event.issues,
-        providers,
-      },
-    }),
+  // Subscribe synchronously so the subscription exists before the
+  // readiness barrier — avoids a race where the polling watcher
+  // publishes before a lazily-created Stream.fromPubSub subscription.
+  const keybindingsChangesSub = yield* keybindingsManager.subscribeChanges.pipe(
+    Scope.provide(subscriptionsScope),
+  );
+  yield* Effect.forever(
+    PubSub.take(keybindingsChangesSub).pipe(
+      Effect.flatMap((event) =>
+        pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
+          issues: event.issues,
+          providers: providerStatuses,
+        }),
+      ),
+    ),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
   yield* Scope.provide(orchestrationReactor.start, subscriptionsScope);
+  yield* readiness.markOrchestrationSubscriptionsReady;
 
   let welcomeBootstrapProjectId: ProjectId | undefined;
   let welcomeBootstrapThreadId: ThreadId | undefined;
@@ -712,22 +694,20 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const runPromise = Effect.runPromiseWith(runtimeServices);
 
   const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
-    (event) => void Effect.runPromise(onTerminalEvent(event)),
+    (event) => void Effect.runPromise(pushBus.publishAll(WS_CHANNELS.terminalEvent, event)),
   );
   yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeTerminalEvents()));
+  yield* readiness.markTerminalSubscriptionsReady;
 
   yield* NodeHttpServer.make(() => httpServer, listenOptions).pipe(
     Effect.mapError((cause) => new ServerLifecycleError({ operation: "httpServerListen", cause })),
   );
+  yield* readiness.markHttpListening;
 
   yield* Effect.addFinalizer(() =>
     Effect.all([
       closeAllClients,
-      closeWebSocketServer.pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("failed to close web socket server", { cause: error }),
-        ),
-      ),
+      closeWebSocketServer.pipe(Effect.ignoreCause({ log: true })),
     ]),
   );
 
@@ -985,29 +965,29 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   wss.on("connection", (ws) => {
-    void runPromise(Ref.update(clients, (clients) => clients.add(ws)));
-
     const segments = cwd.split(/[/\\]/).filter(Boolean);
     const projectName = segments[segments.length - 1] ?? "project";
 
-    const welcome: WsPush = {
-      type: "push",
-      channel: WS_CHANNELS.serverWelcome,
-      data: {
-        cwd,
-        projectName,
-        ...(welcomeBootstrapProjectId ? { bootstrapProjectId: welcomeBootstrapProjectId } : {}),
-        ...(welcomeBootstrapThreadId ? { bootstrapThreadId: welcomeBootstrapThreadId } : {}),
-      },
+    const welcomeData = {
+      cwd,
+      projectName,
+      ...(welcomeBootstrapProjectId ? { bootstrapProjectId: welcomeBootstrapProjectId } : {}),
+      ...(welcomeBootstrapThreadId ? { bootstrapThreadId: welcomeBootstrapThreadId } : {}),
     };
-    logOutgoingPush(welcome, 1);
-    ws.send(JSON.stringify(welcome));
+    // Send welcome before adding to broadcast set so publishAll calls
+    // cannot reach this client before the welcome arrives.
+    void runPromise(
+      readiness.awaitServerReady.pipe(
+        Effect.flatMap(() => pushBus.publishClient(ws, WS_CHANNELS.serverWelcome, welcomeData)),
+        Effect.flatMap((delivered) =>
+          delivered ? Ref.update(clients, (clients) => clients.add(ws)) : Effect.void,
+        ),
+      ),
+    );
 
     ws.on("message", (raw) => {
       void runPromise(
-        handleMessage(ws, raw).pipe(
-          Effect.catch((error) => Effect.logError("Error handling message", error)),
-        ),
+        handleMessage(ws, raw).pipe(Effect.ignoreCause({ log: true })),
       );
     });
 

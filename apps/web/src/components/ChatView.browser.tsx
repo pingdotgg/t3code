@@ -361,6 +361,7 @@ const worker = setupWorker(
     client.send(
       JSON.stringify({
         type: "push",
+        sequence: 1,
         channel: WS_CHANNELS.serverWelcome,
         data: fixture.welcome,
       }),

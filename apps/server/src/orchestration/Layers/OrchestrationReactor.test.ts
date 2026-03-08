@@ -27,6 +27,7 @@ describe("OrchestrationReactor", () => {
             start: Effect.sync(() => {
               started.push("provider-runtime-ingestion");
             }),
+            drain: Effect.void,
           }),
         ),
         Layer.provideMerge(
@@ -34,6 +35,7 @@ describe("OrchestrationReactor", () => {
             start: Effect.sync(() => {
               started.push("provider-command-reactor");
             }),
+            drain: Effect.void,
           }),
         ),
         Layer.provideMerge(
@@ -41,6 +43,7 @@ describe("OrchestrationReactor", () => {
             start: Effect.sync(() => {
               started.push("checkpoint-reactor");
             }),
+            drain: Effect.void,
           }),
         ),
       ),
