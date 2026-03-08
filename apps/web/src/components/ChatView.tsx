@@ -3312,6 +3312,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     }
 
+    // When answering plan questions, allow Alt+ArrowUp / Alt+ArrowDown to
+    // navigate between questions so users don't need the mouse.
+    if (activePendingProgress && event.altKey) {
+      if (key === "ArrowUp" && activePendingProgress.questionIndex > 0) {
+        onPreviousActivePendingUserInputQuestion();
+        return true;
+      }
+      if (key === "ArrowDown" && activePendingProgress.canAdvance) {
+        onAdvanceActivePendingUserInput();
+        return true;
+      }
+    }
+
     if (key === "Enter" && !event.shiftKey) {
       void onSend();
       return true;
@@ -3709,6 +3722,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           className="rounded-full"
                           onClick={onPreviousActivePendingUserInputQuestion}
                           disabled={activePendingIsResponding}
+                          title="Previous question (Alt+↑)"
                         >
                           Previous
                         </Button>
@@ -3722,6 +3736,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           (activePendingProgress.isLastQuestion
                             ? !activePendingResolvedAnswers
                             : !activePendingProgress.canAdvance)
+                        }
+                        title={
+                          activePendingProgress.isLastQuestion
+                            ? "Submit answers (Enter)"
+                            : "Next question (Enter or Alt+↓)"
                         }
                       >
                         {activePendingIsResponding
