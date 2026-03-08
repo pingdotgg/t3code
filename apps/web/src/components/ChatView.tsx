@@ -830,6 +830,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
     };
     return Object.keys(codexOptions).length > 0 ? { codex: codexOptions } : undefined;
   }, [selectedCodexFastModeEnabled, selectedEffort, selectedProvider, supportsReasoningEffort]);
+  const providerOptionsForDispatch = useMemo(() => {
+    if (!settings.codexBinaryPath && !settings.codexHomePath) {
+      return undefined;
+    }
+    return {
+      codex: {
+        ...(settings.codexBinaryPath ? { binaryPath: settings.codexBinaryPath } : {}),
+        ...(settings.codexHomePath ? { homePath: settings.codexHomePath } : {}),
+      },
+    };
+  }, [settings.codexBinaryPath, settings.codexHomePath]);
   const selectedModelForPicker = selectedModel;
   const modelOptionsByProvider = useMemo(
     () => getCustomModelOptionsByProvider(settings),
@@ -2626,6 +2637,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ...(selectedModelOptionsForDispatch
           ? { modelOptions: selectedModelOptionsForDispatch }
           : {}),
+        ...(providerOptionsForDispatch
+          ? { providerOptions: providerOptionsForDispatch }
+          : {}),
         provider: selectedProvider,
         assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
         runtimeMode,
@@ -2903,6 +2917,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ...(selectedModelOptionsForDispatch
             ? { modelOptions: selectedModelOptionsForDispatch }
             : {}),
+          ...(providerOptionsForDispatch
+            ? { providerOptions: providerOptionsForDispatch }
+            : {}),
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: nextInteractionMode,
@@ -2933,6 +2950,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       runtimeMode,
       selectedModel,
       selectedModelOptionsForDispatch,
+      providerOptionsForDispatch,
       selectedProvider,
       setComposerDraftInteractionMode,
       setThreadError,
@@ -2987,8 +3005,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         worktreePath: activeThread.worktreePath,
         createdAt,
       })
-      .then(() =>
-        api.orchestration.dispatchCommand({
+      .then(() => {
+        return api.orchestration.dispatchCommand({
           type: "thread.turn.start",
           commandId: newCommandId(),
           threadId: nextThreadId,
@@ -3003,12 +3021,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ...(selectedModelOptionsForDispatch
             ? { modelOptions: selectedModelOptionsForDispatch }
             : {}),
+          ...(providerOptionsForDispatch
+            ? { providerOptions: providerOptionsForDispatch }
+            : {}),
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: "default",
           createdAt,
-        }),
-      )
+        });
+      })
       .then(() => api.orchestration.getSnapshot())
       .then((snapshot) => {
         syncServerReadModel(snapshot);
@@ -3052,6 +3073,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     runtimeMode,
     selectedModel,
     selectedModelOptionsForDispatch,
+    providerOptionsForDispatch,
     selectedProvider,
     settings.enableAssistantStreaming,
     syncServerReadModel,

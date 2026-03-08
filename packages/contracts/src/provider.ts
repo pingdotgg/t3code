@@ -53,9 +53,10 @@ const CodexProviderStartOptions = Schema.Struct({
   homePath: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 
-const ProviderStartOptions = Schema.Struct({
+export const ProviderStartOptions = Schema.Struct({
   codex: Schema.optional(CodexProviderStartOptions),
 });
+export type ProviderStartOptions = typeof ProviderStartOptions.Type;
 
 export const ProviderSessionStartInput = Schema.Struct({
   threadId: ThreadId,
