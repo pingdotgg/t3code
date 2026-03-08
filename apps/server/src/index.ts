@@ -3,7 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { CliConfig, t3Cli } from "./main";
+import { CliConfig, remoteAgentCli, t3Cli } from "./main";
 import { OpenLive } from "./open";
 import { Command } from "effect/unstable/cli";
 import { version } from "../package.json" with { type: "json" };
@@ -20,4 +20,10 @@ const RuntimeLayer = Layer.empty.pipe(
   Layer.provideMerge(FetchHttpClient.layer),
 );
 
-Command.run(t3Cli, { version }).pipe(Effect.provide(RuntimeLayer), NodeRuntime.runMain);
+const isRemoteAgentCommand = process.argv[2] === "remote-agent";
+if (isRemoteAgentCommand) {
+  process.argv.splice(2, 1);
+  Command.run(remoteAgentCli, { version }).pipe(Effect.provide(RuntimeLayer), NodeRuntime.runMain);
+} else {
+  Command.run(t3Cli, { version }).pipe(Effect.provide(RuntimeLayer), NodeRuntime.runMain);
+}

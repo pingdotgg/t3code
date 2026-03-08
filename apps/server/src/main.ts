@@ -22,6 +22,7 @@ import * as SqlitePersistence from "./persistence/Layers/Sqlite";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { ProviderHealthLive } from "./provider/Layers/ProviderHealth";
+import { makeRemoteAgentProgram } from "./remoteAgent/server";
 import { Server } from "./wsServer";
 import { ServerLoggerLive } from "./serverLogger";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
@@ -331,7 +332,12 @@ const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
   Flag.optional,
 );
 
-export const t3Cli = Command.make("t3", {
+const stdioFlag = Flag.boolean("stdio").pipe(
+  Flag.withDescription("Run the remote helper over stdio."),
+  Flag.optional,
+);
+
+export const serveCli = Command.make("t3", {
   mode: modeFlag,
   port: portFlag,
   host: hostFlag,
@@ -345,3 +351,12 @@ export const t3Cli = Command.make("t3", {
   Command.withDescription("Run the T3 Code server."),
   Command.withHandler((input) => Effect.scoped(makeServerProgram(input))),
 );
+
+export const remoteAgentCli = Command.make("remote-agent", {
+  stdio: stdioFlag,
+}).pipe(
+  Command.withDescription("Run the SSH remote helper over stdio."),
+  Command.withHandler(() => makeRemoteAgentProgram()),
+);
+
+export const t3Cli = serveCli;
