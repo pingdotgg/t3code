@@ -7,6 +7,8 @@ import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
+import { COLOR_THEMES } from "../lib/colorThemes";
+import { WALLPAPER_PRESETS, getWallpaperUrl } from "../lib/wallpapers";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
@@ -93,6 +95,7 @@ function SettingsRouteView() {
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
+  const [customWallpaperUrl, setCustomWallpaperUrl] = useState("");
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
@@ -232,6 +235,218 @@ function SettingsRouteView() {
               <p className="mt-4 text-xs text-muted-foreground">
                 Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
               </p>
+
+              {/* Color Theme */}
+              <div className="mt-5 border-t border-border pt-5">
+                <div className="mb-3">
+                  <h3 className="text-xs font-medium text-foreground">Color Theme</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {resolvedTheme === "dark"
+                      ? "Pick a color palette for dark mode."
+                      : "Switch to dark mode to use color themes."}
+                  </p>
+                </div>
+
+                <div
+                  className={`grid grid-cols-4 gap-2 ${resolvedTheme !== "dark" ? "pointer-events-none opacity-40" : ""}`}
+                >
+                  <button
+                    type="button"
+                    className={`flex flex-col items-center gap-1.5 rounded-lg border px-2 py-2 text-center transition-colors ${
+                      !settings.colorThemeId
+                        ? "border-primary/60 bg-primary/8"
+                        : "border-border bg-background hover:bg-accent"
+                    }`}
+                    onClick={() => updateSettings({ colorThemeId: "" })}
+                  >
+                    <div className="flex gap-1">
+                      <span className="size-3 rounded-full border border-border bg-background" />
+                      <span className="size-3 rounded-full bg-primary" />
+                    </div>
+                    <span className="text-[10px] font-medium text-foreground">Default</span>
+                  </button>
+                  {COLOR_THEMES.map((ct) => {
+                    const selected = settings.colorThemeId === ct.id;
+                    return (
+                      <button
+                        key={ct.id}
+                        type="button"
+                        className={`flex flex-col items-center gap-1.5 rounded-lg border px-2 py-2 text-center transition-colors ${
+                          selected
+                            ? "border-primary/60 bg-primary/8"
+                            : "border-border bg-background hover:bg-accent"
+                        }`}
+                        onClick={() => updateSettings({ colorThemeId: ct.id })}
+                      >
+                        <div className="flex gap-1">
+                          <span
+                            className="size-3 rounded-full"
+                            style={{ backgroundColor: ct.colors.bg }}
+                          />
+                          <span
+                            className="size-3 rounded-full"
+                            style={{ backgroundColor: ct.colors.accent }}
+                          />
+                        </div>
+                        <span className="truncate text-[10px] font-medium text-foreground">
+                          {ct.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Background Wallpaper */}
+              <div className="mt-5 border-t border-border pt-5">
+                <div className="mb-3">
+                  <h3 className="text-xs font-medium text-foreground">Background</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Choose a wallpaper image displayed behind the app.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-4 gap-2">
+                  <button
+                    type="button"
+                    className={`flex aspect-[3/2] items-center justify-center rounded-lg border text-[10px] font-medium transition-colors ${
+                      !settings.backgroundImage
+                        ? "border-primary/60 bg-primary/8 text-foreground"
+                        : "border-border bg-background text-muted-foreground hover:bg-accent"
+                    }`}
+                    onClick={() => updateSettings({ backgroundImage: "" })}
+                  >
+                    None
+                  </button>
+                  {WALLPAPER_PRESETS.map((preset) => {
+                    const selected = settings.backgroundImage === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        className={`relative overflow-hidden rounded-lg border transition-colors ${
+                          selected
+                            ? "border-primary/60 ring-1 ring-primary/40"
+                            : "border-border hover:border-muted-foreground/30"
+                        }`}
+                        onClick={() => updateSettings({ backgroundImage: preset.id })}
+                        title={preset.name}
+                      >
+                        <img
+                          src={getWallpaperUrl(preset)}
+                          alt={preset.name}
+                          className="aspect-[3/2] w-full object-cover"
+                          loading="lazy"
+                        />
+                        <span className="absolute inset-x-0 bottom-0 bg-black/50 px-1 py-0.5 text-[9px] font-medium text-white">
+                          {preset.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-3 flex gap-2">
+                  <Input
+                    value={customWallpaperUrl}
+                    onChange={(event) => setCustomWallpaperUrl(event.target.value)}
+                    placeholder="https://example.com/wallpaper.jpg"
+                    spellCheck={false}
+                    className="flex-1 text-xs"
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      const url = customWallpaperUrl.trim();
+                      if (url) {
+                        updateSettings({ backgroundImage: url });
+                        setCustomWallpaperUrl("");
+                      }
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      const url = customWallpaperUrl.trim();
+                      if (url) {
+                        updateSettings({ backgroundImage: url });
+                        setCustomWallpaperUrl("");
+                      }
+                    }}
+                  >
+                    Apply
+                  </Button>
+                </div>
+              </div>
+
+              {/* Opacity & Blur (only when wallpaper is active) */}
+              {settings.backgroundImage ? (
+                <div className="mt-5 border-t border-border pt-5">
+                  <div className="mb-3">
+                    <h3 className="text-xs font-medium text-foreground">Overlay & Blur</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Adjust the color overlay opacity and blur on the wallpaper.
+                    </p>
+                  </div>
+
+                  <div className="space-y-4">
+                    <label className="block space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-foreground">Opacity</span>
+                        <span className="text-xs tabular-nums text-muted-foreground">
+                          {Math.round(settings.backgroundOpacity * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0.1}
+                        max={1}
+                        step={0.05}
+                        value={settings.backgroundOpacity}
+                        onChange={(event) =>
+                          updateSettings({ backgroundOpacity: parseFloat(event.target.value) })
+                        }
+                        className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-border accent-primary"
+                      />
+                    </label>
+
+                    <label className="block space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-foreground">Blur</span>
+                        <span className="text-xs tabular-nums text-muted-foreground">
+                          {settings.backgroundBlur}px
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={32}
+                        step={2}
+                        value={settings.backgroundBlur}
+                        onChange={(event) =>
+                          updateSettings({ backgroundBlur: parseInt(event.target.value, 10) })
+                        }
+                        className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-border accent-primary"
+                      />
+                    </label>
+
+                    <div className="flex justify-end">
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() =>
+                          updateSettings({
+                            backgroundOpacity: defaults.backgroundOpacity,
+                            backgroundBlur: defaults.backgroundBlur,
+                          })
+                        }
+                      >
+                        Reset to defaults
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">

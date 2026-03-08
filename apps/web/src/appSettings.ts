@@ -24,6 +24,18 @@ const AppSettingsSchema = Schema.Struct({
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
+  colorThemeId: Schema.String.pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  backgroundImage: Schema.String.pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  backgroundOpacity: Schema.Number.pipe(
+    Schema.withConstructorDefault(() => Option.some(0.85)),
+  ),
+  backgroundBlur: Schema.Number.pipe(
+    Schema.withConstructorDefault(() => Option.some(0)),
+  ),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
 export interface AppModelOption {
@@ -71,6 +83,8 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
+    backgroundOpacity: Math.min(1.0, Math.max(0.1, settings.backgroundOpacity)),
+    backgroundBlur: Math.min(32, Math.max(0, settings.backgroundBlur)),
   };
 }
 

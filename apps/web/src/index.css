@@ -120,6 +120,51 @@
   }
 }
 
+/*
+ * Wallpaper transparency system
+ *
+ * BackgroundLayer sets three CSS custom properties on :root:
+ *   --wp-overlay       raw opacity (e.g. "85%") — controls base overlay
+ *   --wp-interactive   interactiveOpacity result — sidebar, inputs (stays visible)
+ *   --wp-nested        nestedOpacity result — cards, headers (subtle tint)
+ *
+ * The overlay div (z-index: -10) uses --wp-overlay. UI panels reference the
+ * other two so interactive elements resist transparency changes.
+ */
+
+/* Fully transparent — let the overlay show through */
+:root[data-has-wallpaper] body,
+:root[data-has-wallpaper] .bg-background,
+:root[data-has-wallpaper] .bg-sidebar,
+:root[data-has-wallpaper] [data-slot="sidebar-inset"],
+:root[data-has-wallpaper] [data-slot="sidebar-inset"] > div,
+:root[data-has-wallpaper] [data-slot="sidebar-container"] {
+  background-color: transparent !important;
+}
+
+/* Interactive tier — inputs stay highly visible */
+:root[data-has-wallpaper] [data-slot="input-control"] {
+  background-color: color-mix(in srgb, var(--background) var(--wp-interactive, 97%), transparent) !important;
+}
+
+/* Chat header matches sidebar tint */
+:root[data-has-wallpaper] [data-slot="sidebar-inset"] > div > header {
+  background-color: color-mix(in srgb, var(--card) var(--wp-nested, 34%), transparent) !important;
+}
+
+/* Nested tier — sidebar, cards, panels, code blocks get a subtle tint */
+:root[data-has-wallpaper] [data-slot="sidebar-inner"] {
+  background-color: color-mix(in srgb, var(--card) var(--wp-nested, 34%), transparent) !important;
+}
+
+:root[data-has-wallpaper] .bg-card {
+  background-color: color-mix(in srgb, var(--card) var(--wp-nested, 34%), transparent) !important;
+}
+
+:root[data-has-wallpaper] .bg-muted {
+  background-color: color-mix(in srgb, var(--muted) var(--wp-nested, 34%), transparent) !important;
+}
+
 body {
   font-family:
     "DM Sans",

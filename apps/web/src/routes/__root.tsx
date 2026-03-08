@@ -10,8 +10,10 @@ import { useEffect, useRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 
 import { APP_DISPLAY_NAME } from "../branding";
+import { BackgroundLayer } from "../components/BackgroundLayer";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
+import { useColorThemeEffect } from "../hooks/useColorTheme";
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -51,6 +53,8 @@ function RootRouteView() {
       <AnchoredToastProvider>
         <EventRouter />
         <DesktopProjectBootstrap />
+        <ColorThemeManager />
+        <BackgroundLayer />
         <Outlet />
       </AnchoredToastProvider>
     </ToastProvider>
@@ -293,6 +297,11 @@ function EventRouter() {
     syncServerReadModel,
   ]);
 
+  return null;
+}
+
+function ColorThemeManager() {
+  useColorThemeEffect();
   return null;
 }
 
