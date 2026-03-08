@@ -214,6 +214,7 @@ import {
   resolveAppServiceTier,
   shouldShowFastTierIcon,
   type AppServiceTier,
+  type ChatThreadFontSize,
   useAppSettings,
 } from "../appSettings";
 import {
@@ -274,6 +275,11 @@ const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnsw
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
+const CHAT_THREAD_TEXT_CLASS_BY_SIZE: Record<ChatThreadFontSize, string> = {
+  small: "text-xs",
+  medium: "text-sm",
+  large: "text-base",
+};
 
 function providerLabel(provider: ProviderKind): string {
   switch (provider) {
@@ -3575,6 +3581,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           markdownCwd={gitCwd ?? undefined}
           resolvedTheme={resolvedTheme}
           workspaceRoot={activeProject?.cwd ?? undefined}
+          chatThreadFontSize={settings.chatThreadFontSize}
         />
       </div>
 
@@ -4712,10 +4719,12 @@ const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
   cwd,
   workspaceRoot,
+  fontSize,
 }: {
   planMarkdown: string;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
+  fontSize: ChatThreadFontSize;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
@@ -4814,7 +4823,7 @@ const ProposedPlanCard = memo(function ProposedPlanCard({
       </div>
       <div className="mt-4">
         <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
-          <ChatMarkdown text={planMarkdown} cwd={cwd} isStreaming={false} />
+          <ChatMarkdown text={planMarkdown} cwd={cwd} isStreaming={false} fontSize={fontSize} />
           {canCollapse && !expanded ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
           ) : null}
@@ -4900,6 +4909,7 @@ interface MessagesTimelineProps {
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
+  chatThreadFontSize: ChatThreadFontSize;
 }
 
 type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
@@ -4954,6 +4964,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   markdownCwd,
   resolvedTheme,
   workspaceRoot,
+  chatThreadFontSize,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
@@ -5284,7 +5295,12 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   </div>
                 )}
                 {row.message.text && (
-                  <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+                  <pre
+                    className={cn(
+                      "whitespace-pre-wrap wrap-break-word font-mono leading-relaxed text-foreground",
+                      CHAT_THREAD_TEXT_CLASS_BY_SIZE[chatThreadFontSize],
+                    )}
+                  >
                     {row.message.text}
                   </pre>
                 )}
@@ -5333,6 +5349,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   text={messageText}
                   cwd={markdownCwd}
                   isStreaming={Boolean(row.message.streaming)}
+                  fontSize={chatThreadFontSize}
                 />
                 {(() => {
                   const turnSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);
@@ -5409,6 +5426,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
             planMarkdown={row.proposedPlan.planMarkdown}
             cwd={markdownCwd}
             workspaceRoot={workspaceRoot}
+            fontSize={chatThreadFontSize}
           />
         </div>
       )}

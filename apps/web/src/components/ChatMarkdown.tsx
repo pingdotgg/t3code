@@ -28,6 +28,7 @@ import { useTheme } from "../hooks/useTheme";
 import { resolveMarkdownFileLinkTarget } from "../markdown-links";
 import { readNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
+import { type ChatThreadFontSize } from "../appSettings";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -54,6 +55,7 @@ interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
   isStreaming?: boolean;
+  fontSize?: ChatThreadFontSize;
 }
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
@@ -64,6 +66,11 @@ const highlightedCodeCache = new LRUCache<string>(
   MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
 );
 const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();
+const CHAT_MARKDOWN_TEXT_CLASS_BY_SIZE: Record<ChatThreadFontSize, string> = {
+  small: "text-xs",
+  medium: "text-sm",
+  large: "text-base",
+};
 
 function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
@@ -229,7 +236,7 @@ function SuspenseShikiCodeBlock({
   );
 }
 
-function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
+function ChatMarkdown({ text, cwd, isStreaming = false, fontSize = "medium" }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownComponents = useMemo<Components>(
@@ -283,7 +290,9 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
   );
 
   return (
-    <div className="chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80">
+    <div
+      className={`chat-markdown chat-markdown--${fontSize} w-full min-w-0 ${CHAT_MARKDOWN_TEXT_CLASS_BY_SIZE[fontSize]} leading-relaxed text-foreground/80`}
+    >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
         {text}
       </ReactMarkdown>

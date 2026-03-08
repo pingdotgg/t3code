@@ -241,9 +241,21 @@ label:has(> select#reasoning-effort) select {
 
 /* Chat markdown rendering */
 .chat-markdown {
+  --chat-markdown-inline-code-font-size: 0.75rem;
+  --chat-markdown-code-font-size: 0.875rem;
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.chat-markdown.chat-markdown--small {
+  --chat-markdown-inline-code-font-size: 0.6875rem;
+  --chat-markdown-code-font-size: 0.8125rem;
+}
+
+.chat-markdown.chat-markdown--large {
+  --chat-markdown-inline-code-font-size: 0.8125rem;
+  --chat-markdown-code-font-size: 0.9375rem;
 }
 
 .chat-markdown > :first-child {
@@ -315,7 +327,7 @@ label:has(> select#reasoning-effort) select {
   background: var(--muted);
   padding: 0.1rem 0.35rem;
   color: var(--foreground);
-  font-size: 0.75rem;
+  font-size: var(--chat-markdown-inline-code-font-size);
 }
 
 .chat-markdown pre {
@@ -332,7 +344,7 @@ label:has(> select#reasoning-effort) select {
   background: transparent;
   padding: 0;
   line-height: 1.5;
-  font-size: 0.875rem;
+  font-size: var(--chat-markdown-code-font-size);
 }
 
 .chat-markdown .chat-markdown-codeblock {

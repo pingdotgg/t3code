@@ -7,6 +7,7 @@ import { ZapIcon } from "lucide-react";
 
 import {
   APP_SERVICE_TIER_OPTIONS,
+  CHAT_THREAD_FONT_SIZE_OPTIONS,
   MAX_CUSTOM_MODEL_LENGTH,
   shouldShowFastTierIcon,
   useAppSettings,
@@ -132,6 +133,7 @@ function SettingsRouteView() {
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const codexServiceTier = settings.codexServiceTier;
+  const chatThreadFontSize = settings.chatThreadFontSize;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
   const openKeybindingsFile = useCallback(() => {
@@ -512,25 +514,58 @@ function SettingsRouteView() {
                 </p>
               </div>
 
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Stream assistant messages</p>
-                  <p className="text-xs text-muted-foreground">
-                    Show token-by-token output while a response is in progress.
-                  </p>
+              <div className="space-y-3">
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Chat thread font size</span>
+                  <Select
+                    items={CHAT_THREAD_FONT_SIZE_OPTIONS.map((option) => ({
+                      label: option.label,
+                      value: option.value,
+                    }))}
+                    value={chatThreadFontSize}
+                    onValueChange={(value) => {
+                      if (!value) return;
+                      updateSettings({ chatThreadFontSize: value });
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectPopup alignItemWithTrigger={false}>
+                      {CHAT_THREAD_FONT_SIZE_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                  <span className="text-xs text-muted-foreground">
+                    {CHAT_THREAD_FONT_SIZE_OPTIONS.find((option) => option.value === chatThreadFontSize)
+                      ?.description ?? "Use the default chat text size."}
+                  </span>
+                </label>
+
+                <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Stream assistant messages</p>
+                    <p className="text-xs text-muted-foreground">
+                      Show token-by-token output while a response is in progress.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={settings.enableAssistantStreaming}
+                    onCheckedChange={(checked) =>
+                      updateSettings({
+                        enableAssistantStreaming: Boolean(checked),
+                      })
+                    }
+                    aria-label="Stream assistant messages"
+                  />
                 </div>
-                <Switch
-                  checked={settings.enableAssistantStreaming}
-                  onCheckedChange={(checked) =>
-                    updateSettings({
-                      enableAssistantStreaming: Boolean(checked),
-                    })
-                  }
-                  aria-label="Stream assistant messages"
-                />
               </div>
 
-              {settings.enableAssistantStreaming !== defaults.enableAssistantStreaming ? (
+              {settings.enableAssistantStreaming !== defaults.enableAssistantStreaming ||
+              settings.chatThreadFontSize !== defaults.chatThreadFontSize ? (
                 <div className="mt-3 flex justify-end">
                   <Button
                     size="xs"
@@ -538,6 +573,7 @@ function SettingsRouteView() {
                     onClick={() =>
                       updateSettings({
                         enableAssistantStreaming: defaults.enableAssistantStreaming,
+                        chatThreadFontSize: defaults.chatThreadFontSize,
                       })
                     }
                   >
