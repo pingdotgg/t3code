@@ -31,7 +31,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           latest_turn_id,
           created_at,
           updated_at,
-          deleted_at
+          deleted_at,
+          archived_at
         )
         VALUES (
           ${row.threadId},
@@ -45,7 +46,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.latestTurnId},
           ${row.createdAt},
           ${row.updatedAt},
-          ${row.deletedAt}
+          ${row.deletedAt},
+          ${row.archivedAt}
         )
         ON CONFLICT (thread_id)
         DO UPDATE SET
@@ -59,7 +61,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           latest_turn_id = excluded.latest_turn_id,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
-          deleted_at = excluded.deleted_at
+          deleted_at = excluded.deleted_at,
+          archived_at = excluded.archived_at
       `,
   });
 
@@ -80,7 +83,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          archived_at AS "archivedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
       `,
@@ -103,7 +107,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
+          deleted_at AS "deletedAt",
+          archived_at AS "archivedAt"
         FROM projection_threads
         WHERE project_id = ${projectId}
         ORDER BY created_at ASC, thread_id ASC

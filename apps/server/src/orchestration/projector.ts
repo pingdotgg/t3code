@@ -298,6 +298,7 @@ export function projectEvent(
             ...(payload.model !== undefined ? { model: payload.model } : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+            ...(payload.archivedAt !== undefined ? { archivedAt: payload.archivedAt } : {}),
             updatedAt: payload.updatedAt,
           }),
         })),

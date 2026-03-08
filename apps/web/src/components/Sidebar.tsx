@@ -62,7 +62,7 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
-const THREAD_PREVIEW_LIMIT = 6;
+const THREAD_PREVIEW_LIMIT = 10;
 
 async function copyTextToClipboard(text: string): Promise<void> {
   if (typeof navigator === "undefined" || navigator.clipboard?.writeText === undefined) {
@@ -312,6 +312,22 @@ export default function Sidebar() {
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
   );
+
+  // Sort projects: most-recently-active project first (by latest turn completedAt or thread createdAt),
+  // with new projects (no threads yet) ranked by their own createdAt descending.
+  const sortedProjects = useMemo(() => {
+    const latestActivityByProjectId = new Map<string, number>();
+    for (const thread of threads) {
+      const ts = new Date(thread.latestTurn?.completedAt ?? thread.createdAt).getTime();
+      const existing = latestActivityByProjectId.get(thread.projectId) ?? 0;
+      if (ts > existing) latestActivityByProjectId.set(thread.projectId, ts);
+    }
+    return projects.toSorted((a, b) => {
+      const aTs = latestActivityByProjectId.get(a.id) ?? new Date(a.createdAt).getTime();
+      const bTs = latestActivityByProjectId.get(b.id) ?? new Date(b.createdAt).getTime();
+      return bTs - aTs;
+    });
+  }, [projects, threads]);
   const threadGitTargets = useMemo(
     () =>
       threads.map((thread) => ({
@@ -603,6 +619,7 @@ export default function Sidebar() {
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
+          { id: "archive", label: "Archive" },
           { id: "delete", label: "Delete", destructive: true },
         ],
         position,
@@ -635,6 +652,32 @@ export default function Sidebar() {
             title: "Failed to copy thread ID",
             description: error instanceof Error ? error.message : "An error occurred.",
           });
+        }
+        return;
+      }
+      if (clicked === "archive") {
+        try {
+          await api.orchestration.dispatchCommand({
+            type: "thread.meta.update",
+            commandId: newCommandId(),
+            threadId,
+            archived: true,
+          });
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Failed to archive thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+          return;
+        }
+        if (routeThreadId === threadId) {
+          const fallbackThreadId = threads.find((entry) => entry.id !== threadId)?.id ?? null;
+          if (fallbackThreadId) {
+            void navigate({ to: "/$threadId", params: { threadId: fallbackThreadId }, replace: true });
+          } else {
+            void navigate({ to: "/", replace: true });
+          }
         }
         return;
       }
@@ -1026,7 +1069,7 @@ export default function Sidebar() {
       <SidebarContent className="gap-0">
         <SidebarGroup className="px-2 py-2">
           <SidebarMenu>
-            {projects.map((project) => {
+            {sortedProjects.map((project) => {
               const projectThreads = threads
                 .filter((thread) => thread.projectId === project.id)
                 .toSorted((a, b) => {

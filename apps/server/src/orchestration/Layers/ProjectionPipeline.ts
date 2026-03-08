@@ -449,6 +449,9 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
               : {}),
+            ...(event.payload.archivedAt !== undefined
+              ? { archivedAt: event.payload.archivedAt }
+              : {}),
             updatedAt: event.payload.updatedAt,
           });
           return;

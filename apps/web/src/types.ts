@@ -81,6 +81,7 @@ export interface Project {
   model: string;
   expanded: boolean;
   scripts: ProjectScript[];
+  createdAt: string;
 }
 
 export interface Thread {
@@ -98,6 +99,7 @@ export interface Thread {
   createdAt: string;
   latestTurn: OrchestrationLatestTurn | null;
   lastVisitedAt?: string | undefined;
+  archivedAt: string | null;
   branch: string | null;
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];

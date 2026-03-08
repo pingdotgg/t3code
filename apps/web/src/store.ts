@@ -119,6 +119,7 @@ function mapProjectsFromReadModel(
           ? persistedExpandedProjectCwds.has(project.workspaceRoot)
           : true),
       scripts: project.scripts.map((script) => ({ ...script })),
+      createdAt: project.createdAt,
     };
   });
 }
@@ -206,7 +207,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
   );
   const existingThreadById = new Map(state.threads.map((thread) => [thread.id, thread] as const));
   const threads = readModel.threads
-    .filter((thread) => thread.deletedAt === null)
+    .filter((thread) => thread.deletedAt === null && thread.archivedAt === null)
     .map((thread) => {
       const existing = existingThreadById.get(thread.id);
       return {
@@ -265,6 +266,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         createdAt: thread.createdAt,
         latestTurn: thread.latestTurn,
         lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,
+        archivedAt: thread.archivedAt,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
         turnDiffSummaries: thread.checkpoints.map((checkpoint) => ({
