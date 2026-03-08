@@ -8,6 +8,15 @@ For this clone:
 - `upstream` = Theo's repo (`pingdotgg/t3code`)
 - local `main` tracks `origin/main`
 
+## Default repo policy
+
+This should be treated as the default interpretation for work in this clone:
+
+- when asked to commit, push, or open a PR, always target `cschubiner/t3code`
+- when opening a PR, always use `cschubiner/t3code` `main` as the base
+- only use `pingdotgg/t3code` as a fetch-only upstream source
+- do not open PRs against Theo's repo unless explicitly requested
+
 ## Mental model
 
 Treat `upstream/main` as the clean base from Theo.

@@ -5,6 +5,15 @@
 - Both `bun lint` and `bun typecheck` must pass before considering tasks completed.
 - NEVER run `bun test`. Always use `bun run test` (runs Vitest).
 
+## Fork Policy
+
+- In this clone, `origin` is the personal fork `cschubiner/t3code` and `upstream` is Theo's source repo `pingdotgg/t3code`.
+- When asked to commit, push, or open a pull request for this repository, always treat that as:
+  - push to `cschubiner/t3code`
+  - open the PR against `cschubiner/t3code` `main`
+- Do not open PRs against `pingdotgg/t3code` unless the user explicitly says to do that.
+- Do not push to `upstream`.
+
 ## Project Snapshot
 
 T3 Code is a minimal web GUI for using code agents like Codex and Claude Code (coming soon).

@@ -16,6 +16,7 @@ You can also just install the desktop app. It's cooler.
 Install the [desktop app from the Releases page](https://github.com/pingdotgg/t3code/releases)
 
 Maintaining a personal fork? See [docs/fork-workflow.md](./docs/fork-workflow.md).
+For this clone, all commit/push/PR work should target `cschubiner/t3code`, with PRs against `cschubiner/t3code` `main`.
 
 ## Some notes
 
