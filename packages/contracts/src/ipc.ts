@@ -81,6 +81,8 @@ export interface DesktopBridge {
   getWsUrl: () => string | null;
   pickFolder: () => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
+  writeClipboardText: (text: string) => Promise<void>;
+  readClipboardText: () => Promise<string>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },

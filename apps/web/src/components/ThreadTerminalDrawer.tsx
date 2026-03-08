@@ -20,6 +20,12 @@ import {
 } from "../terminal-links";
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
 import {
+  isTerminalCopyShortcut,
+  isTerminalPasteShortcut,
+  readTextFromTerminalClipboard,
+  writeTextToTerminalClipboard,
+} from "../terminalClipboard";
+import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_THREAD_TERMINAL_COUNT,
@@ -58,6 +64,7 @@ function terminalThemeFromApp(): ITheme {
       foreground,
       cursor: "rgb(180, 203, 255)",
       selectionBackground: "rgba(180, 203, 255, 0.25)",
+      selectionInactiveBackground: "rgba(180, 203, 255, 0.18)",
       scrollbarSliderBackground: "rgba(255, 255, 255, 0.1)",
       scrollbarSliderHoverBackground: "rgba(255, 255, 255, 0.18)",
       scrollbarSliderActiveBackground: "rgba(255, 255, 255, 0.22)",
@@ -85,6 +92,7 @@ function terminalThemeFromApp(): ITheme {
     foreground,
     cursor: "rgb(38, 56, 78)",
     selectionBackground: "rgba(37, 63, 99, 0.2)",
+    selectionInactiveBackground: "rgba(37, 63, 99, 0.14)",
     scrollbarSliderBackground: "rgba(0, 0, 0, 0.15)",
     scrollbarSliderHoverBackground: "rgba(0, 0, 0, 0.25)",
     scrollbarSliderActiveBackground: "rgba(0, 0, 0, 0.3)",
@@ -105,6 +113,17 @@ function terminalThemeFromApp(): ITheme {
     brightCyan: "rgb(70, 149, 164)",
     brightWhite: "rgb(236, 240, 246)",
   };
+}
+
+function terminalFontFamily(): string {
+  const platform = typeof navigator === "undefined" ? "" : navigator.platform;
+  if (platform.startsWith("Win")) {
+    return '"Cascadia Mono", Consolas, "Courier New", monospace';
+  }
+  if (platform.startsWith("Mac")) {
+    return '"SF Mono", "SFMono-Regular", Menlo, Monaco, monospace';
+  }
+  return '"JetBrains Mono", "Liberation Mono", "DejaVu Sans Mono", monospace';
 }
 
 interface TerminalViewportProps {
@@ -152,7 +171,7 @@ function TerminalViewport({
       lineHeight: 1.2,
       fontSize: 12,
       scrollback: 5_000,
-      fontFamily: '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
+      fontFamily: terminalFontFamily(),
       theme: terminalThemeFromApp(),
     });
     terminal.loadAddon(fitAddon);
@@ -175,7 +194,56 @@ function TerminalViewport({
       }
     };
 
+    const copyTerminalSelection = async () => {
+      const activeTerminal = terminalRef.current;
+      if (!activeTerminal) return;
+      const selection = activeTerminal.getSelection();
+      if (selection.length === 0) {
+        return;
+      }
+      try {
+        await writeTextToTerminalClipboard(selection);
+      } catch (error) {
+        writeSystemMessage(
+          activeTerminal,
+          error instanceof Error ? error.message : "Failed to copy terminal selection",
+        );
+      }
+    };
+
+    const pasteTerminalClipboard = async () => {
+      const activeTerminal = terminalRef.current;
+      if (!activeTerminal) return;
+      try {
+        const text = await readTextFromTerminalClipboard();
+        if (text.length === 0) return;
+        await api.terminal.write({ threadId, terminalId, data: text });
+      } catch (error) {
+        writeSystemMessage(
+          activeTerminal,
+          error instanceof Error ? error.message : "Failed to paste terminal clipboard",
+        );
+      }
+    };
+
     terminal.attachCustomKeyEventHandler((event) => {
+      const activeTerminal = terminalRef.current;
+      const hasSelection = activeTerminal?.hasSelection() ?? false;
+
+      if (isTerminalCopyShortcut(event, hasSelection)) {
+        event.preventDefault();
+        event.stopPropagation();
+        void copyTerminalSelection();
+        return false;
+      }
+
+      if (isTerminalPasteShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        void pasteTerminalClipboard();
+        return false;
+      }
+
       const navigationData = terminalNavigationShortcutData(event);
       if (navigationData !== null) {
         event.preventDefault();
@@ -190,6 +258,35 @@ function TerminalViewport({
       void sendTerminalInput("\u000c", "Failed to clear terminal");
       return false;
     });
+
+    const onCopy = (event: ClipboardEvent) => {
+      const activeTerminal = terminalRef.current;
+      if (!activeTerminal) return;
+      const selection = activeTerminal.getSelection();
+      if (selection.length === 0) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.clipboardData) {
+        event.clipboardData.setData("text/plain", selection);
+        return;
+      }
+      void copyTerminalSelection();
+    };
+
+    const onPaste = (event: ClipboardEvent) => {
+      const text = event.clipboardData?.getData("text/plain");
+      if (!text) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      void sendTerminalInput(text, "Failed to paste terminal clipboard");
+    };
+
+    mount.addEventListener("copy", onCopy);
+    mount.addEventListener("paste", onPaste);
 
     const terminalLinksDisposable = terminal.registerLinkProvider({
       provideLinks: (bufferLineNumber, callback) => {
@@ -385,6 +482,8 @@ function TerminalViewport({
       inputDisposable.dispose();
       terminalLinksDisposable.dispose();
       themeObserver.disconnect();
+      mount.removeEventListener("copy", onCopy);
+      mount.removeEventListener("paste", onPaste);
       terminalRef.current = null;
       fitAddonRef.current = null;
       terminal.dispose();
