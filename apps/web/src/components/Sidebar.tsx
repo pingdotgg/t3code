@@ -34,11 +34,12 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { toastManager } from "./ui/toast";
 import {
   getDesktopUpdateActionError,
+  getDesktopUpdateButtonSummary,
   getDesktopUpdateButtonTooltip,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldHighlightDesktopUpdateError,
-  shouldShowDesktopUpdateButton,
+  shouldShowDesktopUpdateStatus,
   shouldToastDesktopUpdateActionResult,
 } from "./desktopUpdate.logic";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
@@ -871,7 +872,11 @@ export default function Sidebar() {
     };
   }, []);
 
-  const showDesktopUpdateButton = isElectron && shouldShowDesktopUpdateButton(desktopUpdateState);
+  const showDesktopUpdateStatusControl =
+    isElectron && shouldShowDesktopUpdateStatus(desktopUpdateState);
+  const desktopUpdateSummary = desktopUpdateState
+    ? getDesktopUpdateButtonSummary(desktopUpdateState)
+    : null;
 
   const desktopUpdateTooltip = desktopUpdateState
     ? getDesktopUpdateButtonTooltip(desktopUpdateState)
@@ -881,17 +886,45 @@ export default function Sidebar() {
   const desktopUpdateButtonAction = desktopUpdateState
     ? resolveDesktopUpdateButtonAction(desktopUpdateState)
     : "none";
-  const desktopUpdateButtonInteractivityClasses = desktopUpdateButtonDisabled
-    ? "cursor-not-allowed opacity-60"
-    : "hover:bg-accent hover:text-foreground";
+  const desktopUpdateButtonIsInteractive =
+    desktopUpdateButtonAction !== "none" && !desktopUpdateButtonDisabled;
+  const desktopUpdateButtonInteractivityClasses = desktopUpdateButtonIsInteractive
+    ? "cursor-pointer hover:border-ring hover:bg-accent/40"
+    : "cursor-default";
   const desktopUpdateButtonClasses =
     desktopUpdateState?.status === "downloaded"
-      ? "text-emerald-500"
+      ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
       : desktopUpdateState?.status === "downloading"
-        ? "text-sky-400"
-        : shouldHighlightDesktopUpdateError(desktopUpdateState)
-          ? "text-rose-500 animate-pulse"
-          : "text-amber-500 animate-pulse";
+        ? "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+        : desktopUpdateState?.status === "up-to-date"
+          ? "border-border bg-secondary/50 text-muted-foreground"
+          : desktopUpdateState?.status === "error"
+            ? shouldHighlightDesktopUpdateError(desktopUpdateState)
+              ? "border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+              : "border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+            : desktopUpdateState?.status === "available"
+              ? "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+              : "border-border bg-secondary/50 text-muted-foreground";
+  const desktopUpdateActionLabel =
+    desktopUpdateButtonAction === "download"
+      ? "Update"
+      : desktopUpdateButtonAction === "install"
+        ? "Install"
+        : null;
+  const desktopUpdateControlContent = desktopUpdateSummary ? (
+    <>
+      <RocketIcon className="size-3.5 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium">{desktopUpdateSummary.label}</p>
+        <p className="truncate text-[10px] opacity-70">{desktopUpdateSummary.detail}</p>
+      </div>
+      {desktopUpdateActionLabel ? (
+        <span className="shrink-0 rounded-full border border-current/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em]">
+          {desktopUpdateActionLabel}
+        </span>
+      ) : null}
+    </>
+  ) : null;
   const newThreadShortcutLabel = useMemo(
     () =>
       shortcutLabelForCommand(keybindings, "chat.newLocal") ??
@@ -993,30 +1026,9 @@ export default function Sidebar() {
   return (
     <>
       {isElectron ? (
-        <>
-          <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[82px]">
-            {wordmark}
-            {showDesktopUpdateButton && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label={desktopUpdateTooltip}
-                      aria-disabled={desktopUpdateButtonDisabled || undefined}
-                      disabled={desktopUpdateButtonDisabled}
-                      className={`inline-flex size-7 ml-auto mt-2 items-center justify-center rounded-md text-muted-foreground transition-colors ${desktopUpdateButtonInteractivityClasses} ${desktopUpdateButtonClasses}`}
-                      onClick={handleDesktopUpdateButtonClick}
-                    >
-                      <RocketIcon className="size-3.5" />
-                    </button>
-                  }
-                />
-                <TooltipPopup side="bottom">{desktopUpdateTooltip}</TooltipPopup>
-              </Tooltip>
-            )}
-          </SidebarHeader>
-        </>
+        <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[82px]">
+          {wordmark}
+        </SidebarHeader>
       ) : (
         <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
           {wordmark}
@@ -1349,6 +1361,33 @@ export default function Sidebar() {
           >
             + Add project
           </button>
+        )}
+        {showDesktopUpdateStatusControl && desktopUpdateControlContent && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                desktopUpdateButtonIsInteractive ? (
+                  <button
+                    type="button"
+                    aria-label={desktopUpdateTooltip}
+                    className={`mt-2 flex w-full items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors duration-150 ${desktopUpdateButtonInteractivityClasses} ${desktopUpdateButtonClasses}`}
+                    onClick={handleDesktopUpdateButtonClick}
+                  >
+                    {desktopUpdateControlContent}
+                  </button>
+                ) : (
+                  <div
+                    role="status"
+                    aria-label={desktopUpdateTooltip}
+                    className={`mt-2 flex w-full items-center gap-2 rounded-md border px-2.5 py-2 text-left ${desktopUpdateButtonInteractivityClasses} ${desktopUpdateButtonClasses}`}
+                  >
+                    {desktopUpdateControlContent}
+                  </div>
+                )
+              }
+            />
+            <TooltipPopup side="top">{desktopUpdateTooltip}</TooltipPopup>
+          </Tooltip>
         )}
       </SidebarFooter>
     </>

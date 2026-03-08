@@ -3,11 +3,13 @@ import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/con
 
 import {
   getDesktopUpdateActionError,
+  getDesktopUpdateButtonSummary,
   getDesktopUpdateButtonTooltip,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldHighlightDesktopUpdateError,
   shouldShowDesktopUpdateButton,
+  shouldShowDesktopUpdateStatus,
   shouldToastDesktopUpdateActionResult,
 } from "./desktopUpdate.logic";
 
@@ -82,6 +84,20 @@ describe("desktop update button state", () => {
     expect(shouldShowDesktopUpdateButton(state)).toBe(true);
     expect(isDesktopUpdateButtonDisabled(state)).toBe(true);
     expect(getDesktopUpdateButtonTooltip(state)).toContain("42%");
+  });
+
+  it("shows updater status while already up to date", () => {
+    const state: DesktopUpdateState = {
+      ...baseState,
+      status: "up-to-date",
+      checkedAt: "2026-03-08T12:00:00.000Z",
+    };
+    expect(shouldShowDesktopUpdateButton(state)).toBe(false);
+    expect(shouldShowDesktopUpdateStatus(state)).toBe(true);
+    expect(getDesktopUpdateButtonSummary(state)).toEqual({
+      label: "Up to date",
+      detail: "Version 1.0.0 is installed.",
+    });
   });
 });
 
