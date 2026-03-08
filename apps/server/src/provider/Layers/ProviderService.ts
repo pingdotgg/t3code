@@ -174,8 +174,18 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         const adapter = yield* registry.getByProvider(input.binding.provider);
         const hasResumeCursor =
           input.binding.resumeCursor !== null && input.binding.resumeCursor !== undefined;
-        const hasActiveSession = yield* adapter.hasSession(input.binding.threadId);
-        if (hasActiveSession) {
+        let stillHasSession = yield* adapter.hasSession(input.binding.threadId);
+
+        // If the binding is in error state but the adapter still holds a session,
+        // tear it down first so we can start fresh with resume.
+        if (stillHasSession && input.binding.status === "error") {
+          yield* adapter.stopSession(input.binding.threadId).pipe(
+            Effect.catch(() => Effect.void),
+          );
+          stillHasSession = false;
+        }
+
+        if (stillHasSession) {
           const activeSessions = yield* adapter.listSessions();
           const existing = activeSessions.find((session) => session.threadId === input.binding.threadId);
           if (existing) {

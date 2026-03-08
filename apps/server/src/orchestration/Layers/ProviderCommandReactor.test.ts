@@ -794,6 +794,97 @@ describe("ProviderCommandReactor", () => {
     expect(resolvedActivity).toBeUndefined();
   });
 
+  it("serializes concurrent turn-start events on an errored thread so only one recovery occurs", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    // First: start a session normally
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-pre-error"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-pre-error"),
+          role: "user",
+          text: "pre-error message",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    // Simulate error state on the thread session
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-set-error"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "error",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: "SDK stream error",
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    // Send two concurrent turn-start messages
+    const msg1Promise = Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-concurrent-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-concurrent-1"),
+          role: "user",
+          text: "concurrent message 1",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    const msg2Promise = Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-concurrent-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-concurrent-2"),
+          role: "user",
+          text: "concurrent message 2",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await Promise.all([msg1Promise, msg2Promise]);
+
+    // Wait for at least one recovery + send to complete
+    await waitFor(() => harness.sendTurn.mock.calls.length >= 2, 3000);
+    await Effect.runPromise(Effect.sleep("50 millis"));
+
+    // The first turn-start should have triggered recovery (startSession called for it).
+    // The second turn-start should reuse the recovered session (not trigger another recovery).
+    // So we expect exactly 2 startSession calls: 1 initial + 1 recovery
+    expect(harness.startSession.mock.calls.length).toBe(2);
+  });
+
   it("reacts to thread.session.stop by stopping provider session and clearing thread session state", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
