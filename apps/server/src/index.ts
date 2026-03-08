@@ -20,8 +20,15 @@ const RuntimeLayer = Layer.empty.pipe(
   Layer.provideMerge(FetchHttpClient.layer),
 );
 
+function writeToStderr(...args: unknown[]) {
+  process.stderr.write(`${args.map((arg) => String(arg)).join(" ")}\n`);
+}
+
 const isRemoteAgentCommand = process.argv[2] === "remote-agent";
 if (isRemoteAgentCommand) {
+  console.log = writeToStderr;
+  console.info = writeToStderr;
+  console.debug = writeToStderr;
   process.argv.splice(2, 1);
   Command.run(remoteAgentCli, { version }).pipe(Effect.provide(RuntimeLayer), NodeRuntime.runMain);
 } else {
