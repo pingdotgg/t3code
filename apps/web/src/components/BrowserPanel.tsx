@@ -45,6 +45,22 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
     setRefreshKey((k) => k + 1);
   }, [projectId]);
 
+  // Re-check localStorage shortly after mount — handles the race where auto-detection
+  // saved a URL before this component mounted (lazy-loaded via Suspense).
+  const loadedUrlRef = useRef(loadedUrl);
+  loadedUrlRef.current = loadedUrl;
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (loadedUrlRef.current.length > 0) return;
+      const url = readBrowserUrl(projectId);
+      if (url.length === 0) return;
+      setInputUrl(url);
+      setLoadedUrl(url);
+      setRefreshKey((k) => k + 1);
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [projectId]);
+
   // Listen for URL updates from dev server auto-detection (same-tab custom event)
   useEffect(() => {
     const handler = (e: Event) => {

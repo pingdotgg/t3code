@@ -354,20 +354,37 @@ function ChatThreadRouteView() {
     if (!api) return;
 
     const unsubscribe = api.terminal.onEvent((event) => {
-      if (event.threadId !== threadId) return;
+      // Match events from either the thread terminal or the project terminal
+      if (event.threadId !== threadId && event.threadId !== projectTerminalThreadId) return;
       if (event.type !== "output") return;
       const url = detectDevServerUrl(event.data);
       if (!url) return;
-      // Only auto-set if the project has no browser URL yet
+      // Skip if this exact URL is already set for the project
       const current = readBrowserUrl(projectId);
-      if (current.length > 0) return;
+      if (current === url) return;
       setDetectedBrowserUrl(projectId, url);
       if (!browserOpenRef.current) {
         openBrowserRef.current();
       }
     });
     return unsubscribe;
-  }, [threadId, projectId]);
+  }, [threadId, projectId, projectTerminalThreadId]);
+
+  // When a localhost URL is Cmd/Ctrl+clicked in the terminal, open it in the browser panel
+  useEffect(() => {
+    if (!projectId) return;
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ url: string; threadId: string }>).detail;
+      // Match clicks from either the thread terminal or the project terminal
+      if (detail.threadId !== threadId && detail.threadId !== projectTerminalThreadId) return;
+      setDetectedBrowserUrl(projectId, detail.url);
+      if (!browserOpenRef.current) {
+        openBrowserRef.current();
+      }
+    };
+    window.addEventListener("t3code:terminal-localhost-link", handler);
+    return () => window.removeEventListener("t3code:terminal-localhost-link", handler);
+  }, [threadId, projectId, projectTerminalThreadId]);
 
   if (!threadsHydrated || !routeThreadExists) {
     return null;

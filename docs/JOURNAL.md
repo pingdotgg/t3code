@@ -135,4 +135,36 @@ Made the browser panel project-scoped (each project remembers its own URL) and a
 5. Switch to another project → browser panel shows that project's saved URL (or placeholder if none).
 6. Browser panel stays open when switching threads/projects until explicitly closed.
 
+### Follow-up: ANSI-aware detection + clickable terminal links
+
+- **`apps/web/src/lib/devServerDetection.ts`** — `detectDevServerUrl` now strips ANSI escape codes before matching. Vite and other tools wrap URLs in color codes (e.g. `\x1b[36mhttp://localhost:5173/\x1b[39m`) which broke the regex. Also normalizes trailing slashes.
+- **`apps/web/src/components/ThreadTerminalDrawer.tsx`** — The existing terminal link provider now intercepts localhost URLs: Cmd+click (Mac) / Ctrl+click (Windows) on `http://localhost:PORT` in terminal output dispatches a `t3code:terminal-localhost-link` custom event instead of opening the system browser.
+- **`apps/web/src/routes/_chat.$threadId.tsx`** — Listens for `t3code:terminal-localhost-link` events, saves the URL for the active project, and opens the browser panel.
+
+`bun lint` and `bun typecheck` both pass with 0 warnings / 0 errors.
+
+---
+
+## 2026-03-08 16:05 UTC — Fix Auto-Detection & Terminal Click-to-Browser
+
+Fixed two bugs preventing dev server auto-detection and terminal click-to-browser from working.
+
+### Bug 1: Auto-detection blocked when any URL exists
+
+The auto-detection effect in `_chat.$threadId.tsx` had a guard `if (current.length > 0) return;` that skipped URL detection whenever the project already had *any* URL saved (even a manually-entered one). Changed to `if (current === url) return;` so it only skips if the *exact same* URL is already set. Now switching dev servers (e.g. from port 3001 to 3000) correctly updates the browser panel.
+
+### Bug 2: Project terminal events not matched
+
+Both the auto-detection effect and the terminal localhost-link listener filtered events with `event.threadId !== threadId`, matching only the *thread* terminal's ID. The project terminal dispatches events with a synthetic `project:<projectId>` threadId, which never matched. Both listeners now also match `projectTerminalThreadId`, so dev server URLs are detected from either terminal scope.
+
+### What changed
+
+- **`apps/web/src/routes/_chat.$threadId.tsx`**
+  - Auto-detection effect: relaxed URL guard from `current.length > 0` to `current === url`, and added `projectTerminalThreadId` to the threadId match.
+  - Terminal localhost-link listener: added `projectTerminalThreadId` to the threadId match.
+
+### Note on Cmd/Ctrl+click
+
+Terminal link activation requires **Cmd+click** (Mac) or **Ctrl+click** (Windows/Linux) — this is the standard terminal convention inherited from xterm.js. Regular clicks in the terminal are consumed by the shell for cursor placement.
+
 `bun lint` and `bun typecheck` both pass with 0 warnings / 0 errors.

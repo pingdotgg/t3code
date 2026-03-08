@@ -226,6 +226,15 @@ function TerminalViewport({
               if (!latestTerminal) return;
 
               if (match.kind === "url") {
+                // Localhost URLs open in the browser panel instead of the system browser
+                if (/^https?:\/\/(?:localhost|127\.0\.0\.1):\d+/.test(match.text)) {
+                  window.dispatchEvent(
+                    new CustomEvent("t3code:terminal-localhost-link", {
+                      detail: { url: match.text, threadId },
+                    }),
+                  );
+                  return;
+                }
                 void api.shell.openExternal(match.text).catch((error) => {
                   writeSystemMessage(
                     latestTerminal,
