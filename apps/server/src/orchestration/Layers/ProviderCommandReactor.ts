@@ -145,6 +145,8 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const threadProviderOptions = new Map<string, ProviderStartOptions>();
+
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
     readonly kind:
@@ -335,6 +337,9 @@ const make = Effect.gen(function* () {
     const thread = yield* resolveThread(input.threadId);
     if (!thread) {
       return;
+    }
+    if (input.providerOptions !== undefined) {
+      threadProviderOptions.set(input.threadId, input.providerOptions);
     }
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.provider !== undefined ? { provider: input.provider } : {}),
@@ -633,7 +638,10 @@ const make = Effect.gen(function* () {
           if (!thread?.session || thread.session.status === "stopped") {
             return;
           }
-          yield* ensureSessionForThread(event.payload.threadId, event.occurredAt);
+          const cachedProviderOptions = threadProviderOptions.get(event.payload.threadId);
+          yield* ensureSessionForThread(event.payload.threadId, event.occurredAt, {
+            ...(cachedProviderOptions !== undefined ? { providerOptions: cachedProviderOptions } : {}),
+          });
           return;
         }
         case "thread.turn-start-requested":
