@@ -9,6 +9,7 @@ import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 interface ScopedTerminalDrawerProps {
   threadId: ThreadId;
   cwd: string;
+  label?: string;
   splitShortcutLabel?: string;
   newShortcutLabel?: string;
   closeShortcutLabel?: string;
@@ -25,6 +26,7 @@ interface ScopedTerminalDrawerProps {
 export default function ScopedTerminalDrawer({
   threadId,
   cwd,
+  label,
   splitShortcutLabel,
   newShortcutLabel,
   closeShortcutLabel,
@@ -101,6 +103,7 @@ export default function ScopedTerminalDrawer({
     <ThreadTerminalDrawer
       threadId={threadId}
       cwd={cwd}
+      label={label}
       height={terminalState.terminalHeight}
       terminalIds={terminalState.terminalIds}
       activeTerminalId={terminalState.activeTerminalId}

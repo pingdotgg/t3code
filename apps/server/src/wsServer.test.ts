@@ -416,6 +416,7 @@ describe("WebSocket Server", () => {
       port: 0,
       host: undefined,
       cwd: options.cwd ?? "/test/project",
+      homedir: "/home/testuser",
       keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
       stateDir,
       staticDir: options.staticDir,

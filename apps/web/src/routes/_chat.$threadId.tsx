@@ -404,6 +404,7 @@ function ChatThreadRouteView() {
               key={`project-terminal-${String(projectId)}`}
               threadId={projectTerminalThreadId}
               cwd={activeProjectCwd}
+              label="Project"
             />
           )}
         </SidebarInset>

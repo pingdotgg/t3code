@@ -14,7 +14,7 @@ const GLOBAL_TERMINAL_THREAD_ID = "global" as ThreadId;
 function ChatRouteLayout() {
   const navigate = useNavigate();
   const serverConfig = useQuery(serverConfigQueryOptions());
-  const serverCwd = serverConfig.data?.cwd ?? "";
+  const serverHomedir = serverConfig.data?.homedir ?? "";
 
   useEffect(() => {
     const onMenuAction = window.desktopBridge?.onMenuAction;
@@ -50,8 +50,8 @@ function ChatRouteLayout() {
           <Outlet />
         </DiffWorkerPoolProvider>
       </SidebarProvider>
-      {serverCwd && (
-        <ScopedTerminalDrawer threadId={GLOBAL_TERMINAL_THREAD_ID} cwd={serverCwd} />
+      {serverHomedir && (
+        <ScopedTerminalDrawer threadId={GLOBAL_TERMINAL_THREAD_ID} cwd={serverHomedir} label="Global" />
       )}
     </div>
   );

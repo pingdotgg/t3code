@@ -445,6 +445,7 @@ function TerminalViewport({
 interface ThreadTerminalDrawerProps {
   threadId: ThreadId;
   cwd: string;
+  label?: string | undefined;
   runtimeEnv?: Record<string, string>;
   height: number;
   terminalIds: string[];
@@ -491,9 +492,14 @@ function TerminalActionButton({ label, className, onClick, children }: TerminalA
   );
 }
 
+function abbreviatePath(path: string): string {
+  return path.replace(/^\/(?:Users|home)\/[^/]+/, "~");
+}
+
 export default function ThreadTerminalDrawer({
   threadId,
   cwd,
+  label,
   runtimeEnv,
   height,
   terminalIds,
@@ -757,6 +763,14 @@ export default function ThreadTerminalDrawer({
         onPointerUp={handleResizePointerEnd}
         onPointerCancel={handleResizePointerEnd}
       />
+
+      {label && (
+        <div className="pointer-events-none absolute left-2 top-2 z-20">
+          <span className="select-none text-[10px] tracking-wider text-muted-foreground/60">
+            {label} <span className="opacity-60">· {abbreviatePath(cwd)}</span>
+          </span>
+        </div>
+      )}
 
       {!hasTerminalSidebar && (
         <div className="pointer-events-none absolute right-2 top-2 z-20">

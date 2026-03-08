@@ -240,6 +240,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const {
     port,
     cwd,
+    homedir,
     keybindingsConfigPath,
     staticDir,
     devUrl,
@@ -880,6 +881,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
         return {
           cwd,
+          homedir,
           keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,

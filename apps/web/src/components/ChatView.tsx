@@ -3935,6 +3935,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             key={activeThread.id}
             threadId={activeThread.id}
             cwd={gitCwd ?? activeProject.cwd}
+            label="Thread"
             runtimeEnv={threadTerminalRuntimeEnv}
             height={terminalState.terminalHeight}
             terminalIds={terminalState.terminalIds}

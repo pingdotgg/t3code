@@ -16,6 +16,7 @@ import {
   type RuntimeMode,
   type ServerConfigShape,
 } from "./config";
+import { homedir } from "node:os";
 import { fixPath, resolveStateDir } from "./os-jank";
 import { Open } from "./open";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
@@ -178,6 +179,7 @@ const ServerConfigLive = (input: CliInput) =>
         mode,
         port,
         cwd: cliConfig.cwd,
+        homedir: homedir(),
         keybindingsConfigPath,
         host,
         stateDir,
