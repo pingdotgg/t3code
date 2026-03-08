@@ -324,7 +324,7 @@ describe("findLatestProposedPlan", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
-  it("omits tool started entries and keeps completed entries", () => {
+  it("includes tool started and completed entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "tool-complete",
@@ -341,7 +341,7 @@ describe("deriveWorkLogEntries", () => {
     ];
 
     const entries = deriveWorkLogEntries(activities, undefined);
-    expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
+    expect(entries.map((entry) => entry.id)).toEqual(["tool-start", "tool-complete"]);
   });
 
   it("omits task start and completion lifecycle entries", () => {
