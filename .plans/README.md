@@ -10,3 +10,11 @@
 8. `08-precommit-format-and-lint.md`
 9. `09-event-state-test-expansion.md`
 10. `10-unify-process-session-abstraction.md`
+
+## Recent additions
+
+- `17-project-reentry-engine.md`
+- `18-attention-inbox-smart-notifications.md`
+- `19-claude-code-support-design-review.md`
+- `20-monitor-visuals-design-review.md`
+- `21-chat-widgets-design-review.md`
