@@ -51,7 +51,7 @@ describe("ProviderSessionStartInput", () => {
       model: "sonnet",
       modelOptions: {
         claudeCode: {
-          reasoningEffort: "medium",
+          reasoningEffort: "high",
         },
       },
       runtimeMode: "full-access",
@@ -59,7 +59,7 @@ describe("ProviderSessionStartInput", () => {
 
     expect(parsed.provider).toBe("claudeCode");
     expect(parsed.model).toBe("sonnet");
-    expect(parsed.modelOptions?.claudeCode?.reasoningEffort).toBe("medium");
+    expect(parsed.modelOptions?.claudeCode?.reasoningEffort).toBe("high");
   });
 });
 
@@ -84,14 +84,15 @@ describe("ProviderSendTurnInput", () => {
   it("accepts Claude Code reasoning effort model options", () => {
     const parsed = decodeProviderSendTurnInput({
       threadId: "thread-1",
-      model: "sonnet",
+      model: "claude-sonnet-4-6",
       modelOptions: {
         claudeCode: {
-          reasoningEffort: "high",
+          reasoningEffort: "medium",
         },
       },
     });
 
-    expect(parsed.modelOptions?.claudeCode?.reasoningEffort).toBe("high");
+    expect(parsed.model).toBe("claude-sonnet-4-6");
+    expect(parsed.modelOptions?.claudeCode?.reasoningEffort).toBe("medium");
   });
 });

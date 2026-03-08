@@ -4,7 +4,6 @@ import {
   EDITORS,
   type EditorId,
   type KeybindingCommand,
-  type CodexReasoningEffort,
   type MessageId,
   type ProjectId,
   type ProjectEntry,
@@ -16,6 +15,7 @@ import {
   type ProviderApprovalDecision,
   type ServerProviderStatus,
   type ProviderKind,
+  type ReasoningEffort,
   type ThreadId,
   type TurnId,
   OrchestrationThreadActivity,
@@ -23,11 +23,16 @@ import {
   ProviderInteractionMode,
 } from "@t3tools/contracts";
 import {
+  buildTemporaryWorktreeBranchName,
+} from "@t3tools/shared/git";
+import {
   getDefaultModel,
   getDefaultReasoningEffort,
   getReasoningEffortOptions,
   normalizeModelSlug,
+  resolveReasoningEffortForProvider,
   resolveModelSlugForProvider,
+  supportsReasoningEffortForModel,
 } from "@t3tools/shared/model";
 import {
   memo,
@@ -143,6 +148,8 @@ import {
   CopyIcon,
   CheckIcon,
   ZapIcon,
+  PencilIcon,
+  SendIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -265,7 +272,6 @@ const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnsw
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
-const WORKTREE_BRANCH_PREFIX = "t3code";
 
 function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
   const stored = localStorage.getItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
@@ -447,12 +453,6 @@ function readFileAsDataUrl(file: File): Promise<string> {
     });
     reader.readAsDataURL(file);
   });
-}
-
-function buildTemporaryWorktreeBranchName(): string {
-  // Keep the 8-hex suffix shape for backend temporary-branch detection.
-  const token = crypto.randomUUID().slice(0, 8).toLowerCase();
-  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
 }
 
 function cloneComposerImageForRetry(image: ComposerImageAttachment): ComposerImageAttachment {
@@ -665,6 +665,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [queuedMessage, setQueuedMessage] = useState<QueuedComposerMessage | null>(null);
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
+  const [queuedFollowUp, setQueuedFollowUp] = useState<{
+    text: string;
+    images: ComposerImageAttachment[];
+  } | null>(null);
+  const autoSubmitPendingRef = useRef(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
@@ -828,7 +833,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedProvider,
     activeThread?.model ?? activeProject?.model ?? getDefaultModel(selectedProvider),
   );
-  const customModelsForSelectedProvider = settings.customCodexModels;
+  const customModelsByProvider = useMemo(
+    () => ({
+      codex: settings.customCodexModels,
+      claudeCode: settings.customClaudeCodeModels,
+    }),
+    [settings.customClaudeCodeModels, settings.customCodexModels],
+  );
+  const customModelsForSelectedProvider = customModelsByProvider[selectedProvider];
   const selectedModel = useMemo(() => {
     const draftModel = composerDraft.model;
     if (!draftModel) {
@@ -841,8 +853,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     ) as ModelSlug;
   }, [baseThreadModel, composerDraft.model, customModelsForSelectedProvider, selectedProvider]);
   const reasoningOptions = getReasoningEffortOptions(selectedProvider);
-  const supportsReasoningEffort = reasoningOptions.length > 0;
-  const selectedEffort = composerDraft.effort ?? getDefaultReasoningEffort(selectedProvider);
+  const supportsReasoningEffort =
+    reasoningOptions.length > 0 &&
+    supportsReasoningEffortForModel(selectedProvider, selectedModel);
+  const selectedEffort = resolveReasoningEffortForProvider(selectedProvider, composerDraft.effort);
   const selectedCodexFastModeEnabled =
     selectedProvider === "codex" ? composerDraft.codexFastMode : false;
   const selectedModelOptionsForDispatch = useMemo(() => {
@@ -853,19 +867,29 @@ export default function ChatView({ threadId }: ChatViewProps) {
       };
       return Object.keys(codexOptions).length > 0 ? { codex: codexOptions } : undefined;
     }
-    if (selectedProvider === "claudeCode") {
-      const claudeCodeOptions =
-        supportsReasoningEffort &&
-        selectedEffort &&
-        selectedEffort !== "xhigh"
-          ? { reasoningEffort: selectedEffort }
-          : undefined;
-      return claudeCodeOptions && Object.keys(claudeCodeOptions).length > 0
-        ? { claudeCode: claudeCodeOptions }
-        : undefined;
+
+    const claudeEffort =
+      composerDraft.effort === "high" ||
+      composerDraft.effort === "medium" ||
+      composerDraft.effort === "low"
+        ? composerDraft.effort
+        : null;
+    if (selectedProvider === "claudeCode" && supportsReasoningEffort && claudeEffort) {
+      return {
+        claudeCode: {
+          reasoningEffort: claudeEffort,
+        },
+      };
     }
+
     return undefined;
-  }, [selectedCodexFastModeEnabled, selectedEffort, selectedProvider, supportsReasoningEffort]);
+  }, [
+    composerDraft.effort,
+    selectedCodexFastModeEnabled,
+    selectedEffort,
+    selectedProvider,
+    supportsReasoningEffort,
+  ]);
   const selectedModelForPicker = selectedModel;
   const modelOptionsByProvider = useMemo(
     () => getCustomModelOptionsByProvider(settings),
@@ -2203,6 +2227,29 @@ export default function ChatView({ threadId }: ChatViewProps) {
     sendPhase,
   ]);
 
+  // Track phase transitions to auto-send queued follow-up when generation finishes
+  const prevPhaseRef = useRef(phase);
+  useEffect(() => {
+    const prevPhase = prevPhaseRef.current;
+    prevPhaseRef.current = phase;
+    if (prevPhase === "running" && phase !== "running" && queuedFollowUp) {
+      setPrompt(queuedFollowUp.text);
+      if (queuedFollowUp.images.length > 0) {
+        addComposerImagesToDraft(queuedFollowUp.images);
+      }
+      setQueuedFollowUp(null);
+      autoSubmitPendingRef.current = true;
+    }
+  }, [phase, queuedFollowUp, setPrompt, addComposerImagesToDraft]);
+
+  // Submit the form once the queued prompt has been restored to the composer
+  useEffect(() => {
+    if (autoSubmitPendingRef.current && prompt.trim() && phase !== "running" && !isSendBusy) {
+      autoSubmitPendingRef.current = false;
+      composerFormRef.current?.requestSubmit();
+    }
+  }, [prompt, phase, isSendBusy]);
+
   useEffect(() => {
     if (!activeThreadId) return;
     const previous = terminalOpenByThreadRef.current[activeThreadId] ?? false;
@@ -2481,15 +2528,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
       onAdvanceActivePendingUserInput();
       return;
     }
-    // When agent is running, queue the message to send after the turn completes.
-    if (phase === "running" && !override) {
-      const textToQueue = prompt.trim();
-      if (!textToQueue && composerImages.length === 0) return;
-      setQueuedMessage({
-        text: textToQueue,
-        images: composerImages.map(cloneComposerImageForRetry),
-        afterTurnId: activeThread.session?.activeTurnId ?? activeLatestTurn?.turnId ?? null,
-      });
+    const trimmed = prompt.trim();
+    // Queue the message if the model is currently generating
+    if (phase === "running") {
+      if (!trimmed && composerImages.length === 0) return;
+      setQueuedFollowUp({ text: trimmed, images: [...composerImages] });
       promptRef.current = "";
       clearComposerDraftContent(activeThread.id);
       setComposerHighlightedItemId(null);
@@ -2497,10 +2540,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerTrigger(null);
       return;
     }
-    const effectivePrompt = override?.text ?? prompt;
-    const effectiveImages = override?.images ?? composerImages;
-    const trimmed = effectivePrompt.trim();
-    if (!override && showPlanFollowUpPrompt && activeProposedPlan) {
+    if (showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
@@ -3198,25 +3238,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerDraftProvider(activeThread.id, provider);
       setComposerDraftModel(
         activeThread.id,
-        resolveAppModelSelection(provider, settings.customCodexModels, model),
+        resolveAppModelSelection(provider, customModelsByProvider[provider], model),
       );
       scheduleComposerFocus();
     },
     [
       activeThread,
+      customModelsByProvider,
       lockedProvider,
       scheduleComposerFocus,
       setComposerDraftModel,
       setComposerDraftProvider,
-      settings.customCodexModels,
     ],
   );
   const onEffortSelect = useCallback(
-    (effort: CodexReasoningEffort) => {
-      setComposerDraftEffort(threadId, effort);
+    (effort: ReasoningEffort) => {
+      setComposerDraftEffort(threadId, selectedProvider, effort);
       scheduleComposerFocus();
     },
-    [scheduleComposerFocus, setComposerDraftEffort, threadId],
+    [scheduleComposerFocus, selectedProvider, setComposerDraftEffort, threadId],
   );
   const onCodexFastModeChange = useCallback(
     (enabled: boolean) => {
@@ -3592,6 +3632,57 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       {/* Input bar */}
       <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
+        {/* Queued follow-up banner */}
+        {queuedFollowUp ? (
+          <div className="mx-auto mb-2 w-full min-w-0 max-w-3xl">
+            <div className="rounded-[14px] border border-border bg-card px-3 py-2">
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-foreground">1 Queued</span>
+                <div className="flex items-center gap-1">
+                  {/* Edit: restore to composer */}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="Edit queued message"
+                    onClick={() => {
+                      setPrompt(queuedFollowUp.text);
+                      if (queuedFollowUp.images.length > 0) {
+                        addComposerImagesToDraft(queuedFollowUp.images);
+                      }
+                      setQueuedFollowUp(null);
+                    }}
+                  >
+                    <PencilIcon className="size-3" />
+                  </Button>
+                  {/* Send now: interrupt + auto-send */}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="Send queued message now"
+                    onClick={() => {
+                      void onInterrupt();
+                    }}
+                  >
+                    <SendIcon className="size-3" />
+                  </Button>
+                  {/* Discard */}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="Discard queued message"
+                    onClick={() => setQueuedFollowUp(null)}
+                  >
+                    <XIcon className="size-3" />
+                  </Button>
+                </div>
+              </div>
+              <p className="line-clamp-2 text-sm text-foreground/80">{queuedFollowUp.text}</p>
+            </div>
+          </div>
+        ) : null}
         <form
           ref={composerFormRef}
           onSubmit={onSend}
@@ -3769,6 +3860,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     ? "Type your own answer, or leave this blank to use the selected option"
                     : showPlanFollowUpPrompt && activeProposedPlan
                       ? "Add feedback to refine the plan, or leave this blank to implement it"
+                      : phase === "running"
+                      ? "Queue a follow-up message..."
                       : phase === "disconnected"
                         ? "Ask for follow-up changes or attach images"
                         : "Ask anything, @tag files/folders, or use /model"
@@ -3802,13 +3895,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   {supportsReasoningEffort && selectedEffort != null ? (
                     <>
                       <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-                      <CodexTraitsPicker
-                        provider={selectedProvider}
+                      <ReasoningTraitsPicker
                         effort={selectedEffort}
-                        fastModeEnabled={selectedCodexFastModeEnabled}
                         options={reasoningOptions}
                         onEffortChange={onEffortSelect}
-                        onFastModeChange={onCodexFastModeChange}
+                        fastModeEnabled={selectedProvider === "codex" ? selectedCodexFastModeEnabled : null}
+                        onFastModeChange={selectedProvider === "codex" ? onCodexFastModeChange : undefined}
                       />
                     </>
                   ) : null}
@@ -3900,12 +3992,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     </div>
                   ) : phase === "running" ? (
                     <div className="flex items-center gap-2">
-                      {!queuedMessage && (prompt.trim() || composerImages.length > 0) ? (
+                      {prompt.trim() || composerImages.length > 0 ? (
                         <button
                           type="submit"
-                          className="flex h-7 items-center gap-1.5 rounded-full border border-border/60 bg-muted/50 px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted"
+                          className="flex h-8 items-center justify-center gap-1.5 rounded-full bg-primary/90 px-3 text-xs font-medium text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105"
                           aria-label="Queue message"
                         >
+                          <SendIcon className="size-3" />
                           Queue
                         </button>
                       ) : null}
@@ -5661,18 +5754,18 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   );
 });
 
-const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
-  provider: ProviderKind;
-  effort: CodexReasoningEffort;
-  fastModeEnabled: boolean;
-  options: ReadonlyArray<CodexReasoningEffort>;
-  onEffortChange: (effort: CodexReasoningEffort) => void;
-  onFastModeChange: (enabled: boolean) => void;
+const ReasoningTraitsPicker = memo(function ReasoningTraitsPicker(props: {
+  effort: ReasoningEffort;
+  fastModeEnabled?: boolean | null;
+  options: ReadonlyArray<ReasoningEffort>;
+  onEffortChange: (effort: ReasoningEffort) => void;
+  onFastModeChange?: ((enabled: boolean) => void) | undefined;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const defaultReasoningEffort = getDefaultReasoningEffort(props.provider);
-  const showFastMode = props.provider === "codex";
-  const reasoningLabelByOption: Record<CodexReasoningEffort, string> = {
+  const defaultReasoningEffort = props.options.includes("xhigh")
+    ? getDefaultReasoningEffort("codex")
+    : getDefaultReasoningEffort("claudeCode");
+  const reasoningLabelByOption: Record<ReasoningEffort, string> = {
     low: "Low",
     medium: "Medium",
     high: "High",
@@ -5726,17 +5819,15 @@ const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
             ))}
           </MenuRadioGroup>
         </MenuGroup>
-        {showFastMode ? (
+        {props.onFastModeChange ? (
           <>
             <MenuDivider />
             <MenuGroup>
-              <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
-                Fast Mode
-              </div>
+              <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Fast Mode</div>
               <MenuRadioGroup
                 value={props.fastModeEnabled ? "on" : "off"}
                 onValueChange={(value) => {
-                  props.onFastModeChange(value === "on");
+                  props.onFastModeChange?.(value === "on");
                 }}
               >
                 <MenuRadioItem value="off">off</MenuRadioItem>

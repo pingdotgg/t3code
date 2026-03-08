@@ -20,6 +20,32 @@ export function sanitizeBranchFragment(raw: string): string {
   return branchFragment.length > 0 ? branchFragment : "update";
 }
 
+export const WORKTREE_BRANCH_PREFIX = "OSSCode";
+
+const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
+  `^${WORKTREE_BRANCH_PREFIX.toLowerCase()}\\/[0-9a-f]{8}$`,
+);
+
+export function buildTemporaryWorktreeBranchName(): string {
+  // Keep the 8-hex suffix shape for temporary-branch detection.
+  const token = crypto.randomUUID().slice(0, 8).toLowerCase();
+  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+}
+
+export function isTemporaryWorktreeBranch(branch: string): boolean {
+  return TEMP_WORKTREE_BRANCH_PATTERN.test(branch.trim().toLowerCase());
+}
+
+export function buildGeneratedWorktreeBranchName(raw: string): string {
+  const normalized = raw.trim().replace(/^refs\/heads\//i, "");
+  const worktreePrefix = `${WORKTREE_BRANCH_PREFIX.toLowerCase()}/`;
+  const withoutPrefix = normalized.toLowerCase().startsWith(worktreePrefix)
+    ? normalized.slice(worktreePrefix.length)
+    : normalized;
+
+  return `${WORKTREE_BRANCH_PREFIX}/${sanitizeBranchFragment(withoutPrefix)}`;
+}
+
 /**
  * Sanitize a string into a `feature/…` branch name.
  * Preserves an existing `feature/` prefix or slash-separated namespace.

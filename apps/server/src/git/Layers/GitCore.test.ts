@@ -3,6 +3,7 @@ import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import { WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
 import { describe, expect, vi } from "vitest";
 
@@ -1003,6 +1004,49 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(branchOutput).toBe("wt-check");
 
         yield* removeGitWorktree({ cwd: tmp, path: wtPath });
+      }),
+    );
+
+    it.effect("defaults the worktree path from the branch name when path is omitted", () =>
+      Effect.gen(function* () {
+        const homeDir = yield* makeTmpDir("git-home-");
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+
+        const previousHome = process.env.HOME;
+        process.env.HOME = homeDir;
+
+        try {
+          const currentBranch = (yield* listGitBranches({ cwd: tmp })).branches.find(
+            (b) => b.current,
+          )!.name;
+
+          const result = yield* createGitWorktree({
+            cwd: tmp,
+            branch: currentBranch,
+            newBranch: `${WORKTREE_BRANCH_PREFIX}/session-setup`,
+            path: null,
+          });
+
+          expect(result.worktree.path).toBe(
+            path.join(
+              homeDir,
+              ".t3",
+              "worktrees",
+              path.basename(tmp),
+              `${WORKTREE_BRANCH_PREFIX}-session-setup`,
+            ),
+          );
+          expect(existsSync(result.worktree.path)).toBe(true);
+
+          yield* removeGitWorktree({ cwd: tmp, path: result.worktree.path });
+        } finally {
+          if (previousHome === undefined) {
+            delete process.env.HOME;
+          } else {
+            process.env.HOME = previousHome;
+          }
+        }
       }),
     );
 
