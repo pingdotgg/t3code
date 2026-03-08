@@ -1,6 +1,5 @@
 import { Option, Schema, SchemaIssue, Struct } from "effect";
 import { ProviderModelOptions } from "./model";
-import { ProviderStartOptions } from "./provider";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -46,6 +45,13 @@ export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
 export const ProviderServiceTier = Schema.Literals(["fast", "flex"]);
 export type ProviderServiceTier = typeof ProviderServiceTier.Type;
 export const DEFAULT_PROVIDER_KIND: ProviderKind = "codex";
+const CodexProviderStartOptions = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyString),
+  homePath: Schema.optional(TrimmedNonEmptyString),
+});
+const ProviderStartOptions = Schema.Struct({
+  codex: Schema.optional(CodexProviderStartOptions),
+});
 export const RuntimeMode = Schema.Literals(["approval-required", "full-access"]);
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
