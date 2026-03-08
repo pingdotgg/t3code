@@ -442,12 +442,10 @@ layer("CopilotAdapterLive startup", (it) => {
         Effect.forkChild,
       );
 
-      const responsePromise = Effect.promise(() =>
-        onUserInputRequest({
-          question: "Which mode should be used?",
-          choices: ["safe", "fast"],
-        }) as Promise<unknown>,
-      );
+      const responsePromise = onUserInputRequest({
+        question: "Which mode should be used?",
+        choices: ["safe", "fast"],
+      }) as Promise<unknown>;
 
       const [event] = Array.from(
         yield* Fiber.join(runtimeEventsFiber).pipe(
@@ -474,7 +472,7 @@ layer("CopilotAdapterLive startup", (it) => {
         },
       );
 
-      const resolved = yield* responsePromise;
+      const resolved = yield* Effect.promise(() => responsePromise);
       assert.deepStrictEqual(resolved, {
         answer: "safe",
         wasFreeform: false,
