@@ -40,6 +40,151 @@ import { formatTimestamp } from "../../timestampFormat";
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
 
+// ── Agent Panel Component ────────────────────────────────────────
+// Extracted so each agent panel can manage its own auto-scroll refs.
+
+function AgentPanel({
+  agentKey,
+  agentEntries,
+  groupId,
+  isExpanded,
+  onToggle,
+}: {
+  agentKey: string;
+  agentEntries: TimelineWorkEntry[];
+  groupId: string;
+  isExpanded: boolean;
+  onToggle: (groupId: string) => void;
+}) {
+  const displayName = agentKey === "__unnamed_agent__" ? "Sub-agent" : agentKey;
+  const agentGroupId = `${groupId}:agent:${agentKey}`;
+  const latestEntry = agentEntries[agentEntries.length - 1];
+  const isCompleted = latestEntry?.label?.includes("complete") ?? false;
+
+  // Find the latest summary or streaming response
+  let agentResponseText: string | undefined;
+  for (let ei = agentEntries.length - 1; ei >= 0; ei--) {
+    const e = agentEntries[ei];
+    if (e?.agentSummary) { agentResponseText = e.agentSummary; break; }
+    if (e?.streamingResponse) { agentResponseText = e.streamingResponse; break; }
+  }
+  const isStreaming = !isCompleted && !!latestEntry?.streamingResponse;
+
+  const statusDot = isCompleted
+    ? "bg-emerald-400/70"
+    : isStreaming
+      ? "bg-sky-400/70 animate-pulse"
+      : "bg-amber-400/70 animate-pulse";
+  const statusLabel = isCompleted
+    ? "Done"
+    : isStreaming
+      ? "Responding..."
+      : "Working...";
+
+  // Separate activity entries from the response
+  const activityEntries = agentEntries.filter(
+    (e) => !e.streamingResponse && !e.agentSummary,
+  );
+
+  // Auto-scroll refs
+  const activityScrollRef = useRef<HTMLDivElement>(null);
+  const responseScrollRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll activity log to bottom when new entries arrive
+  useEffect(() => {
+    const el = activityScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [activityEntries.length]);
+
+  // Auto-scroll response area to bottom as text streams in
+  useEffect(() => {
+    const el = responseScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [agentResponseText]);
+
+  return (
+    <div className="rounded-lg border border-indigo-500/20 bg-indigo-950/10 dark:bg-indigo-950/20">
+      {/* Agent header */}
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+        onClick={() => onToggle(agentGroupId)}
+      >
+        <div className="flex items-center gap-2">
+          <span className={`h-2 w-2 shrink-0 rounded-full ${statusDot}`} />
+          <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-indigo-300/80 dark:text-indigo-300/70">
+            {displayName}
+          </p>
+          <span className="rounded-full bg-indigo-500/10 px-1.5 py-0.5 text-[9px] text-indigo-300/50">
+            {statusLabel}
+          </span>
+        </div>
+        <span className="text-[10px] text-muted-foreground/50">
+          {isExpanded ? "Collapse" : "Expand"}
+        </span>
+      </button>
+
+      {isExpanded && (
+        <div className="border-t border-indigo-500/10">
+          {/* Activity log — scrollable fixed height, auto-scrolls */}
+          {activityEntries.length > 0 && (
+            <div ref={activityScrollRef} className="max-h-[120px] overflow-y-auto px-3 py-1.5">
+              <p className="mb-1 text-[9px] uppercase tracking-wider text-muted-foreground/30">
+                Activity
+              </p>
+              <div className="space-y-0.5">
+                {activityEntries.map((workEntry) => (
+                  <div
+                    key={`agent-entry:${workEntry.id}`}
+                    className="flex items-start gap-2 py-0.5"
+                  >
+                    <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-indigo-400/30" />
+                    <p className="py-[1px] text-[10px] leading-relaxed text-muted-foreground/60">
+                      {workEntry.detail ? (
+                        <span className="font-mono" title={workEntry.detail}>
+                          {workEntry.detail}
+                        </span>
+                      ) : (
+                        workEntry.label
+                      )}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Agent response / summary — streamed in real-time, auto-scrolls */}
+          {agentResponseText && (
+            <div ref={responseScrollRef} className="max-h-[200px] overflow-y-auto border-t border-indigo-500/10 px-3 py-2">
+              <p className="mb-1 text-[9px] uppercase tracking-wider text-muted-foreground/30">
+                {isCompleted ? "Result" : "Responding"}
+              </p>
+              <div className="whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground/80">
+                {agentResponseText}
+                {isStreaming && (
+                  <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-indigo-400/60" />
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Collapsed: show latest status */}
+      {!isExpanded && (
+        <div className="border-t border-indigo-500/10 px-3 py-1.5">
+          <p className="truncate text-[10px] font-mono text-muted-foreground/50">
+            {agentResponseText
+              ? agentResponseText.slice(0, 120) + (agentResponseText.length > 120 ? "..." : "")
+              : latestEntry?.detail ?? latestEntry?.label ?? ""}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface MessagesTimelineProps {
   hasMessages: boolean;
   isWorking: boolean;
@@ -355,126 +500,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               )}
 
               {/* Agent panels — each agent gets its own fixed-height scrollable panel */}
-              {Array.from(agentGroups.entries()).map(([agentKey, agentEntries]) => {
-                const displayName = agentKey === "__unnamed_agent__" ? "Sub-agent" : agentKey;
-                const agentGroupId = `${groupId}:agent:${agentKey}`;
-                const isAgentExpanded = expandedWorkGroups[agentGroupId] ?? true;
-                const latestEntry = agentEntries[agentEntries.length - 1];
-                const isCompleted = latestEntry?.label?.includes("complete") ?? false;
-
-                // Find the latest summary or streaming response
-                let agentResponseText: string | undefined;
-                for (let ei = agentEntries.length - 1; ei >= 0; ei--) {
-                  const e = agentEntries[ei];
-                  if (e?.agentSummary) { agentResponseText = e.agentSummary; break; }
-                  if (e?.streamingResponse) { agentResponseText = e.streamingResponse; break; }
-                }
-                const isStreaming = !isCompleted && !!latestEntry?.streamingResponse;
-
-                const statusDot = isCompleted
-                  ? "bg-emerald-400/70"
-                  : isStreaming
-                    ? "bg-sky-400/70 animate-pulse"
-                    : "bg-amber-400/70 animate-pulse";
-                const statusLabel = isCompleted
-                  ? "Done"
-                  : isStreaming
-                    ? "Responding..."
-                    : "Working...";
-
-                // Separate activity entries from the response
-                const activityEntries = agentEntries.filter(
-                  (e) => !e.streamingResponse && !e.agentSummary,
-                );
-
-                return (
-                  <div
-                    key={`agent-panel:${agentKey}`}
-                    className="rounded-lg border border-indigo-500/20 bg-indigo-950/10 dark:bg-indigo-950/20"
-                  >
-                    {/* Agent header */}
-                    <button
-                      type="button"
-                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
-                      onClick={() => onToggleWorkGroup(agentGroupId)}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className={`h-2 w-2 shrink-0 rounded-full ${statusDot}`} />
-                        <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-indigo-300/80 dark:text-indigo-300/70">
-                          {displayName}
-                        </p>
-                        <span className="rounded-full bg-indigo-500/10 px-1.5 py-0.5 text-[9px] text-indigo-300/50">
-                          {statusLabel}
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground/50">
-                        {isAgentExpanded ? "Collapse" : "Expand"}
-                      </span>
-                    </button>
-
-                    {isAgentExpanded && (
-                      <div className="border-t border-indigo-500/10">
-                        {/* Activity log — scrollable fixed height */}
-                        {activityEntries.length > 0 && (
-                          <div className="max-h-[120px] overflow-y-auto px-3 py-1.5">
-                            <p className="mb-1 text-[9px] uppercase tracking-wider text-muted-foreground/30">
-                              Activity
-                            </p>
-                            <div className="space-y-0.5">
-                              {activityEntries.map((workEntry) => (
-                                <div
-                                  key={`agent-entry:${workEntry.id}`}
-                                  className="flex items-start gap-2 py-0.5"
-                                >
-                                  <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-indigo-400/30" />
-                                  <p className="py-[1px] text-[10px] leading-relaxed text-muted-foreground/60">
-                                    {workEntry.detail ? (
-                                      <span
-                                        className="font-mono"
-                                        title={workEntry.detail}
-                                      >
-                                        {workEntry.detail}
-                                      </span>
-                                    ) : (
-                                      workEntry.label
-                                    )}
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Agent response / summary — streamed in real-time */}
-                        {agentResponseText && (
-                          <div className="max-h-[200px] overflow-y-auto border-t border-indigo-500/10 px-3 py-2">
-                            <p className="mb-1 text-[9px] uppercase tracking-wider text-muted-foreground/30">
-                              {isCompleted ? "Result" : "Responding"}
-                            </p>
-                            <div className="whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground/80">
-                              {agentResponseText}
-                              {isStreaming && (
-                                <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-indigo-400/60" />
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Collapsed: show latest status */}
-                    {!isAgentExpanded && (
-                      <div className="border-t border-indigo-500/10 px-3 py-1.5">
-                        <p className="truncate text-[10px] font-mono text-muted-foreground/50">
-                          {agentResponseText
-                            ? agentResponseText.slice(0, 120) + (agentResponseText.length > 120 ? "..." : "")
-                            : latestEntry?.detail ?? latestEntry?.label ?? ""}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              {Array.from(agentGroups.entries()).map(([agentKey, agentEntries]) => (
+                <AgentPanel
+                  key={`agent-panel:${agentKey}`}
+                  agentKey={agentKey}
+                  agentEntries={agentEntries}
+                  groupId={groupId}
+                  isExpanded={expandedWorkGroups[`${groupId}:agent:${agentKey}`] ?? true}
+                  onToggle={onToggleWorkGroup}
+                />
+              ))}
             </div>
           );
         })()}

@@ -506,8 +506,26 @@ async function runSubAgent(
     if (resolvedToolCalls.length === 0) {
       finalResponse = assistantContent;
       if (progress) {
-        // Emit final completion with the full summary
         const label = progress.agentName || "sub-agent";
+        // Flush the full streamed response (throttle may have skipped the last chunk)
+        if (assistantContent) {
+          progress.emit({
+            ...makeEventBase(progress.threadId, progress.turnId, progress.parentItemId),
+            type: "item.updated",
+            payload: {
+              itemType: "collab_agent_tool_call" as CanonicalItemType,
+              status: "inProgress",
+              title: "spawn_agent",
+              detail: `[${label}] responding...`.slice(0, 180),
+              data: {
+                agentName: progress.agentName,
+                depth,
+                streamingResponse: assistantContent,
+              },
+            },
+          } as ProviderRuntimeEvent);
+        }
+        // Emit final completion with the full summary
         progress.emit({
           ...makeEventBase(progress.threadId, progress.turnId, progress.parentItemId),
           type: "item.updated",
