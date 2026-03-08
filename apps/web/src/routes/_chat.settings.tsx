@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { type ProviderKind, type ServerCliInstallation } from "@t3tools/contracts";
+import { EDITORS, type EditorId, type ProviderKind, type ServerCliInstallation } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   BotIcon,
+  CodeIcon,
   GitPullRequestIcon,
   KeyboardIcon,
   LayoutTemplateIcon,
@@ -25,6 +26,7 @@ import {
   shouldShowFastTierIcon,
   useAppSettings,
 } from "../appSettings";
+import { CursorIcon, OpenCodeIcon, VisualStudioCode, WindsurfIcon, Zed } from "../components/Icons";
 import WorkspaceSurfaceActions from "../components/WorkspaceSurfaceActions";
 import { isElectron } from "../env";
 import { useWorkspaceSurfaceLaunchers } from "../hooks/useWorkspaceSurfaceLaunchers";
@@ -109,6 +111,13 @@ const SETTINGS_SECTIONS = [
     description: "Theme, look and feel",
     icon: PaletteIcon,
     keywords: ["theme", "appearance", "light", "dark", "system"],
+  },
+  {
+    id: "editor",
+    title: "Editor",
+    description: "Preferred editor for opening projects",
+    icon: CodeIcon,
+    keywords: ["editor", "cursor", "vscode", "windsurf", "opencode", "zed", "ide"],
   },
   {
     id: "codex",
@@ -394,6 +403,25 @@ function SettingsRouteView() {
   const [cliInstallationsById, setCliInstallationsById] = useState<
     Partial<Record<ServerCliInstallation["id"], ServerCliInstallation>>
   >({});
+
+  const LAST_EDITOR_KEY = "t3code:last-editor";
+  const availableEditors: ReadonlyArray<EditorId> = serverConfigQuery.data?.availableEditors ?? [];
+  const [preferredEditor, setPreferredEditor] = useState<EditorId>(() => {
+    const stored = localStorage.getItem(LAST_EDITOR_KEY);
+    return EDITORS.some((e) => e.id === stored) ? (stored as EditorId) : EDITORS[0].id;
+  });
+  const handleEditorChange = useCallback((editorId: EditorId) => {
+    setPreferredEditor(editorId);
+    localStorage.setItem(LAST_EDITOR_KEY, editorId);
+  }, []);
+
+  const EDITOR_UI_OPTIONS: Array<{ id: EditorId; label: string; icon: React.FC<React.SVGProps<SVGSVGElement>> }> = [
+    { id: "cursor", label: "Cursor", icon: CursorIcon },
+    { id: "vscode", label: "VS Code", icon: VisualStudioCode },
+    { id: "windsurf", label: "Windsurf", icon: WindsurfIcon },
+    { id: "opencode", label: "OpenCode", icon: OpenCodeIcon },
+    { id: "zed", label: "Zed", icon: Zed },
+  ];
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
@@ -701,6 +729,63 @@ function SettingsRouteView() {
 
               <p className="mt-4 text-xs text-muted-foreground">
                 Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
+              </p>
+            </section>
+            ) : null}
+
+            {activeSection.id === "editor" ? (
+            <section
+              id="settings-editor"
+              className="rounded-2xl border border-border bg-card p-5"
+            >
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Editor</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Choose your preferred editor for opening projects. This selection is used by the
+                  &quot;Open in&quot; button in the project header and terminal file links.
+                </p>
+              </div>
+
+              <div className="space-y-2" role="radiogroup" aria-label="Editor preference">
+                {EDITOR_UI_OPTIONS.map((option) => {
+                  const selected = preferredEditor === option.id;
+                  const installed = availableEditors.includes(option.id);
+                  const EditorIcon = option.icon;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      disabled={!installed}
+                      className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${
+                        selected
+                          ? "border-primary/60 bg-primary/8 text-foreground"
+                          : installed
+                            ? "border-border bg-background text-muted-foreground hover:bg-accent"
+                            : "cursor-not-allowed border-border bg-background text-muted-foreground/40 opacity-50"
+                      }`}
+                      onClick={() => installed && handleEditorChange(option.id)}
+                    >
+                      <EditorIcon aria-hidden="true" className="size-5 shrink-0" />
+                      <span className="flex flex-1 flex-col">
+                        <span className="text-sm font-medium">{option.label}</span>
+                        {!installed && (
+                          <span className="text-[11px]">Not detected on PATH</span>
+                        )}
+                      </span>
+                      {selected ? (
+                        <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                          Selected
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <p className="mt-4 text-xs text-muted-foreground">
+                Editors are auto-detected from your system PATH. Install an editor&apos;s CLI command to enable it.
               </p>
             </section>
             ) : null}

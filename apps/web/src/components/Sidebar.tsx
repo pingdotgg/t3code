@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  EDITORS,
+  type EditorId,
   type DesktopUpdateState,
   ProjectId,
   ThreadId,
@@ -310,6 +312,11 @@ export default function Sidebar() {
   const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery({
     ...serverConfigQueryOptions(),
     select: (config) => config.keybindings,
+  });
+  const EMPTY_EDITORS: EditorId[] = [];
+  const { data: sidebarAvailableEditors = EMPTY_EDITORS } = useQuery({
+    ...serverConfigQueryOptions(),
+    select: (config) => config.availableEditors as EditorId[],
   });
   const queryClient = useQueryClient();
   const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
@@ -813,14 +820,34 @@ export default function Sidebar() {
     async (projectId: ProjectId, position: { x: number; y: number }) => {
       const api = readNativeApi();
       if (!api) return;
-      const clicked = await api.contextMenu.show(
-        [{ id: "delete", label: "Delete", destructive: true }],
-        position,
-      );
-      if (clicked !== "delete") return;
 
       const project = projects.find((entry) => entry.id === projectId);
       if (!project) return;
+
+      const editorItems = sidebarAvailableEditors
+        .filter((id) => id !== "file-manager")
+        .map((id) => {
+          const def = EDITORS.find((e) => e.id === id);
+          return { id: `open-in-${id}` as const, label: `Open in ${def?.label ?? id}` };
+        });
+
+      const clicked = await api.contextMenu.show(
+        [
+          ...editorItems,
+          { id: "delete" as const, label: "Delete", destructive: true },
+        ],
+        position,
+      );
+
+      if (!clicked) return;
+
+      if (clicked.startsWith("open-in-")) {
+        const editorId = clicked.replace("open-in-", "") as EditorId;
+        void api.shell.openInEditor(project.cwd, editorId);
+        return;
+      }
+
+      if (clicked !== "delete") return;
 
       const projectThreads = threads.filter((thread) => thread.projectId === projectId);
       if (projectThreads.length > 0) {
@@ -863,6 +890,7 @@ export default function Sidebar() {
       clearProjectDraftThreadId,
       getDraftThreadByProjectId,
       projects,
+      sidebarAvailableEditors,
       threads,
     ],
   );
