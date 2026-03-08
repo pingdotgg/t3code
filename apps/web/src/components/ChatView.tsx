@@ -142,8 +142,10 @@ import {
   CopyIcon,
   CheckIcon,
   ZapIcon,
+  ListChecksIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
+import { Kbd } from "./ui/kbd";
 import { Input } from "./ui/input";
 import { Separator } from "./ui/separator";
 import { Group, GroupSeparator } from "./ui/group";
@@ -942,6 +944,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
     (showPlanFollowUpPrompt && activeProposedPlan !== null);
+
+  // Plan suggestion banner — detect plan-related intent in user input
+  const promptHasPlanIntent =
+    interactionMode !== "plan" && /\bplan(ning|ned|s)?\b/i.test(prompt);
+  const planSuggestionDismissedRef = useRef(false);
+  // Reset dismissed flag whenever the prompt no longer contains plan keywords
+  // so the banner re-appears if the user types "plan" again later.
+  if (!promptHasPlanIntent) {
+    planSuggestionDismissedRef.current = false;
+  }
+  const [, forceRenderPlanSuggestion] = useState(0);
+  const dismissPlanSuggestion = useCallback(() => {
+    planSuggestionDismissedRef.current = true;
+    forceRenderPlanSuggestion((n) => n + 1);
+  }, []);
+  const showPlanSuggestion =
+    promptHasPlanIntent &&
+    !planSuggestionDismissedRef.current &&
+    !hasComposerHeader &&
+    phase !== "running";
+
   useEffect(() => {
     if (!activePendingProgress) {
       return;
@@ -3457,6 +3480,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       {/* Input bar */}
       <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
+        {/* Plan suggestion banner — floats above the composer */}
+        {showPlanSuggestion ? (
+          <div className="mx-auto mb-2 flex w-full min-w-0 max-w-3xl justify-center">
+            <ComposerPlanSuggestionBanner
+              onUsePlanMode={() => {
+                handleInteractionModeChange("plan");
+                dismissPlanSuggestion();
+              }}
+              onDismiss={dismissPlanSuggestion}
+            />
+          </div>
+        ) : null}
         <form
           ref={composerFormRef}
           onSubmit={onSend}
@@ -4342,6 +4377,38 @@ const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBanner({
       {/* <div className="mt-2 text-xs text-muted-foreground">
         Review the plan
       </div> */}
+    </div>
+  );
+});
+
+const ComposerPlanSuggestionBanner = memo(function ComposerPlanSuggestionBanner({
+  onUsePlanMode,
+  onDismiss,
+}: {
+  onUsePlanMode: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-card px-3 py-1.5">
+      <ListChecksIcon className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="text-xs font-medium text-foreground/90">Create a plan</span>
+      <Kbd className="ml-0.5 shrink-0 text-[10px]">Shift + Tab</Kbd>
+      <div className="mx-1 h-3.5 w-px bg-border/70" />
+      <button
+        type="button"
+        className="rounded-full bg-muted/60 px-2.5 py-0.5 text-xs font-medium text-foreground/80 transition-colors hover:bg-muted"
+        onClick={onUsePlanMode}
+      >
+        Use plan mode
+      </button>
+      <button
+        type="button"
+        className="ml-0.5 inline-flex items-center justify-center rounded-full p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+        onClick={onDismiss}
+        aria-label="Dismiss plan suggestion"
+      >
+        <XIcon className="size-3" />
+      </button>
     </div>
   );
 });
