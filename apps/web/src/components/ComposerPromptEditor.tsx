@@ -60,6 +60,7 @@ import {
 } from "~/composer-inline-item-display";
 import { cn } from "~/lib/utils";
 import { basenameOfPath, getVscodeIconUrlForEntry } from "~/vscode-icons";
+import { shouldRemoveCurrentInlineItemOnBackspace } from "./composerInlineItemEditor.logic";
 
 const COMPOSER_EDITOR_HMR_KEY = `composer-editor-${Math.random().toString(36).slice(2)}`;
 
@@ -708,7 +709,11 @@ function ComposerInlineItemBackspacePlugin() {
           return true;
         };
 
-        if (removeInlineItemNode(anchorNode)) {
+        if (
+          anchorNode instanceof ComposerInlineItemNode &&
+          shouldRemoveCurrentInlineItemOnBackspace(selection.anchor.offset) &&
+          removeInlineItemNode(anchorNode)
+        ) {
           return true;
         }
 
