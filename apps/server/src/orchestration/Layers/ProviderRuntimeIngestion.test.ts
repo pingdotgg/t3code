@@ -633,14 +633,14 @@ describe("ProviderRuntimeIngestion", () => {
     const thread = await waitForThread(
       harness.engine,
       (entry) =>
-        entry.contextWindow?.usedTokens === 126516 && entry.contextWindow?.usedPercent === 49,
+        entry.contextWindow?.usedTokens === 126516 && entry.contextWindow?.usedPercent === 46,
     );
     expect(thread.contextWindow).toMatchObject({
       provider: "codex",
       usedTokens: 126516,
       maxTokens: 258400,
       remainingTokens: 131884,
-      usedPercent: 49,
+      usedPercent: 46,
     });
   });
 
@@ -676,7 +676,7 @@ describe("ProviderRuntimeIngestion", () => {
       provider: "codex",
       usedTokens: 100,
       maxTokens: 258400,
-      remainingTokens: 258300,
+      remainingTokens: 246400,
       usedPercent: 0,
       inputTokens: 80,
       cachedInputTokens: 20,
@@ -710,6 +710,181 @@ describe("ProviderRuntimeIngestion", () => {
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.contextWindow).toBeNull();
+  });
+
+  it("clears stale context-window state when a compaction event has no replacement stats", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-context-window-stale"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        usage: {
+          tokenUsage: {
+            total: {
+              totalTokens: 300000,
+            },
+            modelContextWindow: 258400,
+          },
+        },
+      },
+    });
+
+    await waitForThread(harness.engine, (entry) => entry.contextWindow?.usedPercent === 100);
+
+    harness.emit({
+      type: "thread.state.changed",
+      eventId: asEventId("evt-context-window-compacted-clear"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        state: "compacted",
+        detail: {
+          thread: {
+            state: "compacted",
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) => entry.contextWindow === null);
+    expect(thread.contextWindow).toBeNull();
+  });
+
+  it("replaces stale context-window state when compaction detail carries fresh usage stats", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-context-window-stale-replace"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        usage: {
+          tokenUsage: {
+            total: {
+              totalTokens: 300000,
+            },
+            modelContextWindow: 258400,
+          },
+        },
+      },
+    });
+
+    await waitForThread(harness.engine, (entry) => entry.contextWindow?.usedPercent === 100);
+
+    harness.emit({
+      type: "thread.state.changed",
+      eventId: asEventId("evt-context-window-compacted-replace"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        state: "compacted",
+        detail: {
+          thread: {
+            usage: {
+              tokenUsage: {
+                total: {
+                  totalTokens: 43083,
+                  inputTokens: 42950,
+                  cachedInputTokens: 42240,
+                  outputTokens: 133,
+                  reasoningOutputTokens: 53,
+                },
+                modelContextWindow: 258400,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) => {
+      return entry.contextWindow?.usedTokens === 43083 && entry.contextWindow?.usedPercent === 13;
+    });
+    expect(thread.contextWindow).toMatchObject({
+      usedTokens: 43083,
+      maxTokens: 258400,
+      remainingTokens: 215317,
+      usedPercent: 13,
+    });
+  });
+
+  it("repopulates context-window state from later token-usage updates after compaction clears it", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-context-window-stale-followup"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        usage: {
+          tokenUsage: {
+            total: {
+              totalTokens: 300000,
+            },
+            modelContextWindow: 258400,
+          },
+        },
+      },
+    });
+
+    await waitForThread(harness.engine, (entry) => entry.contextWindow?.usedPercent === 100);
+
+    harness.emit({
+      type: "thread.state.changed",
+      eventId: asEventId("evt-context-window-compacted-followup"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        state: "compacted",
+        detail: {
+          thread: {
+            state: "compacted",
+          },
+        },
+      },
+    });
+
+    await waitForThread(harness.engine, (entry) => entry.contextWindow === null);
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-context-window-fresh-followup"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        usage: {
+          tokenUsage: {
+            total: {
+              totalTokens: 43083,
+            },
+            modelContextWindow: 258400,
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) => {
+      return entry.contextWindow?.usedTokens === 43083 && entry.contextWindow?.usedPercent === 13;
+    });
+    expect(thread.contextWindow).toMatchObject({
+      usedTokens: 43083,
+      usedPercent: 13,
+    });
   });
 
   it("projects completed plan items into first-class proposed plans", async () => {

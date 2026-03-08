@@ -677,7 +677,11 @@ function mapToRuntimeEvents(
                 ? "closed"
                 : event.method === "thread/compacted"
                   ? "compacted"
-                  : toThreadState(asObject(payload?.thread)?.state ?? payload?.state),
+                  : toThreadState(
+                      asObject(payload?.status)?.type ??
+                        asObject(payload?.thread)?.state ??
+                        payload?.state,
+                    ),
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },

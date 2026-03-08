@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeCodexContextWindow } from "./codexContextWindow.ts";
+import {
+  normalizeCodexContextWindow,
+  normalizeCodexContextWindowFromRuntimeDetail,
+} from "./codexContextWindow.ts";
 
 describe("normalizeCodexContextWindow", () => {
   it("parses the observed Codex token-count shape", () => {
@@ -8,6 +11,13 @@ describe("normalizeCodexContextWindow", () => {
       normalizeCodexContextWindow(
         {
           info: {
+            last_token_usage: {
+              input_tokens: 124862,
+              cached_input_tokens: 92672,
+              output_tokens: 1654,
+              reasoning_output_tokens: 277,
+              total_tokens: 126516,
+            },
             total_token_usage: {
               input_tokens: 124862,
               cached_input_tokens: 92672,
@@ -25,7 +35,7 @@ describe("normalizeCodexContextWindow", () => {
       usedTokens: 126516,
       maxTokens: 258400,
       remainingTokens: 131884,
-      usedPercent: 49,
+      usedPercent: 46,
       inputTokens: 124862,
       cachedInputTokens: 92672,
       outputTokens: 1654,
@@ -38,6 +48,12 @@ describe("normalizeCodexContextWindow", () => {
     expect(
       normalizeCodexContextWindow(
         {
+          lastTokenUsage: {
+            totalTokens: 119000,
+            inputTokens: 110000,
+            cachedInputTokens: 60000,
+            outputTokens: 9000,
+          },
           totalTokenUsage: {
             totalTokens: 119000,
             inputTokens: 110000,
@@ -52,11 +68,11 @@ describe("normalizeCodexContextWindow", () => {
       usedTokens: 119000,
       maxTokens: 258000,
       remainingTokens: 139000,
-      usedPercent: 46,
+      usedPercent: 43,
     });
   });
 
-  it("parses the live thread token-usage payload shape from Codex notifications", () => {
+  it("uses last token usage for the Codex context indicator instead of cumulative totals", () => {
     expect(
       normalizeCodexContextWindow(
         {
@@ -64,11 +80,11 @@ describe("normalizeCodexContextWindow", () => {
           turnId: "019cca93-40f6-7de3-985e-83e2c6fdf35d",
           tokenUsage: {
             total: {
-              totalTokens: 11347,
-              inputTokens: 11321,
-              cachedInputTokens: 4864,
-              outputTokens: 26,
-              reasoningOutputTokens: 0,
+              totalTokens: 231706,
+              inputTokens: 227739,
+              cachedInputTokens: 171264,
+              outputTokens: 3967,
+              reasoningOutputTokens: 898,
             },
             last: {
               totalTokens: 11347,
@@ -86,8 +102,8 @@ describe("normalizeCodexContextWindow", () => {
       provider: "codex",
       usedTokens: 11347,
       maxTokens: 258400,
-      remainingTokens: 247053,
-      usedPercent: 4,
+      remainingTokens: 246400,
+      usedPercent: 0,
       inputTokens: 11321,
       cachedInputTokens: 4864,
       outputTokens: 26,
@@ -111,7 +127,7 @@ describe("normalizeCodexContextWindow", () => {
       provider: "codex",
       usedTokens: 100,
       maxTokens: 258400,
-      remainingTokens: 258300,
+      remainingTokens: 246400,
       usedPercent: 0,
       updatedAt: "2026-03-07T00:00:00.000Z",
     });
@@ -132,7 +148,7 @@ describe("normalizeCodexContextWindow", () => {
       provider: "codex",
       usedTokens: 100,
       maxTokens: 258400,
-      remainingTokens: 258300,
+      remainingTokens: 246400,
       usedPercent: 0,
       updatedAt: "2026-03-07T00:00:00.000Z",
     });
@@ -157,7 +173,7 @@ describe("normalizeCodexContextWindow", () => {
       provider: "codex",
       usedTokens: 100,
       maxTokens: 258400,
-      remainingTokens: 258300,
+      remainingTokens: 246400,
       usedPercent: 0,
       inputTokens: 80,
       cachedInputTokens: 20,
@@ -202,5 +218,53 @@ describe("normalizeCodexContextWindow", () => {
       remainingTokens: 0,
       usedPercent: 100,
     });
+  });
+
+  it("parses compaction detail payloads that carry fresh usage snapshots", () => {
+    expect(
+      normalizeCodexContextWindowFromRuntimeDetail(
+        {
+          thread: {
+            usage: {
+              tokenUsage: {
+                total: {
+                  totalTokens: 43083,
+                  inputTokens: 42950,
+                  cachedInputTokens: 42240,
+                  outputTokens: 133,
+                  reasoningOutputTokens: 53,
+                },
+                modelContextWindow: 258400,
+              },
+            },
+          },
+        },
+        "2026-03-07T00:00:00.000Z",
+      ),
+    ).toEqual({
+      provider: "codex",
+      usedTokens: 43083,
+      maxTokens: 258400,
+      remainingTokens: 215317,
+      usedPercent: 13,
+      inputTokens: 42950,
+      cachedInputTokens: 42240,
+      outputTokens: 133,
+      reasoningOutputTokens: 53,
+      updatedAt: "2026-03-07T00:00:00.000Z",
+    });
+  });
+
+  it("returns null for compaction detail payloads without usable usage data", () => {
+    expect(
+      normalizeCodexContextWindowFromRuntimeDetail(
+        {
+          thread: {
+            state: "compacted",
+          },
+        },
+        "2026-03-07T00:00:00.000Z",
+      ),
+    ).toBeNull();
   });
 });

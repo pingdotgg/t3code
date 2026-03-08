@@ -14,6 +14,7 @@ import {
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
   ThreadActivityAppendedPayload,
+  ThreadContextWindowClearedPayload,
   ThreadContextWindowSetPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
@@ -491,6 +492,22 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             contextWindow: payload.contextWindow,
+            updatedAt: event.occurredAt,
+          }),
+        })),
+      );
+
+    case "thread.context-window-cleared":
+      return decodeForEvent(
+        ThreadContextWindowClearedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            contextWindow: null,
             updatedAt: event.occurredAt,
           }),
         })),

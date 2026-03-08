@@ -5,7 +5,9 @@ import { Effect, Schema } from "effect";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  OrchestrationCommand,
   OrchestrationContextWindow,
+  OrchestrationEvent,
   OrchestrationGetTurnDiffInput,
   OrchestrationSession,
   OrchestrationThread,
@@ -20,6 +22,8 @@ const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffI
 const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
 const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateCommand);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
+const decodeOrchestrationCommand = Schema.decodeUnknownSync(OrchestrationCommand);
+const decodeOrchestrationEvent = Schema.decodeUnknownSync(OrchestrationEvent);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
@@ -280,5 +284,39 @@ it.effect("accepts orchestration threads with null or populated context windows"
 
     assert.strictEqual(withoutContextWindow.contextWindow, null);
     assert.strictEqual(withContextWindow.contextWindow?.usedPercent, 46);
+  }),
+);
+
+it.effect("accepts internal thread.context-window.clear commands", () =>
+  Effect.sync(() => {
+    const parsed = decodeOrchestrationCommand({
+      type: "thread.context-window.clear",
+      commandId: "cmd-context-window-clear",
+      threadId: "thread-1",
+      createdAt: "2026-03-07T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.type, "thread.context-window.clear");
+  }),
+);
+
+it.effect("accepts thread.context-window-cleared orchestration events", () =>
+  Effect.sync(() => {
+    const parsed = decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-context-window-cleared",
+      type: "thread.context-window-cleared",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-03-07T00:00:00.000Z",
+      commandId: "cmd-context-window-clear",
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      payload: {
+        threadId: "thread-1",
+        clearedAt: "2026-03-07T00:00:00.000Z",
+      },
+    });
+    assert.strictEqual(parsed.type, "thread.context-window-cleared");
   }),
 );

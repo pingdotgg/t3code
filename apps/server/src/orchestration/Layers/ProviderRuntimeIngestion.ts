@@ -13,7 +13,10 @@ import {
 import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Ref, Stream } from "effect";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
-import { normalizeCodexContextWindow } from "../../provider/codexContextWindow.ts";
+import {
+  normalizeCodexContextWindow,
+  normalizeCodexContextWindowFromRuntimeDetail,
+} from "../../provider/codexContextWindow.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { isGitRepository } from "../../git/isRepo.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -994,6 +997,29 @@ const make = Effect.gen(function* () {
             commandId: providerCommandId(event, "thread-context-window-set"),
             threadId: thread.id,
             contextWindow,
+            createdAt: now,
+          });
+        }
+      }
+
+      if (event.type === "thread.state.changed" && event.payload.state === "compacted") {
+        const contextWindow = normalizeCodexContextWindowFromRuntimeDetail(
+          event.payload.detail,
+          now,
+        );
+        if (contextWindow) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.context-window.set",
+            commandId: providerCommandId(event, "thread-context-window-set-compacted"),
+            threadId: thread.id,
+            contextWindow,
+            createdAt: now,
+          });
+        } else {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.context-window.clear",
+            commandId: providerCommandId(event, "thread-context-window-clear-compacted"),
+            threadId: thread.id,
             createdAt: now,
           });
         }

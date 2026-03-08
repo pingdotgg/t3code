@@ -295,6 +295,82 @@ describe("orchestration projector", () => {
     expect(afterRevert.threads[0]?.contextWindow).toBeNull();
   });
 
+  it("clears thread context-window state when thread.context-window-cleared is projected", async () => {
+    const now = new Date().toISOString();
+    const model = createEmptyReadModel(now);
+
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            model: "gpt-5.3-codex",
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+
+    const afterSet = await Effect.runPromise(
+      projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.context-window-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-context-window",
+          payload: {
+            threadId: "thread-1",
+            contextWindow: {
+              provider: "codex",
+              usedTokens: 258400,
+              maxTokens: 258400,
+              remainingTokens: 0,
+              usedPercent: 100,
+              updatedAt: now,
+            },
+          },
+        }),
+      ),
+    );
+
+    const afterClear = await Effect.runPromise(
+      projectEvent(
+        afterSet,
+        makeEvent({
+          sequence: 3,
+          type: "thread.context-window-cleared",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: now,
+          commandId: "cmd-context-window-clear",
+          payload: {
+            threadId: "thread-1",
+            clearedAt: now,
+          },
+        }),
+      ),
+    );
+
+    expect(afterSet.threads[0]?.contextWindow?.usedPercent).toBe(100);
+    expect(afterClear.threads[0]?.contextWindow).toBeNull();
+  });
+
   it("updates canonical thread runtime mode from thread.runtime-mode-set", async () => {
     const createdAt = "2026-02-23T08:00:00.000Z";
     const updatedAt = "2026-02-23T08:00:05.000Z";

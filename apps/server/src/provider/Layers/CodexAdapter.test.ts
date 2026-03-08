@@ -407,6 +407,56 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps thread/status/changed status.type values into canonical thread states", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-thread-status-idle"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "thread/status/changed",
+        payload: {
+          threadId: "provider-thread-1",
+          status: {
+            type: "idle",
+          },
+        },
+      } satisfies ProviderEvent);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-thread-status-compacted"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "thread/status/changed",
+        payload: {
+          threadId: "provider-thread-1",
+          status: {
+            type: "compacted",
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      assert.equal(events[0]?.type, "thread.state.changed");
+      if (events[0]?.type === "thread.state.changed") {
+        assert.equal(events[0].payload.state, "idle");
+      }
+
+      assert.equal(events[1]?.type, "thread.state.changed");
+      if (events[1]?.type === "thread.state.changed") {
+        assert.equal(events[1].payload.state, "compacted");
+      }
+    }),
+  );
+
   it.effect("preserves request type when mapping serverRequest/resolved", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;

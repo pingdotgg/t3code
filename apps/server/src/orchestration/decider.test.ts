@@ -87,4 +87,29 @@ describe("decideOrchestrationCommand", () => {
       },
     });
   });
+
+  it("emits thread.context-window-cleared for internal clear requests", async () => {
+    const event = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.context-window.clear",
+          commandId: CommandId.makeUnsafe("cmd-context-window-clear"),
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          createdAt: NOW,
+        },
+        readModel,
+      }),
+    );
+
+    expect(Array.isArray(event)).toBe(false);
+    expect(event).toMatchObject({
+      type: "thread.context-window-cleared",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      payload: {
+        threadId: "thread-1",
+        clearedAt: NOW,
+      },
+    });
+  });
 });

@@ -245,6 +245,118 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
     ),
   );
 
+  it.effect("persists null context-window rows when thread.context-window-cleared is projected", () =>
+    Effect.sync(() => fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-context-window-"))).pipe(
+      Effect.flatMap((stateDir) =>
+        Effect.gen(function* () {
+          const projectionPipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const sql = yield* SqlClient.SqlClient;
+          const now = new Date().toISOString();
+
+          yield* eventStore.append({
+            type: "project.created",
+            eventId: EventId.makeUnsafe("evt-context-window-project"),
+            aggregateKind: "project",
+            aggregateId: ProjectId.makeUnsafe("project-context-window"),
+            occurredAt: now,
+            commandId: CommandId.makeUnsafe("cmd-context-window-project"),
+            causationEventId: null,
+            correlationId: CommandId.makeUnsafe("cmd-context-window-project"),
+            metadata: {},
+            payload: {
+              projectId: ProjectId.makeUnsafe("project-context-window"),
+              title: "Context window project",
+              workspaceRoot: "/tmp/project-context-window",
+              defaultModel: null,
+              scripts: [],
+              createdAt: now,
+              updatedAt: now,
+            },
+          });
+
+          yield* eventStore.append({
+            type: "thread.created",
+            eventId: EventId.makeUnsafe("evt-context-window-thread"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.makeUnsafe("thread-context-window"),
+            occurredAt: now,
+            commandId: CommandId.makeUnsafe("cmd-context-window-thread"),
+            causationEventId: null,
+            correlationId: CommandId.makeUnsafe("cmd-context-window-thread"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.makeUnsafe("thread-context-window"),
+              projectId: ProjectId.makeUnsafe("project-context-window"),
+              title: "Context window thread",
+              model: "gpt-5-codex",
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          });
+
+          yield* eventStore.append({
+            type: "thread.context-window-set",
+            eventId: EventId.makeUnsafe("evt-context-window-set"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.makeUnsafe("thread-context-window"),
+            occurredAt: now,
+            commandId: CommandId.makeUnsafe("cmd-context-window-set"),
+            causationEventId: null,
+            correlationId: CommandId.makeUnsafe("cmd-context-window-set"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.makeUnsafe("thread-context-window"),
+              contextWindow: {
+                provider: "codex",
+                usedTokens: 300000,
+                maxTokens: 258400,
+                remainingTokens: 0,
+                usedPercent: 100,
+                updatedAt: now,
+              },
+            },
+          });
+
+          yield* eventStore.append({
+            type: "thread.context-window-cleared",
+            eventId: EventId.makeUnsafe("evt-context-window-cleared"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.makeUnsafe("thread-context-window"),
+            occurredAt: now,
+            commandId: CommandId.makeUnsafe("cmd-context-window-cleared"),
+            causationEventId: null,
+            correlationId: CommandId.makeUnsafe("cmd-context-window-cleared"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.makeUnsafe("thread-context-window"),
+              clearedAt: now,
+            },
+          });
+
+          yield* projectionPipeline.bootstrap;
+
+          const rows = yield* sql<{
+            readonly contextWindowJson: string | null;
+          }>`
+            SELECT
+              context_window_json AS "contextWindowJson"
+            FROM projection_threads
+            WHERE thread_id = 'thread-context-window'
+          `;
+          assert.equal(rows.length, 1);
+          assert.equal(rows[0]?.contextWindowJson, null);
+        }).pipe(
+          (effect) => runWithProjectionPipelineLayer(stateDir, effect),
+          Effect.ensuring(Effect.sync(() => fs.rmSync(stateDir, { recursive: true, force: true }))),
+        ),
+      ),
+    ),
+  );
+
   it.effect("preserves mixed image attachment metadata as-is", () =>
     Effect.sync(() => fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-"))).pipe(
       Effect.flatMap((stateDir) =>
