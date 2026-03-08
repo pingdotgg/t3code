@@ -85,6 +85,27 @@ bun typecheck
 bun run build:desktop
 ```
 
+### When macOS app icon behavior changes
+
+Keep the fast loop the same by default:
+
+```bash
+bun lint
+bun typecheck
+bun run build:desktop
+```
+
+Only use the macOS 26 appearance-aware path when you intentionally add a real
+`assets/prod/icon.icon` asset created in Apple Icon Composer. The repo is wired
+so:
+
+- if `assets/prod/icon.icon` exists, desktop packaging and local desktop launch
+  compile it with `actool`
+- if it does not exist, the repo stays on the current legacy `icon.icns` path
+
+That keeps the normal build pipeline short and avoids adding extra work for
+every feature branch.
+
 ### Before pushing a branch you expect to behave like upstream CI
 
 Upstream CI currently checks:
@@ -192,6 +213,38 @@ Default recommendation:
 
 - use `rebase` if the branch is mostly local and private
 - use `merge` if several agents or machines are already sharing the branch tip
+
+## macOS 26 Icon Method
+
+Use this only when you want the app icon to participate in Apple’s newer
+appearance-aware rendering on macOS 26 and later.
+
+### Source of truth
+
+- Cross-platform source art stays in `assets/prod/logo.svg`
+- Legacy macOS raster output stays in `assets/prod/black-macos-1024.png`
+- Appearance-aware macOS source should live at `assets/prod/icon.icon`
+
+### Authoring rules
+
+- Create `assets/prod/icon.icon` in Apple Icon Composer, not by hand
+- Put the `Default`, `Dark`, and `Mono` variants there
+- Keep the center symbol and silhouette recognizable across all three variants
+- Do not delete the legacy PNG/ICNS outputs; older tooling still uses them
+
+### Validation rules
+
+After changing icon assets:
+
+```bash
+bun lint
+bun typecheck
+bun run build:desktop
+bun run start:desktop
+```
+
+Check the rebuilt app bundle in Finder and the Dock. If the Dock still shows a
+stale icon, quit the running copy and relaunch the rebuilt app.
 
 ## Standard Feature Workflow
 

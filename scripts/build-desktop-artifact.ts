@@ -9,6 +9,7 @@ import desktopPackageJson from "../apps/desktop/package.json" with { type: "json
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
+import { generateAssetCatalogForIcon } from "./lib/macos-icon-composer.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -25,6 +26,11 @@ const RepoRoot = Effect.service(Path.Path).pipe(
 );
 const ProductionMacIconSource = Effect.zipWith(RepoRoot, Effect.service(Path.Path), (repoRoot, path) =>
   path.join(repoRoot, BRAND_ASSET_PATHS.productionMacIconPng),
+);
+const ProductionMacIconComposerSource = Effect.zipWith(
+  RepoRoot,
+  Effect.service(Path.Path),
+  (repoRoot, path) => path.join(repoRoot, BRAND_ASSET_PATHS.productionMacIconComposer),
 );
 const ProductionLinuxIconSource = Effect.zipWith(
   RepoRoot,
@@ -308,6 +314,7 @@ function stageMacIcons(stageResourcesDir: string, verbose: boolean) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const iconSource = yield* ProductionMacIconSource;
+    const iconComposerSource = yield* ProductionMacIconComposerSource;
     if (!(yield* fs.exists(iconSource))) {
       return yield* new BuildScriptError({
         message: `Production icon source is missing at ${iconSource}`,
@@ -320,12 +327,29 @@ function stageMacIcons(stageResourcesDir: string, verbose: boolean) {
 
     const iconPngPath = path.join(stageResourcesDir, "icon.png");
     const iconIcnsPath = path.join(stageResourcesDir, "icon.icns");
+    const iconComposerPath = path.join(stageResourcesDir, "icon.icon");
 
     yield* runCommand(
       ChildProcess.make({
         ...commandOutputOptions(verbose),
       })`sips -z 512 512 ${iconSource} --out ${iconPngPath}`,
     );
+
+    if (yield* fs.exists(iconComposerSource)) {
+      yield* fs.copy(iconComposerSource, iconComposerPath);
+
+      const compiled = yield* Effect.tryPromise({
+        try: () => generateAssetCatalogForIcon(iconComposerSource),
+        catch: (cause) =>
+          new BuildScriptError({
+            message: `Failed to compile macOS icon composer asset at ${iconComposerSource}`,
+            cause,
+          }),
+      });
+
+      yield* fs.writeFile(iconIcnsPath, compiled.icnsFile);
+      return;
+    }
 
     yield* generateMacIconSet(iconSource, iconIcnsPath, tmpRoot, path, verbose);
   });
@@ -445,6 +469,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   target: string,
   productName: string,
   signed: boolean,
+  useMacIconComposer: boolean,
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: "com.t3tools.t3code",
@@ -462,7 +487,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac") {
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
-      icon: "icon.icns",
+      icon: useMacIconComposer ? "icon.icon" : "icon.icns",
       category: "public.app-category.developer-tools",
     };
   }
@@ -609,6 +634,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
 
   yield* assertPlatformBuildResources(options.platform, stageResourcesDir, options.verbose);
+  const useMacIconComposer =
+    options.platform === "mac" && (yield* fs.exists(path.join(stageResourcesDir, "icon.icon")));
 
   const stagePackageJson: StagePackageJson = {
     name: "t3-code-desktop",
@@ -624,6 +651,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       options.target,
       desktopPackageJson.productName ?? "T3 Code",
       options.signed,
+      useMacIconComposer,
     ),
     dependencies: {
       ...resolvedServerDependencies,

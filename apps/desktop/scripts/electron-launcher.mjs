@@ -16,10 +16,12 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { generateAssetCatalogForIcon } from "../../../scripts/lib/macos-icon-composer.ts";
+
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const APP_BUNDLE_ID = "com.t3tools.t3code";
-const LAUNCHER_VERSION = 1;
+const LAUNCHER_VERSION = 2;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const desktopDir = resolve(__dirname, "..");
@@ -43,16 +45,12 @@ function setPlistString(plistPath, key, value) {
   throw new Error(`Failed to update plist key "${key}" at ${plistPath}: ${details}`.trim());
 }
 
-function patchMainBundleInfoPlist(appBundlePath, iconPath) {
+function patchMainBundleInfoPlist(appBundlePath) {
   const infoPlistPath = join(appBundlePath, "Contents", "Info.plist");
   setPlistString(infoPlistPath, "CFBundleDisplayName", APP_DISPLAY_NAME);
   setPlistString(infoPlistPath, "CFBundleName", APP_DISPLAY_NAME);
   setPlistString(infoPlistPath, "CFBundleIdentifier", APP_BUNDLE_ID);
   setPlistString(infoPlistPath, "CFBundleIconFile", "icon.icns");
-
-  const resourcesDir = join(appBundlePath, "Contents", "Resources");
-  copyFileSync(iconPath, join(resourcesDir, "icon.icns"));
-  copyFileSync(iconPath, join(resourcesDir, "electron.icns"));
 }
 
 function patchHelperBundleInfoPlists(appBundlePath) {
@@ -97,21 +95,66 @@ function readJson(path) {
   }
 }
 
-function buildMacLauncher(electronBinaryPath) {
+function resolveIconSourceMetadata(desktopResourcesDir) {
+  const iconComposerPath = join(desktopResourcesDir, "icon.icon");
+  if (existsSync(iconComposerPath)) {
+    return {
+      iconAssetKind: "icon",
+      iconMtimeMs: statSync(iconComposerPath).mtimeMs,
+    };
+  }
+
+  const legacyIconPath = join(desktopResourcesDir, "icon.icns");
+  return {
+    iconAssetKind: "icns",
+    iconMtimeMs: statSync(legacyIconPath).mtimeMs,
+  };
+}
+
+async function stageMainBundleIcons(appBundlePath, desktopResourcesDir) {
+  const resourcesDir = join(appBundlePath, "Contents", "Resources");
+  const iconComposerPath = join(desktopResourcesDir, "icon.icon");
+  const legacyIconPath = join(desktopResourcesDir, "icon.icns");
+
+  if (existsSync(iconComposerPath)) {
+    const compiled = await generateAssetCatalogForIcon(iconComposerPath);
+    const infoPlistPath = join(appBundlePath, "Contents", "Info.plist");
+
+    setPlistString(infoPlistPath, "CFBundleIconName", "Icon");
+    writeFileSync(join(resourcesDir, "Assets.car"), compiled.assetCatalog);
+    writeFileSync(join(resourcesDir, "icon.icns"), compiled.icnsFile);
+    writeFileSync(join(resourcesDir, "electron.icns"), compiled.icnsFile);
+    return {
+      iconAssetKind: "icon",
+      iconMtimeMs: statSync(iconComposerPath).mtimeMs,
+    };
+  }
+
+  copyFileSync(legacyIconPath, join(resourcesDir, "icon.icns"));
+  copyFileSync(legacyIconPath, join(resourcesDir, "electron.icns"));
+  return {
+    iconAssetKind: "icns",
+    iconMtimeMs: statSync(legacyIconPath).mtimeMs,
+  };
+}
+
+async function buildMacLauncher(electronBinaryPath) {
   const sourceAppBundlePath = resolve(electronBinaryPath, "../../..");
   const runtimeDir = join(desktopDir, ".electron-runtime");
   const targetAppBundlePath = join(runtimeDir, `${APP_DISPLAY_NAME}.app`);
   const targetBinaryPath = join(targetAppBundlePath, "Contents", "MacOS", "Electron");
-  const iconPath = join(desktopDir, "resources", "icon.icns");
+  const desktopResourcesDir = join(desktopDir, "resources");
   const metadataPath = join(runtimeDir, "metadata.json");
 
   mkdirSync(runtimeDir, { recursive: true });
+
+  const iconMetadata = resolveIconSourceMetadata(desktopResourcesDir);
 
   const expectedMetadata = {
     launcherVersion: LAUNCHER_VERSION,
     sourceAppBundlePath,
     sourceAppMtimeMs: statSync(sourceAppBundlePath).mtimeMs,
-    iconMtimeMs: statSync(iconPath).mtimeMs,
+    ...iconMetadata,
   };
 
   const currentMetadata = readJson(metadataPath);
@@ -125,14 +168,18 @@ function buildMacLauncher(electronBinaryPath) {
 
   rmSync(targetAppBundlePath, { recursive: true, force: true });
   cpSync(sourceAppBundlePath, targetAppBundlePath, { recursive: true });
-  patchMainBundleInfoPlist(targetAppBundlePath, iconPath);
+  patchMainBundleInfoPlist(targetAppBundlePath);
+  const refreshedIconMetadata = await stageMainBundleIcons(targetAppBundlePath, desktopResourcesDir);
   patchHelperBundleInfoPlists(targetAppBundlePath);
-  writeFileSync(metadataPath, `${JSON.stringify(expectedMetadata, null, 2)}\n`);
+  writeFileSync(
+    metadataPath,
+    `${JSON.stringify({ ...expectedMetadata, ...refreshedIconMetadata }, null, 2)}\n`,
+  );
 
   return targetBinaryPath;
 }
 
-export function resolveElectronPath() {
+export async function resolveElectronPath() {
   const require = createRequire(import.meta.url);
   const electronBinaryPath = require("electron");
 
@@ -140,5 +187,5 @@ export function resolveElectronPath() {
     return electronBinaryPath;
   }
 
-  return buildMacLauncher(electronBinaryPath);
+  return await buildMacLauncher(electronBinaryPath);
 }
