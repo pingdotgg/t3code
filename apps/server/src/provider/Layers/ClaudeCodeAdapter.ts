@@ -6,6 +6,8 @@
  *
  * @module ClaudeCodeAdapterLive
  */
+import { spawn } from "node:child_process";
+
 import {
   type CanUseTool,
   query,
@@ -16,6 +18,7 @@ import {
   type SDKMessage,
   type SDKResultMessage,
   type SDKUserMessage,
+  type SpawnOptions,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
   ApprovalRequestId,
@@ -58,6 +61,36 @@ import { ClaudeCodeAdapter, type ClaudeCodeAdapterShape } from "../Services/Clau
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "claudeCode" as const;
+
+/**
+ * When running inside an Electron packaged app, `node` is not available in
+ * PATH.  Electron ships its own Node runtime — we can use it by spawning
+ * `process.execPath` (the Electron binary) with `ELECTRON_RUN_AS_NODE=1`.
+ *
+ * This helper returns a `spawnClaudeCodeProcess` override that the SDK will
+ * call instead of its default local spawn so the Claude Code child process
+ * runs with Electron's bundled Node.
+ */
+function makeElectronSpawnOverride(): ClaudeQueryOptions["spawnClaudeCodeProcess"] | undefined {
+  if (!process.env.ELECTRON_RUN_AS_NODE) return undefined;
+
+  return (options: SpawnOptions) => {
+    const child = spawn(process.execPath, options.args, {
+      cwd: options.cwd,
+      env: { ...options.env, ELECTRON_RUN_AS_NODE: "1" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    // Forward abort signal to child process
+    if (options.signal) {
+      options.signal.addEventListener("abort", () => {
+        child.kill("SIGTERM");
+      });
+    }
+
+    return child;
+  };
+}
 
 type PromptQueueItem =
   | {
@@ -1555,6 +1588,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           toPermissionMode(providerOptions?.permissionMode) ??
           (input.runtimeMode === "full-access" ? "bypassPermissions" : undefined);
 
+        const electronSpawn = makeElectronSpawnOverride();
         const queryOptions: ClaudeQueryOptions = {
           ...(input.cwd ? { cwd: input.cwd } : {}),
           ...(input.model ? { model: input.model } : {}),
@@ -1570,6 +1604,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
             : {}),
           ...(resumeState?.resume ? { resume: resumeState.resume } : {}),
           ...(resumeState?.resumeSessionAt ? { resumeSessionAt: resumeState.resumeSessionAt } : {}),
+          ...(electronSpawn ? { spawnClaudeCodeProcess: electronSpawn } : {}),
           includePartialMessages: true,
           canUseTool,
           env: process.env,
