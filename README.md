@@ -15,6 +15,8 @@ You can also just install the desktop app. It's cooler.
 
 Install the [desktop app from the Releases page](https://github.com/pingdotgg/t3code/releases)
 
+Maintaining a personal fork? See [docs/fork-workflow.md](./docs/fork-workflow.md).
+
 ## Some notes
 
 We are very very early in this project. Expect bugs.
