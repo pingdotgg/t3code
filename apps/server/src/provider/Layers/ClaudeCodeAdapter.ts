@@ -959,7 +959,7 @@ export function makeClaudeCodeAdapterLive(options?: ClaudeCodeAdapterLiveOptions
       return {
         provider: PROVIDER,
         capabilities: {
-          sessionModelSwitch: "restart-session",
+          sessionModelSwitch: "in-session",
         },
         startSession,
         sendTurn,
