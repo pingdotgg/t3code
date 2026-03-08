@@ -199,6 +199,11 @@ import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import {
+  rememberPreferredEditor,
+  resolveEffectiveEditor,
+  readPreferredEditor,
+} from "~/editorPreferences";
+import {
   getAppModelOptions,
   resolveAppModelSelection,
   resolveAppServiceTier,
@@ -247,7 +252,6 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
-const LAST_EDITOR_KEY = "t3code:last-editor";
 const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
@@ -5572,10 +5576,7 @@ const OpenInPicker = memo(function OpenInPicker({
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
 }) {
-  const [lastEditor, setLastEditor] = useState<EditorId>(() => {
-    const stored = localStorage.getItem(LAST_EDITOR_KEY);
-    return EDITORS.some((e) => e.id === stored) ? (stored as EditorId) : EDITORS[0].id;
-  });
+  const [lastEditor, setLastEditor] = useState<EditorId | null>(() => readPreferredEditor());
 
   const allOptions = useMemo<Array<{ label: string; Icon: Icon; value: EditorId }>>(
     () =>
@@ -5598,10 +5599,24 @@ const OpenInPicker = memo(function OpenInPicker({
     [allOptions, availableEditors],
   );
 
-  const effectiveEditor = options.some((option) => option.value === lastEditor)
-    ? lastEditor
-    : (options[0]?.value ?? null);
-  const primaryOption = options.find(({ value }) => value === effectiveEditor) ?? null;
+  const effectiveEditor = useMemo(() => {
+    if (lastEditor && availableEditors.includes(lastEditor)) {
+      return lastEditor;
+    }
+    return resolveEffectiveEditor(availableEditors);
+  }, [availableEditors, lastEditor]);
+  const orderedOptions = useMemo(() => {
+    if (!effectiveEditor) {
+      return options;
+    }
+
+    return options.toSorted((left, right) => {
+      if (left.value === effectiveEditor) return -1;
+      if (right.value === effectiveEditor) return 1;
+      return 0;
+    });
+  }, [effectiveEditor, options]);
+  const primaryOption = orderedOptions.find(({ value }) => value === effectiveEditor) ?? null;
 
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
@@ -5609,11 +5624,11 @@ const OpenInPicker = memo(function OpenInPicker({
       if (!api || !openInCwd) return;
       const editor = editorId ?? effectiveEditor;
       if (!editor) return;
-      void api.shell.openInEditor(openInCwd, editor);
-      localStorage.setItem(LAST_EDITOR_KEY, editor);
+      rememberPreferredEditor(editor);
       setLastEditor(editor);
+      void api.shell.openInEditor(openInCwd, editor);
     },
-    [effectiveEditor, openInCwd, setLastEditor],
+    [effectiveEditor, openInCwd],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -5654,15 +5669,18 @@ const OpenInPicker = memo(function OpenInPicker({
           <ChevronDownIcon aria-hidden="true" className="size-4" />
         </MenuTrigger>
         <MenuPopup align="end">
-          {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
-          {options.map(({ label, Icon, value }) => (
-            <MenuItem key={value} onClick={() => openInEditor(value)}>
-              <Icon aria-hidden="true" className="text-muted-foreground" />
-              {label}
-              {value === effectiveEditor && openFavoriteEditorShortcutLabel && (
-                <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
-              )}
-            </MenuItem>
+          {orderedOptions.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
+          {orderedOptions.map(({ label, Icon, value }, index) => (
+            <MenuGroup key={value}>
+              <MenuItem data-editor-open-id={value} onClick={() => openInEditor(value)}>
+                <Icon aria-hidden="true" className="text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate">{label}</span>
+                {value === effectiveEditor && openFavoriteEditorShortcutLabel && (
+                  <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
+                )}
+              </MenuItem>
+              {index < orderedOptions.length - 1 && <MenuDivider />}
+            </MenuGroup>
           ))}
         </MenuPopup>
       </Menu>

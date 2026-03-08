@@ -1,4 +1,5 @@
-import { EDITORS, type EditorId } from "@t3tools/contracts";
+import { type EditorId } from "@t3tools/contracts";
+import { resolvePreferredCommandEditor } from "./editorPreferences";
 import { isMacPlatform } from "./lib/utils";
 
 export type TerminalLinkKind = "url" | "path";
@@ -14,8 +15,6 @@ const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/g;
 const FILE_PATH_PATTERN =
   /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:\\|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
-const LAST_EDITOR_KEY = "t3code:last-editor";
-
 function trimClosingDelimiters(value: string): string {
   let output = value.replace(TRAILING_PUNCTUATION_PATTERN, "");
   if (output.length === 0) return output;
@@ -177,21 +176,5 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
 }
 
 export function preferredTerminalEditor(): EditorId {
-  const fallback = EDITORS.find((editor) => editor.command)?.id ?? EDITORS[0]?.id ?? "cursor";
-
-  if (typeof window === "undefined") {
-    return fallback;
-  }
-
-  const storedEditor = window.localStorage.getItem(LAST_EDITOR_KEY);
-  if (!storedEditor) {
-    return fallback;
-  }
-
-  const configured = EDITORS.find((editor) => editor.id === storedEditor);
-  if (!configured?.command) {
-    return fallback;
-  }
-
-  return configured.id;
+  return resolvePreferredCommandEditor();
 }

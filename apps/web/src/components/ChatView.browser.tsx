@@ -20,6 +20,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
+import { LAST_EDITOR_KEY } from "../editorPreferences";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
@@ -409,6 +410,35 @@ async function waitForInteractionModeButton(expectedLabel: "Chat" | "Plan"): Pro
   );
 }
 
+async function openEditorPickerMenu(): Promise<HTMLButtonElement> {
+  const menuButton = await waitForElement(
+    () => document.querySelector('button[aria-label="Copy options"]'),
+    "Unable to find Open picker button.",
+  );
+  (menuButton as HTMLButtonElement).click();
+  return menuButton as HTMLButtonElement;
+}
+
+async function waitForEditorOpenItem(editorId: string): Promise<HTMLElement> {
+  return waitForElement(
+    () => document.querySelector(`[data-editor-open-id="${editorId}"]`) as HTMLElement | null,
+    `Unable to find open item for ${editorId}.`,
+  );
+}
+
+function shellOpenRequests() {
+  return wsRequests.filter(
+    (request): request is WsRequestEnvelope["body"] & { cwd: string; editor: string } =>
+      request._tag === WS_METHODS.shellOpenInEditor,
+  );
+}
+
+function editorMenuLabels(): string[] {
+  return Array.from(document.querySelectorAll('[data-editor-open-id]'))
+    .map((item) => item.textContent?.replace(/\s+/g, " ").trim() ?? "")
+    .filter((label) => label.length > 0);
+}
+
 async function waitForImagesToLoad(scope: ParentNode): Promise<void> {
   const images = Array.from(scope.querySelectorAll("img"));
   if (images.length === 0) {
@@ -748,7 +778,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     },
   );
 
-  it("opens the project cwd for draft threads without a worktree path", async () => {
+  function seedDraftThread(): void {
     useComposerDraftStore.setState({
       draftThreadsByThreadId: {
         [THREAD_ID]: {
@@ -765,6 +795,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
         [PROJECT_ID]: THREAD_ID,
       },
     });
+  }
+
+  it("opens the project cwd for draft threads without a worktree path", async () => {
+    seedDraftThread();
 
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -804,22 +838,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("shows only installed VS Code-family editors in the open menu and opens the selected one", async () => {
-    useComposerDraftStore.setState({
-      draftThreadsByThreadId: {
-        [THREAD_ID]: {
-          projectId: PROJECT_ID,
-          createdAt: NOW_ISO,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          envMode: "local",
-        },
-      },
-      projectDraftThreadIdByProjectId: {
-        [PROJECT_ID]: THREAD_ID,
-      },
-    });
+    seedDraftThread();
 
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -833,11 +852,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const menuButton = await waitForElement(
-        () => document.querySelector('button[aria-label="Copy options"]'),
-        "Unable to find Open picker button.",
-      );
-      (menuButton as HTMLButtonElement).click();
+      await openEditorPickerMenu();
 
       await waitForElement(
         () =>
@@ -853,22 +868,59 @@ describe("ChatView timeline estimator parity (full app)", () => {
         ),
       ).toBe(false);
 
-      const vscodiumItem = await waitForElement(
-        () =>
-          Array.from(document.querySelectorAll('[data-slot="menu-item"]')).find(
-            (item) => item.textContent?.includes("VSCodium"),
-          ) ?? null,
-        "Unable to find VSCodium menu item.",
-      );
-      (vscodiumItem as HTMLElement).click();
+      const openItem = await waitForEditorOpenItem("vscodium");
+      (openItem as HTMLElement).click();
 
       await vi.waitFor(
         () => {
-          const openRequest = wsRequests.find((request) => request._tag === WS_METHODS.shellOpenInEditor);
-          expect(openRequest).toMatchObject({
+          expect(shellOpenRequests()).toContainEqual({
             _tag: WS_METHODS.shellOpenInEditor,
             cwd: "/repo/project",
             editor: "vscodium",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(localStorage.getItem(LAST_EDITOR_KEY)).toBe("vscodium");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("uses the last used editor for the main Open button", async () => {
+    localStorage.setItem(LAST_EDITOR_KEY, "vscode-insiders");
+    seedDraftThread();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          availableEditors: ["vscode-insiders", "vscodium"],
+        };
+      },
+    });
+
+    try {
+      await openEditorPickerMenu();
+      expect(editorMenuLabels()[0]).toContain("VS Code Insiders");
+
+      const openButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Open",
+          ) as HTMLButtonElement | null,
+        "Unable to find Open button.",
+      );
+      openButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(shellOpenRequests()).toContainEqual({
+            _tag: WS_METHODS.shellOpenInEditor,
+            cwd: "/repo/project",
+            editor: "vscode-insiders",
           });
         },
         { timeout: 8_000, interval: 16 },
@@ -878,26 +930,129 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("falls back to the first installed editor when the stored favorite is unavailable", async () => {
-    localStorage.setItem("t3code:last-editor", "vscodium");
-    useComposerDraftStore.setState({
-      draftThreadsByThreadId: {
-        [THREAD_ID]: {
-          projectId: PROJECT_ID,
-          createdAt: NOW_ISO,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          envMode: "local",
-        },
-      },
-      projectDraftThreadIdByProjectId: {
-        [PROJECT_ID]: THREAD_ID,
+  it("opening another editor makes it the new default", async () => {
+    localStorage.setItem(LAST_EDITOR_KEY, "vscode-insiders");
+    seedDraftThread();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          availableEditors: ["vscode-insiders", "vscodium"],
+        };
       },
     });
 
+    try {
+      await openEditorPickerMenu();
+      const openItem = await waitForEditorOpenItem("vscodium");
+      (openItem as HTMLElement).click();
+
+      await vi.waitFor(
+        () => {
+          expect(shellOpenRequests()).toContainEqual({
+            _tag: WS_METHODS.shellOpenInEditor,
+            cwd: "/repo/project",
+            editor: "vscodium",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const openButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Open",
+          ) as HTMLButtonElement | null,
+        "Unable to find Open button.",
+      );
+      openButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(shellOpenRequests()).toEqual([
+            {
+              _tag: WS_METHODS.shellOpenInEditor,
+              cwd: "/repo/project",
+              editor: "vscodium",
+            },
+            {
+              _tag: WS_METHODS.shellOpenInEditor,
+              cwd: "/repo/project",
+              editor: "vscodium",
+            },
+          ]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(localStorage.getItem(LAST_EDITOR_KEY)).toBe("vscodium");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the last used editor across reloads", async () => {
+    localStorage.setItem(LAST_EDITOR_KEY, "vscode-insiders");
+    seedDraftThread();
+
+    const firstMounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          availableEditors: ["vscode-insiders", "vscodium"],
+        };
+      },
+    });
+
+    await firstMounted.cleanup();
+
+    wsRequests.length = 0;
+    seedDraftThread();
     const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          availableEditors: ["vscode-insiders", "vscodium"],
+        };
+      },
+    });
+
+    try {
+      const openButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Open",
+          ) as HTMLButtonElement | null,
+        "Unable to find Open button.",
+      );
+      openButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(shellOpenRequests()).toContainEqual({
+            _tag: WS_METHODS.shellOpenInEditor,
+            cwd: "/repo/project",
+            editor: "vscode-insiders",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("falls back when the last used editor is unavailable and uses the fallback as the new default", async () => {
+    localStorage.setItem(LAST_EDITOR_KEY, "vscodium");
+    seedDraftThread();
+
+    const unavailableMounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createDraftOnlySnapshot(),
       configureFixture: (nextFixture) => {
@@ -920,8 +1075,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          const openRequest = wsRequests.find((request) => request._tag === WS_METHODS.shellOpenInEditor);
-          expect(openRequest).toMatchObject({
+          expect(shellOpenRequests()).toContainEqual({
             _tag: WS_METHODS.shellOpenInEditor,
             cwd: "/repo/project",
             editor: "vscode-insiders",
@@ -929,8 +1083,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+      expect(localStorage.getItem(LAST_EDITOR_KEY)).toBe("vscode-insiders");
     } finally {
-      await mounted.cleanup();
+      await unavailableMounted.cleanup();
     }
   });
 
