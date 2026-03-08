@@ -34,6 +34,24 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.providerOptions?.codex?.homePath).toBe("/tmp/.codex");
   });
 
+  it("accepts cursor-compatible payloads", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-1",
+      provider: "cursor",
+      cwd: "/tmp/workspace",
+      model: "gpt-5",
+      runtimeMode: "full-access",
+      providerOptions: {
+        cursor: {
+          binaryPath: "/usr/local/bin/cursor-agent",
+        },
+      },
+    });
+
+    expect(parsed.provider).toBe("cursor");
+    expect(parsed.providerOptions?.cursor?.binaryPath).toBe("/usr/local/bin/cursor-agent");
+  });
+
   it("rejects payloads without runtime mode", () => {
     expect(() =>
       decodeProviderSessionStartInput({

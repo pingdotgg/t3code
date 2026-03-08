@@ -54,6 +54,13 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     placeholder: "your-codex-model-slug",
     example: "gpt-6.7-codex-ultra-preview",
   },
+  {
+    provider: "cursor",
+    title: "Cursor",
+    description: "Save additional Cursor model slugs for the picker and `/model` command.",
+    placeholder: "your-cursor-model-slug",
+    example: "claude-sonnet-4",
+  },
 ] as const;
 
 function getCustomModelsForProvider(
@@ -62,8 +69,9 @@ function getCustomModelsForProvider(
 ) {
   switch (provider) {
     case "codex":
-    default:
       return settings.customCodexModels;
+    case "cursor":
+      return settings.customCursorModels;
   }
 }
 
@@ -73,16 +81,18 @@ function getDefaultCustomModelsForProvider(
 ) {
   switch (provider) {
     case "codex":
-    default:
       return defaults.customCodexModels;
+    case "cursor":
+      return defaults.customCursorModels;
   }
 }
 
 function patchCustomModels(provider: ProviderKind, models: string[]) {
   switch (provider) {
     case "codex":
-    default:
       return { customCodexModels: models };
+    case "cursor":
+      return { customCursorModels: models };
   }
 }
 
@@ -96,6 +106,7 @@ function SettingsRouteView() {
     Record<ProviderKind, string>
   >({
     codex: "",
+    cursor: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
@@ -103,6 +114,7 @@ function SettingsRouteView() {
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const cursorBinaryPath = settings.cursorBinaryPath;
   const codexServiceTier = settings.codexServiceTier;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
@@ -295,6 +307,51 @@ function SettingsRouteView() {
                     }
                   >
                     Reset codex overrides
+                  </Button>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Cursor CLI</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Optional overrides for the Cursor agent binary used by new Cursor-backed turns.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <label htmlFor="cursor-binary-path" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Cursor binary path</span>
+                  <Input
+                    id="cursor-binary-path"
+                    value={cursorBinaryPath}
+                    onChange={(event) => updateSettings({ cursorBinaryPath: event.target.value })}
+                    placeholder="cursor-agent"
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Leave blank to use <code>cursor-agent</code> from your PATH.
+                  </span>
+                </label>
+
+                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <p>
+                    Binary source:{" "}
+                    <span className="font-medium text-foreground">
+                      {cursorBinaryPath || "PATH"}
+                    </span>
+                  </p>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      updateSettings({
+                        cursorBinaryPath: defaults.cursorBinaryPath,
+                      })
+                    }
+                  >
+                    Reset cursor override
                   </Button>
                 </div>
               </div>

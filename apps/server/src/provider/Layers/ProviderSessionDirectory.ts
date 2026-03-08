@@ -1,5 +1,5 @@
-import { type ProviderKind, type ThreadId } from "@t3tools/contracts";
-import { Effect, Layer, Option } from "effect";
+import { ProviderKind, type ThreadId } from "@t3tools/contracts";
+import { Effect, Layer, Option, Schema } from "effect";
 
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import {
@@ -25,14 +25,14 @@ function decodeProviderKind(
   providerName: string,
   operation: string,
 ): Effect.Effect<ProviderKind, ProviderSessionDirectoryPersistenceError> {
-  if (providerName === "codex") {
-    return Effect.succeed(providerName);
-  }
-  return Effect.fail(
-    new ProviderSessionDirectoryPersistenceError({
-      operation,
-      detail: `Unknown persisted provider '${providerName}'.`,
-    }),
+  return Schema.decodeUnknownEffect(ProviderKind)(providerName).pipe(
+    Effect.mapError(
+      () =>
+        new ProviderSessionDirectoryPersistenceError({
+          operation,
+          detail: `Unknown persisted provider '${providerName}'.`,
+        }),
+    ),
   );
 }
 

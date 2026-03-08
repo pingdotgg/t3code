@@ -4,7 +4,11 @@ import { Effect, Layer, Sink, Stream } from "effect";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { checkCodexProviderStatus, parseAuthStatusFromOutput } from "./ProviderHealth";
+import {
+  checkCodexProviderStatus,
+  checkCursorProviderStatus,
+  parseAuthStatusFromOutput,
+} from "./ProviderHealth";
 
 // ── Test helpers ────────────────────────────────────────────────────
 
@@ -83,6 +87,50 @@ it.effect("returns unavailable when codex is missing", () =>
     assert.strictEqual(status.authStatus, "unknown");
     assert.strictEqual(status.message, "Codex CLI (`codex`) is not installed or not on PATH.");
   }).pipe(Effect.provide(failingSpawnerLayer("spawn codex ENOENT"))),
+);
+
+it.effect("returns warning when cursor is installed but auth cannot be verified", () =>
+  Effect.gen(function* () {
+    const previousApiKey = process.env.CURSOR_API_KEY;
+    delete process.env.CURSOR_API_KEY;
+    try {
+      const status = yield* checkCursorProviderStatus;
+      assert.strictEqual(status.provider, "cursor");
+      assert.strictEqual(status.status, "warning");
+      assert.strictEqual(status.available, true);
+      assert.strictEqual(status.authStatus, "unknown");
+    } finally {
+      if (previousApiKey === undefined) {
+        delete process.env.CURSOR_API_KEY;
+      } else {
+        process.env.CURSOR_API_KEY = previousApiKey;
+      }
+    }
+  }).pipe(
+    Effect.provide(
+      mockSpawnerLayer((args) => {
+        const joined = args.join(" ");
+        if (joined === "--version") {
+          return { stdout: "cursor-agent 0.1.0\n", stderr: "", code: 0 };
+        }
+        throw new Error(`Unexpected args: ${joined}`);
+      }),
+    ),
+  ),
+);
+
+it.effect("returns unavailable when cursor is missing", () =>
+  Effect.gen(function* () {
+    const status = yield* checkCursorProviderStatus;
+    assert.strictEqual(status.provider, "cursor");
+    assert.strictEqual(status.status, "error");
+    assert.strictEqual(status.available, false);
+    assert.strictEqual(status.authStatus, "unknown");
+    assert.strictEqual(
+      status.message,
+      "Cursor CLI (`cursor-agent`) is not installed or not on PATH.",
+    );
+  }).pipe(Effect.provide(failingSpawnerLayer("spawn cursor-agent ENOENT"))),
 );
 
 it.effect("returns unavailable when codex is below the minimum supported version", () =>

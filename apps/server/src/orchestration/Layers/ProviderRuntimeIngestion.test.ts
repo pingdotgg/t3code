@@ -10,6 +10,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  type ProviderKind,
   ProviderItemId,
   ThreadId,
   TurnId,
@@ -45,7 +46,7 @@ const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
   readonly eventId: EventId;
-  readonly provider: "codex";
+  readonly provider: ProviderKind;
   readonly createdAt: string;
   readonly threadId: ThreadId;
   readonly turnId?: string | undefined;

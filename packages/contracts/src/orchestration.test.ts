@@ -186,6 +186,32 @@ it.effect("accepts provider-scoped model options in thread.turn.start", () =>
   }),
 );
 
+it.effect("accepts provider-scoped start options in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-cursor",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-cursor",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      provider: "cursor",
+      model: "gpt-5",
+      providerOptions: {
+        cursor: {
+          binaryPath: "/usr/local/bin/cursor-agent",
+        },
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.provider, "cursor");
+    assert.strictEqual(parsed.providerOptions?.cursor?.binaryPath, "/usr/local/bin/cursor-agent");
+  }),
+);
+
 it.effect(
   "decodes thread.turn-start-requested defaults for provider, runtime mode, and interaction mode",
   () =>

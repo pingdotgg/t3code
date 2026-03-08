@@ -26,6 +26,7 @@ describe("normalizeModelSlug", () => {
   it("preserves non-aliased model slugs", () => {
     expect(normalizeModelSlug("gpt-5.2")).toBe("gpt-5.2");
     expect(normalizeModelSlug("gpt-5.2-codex")).toBe("gpt-5.2-codex");
+    expect(normalizeModelSlug("5", "cursor")).toBe("gpt-5");
   });
 
   it("does not leak prototype properties as aliases", () => {
@@ -60,10 +61,15 @@ describe("getReasoningEffortOptions", () => {
   it("returns codex reasoning options for codex", () => {
     expect(getReasoningEffortOptions("codex")).toEqual(["xhigh", "high", "medium", "low"]);
   });
+
+  it("returns no reasoning options for cursor", () => {
+    expect(getReasoningEffortOptions("cursor")).toEqual([]);
+  });
 });
 
 describe("getDefaultReasoningEffort", () => {
   it("returns provider-scoped defaults", () => {
     expect(getDefaultReasoningEffort("codex")).toBe("high");
+    expect(getDefaultReasoningEffort("cursor")).toBeNull();
   });
 });
