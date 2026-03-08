@@ -63,6 +63,7 @@ import { isNonEmpty as isNonEmptyString } from "effect/String";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
+const GLOBAL_TERMINAL_THREAD_ID = "global" as ThreadId;
 
 async function copyTextToClipboard(text: string): Promise<void> {
   if (typeof navigator === "undefined" || navigator.clipboard?.writeText === undefined) {
@@ -269,6 +270,15 @@ export default function Sidebar() {
   const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
   const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
+  const globalTerminalOpen = useTerminalStateStore(
+    (state) =>
+      selectThreadTerminalState(state.terminalStateByThreadId, GLOBAL_TERMINAL_THREAD_ID)
+        .terminalOpen,
+  );
+  const storeSetGlobalTerminalOpen = useTerminalStateStore((s) => s.setTerminalOpen);
+  const toggleGlobalTerminal = useCallback(() => {
+    storeSetGlobalTerminalOpen(GLOBAL_TERMINAL_THREAD_ID, !globalTerminalOpen);
+  }, [storeSetGlobalTerminalOpen, globalTerminalOpen]);
   const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const clearProjectDraftThreadId = useComposerDraftStore(
@@ -1298,6 +1308,18 @@ export default function Sidebar() {
 
       <SidebarSeparator />
       <SidebarFooter className="gap-0 p-3">
+        <button
+          type="button"
+          className={`mb-2 flex w-full items-center justify-center gap-1.5 rounded-md border py-1.5 text-xs transition-colors duration-150 ${
+            globalTerminalOpen
+              ? "border-border bg-secondary text-foreground hover:bg-secondary/80"
+              : "border-dashed border-border text-muted-foreground/70 hover:border-ring hover:text-muted-foreground"
+          }`}
+          onClick={toggleGlobalTerminal}
+        >
+          <TerminalIcon className="size-3" />
+          {globalTerminalOpen ? "Close global terminal" : "Global terminal"}
+        </button>
         {addingProject ? (
           <>
             <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">

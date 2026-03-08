@@ -54,6 +54,11 @@ import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuer
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
+  parseBrowserRouteSearch,
+  saveBrowserOpenState,
+  stripBrowserSearchParams,
+} from "../browserRouteSearch";
+import {
   type ComposerSlashCommand,
   type ComposerTrigger,
   type ComposerTriggerKind,
@@ -135,6 +140,9 @@ import {
   DiffIcon,
   EllipsisIcon,
   FolderClosedIcon,
+  GlobeIcon,
+  MonitorIcon,
+  SquareTerminalIcon,
   LockIcon,
   LockOpenIcon,
   Undo2Icon,
@@ -600,7 +608,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const navigate = useNavigate();
   const rawSearch = useSearch({
     strict: false,
-    select: (params) => parseDiffRouteSearch(params),
+    select: (params) => ({
+      ...parseDiffRouteSearch(params as Record<string, unknown>),
+      ...parseBrowserRouteSearch(params as Record<string, unknown>),
+    }),
   });
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
@@ -710,6 +721,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const storeSetActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
 
+  // Per-project terminal state (synthetic threadId keyed by project ID)
+  const projectId = useMemo(
+    () => threads.find((t) => t.id === threadId)?.projectId ?? null,
+    [threads, threadId],
+  );
+  const projectTerminalThreadId = useMemo(
+    () => (projectId !== null ? (`project:${String(projectId)}` as ThreadId) : null),
+    [projectId],
+  );
+  const projectTerminalState = useTerminalStateStore((state) =>
+    projectTerminalThreadId
+      ? selectThreadTerminalState(state.terminalStateByThreadId, projectTerminalThreadId)
+      : null,
+  );
+
   const setPrompt = useCallback(
     (nextPrompt: string) => {
       setComposerDraftPrompt(threadId, nextPrompt);
@@ -762,6 +788,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [rawSearch],
   );
   const diffOpen = diffSearch.diff === "1";
+  const browserOpen = rawSearch.browser === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
@@ -1318,6 +1345,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
       },
     });
   }, [diffOpen, navigate, threadId]);
+  const onToggleBrowser = useCallback(() => {
+    saveBrowserOpenState(!browserOpen);
+    void navigate({
+      to: "/$threadId",
+      params: { threadId },
+      replace: true,
+      search: (previous) => {
+        const rest = stripBrowserSearchParams(previous);
+        return browserOpen ? rest : { ...rest, browser: "1" };
+      },
+    });
+  }, [browserOpen, navigate, threadId]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -1371,6 +1410,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!activeThreadId) return;
     setTerminalOpen(!terminalState.terminalOpen);
   }, [activeThreadId, setTerminalOpen, terminalState.terminalOpen]);
+  const toggleProjectTerminalVisibility = useCallback(() => {
+    if (!projectTerminalThreadId) return;
+    storeSetTerminalOpen(projectTerminalThreadId, !projectTerminalState?.terminalOpen);
+  }, [projectTerminalThreadId, storeSetTerminalOpen, projectTerminalState?.terminalOpen]);
   const splitTerminal = useCallback(() => {
     if (!activeThreadId || hasReachedTerminalLimit) return;
     const terminalId = `terminal-${crypto.randomUUID()}`;
@@ -3407,6 +3450,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onToggleDiff={onToggleDiff}
+          onToggleBrowser={onToggleBrowser}
+          browserOpen={browserOpen}
+          terminalOpen={terminalState.terminalOpen}
+          hasProject={activeProject !== null && activeProject !== undefined}
+          onToggleTerminal={toggleTerminalVisibility}
+          projectTerminalOpen={projectTerminalState?.terminalOpen ?? false}
+          onToggleProjectTerminal={toggleProjectTerminalVisibility}
         />
       </header>
 
@@ -3980,10 +4030,17 @@ interface ChatHeaderProps {
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
   diffOpen: boolean;
+  browserOpen: boolean;
+  terminalOpen: boolean;
+  hasProject: boolean;
+  projectTerminalOpen: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onToggleDiff: () => void;
+  onToggleBrowser: () => void;
+  onToggleTerminal: () => void;
+  onToggleProjectTerminal: () => void;
 }
 
 const ChatHeader = memo(function ChatHeader({
@@ -3999,10 +4056,17 @@ const ChatHeader = memo(function ChatHeader({
   diffToggleShortcutLabel,
   gitCwd,
   diffOpen,
+  browserOpen,
+  terminalOpen,
+  hasProject,
+  projectTerminalOpen,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
   onToggleDiff,
+  onToggleBrowser,
+  onToggleTerminal,
+  onToggleProjectTerminal,
 }: ChatHeaderProps) {
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -4066,6 +4130,67 @@ const ChatHeader = memo(function ChatHeader({
               : diffToggleShortcutLabel
                 ? `Toggle diff panel (${diffToggleShortcutLabel})`
                 : "Toggle diff panel"}
+          </TooltipPopup>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                className="shrink-0"
+                pressed={browserOpen}
+                onPressedChange={onToggleBrowser}
+                aria-label="Toggle browser panel"
+                variant="outline"
+                size="xs"
+              >
+                <GlobeIcon className="size-3" />
+              </Toggle>
+            }
+          />
+          <TooltipPopup side="bottom">Toggle browser panel</TooltipPopup>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                className="shrink-0"
+                pressed={terminalOpen}
+                onPressedChange={onToggleTerminal}
+                aria-label="Toggle thread terminal"
+                variant="outline"
+                size="xs"
+                disabled={!hasProject}
+              >
+                <SquareTerminalIcon className="size-3" />
+              </Toggle>
+            }
+          />
+          <TooltipPopup side="bottom">
+            {!hasProject
+              ? "Terminal is unavailable because this thread has no project."
+              : "Toggle thread terminal"}
+          </TooltipPopup>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                className="shrink-0"
+                pressed={projectTerminalOpen}
+                onPressedChange={onToggleProjectTerminal}
+                aria-label="Toggle project terminal"
+                variant="outline"
+                size="xs"
+                disabled={!hasProject}
+              >
+                <MonitorIcon className="size-3" />
+              </Toggle>
+            }
+          />
+          <TooltipPopup side="bottom">
+            {!hasProject
+              ? "Project terminal is unavailable because this thread has no project."
+              : "Toggle project terminal (persists across threads)"}
           </TooltipPopup>
         </Tooltip>
       </div>

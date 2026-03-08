@@ -702,6 +702,7 @@ export default function ThreadTerminalDrawer({
   );
 
   useEffect(() => {
+    let rafId: number | null = null;
     const onWindowResize = () => {
       const clampedHeight = clampDrawerHeight(drawerHeightRef.current);
       const changed = clampedHeight !== drawerHeightRef.current;
@@ -712,11 +713,20 @@ export default function ThreadTerminalDrawer({
       if (!resizeStateRef.current) {
         syncHeight(clampedHeight);
       }
-      setResizeEpoch((value) => value + 1);
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        setResizeEpoch((value) => value + 1);
+      });
     };
     window.addEventListener("resize", onWindowResize);
     return () => {
       window.removeEventListener("resize", onWindowResize);
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
     };
   }, [syncHeight]);
 

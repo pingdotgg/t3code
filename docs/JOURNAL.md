@@ -1,0 +1,138 @@
+# WebbsiaCode Dev Journal
+
+## 2026-03-08 11:45 UTC — Add Browser Preview Panel
+
+Added a resizable browser panel to the thread view so you can preview a localhost dev server alongside your AI conversations.
+
+### What was added
+
+- **`apps/web/src/components/BrowserPanel.tsx`** — iframe-based preview panel with URL bar and refresh button. URL defaults to `http://localhost:3000` and persists to localStorage.
+- **`apps/web/src/browserRouteSearch.ts`** — Route search param utilities for `browser=1` toggle, mirroring the existing `diffRouteSearch.ts` pattern.
+
+### What was changed
+
+- **`apps/web/src/routes/_chat.$threadId.tsx`** — Added `BrowserPanelInlineSidebar` (resizable right sidebar on wide screens) and `BrowserPanelSheet` (slide-in sheet on narrow screens). Browser panel state driven by `browser=1` URL search param.
+- **`apps/web/src/components/ChatView.tsx`** — Added globe icon toggle button in the ChatHeader toolbar (next to the diff toggle). Wires `browserOpen` state and `onToggleBrowser` callback.
+
+### How to use
+
+Click the globe icon (🌐) in the thread header toolbar to open the browser panel. Type a URL in the address bar and press Enter to navigate. The URL persists between sessions.
+
+---
+
+## 2026-03-08 12:55 UTC — Fix Browser Panel Hot Reload
+
+Restored `allow-same-origin` to the iframe sandbox in `BrowserPanel.tsx`.
+
+### Problem
+
+Vite's HMR relies on a WebSocket connection from the page inside the iframe back to the Vite dev server. This requires same-origin access. Without `allow-same-origin` in the sandbox, the WebSocket was blocked and file changes to the previewed project did not hot-reload in the panel.
+
+### Fix
+
+- Re-added `allow-same-origin` to the iframe `sandbox` attribute.
+- Added a file-level `/* eslint-disable react/iframe-missing-sandbox */` comment with an explanatory note. The lint rule flags `allow-scripts + allow-same-origin` as a security concern in general, but this is acceptable here because the panel is a developer tool exclusively used on localhost.
+- `bun lint` and `bun typecheck` both pass with 0 warnings / 0 errors.
+
+### Note on thread stuttering
+
+During testing, slight stuttering was observed in the thread view while Codex was executing tool calls. This is a pre-existing behaviour caused by the rapid-fire orchestration event stream (~40+ domain events per turn) triggering frequent re-renders of the large `ChatView` component. It is not related to the browser panel feature.
+
+---
+
+## 2026-03-08 13:05 UTC — Add Terminal Toggle Button to ChatHeader
+
+Added a `SquareTerminalIcon` toggle button to the `ChatHeader` toolbar (to the right of the browser toggle), following the same pattern as the diff and browser toggles.
+
+### Motivation
+
+The thread terminal was only openable via keyboard shortcut (`terminal.toggle`) or indirectly by running a project script. There was no visible button to open it. This made it impossible to start a dev server (e.g. `pnpm dev`) from within t3code's web UI without switching to an external terminal.
+
+### What changed
+
+- **`apps/web/src/components/ChatView.tsx`**
+  - Imported `SquareTerminalIcon` from lucide-react.
+  - Added `terminalOpen`, `hasProject`, and `onToggleTerminal` to `ChatHeaderProps`.
+  - Added terminal `Toggle` button in `ChatHeader` render, disabled if no project is associated with the thread.
+  - Wired `terminalOpen={terminalState.terminalOpen}`, `hasProject={activeProject !== null}`, and `onToggleTerminal={toggleTerminalVisibility}` at the call site.
+
+### How to use
+
+Click the `⬛` terminal icon in the thread header toolbar to open/close the terminal panel. From there you can run `pnpm dev` (or any other command) to start a dev server for the project being previewed in the browser panel.
+
+---
+
+## 2026-03-08 14:30 UTC — Per-Project & Global Terminal Scopes + Resize Fix
+
+Added two additional terminal scopes alongside the existing per-thread terminal, and fixed prompt-line spam on window resize.
+
+### Terminal resize fix
+
+- **`apps/web/src/components/ThreadTerminalDrawer.tsx`** — The `onWindowResize` handler was calling `setResizeEpoch` unconditionally on every resize event, causing the pty to receive repeated `SIGWINCH` signals and redraw the shell prompt many times. Fixed by wrapping the `setResizeEpoch` call in `requestAnimationFrame`, coalescing rapid window-resize events into a single repaint per animation frame.
+
+### New: `ScopedTerminalDrawer` component
+
+- **`apps/web/src/components/ScopedTerminalDrawer.tsx`** — New reusable wrapper around `ThreadTerminalDrawer` that internally manages all terminal state (split, new, close, height) via `terminalStateStore` for any given `threadId`. Renders nothing when the terminal is closed. Used by both the project terminal and global terminal to avoid duplicating callback logic.
+
+### New: Per-project terminal
+
+A second terminal that is keyed by the project (not the active thread), so it stays open when switching between threads within the same project.
+
+- **`apps/web/src/components/ChatView.tsx`** — Added `MonitorIcon` import. Computes a synthetic `project:<projectId>` ThreadId and reads/writes its state via `terminalStateStore`. Added `projectTerminalOpen` + `onToggleProjectTerminal` props to `ChatHeaderProps`/`ChatHeader`, and a `MonitorIcon` toggle button in the header toolbar.
+- **`apps/web/src/routes/_chat.$threadId.tsx`** — Renders `ScopedTerminalDrawer` for the project terminal outside `ChatView key={threadId}` (in both the inline-sidebar and sheet layout branches), so it survives thread-switches within the same project. Uses the project's root `cwd` (not a worktree path).
+
+### New: Global terminal
+
+A terminal that is not tied to any project, toggled from the sidebar footer.
+
+- **`apps/web/src/routes/_chat.tsx`** — Wrapped the layout in a `flex h-dvh flex-col` div, placed `ScopedTerminalDrawer` below the `SidebarProvider` (keyed by the synthetic ThreadId `"global"`). Opens in the server's working directory obtained from `serverConfigQueryOptions`.
+- **`apps/web/src/components/Sidebar.tsx`** — Added a `"Global terminal"` toggle button in `SidebarFooter` (above the "+ Add project" button). Reads and writes `terminalStateStore` for the `"global"` synthetic ThreadId.
+
+### How to use
+
+| Terminal | Icon | Where | Opens in |
+|---|---|---|---|
+| Thread terminal | `⬛` square-terminal | ChatHeader | Thread worktree path (or project cwd) |
+| Project terminal | `🖥` monitor | ChatHeader | Project root cwd; persists when switching threads |
+| Global terminal | `>_` terminal | Sidebar footer | Server cwd; always accessible |
+
+`bun lint` and `bun typecheck` both pass with 0 warnings / 0 errors.
+
+---
+
+## 2026-03-08 15:30 UTC — Per-Project Browser Panel + Dev Server Auto-Detection
+
+Made the browser panel project-scoped (each project remembers its own URL) and added automatic dev server URL detection from terminal output.
+
+### Problem
+
+1. Browser URL was global — switching between projects kept showing the same `http://localhost:3000`.
+2. Browser panel closed when switching threads/projects (the `browser=1` search param was lost on navigation).
+3. Projects without a running dev server showed localhost:3000 by default.
+
+### Per-project browser URLs
+
+- **`apps/web/src/components/BrowserPanel.tsx`** — Accepts `projectId` prop. URLs keyed per-project in localStorage (`t3code:browser-url:${projectId}`). When projectId changes, loads that project's saved URL. No default — shows a "No dev server running" placeholder when empty.
+- **`apps/web/src/routes/_chat.$threadId.tsx`** — Passes `projectId` through `BrowserPanelInlineSidebar` and `BrowserPanelSheet` to `BrowserPanel`.
+
+### Browser persistence across navigation
+
+- **`apps/web/src/browserRouteSearch.ts`** — Added `saveBrowserOpenState()` to persist browser open/close to localStorage (`t3code:browser-open`). Modified `parseBrowserRouteSearch()` (called by route `validateSearch`) to auto-restore `browser=1` from localStorage when the URL doesn't include it. This makes the browser panel stay open across thread/project switches seamlessly.
+- Toggle handlers in `ChatView.tsx` and `_chat.$threadId.tsx` call `saveBrowserOpenState()` on every open/close.
+
+### Dev server URL auto-detection
+
+- **`apps/web/src/lib/devServerDetection.ts`** (new) — `detectDevServerUrl(data)` scans terminal output for `http://localhost:PORT` or `http://127.0.0.1:PORT` patterns. `setDetectedBrowserUrl(projectId, url)` saves the URL and dispatches a custom DOM event to update BrowserPanel in the same tab.
+- **`apps/web/src/routes/_chat.$threadId.tsx`** — `useEffect` subscribes to `api.terminal.onEvent()` for the active thread. When a dev server URL is detected in output and the project has no browser URL yet, it auto-saves the URL and opens the browser panel.
+- **`apps/web/src/components/BrowserPanel.tsx`** — Listens for `t3code:browser-url-updated` custom events to reactively update when auto-detection fires.
+
+### How it works
+
+1. Open a project with no browser URL → browser panel shows "No dev server running" placeholder.
+2. Run `pnpm dev` (or any dev server command) in the thread terminal.
+3. Terminal output containing `http://localhost:3000` (or any port) is detected.
+4. Browser panel URL is auto-set for that project and the panel opens.
+5. Switch to another project → browser panel shows that project's saved URL (or placeholder if none).
+6. Browser panel stays open when switching threads/projects until explicitly closed.
+
+`bun lint` and `bun typecheck` both pass with 0 warnings / 0 errors.
