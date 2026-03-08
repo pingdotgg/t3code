@@ -120,6 +120,93 @@
   }
 }
 
+/* Catppuccin Mocha */
+.dark[data-theme="catppuccin"] {
+  --background: #1e1e2e;
+  --foreground: #cdd6f4;
+  --card: #313244;
+  --card-foreground: #cdd6f4;
+  --popover: #313244;
+  --popover-foreground: #cdd6f4;
+  --primary: #89b4fa;
+  --primary-foreground: #1e1e2e;
+  --secondary: #45475a;
+  --secondary-foreground: #cdd6f4;
+  --muted: #45475a;
+  --muted-foreground: #a6adc8;
+  --accent: #45475a;
+  --accent-foreground: #cdd6f4;
+  --destructive: #f38ba8;
+  --border: #45475a;
+  --input: #45475a;
+  --ring: #89b4fa;
+  --destructive-foreground: #f38ba8;
+  --info: #89b4fa;
+  --info-foreground: #1e1e2e;
+  --success: #a6e3a1;
+  --success-foreground: #1e1e2e;
+  --warning: #f9e2af;
+  --warning-foreground: #1e1e2e;
+}
+
+/* Monokai */
+.dark[data-theme="monokai"] {
+  --background: #191a16;
+  --foreground: #f8f8f2;
+  --card: #23251f;
+  --card-foreground: #f8f8f2;
+  --popover: #2a2c25;
+  --popover-foreground: #f8f8f2;
+  --primary: #78dce8;
+  --primary-foreground: #141510;
+  --secondary: #303229;
+  --secondary-foreground: #f3f1e6;
+  --muted: #2b2d25;
+  --muted-foreground: #b6b09a;
+  --accent: #35372e;
+  --accent-foreground: #f8f8f2;
+  --destructive: #ff6188;
+  --border: #4d5042;
+  --input: #3d4034;
+  --ring: #78dce8;
+  --destructive-foreground: #ff6188;
+  --info: #78dce8;
+  --info-foreground: #141510;
+  --success: #a9dc76;
+  --success-foreground: #141510;
+  --warning: #ffd866;
+  --warning-foreground: #141510;
+}
+
+/* Tokyo Night */
+.dark[data-theme="tokyo"] {
+  --background: #1a1b26;
+  --foreground: #a9b1d6;
+  --card: #24283b;
+  --card-foreground: #a9b1d6;
+  --popover: #24283b;
+  --popover-foreground: #a9b1d6;
+  --primary: #7aa2f7;
+  --primary-foreground: #1a1b26;
+  --secondary: #3b4261;
+  --secondary-foreground: #a9b1d6;
+  --muted: #3b4261;
+  --muted-foreground: #565f89;
+  --accent: #3b4261;
+  --accent-foreground: #a9b1d6;
+  --destructive: #f7768e;
+  --border: #3b4261;
+  --input: #3b4261;
+  --ring: #7aa2f7;
+  --destructive-foreground: #f7768e;
+  --info: #7aa2f7;
+  --info-foreground: #1a1b26;
+  --success: #9ece6a;
+  --success-foreground: #1a1b26;
+  --warning: #e0af68;
+  --warning-foreground: #1a1b26;
+}
+
 body {
   font-family:
     "DM Sans",

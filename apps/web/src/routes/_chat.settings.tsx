@@ -39,6 +39,21 @@ const THEME_OPTIONS = [
     label: "Dark",
     description: "Always use the dark theme.",
   },
+  {
+    value: "catppuccin",
+    label: "Catppuccin",
+    description: "Catppuccin Mocha — soft pastel dark theme.",
+  },
+  {
+    value: "monokai",
+    label: "Monokai",
+    description: "Classic Monokai — warm dark theme.",
+  },
+  {
+    value: "tokyo",
+    label: "Tokyo Night",
+    description: "Tokyo Night — cool blue dark theme.",
+  },
 ] as const;
 
 const MODEL_PROVIDER_SETTINGS: Array<{
@@ -273,7 +288,10 @@ function SettingsRouteView() {
               </div>
 
               <p className="mt-4 text-xs text-muted-foreground">
-                Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
+                Active theme:{" "}
+                <span className="font-medium text-foreground">
+                  {theme === "system" ? resolvedTheme : theme}
+                </span>
               </p>
             </section>
 

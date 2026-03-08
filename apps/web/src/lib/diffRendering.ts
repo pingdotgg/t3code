@@ -1,12 +1,28 @@
 export const DIFF_THEME_NAMES = {
   light: "pierre-light",
   dark: "pierre-dark",
+  catppuccin: "catppuccin-mocha",
+  monokai: "monokai",
+  tokyo: "tokyo-night",
 } as const;
 
 export type DiffThemeName = (typeof DIFF_THEME_NAMES)[keyof typeof DIFF_THEME_NAMES];
 
-export function resolveDiffThemeName(theme: "light" | "dark"): DiffThemeName {
-  return theme === "dark" ? DIFF_THEME_NAMES.dark : DIFF_THEME_NAMES.light;
+export type ResolvedThemeForCode = "light" | "dark" | "catppuccin" | "monokai" | "tokyo";
+
+export function resolveDiffThemeName(theme: ResolvedThemeForCode): DiffThemeName {
+  switch (theme) {
+    case "catppuccin":
+      return DIFF_THEME_NAMES.catppuccin;
+    case "monokai":
+      return DIFF_THEME_NAMES.monokai;
+    case "tokyo":
+      return DIFF_THEME_NAMES.tokyo;
+    case "dark":
+      return DIFF_THEME_NAMES.dark;
+    default:
+      return DIFF_THEME_NAMES.light;
+  }
 }
 
 const FNV_OFFSET_BASIS_32 = 0x811c9dc5;

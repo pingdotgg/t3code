@@ -156,7 +156,7 @@ export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const navigate = useNavigate();
-  const { resolvedTheme } = useTheme();
+  const { resolvedTheme, resolvedThemeForCode } = useTheme();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
@@ -274,8 +274,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
   const renderablePatch = useMemo(
-    () => getRenderablePatch(selectedPatch, `diff-panel:${resolvedTheme}`),
-    [resolvedTheme, selectedPatch],
+    () => getRenderablePatch(selectedPatch, `diff-panel:${resolvedThemeForCode}`),
+    [resolvedThemeForCode, selectedPatch],
   );
   const renderableFiles = useMemo(() => {
     if (!renderablePatch || renderablePatch.kind !== "files") {
@@ -574,7 +574,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                 {renderableFiles.map((fileDiff) => {
                   const filePath = resolveFileDiffPath(fileDiff);
                   const fileKey = buildFileDiffRenderKey(fileDiff);
-                  const themedFileKey = `${fileKey}:${resolvedTheme}`;
+                  const themedFileKey = `${fileKey}:${resolvedThemeForCode}`;
                   return (
                     <div
                       key={themedFileKey}
@@ -596,7 +596,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                         options={{
                           diffStyle: diffRenderMode === "split" ? "split" : "unified",
                           lineDiffType: "none",
-                          theme: resolveDiffThemeName(resolvedTheme),
+                          theme: resolveDiffThemeName(resolvedThemeForCode),
                           themeType: resolvedTheme as DiffThemeType,
                           unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
                         }}
