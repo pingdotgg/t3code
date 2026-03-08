@@ -784,8 +784,8 @@ export default function Sidebar() {
   const addRemoteProjectFromPath = useCallback(
     async (rawPath: string) => {
       const api = readNativeApi();
-      const workspaceRoot = rawPath.trim();
-      if (!api || !workspaceRoot || isAddingProject) {
+      const requestedWorkspaceRoot = rawPath.trim();
+      if (!api || !requestedWorkspaceRoot || isAddingProject) {
         return;
       }
 
@@ -797,6 +797,26 @@ export default function Sidebar() {
           type: "error",
           title: "Could not save remote host",
           description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+        return;
+      }
+
+      let workspaceRoot = requestedWorkspaceRoot;
+      try {
+        const browseResult = await api.remoteHosts.browse({
+          remoteHostId: savedRemoteHost.id,
+          path: requestedWorkspaceRoot,
+          limit: 1,
+        });
+        workspaceRoot = browseResult.cwd;
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Remote workspace path is unavailable",
+          description:
+            error instanceof Error
+              ? error.message
+              : "The remote workspace path does not exist or is not accessible.",
         });
         return;
       }

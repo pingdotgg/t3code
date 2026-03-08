@@ -317,6 +317,39 @@ describe("startSession", () => {
     }
   });
 
+  it("reports a missing workspace path before checking the codex binary", async () => {
+    const manager = new CodexAppServerManager();
+    const events: Array<{ method: string; kind: string; message?: string }> = [];
+    manager.on("event", (event) => {
+      events.push({
+        method: event.method,
+        kind: event.kind,
+        ...(event.message ? { message: event.message } : {}),
+      });
+    });
+
+    const missingCwd = path.join(os.tmpdir(), `t3code-missing-${randomUUID()}`);
+
+    try {
+      await expect(
+        manager.startSession({
+          threadId: asThreadId("thread-missing-cwd"),
+          provider: "codex",
+          runtimeMode: "full-access",
+          cwd: missingCwd,
+        }),
+      ).rejects.toThrow(`Workspace path (${missingCwd}) does not exist or is not accessible.`);
+      expect(events).toHaveLength(1);
+      expect(events[0]?.method).toBe("session/startFailed");
+      expect(events[0]?.kind).toBe("error");
+      expect(events[0]?.message).toContain(
+        `Workspace path (${missingCwd}) does not exist or is not accessible.`,
+      );
+    } finally {
+      manager.stopAll();
+    }
+  });
+
   it("fails fast with an upgrade message when codex is below the minimum supported version", async () => {
     const manager = new CodexAppServerManager();
     const events: Array<{ method: string; kind: string; message?: string }> = [];

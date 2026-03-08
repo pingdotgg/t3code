@@ -1,6 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { statSync } from "node:fs";
 import readline from "node:readline";
 
 import {
@@ -1526,6 +1527,21 @@ function assertSupportedCodexCliVersion(input: {
   readonly cwd: string;
   readonly homePath?: string;
 }): void {
+  let cwdStats: ReturnType<typeof statSync>;
+  try {
+    cwdStats = statSync(input.cwd);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message.trim() : String(error);
+    throw new Error(
+      `Workspace path (${input.cwd}) does not exist or is not accessible.${detail ? ` ${detail}` : ""}`,
+      { cause: error },
+    );
+  }
+
+  if (!cwdStats.isDirectory()) {
+    throw new Error(`Workspace path (${input.cwd}) is not a directory.`);
+  }
+
   const result = spawnSync(input.binaryPath, ["--version"], {
     cwd: input.cwd,
     env: {
