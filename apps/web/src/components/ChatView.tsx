@@ -101,6 +101,7 @@ import {
   proposedPlanTitle,
   resolvePlanFollowUpSubmission,
 } from "../proposedPlan";
+import { PR_REVIEW_PROMPT, buildReviewThreadTitle } from "../reviewPrompt";
 import { truncateTitle } from "../truncateTitle";
 import {
   DEFAULT_INTERACTION_MODE,
@@ -3091,6 +3092,119 @@ export default function ChatView({ threadId }: ChatViewProps) {
     syncServerReadModel,
   ]);
 
+  const onReviewPrInNewThread = useCallback(async () => {
+    const api = readNativeApi();
+    if (
+      !api ||
+      !activeThread ||
+      !activeProject ||
+      !isServerThread ||
+      isSendBusy ||
+      isConnecting ||
+      sendInFlightRef.current
+    ) {
+      return;
+    }
+
+    const createdAt = new Date().toISOString();
+    const nextThreadId = newThreadId();
+    const nextThreadTitle = truncateTitle(buildReviewThreadTitle());
+    const nextThreadModel: ModelSlug =
+      selectedModel ||
+      (activeThread.model as ModelSlug) ||
+      (activeProject.model as ModelSlug) ||
+      DEFAULT_MODEL_BY_PROVIDER.codex;
+
+    sendInFlightRef.current = true;
+    beginSendPhase("sending-turn");
+    const finish = () => {
+      sendInFlightRef.current = false;
+      resetSendPhase();
+    };
+
+    await api.orchestration
+      .dispatchCommand({
+        type: "thread.create",
+        commandId: newCommandId(),
+        threadId: nextThreadId,
+        projectId: activeProject.id,
+        title: nextThreadTitle,
+        model: nextThreadModel,
+        runtimeMode,
+        interactionMode: "default",
+        branch: activeThread.branch,
+        worktreePath: activeThread.worktreePath,
+        createdAt,
+      })
+      .then(() =>
+        api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: nextThreadId,
+          message: {
+            messageId: newMessageId(),
+            role: "user",
+            text: PR_REVIEW_PROMPT,
+            attachments: [],
+          },
+          provider: selectedProvider,
+          model: selectedModel || undefined,
+          ...(selectedModelOptionsForDispatch
+            ? { modelOptions: selectedModelOptionsForDispatch }
+            : {}),
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          runtimeMode,
+          interactionMode: "default",
+          createdAt,
+        }),
+      )
+      .then(() => api.orchestration.getSnapshot())
+      .then((snapshot) => {
+        syncServerReadModel(snapshot);
+        return navigate({
+          to: "/$threadId",
+          params: { threadId: nextThreadId },
+        });
+      })
+      .catch(async (err) => {
+        await api.orchestration
+          .dispatchCommand({
+            type: "thread.delete",
+            commandId: newCommandId(),
+            threadId: nextThreadId,
+          })
+          .catch(() => undefined);
+        await api.orchestration
+          .getSnapshot()
+          .then((snapshot) => {
+            syncServerReadModel(snapshot);
+          })
+          .catch(() => undefined);
+        toastManager.add({
+          type: "error",
+          title: "Could not start review thread",
+          description:
+            err instanceof Error ? err.message : "An error occurred while creating the review thread.",
+        });
+      })
+      .then(finish, finish);
+  }, [
+    activeProject,
+    activeThread,
+    beginSendPhase,
+    isConnecting,
+    isSendBusy,
+    isServerThread,
+    navigate,
+    resetSendPhase,
+    runtimeMode,
+    selectedModel,
+    selectedModelOptionsForDispatch,
+    selectedProvider,
+    settings.enableAssistantStreaming,
+    syncServerReadModel,
+  ]);
+
   const onProviderModelSelect = useCallback(
     (provider: ProviderKind, model: ModelSlug) => {
       if (!activeThread) return;
@@ -3488,6 +3602,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onToggleDiff={onToggleDiff}
+          onRequestReview={() => void onReviewPrInNewThread()}
         />
       </header>
 
@@ -4135,6 +4250,7 @@ interface ChatHeaderProps {
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onToggleDiff: () => void;
+  onRequestReview?: () => void;
 }
 
 const ChatHeader = memo(function ChatHeader({
@@ -4154,6 +4270,7 @@ const ChatHeader = memo(function ChatHeader({
   onAddProjectScript,
   onUpdateProjectScript,
   onToggleDiff,
+  onRequestReview,
 }: ChatHeaderProps) {
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -4194,7 +4311,7 @@ const ChatHeader = memo(function ChatHeader({
             openInCwd={openInCwd}
           />
         )}
-        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} onRequestReview={onRequestReview} />}
         <Tooltip>
           <TooltipTrigger
             render={

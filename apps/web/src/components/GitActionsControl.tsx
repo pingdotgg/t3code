@@ -1,7 +1,7 @@
 import type { GitStackedAction, GitStatusResult, ThreadId } from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
+import { ChevronDownIcon, CloudUploadIcon, FileSearchIcon, GitCommitIcon, InfoIcon } from "lucide-react";
 import { GitHubIcon } from "./Icons";
 import {
   buildGitActionProgressStages,
@@ -46,6 +46,7 @@ import { readNativeApi } from "~/nativeApi";
 interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadId: ThreadId | null;
+  onRequestReview?: (() => void) | undefined;
 }
 
 interface PendingDefaultBranchAction {
@@ -138,7 +139,7 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   return <InfoIcon className={iconClassName} />;
 }
 
-export default function GitActionsControl({ gitCwd, activeThreadId }: GitActionsControlProps) {
+export default function GitActionsControl({ gitCwd, activeThreadId, onRequestReview }: GitActionsControlProps) {
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
@@ -595,6 +596,15 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
           {initMutation.isPending ? "Initializing..." : "Initialize Git"}
         </Button>
       ) : (
+        <>
+        {gitStatusForActions?.pr?.state === "open" && onRequestReview && (
+          <Button variant="outline" size="xs" onClick={onRequestReview}>
+            <FileSearchIcon className="size-3.5" />
+            <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
+              Review
+            </span>
+          </Button>
+        )}
         <Group aria-label="Git actions">
           {quickActionDisabledReason ? (
             <Popover>
@@ -708,6 +718,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
             </MenuPopup>
           </Menu>
         </Group>
+        </>
       )}
 
       <Dialog
