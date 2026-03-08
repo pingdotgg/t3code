@@ -20,7 +20,6 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   ProjectId,
   ThreadId,
-  TerminalEvent,
   WS_CHANNELS,
   WS_METHODS,
   WebSocketRequest,
@@ -35,6 +34,7 @@ import {
   FileSystem,
   Layer,
   Path,
+  PubSub,
   Ref,
   Schema,
   Scope,
@@ -73,6 +73,8 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
+import { makeServerPushBus } from "./wsServer/pushBus.ts";
+import { makeServerReadiness } from "./wsServer/readiness.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -197,8 +199,7 @@ function stripRequestTag<T extends { _tag: string }>(body: T) {
 
 function messageFromCause(cause: Cause.Cause<unknown>): string {
   const squashed = Cause.squash(cause);
-  const message =
-    squashed instanceof Error ? squashed.message.trim() : String(squashed).trim();
+  const message = squashed instanceof Error ? squashed.message.trim() : String(squashed).trim();
   return message.length > 0 ? message : Cause.pretty(cause);
 }
 
@@ -258,50 +259,33 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  yield* keybindingsManager.syncDefaultKeybindingsOnStartup.pipe(
-    Effect.catch((error) =>
-      Effect.logWarning("failed to sync keybindings defaults on startup", {
-        path: error.configPath,
-        detail: error.detail,
-        cause: error.cause,
-      }),
-    ),
-  );
-
   const providerStatuses = yield* providerHealth.getStatuses;
 
   const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
+  const readiness = yield* makeServerReadiness;
 
   function logOutgoingPush(push: WsPush, recipients: number) {
     if (!logWebSocketEvents) return;
     logger.event("outgoing push", {
       channel: push.channel,
+      sequence: push.sequence,
       recipients,
       payload: push.data,
     });
   }
 
-  const encodePush = Schema.encodeEffect(Schema.fromJsonString(WsPush));
-  const broadcastPush = Effect.fnUntraced(function* (push: WsPush) {
-    const message = yield* encodePush(push);
-    let recipients = 0;
-    for (const client of yield* Ref.get(clients)) {
-      if (client.readyState === client.OPEN) {
-        client.send(message);
-        recipients += 1;
-      }
-    }
-    logOutgoingPush(push, recipients);
+  const pushBus = yield* makeServerPushBus({
+    clients,
+    logOutgoingPush,
   });
-
-  const onTerminalEvent = Effect.fnUntraced(function* (event: TerminalEvent) {
-    yield* broadcastPush({
-      type: "push",
-      channel: WS_CHANNELS.terminalEvent,
-      data: event,
-    });
-  });
+  yield* readiness.markPushBusReady;
+  yield* keybindingsManager.start.pipe(
+    Effect.mapError(
+      (cause) => new ServerLifecycleError({ operation: "keybindingsRuntimeStart", cause }),
+    ),
+  );
+  yield* readiness.markKeybindingsReady;
 
   const normalizeDispatchCommand = Effect.fnUntraced(function* (input: {
     readonly command: ClientOrchestrationCommand;
@@ -331,10 +315,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       } satisfies OrchestrationCommand;
     }
 
-    if (
-      input.command.type === "project.meta.update" &&
-      input.command.workspaceRoot !== undefined
-    ) {
+    if (input.command.type === "project.meta.update" && input.command.workspaceRoot !== undefined) {
       return {
         ...input.command,
         workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
@@ -618,25 +599,28 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
 
   yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
-    broadcastPush({
-      type: "push",
-      channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
-      data: event,
-    }),
+    pushBus.publishAll(ORCHESTRATION_WS_CHANNELS.domainEvent, event),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
-  yield* Stream.runForEach(keybindingsManager.changes, (event) =>
-    broadcastPush({
-      type: "push",
-      channel: WS_CHANNELS.serverConfigUpdated,
-      data: {
-        issues: event.issues,
-        providers: providerStatuses,
-      },
-    }),
+  // Subscribe synchronously so the subscription exists before the
+  // readiness barrier — avoids a race where the polling watcher
+  // publishes before a lazily-created Stream.fromPubSub subscription.
+  const keybindingsChangesSub = yield* keybindingsManager.subscribeChanges.pipe(
+    Scope.provide(subscriptionsScope),
+  );
+  yield* Effect.forever(
+    PubSub.take(keybindingsChangesSub).pipe(
+      Effect.flatMap((event) =>
+        pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
+          issues: event.issues,
+          providers: providerStatuses,
+        }),
+      ),
+    ),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
   yield* Scope.provide(orchestrationReactor.start, subscriptionsScope);
+  yield* readiness.markOrchestrationSubscriptionsReady;
 
   let welcomeBootstrapProjectId: ProjectId | undefined;
   let welcomeBootstrapThreadId: ThreadId | undefined;
@@ -707,22 +691,20 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const runPromise = Effect.runPromiseWith(runtimeServices);
 
   const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
-    (event) => void Effect.runPromise(onTerminalEvent(event)),
+    (event) => void Effect.runPromise(pushBus.publishAll(WS_CHANNELS.terminalEvent, event)),
   );
   yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeTerminalEvents()));
+  yield* readiness.markTerminalSubscriptionsReady;
 
   yield* NodeHttpServer.make(() => httpServer, listenOptions).pipe(
     Effect.mapError((cause) => new ServerLifecycleError({ operation: "httpServerListen", cause })),
   );
+  yield* readiness.markHttpListening;
 
   yield* Effect.addFinalizer(() =>
     Effect.all([
       closeAllClients,
-      closeWebSocketServer.pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("failed to close web socket server", { cause: error }),
-        ),
-      ),
+      closeWebSocketServer.pipe(Effect.ignoreCause({ log: true })),
     ]),
   );
 
@@ -777,14 +759,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           relativePath: body.relativePath,
           path,
         });
-        yield* fileSystem.makeDirectory(path.dirname(target.absolutePath), { recursive: true }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new RouteRequestError({
-                message: `Failed to prepare workspace path: ${String(cause)}`,
-              }),
-          ),
-        );
+        yield* fileSystem
+          .makeDirectory(path.dirname(target.absolutePath), { recursive: true })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new RouteRequestError({
+                  message: `Failed to prepare workspace path: ${String(cause)}`,
+                }),
+            ),
+          );
         yield* fileSystem.writeFileString(target.absolutePath, body.contents).pipe(
           Effect.mapError(
             (cause) =>
@@ -968,29 +952,29 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   wss.on("connection", (ws) => {
-    void runPromise(Ref.update(clients, (clients) => clients.add(ws)));
-
     const segments = cwd.split(/[/\\]/).filter(Boolean);
     const projectName = segments[segments.length - 1] ?? "project";
 
-    const welcome: WsPush = {
-      type: "push",
-      channel: WS_CHANNELS.serverWelcome,
-      data: {
-        cwd,
-        projectName,
-        ...(welcomeBootstrapProjectId ? { bootstrapProjectId: welcomeBootstrapProjectId } : {}),
-        ...(welcomeBootstrapThreadId ? { bootstrapThreadId: welcomeBootstrapThreadId } : {}),
-      },
+    const welcomeData = {
+      cwd,
+      projectName,
+      ...(welcomeBootstrapProjectId ? { bootstrapProjectId: welcomeBootstrapProjectId } : {}),
+      ...(welcomeBootstrapThreadId ? { bootstrapThreadId: welcomeBootstrapThreadId } : {}),
     };
-    logOutgoingPush(welcome, 1);
-    ws.send(JSON.stringify(welcome));
+    // Send welcome before adding to broadcast set so publishAll calls
+    // cannot reach this client before the welcome arrives.
+    void runPromise(
+      readiness.awaitServerReady.pipe(
+        Effect.flatMap(() => pushBus.publishClient(ws, WS_CHANNELS.serverWelcome, welcomeData)),
+        Effect.flatMap((delivered) =>
+          delivered ? Ref.update(clients, (clients) => clients.add(ws)) : Effect.void,
+        ),
+      ),
+    );
 
     ws.on("message", (raw) => {
       void runPromise(
-        handleMessage(ws, raw).pipe(
-          Effect.catch((error) => Effect.logError("Error handling message", error)),
-        ),
+        handleMessage(ws, raw).pipe(Effect.ignoreCause({ log: true })),
       );
     });
 
