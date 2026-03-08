@@ -21,6 +21,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL } from "../branding";
+import { writeClipboardText } from "../lib/clipboard";
 import { newCommandId, newProjectId, newThreadId } from "../lib/utils";
 import { useStore } from "../store";
 import { isChatNewLocalShortcut, isChatNewShortcut, shortcutLabelForCommand } from "../keybindings";
@@ -63,13 +64,6 @@ import { isNonEmpty as isNonEmptyString } from "effect/String";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
-
-async function copyTextToClipboard(text: string): Promise<void> {
-  if (typeof navigator === "undefined" || navigator.clipboard?.writeText === undefined) {
-    throw new Error("Clipboard API unavailable.");
-  }
-  await navigator.clipboard.writeText(text);
-}
 
 function formatRelativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -623,7 +617,7 @@ export default function Sidebar() {
       }
       if (clicked === "copy-thread-id") {
         try {
-          await copyTextToClipboard(threadId);
+          await writeClipboardText(threadId);
           toastManager.add({
             type: "success",
             title: "Thread ID copied",

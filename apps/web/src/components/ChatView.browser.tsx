@@ -806,6 +806,71 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("copies the project cwd from the open menu", async () => {
+    const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          availableWorkspaceTargets: ["vscode"],
+        };
+      },
+    });
+
+    try {
+      const openButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Open",
+          ) as HTMLButtonElement | null,
+        "Unable to find Open button.",
+      );
+      const openOptionsButton = await waitForElement(
+        () => (openButton.closest('[role="group"]')?.querySelectorAll("button")[1] as HTMLButtonElement | undefined) ?? null,
+        "Unable to find Open options button.",
+      );
+      openOptionsButton.click();
+
+      const copyPathItem = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll('[data-slot="menu-item"]')).find(
+            (element) => element.textContent?.trim() === "Copy path",
+          ) as HTMLElement | null,
+        "Unable to find Copy path menu item.",
+      );
+      copyPathItem.click();
+
+      await vi.waitFor(() => {
+        expect(writeText).toHaveBeenCalledWith("/repo/project");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("toggles plan mode with Shift+Tab only while the composer is focused", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

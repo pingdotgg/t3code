@@ -122,6 +122,7 @@ import {
   summarizeTurnDiffStats,
   type TurnDiffTreeNode,
 } from "../lib/turnDiffTree";
+import { canWriteClipboardText, writeClipboardText } from "../lib/clipboard";
 import BranchToolbar from "./BranchToolbar";
 import GitActionsControl from "./GitActionsControl";
 import {
@@ -3577,6 +3578,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
         />
       </div>
 
+      <RunningCommandsStrip
+        commands={runningCommandExecutions}
+        nowIso={nowIso}
+        provider={activeProvider}
+      />
+
       {/* Input bar */}
       <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
         <form
@@ -3995,12 +4002,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           </div>
         </form>
       </div>
-
-      <RunningCommandsStrip
-        commands={runningCommandExecutions}
-        nowIso={nowIso}
-        provider={activeProvider}
-      />
 
       {isGitRepo && (
         <BranchToolbar
@@ -4546,7 +4547,7 @@ const MessageCopyButton = memo(function MessageCopyButton({ text }: { text: stri
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
-    void navigator.clipboard.writeText(text);
+    void writeClipboardText(text).catch(() => undefined);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }, [text]);
@@ -5970,6 +5971,29 @@ const OpenInPicker = memo(function OpenInPicker({
     [keybindings],
   );
 
+  const handleCopyPath = useCallback(() => {
+    if (!openInCwd) return;
+
+    void writeClipboardText(openInCwd)
+      .then(() => {
+        toastManager.add({
+          type: "success",
+          title: "Copied workspace path",
+          description: openInCwd,
+          data: {
+            dismissAfterVisibleMs: 2_000,
+          },
+        });
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not copy workspace path",
+          description: error instanceof Error ? error.message : "Clipboard write failed.",
+        });
+      });
+  }, [openInCwd]);
+
   useEffect(() => {
     const handler = (e: globalThis.KeyboardEvent) => {
       const api = readNativeApi();
@@ -6003,6 +6027,11 @@ const OpenInPicker = memo(function OpenInPicker({
           <ChevronDownIcon aria-hidden="true" className="size-4" />
         </MenuTrigger>
         <MenuPopup align="end">
+          <MenuItem disabled={!openInCwd || !canWriteClipboardText()} onClick={handleCopyPath}>
+            <CopyIcon aria-hidden="true" className="text-muted-foreground" />
+            Copy path
+          </MenuItem>
+          {options.length > 0 && <MenuDivider />}
           {options.length === 0 && <MenuItem disabled>No installed launchers found</MenuItem>}
           {options.map(({ label, Icon, value }) => (
             <MenuItem key={value} onClick={() => openWorkspaceTarget(value)}>
