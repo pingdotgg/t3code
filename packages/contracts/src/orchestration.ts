@@ -131,11 +131,13 @@ export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
-  executionTarget: ExecutionTarget.pipe(
+  executionTarget: Schema.optional(ExecutionTarget).pipe(
     Schema.withDecodingDefault(() => DEFAULT_EXECUTION_TARGET),
   ),
-  remoteHostId: Schema.NullOr(RemoteHostId).pipe(Schema.withDecodingDefault(() => null)),
-  remoteHostLabel: Schema.NullOr(TrimmedNonEmptyString).pipe(
+  remoteHostId: Schema.optional(Schema.NullOr(RemoteHostId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  remoteHostLabel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)).pipe(
     Schema.withDecodingDefault(() => null),
   ),
   defaultModel: Schema.NullOr(TrimmedNonEmptyString),
@@ -294,11 +296,15 @@ export const ProjectCreateCommand = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
-  executionTarget: ExecutionTarget.pipe(
+  executionTarget: Schema.optional(ExecutionTarget).pipe(
     Schema.withDecodingDefault(() => DEFAULT_EXECUTION_TARGET),
   ),
-  remoteHostId: Schema.optional(Schema.NullOr(RemoteHostId)),
-  remoteHostLabel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  remoteHostId: Schema.optional(Schema.NullOr(RemoteHostId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  remoteHostLabel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   defaultModel: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });

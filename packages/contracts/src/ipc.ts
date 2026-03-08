@@ -49,7 +49,7 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "./orchestration";
-import { type EditorId } from "./editor";
+import { EditorId } from "./editor";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;

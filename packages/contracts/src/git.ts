@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
+import { NonNegativeInt, PositiveInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 
@@ -37,8 +37,9 @@ const GitWorktree = Schema.Struct({
 });
 
 const GitTargetContext = {
-  cwd: TrimmedNonEmptyStringSchema,
+  projectId: Schema.optional(ProjectId),
   threadId: Schema.optional(ThreadId),
+  cwd: TrimmedNonEmptyStringSchema,
 } as const;
 
 // RPC Inputs

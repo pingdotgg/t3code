@@ -1179,11 +1179,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (debouncerState) => ({ isPending: debouncerState.isPending }),
   );
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
-  const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
+  const branchesQuery = useQuery(gitBranchesQueryOptions(activeProject?.id ?? null, gitCwd));
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const workspaceEntriesQuery = useQuery(
     projectSearchEntriesQueryOptions({
-      cwd: gitCwd,
+      projectId: activeProject?.id ?? null,
       query: effectivePathQuery,
       enabled: isPathTrigger,
       limit: 80,
@@ -2507,6 +2507,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         beginSendPhase("preparing-worktree");
         const newBranch = buildTemporaryWorktreeBranchName();
         const result = await createWorktreeMutation.mutateAsync({
+          projectId: activeProject.id,
           cwd: activeProject.cwd,
           branch: baseBranchForWorktree,
           newBranch,
@@ -3388,8 +3389,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
       >
         <ChatHeader
           activeThreadId={activeThread.id}
+          activeProjectId={activeProject?.id}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
+          activeProjectExecutionTarget={activeProject?.executionTarget}
+          activeProjectRemoteHostLabel={activeProject?.remoteHostLabel}
           isGitRepo={isGitRepo}
           openInCwd={activeThread.worktreePath ?? activeProject?.cwd ?? null}
           activeProjectScripts={activeProject?.scripts}
@@ -3432,6 +3436,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       >
         <MessagesTimeline
           key={activeThread.id}
+          activeProjectId={activeProject?.id}
           hasMessages={timelineEntries.length > 0}
           isWorking={isWorking}
           activeTurnInProgress={isWorking || !latestTurnSettled}
@@ -3450,6 +3455,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           isRevertingCheckpoint={isRevertingCheckpoint}
           onImageExpand={onExpandTimelineImage}
           markdownCwd={gitCwd ?? undefined}
+          markdownFileLinksEnabled={activeProject?.executionTarget !== "ssh-remote"}
           resolvedTheme={resolvedTheme}
           workspaceRoot={activeProject?.cwd ?? undefined}
         />
@@ -3877,6 +3883,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             key={activeThread.id}
             threadId={activeThread.id}
             cwd={gitCwd ?? activeProject.cwd}
+            allowPathLinks={activeProject.executionTarget !== "ssh-remote"}
             runtimeEnv={threadTerminalRuntimeEnv}
             height={terminalState.terminalHeight}
             terminalIds={terminalState.terminalIds}
@@ -3969,8 +3976,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
 interface ChatHeaderProps {
   activeThreadId: ThreadId;
+  activeProjectId: ProjectId | undefined;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  activeProjectExecutionTarget: "local" | "ssh-remote" | undefined;
+  activeProjectRemoteHostLabel: string | null | undefined;
   isGitRepo: boolean;
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
@@ -3988,8 +3998,11 @@ interface ChatHeaderProps {
 
 const ChatHeader = memo(function ChatHeader({
   activeThreadId,
+  activeProjectId,
   activeThreadTitle,
   activeProjectName,
+  activeProjectExecutionTarget,
+  activeProjectRemoteHostLabel,
   isGitRepo,
   openInCwd,
   activeProjectScripts,
@@ -4004,6 +4017,7 @@ const ChatHeader = memo(function ChatHeader({
   onUpdateProjectScript,
   onToggleDiff,
 }: ChatHeaderProps) {
+  const isRemoteProject = activeProjectExecutionTarget === "ssh-remote";
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
@@ -4017,6 +4031,11 @@ const ChatHeader = memo(function ChatHeader({
         {activeProjectName && (
           <Badge variant="outline" className="max-w-28 shrink-0 truncate">
             {activeProjectName}
+          </Badge>
+        )}
+        {isRemoteProject && (
+          <Badge variant="outline" className="shrink-0 border-sky-500/30 text-sky-600">
+            {activeProjectRemoteHostLabel ?? "Remote"}
           </Badge>
         )}
         {activeProjectName && !isGitRepo && (
@@ -4036,14 +4055,20 @@ const ChatHeader = memo(function ChatHeader({
             onUpdateScript={onUpdateProjectScript}
           />
         )}
-        {activeProjectName && (
+        {activeProjectName && !isRemoteProject && (
           <OpenInPicker
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
           />
         )}
-        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+        {activeProjectName && (
+          <GitActionsControl
+            projectId={activeProjectId ?? null}
+            gitCwd={gitCwd}
+            activeThreadId={activeThreadId}
+          />
+        )}
         <Tooltip>
           <TooltipTrigger
             render={
@@ -4512,13 +4537,17 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
 });
 
 const ProposedPlanCard = memo(function ProposedPlanCard({
+  activeProjectId,
   planMarkdown,
   cwd,
   workspaceRoot,
+  enableFileLinks,
 }: {
+  activeProjectId: ProjectId | undefined;
   planMarkdown: string;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
+  enableFileLinks: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
@@ -4551,7 +4580,7 @@ const ProposedPlanCard = memo(function ProposedPlanCard({
   const handleSaveToWorkspace = () => {
     const api = readNativeApi();
     const relativePath = savePath.trim();
-    if (!api || !workspaceRoot) {
+    if (!api || !workspaceRoot || !activeProjectId) {
       return;
     }
     if (!relativePath) {
@@ -4565,7 +4594,7 @@ const ProposedPlanCard = memo(function ProposedPlanCard({
     setIsSavingToWorkspace(true);
     void api.projects
       .writeFile({
-        cwd: workspaceRoot,
+        projectId: activeProjectId,
         relativePath,
         contents: saveContents,
       })
@@ -4617,7 +4646,12 @@ const ProposedPlanCard = memo(function ProposedPlanCard({
       </div>
       <div className="mt-4">
         <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
-          <ChatMarkdown text={planMarkdown} cwd={cwd} isStreaming={false} />
+          <ChatMarkdown
+            text={planMarkdown}
+            cwd={cwd}
+            isStreaming={false}
+            enableFileLinks={enableFileLinks}
+          />
           {canCollapse && !expanded ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
           ) : null}
@@ -4683,6 +4717,7 @@ const ProposedPlanCard = memo(function ProposedPlanCard({
 });
 
 interface MessagesTimelineProps {
+  activeProjectId: ProjectId | undefined;
   hasMessages: boolean;
   isWorking: boolean;
   activeTurnInProgress: boolean;
@@ -4701,6 +4736,7 @@ interface MessagesTimelineProps {
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
+  markdownFileLinksEnabled: boolean;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
 }
@@ -4737,6 +4773,7 @@ function estimateTimelineProposedPlanHeight(proposedPlan: TimelineProposedPlan):
 }
 
 const MessagesTimeline = memo(function MessagesTimeline({
+  activeProjectId,
   hasMessages,
   isWorking,
   activeTurnInProgress,
@@ -4755,6 +4792,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   isRevertingCheckpoint,
   onImageExpand,
   markdownCwd,
+  markdownFileLinksEnabled,
   resolvedTheme,
   workspaceRoot,
 }: MessagesTimelineProps) {
@@ -5136,6 +5174,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   text={messageText}
                   cwd={markdownCwd}
                   isStreaming={Boolean(row.message.streaming)}
+                  enableFileLinks={markdownFileLinksEnabled}
                 />
                 {(() => {
                   const turnSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);
@@ -5209,9 +5248,11 @@ const MessagesTimeline = memo(function MessagesTimeline({
       {row.kind === "proposed-plan" && (
         <div className="min-w-0 px-1 py-0.5">
           <ProposedPlanCard
+            activeProjectId={activeProjectId}
             planMarkdown={row.proposedPlan.planMarkdown}
             cwd={markdownCwd}
             workspaceRoot={workspaceRoot}
+            enableFileLinks={markdownFileLinksEnabled}
           />
         </div>
       )}

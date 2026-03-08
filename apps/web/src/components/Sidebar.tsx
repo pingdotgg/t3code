@@ -12,8 +12,10 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
   ProjectId,
+  RemoteHostId,
   ThreadId,
   type GitStatusResult,
+  type RemoteHostRecord,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -63,6 +65,110 @@ import { isNonEmpty as isNonEmptyString } from "effect/String";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
+const REMOTE_BROWSE_LIMIT = 40;
+
+interface RemoteHostDraft {
+  id: RemoteHostId | null;
+  label: string;
+  host: string;
+  port: string;
+  user: string;
+  identityFile: string;
+  sshConfigHost: string;
+  helperCommand: string;
+}
+
+function emptyRemoteHostDraft(): RemoteHostDraft {
+  return {
+    id: null,
+    label: "",
+    host: "",
+    port: "22",
+    user: "",
+    identityFile: "",
+    sshConfigHost: "",
+    helperCommand: "t3 remote-agent --stdio",
+  };
+}
+
+function draftFromRemoteHost(host: RemoteHostRecord): RemoteHostDraft {
+  return {
+    id: host.id,
+    label: host.label,
+    host: host.host,
+    port: String(host.port),
+    user: host.user,
+    identityFile: host.identityFile ?? "",
+    sshConfigHost: host.sshConfigHost ?? "",
+    helperCommand: host.helperCommand,
+  };
+}
+
+function normalizeRemoteHostDraft(draft: RemoteHostDraft) {
+  return {
+    id: draft.id,
+    label: draft.label.trim(),
+    host: draft.host.trim(),
+    port: draft.port.trim(),
+    user: draft.user.trim(),
+    identityFile: draft.identityFile.trim(),
+    sshConfigHost: draft.sshConfigHost.trim(),
+    helperCommand: draft.helperCommand.trim(),
+  };
+}
+
+function normalizeRemoteHostRecord(host: RemoteHostRecord) {
+  return {
+    id: host.id,
+    label: host.label.trim(),
+    host: host.host.trim(),
+    port: String(host.port),
+    user: host.user.trim(),
+    identityFile: (host.identityFile ?? "").trim(),
+    sshConfigHost: (host.sshConfigHost ?? "").trim(),
+    helperCommand: host.helperCommand.trim(),
+  };
+}
+
+function doesRemoteHostDraftMatchRecord(
+  draft: RemoteHostDraft,
+  host: RemoteHostRecord | null,
+): boolean {
+  if (!host || draft.id !== host.id) {
+    return false;
+  }
+
+  const normalizedDraft = normalizeRemoteHostDraft(draft);
+  const normalizedHost = normalizeRemoteHostRecord(host);
+
+  return (
+    normalizedDraft.label === normalizedHost.label &&
+    normalizedDraft.host === normalizedHost.host &&
+    normalizedDraft.port === normalizedHost.port &&
+    normalizedDraft.user === normalizedHost.user &&
+    normalizedDraft.identityFile === normalizedHost.identityFile &&
+    normalizedDraft.sshConfigHost === normalizedHost.sshConfigHost &&
+    normalizedDraft.helperCommand === normalizedHost.helperCommand
+  );
+}
+
+function formatRemoteProjectHost(project: {
+  executionTarget: "local" | "ssh-remote";
+  remoteHostLabel: string | null;
+}): string | null {
+  if (project.executionTarget !== "ssh-remote") {
+    return null;
+  }
+  return project.remoteHostLabel ?? "Remote host";
+}
+
+function formatRemoteHostSummary(host: RemoteHostRecord): string {
+  return `${host.user}@${host.host}${host.port === 22 ? "" : `:${host.port}`}`;
+}
+
+function projectTitleFromPath(workspacePath: string): string {
+  return workspacePath.split(/[/\\]/).findLast(isNonEmptyString) ?? workspacePath;
+}
 
 async function copyTextToClipboard(text: string): Promise<void> {
   if (typeof navigator === "undefined" || navigator.clipboard?.writeText === undefined) {
@@ -290,9 +396,16 @@ export default function Sidebar() {
   const queryClient = useQueryClient();
   const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
   const [addingProject, setAddingProject] = useState(false);
+  const [addProjectMode, setAddProjectMode] = useState<"local" | "remote">("local");
   const [newCwd, setNewCwd] = useState("");
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
+  const [selectedRemoteHostId, setSelectedRemoteHostId] = useState<RemoteHostId | null>(null);
+  const [remoteHostDraft, setRemoteHostDraft] = useState<RemoteHostDraft>(() =>
+    emptyRemoteHostDraft(),
+  );
+  const [remotePath, setRemotePath] = useState("");
+  const [remoteBrowseQuery, setRemoteBrowseQuery] = useState("");
   const [renamingThreadId, setRenamingThreadId] = useState<ThreadId | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
@@ -301,6 +414,108 @@ export default function Sidebar() {
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
+  const { data: remoteHosts = [] } = useQuery({
+    queryKey: ["remote-hosts"],
+    queryFn: async () => {
+      const api = readNativeApi();
+      if (!api) return [];
+      return api.remoteHosts.list();
+    },
+    enabled: addingProject && addProjectMode === "remote",
+    staleTime: 15_000,
+  });
+  const selectedRemoteHost = useMemo(
+    () => remoteHosts.find((host) => host.id === selectedRemoteHostId) ?? null,
+    [remoteHosts, selectedRemoteHostId],
+  );
+  const saveRemoteHostMutation = useMutation({
+    mutationFn: async (draft: RemoteHostDraft) => {
+      const api = readNativeApi();
+      if (!api) {
+        throw new Error("Native API unavailable.");
+      }
+      const port = Number.parseInt(draft.port.trim(), 10);
+      if (!draft.label.trim() || !draft.host.trim() || !draft.user.trim()) {
+        throw new Error("Label, host, and user are required.");
+      }
+      if (!Number.isInteger(port) || port <= 0) {
+        throw new Error("Port must be a positive integer.");
+      }
+      return api.remoteHosts.upsert({
+        id: draft.id ?? RemoteHostId.makeUnsafe(crypto.randomUUID()),
+        label: draft.label.trim(),
+        host: draft.host.trim(),
+        port,
+        user: draft.user.trim(),
+        ...(draft.identityFile.trim() ? { identityFile: draft.identityFile.trim() } : {}),
+        ...(draft.sshConfigHost.trim() ? { sshConfigHost: draft.sshConfigHost.trim() } : {}),
+        ...(draft.helperCommand.trim() ? { helperCommand: draft.helperCommand.trim() } : {}),
+      });
+    },
+    onSuccess: async (host) => {
+      setSelectedRemoteHostId(host.id);
+      setRemoteHostDraft(draftFromRemoteHost(host));
+      await queryClient.invalidateQueries({ queryKey: ["remote-hosts"] });
+      toastManager.add({
+        type: "success",
+        title: "Saved remote host",
+        description: host.label,
+      });
+    },
+  });
+  const testRemoteHostMutation = useMutation({
+    mutationFn: async (remoteHostId: RemoteHostId) => {
+      const api = readNativeApi();
+      if (!api) {
+        throw new Error("Native API unavailable.");
+      }
+      return api.remoteHosts.testConnection({ remoteHostId });
+    },
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["remote-hosts"] });
+      toastManager.add({
+        type: result.ok ? "success" : "error",
+        title: result.ok ? "Remote host connected" : "Remote host unavailable",
+        description:
+          result.helperVersion !== null
+            ? `Helper ${result.helperVersion}`
+            : (result.message ?? "Connection test completed."),
+      });
+    },
+  });
+  const browseRemoteHostMutation = useMutation({
+    mutationFn: async (input: { remoteHostId: RemoteHostId; path?: string; query?: string }) => {
+      const api = readNativeApi();
+      if (!api) {
+        throw new Error("Native API unavailable.");
+      }
+      return api.remoteHosts.browse({
+        remoteHostId: input.remoteHostId,
+        ...(input.path?.trim() ? { path: input.path.trim() } : {}),
+        ...(input.query?.trim() ? { query: input.query.trim() } : {}),
+        limit: REMOTE_BROWSE_LIMIT,
+      });
+    },
+  });
+  const removeRemoteHostMutation = useMutation({
+    mutationFn: async (remoteHostId: RemoteHostId) => {
+      const api = readNativeApi();
+      if (!api) {
+        throw new Error("Native API unavailable.");
+      }
+      await api.remoteHosts.remove({ remoteHostId });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["remote-hosts"] });
+      setSelectedRemoteHostId(null);
+      setRemoteHostDraft(emptyRemoteHostDraft());
+      browseRemoteHostMutation.reset();
+      toastManager.add({
+        type: "success",
+        title: "Remote host removed",
+      });
+    },
+  });
   const pendingApprovalByThreadId = useMemo(() => {
     const map = new Map<ThreadId, boolean>();
     for (const thread of threads) {
@@ -316,49 +531,58 @@ export default function Sidebar() {
     () =>
       threads.map((thread) => ({
         threadId: thread.id,
+        projectId: thread.projectId,
         branch: thread.branch,
         cwd: thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null,
       })),
     [projectCwdById, threads],
   );
-  const threadGitStatusCwds = useMemo(
-    () => [
-      ...new Set(
-        threadGitTargets
-          .filter((target) => target.branch !== null)
-          .map((target) => target.cwd)
-          .filter((cwd): cwd is string => cwd !== null),
-      ),
-    ],
-    [threadGitTargets],
-  );
+  const threadGitStatusTargets = useMemo(() => {
+    const seen = new Set<string>();
+    const next: Array<{ projectId: ProjectId; cwd: string }> = [];
+    for (const target of threadGitTargets) {
+      if (target.branch === null || target.cwd === null) {
+        continue;
+      }
+      const key = `${target.projectId}:${target.cwd}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      next.push({ projectId: target.projectId, cwd: target.cwd });
+    }
+    return next;
+  }, [threadGitTargets]);
   const threadGitStatusQueries = useQueries({
-    queries: threadGitStatusCwds.map((cwd) => ({
-      ...gitStatusQueryOptions(cwd),
+    queries: threadGitStatusTargets.map((target) => ({
+      ...gitStatusQueryOptions(target.projectId, target.cwd),
       staleTime: 30_000,
       refetchInterval: 60_000,
     })),
   });
   const prByThreadId = useMemo(() => {
-    const statusByCwd = new Map<string, GitStatusResult>();
-    for (let index = 0; index < threadGitStatusCwds.length; index += 1) {
-      const cwd = threadGitStatusCwds[index];
-      if (!cwd) continue;
+    const statusByTarget = new Map<string, GitStatusResult>();
+    for (let index = 0; index < threadGitStatusTargets.length; index += 1) {
+      const target = threadGitStatusTargets[index];
+      if (!target) {
+        continue;
+      }
       const status = threadGitStatusQueries[index]?.data;
       if (status) {
-        statusByCwd.set(cwd, status);
+        statusByTarget.set(`${target.projectId}:${target.cwd}`, status);
       }
     }
 
     const map = new Map<ThreadId, ThreadPr>();
     for (const target of threadGitTargets) {
-      const status = target.cwd ? statusByCwd.get(target.cwd) : undefined;
+      const status =
+        target.cwd !== null ? statusByTarget.get(`${target.projectId}:${target.cwd}`) : undefined;
       const branchMatches =
         target.branch !== null && status?.branch !== null && status?.branch === target.branch;
       map.set(target.threadId, branchMatches ? (status?.pr ?? null) : null);
     }
     return map;
-  }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
+  }, [threadGitStatusQueries, threadGitStatusTargets, threadGitTargets]);
 
   const openPrLink = useCallback((event: React.MouseEvent<HTMLElement>, prUrl: string) => {
     event.preventDefault();
@@ -489,7 +713,9 @@ export default function Sidebar() {
         setAddingProject(false);
       };
 
-      const existing = projects.find((project) => project.cwd === cwd);
+      const existing = projects.find(
+        (project) => project.executionTarget === "local" && project.cwd === cwd,
+      );
       if (existing) {
         focusMostRecentThreadForProject(existing.id);
         finishAddingProject();
@@ -498,7 +724,7 @@ export default function Sidebar() {
 
       const projectId = newProjectId();
       const createdAt = new Date().toISOString();
-      const title = cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd;
+      const title = projectTitleFromPath(cwd);
       try {
         await api.orchestration.dispatchCommand({
           type: "project.create",
@@ -528,9 +754,155 @@ export default function Sidebar() {
     [focusMostRecentThreadForProject, handleNewThread, isAddingProject, projects],
   );
 
+  const handleRemoteHostSelect = useCallback(
+    (remoteHostId: RemoteHostId | null) => {
+      setSelectedRemoteHostId(remoteHostId);
+      const nextHost = remoteHosts.find((host) => host.id === remoteHostId) ?? null;
+      setRemoteHostDraft(nextHost ? draftFromRemoteHost(nextHost) : emptyRemoteHostDraft());
+      browseRemoteHostMutation.reset();
+    },
+    [browseRemoteHostMutation, remoteHosts],
+  );
+
+  const handleSaveRemoteHost = useCallback(() => {
+    void saveRemoteHostMutation.mutateAsync(remoteHostDraft).catch((error) => {
+      toastManager.add({
+        type: "error",
+        title: "Could not save remote host",
+        description: error instanceof Error ? error.message : "An unexpected error occurred.",
+      });
+    });
+  }, [remoteHostDraft, saveRemoteHostMutation]);
+
+  const ensureSavedRemoteHost = useCallback(async (): Promise<RemoteHostRecord> => {
+    if (selectedRemoteHost && doesRemoteHostDraftMatchRecord(remoteHostDraft, selectedRemoteHost)) {
+      return selectedRemoteHost;
+    }
+    return saveRemoteHostMutation.mutateAsync(remoteHostDraft);
+  }, [remoteHostDraft, saveRemoteHostMutation, selectedRemoteHost]);
+
+  const addRemoteProjectFromPath = useCallback(
+    async (rawPath: string) => {
+      const api = readNativeApi();
+      const workspaceRoot = rawPath.trim();
+      if (!api || !workspaceRoot || isAddingProject) {
+        return;
+      }
+
+      let savedRemoteHost: RemoteHostRecord;
+      try {
+        savedRemoteHost = await ensureSavedRemoteHost();
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Could not save remote host",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+        return;
+      }
+
+      setIsAddingProject(true);
+      const finishAddingProject = () => {
+        setIsAddingProject(false);
+        setRemotePath("");
+        setRemoteBrowseQuery("");
+        browseRemoteHostMutation.reset();
+        setAddingProject(false);
+      };
+
+      const existing = projects.find(
+        (project) =>
+          project.executionTarget === "ssh-remote" &&
+          project.remoteHostId === savedRemoteHost.id &&
+          project.cwd === workspaceRoot,
+      );
+      if (existing) {
+        focusMostRecentThreadForProject(existing.id);
+        finishAddingProject();
+        return;
+      }
+
+      const projectId = newProjectId();
+      const createdAt = new Date().toISOString();
+      try {
+        await api.orchestration.dispatchCommand({
+          type: "project.create",
+          commandId: newCommandId(),
+          projectId,
+          title: projectTitleFromPath(workspaceRoot),
+          workspaceRoot,
+          executionTarget: "ssh-remote",
+          remoteHostId: savedRemoteHost.id,
+          remoteHostLabel: savedRemoteHost.label,
+          defaultModel: DEFAULT_MODEL_BY_PROVIDER.codex,
+          createdAt,
+        });
+        await handleNewThread(projectId).catch(() => undefined);
+      } catch (error) {
+        setIsAddingProject(false);
+        toastManager.add({
+          type: "error",
+          title: "Unable to add remote project",
+          description:
+            error instanceof Error ? error.message : "An error occurred while adding the project.",
+        });
+        return;
+      }
+      finishAddingProject();
+    },
+    [
+      browseRemoteHostMutation,
+      ensureSavedRemoteHost,
+      focusMostRecentThreadForProject,
+      handleNewThread,
+      isAddingProject,
+      projects,
+    ],
+  );
+
   const handleAddProject = () => {
+    if (addProjectMode === "remote") {
+      void addRemoteProjectFromPath(remotePath);
+      return;
+    }
     void addProjectFromPath(newCwd);
   };
+
+  const handleTestRemoteHost = useCallback(() => {
+    void ensureSavedRemoteHost()
+      .then((host) => testRemoteHostMutation.mutateAsync(host.id))
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Remote host connection failed",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      });
+  }, [ensureSavedRemoteHost, testRemoteHostMutation]);
+
+  const handleBrowseRemotePath = useCallback(
+    (pathOverride?: string) => {
+      void ensureSavedRemoteHost()
+        .then((host) =>
+          browseRemoteHostMutation.mutateAsync({
+            remoteHostId: host.id,
+            path: pathOverride ?? remotePath,
+            query: remoteBrowseQuery,
+          }),
+        )
+        .then((result) => {
+          setRemotePath(result.cwd);
+        })
+        .catch((error) => {
+          toastManager.add({
+            type: "error",
+            title: "Unable to browse remote path",
+            description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          });
+        });
+    },
+    [browseRemoteHostMutation, ensureSavedRemoteHost, remoteBrowseQuery, remotePath],
+  );
 
   const handlePickFolder = async () => {
     const api = readNativeApi();
@@ -718,6 +1090,7 @@ export default function Sidebar() {
 
       try {
         await removeWorktreeMutation.mutateAsync({
+          projectId: threadProject.id,
           cwd: threadProject.cwd,
           path: orphanedWorktreePath,
           force: true,
@@ -840,6 +1213,21 @@ export default function Sidebar() {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
   }, [getDraftThread, handleNewThread, keybindings, projects, routeThreadId, threads]);
+
+  useEffect(() => {
+    if (!addingProject || addProjectMode !== "remote") {
+      return;
+    }
+    if (selectedRemoteHostId) {
+      return;
+    }
+    const firstHost = remoteHosts[0];
+    if (!firstHost) {
+      return;
+    }
+    setSelectedRemoteHostId(firstHost.id);
+    setRemoteHostDraft(draftFromRemoteHost(firstHost));
+  }, [addProjectMode, addingProject, remoteHosts, selectedRemoteHostId]);
 
   useEffect(() => {
     if (!isElectron) return;
@@ -1076,9 +1464,27 @@ export default function Sidebar() {
                             project.expanded ? "rotate-90" : ""
                           }`}
                         />
-                        <ProjectFavicon cwd={project.cwd} />
-                        <span className="flex-1 truncate text-xs font-medium text-foreground/90">
-                          {project.name}
+                        {project.executionTarget === "local" ? (
+                          <ProjectFavicon cwd={project.cwd} />
+                        ) : (
+                          <FolderIcon className="size-3.5 shrink-0 text-sky-500/80" />
+                        )}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-xs font-medium text-foreground/90">
+                            {project.name}
+                          </span>
+                          <span className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground/60">
+                            {project.executionTarget === "ssh-remote" && (
+                              <span className="rounded-full border border-sky-500/25 bg-sky-500/8 px-1.5 py-0.5 uppercase tracking-[0.12em] text-sky-600 dark:text-sky-300">
+                                Remote
+                              </span>
+                            )}
+                            <span className="truncate">
+                              {formatRemoteProjectHost(project)
+                                ? `${formatRemoteProjectHost(project)} · ${project.cwd}`
+                                : project.cwd}
+                            </span>
+                          </span>
                         </span>
                       </CollapsibleTrigger>
                       <Tooltip>
@@ -1304,27 +1710,285 @@ export default function Sidebar() {
         {addingProject ? (
           <>
             <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-              Add project
+              {addProjectMode === "remote" ? "Add remote project" : "Add project"}
             </p>
-            <input
-              className="mb-2 w-full rounded-md border border-border bg-secondary px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
-              placeholder="/path/to/project"
-              value={newCwd}
-              onChange={(event) => setNewCwd(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") handleAddProject();
-                if (event.key === "Escape") setAddingProject(false);
-              }}
-            />
-            {isElectron && (
+            <div className="mb-2 grid grid-cols-2 gap-2">
               <button
                 type="button"
-                className="mb-2 flex w-full items-center justify-center rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={() => void handlePickFolder()}
-                disabled={isPickingFolder || isAddingProject}
+                className={`rounded-md border px-2 py-1 text-xs transition-colors duration-150 ${
+                  addProjectMode === "local"
+                    ? "border-ring bg-secondary text-foreground"
+                    : "border-border text-muted-foreground/80 hover:bg-secondary"
+                }`}
+                onClick={() => setAddProjectMode("local")}
               >
-                {isPickingFolder ? "Picking folder..." : "Browse for folder"}
+                Local
               </button>
+              <button
+                type="button"
+                className={`rounded-md border px-2 py-1 text-xs transition-colors duration-150 ${
+                  addProjectMode === "remote"
+                    ? "border-ring bg-secondary text-foreground"
+                    : "border-border text-muted-foreground/80 hover:bg-secondary"
+                }`}
+                onClick={() => setAddProjectMode("remote")}
+              >
+                Remote
+              </button>
+            </div>
+            {addProjectMode === "local" ? (
+              <>
+                <input
+                  className="mb-2 w-full rounded-md border border-border bg-secondary px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                  placeholder="/path/to/project"
+                  value={newCwd}
+                  onChange={(event) => setNewCwd(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") handleAddProject();
+                    if (event.key === "Escape") setAddingProject(false);
+                  }}
+                />
+                {isElectron && (
+                  <button
+                    type="button"
+                    className="mb-2 flex w-full items-center justify-center rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => void handlePickFolder()}
+                    disabled={isPickingFolder || isAddingProject}
+                  >
+                    {isPickingFolder ? "Picking folder..." : "Browse for folder"}
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                <select
+                  className="mb-2 w-full rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                  value={selectedRemoteHostId ?? ""}
+                  onChange={(event) =>
+                    handleRemoteHostSelect(
+                      event.target.value
+                        ? RemoteHostId.makeUnsafe(event.target.value)
+                        : null,
+                    )
+                  }
+                >
+                  <option value="">Select saved host</option>
+                  {remoteHosts.map((host) => (
+                    <option key={host.id} value={host.id}>
+                      {host.label} ({formatRemoteHostSummary(host)})
+                    </option>
+                  ))}
+                </select>
+                <div className="mb-2 grid grid-cols-2 gap-2">
+                  <input
+                    className="rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                    placeholder="Host label"
+                    value={remoteHostDraft.label}
+                    onChange={(event) =>
+                      setRemoteHostDraft((current) => ({
+                        ...current,
+                        label: event.target.value,
+                      }))
+                    }
+                  />
+                  <input
+                    className="rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                    placeholder="ssh user"
+                    value={remoteHostDraft.user}
+                    onChange={(event) =>
+                      setRemoteHostDraft((current) => ({
+                        ...current,
+                        user: event.target.value,
+                      }))
+                    }
+                  />
+                  <input
+                    className="rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                    placeholder="host"
+                    value={remoteHostDraft.host}
+                    onChange={(event) =>
+                      setRemoteHostDraft((current) => ({
+                        ...current,
+                        host: event.target.value,
+                      }))
+                    }
+                  />
+                  <input
+                    className="rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                    placeholder="port"
+                    value={remoteHostDraft.port}
+                    onChange={(event) =>
+                      setRemoteHostDraft((current) => ({
+                        ...current,
+                        port: event.target.value,
+                      }))
+                    }
+                  />
+                  <input
+                    className="rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                    placeholder="ssh config host (optional)"
+                    value={remoteHostDraft.sshConfigHost}
+                    onChange={(event) =>
+                      setRemoteHostDraft((current) => ({
+                        ...current,
+                        sshConfigHost: event.target.value,
+                      }))
+                    }
+                  />
+                  <input
+                    className="rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                    placeholder="identity file (optional)"
+                    value={remoteHostDraft.identityFile}
+                    onChange={(event) =>
+                      setRemoteHostDraft((current) => ({
+                        ...current,
+                        identityFile: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <input
+                  className="mb-2 w-full rounded-md border border-border bg-secondary px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                  placeholder="t3 remote-agent --stdio"
+                  value={remoteHostDraft.helperCommand}
+                  onChange={(event) =>
+                    setRemoteHostDraft((current) => ({
+                      ...current,
+                      helperCommand: event.target.value,
+                    }))
+                  }
+                />
+                {selectedRemoteHost && (
+                  <div className="mb-2 rounded-md border border-border/70 bg-secondary/60 px-2 py-1.5 text-[10px] text-muted-foreground/80">
+                    <div className="font-medium text-foreground/80">
+                      {formatRemoteHostSummary(selectedRemoteHost)}
+                    </div>
+                    <div>
+                      Status:{" "}
+                      {selectedRemoteHost.lastConnectionStatus === "ok"
+                        ? "Connected"
+                        : selectedRemoteHost.lastConnectionStatus === "error"
+                          ? "Error"
+                          : "Unknown"}
+                      {selectedRemoteHost.helperVersion
+                        ? ` · Helper ${selectedRemoteHost.helperVersion}`
+                        : ""}
+                    </div>
+                    {selectedRemoteHost.lastConnectionError && (
+                      <div className="mt-1 truncate text-rose-500/90">
+                        {selectedRemoteHost.lastConnectionError}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="mb-2 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={handleSaveRemoteHost}
+                    disabled={saveRemoteHostMutation.isPending}
+                  >
+                    {saveRemoteHostMutation.isPending ? "Saving..." : "Save host"}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={handleTestRemoteHost}
+                    disabled={!selectedRemoteHostId || testRemoteHostMutation.isPending}
+                  >
+                    {testRemoteHostMutation.isPending ? "Testing..." : "Test connection"}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary"
+                    onClick={() => {
+                      setSelectedRemoteHostId(null);
+                      setRemoteHostDraft(emptyRemoteHostDraft());
+                    }}
+                  >
+                    New host
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => {
+                      if (!selectedRemoteHostId) {
+                        return;
+                      }
+                      void removeRemoteHostMutation.mutateAsync(selectedRemoteHostId).catch(
+                        (error) => {
+                          toastManager.add({
+                            type: "error",
+                            title: "Could not remove remote host",
+                            description:
+                              error instanceof Error
+                                ? error.message
+                                : "An unexpected error occurred.",
+                          });
+                        },
+                      );
+                    }}
+                    disabled={!selectedRemoteHostId || removeRemoteHostMutation.isPending}
+                  >
+                    Remove host
+                  </button>
+                </div>
+                <input
+                  className="mb-2 w-full rounded-md border border-border bg-secondary px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                  placeholder="~/project or /srv/project"
+                  value={remotePath}
+                  onChange={(event) => setRemotePath(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") handleAddProject();
+                    if (event.key === "Escape") setAddingProject(false);
+                  }}
+                />
+                <div className="mb-2 flex gap-2">
+                  <input
+                    className="min-w-0 flex-1 rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                    placeholder="Browse filter (optional)"
+                    value={remoteBrowseQuery}
+                    onChange={(event) => setRemoteBrowseQuery(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => handleBrowseRemotePath()}
+                    disabled={!selectedRemoteHostId || browseRemoteHostMutation.isPending}
+                  >
+                    {browseRemoteHostMutation.isPending ? "Loading..." : "Browse"}
+                  </button>
+                </div>
+                {browseRemoteHostMutation.data && (
+                  <div className="mb-2 rounded-md border border-border/70 bg-secondary/50 p-1">
+                    <div className="px-1 pb-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
+                      {browseRemoteHostMutation.data.cwd}
+                    </div>
+                    <div className="max-h-36 space-y-1 overflow-y-auto">
+                      {browseRemoteHostMutation.data.entries.map((entry) => (
+                        <button
+                          key={`${entry.kind}:${entry.path}`}
+                          type="button"
+                          className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-background hover:text-foreground"
+                          onClick={() => {
+                            const nextPath =
+                              entry.kind === "directory" ? entry.path : (entry.parentPath ?? entry.path);
+                            setRemotePath(nextPath);
+                            if (entry.kind === "directory") {
+                              handleBrowseRemotePath(entry.path);
+                            }
+                          }}
+                        >
+                          <span className="truncate">{entry.path}</span>
+                          <span className="ml-2 shrink-0 text-[10px] uppercase tracking-[0.12em] text-muted-foreground/50">
+                            {entry.kind}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
             <div className="flex gap-2">
               <button
@@ -1333,12 +1997,19 @@ export default function Sidebar() {
                 onClick={handleAddProject}
                 disabled={isAddingProject}
               >
-                {isAddingProject ? "Adding..." : "Add"}
+                {isAddingProject ? "Adding..." : addProjectMode === "remote" ? "Add remote" : "Add"}
               </button>
               <button
                 type="button"
                 className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary"
-                onClick={() => setAddingProject(false)}
+                onClick={() => {
+                  setAddingProject(false);
+                  setAddProjectMode("local");
+                  setNewCwd("");
+                  setRemotePath("");
+                  setRemoteBrowseQuery("");
+                  browseRemoteHostMutation.reset();
+                }}
               >
                 Cancel
               </button>
@@ -1348,7 +2019,10 @@ export default function Sidebar() {
           <button
             type="button"
             className="flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-border py-2 text-xs text-muted-foreground/70 transition-colors duration-150 hover:border-ring hover:text-muted-foreground"
-            onClick={() => setAddingProject(true)}
+            onClick={() => {
+              setAddingProject(true);
+              setAddProjectMode("local");
+            }}
           >
             + Add project
           </button>

@@ -144,7 +144,7 @@ export function createWsNativeApi(): NativeApi {
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
     },
     remoteHosts: {
-      list: () => transport.request(WS_METHODS.remoteHostsList, {}),
+      list: () => transport.request(WS_METHODS.remoteHostsList),
       upsert: (input) => transport.request(WS_METHODS.remoteHostsUpsert, input),
       remove: (input) => transport.request(WS_METHODS.remoteHostsRemove, input),
       testConnection: (input) => transport.request(WS_METHODS.remoteHostsTestConnection, input),

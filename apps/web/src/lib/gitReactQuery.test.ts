@@ -8,13 +8,15 @@ import {
 
 describe("gitMutationKeys", () => {
   it("scopes stacked action keys by cwd", () => {
-    expect(gitMutationKeys.runStackedAction("/repo/a")).not.toEqual(
-      gitMutationKeys.runStackedAction("/repo/b"),
+    expect(gitMutationKeys.runStackedAction(null, "/repo/a")).not.toEqual(
+      gitMutationKeys.runStackedAction(null, "/repo/b"),
     );
   });
 
   it("scopes pull keys by cwd", () => {
-    expect(gitMutationKeys.pull("/repo/a")).not.toEqual(gitMutationKeys.pull("/repo/b"));
+    expect(gitMutationKeys.pull(null, "/repo/a")).not.toEqual(
+      gitMutationKeys.pull(null, "/repo/b"),
+    );
   });
 });
 
@@ -23,11 +25,11 @@ describe("git mutation options", () => {
 
   it("attaches cwd-scoped mutation key for runStackedAction", () => {
     const options = gitRunStackedActionMutationOptions({ cwd: "/repo/a", queryClient });
-    expect(options.mutationKey).toEqual(gitMutationKeys.runStackedAction("/repo/a"));
+    expect(options.mutationKey).toEqual(gitMutationKeys.runStackedAction(null, "/repo/a"));
   });
 
   it("attaches cwd-scoped mutation key for pull", () => {
     const options = gitPullMutationOptions({ cwd: "/repo/a", queryClient });
-    expect(options.mutationKey).toEqual(gitMutationKeys.pull("/repo/a"));
+    expect(options.mutationKey).toEqual(gitMutationKeys.pull(null, "/repo/a"));
   });
 });

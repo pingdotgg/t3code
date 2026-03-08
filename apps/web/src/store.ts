@@ -40,7 +40,7 @@ const initialState: AppState = {
   threads: [],
   threadsHydrated: false,
 };
-const persistedExpandedProjectCwds = new Set<string>();
+const persistedExpandedProjectIds = new Set<string>();
 
 // ── Persist helpers ──────────────────────────────────────────────────
 
@@ -49,11 +49,11 @@ function readPersistedState(): AppState {
   try {
     const raw = window.localStorage.getItem(PERSISTED_STATE_KEY);
     if (!raw) return initialState;
-    const parsed = JSON.parse(raw) as { expandedProjectCwds?: string[] };
-    persistedExpandedProjectCwds.clear();
-    for (const cwd of parsed.expandedProjectCwds ?? []) {
-      if (typeof cwd === "string" && cwd.length > 0) {
-        persistedExpandedProjectCwds.add(cwd);
+    const parsed = JSON.parse(raw) as { expandedProjectIds?: string[] };
+    persistedExpandedProjectIds.clear();
+    for (const projectId of parsed.expandedProjectIds ?? []) {
+      if (typeof projectId === "string" && projectId.length > 0) {
+        persistedExpandedProjectIds.add(projectId);
       }
     }
     return { ...initialState };
@@ -68,9 +68,9 @@ function persistState(state: AppState): void {
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
-        expandedProjectCwds: state.projects
+        expandedProjectIds: state.projects
           .filter((project) => project.expanded)
-          .map((project) => project.cwd),
+          .map((project) => project.id),
       }),
     );
     for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
@@ -105,18 +105,26 @@ function mapProjectsFromReadModel(
   return incoming.map((project) => {
     const existing =
       previous.find((entry) => entry.id === project.id) ??
-      previous.find((entry) => entry.cwd === project.workspaceRoot);
+      previous.find(
+        (entry) =>
+          entry.cwd === project.workspaceRoot &&
+          entry.executionTarget === project.executionTarget &&
+          entry.remoteHostId === project.remoteHostId,
+      );
     return {
       id: project.id,
       name: project.title,
       cwd: project.workspaceRoot,
+      executionTarget: project.executionTarget ?? "local",
+      remoteHostId: project.remoteHostId ?? null,
+      remoteHostLabel: project.remoteHostLabel ?? null,
       model:
         existing?.model ??
         resolveModelSlug(project.defaultModel ?? DEFAULT_MODEL_BY_PROVIDER.codex),
       expanded:
         existing?.expanded ??
-        (persistedExpandedProjectCwds.size > 0
-          ? persistedExpandedProjectCwds.has(project.workspaceRoot)
+        (persistedExpandedProjectIds.size > 0
+          ? persistedExpandedProjectIds.has(project.id)
           : true),
       scripts: project.scripts.map((script) => ({ ...script })),
     };

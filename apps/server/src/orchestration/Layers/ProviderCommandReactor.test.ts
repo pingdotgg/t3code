@@ -28,6 +28,7 @@ import {
 } from "../../provider/Services/ProviderService.ts";
 import { GitCore, type GitCoreShape } from "../../git/Services/GitCore.ts";
 import { TextGeneration, type TextGenerationShape } from "../../git/Services/TextGeneration.ts";
+import { TestProviderWorkspaceRuntimeRouterLive } from "../../remote/Layers/TestLocalWorkspaceRuntimeRouter.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { ProviderCommandReactorLive } from "./ProviderCommandReactor.ts";
@@ -197,13 +198,18 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const providerLayer = Layer.succeed(ProviderService, service);
+    const routerLayer = TestProviderWorkspaceRuntimeRouterLive.pipe(
+      Layer.provideMerge(providerLayer),
+    );
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
-      Layer.provideMerge(Layer.succeed(ProviderService, service)),
+      Layer.provideMerge(providerLayer),
       Layer.provideMerge(Layer.succeed(GitCore, { renameBranch } as unknown as GitCoreShape)),
       Layer.provideMerge(
         Layer.succeed(TextGeneration, { generateBranchName } as unknown as TextGenerationShape),
       ),
+      Layer.provideMerge(routerLayer),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), stateDir)),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -222,9 +228,6 @@ describe("ProviderCommandReactor", () => {
         projectId: asProjectId("project-1"),
         title: "Provider Project",
         workspaceRoot: "/tmp/provider-project",
-        executionTarget: "local",
-        remoteHostId: null,
-        remoteHostLabel: null,
         defaultModel: "gpt-5-codex",
         createdAt: now,
       }),

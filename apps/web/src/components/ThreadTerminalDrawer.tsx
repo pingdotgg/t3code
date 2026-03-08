@@ -111,6 +111,7 @@ interface TerminalViewportProps {
   threadId: ThreadId;
   terminalId: string;
   cwd: string;
+  allowPathLinks: boolean;
   runtimeEnv?: Record<string, string>;
   onSessionExited: () => void;
   focusRequestId: number;
@@ -123,6 +124,7 @@ function TerminalViewport({
   threadId,
   terminalId,
   cwd,
+  allowPathLinks,
   runtimeEnv,
   onSessionExited,
   focusRequestId,
@@ -232,6 +234,14 @@ function TerminalViewport({
                     error instanceof Error ? error.message : "Unable to open link",
                   );
                 });
+                return;
+              }
+
+              if (!allowPathLinks) {
+                writeSystemMessage(
+                  latestTerminal,
+                  "Remote file paths can't be opened in a local editor.",
+                );
                 return;
               }
 
@@ -436,6 +446,7 @@ function TerminalViewport({
 interface ThreadTerminalDrawerProps {
   threadId: ThreadId;
   cwd: string;
+  allowPathLinks?: boolean;
   runtimeEnv?: Record<string, string>;
   height: number;
   terminalIds: string[];
@@ -485,6 +496,7 @@ function TerminalActionButton({ label, className, onClick, children }: TerminalA
 export default function ThreadTerminalDrawer({
   threadId,
   cwd,
+  allowPathLinks = true,
   runtimeEnv,
   height,
   terminalIds,
@@ -804,6 +816,7 @@ export default function ThreadTerminalDrawer({
                         threadId={threadId}
                         terminalId={terminalId}
                         cwd={cwd}
+                        allowPathLinks={allowPathLinks}
                         {...(runtimeEnv ? { runtimeEnv } : {})}
                         onSessionExited={() => onCloseTerminal(terminalId)}
                         focusRequestId={focusRequestId}
@@ -822,6 +835,7 @@ export default function ThreadTerminalDrawer({
                   threadId={threadId}
                   terminalId={resolvedActiveTerminalId}
                   cwd={cwd}
+                  allowPathLinks={allowPathLinks}
                   {...(runtimeEnv ? { runtimeEnv } : {})}
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
                   focusRequestId={focusRequestId}

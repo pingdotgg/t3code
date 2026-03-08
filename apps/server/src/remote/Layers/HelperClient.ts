@@ -35,6 +35,32 @@ interface RemoteConnection {
   readonly output: readline.Interface;
   readonly pending: Map<string, PendingRequest>;
   readonly heartbeat: NodeJS.Timeout;
+  readonly recentStderr: string[];
+  readonly recentStdout: string[];
+}
+
+const MAX_DEBUG_LINES = 8;
+
+function pushDebugLine(buffer: string[], line: string) {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) {
+    return;
+  }
+  buffer.push(trimmed);
+  if (buffer.length > MAX_DEBUG_LINES) {
+    buffer.splice(0, buffer.length - MAX_DEBUG_LINES);
+  }
+}
+
+function formatConnectionDebug(connection: RemoteConnection): string {
+  const details: string[] = [];
+  if (connection.recentStdout.length > 0) {
+    details.push(`stdout=${connection.recentStdout.join(" | ")}`);
+  }
+  if (connection.recentStderr.length > 0) {
+    details.push(`stderr=${connection.recentStderr.join(" | ")}`);
+  }
+  return details.length > 0 ? ` (${details.join("; ")})` : "";
 }
 
 function toRemoteHelperError(
@@ -92,7 +118,7 @@ const makeRemoteHelperClient = Effect.gen(function* () {
       };
       const timeout = setTimeout(() => {
         connection.pending.delete(id);
-        reject(new Error(`Remote helper request timed out: ${method}`));
+        reject(new Error(`Remote helper request timed out: ${method}${formatConnectionDebug(connection)}`));
       }, CALL_TIMEOUT_MS);
 
       connection.pending.set(id, {
@@ -155,11 +181,16 @@ const makeRemoteHelperClient = Effect.gen(function* () {
         output,
         pending,
         heartbeat,
+        recentStderr: [],
+        recentStdout: [],
       };
 
       child.stderr.on("data", (chunk) => {
         const message = Buffer.from(chunk).toString("utf8").trim();
         if (message.length > 0) {
+          for (const line of message.split(/\r?\n/)) {
+            pushDebugLine(connection.recentStderr, line);
+          }
           logger.warn("remote helper stderr", { remoteHostId, message });
         }
       });
@@ -167,8 +198,18 @@ const makeRemoteHelperClient = Effect.gen(function* () {
       child.once("error", (error) => {
         removeConnection(remoteHostId, error);
       });
-      child.once("close", (_code, _signal) => {
-        removeConnection(remoteHostId, new Error(`Remote helper connection closed for ${remoteHostId}.`));
+      child.once("close", (code, signal) => {
+        const suffix = formatConnectionDebug(connection);
+        const detail =
+          code !== null
+            ? `exit code ${code}`
+            : signal !== null
+              ? `signal ${signal}`
+              : "unknown termination";
+        removeConnection(
+          remoteHostId,
+          new Error(`Remote helper connection closed for ${remoteHostId} (${detail})${suffix}`),
+        );
       });
 
       output.on("line", (line) => {
@@ -185,6 +226,7 @@ const makeRemoteHelperClient = Effect.gen(function* () {
             | RemoteHelperFailure
             | RemoteHelperNotification<unknown>;
         } catch (error) {
+          pushDebugLine(connection.recentStdout, line);
           logger.warn("failed to parse remote helper line", { remoteHostId, line, error });
           return;
         }
@@ -281,7 +323,12 @@ const makeRemoteHelperClient = Effect.gen(function* () {
     });
 
   const testConnection = (remoteHostId: RemoteHostId) =>
-    call(remoteHostId, REMOTE_HELPER_METHODS.hostGetCapabilities, undefined);
+    Effect.sync(() => {
+      removeConnection(
+        remoteHostId,
+        new Error(`Remote helper connection reset for test: ${remoteHostId}`),
+      );
+    }).pipe(Effect.flatMap(() => call(remoteHostId, REMOTE_HELPER_METHODS.hostGetCapabilities, undefined)));
 
   const subscribe: RemoteHelperClientShape["subscribe"] = (listener) =>
     Effect.sync(() => {

@@ -6,6 +6,8 @@ import type {
   ProjectScript as ContractProjectScript,
   ThreadId,
   ProjectId,
+  ExecutionTarget,
+  RemoteHostId,
   TurnId,
   MessageId,
   CheckpointRef,
@@ -78,6 +80,9 @@ export interface Project {
   id: ProjectId;
   name: string;
   cwd: string;
+  executionTarget: ExecutionTarget;
+  remoteHostId: RemoteHostId | null;
+  remoteHostLabel: string | null;
   model: string;
   expanded: boolean;
   scripts: ProjectScript[];

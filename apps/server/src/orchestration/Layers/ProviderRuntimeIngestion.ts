@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Ref, Stream } from "effect";
 
-import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { WorkspaceRuntimeRouter } from "../../remote/Services/WorkspaceRuntimeRouter.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { isGitRepository } from "../../git/isRepo.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -485,7 +485,7 @@ function runtimeEventToActivities(
 
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
-  const providerService = yield* ProviderService;
+  const runtimeRouter = yield* WorkspaceRuntimeRouter;
 
   const assistantDeliveryModeRef = yield* Ref.make<AssistantDeliveryMode>(
     DEFAULT_ASSISTANT_DELIVERY_MODE,
@@ -1123,7 +1123,7 @@ const make = Effect.gen(function* () {
       Effect.forever(Queue.take(inputQueue).pipe(Effect.flatMap(processInputSafely))),
     );
     yield* Effect.forkScoped(
-      Stream.runForEach(providerService.streamEvents, (event) =>
+      Stream.runForEach(runtimeRouter.providerEvents, (event) =>
         Queue.offer(inputQueue, { source: "runtime", event }).pipe(Effect.asVoid),
       ),
     );

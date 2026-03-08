@@ -34,6 +34,7 @@ import {
   Exit,
   FileSystem,
   Layer,
+  Option,
   Path,
   Ref,
   Schema,
@@ -48,7 +49,6 @@ import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { Keybindings } from "./keybindings";
-import { searchWorkspaceEntries } from "./workspaceEntries";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
@@ -73,8 +73,9 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
-import { RemoteHelperClient } from "./remote/Services/HelperClient.ts";
+import { WorkspaceRuntimeRouter } from "./remote/Services/WorkspaceRuntimeRouter.ts";
 import { RemoteHostRegistry } from "./remote/Services/HostRegistry.ts";
+import { RemoteHelperClient } from "./remote/Services/HelperClient.ts";
 import { REMOTE_HELPER_METHODS } from "./remote/protocol.ts";
 
 /**
@@ -152,48 +153,6 @@ function websocketRawToString(raw: unknown): string | null {
   return null;
 }
 
-function toPosixRelativePath(input: string): string {
-  return input.replaceAll("\\", "/");
-}
-
-function resolveWorkspaceWritePath(params: {
-  workspaceRoot: string;
-  relativePath: string;
-  path: Path.Path;
-}): Effect.Effect<{ absolutePath: string; relativePath: string }, RouteRequestError> {
-  const normalizedInputPath = params.relativePath.trim();
-  if (params.path.isAbsolute(normalizedInputPath)) {
-    return Effect.fail(
-      new RouteRequestError({
-        message: "Workspace file path must be relative to the project root.",
-      }),
-    );
-  }
-
-  const absolutePath = params.path.resolve(params.workspaceRoot, normalizedInputPath);
-  const relativeToRoot = toPosixRelativePath(
-    params.path.relative(params.workspaceRoot, absolutePath),
-  );
-  if (
-    relativeToRoot.length === 0 ||
-    relativeToRoot === "." ||
-    relativeToRoot.startsWith("../") ||
-    relativeToRoot === ".." ||
-    params.path.isAbsolute(relativeToRoot)
-  ) {
-    return Effect.fail(
-      new RouteRequestError({
-        message: "Workspace file path must stay within the project root.",
-      }),
-    );
-  }
-
-  return Effect.succeed({
-    absolutePath,
-    relativePath: relativeToRoot,
-  });
-}
-
 function stripRequestTag<T extends { _tag: string }>(body: T) {
   return Struct.omit(body, ["_tag"]);
 }
@@ -221,6 +180,7 @@ export type ServerRuntimeServices =
   | Keybindings
   | Open
   | AnalyticsService
+  | WorkspaceRuntimeRouter
   | RemoteHostRegistry
   | RemoteHelperClient;
 
@@ -255,15 +215,13 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   } = serverConfig;
   const availableEditors = resolveAvailableEditors();
 
-  const gitManager = yield* GitManager;
-  const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
   const providerHealth = yield* ProviderHealth;
-  const git = yield* GitCore;
-  const remoteHostRegistry = yield* RemoteHostRegistry;
-  const remoteHelperClient = yield* RemoteHelperClient;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const runtimeRouter = yield* WorkspaceRuntimeRouter;
+  const remoteHostRegistry = yield* RemoteHostRegistry;
+  const remoteHelperClient = yield* RemoteHelperClient;
 
   yield* keybindingsManager.syncDefaultKeybindingsOnStartup.pipe(
     Effect.catch((error) =>
@@ -332,9 +290,19 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     });
 
     if (input.command.type === "project.create") {
+      if (input.command.executionTarget === "ssh-remote") {
+        return {
+          ...input.command,
+          workspaceRoot: input.command.workspaceRoot.trim(),
+          remoteHostId: input.command.remoteHostId ?? null,
+          remoteHostLabel: input.command.remoteHostLabel ?? null,
+        } satisfies OrchestrationCommand;
+      }
       return {
         ...input.command,
         workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
+        remoteHostId: input.command.remoteHostId ?? null,
+        remoteHostLabel: input.command.remoteHostLabel ?? null,
       } satisfies OrchestrationCommand;
     }
 
@@ -342,6 +310,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       input.command.type === "project.meta.update" &&
       input.command.workspaceRoot !== undefined
     ) {
+      if (input.command.executionTarget === "ssh-remote") {
+        return {
+          ...input.command,
+          workspaceRoot: input.command.workspaceRoot.trim(),
+        } satisfies OrchestrationCommand;
+      }
       return {
         ...input.command,
         workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
@@ -619,8 +593,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const projectionReadModelQuery = yield* ProjectionSnapshotQuery;
   const checkpointDiffQuery = yield* CheckpointDiffQuery;
   const orchestrationReactor = yield* OrchestrationReactor;
-  const { openInEditor } = yield* Open;
-
   const subscriptionsScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
 
@@ -716,9 +688,13 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   >();
   const runPromise = Effect.runPromiseWith(runtimeServices);
 
-  const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
-    (event) => void Effect.runPromise(onTerminalEvent(event)),
-  );
+  const unsubscribeTerminalEvents = yield* runtimeRouter
+    .subscribeTerminalEvents((event) => void Effect.runPromise(onTerminalEvent(event)))
+    .pipe(
+      Effect.mapError(
+        (cause) => new ServerLifecycleError({ operation: "subscribeTerminalEvents", cause }),
+      ),
+    );
   yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeTerminalEvents()));
 
   yield* NodeHttpServer.make(() => httpServer, listenOptions).pipe(
@@ -771,39 +747,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.projectsSearchEntries: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.tryPromise({
-          try: () => searchWorkspaceEntries(body),
-          catch: (cause) =>
-            new RouteRequestError({
-              message: `Failed to search workspace entries: ${String(cause)}`,
-            }),
-        });
+        return yield* runtimeRouter.projectSearchEntries(body);
       }
 
       case WS_METHODS.projectsWriteFile: {
         const body = stripRequestTag(request.body);
-        const target = yield* resolveWorkspaceWritePath({
-          workspaceRoot: body.cwd,
-          relativePath: body.relativePath,
-          path,
-        });
-        yield* fileSystem.makeDirectory(path.dirname(target.absolutePath), { recursive: true }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new RouteRequestError({
-                message: `Failed to prepare workspace path: ${String(cause)}`,
-              }),
-          ),
-        );
-        yield* fileSystem.writeFileString(target.absolutePath, body.contents).pipe(
-          Effect.mapError(
-            (cause) =>
-              new RouteRequestError({
-                message: `Failed to write workspace file: ${String(cause)}`,
-              }),
-          ),
-        );
-        return { relativePath: target.relativePath };
+        return yield* runtimeRouter.projectWriteFile(body);
       }
 
       case WS_METHODS.remoteHostsList:
@@ -816,54 +765,43 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.remoteHostsRemove: {
         const body = stripRequestTag(request.body);
-        yield* remoteHostRegistry.remove(body.remoteHostId);
-        return undefined;
+        return yield* remoteHostRegistry.remove(body.remoteHostId);
       }
 
       case WS_METHODS.remoteHostsTestConnection: {
         const body = stripRequestTag(request.body);
-        const capabilities = yield* remoteHelperClient.testConnection(body.remoteHostId);
+        const result = yield* remoteHelperClient.testConnection(body.remoteHostId);
         return {
           remoteHostId: body.remoteHostId,
           ok: true,
-          helperVersion: capabilities.helperVersion,
-          capabilities: Array.from(capabilities.capabilities),
+          helperVersion: result.helperVersion,
+          capabilities: result.capabilities,
           checkedAt: new Date().toISOString(),
         };
       }
 
       case WS_METHODS.remoteHostsBrowse: {
         const body = stripRequestTag(request.body);
-        const cwd = body.path ?? ".";
-        if (body.query !== undefined && body.query.length > 0) {
-          const result = yield* remoteHelperClient.call(
-            body.remoteHostId,
-            REMOTE_HELPER_METHODS.workspaceSearchEntries,
-            {
-              cwd,
-              query: body.query,
-              limit: body.limit,
-            },
-          );
-          return {
-            remoteHostId: body.remoteHostId,
-            cwd,
-            entries: result.entries,
-            truncated: result.truncated,
-          };
+        const host = yield* remoteHostRegistry.getById(body.remoteHostId);
+        if (Option.isNone(host)) {
+          return yield* new RouteRequestError({
+            message: `Remote host '${body.remoteHostId}' was not found.`,
+          });
         }
-
+        const cwd = body.path ?? "~";
         const result = yield* remoteHelperClient.call(
           body.remoteHostId,
-          REMOTE_HELPER_METHODS.workspaceBrowseEntries,
-          {
-            cwd,
-            limit: body.limit,
-          },
+          body.query
+            ? REMOTE_HELPER_METHODS.workspaceSearchEntries
+            : REMOTE_HELPER_METHODS.workspaceBrowseEntries,
+          body.query
+            ? { cwd, query: body.query, limit: body.limit }
+            : { cwd, limit: body.limit },
         );
+        const resultCwd = "cwd" in result ? result.cwd : cwd;
         return {
           remoteHostId: body.remoteHostId,
-          cwd: result.cwd,
+          cwd: resultCwd,
           entries: result.entries,
           truncated: result.truncated,
         };
@@ -871,82 +809,83 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.shellOpenInEditor: {
         const body = stripRequestTag(request.body);
+        const { openInEditor } = yield* Open;
         return yield* openInEditor(body);
       }
 
       case WS_METHODS.gitStatus: {
         const body = stripRequestTag(request.body);
-        return yield* gitManager.status(body);
+        return yield* runtimeRouter.gitStatus(body);
       }
 
       case WS_METHODS.gitPull: {
         const body = stripRequestTag(request.body);
-        return yield* git.pullCurrentBranch(body.cwd);
+        return yield* runtimeRouter.gitPull(body);
       }
 
       case WS_METHODS.gitRunStackedAction: {
         const body = stripRequestTag(request.body);
-        return yield* gitManager.runStackedAction(body);
+        return yield* runtimeRouter.gitRunStackedAction(body);
       }
 
       case WS_METHODS.gitListBranches: {
         const body = stripRequestTag(request.body);
-        return yield* git.listBranches(body);
+        return yield* runtimeRouter.gitListBranches(body);
       }
 
       case WS_METHODS.gitCreateWorktree: {
         const body = stripRequestTag(request.body);
-        return yield* git.createWorktree(body);
+        return yield* runtimeRouter.gitCreateWorktree(body);
       }
 
       case WS_METHODS.gitRemoveWorktree: {
         const body = stripRequestTag(request.body);
-        return yield* git.removeWorktree(body);
+        return yield* runtimeRouter.gitRemoveWorktree(body);
       }
 
       case WS_METHODS.gitCreateBranch: {
         const body = stripRequestTag(request.body);
-        return yield* git.createBranch(body);
+        return yield* runtimeRouter.gitCreateBranch(body);
       }
 
       case WS_METHODS.gitCheckout: {
         const body = stripRequestTag(request.body);
-        return yield* Effect.scoped(git.checkoutBranch(body));
+        return yield* runtimeRouter.gitCheckout(body);
       }
 
       case WS_METHODS.gitInit: {
         const body = stripRequestTag(request.body);
-        return yield* git.initRepo(body);
+        return yield* runtimeRouter.gitInit(body);
       }
 
       case WS_METHODS.terminalOpen: {
         const body = stripRequestTag(request.body);
-        return yield* terminalManager.open(body);
+        return yield* runtimeRouter.terminalOpen(body);
       }
 
       case WS_METHODS.terminalWrite: {
         const body = stripRequestTag(request.body);
-        return yield* terminalManager.write(body);
+        return yield* runtimeRouter.terminalWrite(body);
       }
 
       case WS_METHODS.terminalResize: {
         const body = stripRequestTag(request.body);
-        return yield* terminalManager.resize(body);
+        return yield* runtimeRouter.terminalResize(body);
       }
 
       case WS_METHODS.terminalClear: {
         const body = stripRequestTag(request.body);
-        return yield* terminalManager.clear(body);
+        return yield* runtimeRouter.terminalClear(body);
       }
 
       case WS_METHODS.terminalRestart: {
         const body = stripRequestTag(request.body);
-        return yield* terminalManager.restart(body);
+        return yield* runtimeRouter.terminalRestart(body);
       }
 
       case WS_METHODS.terminalClose: {
         const body = stripRequestTag(request.body);
-        return yield* terminalManager.close(body);
+        return yield* runtimeRouter.terminalClose(body);
       }
 
       case WS_METHODS.serverGetConfig:

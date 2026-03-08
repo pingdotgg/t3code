@@ -2,6 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "composite": true,
+    "tsBuildInfoFile": "/tmp/t3code-apps-server.tsbuildinfo",
     "types": ["node", "bun"],
     "lib": ["ES2023", "esnext.disposable"],
     "noEmit": true,

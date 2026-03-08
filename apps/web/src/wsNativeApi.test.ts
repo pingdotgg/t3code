@@ -343,13 +343,13 @@ describe("wsNativeApi", () => {
 
     const api = createWsNativeApi();
     await api.projects.writeFile({
-      cwd: "/tmp/project",
+      projectId: ProjectId.makeUnsafe("project-1"),
       relativePath: "plan.md",
       contents: "# Plan\n",
     });
 
     expect(requestMock).toHaveBeenCalledWith(WS_METHODS.projectsWriteFile, {
-      cwd: "/tmp/project",
+      projectId: ProjectId.makeUnsafe("project-1"),
       relativePath: "plan.md",
       contents: "# Plan\n",
     });

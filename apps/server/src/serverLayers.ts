@@ -17,12 +17,12 @@ import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderComma
 import { OrchestrationProjectionPipelineLive } from "./orchestration/Layers/ProjectionPipeline";
 import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers/ProjectionSnapshotQuery";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion";
-import { RemoteHostRepositoryLive } from "./persistence/Layers/RemoteHosts";
 import { ProviderUnsupportedError } from "./provider/Errors";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
 import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
+import { ProviderSessionDirectory } from "./provider/Services/ProviderSessionDirectory";
 import { ProviderService } from "./provider/Services/ProviderService";
 import { makeEventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
 
@@ -35,12 +35,14 @@ import { CodexTextGenerationLive } from "./git/Layers/CodexTextGeneration";
 import { GitServiceLive } from "./git/Layers/GitService";
 import { BunPtyAdapterLive } from "./terminal/Layers/BunPTY";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
-import { RemoteHelperClientLive } from "./remote/Layers/HelperClient";
-import { RemoteHostRegistryLive } from "./remote/Layers/HostRegistry";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
+import { RemoteHostRepositoryLive } from "./persistence/Layers/RemoteHosts.ts";
+import { RemoteHostRegistryLive } from "./remote/Layers/HostRegistry.ts";
+import { RemoteHelperClientLive } from "./remote/Layers/HelperClient.ts";
+import { WorkspaceRuntimeRouterLive } from "./remote/Layers/WorkspaceRuntimeRouter.ts";
 
 export function makeServerProviderLayer(): Layer.Layer<
-  ProviderService,
+  ProviderService | ProviderSessionDirectory,
   ProviderUnsupportedError,
   SqlClient.SqlClient | ServerConfig | FileSystem.FileSystem | AnalyticsService
 > {
@@ -64,9 +66,12 @@ export function makeServerProviderLayer(): Layer.Layer<
       Layer.provide(codexAdapterLayer),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
-    return makeProviderServiceLive(
-      canonicalEventLogger ? { canonicalEventLogger } : undefined,
-    ).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer));
+    return Layer.mergeAll(
+      providerSessionDirectoryLayer,
+      makeProviderServiceLive(
+        canonicalEventLogger ? { canonicalEventLogger } : undefined,
+      ).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer)),
+    );
   }).pipe(Layer.unwrap);
 }
 
@@ -91,23 +96,6 @@ export function makeServerRuntimeServicesLayer() {
     CheckpointStoreLive,
     checkpointDiffQueryLayer,
   );
-  const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
-    Layer.provideMerge(runtimeServicesLayer),
-  );
-  const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
-    Layer.provideMerge(runtimeServicesLayer),
-    Layer.provideMerge(gitCoreLayer),
-    Layer.provideMerge(textGenerationLayer),
-  );
-  const checkpointReactorLayer = CheckpointReactorLive.pipe(
-    Layer.provideMerge(runtimeServicesLayer),
-  );
-  const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
-    Layer.provideMerge(runtimeIngestionLayer),
-    Layer.provideMerge(providerCommandReactorLayer),
-    Layer.provideMerge(checkpointReactorLayer),
-  );
-
   const terminalLayer = TerminalManagerLive.pipe(
     Layer.provide(
       typeof Bun !== "undefined" && process.platform !== "win32"
@@ -128,6 +116,32 @@ export function makeServerRuntimeServicesLayer() {
   const remoteHelperClientLayer = RemoteHelperClientLive.pipe(
     Layer.provide(remoteHostRegistryLayer),
   );
+  const workspaceRuntimeRouterLayer = WorkspaceRuntimeRouterLive.pipe(
+    Layer.provideMerge(runtimeServicesLayer),
+    Layer.provideMerge(gitManagerLayer),
+    Layer.provideMerge(gitCoreLayer),
+    Layer.provideMerge(terminalLayer),
+    Layer.provideMerge(remoteHelperClientLayer),
+  );
+  const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
+    Layer.provideMerge(runtimeServicesLayer),
+    Layer.provideMerge(workspaceRuntimeRouterLayer),
+  );
+  const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
+    Layer.provideMerge(runtimeServicesLayer),
+    Layer.provideMerge(gitCoreLayer),
+    Layer.provideMerge(textGenerationLayer),
+    Layer.provideMerge(workspaceRuntimeRouterLayer),
+  );
+  const checkpointReactorLayer = CheckpointReactorLive.pipe(
+    Layer.provideMerge(runtimeServicesLayer),
+    Layer.provideMerge(workspaceRuntimeRouterLayer),
+  );
+  const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
+    Layer.provideMerge(runtimeIngestionLayer),
+    Layer.provideMerge(providerCommandReactorLayer),
+    Layer.provideMerge(checkpointReactorLayer),
+  );
 
   return Layer.mergeAll(
     orchestrationReactorLayer,
@@ -135,7 +149,9 @@ export function makeServerRuntimeServicesLayer() {
     gitManagerLayer,
     terminalLayer,
     KeybindingsLive,
+    RemoteHostRepositoryLive,
     remoteHostRegistryLayer,
     remoteHelperClientLayer,
+    workspaceRuntimeRouterLayer,
   ).pipe(Layer.provideMerge(NodeServices.layer));
 }

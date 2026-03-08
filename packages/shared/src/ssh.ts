@@ -30,11 +30,12 @@ export function buildSshArgs(
   >,
   remoteCommand?: string,
 ): string[] {
-  const args: string[] = [];
+  const args: string[] = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"];
   if (host.port !== 22) {
     args.push("-p", String(host.port));
   }
   if (host.identityFile && host.identityFile.trim().length > 0) {
+    args.push("-o", "IdentitiesOnly=yes");
     args.push("-i", host.identityFile.trim());
   }
   args.push(resolveSshDestination(host));

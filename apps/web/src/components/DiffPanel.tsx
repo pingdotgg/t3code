@@ -176,7 +176,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     activeProjectId ? store.projects.find((project) => project.id === activeProjectId) : undefined,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
-  const gitBranchesQuery = useQuery(gitBranchesQueryOptions(activeCwd ?? null));
+  const gitBranchesQuery = useQuery(gitBranchesQueryOptions(activeProjectId, activeCwd ?? null));
   const isGitRepo = gitBranchesQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
@@ -302,13 +302,15 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const openDiffFileInEditor = useCallback(
     (filePath: string) => {
       const api = readNativeApi();
-      if (!api) return;
+      if (!api || activeProject?.executionTarget === "ssh-remote") {
+        return;
+      }
       const targetPath = activeCwd ? resolvePathLinkTarget(filePath, activeCwd) : filePath;
       void api.shell.openInEditor(targetPath, preferredTerminalEditor()).catch((error) => {
         console.warn("Failed to open diff file in editor.", error);
       });
     },
-    [activeCwd],
+    [activeCwd, activeProject?.executionTarget],
   );
 
   const selectTurn = (turnId: TurnId) => {

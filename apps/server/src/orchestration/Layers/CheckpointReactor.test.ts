@@ -36,6 +36,7 @@ import {
 } from "../../provider/Services/ProviderService.ts";
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { ServerConfig } from "../../config.ts";
+import { TestLocalWorkspaceRuntimeRouterLive } from "../../remote/Layers/TestLocalWorkspaceRuntimeRouter.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
@@ -249,11 +250,17 @@ describe("CheckpointReactor", () => {
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const providerLayer = Layer.succeed(ProviderService, provider.service);
+    const routerLayer = TestLocalWorkspaceRuntimeRouterLive.pipe(
+      Layer.provideMerge(providerLayer),
+      Layer.provideMerge(CheckpointStoreLive),
+    );
 
     const layer = CheckpointReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
-      Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
+      Layer.provideMerge(providerLayer),
       Layer.provideMerge(CheckpointStoreLive),
+      Layer.provideMerge(routerLayer),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -274,9 +281,6 @@ describe("CheckpointReactor", () => {
         projectId: asProjectId("project-1"),
         title: "Test Project",
         workspaceRoot: options?.projectWorkspaceRoot ?? cwd,
-        executionTarget: "local",
-        remoteHostId: null,
-        remoteHostLabel: null,
         defaultModel: "gpt-5-codex",
         createdAt,
       }),

@@ -42,11 +42,19 @@ function rowToRemoteHostRecord(row: RemoteHostRecordRow): RemoteHostRecord {
   };
 }
 
+function remoteHostRecordToRow(row: RemoteHostRecord): RemoteHostRecordRow {
+  return {
+    ...row,
+    identityFile: row.identityFile ?? null,
+    sshConfigHost: row.sshConfigHost ?? null,
+  };
+}
+
 const makeRemoteHostRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   const upsertRemoteHostRow = SqlSchema.void({
-    Request: RemoteHostRecord,
+    Request: RemoteHostRecordRow,
     execute: (row) =>
       sql`
         INSERT INTO remote_hosts (
@@ -159,7 +167,7 @@ const makeRemoteHostRepository = Effect.gen(function* () {
   });
 
   const upsert: RemoteHostRepositoryShape["upsert"] = (row) =>
-    upsertRemoteHostRow(row).pipe(
+    upsertRemoteHostRow(remoteHostRecordToRow(row)).pipe(
       Effect.mapError(toPersistenceSqlError("RemoteHostRepository.upsert:query")),
     );
 

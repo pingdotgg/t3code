@@ -13,6 +13,10 @@
     "T3CODE_AUTH_TOKEN",
     "T3CODE_DESKTOP_WS_URL"
   ],
+  "globalPassThroughEnv": [
+    "SSH_AUTH_SOCK",
+    "SSH_AGENT_PID"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

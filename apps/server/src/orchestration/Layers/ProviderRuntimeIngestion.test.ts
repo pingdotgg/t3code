@@ -33,6 +33,7 @@ import {
 } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerConfig } from "../../config.ts";
+import { TestProviderWorkspaceRuntimeRouterLive } from "../../remote/Layers/TestLocalWorkspaceRuntimeRouter.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
@@ -148,9 +149,14 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const providerLayer = Layer.succeed(ProviderService, provider.service);
+    const routerLayer = TestProviderWorkspaceRuntimeRouterLive.pipe(
+      Layer.provideMerge(providerLayer),
+    );
     const layer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(orchestrationLayer),
-      Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
+      Layer.provideMerge(providerLayer),
+      Layer.provideMerge(routerLayer),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -169,9 +175,6 @@ describe("ProviderRuntimeIngestion", () => {
         projectId: asProjectId("project-1"),
         title: "Provider Project",
         workspaceRoot,
-        executionTarget: "local",
-        remoteHostId: null,
-        remoteHostLabel: null,
         defaultModel: "gpt-5-codex",
         createdAt,
       }),

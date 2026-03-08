@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Effect, Exit, Layer, PlatformError, PubSub, Scope, Stream } from "effect";
+import { Effect, Exit, Layer, Option, PlatformError, PubSub, Scope, Stream } from "effect";
 import { describe, expect, it, afterEach, vi } from "vitest";
 import { createServer } from "./wsServer";
 import WebSocket from "ws";
@@ -43,6 +43,10 @@ import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/
 import { makeSqlitePersistenceLive, SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
 import { SqlClient, SqlError } from "effect/unstable/sql";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
+import {
+  ProviderSessionDirectory,
+  type ProviderSessionDirectoryShape,
+} from "./provider/Services/ProviderSessionDirectory.ts";
 import { ProviderHealth, type ProviderHealthShape } from "./provider/Services/ProviderHealth";
 import { Open, type OpenShape } from "./open";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
@@ -78,6 +82,14 @@ const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
     checkedAt: "2026-01-01T00:00:00.000Z",
   },
 ];
+
+const defaultProviderSessionDirectory: ProviderSessionDirectoryShape = {
+  upsert: () => Effect.void,
+  getProvider: () => Effect.die(new Error("No provider session binding is available in this test.")),
+  getBinding: () => Effect.succeed(Option.none()),
+  remove: () => Effect.void,
+  listThreadIds: () => Effect.succeed([]),
+};
 
 const defaultProviderHealthService: ProviderHealthShape = {
   getStatuses: Effect.succeed(defaultProviderStatuses),
@@ -438,18 +450,22 @@ describe("WebSocket Server", () => {
 
     const runtimeLayer = Layer.merge(
       Layer.merge(
-        makeServerRuntimeServicesLayer().pipe(Layer.provide(infrastructureLayer)),
+        makeServerRuntimeServicesLayer().pipe(Layer.provideMerge(infrastructureLayer)),
         infrastructureLayer,
       ),
       runtimeOverrides,
     );
-    const dependenciesLayer = Layer.empty.pipe(
-      Layer.provideMerge(runtimeLayer),
-      Layer.provideMerge(providerHealthLayer),
-      Layer.provideMerge(openLayer),
-      Layer.provideMerge(serverConfigLayer),
-      Layer.provideMerge(AnalyticsService.layerTest),
-      Layer.provideMerge(NodeServices.layer),
+    const baseDependenciesLayer = Layer.mergeAll(
+      providerHealthLayer,
+      openLayer,
+      serverConfigLayer,
+      Layer.succeed(ProviderSessionDirectory, defaultProviderSessionDirectory),
+      AnalyticsService.layerTest,
+      NodeServices.layer,
+    );
+    const dependenciesLayer = Layer.merge(
+      runtimeLayer.pipe(Layer.provideMerge(baseDependenciesLayer)),
+      baseDependenciesLayer,
     );
     const runtimeServices = await Effect.runPromise(
       Layer.build(dependenciesLayer).pipe(Scope.provide(scope)),
@@ -1116,9 +1132,6 @@ describe("WebSocket Server", () => {
       projectId: "project-diff",
       title: "Diff Project",
       workspaceRoot,
-      executionTarget: "local",
-      remoteHostId: null,
-      remoteHostLabel: null,
       defaultModel: "gpt-5-codex",
       createdAt,
     });
@@ -1198,9 +1211,6 @@ describe("WebSocket Server", () => {
       projectId: "project-1",
       title: "WS Project",
       workspaceRoot,
-      executionTarget: "local",
-      remoteHostId: null,
-      remoteHostLabel: null,
       defaultModel: "gpt-5-codex",
       createdAt,
     });

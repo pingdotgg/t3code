@@ -121,6 +121,7 @@ export default function BranchToolbar({
       </div>
 
       <BranchToolbarBranchSelector
+        activeProjectId={activeProject.id}
         activeProjectCwd={activeProject.cwd}
         activeThreadBranch={activeThreadBranch}
         activeWorktreePath={activeWorktreePath}

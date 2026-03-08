@@ -1,4 +1,4 @@
-import type { GitStackedAction, GitStatusResult, ThreadId } from "@t3tools/contracts";
+import type { GitStackedAction, GitStatusResult, ProjectId, ThreadId } from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
@@ -42,8 +42,10 @@ import {
 } from "~/lib/gitReactQuery";
 import { preferredTerminalEditor, resolvePathLinkTarget } from "~/terminal-links";
 import { readNativeApi } from "~/nativeApi";
+import { useStore } from "~/store";
 
 interface GitActionsControlProps {
+  projectId: ProjectId | null;
   gitCwd: string | null;
   activeThreadId: ThreadId | null;
 }
@@ -138,20 +140,30 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   return <InfoIcon className={iconClassName} />;
 }
 
-export default function GitActionsControl({ gitCwd, activeThreadId }: GitActionsControlProps) {
+export default function GitActionsControl({
+  projectId,
+  gitCwd,
+  activeThreadId,
+}: GitActionsControlProps) {
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
   );
+  const activeProject = useStore((store) =>
+    projectId ? store.projects.find((project) => project.id === projectId) : undefined,
+  );
+  const allowOpenInEditor = activeProject?.executionTarget !== "ssh-remote";
   const queryClient = useQueryClient();
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
     useState<PendingDefaultBranchAction | null>(null);
 
-  const { data: gitStatus = null, error: gitStatusError } = useQuery(gitStatusQueryOptions(gitCwd));
+  const { data: gitStatus = null, error: gitStatusError } = useQuery(
+    gitStatusQueryOptions(projectId, gitCwd),
+  );
 
-  const { data: branchList = null } = useQuery(gitBranchesQueryOptions(gitCwd));
+  const { data: branchList = null } = useQuery(gitBranchesQueryOptions(projectId, gitCwd));
   // Default to true while loading so we don't flash init controls.
   const isRepo = branchList?.isRepo ?? true;
   const currentBranch = branchList?.branches.find((branch) => branch.current)?.name ?? null;
@@ -165,16 +177,20 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
   const gitStatusForActions = isGitStatusOutOfSync ? null : gitStatus;
 
-  const initMutation = useMutation(gitInitMutationOptions({ cwd: gitCwd, queryClient }));
+  const initMutation = useMutation(
+    gitInitMutationOptions({ projectId, cwd: gitCwd, queryClient }),
+  );
 
   const runImmediateGitActionMutation = useMutation(
-    gitRunStackedActionMutationOptions({ cwd: gitCwd, queryClient }),
+    gitRunStackedActionMutationOptions({ projectId, cwd: gitCwd, queryClient }),
   );
-  const pullMutation = useMutation(gitPullMutationOptions({ cwd: gitCwd, queryClient }));
+  const pullMutation = useMutation(
+    gitPullMutationOptions({ projectId, cwd: gitCwd, queryClient }),
+  );
 
   const isRunStackedActionRunning =
-    useIsMutating({ mutationKey: gitMutationKeys.runStackedAction(gitCwd) }) > 0;
-  const isPullRunning = useIsMutating({ mutationKey: gitMutationKeys.pull(gitCwd) }) > 0;
+    useIsMutating({ mutationKey: gitMutationKeys.runStackedAction(projectId, gitCwd) }) > 0;
+  const isPullRunning = useIsMutating({ mutationKey: gitMutationKeys.pull(projectId, gitCwd) }) > 0;
   const isGitActionRunning = isRunStackedActionRunning || isPullRunning;
   const isDefaultBranch = useMemo(() => {
     const branchName = gitStatusForActions?.branch;
@@ -556,10 +572,10 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const openChangedFileInEditor = useCallback(
     (filePath: string) => {
       const api = readNativeApi();
-      if (!api || !gitCwd) {
+      if (!api || !gitCwd || !allowOpenInEditor) {
         toastManager.add({
           type: "error",
-          title: "Editor opening is unavailable.",
+          title: allowOpenInEditor ? "Editor opening is unavailable." : "Remote files can't be opened locally.",
           data: threadToastData,
         });
         return;
@@ -574,7 +590,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         });
       });
     },
-    [gitCwd, threadToastData],
+    [allowOpenInEditor, gitCwd, threadToastData],
   );
 
   if (!gitCwd) return null;

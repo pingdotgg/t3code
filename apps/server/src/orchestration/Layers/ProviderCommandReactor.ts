@@ -18,7 +18,7 @@ import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../git/Services/TextGeneration.ts";
-import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { WorkspaceRuntimeRouter } from "../../remote/Services/WorkspaceRuntimeRouter.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   ProviderCommandReactor,
@@ -128,7 +128,7 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
 
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
-  const providerService = yield* ProviderService;
+  const runtimeRouter = yield* WorkspaceRuntimeRouter;
   const git = yield* GitCore;
   const textGeneration = yield* TextGeneration;
   const handledTurnStartKeys = yield* Cache.make<string, true>({
@@ -222,7 +222,7 @@ const make = Effect.gen(function* () {
     });
 
     const resolveActiveSession = (threadId: ThreadId) =>
-      providerService.listSessions().pipe(
+      runtimeRouter.listProviderSessions().pipe(
         Effect.map((sessions) => sessions.find((session) => session.threadId === threadId)),
       );
 
@@ -230,7 +230,7 @@ const make = Effect.gen(function* () {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderKind;
     }) =>
-      providerService.startSession(threadId, {
+      runtimeRouter.startProviderSession(threadId, {
         threadId,
         ...(input?.provider ?? preferredProvider
           ? { provider: input?.provider ?? preferredProvider }
@@ -268,7 +268,8 @@ const make = Effect.gen(function* () {
       const sessionModelSwitch =
         currentProvider === undefined
           ? "in-session"
-          : (yield* providerService.getCapabilities(currentProvider)).sessionModelSwitch;
+          : (yield* runtimeRouter.getProviderCapabilities(threadId, currentProvider))
+              .sessionModelSwitch;
       const modelChanged =
         options?.model !== undefined && options.model !== activeSession?.model;
       const shouldRestartForModelChange =
@@ -340,17 +341,18 @@ const make = Effect.gen(function* () {
     });
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
-    const activeSession = yield* providerService.listSessions().pipe(
+    const activeSession = yield* runtimeRouter.listProviderSessions().pipe(
       Effect.map((sessions) => sessions.find((session) => session.threadId === input.threadId)),
     );
     const sessionModelSwitch =
       activeSession === undefined
         ? "in-session"
-        : (yield* providerService.getCapabilities(activeSession.provider)).sessionModelSwitch;
+        : (yield* runtimeRouter.getProviderCapabilities(input.threadId, activeSession.provider))
+            .sessionModelSwitch;
     const modelForTurn =
       sessionModelSwitch === "unsupported" ? activeSession?.model : input.model;
 
-    yield* providerService.sendTurn({
+    yield* runtimeRouter.sendProviderTurn({
       threadId: input.threadId,
       ...(normalizedInput ? { input: normalizedInput } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
@@ -497,7 +499,7 @@ const make = Effect.gen(function* () {
     }
 
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+    yield* runtimeRouter.interruptProviderTurn({ threadId: event.payload.threadId });
   });
 
   const processApprovalResponseRequested = Effect.fnUntraced(function* (
@@ -520,8 +522,8 @@ const make = Effect.gen(function* () {
       });
     }
 
-    yield* providerService
-      .respondToRequest({
+    yield* runtimeRouter
+      .respondToProviderRequest({
         threadId: event.payload.threadId,
         requestId: event.payload.requestId,
         decision: event.payload.decision,
@@ -567,8 +569,8 @@ const make = Effect.gen(function* () {
       });
     }
 
-    yield* providerService
-      .respondToUserInput({
+    yield* runtimeRouter
+      .respondToProviderUserInput({
         threadId: event.payload.threadId,
         requestId: event.payload.requestId,
         answers: event.payload.answers,
@@ -601,7 +603,7 @@ const make = Effect.gen(function* () {
 
     const now = event.payload.createdAt;
     if (thread.session && thread.session.status !== "stopped") {
-      yield* providerService.stopSession({ threadId: thread.id });
+      yield* runtimeRouter.stopProviderSession(thread.id);
     }
 
     yield* setThreadSession({

@@ -412,6 +412,9 @@ async function getWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
 export async function searchWorkspaceEntries(
   input: ProjectSearchEntriesInput,
 ): Promise<ProjectSearchEntriesResult> {
+  if (!input.cwd) {
+    throw new Error("Workspace cwd is required for search.");
+  }
   const index = await getWorkspaceIndex(input.cwd);
   const normalizedQuery = normalizeQuery(input.query);
   const candidates = normalizedQuery

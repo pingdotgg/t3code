@@ -60,6 +60,7 @@ import {
   type TestProviderAdapterHarness,
 } from "./TestProviderAdapter.integration.ts";
 import { ServerConfig } from "../src/config.ts";
+import { TestLocalWorkspaceRuntimeRouterLive } from "../src/remote/Layers/TestLocalWorkspaceRuntimeRouter.ts";
 
 function runGit(cwd: string, args: ReadonlyArray<string>) {
   return execFileSync("git", args, {
@@ -269,8 +270,13 @@ export const makeOrchestrationIntegrationHarness = (
       CheckpointStoreLive,
       providerLayer,
     );
+    const routerLayer = TestLocalWorkspaceRuntimeRouterLive.pipe(
+      Layer.provideMerge(providerLayer),
+      Layer.provideMerge(CheckpointStoreLive),
+    );
     const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
+      Layer.provideMerge(routerLayer),
     );
     const gitCoreLayer = Layer.succeed(GitCore, {
       renameBranch: (input: Parameters<GitCoreShape["renameBranch"]>[0]) =>
@@ -283,9 +289,11 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(gitCoreLayer),
       Layer.provideMerge(textGenerationLayer),
+      Layer.provideMerge(routerLayer),
     );
     const checkpointReactorLayer = CheckpointReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
+      Layer.provideMerge(routerLayer),
     );
     const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
       Layer.provideMerge(runtimeIngestionLayer),
@@ -293,6 +301,7 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(checkpointReactorLayer),
     );
     const layer = orchestrationReactorLayer.pipe(
+      Layer.provideMerge(routerLayer),
       Layer.provide(persistenceLayer),
       Layer.provideMerge(ServerConfig.layerTest(workspaceDir, stateDir)),
       Layer.provideMerge(NodeServices.layer),
