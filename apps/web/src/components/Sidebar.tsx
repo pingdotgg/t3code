@@ -44,6 +44,17 @@ import {
   shouldToastDesktopUpdateActionResult,
 } from "./desktopUpdate.logic";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
+import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "./ui/select";
+import {
+  Dialog,
+  DialogClose,
+  DialogPopup,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogPanel,
+  DialogFooter,
+} from "./ui/dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
@@ -363,6 +374,208 @@ function ProjectFavicon({ cwd }: { cwd: string }) {
   );
 }
 
+const INPUT_CLASSES =
+  "rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none";
+
+interface RemoteHostDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  remoteHosts: readonly RemoteHostRecord[];
+  selectedRemoteHostId: RemoteHostId | null;
+  onSelectHost: (id: RemoteHostId | null) => void;
+  remoteHostDraft: RemoteHostDraft;
+  setRemoteHostDraft: React.Dispatch<React.SetStateAction<RemoteHostDraft>>;
+  selectedRemoteHost: RemoteHostRecord | null;
+  onSave: () => void;
+  onTest: () => void;
+  onRemove: (id: RemoteHostId) => void;
+  isSaving: boolean;
+  isTesting: boolean;
+  isRemoving: boolean;
+}
+
+function RemoteHostDialog({
+  open,
+  onOpenChange,
+  remoteHosts,
+  selectedRemoteHostId,
+  onSelectHost,
+  remoteHostDraft,
+  setRemoteHostDraft,
+  selectedRemoteHost,
+  onSave,
+  onTest,
+  onRemove,
+  isSaving,
+  isTesting,
+  isRemoving,
+}: RemoteHostDialogProps) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogPopup>
+        <DialogHeader>
+          <DialogTitle>Manage remote hosts</DialogTitle>
+          <DialogDescription>
+            Configure SSH hosts for remote project access.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          <div className="space-y-4">
+            <Select
+              value={selectedRemoteHostId ?? ""}
+              onValueChange={(val) =>
+                onSelectHost(val ? RemoteHostId.makeUnsafe(val as string) : null)
+              }
+              items={Object.fromEntries([
+                ["", "New host"],
+                ...remoteHosts.map((host) => [
+                  host.id,
+                  `${host.label} (${formatRemoteHostSummary(host)})`,
+                ]),
+              ])}
+            >
+              <SelectTrigger size="sm">
+                <SelectValue placeholder="New host" />
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="">New host</SelectItem>
+                {remoteHosts.map((host) => (
+                  <SelectItem key={host.id} value={host.id}>
+                    {host.label} ({formatRemoteHostSummary(host)})
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                className={INPUT_CLASSES}
+                placeholder="Host label"
+                value={remoteHostDraft.label}
+                onChange={(event) =>
+                  setRemoteHostDraft((current) => ({ ...current, label: event.target.value }))
+                }
+              />
+              <input
+                className={INPUT_CLASSES}
+                placeholder="SSH user"
+                value={remoteHostDraft.user}
+                onChange={(event) =>
+                  setRemoteHostDraft((current) => ({ ...current, user: event.target.value }))
+                }
+              />
+              <input
+                className={INPUT_CLASSES}
+                placeholder="Host"
+                value={remoteHostDraft.host}
+                onChange={(event) =>
+                  setRemoteHostDraft((current) => ({ ...current, host: event.target.value }))
+                }
+              />
+              <input
+                className={INPUT_CLASSES}
+                placeholder="Port"
+                value={remoteHostDraft.port}
+                onChange={(event) =>
+                  setRemoteHostDraft((current) => ({ ...current, port: event.target.value }))
+                }
+              />
+              <input
+                className={INPUT_CLASSES}
+                placeholder="SSH config host (optional)"
+                value={remoteHostDraft.sshConfigHost}
+                onChange={(event) =>
+                  setRemoteHostDraft((current) => ({
+                    ...current,
+                    sshConfigHost: event.target.value,
+                  }))
+                }
+              />
+              <input
+                className={INPUT_CLASSES}
+                placeholder="Identity file (optional)"
+                value={remoteHostDraft.identityFile}
+                onChange={(event) =>
+                  setRemoteHostDraft((current) => ({
+                    ...current,
+                    identityFile: event.target.value,
+                  }))
+                }
+              />
+            </div>
+
+            <input
+              className={`w-full font-mono ${INPUT_CLASSES}`}
+              placeholder="t3 remote-agent --stdio"
+              value={remoteHostDraft.helperCommand}
+              onChange={(event) =>
+                setRemoteHostDraft((current) => ({
+                  ...current,
+                  helperCommand: event.target.value,
+                }))
+              }
+            />
+
+            {selectedRemoteHost && (
+              <div className="rounded-md border border-border/70 bg-secondary/60 px-3 py-2 text-xs text-muted-foreground/80">
+                <div className="font-medium text-foreground/80">
+                  {formatRemoteHostSummary(selectedRemoteHost)}
+                </div>
+                <div>
+                  Status:{" "}
+                  {selectedRemoteHost.lastConnectionStatus === "ok"
+                    ? "Connected"
+                    : selectedRemoteHost.lastConnectionStatus === "error"
+                      ? "Error"
+                      : "Unknown"}
+                  {selectedRemoteHost.helperVersion
+                    ? ` · Helper ${selectedRemoteHost.helperVersion}`
+                    : ""}
+                </div>
+                {selectedRemoteHost.lastConnectionError && (
+                  <div className="mt-1 truncate text-rose-500/90">
+                    {selectedRemoteHost.lastConnectionError}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </DialogPanel>
+        <DialogFooter>
+          {selectedRemoteHostId && (
+            <button
+              type="button"
+              className="mr-auto rounded-md border border-border px-3 py-1.5 text-xs text-rose-500 transition-colors duration-150 hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => {
+                if (selectedRemoteHostId) onRemove(selectedRemoteHostId);
+              }}
+              disabled={isRemoving}
+            >
+              {isRemoving ? "Removing..." : "Remove host"}
+            </button>
+          )}
+          <button
+            type="button"
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={onTest}
+            disabled={!selectedRemoteHostId || isTesting}
+          >
+            {isTesting ? "Testing..." : "Test connection"}
+          </button>
+          <button
+            type="button"
+            className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={onSave}
+            disabled={isSaving}
+          >
+            {isSaving ? "Saving..." : "Save host"}
+          </button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
 export default function Sidebar() {
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
@@ -406,6 +619,7 @@ export default function Sidebar() {
   );
   const [remotePath, setRemotePath] = useState("");
   const [remoteBrowseQuery, setRemoteBrowseQuery] = useState("");
+  const [remoteHostDialogOpen, setRemoteHostDialogOpen] = useState(false);
   const [renamingThreadId, setRenamingThreadId] = useState<ThreadId | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
@@ -1468,7 +1682,9 @@ export default function Sidebar() {
                         render={
                           <SidebarMenuButton
                             size="sm"
-                            className="gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground"
+                            className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
+                              project.executionTarget === "ssh-remote" ? "h-auto" : ""
+                            }`}
                           />
                         }
                         onContextMenu={(event) => {
@@ -1489,23 +1705,20 @@ export default function Sidebar() {
                         ) : (
                           <FolderIcon className="size-3.5 shrink-0 text-sky-500/80" />
                         )}
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-xs font-medium text-foreground/90">
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-xs font-medium text-foreground/90">
                             {project.name}
-                          </span>
-                          <span className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground/60">
-                            {project.executionTarget === "ssh-remote" && (
-                              <span className="rounded-full border border-sky-500/25 bg-sky-500/8 px-1.5 py-0.5 uppercase tracking-[0.12em] text-sky-600 dark:text-sky-300">
-                                Remote
+                          </div>
+                          {project.executionTarget === "ssh-remote" && (
+                            <div className="mt-0.5 truncate text-[10px] text-muted-foreground/60">
+                              <span className="text-sky-500/80 dark:text-sky-400/70">
+                                {formatRemoteProjectHost(project)}
                               </span>
-                            )}
-                            <span className="truncate">
-                              {formatRemoteProjectHost(project)
-                                ? `${formatRemoteProjectHost(project)} · ${project.cwd}`
-                                : project.cwd}
-                            </span>
-                          </span>
-                        </span>
+                              <span className="mx-1">·</span>
+                              {project.cwd}
+                            </div>
+                          )}
+                        </div>
                       </CollapsibleTrigger>
                       <Tooltip>
                         <TooltipTrigger
@@ -1727,15 +1940,38 @@ export default function Sidebar() {
 
       <SidebarSeparator />
       <SidebarFooter className="gap-0 p-3">
-        {addingProject ? (
-          <>
-            <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-              {addProjectMode === "remote" ? "Add remote project" : "Add project"}
-            </p>
-            <div className="mb-2 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          className="flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-border py-2 text-xs text-muted-foreground/70 transition-colors duration-150 hover:border-ring hover:text-muted-foreground"
+          onClick={() => setAddingProject(true)}
+        >
+          + Add project
+        </button>
+      </SidebarFooter>
+
+      <Dialog
+        open={addingProject}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAddingProject(false);
+            setAddProjectMode("local");
+            setNewCwd("");
+            setRemotePath("");
+            setRemoteBrowseQuery("");
+            browseRemoteHostMutation.reset();
+          }
+        }}
+      >
+        <DialogPopup>
+          <DialogHeader>
+            <DialogTitle>Add project</DialogTitle>
+            <DialogDescription>
+              Add a local or remote project workspace.
+            </DialogDescription>
+            <div className="mt-2 grid grid-cols-2 gap-2">
               <button
                 type="button"
-                className={`rounded-md border px-2 py-1 text-xs transition-colors duration-150 ${
+                className={`rounded-md border px-2 py-1.5 text-xs font-medium transition-colors duration-150 ${
                   addProjectMode === "local"
                     ? "border-ring bg-secondary text-foreground"
                     : "border-border text-muted-foreground/80 hover:bg-secondary"
@@ -1746,7 +1982,7 @@ export default function Sidebar() {
               </button>
               <button
                 type="button"
-                className={`rounded-md border px-2 py-1 text-xs transition-colors duration-150 ${
+                className={`rounded-md border px-2 py-1.5 text-xs font-medium transition-colors duration-150 ${
                   addProjectMode === "remote"
                     ? "border-ring bg-secondary text-foreground"
                     : "border-border text-muted-foreground/80 hover:bg-secondary"
@@ -1756,223 +1992,89 @@ export default function Sidebar() {
                 Remote
               </button>
             </div>
+          </DialogHeader>
+          <DialogPanel>
             {addProjectMode === "local" ? (
-              <>
+              <div className="space-y-3">
                 <input
-                  className="mb-2 w-full rounded-md border border-border bg-secondary px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                  className={`w-full font-mono ${INPUT_CLASSES}`}
                   placeholder="/path/to/project"
                   value={newCwd}
                   onChange={(event) => setNewCwd(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") handleAddProject();
-                    if (event.key === "Escape") setAddingProject(false);
                   }}
                 />
                 {isElectron && (
                   <button
                     type="button"
-                    className="mb-2 flex w-full items-center justify-center rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                    className="flex w-full items-center justify-center rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => void handlePickFolder()}
                     disabled={isPickingFolder || isAddingProject}
                   >
                     {isPickingFolder ? "Picking folder..." : "Browse for folder"}
                   </button>
                 )}
-              </>
+              </div>
             ) : (
-              <>
-                <select
-                  className="mb-2 w-full rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none"
-                  value={selectedRemoteHostId ?? ""}
-                  onChange={(event) =>
-                    handleRemoteHostSelect(
-                      event.target.value
-                        ? RemoteHostId.makeUnsafe(event.target.value)
-                        : null,
-                    )
-                  }
-                >
-                  <option value="">Select saved host</option>
-                  {remoteHosts.map((host) => (
-                    <option key={host.id} value={host.id}>
-                      {host.label} ({formatRemoteHostSummary(host)})
-                    </option>
-                  ))}
-                </select>
-                <div className="mb-2 grid grid-cols-2 gap-2">
-                  <input
-                    className="rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
-                    placeholder="Host label"
-                    value={remoteHostDraft.label}
-                    onChange={(event) =>
-                      setRemoteHostDraft((current) => ({
-                        ...current,
-                        label: event.target.value,
-                      }))
-                    }
-                  />
-                  <input
-                    className="rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
-                    placeholder="ssh user"
-                    value={remoteHostDraft.user}
-                    onChange={(event) =>
-                      setRemoteHostDraft((current) => ({
-                        ...current,
-                        user: event.target.value,
-                      }))
-                    }
-                  />
-                  <input
-                    className="rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
-                    placeholder="host"
-                    value={remoteHostDraft.host}
-                    onChange={(event) =>
-                      setRemoteHostDraft((current) => ({
-                        ...current,
-                        host: event.target.value,
-                      }))
-                    }
-                  />
-                  <input
-                    className="rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
-                    placeholder="port"
-                    value={remoteHostDraft.port}
-                    onChange={(event) =>
-                      setRemoteHostDraft((current) => ({
-                        ...current,
-                        port: event.target.value,
-                      }))
-                    }
-                  />
-                  <input
-                    className="rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
-                    placeholder="ssh config host (optional)"
-                    value={remoteHostDraft.sshConfigHost}
-                    onChange={(event) =>
-                      setRemoteHostDraft((current) => ({
-                        ...current,
-                        sshConfigHost: event.target.value,
-                      }))
-                    }
-                  />
-                  <input
-                    className="rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
-                    placeholder="identity file (optional)"
-                    value={remoteHostDraft.identityFile}
-                    onChange={(event) =>
-                      setRemoteHostDraft((current) => ({
-                        ...current,
-                        identityFile: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <input
-                  className="mb-2 w-full rounded-md border border-border bg-secondary px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
-                  placeholder="t3 remote-agent --stdio"
-                  value={remoteHostDraft.helperCommand}
-                  onChange={(event) =>
-                    setRemoteHostDraft((current) => ({
-                      ...current,
-                      helperCommand: event.target.value,
-                    }))
-                  }
-                />
-                {selectedRemoteHost && (
-                  <div className="mb-2 rounded-md border border-border/70 bg-secondary/60 px-2 py-1.5 text-[10px] text-muted-foreground/80">
-                    <div className="font-medium text-foreground/80">
-                      {formatRemoteHostSummary(selectedRemoteHost)}
-                    </div>
-                    <div>
-                      Status:{" "}
-                      {selectedRemoteHost.lastConnectionStatus === "ok"
-                        ? "Connected"
-                        : selectedRemoteHost.lastConnectionStatus === "error"
-                          ? "Error"
-                          : "Unknown"}
-                      {selectedRemoteHost.helperVersion
-                        ? ` · Helper ${selectedRemoteHost.helperVersion}`
-                        : ""}
-                    </div>
-                    {selectedRemoteHost.lastConnectionError && (
-                      <div className="mt-1 truncate text-rose-500/90">
-                        {selectedRemoteHost.lastConnectionError}
-                      </div>
-                    )}
-                  </div>
-                )}
-                <div className="mb-2 grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                    onClick={handleSaveRemoteHost}
-                    disabled={saveRemoteHostMutation.isPending}
-                  >
-                    {saveRemoteHostMutation.isPending ? "Saving..." : "Save host"}
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                    onClick={handleTestRemoteHost}
-                    disabled={!selectedRemoteHostId || testRemoteHostMutation.isPending}
-                  >
-                    {testRemoteHostMutation.isPending ? "Testing..." : "Test connection"}
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary"
-                    onClick={() => {
-                      setSelectedRemoteHostId(null);
-                      setRemoteHostDraft(emptyRemoteHostDraft());
-                    }}
-                  >
-                    New host
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                    onClick={() => {
-                      if (!selectedRemoteHostId) {
-                        return;
+              <div className="space-y-3">
+                <div className="flex gap-2">
+                  <div className="min-w-0 flex-1">
+                    <Select
+                      value={selectedRemoteHostId ?? ""}
+                      onValueChange={(val) =>
+                        handleRemoteHostSelect(
+                          val ? RemoteHostId.makeUnsafe(val as string) : null,
+                        )
                       }
-                      void removeRemoteHostMutation.mutateAsync(selectedRemoteHostId).catch(
-                        (error) => {
-                          toastManager.add({
-                            type: "error",
-                            title: "Could not remove remote host",
-                            description:
-                              error instanceof Error
-                                ? error.message
-                                : "An unexpected error occurred.",
-                          });
-                        },
-                      );
-                    }}
-                    disabled={!selectedRemoteHostId || removeRemoteHostMutation.isPending}
+                      items={Object.fromEntries([
+                        ["", "Select saved host"],
+                        ...remoteHosts.map((host) => [
+                          host.id,
+                          `${host.label} (${formatRemoteHostSummary(host)})`,
+                        ]),
+                      ])}
+                    >
+                      <SelectTrigger size="sm">
+                        <SelectValue placeholder="Select saved host" />
+                      </SelectTrigger>
+                      <SelectPopup>
+                        <SelectItem value="">Select saved host</SelectItem>
+                        {remoteHosts.map((host) => (
+                          <SelectItem key={host.id} value={host.id}>
+                            {host.label} ({formatRemoteHostSummary(host)})
+                          </SelectItem>
+                        ))}
+                      </SelectPopup>
+                    </Select>
+                  </div>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary"
+                    onClick={() => setRemoteHostDialogOpen(true)}
                   >
-                    Remove host
+                    Manage hosts
                   </button>
                 </div>
                 <input
-                  className="mb-2 w-full rounded-md border border-border bg-secondary px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                  className={`w-full font-mono ${INPUT_CLASSES}`}
                   placeholder="~/project or /srv/project"
                   value={remotePath}
                   onChange={(event) => setRemotePath(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") handleAddProject();
-                    if (event.key === "Escape") setAddingProject(false);
                   }}
                 />
-                <div className="mb-2 flex gap-2">
+                <div className="flex gap-2">
                   <input
-                    className="min-w-0 flex-1 rounded-md border border-border bg-secondary px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                    className={`min-w-0 flex-1 ${INPUT_CLASSES}`}
                     placeholder="Browse filter (optional)"
                     value={remoteBrowseQuery}
                     onChange={(event) => setRemoteBrowseQuery(event.target.value)}
                   />
                   <button
                     type="button"
-                    className="rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                    className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => handleBrowseRemotePath()}
                     disabled={!selectedRemoteHostId || browseRemoteHostMutation.isPending}
                   >
@@ -1980,11 +2082,11 @@ export default function Sidebar() {
                   </button>
                 </div>
                 {browseRemoteHostMutation.data && (
-                  <div className="mb-2 rounded-md border border-border/70 bg-secondary/50 p-1">
+                  <div className="rounded-md border border-border/70 bg-secondary/50 p-1">
                     <div className="px-1 pb-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
                       {browseRemoteHostMutation.data.cwd}
                     </div>
-                    <div className="max-h-36 space-y-1 overflow-y-auto">
+                    <div className="max-h-48 space-y-0.5 overflow-y-auto">
                       {browseRemoteHostMutation.data.entries.map((entry) => (
                         <button
                           key={`${entry.kind}:${entry.path}`}
@@ -2008,46 +2110,57 @@ export default function Sidebar() {
                     </div>
                   </div>
                 )}
-              </>
+              </div>
             )}
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className="flex-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90"
-                onClick={handleAddProject}
-                disabled={isAddingProject}
-              >
-                {isAddingProject ? "Adding..." : addProjectMode === "remote" ? "Add remote" : "Add"}
-              </button>
-              <button
-                type="button"
-                className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary"
-                onClick={() => {
-                  setAddingProject(false);
-                  setAddProjectMode("local");
-                  setNewCwd("");
-                  setRemotePath("");
-                  setRemoteBrowseQuery("");
-                  browseRemoteHostMutation.reset();
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </>
-        ) : (
-          <button
-            type="button"
-            className="flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-border py-2 text-xs text-muted-foreground/70 transition-colors duration-150 hover:border-ring hover:text-muted-foreground"
-            onClick={() => {
-              setAddingProject(true);
-              setAddProjectMode("local");
-            }}
-          >
-            + Add project
-          </button>
-        )}
-      </SidebarFooter>
+          </DialogPanel>
+          <DialogFooter>
+            <DialogClose
+              render={
+                <button
+                  type="button"
+                  className="rounded-md border border-border px-4 py-1.5 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary"
+                />
+              }
+            >
+              Cancel
+            </DialogClose>
+            <button
+              type="button"
+              className="rounded-md bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={handleAddProject}
+              disabled={isAddingProject}
+            >
+              {isAddingProject ? "Adding..." : addProjectMode === "remote" ? "Add remote" : "Add project"}
+            </button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+
+      <RemoteHostDialog
+        open={remoteHostDialogOpen}
+        onOpenChange={setRemoteHostDialogOpen}
+        remoteHosts={remoteHosts}
+        selectedRemoteHostId={selectedRemoteHostId}
+        onSelectHost={handleRemoteHostSelect}
+        remoteHostDraft={remoteHostDraft}
+        setRemoteHostDraft={setRemoteHostDraft}
+        selectedRemoteHost={selectedRemoteHost}
+        onSave={handleSaveRemoteHost}
+        onTest={handleTestRemoteHost}
+        onRemove={(id) => {
+          void removeRemoteHostMutation.mutateAsync(id).catch((error) => {
+            toastManager.add({
+              type: "error",
+              title: "Could not remove remote host",
+              description:
+                error instanceof Error ? error.message : "An unexpected error occurred.",
+            });
+          });
+        }}
+        isSaving={saveRemoteHostMutation.isPending}
+        isTesting={testRemoteHostMutation.isPending}
+        isRemoving={removeRemoteHostMutation.isPending}
+      />
     </>
   );
 }
