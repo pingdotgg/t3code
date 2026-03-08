@@ -17,7 +17,7 @@ function stripAnsi(data: string): string {
  * Matches patterns like:
  *   - http://localhost:3000
  *   - http://127.0.0.1:5173/
- *   - https://localhost:8080/path
+ *   - https://localhost:8080
  */
 const DEV_SERVER_URL_RE = /https?:\/\/(?:localhost|127\.0\.0\.1):\d+\/?/;
 

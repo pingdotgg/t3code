@@ -28,7 +28,6 @@ function ChatRouteLayout() {
       <SidebarProvider
         defaultOpen
         className="min-h-0 flex-1 overflow-hidden"
-        style={{ minHeight: 0 } as React.CSSProperties}
       >
         <Sidebar
           side="left"

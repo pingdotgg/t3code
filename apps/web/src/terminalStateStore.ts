@@ -5,7 +5,7 @@
  * API constrained to store actions/selectors.
  */
 
-import type { ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
@@ -407,6 +407,9 @@ function setThreadTerminalActivity(
   }
   return { ...normalized, runningTerminalIds: [...runningTerminalIds] };
 }
+
+/** Synthetic thread ID used for the global (non-project) terminal. */
+export const GLOBAL_TERMINAL_THREAD_ID = "global" as ThreadId;
 
 export function selectThreadTerminalState(
   terminalStateByThreadId: Record<ThreadId, ThreadTerminalState>,

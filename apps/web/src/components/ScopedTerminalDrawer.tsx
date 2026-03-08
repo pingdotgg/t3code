@@ -18,7 +18,8 @@ interface ScopedTerminalDrawerProps {
 /**
  * ScopedTerminalDrawer — a self-contained terminal drawer that manages its
  * own state via `terminalStateStore` for a given (potentially synthetic)
- * `threadId`. Renders nothing when the terminal is closed.
+ * `threadId`. Renders nothing if the terminal has never been opened; once
+ * opened, stays mounted with `visible=false` when closed.
  *
  * Used for per-project terminals (keyed by `project:<projectId>`) and the
  * global terminal (keyed by `"global"`).

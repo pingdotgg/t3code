@@ -79,8 +79,10 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
 
   // Health-check: detect when the dev server goes down and when it comes back.
   // Uses no-cors fetch to localhost — a network error means the server is unreachable.
-  // Polls every 3s while reachable (fast crash detection) and every 2s while down
+  // Polls every 10s while reachable (crash detection) and every 2s while down
   // (fast recovery detection).
+  const serverReachableRef = useRef(serverReachable);
+  serverReachableRef.current = serverReachable;
   useEffect(() => {
     if (loadedUrl.length === 0) return;
 
@@ -98,7 +100,7 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
         if (!cancelled) setServerReachable(false);
       }
       if (!cancelled) {
-        timer = setTimeout(checkHealth, serverReachable ? 10_000 : 2_000);
+        timer = setTimeout(checkHealth, serverReachableRef.current ? 10_000 : 2_000);
       }
     };
 
@@ -109,7 +111,7 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
       cancelled = true;
       if (timer !== null) clearTimeout(timer);
     };
-  }, [loadedUrl, serverReachable]);
+  }, [loadedUrl]);
 
   // Reset reachable state when the URL changes (new URL deserves a fresh attempt)
   const prevLoadedUrlRef = useRef(loadedUrl);
@@ -124,6 +126,14 @@ export default function BrowserPanel({ mode: _mode = "sidebar", projectId }: Bro
     (url: string) => {
       const trimmed = url.trim();
       const normalized = trimmed.startsWith("http") ? trimmed : `http://${trimmed}`;
+      try {
+        const parsed = new URL(normalized);
+        if (parsed.hostname !== "localhost" && parsed.hostname !== "127.0.0.1") {
+          return;
+        }
+      } catch {
+        return;
+      }
       setLoadedUrl(normalized);
       setInputUrl(normalized);
       saveBrowserUrl(projectId, normalized);
