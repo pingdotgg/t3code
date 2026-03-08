@@ -1402,24 +1402,19 @@ it.layer(TestLayer)("git integration", (it) => {
         }),
     );
 
-    it.effect("includes command context when worktree removal fails", () =>
+    it.effect("succeeds silently when worktree path no longer exists on disk", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
         const core = yield* GitCore;
         const missingWorktreePath = path.join(tmp, "missing-worktree");
 
+        // If the worktree directory was already deleted, removal should succeed
+        // (it prunes stale references instead of failing).
         const removeResult = yield* Effect.result(
           core.removeWorktree({ cwd: tmp, path: missingWorktreePath }),
         );
-        expect(removeResult._tag).toBe("Failure");
-        if (removeResult._tag !== "Failure") {
-          return;
-        }
-        const message = removeResult.failure.message;
-        expect(message).toContain("git worktree remove");
-        expect(message).toContain(`cwd: ${tmp}`);
-        expect(message).toContain(missingWorktreePath);
+        expect(removeResult._tag).toBe("Success");
       }),
     );
 

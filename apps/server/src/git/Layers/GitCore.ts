@@ -1040,6 +1040,19 @@ const makeGitCore = Effect.gen(function* () {
 
   const removeWorktree: GitCoreShape["removeWorktree"] = (input) =>
     Effect.gen(function* () {
+      // If the worktree directory no longer exists, prune stale references and
+      // return early — the worktree was already cleaned up.
+      const exists = yield* fileSystem
+        .stat(input.path)
+        .pipe(Effect.map(() => true), Effect.catch(() => Effect.succeed(false)));
+      if (!exists) {
+        yield* executeGit("GitCore.removeWorktree", input.cwd, ["worktree", "prune"], {
+          timeoutMs: 10_000,
+          fallbackErrorMessage: "git worktree prune failed",
+        }).pipe(Effect.catch(() => Effect.void));
+        return;
+      }
+
       const args = ["worktree", "remove"];
       if (input.force) {
         args.push("--force");
