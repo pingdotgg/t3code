@@ -374,6 +374,25 @@ export const ThreadTurnStartCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadPlanImplementCommand = Schema.Struct({
+  type: Schema.Literal("thread.plan.implement"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  planId: OrchestrationProposedPlanId,
+  messageId: MessageId,
+  messageText: TrimmedNonEmptyString,
+  provider: Schema.optional(ProviderKind),
+  model: Schema.optional(TrimmedNonEmptyString),
+  serviceTier: Schema.optional(Schema.NullOr(ProviderServiceTier)),
+  modelOptions: Schema.optional(ProviderModelOptions),
+  assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
+  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
+  ),
+  createdAt: IsoDateTime,
+});
+
 const ClientThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -445,6 +464,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
+  ThreadPlanImplementCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
@@ -464,6 +484,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
+  ThreadPlanImplementCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
@@ -661,9 +682,25 @@ export const ThreadMessageSentPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+export const ThreadTurnStartSource = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("message"),
+    messageId: MessageId,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("proposed-plan"),
+    planId: OrchestrationProposedPlanId,
+    providerInput: TrimmedNonEmptyString,
+  }),
+]);
+export type ThreadTurnStartSource = typeof ThreadTurnStartSource.Type;
+
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
-  messageId: MessageId,
+  // `messageId` remains optional for replay compatibility with historical
+  // persisted events that predate structured turn sources.
+  messageId: Schema.optional(MessageId),
+  source: Schema.optional(ThreadTurnStartSource),
   provider: Schema.optional(ProviderKind),
   model: Schema.optional(TrimmedNonEmptyString),
   serviceTier: Schema.optional(Schema.NullOr(ProviderServiceTier)),

@@ -16,6 +16,7 @@ import {
   type ProviderApprovalDecision,
   type ServerProviderStatus,
   type ProviderKind,
+  type OrchestrationProposedPlanId,
   type ThreadId,
   type TurnId,
   OrchestrationThreadActivity,
@@ -89,8 +90,8 @@ import {
 } from "../pendingUserInput";
 import { useStore } from "../store";
 import {
+  buildPlanImplementationMessageText,
   buildPlanImplementationThreadTitle,
-  buildPlanImplementationPrompt,
   buildProposedPlanMarkdownFilename,
   proposedPlanTitle,
   resolvePlanFollowUpSubmission,
@@ -2405,15 +2406,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     const trimmed = prompt.trim();
     if (showPlanFollowUpPrompt && activeProposedPlan) {
-      const followUp = resolvePlanFollowUpSubmission({
-        draftText: trimmed,
-        planMarkdown: activeProposedPlan.planMarkdown,
-      });
+      const followUp = resolvePlanFollowUpSubmission({ draftText: trimmed });
       promptRef.current = "";
       clearComposerDraftContent(activeThread.id);
       setComposerHighlightedItemId(null);
       setComposerCursor(0);
       setComposerTrigger(null);
+      if (followUp.text === null) {
+        await onSubmitPlanImplementation({
+          threadId: activeThread.id,
+          planId: activeProposedPlan.id,
+          createdAt: new Date().toISOString(),
+        });
+        return;
+      }
       await onSubmitPlanFollowUp({
         text: followUp.text,
         interactionMode: followUp.interactionMode,
@@ -2940,6 +2946,107 @@ export default function ChatView({ threadId }: ChatViewProps) {
     ],
   );
 
+  const onSubmitPlanImplementation = useCallback(
+    async ({
+      threadId,
+      planId,
+      createdAt,
+    }: {
+      threadId: ThreadId;
+      planId: OrchestrationProposedPlanId;
+      createdAt: string;
+    }) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !isServerThread ||
+        isSendBusy ||
+        isConnecting ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+
+      const messageIdForSend = newMessageId();
+      const messageText = buildPlanImplementationMessageText();
+
+      sendInFlightRef.current = true;
+      beginSendPhase("sending-turn");
+      setThreadError(threadId, null);
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: messageText,
+          createdAt,
+          streaming: false,
+        },
+      ]);
+      shouldAutoScrollRef.current = true;
+      forceStickToBottom();
+
+      try {
+        await persistThreadSettingsForNextTurn({
+          threadId,
+          createdAt,
+          ...(selectedModel ? { model: selectedModel } : {}),
+          runtimeMode,
+          interactionMode: "default",
+        });
+
+        setComposerDraftInteractionMode(threadId, "default");
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.plan.implement",
+          commandId: newCommandId(),
+          threadId,
+          planId,
+          messageId: messageIdForSend,
+          messageText,
+          provider: selectedProvider,
+          model: selectedModel || undefined,
+          serviceTier: selectedServiceTier,
+          ...(selectedModelOptionsForDispatch
+            ? { modelOptions: selectedModelOptionsForDispatch }
+            : {}),
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          runtimeMode,
+          interactionMode: "default",
+          createdAt,
+        });
+        sendInFlightRef.current = false;
+      } catch (err) {
+        setOptimisticUserMessages((existing) =>
+          existing.filter((message) => message.id !== messageIdForSend),
+        );
+        setThreadError(
+          threadId,
+          err instanceof Error ? err.message : "Failed to start plan implementation.",
+        );
+        sendInFlightRef.current = false;
+        resetSendPhase();
+      }
+    },
+    [
+      beginSendPhase,
+      forceStickToBottom,
+      isConnecting,
+      isSendBusy,
+      isServerThread,
+      persistThreadSettingsForNextTurn,
+      resetSendPhase,
+      runtimeMode,
+      selectedModel,
+      selectedModelOptionsForDispatch,
+      selectedProvider,
+      selectedServiceTier,
+      setComposerDraftInteractionMode,
+      setThreadError,
+      settings.enableAssistantStreaming,
+    ],
+  );
+
   const onImplementPlanInNewThread = useCallback(async () => {
     const api = readNativeApi();
     if (
@@ -2957,9 +3064,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     const createdAt = new Date().toISOString();
     const nextThreadId = newThreadId();
-    const planMarkdown = activeProposedPlan.planMarkdown;
-    const implementationPrompt = buildPlanImplementationPrompt(planMarkdown);
-    const nextThreadTitle = truncateTitle(buildPlanImplementationThreadTitle(planMarkdown));
+    const messageText = buildPlanImplementationMessageText();
+    const nextThreadTitle = truncateTitle(
+      buildPlanImplementationThreadTitle(activeProposedPlan.planMarkdown),
+    );
     const nextThreadModel: ModelSlug =
       selectedModel ||
       (activeThread.model as ModelSlug) ||
@@ -2989,17 +3097,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
       })
       .then(() =>
         api.orchestration.dispatchCommand({
-          type: "thread.turn.start",
+          type: "thread.plan.implement",
           commandId: newCommandId(),
           threadId: nextThreadId,
-          message: {
-            messageId: newMessageId(),
-            role: "user",
-            text: implementationPrompt,
-            attachments: [],
-          },
+          planId: activeProposedPlan.id,
+          messageId: newMessageId(),
+          messageText,
           provider: selectedProvider,
           model: selectedModel || undefined,
+          serviceTier: selectedServiceTier,
           ...(selectedModelOptionsForDispatch
             ? { modelOptions: selectedModelOptionsForDispatch }
             : {}),
@@ -3053,6 +3159,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedModel,
     selectedModelOptionsForDispatch,
     selectedProvider,
+    selectedServiceTier,
     settings.enableAssistantStreaming,
     syncServerReadModel,
   ]);
@@ -4617,7 +4724,12 @@ const ProposedPlanCard = memo(function ProposedPlanCard({
       </div>
       <div className="mt-4">
         <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
-          <ChatMarkdown text={planMarkdown} cwd={cwd} isStreaming={false} />
+          <ChatMarkdown
+            text={planMarkdown}
+            cwd={cwd}
+            isStreaming={false}
+            className="text-foreground/80"
+          />
           {canCollapse && !expanded ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
           ) : null}
@@ -5087,9 +5199,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   </div>
                 )}
                 {row.message.text && (
-                  <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
-                    {row.message.text}
-                  </pre>
+                  <ChatMarkdown text={row.message.text} cwd={markdownCwd} className="text-foreground" />
                 )}
                 <div className="mt-1.5 flex items-center justify-end gap-2">
                   <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
@@ -5136,6 +5246,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   text={messageText}
                   cwd={markdownCwd}
                   isStreaming={Boolean(row.message.streaming)}
+                  className="text-foreground/80"
                 />
                 {(() => {
                   const turnSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);

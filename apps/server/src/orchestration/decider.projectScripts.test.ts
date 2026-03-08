@@ -189,6 +189,10 @@ describe("decider project scripts", () => {
     expect(turnStartEvent.payload).toMatchObject({
       threadId: ThreadId.makeUnsafe("thread-1"),
       messageId: asMessageId("message-user-1"),
+      source: {
+        kind: "message",
+        messageId: asMessageId("message-user-1"),
+      },
       provider: "codex",
       model: "gpt-5.3-codex",
       modelOptions: {
@@ -198,6 +202,129 @@ describe("decider project scripts", () => {
         },
       },
       runtimeMode: "approval-required",
+    });
+  });
+
+  it("emits a visible user message plus turn-start-requested for thread.plan.implement", async () => {
+    const now = new Date().toISOString();
+    const initial = createEmptyReadModel(now);
+    const withProject = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-hidden-plan"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-hidden-plan"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-create-hidden-plan"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-create-hidden-plan"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-hidden-plan"),
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModel: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+    const withThread = await Effect.runPromise(
+      projectEvent(withProject, {
+        sequence: 2,
+        eventId: asEventId("evt-thread-create-hidden-plan"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-hidden-plan"),
+        type: "thread.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-thread-create-hidden-plan"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-thread-create-hidden-plan"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-hidden-plan"),
+          projectId: asProjectId("project-hidden-plan"),
+          title: "Thread",
+          model: "gpt-5-codex",
+          interactionMode: "plan",
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+    const readModel = await Effect.runPromise(
+      projectEvent(withThread, {
+        sequence: 3,
+        eventId: asEventId("evt-thread-plan-upsert-hidden-plan"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-hidden-plan"),
+        type: "thread.proposed-plan-upserted",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-thread-plan-upsert-hidden-plan"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-thread-plan-upsert-hidden-plan"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-hidden-plan"),
+          proposedPlan: {
+            id: "plan-hidden-1",
+            turnId: null,
+            planMarkdown: "# Ship hidden plan\n\n- step 1",
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.plan.implement",
+          commandId: CommandId.makeUnsafe("cmd-thread-plan-implement"),
+          threadId: ThreadId.makeUnsafe("thread-hidden-plan"),
+          planId: "plan-hidden-1",
+          messageId: asMessageId("message-user-hidden-plan"),
+          messageText: "Implement this plan.",
+          provider: "codex",
+          model: "gpt-5.3-codex",
+          interactionMode: "default",
+          runtimeMode: "approval-required",
+          createdAt: now,
+        },
+        readModel,
+      }),
+    );
+
+    expect(Array.isArray(result)).toBe(true);
+    const events = Array.isArray(result) ? result : [result];
+    expect(events).toHaveLength(2);
+    expect(events[0]?.type).toBe("thread.message-sent");
+    expect(events[0]?.payload).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-hidden-plan"),
+      messageId: asMessageId("message-user-hidden-plan"),
+      role: "user",
+      text: "Implement this plan.",
+      attachments: [],
+      turnId: null,
+      streaming: false,
+    });
+    const event = events[1];
+    expect(event?.type).toBe("thread.turn-start-requested");
+    expect(event?.causationEventId).toBe(events[0]?.eventId ?? null);
+    if (!event || event.type !== "thread.turn-start-requested") {
+      return;
+    }
+    expect(event.payload.messageId).toBe(asMessageId("message-user-hidden-plan"));
+    expect(event.payload.source).toEqual({
+      kind: "proposed-plan",
+      planId: "plan-hidden-1",
+      providerInput: "PLEASE IMPLEMENT THIS PLAN:\n# Ship hidden plan\n\n- step 1",
     });
   });
 

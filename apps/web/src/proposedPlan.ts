@@ -12,16 +12,11 @@ function sanitizePlanFileSegment(input: string): string {
   return sanitized.length > 0 ? sanitized : "plan";
 }
 
-export function buildPlanImplementationPrompt(planMarkdown: string): string {
-  return `PLEASE IMPLEMENT THIS PLAN:\n${planMarkdown.trim()}`;
-}
-
 export function resolvePlanFollowUpSubmission(input: {
   draftText: string;
-  planMarkdown: string;
 }): {
-  text: string;
-  interactionMode: "default" | "plan";
+  text: string | null;
+  interactionMode: "plan";
 } {
   const trimmedDraftText = input.draftText.trim();
   if (trimmedDraftText.length > 0) {
@@ -32,9 +27,13 @@ export function resolvePlanFollowUpSubmission(input: {
   }
 
   return {
-    text: buildPlanImplementationPrompt(input.planMarkdown),
-    interactionMode: "default",
+    text: null,
+    interactionMode: "plan",
   };
+}
+
+export function buildPlanImplementationMessageText(): string {
+  return "Implement this plan.";
 }
 
 export function buildPlanImplementationThreadTitle(planMarkdown: string): string {

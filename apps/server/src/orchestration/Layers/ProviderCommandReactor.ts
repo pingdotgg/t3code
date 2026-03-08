@@ -365,7 +365,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly branch: string | null;
     readonly worktreePath: string | null;
-    readonly messageId: string;
+    readonly messageId: string | null;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
   }) {
@@ -382,7 +382,11 @@ const make = Effect.gen(function* () {
     }
 
     const userMessages = thread.messages.filter((message) => message.role === "user");
-    if (userMessages.length !== 1 || userMessages[0]?.id !== input.messageId) {
+    if (input.messageId === null) {
+      if (userMessages.length !== 0) {
+        return;
+      }
+    } else if (userMessages.length !== 1 || userMessages[0]?.id !== input.messageId) {
       return;
     }
 
@@ -442,13 +446,38 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const message = thread.messages.find((entry) => entry.id === event.payload.messageId);
-    if (!message || message.role !== "user") {
+    const source = event.payload.source;
+    const resolvedTurnInput =
+      source?.kind === "proposed-plan"
+        ? {
+            messageText: source.providerInput,
+            attachments: [] as const,
+          }
+        : (() => {
+            const messageId = source?.kind === "message" ? source.messageId : event.payload.messageId;
+            if (!messageId) {
+              return null;
+            }
+            const message = thread.messages.find((entry) => entry.id === messageId);
+            if (!message || message.role !== "user") {
+              return null;
+            }
+            return {
+              messageId: message.id,
+              messageText: message.text,
+              attachments: message.attachments ?? [],
+            };
+          })();
+    if (!resolvedTurnInput) {
+      const detail =
+        source?.kind === "proposed-plan"
+          ? `Proposed plan '${source.planId}' could not be resolved for provider turn start.`
+          : `User message '${source?.kind === "message" ? source.messageId : event.payload.messageId}' was not found for turn start request.`;
       yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.turn.start.failed",
         summary: "Provider turn start failed",
-        detail: `User message '${event.payload.messageId}' was not found for turn start request.`,
+        detail,
         turnId: null,
         createdAt: event.payload.createdAt,
       });
@@ -459,15 +488,17 @@ const make = Effect.gen(function* () {
       threadId: event.payload.threadId,
       branch: thread.branch,
       worktreePath: thread.worktreePath,
-      messageId: message.id,
-      messageText: message.text,
-      ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+      messageId: event.payload.messageId ?? null,
+      messageText: resolvedTurnInput.messageText,
+      attachments: [...resolvedTurnInput.attachments],
     }).pipe(Effect.forkScoped);
 
     yield* sendTurnForThread({
       threadId: event.payload.threadId,
-      messageText: message.text,
-      ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+      messageText: resolvedTurnInput.messageText,
+      ...(resolvedTurnInput.attachments.length > 0
+        ? { attachments: [...resolvedTurnInput.attachments] }
+        : {}),
       ...(event.payload.provider !== undefined ? { provider: event.payload.provider } : {}),
       ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
       ...(event.payload.serviceTier !== undefined ? { serviceTier: event.payload.serviceTier } : {}),

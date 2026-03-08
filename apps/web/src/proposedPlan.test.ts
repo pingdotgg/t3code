@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildPlanImplementationMessageText,
   buildPlanImplementationThreadTitle,
-  buildPlanImplementationPrompt,
   buildProposedPlanMarkdownFilename,
   proposedPlanTitle,
   resolvePlanFollowUpSubmission,
@@ -18,24 +18,15 @@ describe("proposedPlanTitle", () => {
   });
 });
 
-describe("buildPlanImplementationPrompt", () => {
-  it("formats the plan exactly like the Codex follow-up handoff prompt", () => {
-    expect(buildPlanImplementationPrompt("## Ship it\n\n- step 1\n")).toBe(
-      "PLEASE IMPLEMENT THIS PLAN:\n## Ship it\n\n- step 1",
-    );
-  });
-});
-
 describe("resolvePlanFollowUpSubmission", () => {
-  it("switches to default mode when implementing the ready plan without extra text", () => {
+  it("returns null text when implementing the ready plan without extra text", () => {
     expect(
       resolvePlanFollowUpSubmission({
         draftText: "   ",
-        planMarkdown: "## Ship it\n\n- step 1\n",
       }),
     ).toEqual({
-      text: "PLEASE IMPLEMENT THIS PLAN:\n## Ship it\n\n- step 1",
-      interactionMode: "default",
+      text: null,
+      interactionMode: "plan",
     });
   });
 
@@ -43,12 +34,17 @@ describe("resolvePlanFollowUpSubmission", () => {
     expect(
       resolvePlanFollowUpSubmission({
         draftText: "Refine step 2 first",
-        planMarkdown: "## Ship it\n\n- step 1\n",
       }),
     ).toEqual({
       text: "Refine step 2 first",
       interactionMode: "plan",
     });
+  });
+});
+
+describe("buildPlanImplementationMessageText", () => {
+  it("returns a short visible implementation message", () => {
+    expect(buildPlanImplementationMessageText()).toBe("Implement this plan.");
   });
 });
 

@@ -3,11 +3,13 @@ import { it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 
 import {
+  ClientOrchestrationCommand,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   OrchestrationGetTurnDiffInput,
   OrchestrationSession,
   ProjectCreateCommand,
+  ThreadPlanImplementCommand,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
@@ -17,6 +19,8 @@ import {
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
 const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
 const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateCommand);
+const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
+const decodeThreadPlanImplementCommand = Schema.decodeUnknownEffect(ThreadPlanImplementCommand);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
@@ -186,6 +190,37 @@ it.effect("accepts provider-scoped model options in thread.turn.start", () =>
   }),
 );
 
+it.effect("decodes thread.plan.implement defaults", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadPlanImplementCommand({
+      type: "thread.plan.implement",
+      commandId: "cmd-plan-implement",
+      threadId: "thread-1",
+      planId: "plan-1",
+      messageId: "msg-plan-implement",
+      messageText: "Implement this plan.",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+  }),
+);
+
+it.effect("includes thread.plan.implement in the client orchestration command union", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeClientOrchestrationCommand({
+      type: "thread.plan.implement",
+      commandId: "cmd-plan-implement-union",
+      threadId: "thread-1",
+      planId: "plan-1",
+      messageId: "msg-plan-implement-union",
+      messageText: "Implement this plan.",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.type, "thread.plan.implement");
+  }),
+);
+
 it.effect(
   "decodes thread.turn-start-requested defaults for provider, runtime mode, and interaction mode",
   () =>
@@ -193,12 +228,35 @@ it.effect(
       const parsed = yield* decodeThreadTurnStartRequestedPayload({
         threadId: "thread-1",
         messageId: "msg-1",
+        source: {
+          kind: "message",
+          messageId: "msg-1",
+        },
         createdAt: "2026-01-01T00:00:00.000Z",
       });
       assert.strictEqual(parsed.provider, undefined);
       assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
       assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
     }),
+);
+
+it.effect("decodes proposed-plan turn start sources", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-1",
+      source: {
+        kind: "proposed-plan",
+        planId: "plan-1",
+        providerInput: "PLEASE IMPLEMENT THIS PLAN:\n# Plan",
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.source, {
+      kind: "proposed-plan",
+      planId: "plan-1",
+      providerInput: "PLEASE IMPLEMENT THIS PLAN:\n# Plan",
+    });
+  }),
 );
 
 it.effect("decodes orchestration session runtime mode defaults", () =>
