@@ -8,7 +8,7 @@ import {
   MODEL_OPTIONS,
   MODEL_OPTIONS_BY_PROVIDER,
   REASONING_EFFORT_OPTIONS_BY_PROVIDER,
-} from "../../contracts/src";
+} from "@t3tools/contracts";
 
 import {
   getDefaultModel,

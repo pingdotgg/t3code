@@ -180,7 +180,7 @@ it.live("runs a single turn end-to-end and persists checkpoint state in sqlite +
         ],
       };
 
-      yield* harness.adapterHarness.queueTurnResponseForNextSession(turnResponse);
+      yield* harness.adapterHarness!.queueTurnResponseForNextSession(turnResponse);
       yield* startTurn({
         harness,
         commandId: "cmd-turn-start-single",
@@ -314,7 +314,7 @@ it.live("runs multi-turn file edits and persists checkpoint diffs", () =>
     Effect.gen(function* () {
       yield* seedProjectAndThread(harness);
 
-      yield* harness.adapterHarness.queueTurnResponseForNextSession({
+      yield* harness.adapterHarness!.queueTurnResponseForNextSession({
         events: [
           {
             type: "turn.started",
@@ -373,7 +373,7 @@ it.live("runs multi-turn file edits and persists checkpoint diffs", () =>
         (entry) => entry.checkpoints.length === 1 && entry.session?.threadId === "thread-1",
       );
 
-      yield* harness.adapterHarness.queueTurnResponse(THREAD_ID, {
+      yield* harness.adapterHarness!.queueTurnResponse(THREAD_ID, {
         events: [
           {
             type: "turn.started",
@@ -473,7 +473,7 @@ it.live("tracks approval requests and resolves pending approvals on user respons
     Effect.gen(function* () {
       yield* seedProjectAndThread(harness);
 
-      yield* harness.adapterHarness.queueTurnResponseForNextSession({
+      yield* harness.adapterHarness!.queueTurnResponseForNextSession({
         events: [
           {
             type: "turn.started",
@@ -538,7 +538,7 @@ it.live("tracks approval requests and resolves pending approvals on user respons
       assert.equal(resolvedRow.decision, "accept");
 
       const approvalResponses = yield* waitForSync(
-        () => harness.adapterHarness.getApprovalResponses(THREAD_ID),
+        () => harness.adapterHarness!.getApprovalResponses(THREAD_ID),
         (responses) => responses.length === 1,
         "provider approval response",
       );
@@ -554,7 +554,7 @@ it.live("records failed turn runtime state and checkpoint status as error", () =
     Effect.gen(function* () {
       yield* seedProjectAndThread(harness);
 
-      yield* harness.adapterHarness.queueTurnResponseForNextSession({
+      yield* harness.adapterHarness!.queueTurnResponseForNextSession({
         events: [
           {
             type: "turn.started",
@@ -633,7 +633,7 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
     Effect.gen(function* () {
       yield* seedProjectAndThread(harness);
 
-      yield* harness.adapterHarness.queueTurnResponseForNextSession({
+      yield* harness.adapterHarness!.queueTurnResponseForNextSession({
         events: [
           {
             type: "turn.started",
@@ -691,7 +691,7 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
         (entry) => entry.session?.threadId === "thread-1" && entry.checkpoints.length === 1,
       );
 
-      yield* harness.adapterHarness.queueTurnResponse(THREAD_ID, {
+      yield* harness.adapterHarness!.queueTurnResponse(THREAD_ID, {
         events: [
           {
             type: "turn.started",
@@ -796,7 +796,7 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
         gitRefExists(harness.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 2)),
         false,
       );
-      assert.deepEqual(harness.adapterHarness.getRollbackCalls(THREAD_ID), [1]);
+      assert.deepEqual(harness.adapterHarness!.getRollbackCalls(THREAD_ID), [1]);
 
       const checkpointRows = yield* harness.checkpointRepository.listByThreadId({
         threadId: THREAD_ID,
@@ -849,7 +849,7 @@ it.live("starts a claudeCode session on first turn when provider is requested", 
       Effect.gen(function* () {
         yield* seedProjectAndThread(harness);
 
-        yield* harness.adapterHarness.queueTurnResponseForNextSession({
+        yield* harness.adapterHarness!.queueTurnResponseForNextSession({
           events: [
             {
               type: "turn.started",
@@ -903,7 +903,7 @@ it.live("recovers claudeCode sessions after provider stopAll using persisted res
       Effect.gen(function* () {
         yield* seedProjectAndThread(harness);
 
-        yield* harness.adapterHarness.queueTurnResponseForNextSession({
+        yield* harness.adapterHarness!.queueTurnResponseForNextSession({
           events: [
             {
               type: "turn.started",
@@ -943,12 +943,12 @@ it.live("recovers claudeCode sessions after provider stopAll using persisted res
 
         yield* harness.providerService.stopAll();
         yield* waitForSync(
-          () => harness.adapterHarness.listActiveSessionIds(),
+          () => harness.adapterHarness!.listActiveSessionIds(),
           (sessionIds) => sessionIds.length === 0,
           "provider stopAll",
         );
 
-        yield* harness.adapterHarness.queueTurnResponseForNextSession({
+        yield* harness.adapterHarness!.queueTurnResponseForNextSession({
           events: [
             {
               type: "turn.started",
@@ -980,7 +980,7 @@ it.live("recovers claudeCode sessions after provider stopAll using persisted res
           text: "After restart",
         });
         yield* waitForSync(
-          () => harness.adapterHarness.getStartCount(),
+          () => harness.adapterHarness!.getStartCount(),
           (count) => count === 2,
           "claude provider recovery start",
         );
@@ -1007,7 +1007,7 @@ it.live("forwards claudeCode approval responses to the provider session", () =>
       Effect.gen(function* () {
         yield* seedProjectAndThread(harness);
 
-        yield* harness.adapterHarness.queueTurnResponseForNextSession({
+        yield* harness.adapterHarness!.queueTurnResponseForNextSession({
           events: [
             {
               type: "turn.started",
@@ -1062,7 +1062,7 @@ it.live("forwards claudeCode approval responses to the provider session", () =>
         );
 
         const approvalResponses = yield* waitForSync(
-          () => harness.adapterHarness.getApprovalResponses(THREAD_ID),
+          () => harness.adapterHarness!.getApprovalResponses(THREAD_ID),
           (responses) => responses.length === 1,
           "claude provider approval response",
         );
@@ -1078,7 +1078,7 @@ it.live("forwards thread.turn.interrupt to claudeCode provider sessions", () =>
       Effect.gen(function* () {
         yield* seedProjectAndThread(harness);
 
-        yield* harness.adapterHarness.queueTurnResponseForNextSession({
+        yield* harness.adapterHarness!.queueTurnResponseForNextSession({
           events: [
             {
               type: "turn.started",
@@ -1126,7 +1126,7 @@ it.live("forwards thread.turn.interrupt to claudeCode provider sessions", () =>
         yield* harness.waitForDomainEvent((event) => event.type === "thread.turn-interrupt-requested");
 
         const interruptCalls = yield* waitForSync(
-          () => harness.adapterHarness.getInterruptCalls(THREAD_ID),
+          () => harness.adapterHarness!.getInterruptCalls(THREAD_ID),
           (calls) => calls.length === 1,
           "claude provider interrupt call",
         );
@@ -1142,7 +1142,7 @@ it.live("reverts claudeCode turns and rolls back provider conversation state", (
       Effect.gen(function* () {
         yield* seedProjectAndThread(harness);
 
-        yield* harness.adapterHarness.queueTurnResponseForNextSession({
+        yield* harness.adapterHarness!.queueTurnResponseForNextSession({
           events: [
             {
               type: "turn.started",
@@ -1184,7 +1184,7 @@ it.live("reverts claudeCode turns and rolls back provider conversation state", (
           (entry) => entry.latestTurn?.turnId === "turn-1" && entry.session?.threadId === "thread-1",
         );
 
-        yield* harness.adapterHarness.queueTurnResponse(THREAD_ID, {
+        yield* harness.adapterHarness!.queueTurnResponse(THREAD_ID, {
           events: [
             {
               type: "turn.started",
@@ -1250,7 +1250,7 @@ it.live("reverts claudeCode turns and rolls back provider conversation state", (
           gitRefExists(harness.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 2)),
           false,
         );
-        assert.deepEqual(harness.adapterHarness.getRollbackCalls(THREAD_ID), [1]);
+        assert.deepEqual(harness.adapterHarness!.getRollbackCalls(THREAD_ID), [1]);
       }),
     "claudeCode",
   ),

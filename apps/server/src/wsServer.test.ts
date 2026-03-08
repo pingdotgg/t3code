@@ -50,6 +50,7 @@ import type { GitCoreShape } from "./git/Services/GitCore.ts";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
+import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 
 interface PendingMessages {
   queue: unknown[];
@@ -393,10 +394,7 @@ describe("WebSocket Server", () => {
       providerHealth?: ProviderHealthShape;
       open?: OpenShape;
       gitManager?: GitManagerShape;
-      gitCore?: Pick<
-        GitCoreShape,
-        "listBranches" | "initRepo" | "pullCurrentBranch"
-      >;
+      gitCore?: Pick<GitCoreShape, "listBranches" | "initRepo" | "pullCurrentBranch">;
       terminalManager?: TerminalManagerShape;
     } = {},
   ): Promise<Http.Server> {
@@ -437,6 +435,7 @@ describe("WebSocket Server", () => {
         ? Layer.succeed(TerminalManager, options.terminalManager)
         : Layer.empty,
     );
+
     const runtimeLayer = Layer.merge(
       Layer.merge(
         makeServerRuntimeServicesLayer().pipe(Layer.provide(infrastructureLayer)),
@@ -449,6 +448,7 @@ describe("WebSocket Server", () => {
       Layer.provideMerge(providerHealthLayer),
       Layer.provideMerge(openLayer),
       Layer.provideMerge(serverConfigLayer),
+      Layer.provideMerge(AnalyticsService.layerTest),
       Layer.provideMerge(NodeServices.layer),
     );
     const runtimeServices = await Effect.runPromise(
@@ -1108,13 +1108,14 @@ describe("WebSocket Server", () => {
     connections.push(ws);
     await waitForMessage(ws);
 
+    const workspaceRoot = makeTempDir("t3code-ws-diff-project-");
     const createdAt = new Date().toISOString();
     const createProjectResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
       type: "project.create",
       commandId: "cmd-diff-project-create",
       projectId: "project-diff",
       title: "Diff Project",
-      workspaceRoot: "/tmp/ws-diff-project",
+      workspaceRoot,
       defaultModel: "gpt-5-codex",
       createdAt,
     });
@@ -1187,13 +1188,14 @@ describe("WebSocket Server", () => {
     connections.push(ws);
     await waitForMessage(ws);
 
+    const workspaceRoot = makeTempDir("t3code-ws-project-");
     const createdAt = new Date().toISOString();
     const createProjectResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
       type: "project.create",
       commandId: "cmd-ws-project-create",
       projectId: "project-1",
       title: "WS Project",
-      workspaceRoot: "/tmp/ws-project",
+      workspaceRoot,
       defaultModel: "gpt-5-codex",
       createdAt,
     });
@@ -1620,7 +1622,6 @@ describe("WebSocket Server", () => {
     expect(pullResponse.result).toBeUndefined();
     expect(pullResponse.error?.message).toContain("No upstream configured");
     expect(pullCurrentBranch).toHaveBeenCalledWith("/repo/path");
-
   });
 
   it("supports git.status over websocket", async () => {

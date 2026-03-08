@@ -40,6 +40,7 @@ import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.
 import { makeCodexAdapterLive } from "../src/provider/Layers/CodexAdapter.ts";
 import { CodexAdapter } from "../src/provider/Services/CodexAdapter.ts";
 import { ProviderService } from "../src/provider/Services/ProviderService.ts";
+import { AnalyticsService } from "../src/telemetry/Services/AnalyticsService.ts";
 import { CheckpointReactorLive } from "../src/orchestration/Layers/CheckpointReactor.ts";
 import { OrchestrationEngineLive } from "../src/orchestration/Layers/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "../src/orchestration/Layers/ProjectionPipeline.ts";
@@ -152,7 +153,7 @@ export interface OrchestrationIntegrationHarness {
   readonly rootDir: string;
   readonly workspaceDir: string;
   readonly dbPath: string;
-  readonly adapterHarness: TestProviderAdapterHarness;
+  readonly adapterHarness: TestProviderAdapterHarness | null;
   readonly engine: OrchestrationEngineShape;
   readonly snapshotQuery: ProjectionSnapshotQuery["Service"];
   readonly providerService: ProviderService["Service"];
@@ -252,10 +253,12 @@ export const makeOrchestrationIntegrationHarness = (
       ? makeProviderServiceLive().pipe(
           Layer.provide(providerSessionDirectoryLayer),
           Layer.provide(realCodexRegistry),
+          Layer.provide(AnalyticsService.layerTest),
         )
       : makeProviderServiceLive().pipe(
           Layer.provide(providerSessionDirectoryLayer),
           Layer.provide(fakeRegistry!),
+          Layer.provide(AnalyticsService.layerTest),
         );
 
     const runtimeServicesLayer = Layer.mergeAll(
@@ -417,6 +420,7 @@ export const makeOrchestrationIntegrationHarness = (
               ? disposeRuntimeExit.cause
               : null;
 
+
         if (failureCause) {
           return yield* Effect.failCause(failureCause);
         }
@@ -435,7 +439,7 @@ export const makeOrchestrationIntegrationHarness = (
       rootDir,
       workspaceDir,
       dbPath,
-      adapterHarness: adapterHarness as TestProviderAdapterHarness,
+      adapterHarness,
       engine,
       snapshotQuery,
       providerService,

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { getAppModelOptions, getSlashModelOptions, normalizeCustomModelSlugs } from "./appSettings";
+import {
+  getAppModelOptions,
+  getSlashModelOptions,
+  normalizeCustomModelSlugs,
+  resolveAppServiceTier,
+  shouldShowFastTierIcon,
+  resolveAppModelSelection,
+} from "./appSettings";
 
 describe("normalizeCustomModelSlugs", () => {
   it("normalizes aliases, removes built-ins, and deduplicates values", () => {
@@ -61,6 +68,18 @@ describe("getAppModelOptions", () => {
   });
 });
 
+describe("resolveAppModelSelection", () => {
+  it("preserves saved custom model slugs instead of falling back to the default", () => {
+    expect(resolveAppModelSelection("codex", ["galapagos-alpha"], "galapagos-alpha")).toBe(
+      "galapagos-alpha",
+    );
+  });
+
+  it("falls back to the provider default when no model is selected", () => {
+    expect(resolveAppModelSelection("codex", [], "")).toBe("gpt-5.4");
+  });
+});
+
 describe("getSlashModelOptions", () => {
   it("includes saved custom model slugs for /model command suggestions", () => {
     const options = getSlashModelOptions(
@@ -90,5 +109,24 @@ describe("getSlashModelOptions", () => {
 
     expect(claudeOptions.some((option) => option.slug === "claude/custom-opus")).toBe(true);
     expect(cursorOptions.some((option) => option.slug === "cursor/custom-model")).toBe(true);
+  });
+});
+
+describe("resolveAppServiceTier", () => {
+  it("maps automatic to no override", () => {
+    expect(resolveAppServiceTier("auto")).toBeNull();
+  });
+
+  it("preserves explicit service tier overrides", () => {
+    expect(resolveAppServiceTier("fast")).toBe("fast");
+    expect(resolveAppServiceTier("flex")).toBe("flex");
+  });
+});
+
+describe("shouldShowFastTierIcon", () => {
+  it("shows the fast-tier icon only for gpt-5.4 on fast tier", () => {
+    expect(shouldShowFastTierIcon("gpt-5.4", "fast")).toBe(true);
+    expect(shouldShowFastTierIcon("gpt-5.4", "auto")).toBe(false);
+    expect(shouldShowFastTierIcon("gpt-5.3-codex", "fast")).toBe(false);
   });
 });

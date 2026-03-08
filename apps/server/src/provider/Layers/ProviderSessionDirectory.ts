@@ -95,11 +95,15 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
     }
 
     const now = new Date().toISOString();
+    const providerChanged =
+      existingRuntime !== undefined && existingRuntime.providerName !== binding.provider;
     yield* repository
       .upsert({
         threadId: resolvedThreadId,
         providerName: binding.provider,
-        adapterKey: binding.adapterKey ?? existingRuntime?.adapterKey ?? binding.provider,
+        adapterKey:
+          binding.adapterKey ??
+          (providerChanged ? binding.provider : (existingRuntime?.adapterKey ?? binding.provider)),
         runtimeMode: binding.runtimeMode ?? existingRuntime?.runtimeMode ?? "full-access",
         status: binding.status ?? existingRuntime?.status ?? "running",
         lastSeenAt: now,

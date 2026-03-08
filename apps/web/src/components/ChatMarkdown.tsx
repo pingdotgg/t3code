@@ -4,7 +4,7 @@ import {
   type SupportedLanguages,
 } from "@pierre/diffs";
 import { CheckIcon, CopyIcon } from "lucide-react";
-import {
+import React, {
   Children,
   Suspense,
   isValidElement,
@@ -27,6 +27,27 @@ import { useTheme } from "../hooks/useTheme";
 import { resolveMarkdownFileLinkTarget } from "../markdown-links";
 import { readNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
+
+class CodeHighlightErrorBoundary extends React.Component<
+  { fallback: ReactNode; children: ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { fallback: ReactNode; children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  override render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    return this.props.children;
+  }
+}
 
 interface ChatMarkdownProps {
   text: string;
@@ -99,6 +120,14 @@ function getHighlighterPromise(language: string): Promise<DiffsHighlighter> {
     themes: [resolveDiffThemeName("dark"), resolveDiffThemeName("light")],
     langs: [language as SupportedLanguages],
     preferredHighlighter: "shiki-js",
+  }).catch((err) => {
+    highlighterPromiseCache.delete(language);
+    if (language === "text") {
+      // "text" itself failed — Shiki cannot initialize at all, surface the error
+      throw err;
+    }
+    // Language not supported by Shiki — fall back to "text"
+    return getHighlighterPromise("text");
   });
   highlighterPromiseCache.set(language, promise);
   return promise;
@@ -179,10 +208,14 @@ function SuspenseShikiCodeBlock({
   }
 
   const highlighter = use(getHighlighterPromise(language));
-  const highlightedHtml = useMemo(
-    () => highlighter.codeToHtml(code, { lang: language, theme: themeName }),
-    [code, highlighter, language, themeName],
-  );
+  const highlightedHtml = useMemo(() => {
+    try {
+      return highlighter.codeToHtml(code, { lang: language, theme: themeName });
+    } catch {
+      // If highlighting fails for this language, render as plain text
+      return highlighter.codeToHtml(code, { lang: "text", theme: themeName });
+    }
+  }, [code, highlighter, language, themeName]);
 
   useEffect(() => {
     if (!isStreaming) {
@@ -235,14 +268,16 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
 
         return (
           <MarkdownCodeBlock code={codeBlock.code}>
-            <Suspense fallback={<pre {...props}>{children}</pre>}>
-              <SuspenseShikiCodeBlock
-                className={codeBlock.className}
-                code={codeBlock.code}
-                themeName={diffThemeName}
-                isStreaming={isStreaming}
-              />
-            </Suspense>
+            <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
+              <Suspense fallback={<pre {...props}>{children}</pre>}>
+                <SuspenseShikiCodeBlock
+                  className={codeBlock.className}
+                  code={codeBlock.code}
+                  themeName={diffThemeName}
+                  isStreaming={isStreaming}
+                />
+              </Suspense>
+            </CodeHighlightErrorBoundary>
           </MarkdownCodeBlock>
         );
       },

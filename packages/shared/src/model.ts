@@ -13,7 +13,7 @@ import {
   type CursorReasoningOption,
   type ModelSlug,
   type ProviderKind,
-} from "../../contracts/src";
+} from "@t3tools/contracts";
 
 type CursorModelCapability = {
   readonly supportsReasoning: boolean;
@@ -105,6 +105,7 @@ export interface CursorModelSelection {
   readonly fast: boolean;
   readonly thinking: boolean;
 }
+
 
 export function getModelOptions(provider: ProviderKind = "codex") {
   return MODEL_OPTIONS_BY_PROVIDER[provider];
@@ -248,12 +249,12 @@ export function resolveModelSlug(
 ): ModelSlug {
   const normalized = normalizeModelSlug(model, provider);
   if (!normalized) {
-    return DEFAULT_MODEL_BY_PROVIDER[provider];
+    return getDefaultModel(provider);
   }
 
   return MODEL_SLUG_SET_BY_PROVIDER[provider].has(normalized)
     ? normalized
-    : DEFAULT_MODEL_BY_PROVIDER[provider];
+    : getDefaultModel(provider);
 }
 
 export function resolveModelSlugForProvider(

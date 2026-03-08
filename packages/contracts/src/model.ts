@@ -97,12 +97,11 @@ export type ModelSlug = BuiltInModelSlug | (string & {});
 export type CursorModelSlug = (typeof MODEL_OPTIONS_BY_PROVIDER)["cursor"][number]["slug"];
 
 export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, ModelSlug> = {
-  codex: "gpt-5.3-codex",
+  codex: "gpt-5.4",
   claudeCode: "claude-sonnet-4-6",
   cursor: "opus-4.6-thinking",
 };
 
-// Backward compatibility for existing Codex-only call sites.
 export const MODEL_OPTIONS = MODEL_OPTIONS_BY_PROVIDER.codex;
 export const DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER.codex;
 

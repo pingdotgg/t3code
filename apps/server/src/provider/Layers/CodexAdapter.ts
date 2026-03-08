@@ -274,9 +274,6 @@ function toCanonicalUserInputAnswers(
 
       if (Array.isArray(value)) {
         const normalized = value.filter((entry): entry is string => typeof entry === "string");
-        if (normalized.length === 0) {
-          return [];
-        }
         return [[questionId, normalized.length === 1 ? normalized[0] : normalized] as const];
       }
 
@@ -284,7 +281,7 @@ function toCanonicalUserInputAnswers(
       const answerList = asArray(answerObject?.answers)?.filter(
         (entry): entry is string => typeof entry === "string",
       );
-      if (!answerList || answerList.length === 0) {
+      if (!answerList) {
         return [];
       }
       return [[questionId, answerList.length === 1 ? answerList[0] : answerList] as const];
@@ -1357,6 +1354,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
               threadId: input.threadId,
               ...(input.input !== undefined ? { input: input.input } : {}),
               ...(input.model !== undefined ? { model: input.model } : {}),
+              ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
               ...(input.modelOptions?.codex?.reasoningEffort !== undefined
                 ? { effort: input.modelOptions.codex.reasoningEffort }
                 : {}),

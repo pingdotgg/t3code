@@ -5,6 +5,7 @@ import {
   buildPlanImplementationPrompt,
   buildProposedPlanMarkdownFilename,
   proposedPlanTitle,
+  resolvePlanFollowUpSubmission,
 } from "./proposedPlan";
 
 describe("proposedPlanTitle", () => {
@@ -24,6 +25,33 @@ describe("buildPlanImplementationPrompt", () => {
     );
   });
 });
+
+describe("resolvePlanFollowUpSubmission", () => {
+  it("switches to default mode when implementing the ready plan without extra text", () => {
+    expect(
+      resolvePlanFollowUpSubmission({
+        draftText: "   ",
+        planMarkdown: "## Ship it\n\n- step 1\n",
+      }),
+    ).toEqual({
+      text: "PLEASE IMPLEMENT THIS PLAN:\n## Ship it\n\n- step 1",
+      interactionMode: "default",
+    });
+  });
+
+  it("stays in plan mode when the user adds a follow-up prompt", () => {
+    expect(
+      resolvePlanFollowUpSubmission({
+        draftText: "Refine step 2 first",
+        planMarkdown: "## Ship it\n\n- step 1\n",
+      }),
+    ).toEqual({
+      text: "Refine step 2 first",
+      interactionMode: "plan",
+    });
+  });
+});
+
 
 describe("buildPlanImplementationThreadTitle", () => {
   it("uses the plan heading when building the implementation thread title", () => {

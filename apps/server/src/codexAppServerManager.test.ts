@@ -7,11 +7,14 @@ import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
 
 import {
   buildCodexInitializeParams,
+  CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
   CodexAppServerManager,
   classifyCodexStderrLine,
   isRecoverableThreadResumeError,
   normalizeCodexModelSlug,
+  readCodexAccountSnapshot,
+  resolveCodexModelForAccount,
 } from "./codexAppServerManager";
 
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
@@ -20,13 +23,19 @@ function createSendTurnHarness() {
   const manager = new CodexAppServerManager();
   const context = {
     session: {
-      sessionId: "sess_1",
       provider: "codex",
       status: "ready",
       threadId: "thread_1",
+      runtimeMode: "full-access",
+      model: "gpt-5.3-codex",
       resumeCursor: { threadId: "thread_1" },
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
+    },
+    account: {
+      type: "unknown",
+      planType: null,
+      sparkEnabled: true,
     },
   };
 
@@ -57,10 +66,11 @@ function createThreadControlHarness() {
   const manager = new CodexAppServerManager();
   const context = {
     session: {
-      sessionId: "sess_1",
       provider: "codex",
       status: "ready",
       threadId: "thread_1",
+      runtimeMode: "full-access",
+      model: "gpt-5.3-codex",
       resumeCursor: { threadId: "thread_1" },
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
@@ -88,10 +98,11 @@ function createPendingUserInputHarness() {
   const manager = new CodexAppServerManager();
   const context = {
     session: {
-      sessionId: "sess_1",
       provider: "codex",
       status: "ready",
       threadId: "thread_1",
+      runtimeMode: "full-access",
+      model: "gpt-5.3-codex",
       resumeCursor: { threadId: "thread_1" },
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
@@ -194,6 +205,70 @@ describe("isRecoverableThreadResumeError", () => {
   });
 });
 
+describe("readCodexAccountSnapshot", () => {
+  it("disables spark for chatgpt plus accounts", () => {
+    expect(
+      readCodexAccountSnapshot({
+        type: "chatgpt",
+        email: "plus@example.com",
+        planType: "plus",
+      }),
+    ).toEqual({
+      type: "chatgpt",
+      planType: "plus",
+      sparkEnabled: false,
+    });
+  });
+
+  it("keeps spark enabled for chatgpt pro accounts", () => {
+    expect(
+      readCodexAccountSnapshot({
+        type: "chatgpt",
+        email: "pro@example.com",
+        planType: "pro",
+      }),
+    ).toEqual({
+      type: "chatgpt",
+      planType: "pro",
+      sparkEnabled: true,
+    });
+  });
+
+  it("keeps spark enabled for api key accounts", () => {
+    expect(
+      readCodexAccountSnapshot({
+        type: "apiKey",
+      }),
+    ).toEqual({
+      type: "apiKey",
+      planType: null,
+      sparkEnabled: true,
+    });
+  });
+});
+
+describe("resolveCodexModelForAccount", () => {
+  it("falls back from spark to default for unsupported chatgpt plans", () => {
+    expect(
+      resolveCodexModelForAccount("gpt-5.3-codex-spark", {
+        type: "chatgpt",
+        planType: "plus",
+        sparkEnabled: false,
+      }),
+    ).toBe("gpt-5.3-codex");
+  });
+
+  it("keeps spark for supported plans", () => {
+    expect(
+      resolveCodexModelForAccount("gpt-5.3-codex-spark", {
+        type: "chatgpt",
+        planType: "pro",
+        sparkEnabled: true,
+      }),
+    ).toBe("gpt-5.3-codex-spark");
+  });
+});
+
 describe("startSession", () => {
   it("enables Codex experimental api capabilities during initialize", () => {
     expect(buildCodexInitializeParams()).toEqual({
@@ -258,8 +333,8 @@ describe("sendTurn", () => {
         },
       ],
       model: "gpt-5.3",
-      effort: "high",
       serviceTier: "fast",
+      effort: "high",
     });
 
     expect(result).toEqual({
@@ -282,8 +357,8 @@ describe("sendTurn", () => {
         },
       ],
       model: "gpt-5.3-codex",
-      effort: "high",
       serviceTier: "fast",
+      effort: "high",
     });
     expect(updateSession).toHaveBeenCalledWith(context, {
       status: "running",
@@ -313,6 +388,98 @@ describe("sendTurn", () => {
           url: "data:image/png;base64,BBBB",
         },
       ],
+      model: "gpt-5.3-codex",
+    });
+  });
+
+  it("passes Codex plan mode as a collaboration preset on turn/start", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "Plan the work",
+      interactionMode: "plan",
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Plan the work",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.3-codex",
+      collaborationMode: {
+        mode: "plan",
+        settings: {
+          model: "gpt-5.3-codex",
+          reasoning_effort: "medium",
+          developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+        },
+      },
+    });
+  });
+
+  it("passes Codex default mode as a collaboration preset on turn/start", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "PLEASE IMPLEMENT THIS PLAN:\n- step 1",
+      interactionMode: "default",
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "PLEASE IMPLEMENT THIS PLAN:\n- step 1",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.3-codex",
+      collaborationMode: {
+        mode: "default",
+        settings: {
+          model: "gpt-5.3-codex",
+          reasoning_effort: "medium",
+          developer_instructions: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+        },
+      },
+    });
+  });
+
+  it("keeps the session model when interaction mode is set without an explicit model", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+    context.session.model = "gpt-5.2-codex";
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "Plan this with my current session model",
+      interactionMode: "plan",
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Plan this with my current session model",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.2-codex",
+      collaborationMode: {
+        mode: "plan",
+        settings: {
+          model: "gpt-5.2-codex",
+          reasoning_effort: "medium",
+          developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+        },
+      },
     });
   });
 
@@ -454,8 +621,8 @@ describe("respondToUserInput", () => {
       asThreadId("thread_1"),
       ApprovalRequestId.makeUnsafe("req-user-input-1"),
       {
-      scope: "All request methods",
-      compat: "Keep current envelope",
+        scope: "All request methods",
+        compat: "Keep current envelope",
       },
     );
 
@@ -481,6 +648,80 @@ describe("respondToUserInput", () => {
         },
       }),
     );
+  });
+
+  it("preserves explicit empty multi-select answers", async () => {
+    const { manager, context, requireSession, writeMessage, emitEvent } =
+      createPendingUserInputHarness();
+
+    await manager.respondToUserInput(
+      asThreadId("thread_1"),
+      ApprovalRequestId.makeUnsafe("req-user-input-1"),
+      {
+        scope: [],
+      },
+    );
+
+    expect(requireSession).toHaveBeenCalledWith("thread_1");
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 42,
+      result: {
+        answers: {
+          scope: { answers: [] },
+        },
+      },
+    });
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "item/tool/requestUserInput/answered",
+        payload: {
+          requestId: "req-user-input-1",
+          answers: {
+            scope: { answers: [] },
+          },
+        },
+      }),
+    );
+  });
+
+  it("tracks file-read approval requests with the correct method", () => {
+    const manager = new CodexAppServerManager();
+    const context = {
+      session: {
+        sessionId: "sess_1",
+        provider: "codex",
+        status: "ready",
+        threadId: asThreadId("thread_1"),
+        resumeCursor: { threadId: "thread_1" },
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+    };
+    type ApprovalRequestContext = {
+      session: typeof context.session;
+      pendingApprovals: typeof context.pendingApprovals;
+      pendingUserInputs: typeof context.pendingUserInputs;
+    };
+
+    (
+      manager as unknown as {
+        handleServerRequest: (
+          context: ApprovalRequestContext,
+          request: Record<string, unknown>,
+        ) => void;
+      }
+    ).handleServerRequest(context, {
+      jsonrpc: "2.0",
+      id: 42,
+      method: "item/fileRead/requestApproval",
+      params: {},
+    });
+
+    const request = Array.from(context.pendingApprovals.values())[0];
+    expect(request?.requestKind).toBe("file-read");
+    expect(request?.method).toBe("item/fileRead/requestApproval");
   });
 });
 
