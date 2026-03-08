@@ -4356,7 +4356,7 @@ const MessageCopyButton = memo(function MessageCopyButton({ text }: { text: stri
   }, [text]);
 
   return (
-    <Button type="button" size="xs" variant="outline" onClick={handleCopy} title="Copy message">
+    <Button type="button" size="icon-xs" variant="outline" onClick={handleCopy} title="Copy message">
       {copied ? <CheckIcon className="size-3 text-success" /> : <CopyIcon className="size-3" />}
     </Button>
   );
@@ -5089,18 +5089,21 @@ const MessagesTimeline = memo(function MessagesTimeline({
                 {row.message.text && (
                   <pre
                     data-chat-user-message-text="true"
-                    className="chat-composer-body-text m-0 whitespace-pre-wrap wrap-break-word text-foreground"
+                    className={cn(
+                      "chat-composer-body-text m-0 whitespace-pre-wrap wrap-break-word text-foreground",
+                      (row.message.text || canRevertAgentWork) && "pe-16",
+                    )}
                   >
                     {row.message.text}
                   </pre>
                 )}
-                <div className="mt-1.5 flex items-center justify-end">
-                  <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+                {(row.message.text || canRevertAgentWork) && (
+                  <div className="pointer-events-none absolute right-3 bottom-3 flex items-center gap-1 opacity-0 transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
                     {row.message.text && <MessageCopyButton text={row.message.text} />}
                     {canRevertAgentWork && (
                       <Button
                         type="button"
-                        size="xs"
+                        size="icon-xs"
                         variant="outline"
                         disabled={isRevertingCheckpoint || isWorking}
                         onClick={() => onRevertUserMessage(row.message.id)}
@@ -5110,7 +5113,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                       </Button>
                     )}
                   </div>
-                </div>
+                )}
               </div>
             </div>
           );
