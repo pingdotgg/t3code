@@ -946,6 +946,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!activePendingProgress) {
       return;
     }
+    // Only reset the composer when the active pending question changes.
+    // If we key this effect on the whole progress object, every keystroke updates
+    // `customAnswer`, retriggers the effect, and forces the cursor back to the end.
+    // That breaks normal left/right arrow navigation and click-to-reposition while
+    // answering a question.
     promptRef.current = activePendingProgress.customAnswer;
     setComposerCursor(activePendingProgress.customAnswer.length);
     setComposerTrigger(
@@ -958,7 +963,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
       ),
     );
     setComposerHighlightedItemId(null);
-  }, [activePendingProgress, activePendingUserInput?.requestId]);
+  }, [
+    activePendingProgress?.activeQuestion?.id,
+    activePendingQuestionIndex,
+    activePendingUserInput?.requestId,
+  ]);
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
