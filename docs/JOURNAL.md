@@ -204,3 +204,36 @@ BrowserPanel now periodically pings the loaded URL with `fetch(url, { mode: 'no-
 - Polling overhead is negligible for localhost (tiny requests handled entirely by local network stack).
 
 `bun lint` and `bun typecheck` both pass with 0 warnings / 0 errors.
+
+---
+
+## 2026-03-08 — Cmd+B Browser Toggle Keybinding
+
+Added `Cmd+B` (Mac) / `Ctrl+B` (non-Mac) as a keyboard shortcut to toggle the browser panel.
+
+### What changed
+
+- **`packages/contracts/src/keybindings.ts`** — Added `"browser.toggle"` to `STATIC_KEYBINDING_COMMANDS`.
+- **`apps/server/src/keybindings.ts`** — Added default rule `{ key: "mod+b", command: "browser.toggle", when: "!terminalFocus" }`.
+- **`apps/web/src/keybindings.ts`** — Added `isBrowserToggleShortcut` matcher function.
+- **`apps/web/src/components/ChatView.tsx`** — Wired `browser.toggle` command in the keydown handler to call `onToggleBrowser`.
+
+---
+
+## 2026-03-08 — Fix Browser Features for Draft Threads
+
+Fixed auto-detection and Cmd+click-to-browser not working when the user is on a "New thread" (draft that hasn't been submitted yet).
+
+### Problem
+
+The `projectId` lookup in `_chat.$threadId.tsx` only searched `store.threads` (server-persisted threads). Draft threads store their `projectId` in `composerDraftStore.draftThreadsByThreadId`, so draft threads returned `null` for `projectId`. Both the auto-detection effect and the Cmd+click listener guard with `if (!projectId) return;`, so they silently exited without subscribing to events.
+
+### Fix
+
+Added a fallback `projectId` lookup from `composerDraftStore.draftThreadsByThreadId[threadId]?.projectId`. The effective `projectId` is now `serverProjectId ?? draftProjectId`, so browser features work immediately on new threads before the first message is sent.
+
+### What changed
+
+- **`apps/web/src/routes/_chat.$threadId.tsx`** — `projectId` now falls back to `draftProjectId` from `useComposerDraftStore`.
+
+`bun lint` and `bun typecheck` both pass with 0 warnings / 0 errors.

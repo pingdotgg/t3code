@@ -276,9 +276,13 @@ function ChatThreadRouteView() {
   );
 
   // Project terminal: persists across thread switches within the same project
-  const projectId = useStore(
+  const serverProjectId = useStore(
     (store) => store.threads.find((t) => t.id === threadId)?.projectId ?? null,
   );
+  const draftProjectId = useComposerDraftStore(
+    (store) => store.draftThreadsByThreadId[threadId]?.projectId ?? null,
+  );
+  const projectId = serverProjectId ?? draftProjectId;
   const activeProjectCwd = useStore(
     (store) => (projectId ? (store.projects.find((p) => p.id === projectId)?.cwd ?? null) : null),
   );
