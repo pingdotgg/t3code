@@ -120,6 +120,31 @@ interface TerminalViewportProps {
   drawerHeight: number;
 }
 
+function fitTerminalAndSyncSize(params: {
+  api: ReturnType<typeof readNativeApi>;
+  terminal: Terminal | null;
+  fitAddon: FitAddon | null;
+  threadId: ThreadId;
+  terminalId: string;
+}) {
+  const { api, terminal, fitAddon, threadId, terminalId } = params;
+  if (!api || !terminal || !fitAddon) return;
+
+  const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
+  fitAddon.fit();
+  if (wasAtBottom) {
+    terminal.scrollToBottom();
+  }
+  void api.terminal
+    .resize({
+      threadId,
+      terminalId,
+      cols: terminal.cols,
+      rows: terminal.rows,
+    })
+    .catch(() => undefined);
+}
+
 function TerminalViewport({
   threadId,
   terminalId,
@@ -360,23 +385,13 @@ function TerminalViewport({
     });
 
     const fitTimer = window.setTimeout(() => {
-      const activeTerminal = terminalRef.current;
-      const activeFitAddon = fitAddonRef.current;
-      if (!activeTerminal || !activeFitAddon) return;
-      const wasAtBottom =
-        activeTerminal.buffer.active.viewportY >= activeTerminal.buffer.active.baseY;
-      activeFitAddon.fit();
-      if (wasAtBottom) {
-        activeTerminal.scrollToBottom();
-      }
-      void api.terminal
-        .resize({
-          threadId,
-          terminalId,
-          cols: activeTerminal.cols,
-          rows: activeTerminal.rows,
-        })
-        .catch(() => undefined);
+      fitTerminalAndSyncSize({
+        api,
+        terminal: terminalRef.current,
+        fitAddon: fitAddonRef.current,
+        threadId,
+        terminalId,
+      });
     }, 30);
     void openTerminal();
 
@@ -397,13 +412,25 @@ function TerminalViewport({
   }, [cwd, runtimeEnv, terminalId, threadId]);
 
   useEffect(() => {
+    const api = readNativeApi();
     const terminal = terminalRef.current;
-    if (!terminal) return;
+    if (!api || !terminal) return;
 
     terminal.options.fontFamily = appearance.monoFontFamily;
     terminal.options.fontSize = appearance.terminalFontSizePx;
-    fitAddonRef.current?.fit();
-  }, [appearance.monoFontFamily, appearance.terminalFontSizePx]);
+    fitTerminalAndSyncSize({
+      api,
+      terminal,
+      fitAddon: fitAddonRef.current,
+      threadId,
+      terminalId,
+    });
+  }, [
+    appearance.monoFontFamily,
+    appearance.terminalFontSizePx,
+    terminalId,
+    threadId,
+  ]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -422,20 +449,14 @@ function TerminalViewport({
     const terminal = terminalRef.current;
     const fitAddon = fitAddonRef.current;
     if (!api || !terminal || !fitAddon) return;
-    const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
     const frame = window.requestAnimationFrame(() => {
-      fitAddon.fit();
-      if (wasAtBottom) {
-        terminal.scrollToBottom();
-      }
-      void api.terminal
-        .resize({
-          threadId,
-          terminalId,
-          cols: terminal.cols,
-          rows: terminal.rows,
-        })
-        .catch(() => undefined);
+      fitTerminalAndSyncSize({
+        api,
+        terminal,
+        fitAddon,
+        threadId,
+        terminalId,
+      });
     });
     return () => {
       window.cancelAnimationFrame(frame);
