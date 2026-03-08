@@ -895,61 +895,92 @@ export function makeGlmAdapterLive(_options?: GlmAdapterLiveOptions) {
             return;
           }
 
-          // Execute tool calls
-          for (const tc of resolvedToolCalls) {
-            if (signal.aborted) break;
+          // If the model produced plan/explanation text alongside tool calls,
+          // emit it as a completed assistant message so the UI renders it
+          // before the tool calls start executing.
+          if (assistantContent) {
+            const msgItemId = `msg-${nextEventId()}`;
+            emit({
+              ...makeEventBase(session.threadId, turnId, msgItemId),
+              type: "item.completed",
+              payload: {
+                itemType: "assistant_message",
+                status: "completed",
+                title: "Assistant message",
+              },
+            } as ProviderRuntimeEvent);
+          }
 
+          // Prepare all tool calls with parsed args and metadata
+          type PreparedToolCall = {
+            tc: ToolCall;
+            parsedArgs: Record<string, unknown>;
+            toolItemId: string;
+            canonicalType: CanonicalItemType;
+            toolDetail: string;
+            isSpawnAgent: boolean;
+            agentName: string;
+          };
+
+          const prepared: PreparedToolCall[] = resolvedToolCalls.map((tc) => {
+            let parsedArgs: Record<string, unknown> = {};
+            try { parsedArgs = JSON.parse(tc.function.arguments); } catch { parsedArgs = {}; }
             const toolItemId = `tool-${tc.id}`;
             const canonicalType = toolCallToCanonicalItemType(tc.function.name);
-
-            let parsedArgs: Record<string, unknown> = {};
-            try {
-              parsedArgs = JSON.parse(tc.function.arguments);
-            } catch {
-              parsedArgs = {};
-            }
-
+            const isSpawnAgent = tc.function.name === "spawn_agent";
+            const agentName = isSpawnAgent ? String(parsedArgs.name ?? "") : "";
             const toolDetail =
               tc.function.name === "run_command"
                 ? String(parsedArgs.command ?? "")
                 : tc.function.name === "read_file" || tc.function.name === "write_file" || tc.function.name === "edit_file"
                   ? String(parsedArgs.path ?? "")
-                  : tc.function.name === "spawn_agent"
+                  : isSpawnAgent
                     ? String(parsedArgs.task ?? "").slice(0, 120)
                     : tc.function.name;
+            return { tc, parsedArgs, toolItemId, canonicalType, toolDetail, isSpawnAgent, agentName };
+          });
+
+          // Split into spawn_agent calls (run in parallel) and other tools (run sequentially)
+          const spawnAgentCalls = prepared.filter((p) => p.isSpawnAgent);
+          const otherToolCalls = prepared.filter((p) => !p.isSpawnAgent);
+
+          // Helper to execute a single prepared tool call
+          const executePrepared = async (p: PreparedToolCall): Promise<void> => {
+            if (signal.aborted) return;
+
+            const agentData = p.isSpawnAgent ? { agentName: p.agentName } : undefined;
 
             // Approval flow for write/execute operations in approval-required mode
             if (
               session.runtimeMode === "approval-required" &&
-              (tc.function.name === "write_file" ||
-                tc.function.name === "edit_file" ||
-                tc.function.name === "run_command")
+              (p.tc.function.name === "write_file" ||
+                p.tc.function.name === "edit_file" ||
+                p.tc.function.name === "run_command")
             ) {
               const requestId = `req-${nextEventId()}`;
               const requestType =
-                tc.function.name === "run_command"
+                p.tc.function.name === "run_command"
                   ? "exec_command_approval"
                   : "file_change_approval";
 
               emit({
-                ...makeEventBase(session.threadId, turnId, toolItemId),
+                ...makeEventBase(session.threadId, turnId, p.toolItemId),
                 type: "request.opened",
                 requestId: RuntimeRequestId.makeUnsafe(requestId),
                 payload: {
                   requestType,
-                  detail: toolDetail,
-                  args: parsedArgs,
+                  detail: p.toolDetail,
+                  args: p.parsedArgs,
                 },
               } as ProviderRuntimeEvent);
 
-              // Wait for approval
               const decision = await new Promise<string>((resolve) => {
                 session.pendingApproval = { resolve, requestId };
               });
               session.pendingApproval = null;
 
               emit({
-                ...makeEventBase(session.threadId, turnId, toolItemId),
+                ...makeEventBase(session.threadId, turnId, p.toolItemId),
                 type: "request.resolved",
                 requestId: RuntimeRequestId.makeUnsafe(requestId),
                 payload: {
@@ -961,26 +992,21 @@ export function makeGlmAdapterLive(_options?: GlmAdapterLiveOptions) {
               if (decision === "decline" || decision === "cancel") {
                 session.messages.push({
                   role: "tool",
-                  tool_call_id: tc.id,
+                  tool_call_id: p.tc.id,
                   content: "Operation declined by user.",
                 });
-                continue;
+                return;
               }
             }
 
-            // For spawn_agent, extract name for event data
-            const isSpawnAgent = tc.function.name === "spawn_agent";
-            const agentName = isSpawnAgent ? String(parsedArgs.name ?? "") : "";
-            const agentData = isSpawnAgent ? { agentName } : undefined;
-
             // Emit item.started
             emit({
-              ...makeEventBase(session.threadId, turnId, toolItemId),
+              ...makeEventBase(session.threadId, turnId, p.toolItemId),
               type: "item.started",
               payload: {
-                itemType: canonicalType,
-                title: isSpawnAgent && agentName ? `spawn_agent (${agentName})` : tc.function.name,
-                detail: toolDetail,
+                itemType: p.canonicalType,
+                title: p.isSpawnAgent && p.agentName ? `spawn_agent (${p.agentName})` : p.tc.function.name,
+                detail: p.toolDetail,
                 ...(agentData ? { data: agentData } : {}),
               },
             } as ProviderRuntimeEvent);
@@ -988,19 +1014,19 @@ export function makeGlmAdapterLive(_options?: GlmAdapterLiveOptions) {
             // Execute
             let toolResult: string;
             try {
-              if (isSpawnAgent) {
-                const subTask = String(parsedArgs.task ?? "");
-                const subCwd = parsedArgs.cwd ? String(parsedArgs.cwd) : session.cwd;
+              if (p.isSpawnAgent) {
+                const subTask = String(p.parsedArgs.task ?? "");
+                const subCwd = p.parsedArgs.cwd ? String(p.parsedArgs.cwd) : session.cwd;
                 const progressCtx: SubAgentProgressContext = {
                   threadId: session.threadId,
                   turnId,
-                  parentItemId: toolItemId,
-                  agentName,
+                  parentItemId: p.toolItemId,
+                  agentName: p.agentName,
                   emit,
                 };
                 toolResult = await runSubAgent(subTask, subCwd, session.model, signal, 0, progressCtx);
               } else {
-                toolResult = await executeToolCall(tc.function.name, parsedArgs, session.cwd);
+                toolResult = await executeToolCall(p.tc.function.name, p.parsedArgs, session.cwd);
               }
             } catch (error) {
               toolResult = `Error: ${error instanceof Error ? error.message : String(error)}`;
@@ -1008,22 +1034,33 @@ export function makeGlmAdapterLive(_options?: GlmAdapterLiveOptions) {
 
             // Emit item.completed
             emit({
-              ...makeEventBase(session.threadId, turnId, toolItemId),
+              ...makeEventBase(session.threadId, turnId, p.toolItemId),
               type: "item.completed",
               payload: {
-                itemType: canonicalType,
+                itemType: p.canonicalType,
                 status: "completed",
-                title: isSpawnAgent && agentName ? `spawn_agent (${agentName})` : tc.function.name,
-                detail: toolDetail,
+                title: p.isSpawnAgent && p.agentName ? `spawn_agent (${p.agentName})` : p.tc.function.name,
+                detail: p.toolDetail,
                 ...(agentData ? { data: agentData } : {}),
               },
             } as ProviderRuntimeEvent);
 
             session.messages.push({
               role: "tool",
-              tool_call_id: tc.id,
+              tool_call_id: p.tc.id,
               content: toolResult.slice(0, 50_000),
             });
+          };
+
+          // Execute other tools sequentially first
+          for (const p of otherToolCalls) {
+            if (signal.aborted) break;
+            await executePrepared(p);
+          }
+
+          // Execute spawn_agent calls in parallel
+          if (spawnAgentCalls.length > 0 && !signal.aborted) {
+            await Promise.all(spawnAgentCalls.map((p) => executePrepared(p)));
           }
 
           session.updatedAt = nowIso();
