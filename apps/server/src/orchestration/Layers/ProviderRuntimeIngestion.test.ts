@@ -1165,6 +1165,57 @@ describe("ProviderRuntimeIngestion", () => {
     expect(toolStartedPayload?.command).toBe("cat /tmp/file.ts");
   });
 
+  it("preserves structured tool data on tool completion activities", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-tool-completed-with-data"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-9"),
+      itemId: asItemId("item-tool-completed"),
+      payload: {
+        itemType: "file_change",
+        status: "completed",
+        title: "Read",
+        detail: "Read: src/app.ts",
+        data: {
+          toolName: "Read",
+          input: {
+            path: "src/app.ts",
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.id === "evt-tool-completed-with-data",
+        ),
+    );
+
+    const toolCompleted = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-tool-completed-with-data",
+    );
+    const toolCompletedPayload =
+      toolCompleted?.payload && typeof toolCompleted.payload === "object"
+        ? (toolCompleted.payload as Record<string, unknown>)
+        : undefined;
+    expect(toolCompleted?.kind).toBe("tool.completed");
+    expect(toolCompletedPayload?.detail).toBe("Read: src/app.ts");
+    expect(toolCompletedPayload?.data).toEqual({
+      toolName: "Read",
+      input: {
+        path: "src/app.ts",
+      },
+    });
+  });
+
   it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

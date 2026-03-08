@@ -131,6 +131,10 @@ interface ToolInFlight {
   readonly toolName: string;
   readonly title: string;
   readonly detail?: string;
+  readonly data: {
+    readonly toolName: string;
+    readonly input: Record<string, unknown>;
+  };
 }
 
 interface ClaudeSessionContext {
@@ -283,33 +287,126 @@ function classifyRequestType(toolName: string): CanonicalRequestType {
     : "file_change_approval";
 }
 
-function summarizeToolRequest(toolName: string, input: Record<string, unknown>): string {
+function summarizeToolRequest(
+  toolName: string,
+  input: Record<string, unknown>,
+): string | undefined {
   const commandValue = input.command ?? input.cmd;
   const command = typeof commandValue === "string" ? commandValue : undefined;
   if (command && command.trim().length > 0) {
     return `${toolName}: ${command.trim().slice(0, 400)}`;
   }
 
+  const pathValue =
+    input.path ??
+    input.filePath ??
+    input.relativePath ??
+    input.filename ??
+    input.targetPath ??
+    input.destinationPath ??
+    input.sourcePath;
+  const path = typeof pathValue === "string" ? pathValue.trim() : undefined;
+  if (path && path.length > 0) {
+    return `${toolName}: ${path.slice(0, 400)}`;
+  }
+
+  const patternValue = input.pattern ?? input.query ?? input.glob;
+  const pattern = typeof patternValue === "string" ? patternValue.trim() : undefined;
+  if (pattern && pattern.length > 0) {
+    return `${toolName}: ${pattern.slice(0, 400)}`;
+  }
+
   const serialized = JSON.stringify(input);
+  if (serialized === "{}" || serialized === "[]") {
+    return undefined;
+  }
   if (serialized.length <= 400) {
     return `${toolName}: ${serialized}`;
   }
   return `${toolName}: ${serialized.slice(0, 397)}...`;
 }
 
-function titleForTool(itemType: CanonicalItemType): string {
+function humanizeToolName(toolName: string): string {
+  const normalized = toolName
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .trim();
+  if (normalized.length === 0) {
+    return "";
+  }
+
+  return normalized
+    .split(/\s+/)
+    .map((segment) =>
+      /^[A-Z0-9]+$/.test(segment)
+        ? segment
+        : `${segment.slice(0, 1).toUpperCase()}${segment.slice(1)}`,
+    )
+    .join(" ");
+}
+
+function titleForTool(itemType: CanonicalItemType, toolName: string): string {
   switch (itemType) {
     case "command_execution":
       return "Command run";
-    case "file_change":
-      return "File change";
-    case "mcp_tool_call":
-      return "MCP tool call";
-    case "dynamic_tool_call":
-      return "Tool call";
     default:
-      return "Item";
+      return humanizeToolName(toolName) || "Tool call";
   }
+}
+
+function toolData(toolName: string, input: Record<string, unknown>): ToolInFlight["data"] {
+  return {
+    toolName,
+    input,
+  };
+}
+
+function extractAssistantToolUses(message: SDKMessage): Array<{
+  readonly itemId: string;
+  readonly toolName: string;
+  readonly input: Record<string, unknown>;
+}> {
+  if (message.type !== "assistant") {
+    return [];
+  }
+
+  const content = (message.message as { content?: unknown } | undefined)?.content;
+  if (!Array.isArray(content)) {
+    return [];
+  }
+
+  return content.flatMap((block) => {
+    if (!block || typeof block !== "object") {
+      return [];
+    }
+    const toolBlock = block as {
+      type?: unknown;
+      id?: unknown;
+      name?: unknown;
+      input?: unknown;
+    };
+    if (
+      toolBlock.type !== "tool_use" &&
+      toolBlock.type !== "server_tool_use" &&
+      toolBlock.type !== "mcp_tool_use"
+    ) {
+      return [];
+    }
+    if (typeof toolBlock.id !== "string" || typeof toolBlock.name !== "string") {
+      return [];
+    }
+
+    return [
+      {
+        itemId: toolBlock.id,
+        toolName: toolBlock.name,
+        input:
+          typeof toolBlock.input === "object" && toolBlock.input !== null
+            ? (toolBlock.input as Record<string, unknown>)
+            : {},
+      },
+    ];
+  });
 }
 
 function buildUserMessage(input: ProviderSendTurnInput): SDKUserMessage {
@@ -886,8 +983,9 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
             itemId,
             itemType,
             toolName,
-            title: titleForTool(itemType),
-            detail,
+            title: titleForTool(itemType, toolName),
+            data: toolData(toolName, toolInput),
+            ...(detail ? { detail } : {}),
           };
           context.inFlightTools.set(index, tool);
 
@@ -906,8 +1004,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
               title: tool.title,
               ...(tool.detail ? { detail: tool.detail } : {}),
               data: {
-                toolName: tool.toolName,
-                input: toolInput,
+                ...tool.data,
               },
             },
             providerRefs: {
@@ -946,6 +1043,9 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
               status: "completed",
               title: tool.title,
               ...(tool.detail ? { detail: tool.detail } : {}),
+              data: {
+                ...tool.data,
+              },
             },
             providerRefs: {
               ...providerThreadRef(context),
@@ -972,6 +1072,25 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
 
         if (context.turnState) {
           context.turnState.items.push(message.message);
+          const toolUses = extractAssistantToolUses(message);
+          if (toolUses.length > 0) {
+            for (const toolUse of toolUses) {
+              const detail = summarizeToolRequest(toolUse.toolName, toolUse.input);
+              for (const [index, inFlightTool] of context.inFlightTools.entries()) {
+                if (inFlightTool.itemId !== toolUse.itemId) {
+                  continue;
+                }
+                context.inFlightTools.set(index, {
+                  ...inFlightTool,
+                  toolName: toolUse.toolName,
+                  title: titleForTool(inFlightTool.itemType, toolUse.toolName),
+                  data: toolData(toolUse.toolName, toolUse.input),
+                  ...(detail ? { detail } : {}),
+                });
+                break;
+              }
+            }
+          }
           const fallbackAssistantText = extractAssistantText(message);
           if (
             fallbackAssistantText.length > 0 &&
@@ -1475,8 +1594,8 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
               const decisionDeferred = yield* Deferred.make<ProviderApprovalDecision>();
               const pendingApproval: PendingApproval = {
                 requestType,
-                detail,
                 decision: decisionDeferred,
+                ...(detail ? { detail } : {}),
                 ...(callbackOptions.suggestions
                   ? { suggestions: callbackOptions.suggestions }
                   : {}),

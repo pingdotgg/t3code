@@ -392,6 +392,106 @@ describe("ClaudeCodeAdapterLive", () => {
     );
   });
 
+  it.effect("enriches Claude tool completion details from assistant tool_use payloads", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeCodeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 10).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeCode",
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "inspect the file",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-tool-enrichment",
+        uuid: "stream-tool-start",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: {
+            type: "tool_use",
+            id: "tool-read-1",
+            name: "Read",
+            input: {},
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-tool-enrichment",
+        uuid: "assistant-tool-enrichment",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-message-tool-enrichment",
+          content: [{ type: "tool_use", id: "tool-read-1", name: "Read", input: { path: "src/app.ts" } }],
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-tool-enrichment",
+        uuid: "stream-tool-stop",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_stop",
+          index: 1,
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-tool-enrichment",
+        uuid: "result-tool-enrichment",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const toolStarted = runtimeEvents.find(
+        (event) => event.type === "item.started" && String(event.itemId) === "tool-read-1",
+      );
+      assert.equal(toolStarted?.type, "item.started");
+      if (toolStarted?.type === "item.started") {
+        assert.equal(toolStarted.payload.title, "Read");
+        assert.equal(toolStarted.payload.detail, undefined);
+      }
+
+      const toolCompleted = runtimeEvents.find(
+        (event) => event.type === "item.completed" && String(event.itemId) === "tool-read-1",
+      );
+      assert.equal(toolCompleted?.type, "item.completed");
+      if (toolCompleted?.type === "item.completed") {
+        assert.equal(toolCompleted.payload.title, "Read");
+        assert.equal(toolCompleted.payload.detail, "Read: src/app.ts");
+        assert.deepEqual(toolCompleted.payload.data, {
+          toolName: "Read",
+          input: {
+            path: "src/app.ts",
+          },
+        });
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("emits completion only after turn result when assistant frames arrive before deltas", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
