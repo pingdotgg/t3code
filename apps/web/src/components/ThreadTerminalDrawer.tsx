@@ -275,18 +275,7 @@ function TerminalViewport({
       void copyTerminalSelection();
     };
 
-    const onPaste = (event: ClipboardEvent) => {
-      const text = event.clipboardData?.getData("text/plain");
-      if (!text) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      void sendTerminalInput(text, "Failed to paste terminal clipboard");
-    };
-
     mount.addEventListener("copy", onCopy);
-    mount.addEventListener("paste", onPaste);
 
     const terminalLinksDisposable = terminal.registerLinkProvider({
       provideLinks: (bufferLineNumber, callback) => {
@@ -483,7 +472,6 @@ function TerminalViewport({
       terminalLinksDisposable.dispose();
       themeObserver.disconnect();
       mount.removeEventListener("copy", onCopy);
-      mount.removeEventListener("paste", onPaste);
       terminalRef.current = null;
       fitAddonRef.current = null;
       terminal.dispose();
