@@ -27,6 +27,11 @@ import { ServerLoggerLive } from "./serverLogger";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 
+// T012: Defense-in-depth — prevent unhandled rejections from crashing the process
+process.on("unhandledRejection", (reason) => {
+  console.error("[T3 Code] Unhandled rejection (process kept alive):", reason);
+});
+
 export class StartupError extends Data.TaggedError("StartupError")<{
   readonly message: string;
   readonly cause?: unknown;

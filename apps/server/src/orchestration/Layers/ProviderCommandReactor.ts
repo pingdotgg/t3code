@@ -13,6 +13,7 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Schema, Stream } from "effect";
+import * as Semaphore from "effect/Semaphore";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
@@ -136,6 +137,16 @@ const make = Effect.gen(function* () {
     timeToLive: HANDLED_TURN_START_KEY_TTL,
     lookup: () => Effect.succeed(true),
   });
+
+  const threadMutexMap = new Map<string, Semaphore.Semaphore>();
+  const getThreadMutex = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const existing = threadMutexMap.get(threadId);
+      if (existing) return existing;
+      const sem = yield* Semaphore.make(1);
+      threadMutexMap.set(threadId, sem);
+      return sem;
+    });
 
   const hasHandledTurnStartRecently = (key: string) =>
     Cache.getOption(handledTurnStartKeys, key).pipe(
@@ -263,6 +274,74 @@ const make = Effect.gen(function* () {
 
     const existingSessionThreadId =
       thread.session && thread.session.status !== "stopped" ? thread.id : null;
+
+    // T004/T009: Detect error-state or stale running sessions and recover
+    if (existingSessionThreadId && (thread.session?.status === "error" || thread.session?.status === "running")) {
+      const activeSession = yield* resolveActiveSession(existingSessionThreadId);
+      const adapterHasSession = activeSession !== undefined;
+      const needsRecovery =
+        thread.session.status === "error" ||
+        (thread.session.status === "running" && !adapterHasSession);
+
+      if (needsRecovery) {
+        // T006: Emit "starting" status with lastError cleared (T008)
+        yield* setThreadSession({
+          threadId,
+          session: {
+            threadId,
+            status: "starting",
+            providerName: thread.session.providerName,
+            runtimeMode: desiredRuntimeMode,
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        });
+
+        // T004: Tear down errored session, start fresh with resumeCursor (T005)
+        yield* providerService.stopSession({ threadId }).pipe(
+          Effect.catch(() => Effect.void),
+        );
+        const resumeCursor = activeSession?.resumeCursor ?? undefined;
+
+        const recoveryEffect = Effect.gen(function* () {
+          const recovered = yield* startProviderSession(
+            resumeCursor !== undefined ? { resumeCursor } : undefined,
+          );
+          yield* bindSessionToThread(recovered);
+          return recovered.threadId;
+        });
+
+        // T007: Timeout recovery and emit error on failure
+        const recovered = yield* recoveryEffect.pipe(
+          Effect.timeout(Duration.seconds(10)),
+          Effect.catchCause((cause) =>
+            Effect.gen(function* () {
+              const error = Cause.squash(cause);
+              const errorMessage = toErrorMessage(error);
+              yield* setThreadSession({
+                threadId,
+                session: {
+                  threadId,
+                  status: "error",
+                  providerName: thread.session!.providerName,
+                  runtimeMode: desiredRuntimeMode,
+                  activeTurnId: null,
+                  lastError: errorMessage,
+                  updatedAt: new Date().toISOString(),
+                },
+                createdAt: new Date().toISOString(),
+              });
+              return yield* Effect.failCause(cause);
+            }),
+          ),
+        );
+
+        return recovered;
+      }
+    }
+
     if (existingSessionThreadId) {
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
       const providerChanged = options?.provider !== undefined && options.provider !== currentProvider;
@@ -469,17 +548,21 @@ const make = Effect.gen(function* () {
       ...(event.payload.provider ? { provider: event.payload.provider } : {}),
     }).pipe(Effect.forkScoped);
 
-    yield* sendTurnForThread({
-      threadId: event.payload.threadId,
-      messageText: message.text,
-      ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
-      ...(event.payload.provider !== undefined ? { provider: event.payload.provider } : {}),
-      ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
-      ...(event.payload.serviceTier !== undefined ? { serviceTier: event.payload.serviceTier } : {}),
-      ...(event.payload.modelOptions !== undefined ? { modelOptions: event.payload.modelOptions } : {}),
-      interactionMode: event.payload.interactionMode,
-      createdAt: event.payload.createdAt,
-    });
+    // T003: Serialize recovery/turn-start per thread to prevent parallel recovery
+    const mutex = yield* getThreadMutex(event.payload.threadId);
+    yield* mutex.withPermits(1)(
+      sendTurnForThread({
+        threadId: event.payload.threadId,
+        messageText: message.text,
+        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+        ...(event.payload.provider !== undefined ? { provider: event.payload.provider } : {}),
+        ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
+        ...(event.payload.serviceTier !== undefined ? { serviceTier: event.payload.serviceTier } : {}),
+        ...(event.payload.modelOptions !== undefined ? { modelOptions: event.payload.modelOptions } : {}),
+        interactionMode: event.payload.interactionMode,
+        createdAt: event.payload.createdAt,
+      }),
+    );
   });
 
   const processTurnInterruptRequested = Effect.fnUntraced(function* (

@@ -618,8 +618,13 @@ const makeClaudeCodeAdapter = (options?: ClaudeCodeAdapterLiveOptions) =>
         // Stop existing session
         const existing = getSession(threadId);
         if (existing && existing.status !== "closed") {
-          existing.query.close();
+          try {
+            existing.query.close();
+          } catch {
+            // SDK process may already be dead — ignore close errors
+          }
           existing.status = "closed";
+          sessions.delete(threadId);
         }
 
         const pendingApprovals = new Map<
@@ -828,12 +833,32 @@ const makeClaudeCodeAdapter = (options?: ClaudeCodeAdapterLiveOptions) =>
               ctx.status = "closed";
               ctx.updatedAt = nowIso();
             }
+            sessions.delete(threadId);
             for (const [, entry] of pendingApprovals) {
               entry.resolve({ decision: "cancel" });
             }
             pendingApprovals.clear();
           }
-        })();
+        })().catch((outerError) => {
+          ctx.status = "error";
+          ctx.lastError = toMessage(outerError, "SDK stream setup error");
+          ctx.updatedAt = nowIso();
+          sessions.delete(threadId);
+          emitEvents([
+            {
+              eventId: makeEventId(),
+              provider: PROVIDER,
+              threadId,
+              createdAt: nowIso(),
+              type: "session.exited",
+              payload: {
+                reason: ctx.lastError,
+                exitKind: "error",
+                recoverable: false,
+              },
+            } as ProviderRuntimeEvent,
+          ]);
+        });
 
         ctx.status = "ready";
         ctx.updatedAt = nowIso();
@@ -965,9 +990,14 @@ const makeClaudeCodeAdapter = (options?: ClaudeCodeAdapterLiveOptions) =>
         const ctx = getSession(threadId);
         if (!ctx || ctx.status === "closed") return;
 
-        ctx.query.close();
+        try {
+          ctx.query.close();
+        } catch {
+          // SDK process may already be dead — ignore close errors
+        }
         ctx.status = "closed";
         ctx.updatedAt = nowIso();
+        sessions.delete(threadId);
 
         for (const [, entry] of ctx.pendingApprovals) {
           entry.resolve({ decision: "cancel" });
@@ -1027,11 +1057,16 @@ const makeClaudeCodeAdapter = (options?: ClaudeCodeAdapterLiveOptions) =>
 
     const stopAll: ClaudeCodeAdapterShape["stopAll"] = () =>
       Effect.sync(() => {
-        for (const [, ctx] of sessions) {
+        for (const [threadId, ctx] of sessions) {
           if (ctx.status === "closed") continue;
-          ctx.query.close();
+          try {
+            ctx.query.close();
+          } catch {
+            // SDK process may already be dead — ignore close errors
+          }
           ctx.status = "closed";
           ctx.updatedAt = nowIso();
+          sessions.delete(threadId);
           for (const [, entry] of ctx.pendingApprovals) {
             entry.resolve({ decision: "cancel" });
           }
