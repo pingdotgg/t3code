@@ -18,9 +18,12 @@ import {
 import { Skeleton } from "~/components/ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
+import {
+  getSidebarOpenStateStorage,
+  persistSidebarOpenState,
+  resolveSidebarOpenState,
+} from "./sidebar.persistence";
 
-const SIDEBAR_COOKIE_NAME = "sidebar_state";
-const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing(3)))";
 const SIDEBAR_WIDTH_ICON = "3rem";
@@ -87,6 +90,7 @@ function SidebarProvider({
   defaultOpen = true,
   open: openProp,
   onOpenChange: setOpenProp,
+  storageKey = null,
   className,
   style,
   children,
@@ -95,16 +99,38 @@ function SidebarProvider({
   defaultOpen?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  storageKey?: string | null;
 }) {
   const isMobile = useMediaQuery("(max-width: 767px)");
   const [openMobile, setOpenMobile] = React.useState(false);
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
-  const [_open, _setOpen] = React.useState(defaultOpen);
+  const [_open, _setOpen] = React.useState(() =>
+    resolveSidebarOpenState({
+      defaultOpen,
+      storage: getSidebarOpenStateStorage(),
+      storageKey,
+    }),
+  );
   const open = openProp ?? _open;
+
+  React.useEffect(() => {
+    if (openProp !== undefined) {
+      return;
+    }
+
+    _setOpen(
+      resolveSidebarOpenState({
+        defaultOpen,
+        storage: getSidebarOpenStateStorage(),
+        storageKey,
+      }),
+    );
+  }, [defaultOpen, openProp, storageKey]);
+
   const setOpen = React.useCallback(
-    async (value: boolean | ((value: boolean) => boolean)) => {
+    (value: boolean | ((value: boolean) => boolean)) => {
       const openState = typeof value === "function" ? value(open) : value;
       if (setOpenProp) {
         setOpenProp(openState);
@@ -112,15 +138,13 @@ function SidebarProvider({
         _setOpen(openState);
       }
 
-      // This sets the cookie to keep the sidebar state.
-      await cookieStore.set({
-        expires: Date.now() + SIDEBAR_COOKIE_MAX_AGE * 1000,
-        name: SIDEBAR_COOKIE_NAME,
-        path: "/",
-        value: String(openState),
+      persistSidebarOpenState({
+        open: openState,
+        storage: getSidebarOpenStateStorage(),
+        storageKey,
       });
     },
-    [setOpenProp, open],
+    [open, setOpenProp, storageKey],
   );
 
   // Helper to toggle the sidebar.
@@ -301,7 +325,8 @@ function Sidebar({
 }
 
 function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
-  const { toggleSidebar, openMobile } = useSidebar();
+  const { isMobile, open, openMobile, toggleSidebar } = useSidebar();
+  const isOpen = isMobile ? openMobile : open;
 
   return (
     <Button
@@ -316,8 +341,8 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       variant="ghost"
       {...props}
     >
-      {openMobile ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
-      <span className="sr-only">Toggle Sidebar</span>
+      {isOpen ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
+      <span className="sr-only">{isOpen ? "Close Sidebar" : "Open Sidebar"}</span>
     </Button>
   );
 }

@@ -41,6 +41,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedDiffToggle.command, "diff.toggle");
 
+    const parsedSidebarToggle = yield* decode(KeybindingRule, {
+      key: "mod+b",
+      command: "sidebar.toggle",
+    });
+    assert.strictEqual(parsedSidebarToggle.command, "sidebar.toggle");
+
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",
       command: "chat.newLocal",
@@ -110,9 +116,9 @@ it.effect("parses resolved keybindings arrays", () =>
   Effect.gen(function* () {
     const parsed = yield* decode(ResolvedKeybindingsConfig, [
       {
-        command: "terminal.toggle",
+        command: "sidebar.toggle",
         shortcut: {
-          key: "j",
+          key: "b",
           metaKey: false,
           ctrlKey: false,
           shiftKey: false,
@@ -127,21 +133,21 @@ it.effect("parses resolved keybindings arrays", () =>
 
 it.effect("drops unknown fields in resolved keybinding rules", () =>
   decodeResolvedRule({
-    command: "terminal.toggle",
+    command: "sidebar.toggle",
     shortcut: {
-      key: "j",
+      key: "b",
       metaKey: false,
       ctrlKey: false,
       shiftKey: false,
       altKey: false,
       modKey: true,
     },
-    key: "mod+j",
+    key: "mod+b",
   }).pipe(
     Effect.map((parsed) => {
       const view = parsed as Record<string, unknown>;
       assert.strictEqual("key" in view, false);
-      assert.strictEqual(view.command, "terminal.toggle");
+      assert.strictEqual(view.command, "sidebar.toggle");
     }),
   ),
 );

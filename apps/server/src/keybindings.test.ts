@@ -199,6 +199,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       yield* fs.writeFileString(
         keybindingsConfigPath,
         JSON.stringify([
+          { key: "mod+b", command: "sidebar.toggle" },
           { key: "mod+j", command: "terminal.toggle" },
           { key: "mod+shift+d+o", command: "terminal.new" },
           { key: "mod+x", command: "invalid.command" },
@@ -210,17 +211,18 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         return yield* keybindings.loadConfigState;
       });
 
+      assert.isTrue(configState.keybindings.some((entry) => entry.command === "sidebar.toggle"));
       assert.isTrue(configState.keybindings.some((entry) => entry.command === "terminal.toggle"));
       assert.isFalse(configState.keybindings.some((entry) => String(entry.command) === "invalid.command"));
       assert.deepEqual(configState.issues, [
         {
           kind: "keybindings.invalid-entry",
-          index: 1,
+          index: 2,
           message: configState.issues[0]?.message ?? "",
         },
         {
           kind: "keybindings.invalid-entry",
-          index: 2,
+          index: 3,
           message: configState.issues[1]?.message ?? "",
         },
       ]);
@@ -234,6 +236,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         const { keybindingsConfigPath } = yield* ServerConfig;
         yield* writeKeybindingsConfig(keybindingsConfigPath, [
           { key: "mod+shift+t", command: "terminal.toggle" },
+          { key: "mod+shift+b", command: "sidebar.toggle" },
           { key: "mod+shift+r", command: "script.run-tests.run" },
         ]);
 
@@ -250,6 +253,12 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         assert.equal(persistedToggle?.key, "mod+shift+t");
         assert.isFalse(
           persisted.some((entry) => entry.command === "terminal.toggle" && entry.key === "mod+j"),
+        );
+        const persistedSidebarToggle = byCommand.get("sidebar.toggle");
+        assert.isNotNull(persistedSidebarToggle);
+        assert.equal(persistedSidebarToggle?.key, "mod+shift+b");
+        assert.isFalse(
+          persisted.some((entry) => entry.command === "sidebar.toggle" && entry.key === "mod+b"),
         );
 
         for (const defaultRule of DEFAULT_KEYBINDINGS) {

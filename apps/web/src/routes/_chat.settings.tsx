@@ -11,11 +11,11 @@ import {
   shouldShowFastTierIcon,
   useAppSettings,
 } from "../appSettings";
-import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
+import ChatShellHeaderBar from "../components/ChatShellHeaderBar";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../components/ui/select";
@@ -182,13 +182,10 @@ function SettingsRouteView() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
-        {isElectron && (
-          <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
-            <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
-              Settings
-            </span>
-          </div>
-        )}
+        <ChatShellHeaderBar
+          title="Settings"
+          titleClassName="text-xs font-medium tracking-wide text-muted-foreground/70 sm:text-sm sm:font-medium sm:tracking-normal sm:text-foreground"
+        />
 
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">

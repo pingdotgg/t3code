@@ -121,6 +121,7 @@ import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../keybindings";
+import { isTerminalFocusedInDom } from "../lib/terminalFocus";
 import ChatMarkdown from "./ChatMarkdown";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
@@ -2167,17 +2168,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeThreadId, focusComposer, terminalState.terminalOpen]);
 
   useEffect(() => {
-    const isTerminalFocused = (): boolean => {
-      const activeElement = document.activeElement;
-      if (!(activeElement instanceof HTMLElement)) return false;
-      if (activeElement.classList.contains("xterm-helper-textarea")) return true;
-      return activeElement.closest(".thread-terminal-drawer .xterm") !== null;
-    };
-
     const handler = (event: globalThis.KeyboardEvent) => {
       if (!activeThreadId || event.defaultPrevented) return;
       const shortcutContext = {
-        terminalFocus: isTerminalFocused(),
+        terminalFocus: isTerminalFocusedInDom(),
         terminalOpen: Boolean(terminalState.terminalOpen),
       };
 
@@ -4007,7 +4001,7 @@ const ChatHeader = memo(function ChatHeader({
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
-        <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+        <SidebarTrigger className="size-7 shrink-0" />
         <h2
           className="min-w-0 shrink truncate text-sm font-medium text-foreground"
           title={activeThreadTitle}
