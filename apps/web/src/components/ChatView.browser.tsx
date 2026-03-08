@@ -29,6 +29,8 @@ const PROJECT_ID = "project-1" as ProjectId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='300'></svg>";
+const SCREENSHOT_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9p6zHn8AAAAASUVORK5CYII=";
 
 interface WsRequestEnvelope {
   id: string;
@@ -85,6 +87,7 @@ interface MountedChatView {
   cleanup: () => Promise<void>;
   measureUserRow: (targetMessageId: MessageId) => Promise<UserRowMeasurement>;
   setViewport: (viewport: ViewportSpec) => Promise<void>;
+  host: HTMLElement;
 }
 
 function isoAt(offsetSeconds: number): string {
@@ -530,6 +533,7 @@ async function mountChatView(options: {
       await screen.unmount();
       host.remove();
     },
+    host,
     measureUserRow: async (targetMessageId: MessageId) => measureUserRow({ host, targetMessageId }),
     setViewport: async (viewport: ViewportSpec) => {
       await setViewport(viewport);
@@ -581,6 +585,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     localStorage.clear();
     document.body.innerHTML = "";
     wsRequests.length = 0;
+    Reflect.deleteProperty(window, "desktopBridge");
     useComposerDraftStore.setState({
       draftsByThreadId: {},
       draftThreadsByThreadId: {},
@@ -594,7 +599,105 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   afterEach(() => {
+    Reflect.deleteProperty(window, "desktopBridge");
     document.body.innerHTML = "";
+  });
+
+  it("attaches a captured desktop screenshot to the composer draft", async () => {
+    Object.defineProperty(window, "desktopBridge", {
+      configurable: true,
+      value: {
+        getWsUrl: () => null,
+        pickFolder: async () => null,
+        confirm: async () => false,
+        showContextMenu: async () => null,
+        openExternal: async () => false,
+        captureScreenshot: async () => ({
+          name: "omarchy-shot.png",
+          mimeType: "image/png",
+          sizeBytes: 68,
+          dataUrl: SCREENSHOT_DATA_URL,
+        }),
+        onMenuAction: () => () => undefined,
+        getUpdateState: async () => ({
+          enabled: false,
+          status: "disabled",
+          currentVersion: "0.0.0",
+          availableVersion: null,
+          downloadedVersion: null,
+          downloadPercent: null,
+          checkedAt: null,
+          message: null,
+          errorContext: null,
+          canRetry: false,
+        }),
+        downloadUpdate: async () => ({
+          accepted: false,
+          completed: false,
+          state: {
+            enabled: false,
+            status: "disabled",
+            currentVersion: "0.0.0",
+            availableVersion: null,
+            downloadedVersion: null,
+            downloadPercent: null,
+            checkedAt: null,
+            message: null,
+            errorContext: null,
+            canRetry: false,
+          },
+        }),
+        installUpdate: async () => ({
+          accepted: false,
+          completed: false,
+          state: {
+            enabled: false,
+            status: "disabled",
+            currentVersion: "0.0.0",
+            availableVersion: null,
+            downloadedVersion: null,
+            downloadPercent: null,
+            checkedAt: null,
+            message: null,
+            errorContext: null,
+            canRetry: false,
+          },
+        }),
+        onUpdateState: () => () => undefined,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-screenshot-target" as MessageId,
+        targetText: "screenshot target",
+      }),
+    });
+
+    try {
+      const screenshotButton = await waitForElement(
+        () =>
+          Array.from(mounted.host.querySelectorAll("button")).find(
+            (button) => button.textContent?.includes("Screenshot"),
+          ) as HTMLButtonElement | null,
+        "Unable to find screenshot button.",
+      );
+      await screenshotButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(mounted.host.textContent).toContain("omarchy-shot.png");
+        },
+        { timeout: 4_000, interval: 16 },
+      );
+
+      const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
+      expect(draft?.images).toHaveLength(1);
+      expect(draft?.images[0]?.name).toBe("omarchy-shot.png");
+    } finally {
+      await mounted.cleanup();
+    }
   });
 
   it.each(TEXT_VIEWPORT_MATRIX)(

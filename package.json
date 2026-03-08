@@ -1,5 +1,5 @@
 {
-  "name": "@t3tools/monorepo",
+  "name": "t3chat-omarchy",
   "private": true,
   "workspaces": {
     "packages": [

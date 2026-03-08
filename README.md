@@ -1,19 +1,19 @@
-# T3 Code
+# t3chat-omarchy
 
-T3 Code is a minimal web GUI for coding agents. Currently Codex-first, with Claude Code support coming soon.
+t3chat-omarchy is an Omarchy tuned fork of T3 Code for coding agents. It is currently Codex first, with Claude Code support coming soon.
 
 ## How to use
 
 > [!WARNING]
-> You need to have [Codex CLI](https://github.com/openai/codex) installed and authorized for T3 Code to work.
+> You need to have [Codex CLI](https://github.com/openai/codex) installed and authorized for t3chat-omarchy to work.
 
 ```bash
 npx t3
 ```
 
-You can also just install the desktop app. It's cooler.
+You can also just install the desktop app.
 
-Install the [desktop app from the Releases page](https://github.com/pingdotgg/t3code/releases)
+Install the desktop app from this fork's Releases page after publishing a release.
 
 ## Some notes
 

@@ -126,6 +126,7 @@ import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import {
   BotIcon,
+  CameraIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -218,6 +219,7 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { clamp } from "effect/Number";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
+import { DESKTOP_CAPTURE_SCREENSHOT_EVENT } from "../desktopEvents";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
   if (!duration) return formatTimestamp(createdAt);
@@ -440,6 +442,13 @@ function readFileAsDataUrl(file: File): Promise<string> {
     });
     reader.readAsDataURL(file);
   });
+}
+
+function fileFromDataUrl(input: { dataUrl: string; name: string; mimeType: string }): File {
+  const commaIndex = input.dataUrl.indexOf(",");
+  const payload = commaIndex >= 0 ? input.dataUrl.slice(commaIndex + 1) : "";
+  const bytes = Uint8Array.from(atob(payload), (char) => char.charCodeAt(0));
+  return new File([bytes], input.name, { type: input.mimeType });
 }
 
 function buildTemporaryWorktreeBranchName(): string {
@@ -1325,6 +1334,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       (activeThread.session !== null && activeThread.session.status !== "closed")),
   );
   const hasReachedTerminalLimit = terminalState.terminalIds.length >= MAX_THREAD_TERMINAL_COUNT;
+  const canCaptureDesktopScreenshot =
+    typeof window.desktopBridge?.captureScreenshot === "function";
   const setThreadError = useCallback(
     (targetThreadId: ThreadId | null, error: string | null) => {
       if (!targetThreadId) return;
@@ -2176,6 +2187,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     const handler = (event: globalThis.KeyboardEvent) => {
       if (!activeThreadId || event.defaultPrevented) return;
+      if (canCaptureDesktopScreenshot && event.key === "PrintScreen") {
+        event.preventDefault();
+        event.stopPropagation();
+        window.dispatchEvent(new CustomEvent(DESKTOP_CAPTURE_SCREENSHOT_EVENT));
+        return;
+      }
       const shortcutContext = {
         terminalFocus: isTerminalFocused(),
         terminalOpen: Boolean(terminalState.terminalOpen),
@@ -2249,52 +2266,95 @@ export default function ChatView({ threadId }: ChatViewProps) {
     keybindings,
     onToggleDiff,
     toggleTerminalVisibility,
+    canCaptureDesktopScreenshot,
   ]);
 
-  const addComposerImages = (files: File[]) => {
-    if (!activeThreadId || files.length === 0) return;
+  const addComposerImages = useCallback(
+    (files: File[]) => {
+      if (!activeThreadId || files.length === 0) return;
 
-    const nextImages: ComposerImageAttachment[] = [];
-    let nextImageCount = composerImagesRef.current.length;
-    let error: string | null = null;
-    for (const file of files) {
-      if (!file.type.startsWith("image/")) {
-        error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
-        continue;
-      }
-      if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-        error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
-        continue;
-      }
-      if (nextImageCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
-        break;
+      const nextImages: ComposerImageAttachment[] = [];
+      let nextImageCount = composerImagesRef.current.length;
+      let error: string | null = null;
+      for (const file of files) {
+        if (!file.type.startsWith("image/")) {
+          error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
+          continue;
+        }
+        if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+          error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
+          continue;
+        }
+        if (nextImageCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+          error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
+          break;
+        }
+
+        const previewUrl = URL.createObjectURL(file);
+        nextImages.push({
+          type: "image",
+          id: crypto.randomUUID(),
+          name: file.name || "image",
+          mimeType: file.type,
+          sizeBytes: file.size,
+          previewUrl,
+          file,
+        });
+        nextImageCount += 1;
       }
 
-      const previewUrl = URL.createObjectURL(file);
-      nextImages.push({
-        type: "image",
-        id: crypto.randomUUID(),
-        name: file.name || "image",
-        mimeType: file.type,
-        sizeBytes: file.size,
-        previewUrl,
-        file,
+      if (nextImages.length === 1 && nextImages[0]) {
+        addComposerImage(nextImages[0]);
+      } else if (nextImages.length > 1) {
+        addComposerImagesToDraft(nextImages);
+      }
+      setThreadError(activeThreadId, error);
+    },
+    [activeThreadId, addComposerImage, addComposerImagesToDraft, setThreadError],
+  );
+
+  const captureComposerScreenshot = useCallback(async () => {
+    if (!activeThreadId) {
+      return;
+    }
+    const bridge = window.desktopBridge;
+    if (!bridge || typeof bridge.captureScreenshot !== "function") {
+      setThreadError(activeThreadId, "Screenshot capture is unavailable in this desktop build.");
+      return;
+    }
+
+    try {
+      const capturedScreenshot = await bridge.captureScreenshot();
+      if (!capturedScreenshot) return;
+      const screenshotMimeType = capturedScreenshot.mimeType || "image/png";
+      const screenshotFile = fileFromDataUrl({
+        dataUrl: capturedScreenshot.dataUrl,
+        name: capturedScreenshot.name,
+        mimeType: screenshotMimeType,
       });
-      nextImageCount += 1;
+      addComposerImages([screenshotFile]);
+      setThreadError(activeThreadId, null);
+      focusComposer();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to capture screenshot right now.";
+      setThreadError(activeThreadId, message);
     }
-
-    if (nextImages.length === 1 && nextImages[0]) {
-      addComposerImage(nextImages[0]);
-    } else if (nextImages.length > 1) {
-      addComposerImagesToDraft(nextImages);
-    }
-    setThreadError(activeThreadId, error);
-  };
+  }, [activeThreadId, addComposerImages, focusComposer, setThreadError]);
 
   const removeComposerImage = (imageId: string) => {
     removeComposerImageFromDraft(imageId);
   };
+
+  useEffect(() => {
+    const onDesktopCaptureScreenshot = () => {
+      void captureComposerScreenshot();
+    };
+    window.addEventListener(DESKTOP_CAPTURE_SCREENSHOT_EVENT, onDesktopCaptureScreenshot);
+    return () => {
+      window.removeEventListener(DESKTOP_CAPTURE_SCREENSHOT_EVENT, onDesktopCaptureScreenshot);
+    };
+  }, [captureComposerScreenshot]);
 
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
     const files = Array.from(event.clipboardData.files);
@@ -3693,6 +3753,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       {runtimeMode === "full-access" ? "Full access" : "Supervised"}
                     </span>
                   </Button>
+
+                  {canCaptureDesktopScreenshot ? (
+                    <>
+                      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+                      <Button
+                        variant="ghost"
+                        className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                        size="sm"
+                        type="button"
+                        onClick={() => {
+                          void captureComposerScreenshot();
+                        }}
+                        title="Capture screenshot and attach to draft"
+                      >
+                        <CameraIcon />
+                        <span className="sr-only sm:not-sr-only">Screenshot</span>
+                      </Button>
+                    </>
+                  ) : null}
                 </div>
 
                 {/* Right side: send / stop button */}

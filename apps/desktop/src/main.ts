@@ -7,7 +7,11 @@ import * as Path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
-import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import type {
+  DesktopScreenshotCapture,
+  DesktopUpdateActionResult,
+  DesktopUpdateState,
+} from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
@@ -31,6 +35,7 @@ import {
   reduceDesktopUpdateStateOnNoUpdate,
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
+import { captureDesktopScreenshot } from "./screenshotCapture";
 
 fixPath();
 
@@ -38,6 +43,7 @@ const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
+const CAPTURE_SCREENSHOT_CHANNEL = "desktop:capture-screenshot";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
@@ -48,7 +54,7 @@ const STATE_DIR =
 const DESKTOP_SCHEME = "t3";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
-const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+const APP_DISPLAY_NAME = isDevelopment ? "T3 Chat Omarchy (Dev)" : "T3 Chat Omarchy (Alpha)";
 const APP_USER_MODEL_ID = "com.t3tools.t3code";
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
@@ -184,7 +190,7 @@ function initializePackagedLogging(): void {
     writeDesktopLogHeader(`runtime log capture enabled logDir=${LOG_DIR}`);
   } catch (error) {
     // Logging setup should never block app startup.
-    console.error("[desktop] failed to initialize packaged logging", error);
+    console.error("[desktop] failed to initialize logging", error);
   }
 }
 
@@ -532,6 +538,15 @@ function configureApplicationMenu(): void {
                 accelerator: "CmdOrCtrl+,",
                 click: () => dispatchMenuAction("open-settings"),
               },
+              ...(process.platform === "linux"
+                ? [
+                    {
+                      label: "Capture Screenshot",
+                      accelerator: "PrintScreen",
+                      click: () => dispatchMenuAction("capture-screenshot"),
+                    },
+                  ]
+                : []),
               { type: "separator" as const },
             ]),
         { role: process.platform === "darwin" ? "close" : "quit" },
@@ -1054,6 +1069,12 @@ function registerIpcHandlers(): void {
     } catch {
       return false;
     }
+  });
+
+  ipcMain.removeHandler(CAPTURE_SCREENSHOT_CHANNEL);
+  ipcMain.handle(CAPTURE_SCREENSHOT_CHANNEL, async () => {
+    const screenshot = await captureDesktopScreenshot();
+    return screenshot satisfies DesktopScreenshotCapture | null;
   });
 
   ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL);
