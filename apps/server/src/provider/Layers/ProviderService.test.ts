@@ -212,6 +212,22 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
   };
 }
 
+function makeRegistry(
+  ...adapters: ReadonlyArray<ReturnType<typeof makeFakeCodexAdapter>>
+): typeof ProviderAdapterRegistry.Service {
+  const adaptersByProvider = new Map(adapters.map((adapter) => [adapter.adapter.provider, adapter.adapter]));
+
+  return {
+    getByProvider: (provider) => {
+      const adapter = adaptersByProvider.get(provider);
+      return adapter
+        ? Effect.succeed(adapter)
+        : Effect.fail(new ProviderUnsupportedError({ provider }));
+    },
+    listProviders: () => Effect.succeed(Array.from(adaptersByProvider.keys())),
+  };
+}
+
 const sleep = (ms: number) =>
   Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
@@ -413,6 +429,162 @@ it.effect(
       const rollbackCall = secondCodex.rollbackThread.mock.calls[0];
       assert.equal(typeof rollbackCall?.[0], "string");
       assert.equal(rollbackCall?.[1], 1);
+
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "ProviderServiceLive prefers persisted claudeCode binding when restarting without an explicit provider",
+  () =>
+    Effect.gen(function* () {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-claude-start-"));
+      const dbPath = path.join(tempDir, "orchestration.sqlite");
+      const persistenceLayer = makeSqlitePersistenceLive(dbPath);
+      const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+        Layer.provide(persistenceLayer),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const codex = makeFakeCodexAdapter();
+      const claudeCode = makeFakeCodexAdapter("claudeCode");
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry, makeRegistry(codex, claudeCode))),
+        Layer.provide(directoryLayer),
+        Layer.provide(AnalyticsService.layerTest),
+      );
+      const threadId = asThreadId("thread-claude-start");
+
+      yield* Effect.gen(function* () {
+        const directory = yield* ProviderSessionDirectory;
+        yield* directory.upsert({
+          provider: "claudeCode",
+          threadId,
+          runtimeMode: "approval-required",
+          status: "stopped",
+          resumeCursor: { opaque: "persisted-claude-cursor" },
+          runtimePayload: { cwd: "/tmp/provider-service-claude-start" },
+        });
+      }).pipe(Effect.provide(directoryLayer));
+
+      claudeCode.startSession.mockClear();
+      codex.startSession.mockClear();
+
+      const session = yield* Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        return yield* provider.startSession(threadId, {
+          threadId,
+          cwd: "/tmp/provider-service-claude-start",
+          runtimeMode: "approval-required",
+        });
+      }).pipe(Effect.provide(providerLayer));
+
+      assert.equal(session.provider, "claudeCode");
+      assert.equal(claudeCode.startSession.mock.calls.length, 1);
+      assert.equal(codex.startSession.mock.calls.length, 0);
+      const resumedStartInput = claudeCode.startSession.mock.calls[0]?.[0];
+      assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
+      if (resumedStartInput && typeof resumedStartInput === "object") {
+        const startPayload = resumedStartInput as {
+          provider?: string;
+          cwd?: string;
+          runtimeMode?: string;
+          threadId?: string;
+        };
+        assert.equal(startPayload.provider, "claudeCode");
+        assert.equal(startPayload.cwd, "/tmp/provider-service-claude-start");
+        assert.equal(startPayload.runtimeMode, "approval-required");
+        assert.equal(startPayload.threadId, threadId);
+      }
+
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "ProviderServiceLive restores claudeCode rollback routing after restart using persisted thread mapping",
+  () =>
+    Effect.gen(function* () {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-claude-restart-"));
+      const dbPath = path.join(tempDir, "orchestration.sqlite");
+      const persistenceLayer = makeSqlitePersistenceLive(dbPath);
+      const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+        Layer.provide(persistenceLayer),
+      );
+
+      const firstCodex = makeFakeCodexAdapter();
+      const firstClaudeCode = makeFakeCodexAdapter("claudeCode");
+      const firstDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const firstProviderLayer = makeProviderServiceLive().pipe(
+        Layer.provide(
+          Layer.succeed(
+            ProviderAdapterRegistry,
+            makeRegistry(firstCodex, firstClaudeCode),
+          ),
+        ),
+        Layer.provide(firstDirectoryLayer),
+        Layer.provide(AnalyticsService.layerTest),
+      );
+
+      const startedSession = yield* Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        const threadId = asThreadId("thread-claude-1");
+        return yield* provider.startSession(threadId, {
+          provider: "claudeCode",
+          cwd: "/tmp/claude-project",
+          runtimeMode: "full-access",
+          threadId,
+        });
+      }).pipe(Effect.provide(firstProviderLayer));
+
+      const secondCodex = makeFakeCodexAdapter();
+      const secondClaudeCode = makeFakeCodexAdapter("claudeCode");
+      const secondDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const secondProviderLayer = makeProviderServiceLive().pipe(
+        Layer.provide(
+          Layer.succeed(
+            ProviderAdapterRegistry,
+            makeRegistry(secondCodex, secondClaudeCode),
+          ),
+        ),
+        Layer.provide(secondDirectoryLayer),
+        Layer.provide(AnalyticsService.layerTest),
+      );
+
+      secondClaudeCode.startSession.mockClear();
+      secondClaudeCode.rollbackThread.mockClear();
+      secondCodex.startSession.mockClear();
+
+      yield* Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        yield* provider.rollbackConversation({
+          threadId: startedSession.threadId,
+          numTurns: 1,
+        });
+      }).pipe(Effect.provide(secondProviderLayer));
+
+      assert.equal(secondClaudeCode.startSession.mock.calls.length, 1);
+      assert.equal(secondCodex.startSession.mock.calls.length, 0);
+      const resumedStartInput = secondClaudeCode.startSession.mock.calls[0]?.[0];
+      assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
+      if (resumedStartInput && typeof resumedStartInput === "object") {
+        const startPayload = resumedStartInput as {
+          provider?: string;
+          cwd?: string;
+          resumeCursor?: unknown;
+          threadId?: string;
+        };
+        assert.equal(startPayload.provider, "claudeCode");
+        assert.equal(startPayload.cwd, "/tmp/claude-project");
+        assert.deepEqual(startPayload.resumeCursor, startedSession.resumeCursor);
+        assert.equal(startPayload.threadId, startedSession.threadId);
+      }
+      assert.equal(secondClaudeCode.rollbackThread.mock.calls.length, 1);
 
       fs.rmSync(tempDir, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),

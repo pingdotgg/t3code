@@ -18,7 +18,7 @@ export const PROVIDER_OPTIONS: Array<{
   available: boolean;
 }> = [
   { value: "codex", label: "Codex", available: true },
-  { value: "claudeCode", label: "Claude Code", available: false },
+  { value: "claudeCode", label: "Claude Code", available: true },
   { value: "cursor", label: "Cursor", available: false },
 ];
 
@@ -61,6 +61,38 @@ export interface LatestProposedPlanState {
   planMarkdown: string;
 }
 
+function deriveRichContentWorkLogEntry(
+  activity: OrchestrationThreadActivity,
+  payload: Record<string, unknown> | null,
+): Pick<WorkLogEntry, "label" | "detail"> | null {
+  if (!payload || payload.itemType !== "web_search") {
+    return null;
+  }
+  const data = payload.data && typeof payload.data === "object"
+    ? (payload.data as Record<string, unknown>)
+    : null;
+  const item = data?.item && typeof data.item === "object"
+    ? (data.item as Record<string, unknown>)
+    : null;
+  const detail = typeof payload.detail === "string" && payload.detail.length > 0 ? payload.detail : undefined;
+
+  if (activity.kind === "tool.updated" && item?.type === "server_tool_use") {
+    return {
+      label: "Searching the web",
+      ...(detail ? { detail } : {}),
+    };
+  }
+
+  if (activity.kind === "tool.completed" && item?.type === "web_search_tool_result") {
+    return {
+      label: "Web search complete",
+      ...(detail ? { detail } : {}),
+    };
+  }
+
+  return null;
+}
+
 export type TimelineEntry =
   | {
       id: string;
@@ -101,14 +133,30 @@ export function formatDuration(durationMs: number): string {
   return `${minutes}m ${seconds}s`;
 }
 
-export function formatElapsed(startIso: string, endIso: string | undefined): string | null {
+export interface FormatElapsedOptions {
+  minimumVisibleMs?: number;
+}
+
+export function formatElapsed(
+  startIso: string,
+  endIso: string | undefined,
+  options: FormatElapsedOptions = {},
+): string | null {
   if (!endIso) return null;
   const startedAt = Date.parse(startIso);
   const endedAt = Date.parse(endIso);
   if (Number.isNaN(startedAt) || Number.isNaN(endedAt) || endedAt < startedAt) {
     return null;
   }
-  return formatDuration(endedAt - startedAt);
+  const elapsedMs = endedAt - startedAt;
+  if (
+    options.minimumVisibleMs !== undefined &&
+    Number.isFinite(options.minimumVisibleMs) &&
+    elapsedMs < options.minimumVisibleMs
+  ) {
+    return null;
+  }
+  return formatDuration(elapsedMs);
 }
 
 export function isLatestTurnSettled(
@@ -401,13 +449,16 @@ export function deriveWorkLogEntries(
         activity.payload && typeof activity.payload === "object"
           ? (activity.payload as Record<string, unknown>)
           : null;
+      const richContentEntry = deriveRichContentWorkLogEntry(activity, payload);
       const entry: WorkLogEntry = {
         id: activity.id,
         createdAt: activity.createdAt,
-        label: activity.summary,
+        label: richContentEntry?.label ?? activity.summary,
         tone: activity.tone === "approval" ? "info" : activity.tone,
       };
-      if (payload && typeof payload.detail === "string" && payload.detail.length > 0) {
+      if (richContentEntry?.detail) {
+        entry.detail = richContentEntry.detail;
+      } else if (payload && typeof payload.detail === "string" && payload.detail.length > 0) {
         entry.detail = payload.detail;
       }
       return entry;

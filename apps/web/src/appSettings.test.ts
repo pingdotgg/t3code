@@ -22,6 +22,15 @@ describe("normalizeCustomModelSlugs", () => {
       ]),
     ).toEqual(["custom/internal-model"]);
   });
+
+  it("filters Claude Code built-ins and aliases while preserving custom slugs", () => {
+    expect(
+      normalizeCustomModelSlugs(
+        [" sonnet ", "claude-sonnet-4-5-20250929", "team/internal-claude"],
+        "claudeCode",
+      ),
+    ).toEqual(["team/internal-claude"]);
+  });
 });
 
 describe("getAppModelOptions", () => {
@@ -47,6 +56,18 @@ describe("getAppModelOptions", () => {
       isCustom: true,
     });
   });
+
+  it("supports saved Claude Code custom models", () => {
+    const options = getAppModelOptions("claudeCode", ["anthropic/sonnet-max"]);
+
+    expect(options.map((option) => option.slug)).toEqual([
+      "sonnet",
+      "opus",
+      "haiku",
+      "sonnet[1m]",
+      "anthropic/sonnet-max",
+    ]);
+  });
 });
 
 describe("resolveAppModelSelection", () => {
@@ -58,6 +79,12 @@ describe("resolveAppModelSelection", () => {
 
   it("falls back to the provider default when no model is selected", () => {
     expect(resolveAppModelSelection("codex", [], "")).toBe("gpt-5.4");
+  });
+
+  it("preserves saved Claude Code custom models", () => {
+    expect(resolveAppModelSelection("claudeCode", ["anthropic/sonnet-max"], "anthropic/sonnet-max")).toBe(
+      "anthropic/sonnet-max",
+    );
   });
 });
 
@@ -82,6 +109,17 @@ describe("getSlashModelOptions", () => {
     );
 
     expect(options.map((option) => option.slug)).toEqual(["openai/gpt-oss-120b"]);
+  });
+
+  it("includes Claude Code custom models in /model suggestions", () => {
+    const options = getSlashModelOptions(
+      "claudeCode",
+      ["anthropic/sonnet-max"],
+      "max",
+      "sonnet",
+    );
+
+    expect(options.map((option) => option.slug)).toEqual(["anthropic/sonnet-max"]);
   });
 });
 

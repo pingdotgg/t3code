@@ -199,7 +199,18 @@ function SuspenseShikiCodeBlock({
   );
 }
 
-function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
+function StreamingChatText({ text }: Pick<ChatMarkdownProps, "text">) {
+  return (
+    <div
+      className="chat-markdown w-full min-w-0 break-words whitespace-pre-wrap text-sm leading-relaxed text-foreground/80"
+      data-chat-markdown-mode="plain-text"
+    >
+      {text}
+    </div>
+  );
+}
+
+function MarkdownChatText({ text, cwd }: Pick<ChatMarkdownProps, "text" | "cwd">) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownComponents = useMemo<Components>(
@@ -240,23 +251,30 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
                 className={codeBlock.className}
                 code={codeBlock.code}
                 themeName={diffThemeName}
-                isStreaming={isStreaming}
+                isStreaming={false}
               />
             </Suspense>
           </MarkdownCodeBlock>
         );
       },
     }),
-    [cwd, diffThemeName, isStreaming],
+    [cwd, diffThemeName],
   );
 
   return (
-    <div className="chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80">
+    <div
+      className="chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80"
+      data-chat-markdown-mode="markdown"
+    >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
         {text}
       </ReactMarkdown>
     </div>
   );
+}
+
+function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
+  return isStreaming ? <StreamingChatText text={text} /> : <MarkdownChatText text={text} cwd={cwd} />;
 }
 
 export default memo(ChatMarkdown);

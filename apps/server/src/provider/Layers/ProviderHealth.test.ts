@@ -4,7 +4,15 @@ import { Effect, Layer, Sink, Stream } from "effect";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { checkCodexProviderStatus, parseAuthStatusFromOutput } from "./ProviderHealth";
+import {
+  checkClaudeCodeProviderStatus,
+  checkCodexProviderStatus,
+  parseAuthStatusFromOutput,
+  parseClaudeCodeAuthStatusFromOutput,
+} from "./ProviderHealth";
+
+const CLAUDE_UNAUTHENTICATED_MESSAGE =
+  "Claude Code is not authenticated. Use `claude auth login` for Max/Pro, or configure Claude-native API key mode outside T3 Code, then try again.";
 
 // ── Test helpers ────────────────────────────────────────────────────
 
@@ -161,6 +169,67 @@ it.effect("returns warning when login status command is unsupported", () =>
   ),
 );
 
+it.effect("returns ready when Claude Code is installed and authenticated", () =>
+  Effect.gen(function* () {
+    const status = yield* checkClaudeCodeProviderStatus;
+    assert.strictEqual(status.provider, "claudeCode");
+    assert.strictEqual(status.status, "ready");
+    assert.strictEqual(status.available, true);
+    assert.strictEqual(status.authStatus, "authenticated");
+  }).pipe(
+    Effect.provide(
+      mockSpawnerLayer((args) => {
+        const joined = args.join(" ");
+        if (joined === "--version") return { stdout: "1.0.70\n", stderr: "", code: 0 };
+        if (joined === "auth status --json") {
+          return {
+            stdout: '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}\n',
+            stderr: "",
+            code: 0,
+          };
+        }
+        throw new Error(`Unexpected args: ${joined}`);
+      }),
+    ),
+  ),
+);
+
+it.effect("returns unavailable when Claude Code is missing", () =>
+  Effect.gen(function* () {
+    const status = yield* checkClaudeCodeProviderStatus;
+    assert.strictEqual(status.provider, "claudeCode");
+    assert.strictEqual(status.status, "error");
+    assert.strictEqual(status.available, false);
+    assert.strictEqual(status.authStatus, "unknown");
+    assert.strictEqual(status.message, "Claude Code CLI (`claude`) is not installed or not on PATH.");
+  }).pipe(Effect.provide(failingSpawnerLayer("spawn claude ENOENT"))),
+);
+
+it.effect("returns unauthenticated when Claude auth status reports login required", () =>
+  Effect.gen(function* () {
+    const status = yield* checkClaudeCodeProviderStatus;
+    assert.strictEqual(status.provider, "claudeCode");
+    assert.strictEqual(status.status, "error");
+    assert.strictEqual(status.available, true);
+    assert.strictEqual(status.authStatus, "unauthenticated");
+    assert.strictEqual(
+      status.message,
+      CLAUDE_UNAUTHENTICATED_MESSAGE,
+    );
+  }).pipe(
+    Effect.provide(
+      mockSpawnerLayer((args) => {
+        const joined = args.join(" ");
+        if (joined === "--version") return { stdout: "1.0.70\n", stderr: "", code: 0 };
+        if (joined === "auth status --json") {
+          return { stdout: "", stderr: "Not logged in. Run claude auth login.", code: 1 };
+        }
+        throw new Error(`Unexpected args: ${joined}`);
+      }),
+    ),
+  ),
+);
+
 // ── Pure function tests ─────────────────────────────────────────────
 
 it("parseAuthStatusFromOutput: exit code 0 with no auth markers is ready", () => {
@@ -182,6 +251,27 @@ it("parseAuthStatusFromOutput: JSON with authenticated=false is unauthenticated"
 it("parseAuthStatusFromOutput: JSON without auth marker is warning", () => {
   const parsed = parseAuthStatusFromOutput({
     stdout: '[{"ok":true}]\n',
+    stderr: "",
+    code: 0,
+  });
+  assert.strictEqual(parsed.status, "warning");
+  assert.strictEqual(parsed.authStatus, "unknown");
+});
+
+it("parseClaudeCodeAuthStatusFromOutput: JSON with loggedIn=false is unauthenticated", () => {
+  const parsed = parseClaudeCodeAuthStatusFromOutput({
+    stdout: '{"loggedIn":false}\n',
+    stderr: "",
+    code: 0,
+  });
+  assert.strictEqual(parsed.status, "error");
+  assert.strictEqual(parsed.authStatus, "unauthenticated");
+  assert.strictEqual(parsed.message, CLAUDE_UNAUTHENTICATED_MESSAGE);
+});
+
+it("parseClaudeCodeAuthStatusFromOutput: JSON without auth marker is warning", () => {
+  const parsed = parseClaudeCodeAuthStatusFromOutput({
+    stdout: '{"ok":true}\n',
     stderr: "",
     code: 0,
   });

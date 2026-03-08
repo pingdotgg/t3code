@@ -53,8 +53,14 @@ const CodexProviderStartOptions = Schema.Struct({
   homePath: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 
+const ClaudeCodeProviderStartOptions = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
+  homePath: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+
 const ProviderStartOptions = Schema.Struct({
   codex: Schema.optional(CodexProviderStartOptions),
+  claudeCode: Schema.optional(ClaudeCodeProviderStartOptions),
 });
 
 export const ProviderSessionStartInput = Schema.Struct({

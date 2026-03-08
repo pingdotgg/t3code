@@ -140,6 +140,42 @@ it.effect("preserves explicit provider and runtime mode in thread.turn.start", (
   }),
 );
 
+it.effect("accepts claude code as an explicit provider in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-claude",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-claude",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      provider: "claudeCode",
+      model: "sonnet",
+      modelOptions: {
+        claudeCode: {},
+      },
+      providerOptions: {
+        claudeCode: {
+          binaryPath: "/usr/local/bin/claude",
+          homePath: "/tmp/.claude",
+        },
+      },
+      runtimeMode: "full-access",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.provider, "claudeCode");
+    assert.deepStrictEqual(parsed.modelOptions?.claudeCode, {});
+    assert.deepStrictEqual(parsed.providerOptions?.claudeCode, {
+      binaryPath: "/usr/local/bin/claude",
+      homePath: "/tmp/.claude",
+    });
+  }),
+);
+
 it.effect("decodes thread.created runtime mode for historical events", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadCreatedPayload({
@@ -196,6 +232,7 @@ it.effect(
         createdAt: "2026-01-01T00:00:00.000Z",
       });
       assert.strictEqual(parsed.provider, undefined);
+      assert.strictEqual(parsed.providerOptions, undefined);
       assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
       assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
     }),

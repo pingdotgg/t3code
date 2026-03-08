@@ -204,4 +204,41 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
 
       fs.rmSync(tempDir, { recursive: true, force: true });
     }));
+
+  it("decodes persisted claudeCode mappings across layer restart", () =>
+    Effect.gen(function* () {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-directory-claude-"));
+      const dbPath = path.join(tempDir, "orchestration.sqlite");
+      const directoryLayer = makeDirectoryLayer(makeSqlitePersistenceLive(dbPath));
+      const threadId = ThreadId.makeUnsafe("thread-claude-restart");
+
+      yield* Effect.gen(function* () {
+        const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+        yield* runtimeRepository.upsert({
+          threadId,
+          providerName: "claudeCode",
+          adapterKey: "claudeCode",
+          runtimeMode: "approval-required",
+          status: "stopped",
+          lastSeenAt: new Date().toISOString(),
+          resumeCursor: { opaque: "cursor-claude" },
+          runtimePayload: { cwd: "/tmp/claude-project" },
+        });
+      }).pipe(Effect.provide(directoryLayer));
+
+      yield* Effect.gen(function* () {
+        const directory = yield* ProviderSessionDirectory;
+
+        const provider = yield* directory.getProvider(threadId);
+        assert.equal(provider, "claudeCode");
+
+        const resolvedBinding = yield* directory.getBinding(threadId);
+        assertSome(resolvedBinding, {
+          threadId,
+          provider: "claudeCode",
+        });
+      }).pipe(Effect.provide(directoryLayer));
+
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }));
 });

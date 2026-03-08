@@ -1,5 +1,6 @@
 import {
   DEFAULT_REASONING_EFFORT_BY_PROVIDER,
+  MODEL_OPTIONS_BY_PROVIDER,
   ProjectId,
   REASONING_EFFORT_OPTIONS_BY_PROVIDER,
   ThreadId,
@@ -171,6 +172,10 @@ const EMPTY_THREAD_DRAFT = Object.freeze({
 const REASONING_EFFORT_VALUES = new Set<CodexReasoningEffort>(
   REASONING_EFFORT_OPTIONS_BY_PROVIDER.codex,
 );
+const MODEL_SLUG_SET_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
+  codex: new Set(MODEL_OPTIONS_BY_PROVIDER.codex.map((option) => option.slug)),
+  claudeCode: new Set(MODEL_OPTIONS_BY_PROVIDER.claudeCode.map((option) => option.slug)),
+};
 
 function createEmptyThreadDraft(): ComposerThreadDraftState {
   return {
@@ -208,7 +213,25 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
 }
 
 function normalizeProviderKind(value: unknown): ProviderKind | null {
-  return value === "codex" ? value : null;
+  return value === "codex" || value === "claudeCode" ? value : null;
+}
+
+function inferProviderKindFromModel(model: string | null | undefined): ProviderKind | null {
+  for (const provider of ["claudeCode", "codex"] satisfies readonly ProviderKind[]) {
+    const normalizedModel = normalizeModelSlug(model, provider);
+    if (normalizedModel && MODEL_SLUG_SET_BY_PROVIDER[provider].has(normalizedModel)) {
+      return provider;
+    }
+  }
+  return null;
+}
+
+function normalizeDraftModel(
+  model: string | null | undefined,
+  provider: ProviderKind | null,
+): string | null {
+  const providerForModel = provider ?? inferProviderKindFromModel(model) ?? "codex";
+  return normalizeModelSlug(model, providerForModel) ?? null;
 }
 
 function revokeObjectPreviewUrl(previewUrl: string): void {
@@ -366,11 +389,10 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
           return normalized ? [normalized] : [];
         })
       : [];
-    const provider = normalizeProviderKind(draftCandidate.provider);
-    const model =
-      typeof draftCandidate.model === "string"
-        ? normalizeModelSlug(draftCandidate.model, provider ?? "codex")
-        : null;
+    const modelInput = typeof draftCandidate.model === "string" ? draftCandidate.model : null;
+    const provider =
+      normalizeProviderKind(draftCandidate.provider) ?? inferProviderKindFromModel(modelInput);
+    const model = normalizeDraftModel(modelInput, provider);
     const runtimeMode =
       draftCandidate.runtimeMode === "approval-required" ||
       draftCandidate.runtimeMode === "full-access"
@@ -809,9 +831,9 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         if (threadId.length === 0) {
           return;
         }
-        const normalizedModel = normalizeModelSlug(model) ?? null;
         set((state) => {
           const existing = state.draftsByThreadId[threadId];
+          const normalizedModel = normalizeDraftModel(model, existing?.provider ?? null);
           if (!existing && normalizedModel === null) {
             return state;
           }

@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
-import { type ProviderKind } from "@t3tools/contracts";
+import { type ProviderKind, type ServerProviderStatus } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { ZapIcon } from "lucide-react";
 
@@ -13,6 +13,7 @@ import {
 } from "../appSettings";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
+import { getProviderAuthGuidance } from "../providerAuthGuidance";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
@@ -48,6 +49,13 @@ const MODEL_PROVIDER_SETTINGS: Array<{
   example: string;
 }> = [
   {
+    provider: "claudeCode",
+    title: "Claude Code",
+    description: "Save additional Claude Code model slugs for the picker and `/model` command.",
+    placeholder: "your-claude-model-slug",
+    example: "anthropic/claude-sonnet-max",
+  },
+  {
     provider: "codex",
     title: "Codex",
     description: "Save additional Codex model slugs for the picker and `/model` command.",
@@ -56,11 +64,95 @@ const MODEL_PROVIDER_SETTINGS: Array<{
   },
 ] as const;
 
+const PROVIDER_INSTALL_SETTINGS: Array<{
+  provider: ProviderKind;
+  title: string;
+  description: string;
+  binaryLabel: string;
+  binaryPlaceholder: string;
+  homeLabel: string;
+  homePlaceholder: string;
+  homeHint: string;
+  resetLabel: string;
+}> = [
+  {
+    provider: "claudeCode",
+    title: "Claude Code",
+    description: "These overrides apply to new Claude Code sessions and let you use a non-default CLI install.",
+    binaryLabel: "Claude binary path",
+    binaryPlaceholder: "claude",
+    homeLabel: "CLAUDE_CONFIG_DIR path",
+    homePlaceholder: "/Users/you/.claude",
+    homeHint: "Optional custom Claude Code config directory.",
+    resetLabel: "Reset Claude overrides",
+  },
+  {
+    provider: "codex",
+    title: "Codex",
+    description: "These overrides apply to new Codex sessions and let you use a non-default Codex install.",
+    binaryLabel: "Codex binary path",
+    binaryPlaceholder: "codex",
+    homeLabel: "CODEX_HOME path",
+    homePlaceholder: "/Users/you/.codex",
+    homeHint: "Optional custom Codex home/config directory.",
+    resetLabel: "Reset Codex overrides",
+  },
+] as const;
+
+function getProviderBinaryPath(settings: ReturnType<typeof useAppSettings>["settings"], provider: ProviderKind) {
+  return provider === "claudeCode" ? settings.claudeBinaryPath : settings.codexBinaryPath;
+}
+
+function getProviderHomePath(settings: ReturnType<typeof useAppSettings>["settings"], provider: ProviderKind) {
+  return provider === "claudeCode" ? settings.claudeHomePath : settings.codexHomePath;
+}
+
+function patchProviderOverrides(provider: ProviderKind, paths: { binaryPath: string; homePath: string }) {
+  return provider === "claudeCode"
+    ? { claudeBinaryPath: paths.binaryPath, claudeHomePath: paths.homePath }
+    : { codexBinaryPath: paths.binaryPath, codexHomePath: paths.homePath };
+}
+
+function formatProviderAuthStatus(status: ServerProviderStatus): string {
+  switch (status.authStatus) {
+    case "authenticated":
+      return "Authenticated";
+    case "unauthenticated":
+      return "Authentication required";
+    default:
+      return "Auth status unknown";
+  }
+}
+
+function formatProviderStatus(status: ServerProviderStatus): string {
+  switch (status.status) {
+    case "ready":
+      return "Ready";
+    case "warning":
+      return "Limited";
+    default:
+      return "Unavailable";
+  }
+}
+
+function getProviderStatusClasses(status: ServerProviderStatus): string {
+  switch (status.status) {
+    case "ready":
+      return "border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300";
+    case "warning":
+      return "border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-300";
+    default:
+      return "border-destructive/30 bg-destructive/5 text-destructive";
+  }
+}
+
 function getCustomModelsForProvider(
   settings: ReturnType<typeof useAppSettings>["settings"],
   provider: ProviderKind,
 ) {
   switch (provider) {
+    case "claudeCode":
+      return settings.customClaudeModels;
     case "codex":
     default:
       return settings.customCodexModels;
@@ -72,6 +164,8 @@ function getDefaultCustomModelsForProvider(
   provider: ProviderKind,
 ) {
   switch (provider) {
+    case "claudeCode":
+      return defaults.customClaudeModels;
     case "codex":
     default:
       return defaults.customCodexModels;
@@ -80,6 +174,8 @@ function getDefaultCustomModelsForProvider(
 
 function patchCustomModels(provider: ProviderKind, models: string[]) {
   switch (provider) {
+    case "claudeCode":
+      return { customClaudeModels: models };
     case "codex":
     default:
       return { customCodexModels: models };
@@ -96,15 +192,15 @@ function SettingsRouteView() {
     Record<ProviderKind, string>
   >({
     codex: "",
+    claudeCode: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
 
-  const codexBinaryPath = settings.codexBinaryPath;
-  const codexHomePath = settings.codexHomePath;
   const codexServiceTier = settings.codexServiceTier;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
+  const providerStatuses = serverConfigQuery.data?.providers ?? [];
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -244,61 +340,144 @@ function SettingsRouteView() {
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
-                <h2 className="text-sm font-medium text-foreground">Codex App Server</h2>
+                <h2 className="text-sm font-medium text-foreground">Provider status</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  These overrides apply to new sessions and let you use a non-default Codex install.
+                  Current Claude Code and Codex availability reported by the desktop server.
                 </p>
               </div>
 
-              <div className="space-y-4">
-                <label htmlFor="codex-binary-path" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Codex binary path</span>
-                  <Input
-                    id="codex-binary-path"
-                    value={codexBinaryPath}
-                    onChange={(event) => updateSettings({ codexBinaryPath: event.target.value })}
-                    placeholder="codex"
-                    spellCheck={false}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Leave blank to use <code>codex</code> from your PATH.
-                  </span>
-                </label>
-
-                <label htmlFor="codex-home-path" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">CODEX_HOME path</span>
-                  <Input
-                    id="codex-home-path"
-                    value={codexHomePath}
-                    onChange={(event) => updateSettings({ codexHomePath: event.target.value })}
-                    placeholder="/Users/you/.codex"
-                    spellCheck={false}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Optional custom Codex home/config directory.
-                  </span>
-                </label>
-
-                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <p>
-                    Binary source:{" "}
-                    <span className="font-medium text-foreground">{codexBinaryPath || "PATH"}</span>
-                  </p>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() =>
-                      updateSettings({
-                        codexBinaryPath: defaults.codexBinaryPath,
-                        codexHomePath: defaults.codexHomePath,
-                      })
-                    }
-                  >
-                    Reset codex overrides
-                  </Button>
-                </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {PROVIDER_INSTALL_SETTINGS.map((providerSettings) => {
+                  const status = providerStatuses.find(
+                    (entry) => entry.provider === providerSettings.provider,
+                  );
+                  const authGuidance = getProviderAuthGuidance(providerSettings.provider);
+                  const binaryPath = getProviderBinaryPath(settings, providerSettings.provider);
+                  return (
+                    <div
+                      key={`status:${providerSettings.provider}`}
+                      className="rounded-xl border border-border bg-background/50 p-4"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-medium text-foreground">{providerSettings.title}</h3>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {status?.message ?? "Waiting for provider health check."}
+                          </p>
+                        </div>
+                        <span
+                          className={`rounded-full border px-2 py-1 text-[11px] font-medium ${status ? getProviderStatusClasses(status) : "border-border bg-background text-muted-foreground"}`}
+                        >
+                          {status ? formatProviderStatus(status) : "Unknown"}
+                        </span>
+                      </div>
+                      <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+                        <p>{status ? formatProviderAuthStatus(status) : "Auth status unknown"}</p>
+                        {authGuidance ? <p>{authGuidance.summary}</p> : null}
+                        <p>
+                          Binary source:{" "}
+                          <span className="font-medium text-foreground">{binaryPath || "PATH"}</span>
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </section>
+
+            {PROVIDER_INSTALL_SETTINGS.map((providerSettings) => {
+              const binaryPath = getProviderBinaryPath(settings, providerSettings.provider);
+              const homePath = getProviderHomePath(settings, providerSettings.provider);
+              const defaultBinaryPath = getProviderBinaryPath(defaults, providerSettings.provider);
+              const defaultHomePath = getProviderHomePath(defaults, providerSettings.provider);
+              const authGuidance = getProviderAuthGuidance(providerSettings.provider);
+
+              return (
+                <section
+                  key={providerSettings.provider}
+                  className="rounded-2xl border border-border bg-card p-5"
+                >
+                  <div className="mb-4">
+                    <h2 className="text-sm font-medium text-foreground">{providerSettings.title} CLI</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">{providerSettings.description}</p>
+                  </div>
+
+                  <div className="space-y-4">
+                    {authGuidance ? (
+                      <div className="rounded-lg border border-dashed border-border bg-background px-3 py-3 text-xs text-muted-foreground">
+                        <p className="font-medium text-foreground">Authentication</p>
+                        <p className="mt-1">{authGuidance.detail}</p>
+                      </div>
+                    ) : null}
+
+                    <label htmlFor={`${providerSettings.provider}-binary-path`} className="block space-y-1">
+                      <span className="text-xs font-medium text-foreground">
+                        {providerSettings.binaryLabel}
+                      </span>
+                      <Input
+                        id={`${providerSettings.provider}-binary-path`}
+                        value={binaryPath}
+                        onChange={(event) =>
+                          updateSettings(
+                            patchProviderOverrides(providerSettings.provider, {
+                              binaryPath: event.target.value,
+                              homePath,
+                            }),
+                          )
+                        }
+                        placeholder={providerSettings.binaryPlaceholder}
+                        spellCheck={false}
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        Leave blank to use <code>{providerSettings.binaryPlaceholder}</code> from your PATH.
+                      </span>
+                    </label>
+
+                    <label htmlFor={`${providerSettings.provider}-home-path`} className="block space-y-1">
+                      <span className="text-xs font-medium text-foreground">
+                        {providerSettings.homeLabel}
+                      </span>
+                      <Input
+                        id={`${providerSettings.provider}-home-path`}
+                        value={homePath}
+                        onChange={(event) =>
+                          updateSettings(
+                            patchProviderOverrides(providerSettings.provider, {
+                              binaryPath,
+                              homePath: event.target.value,
+                            }),
+                          )
+                        }
+                        placeholder={providerSettings.homePlaceholder}
+                        spellCheck={false}
+                      />
+                      <span className="text-xs text-muted-foreground">{providerSettings.homeHint}</span>
+                    </label>
+
+                    <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <p>
+                        Binary source:{" "}
+                        <span className="font-medium text-foreground">{binaryPath || "PATH"}</span>
+                      </p>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() =>
+                          updateSettings(
+                            patchProviderOverrides(providerSettings.provider, {
+                              binaryPath: defaultBinaryPath,
+                              homePath: defaultHomePath,
+                            }),
+                          )
+                        }
+                      >
+                        {providerSettings.resetLabel}
+                      </Button>
+                    </div>
+                  </div>
+                </section>
+              );
+            })}
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">

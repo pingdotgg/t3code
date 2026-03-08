@@ -1,7 +1,11 @@
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { type ComposerImageAttachment, useComposerDraftStore } from "./composerDraftStore";
+import {
+  COMPOSER_DRAFT_STORAGE_KEY,
+  type ComposerImageAttachment,
+  useComposerDraftStore,
+} from "./composerDraftStore";
 
 function makeImage(input: {
   id: string;
@@ -166,6 +170,7 @@ describe("composerDraftStore project draft thread mapping", () => {
       draftThreadsByThreadId: {},
       projectDraftThreadIdByProjectId: {},
     });
+    window.localStorage.removeItem(COMPOSER_DRAFT_STORAGE_KEY);
   });
 
   it("stores and reads project draft thread ids via actions", () => {
@@ -394,18 +399,66 @@ describe("composerDraftStore setProvider", () => {
   it("persists provider-only selection even when prompt/model are empty", () => {
     const store = useComposerDraftStore.getState();
 
-    store.setProvider(threadId, "codex");
+    store.setProvider(threadId, "claudeCode");
 
-    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.provider).toBe("codex");
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.provider).toBe("claudeCode");
   });
 
   it("removes empty provider-only draft when provider is reset", () => {
     const store = useComposerDraftStore.getState();
 
-    store.setProvider(threadId, "codex");
+    store.setProvider(threadId, "claudeCode");
     store.setProvider(threadId, null);
 
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+
+  it("stores Claude models against a Claude provider selection", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "claudeCode");
+    store.setModel(threadId, "sonnet");
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toMatchObject({
+      provider: "claudeCode",
+      model: "sonnet",
+    });
+  });
+
+  it("rehydrates persisted Claude provider selections from storage", async () => {
+    // Reset in-memory state first — persist middleware will write empty state to storage.
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+
+    // Write test data AFTER setState so the persist middleware does not overwrite it.
+    window.localStorage.setItem(
+      COMPOSER_DRAFT_STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          draftsByThreadId: {
+            [threadId]: {
+              prompt: "",
+              attachments: [],
+              provider: "claudeCode",
+              model: "sonnet",
+            },
+          },
+          draftThreadsByThreadId: {},
+          projectDraftThreadIdByProjectId: {},
+        },
+        version: 1,
+      }),
+    );
+
+    await useComposerDraftStore.persist.rehydrate();
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toMatchObject({
+      provider: "claudeCode",
+      model: "sonnet",
+    });
   });
 });
 

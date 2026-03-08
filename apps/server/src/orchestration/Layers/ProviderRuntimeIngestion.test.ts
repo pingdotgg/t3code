@@ -41,7 +41,7 @@ const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
   readonly eventId: EventId;
-  readonly provider: "codex";
+  readonly provider: ProviderRuntimeEvent["provider"];
   readonly createdAt: string;
   readonly threadId: ThreadId;
   readonly turnId?: string | undefined;
@@ -544,6 +544,62 @@ describe("ProviderRuntimeIngestion", () => {
       (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-1",
     );
     expect(message?.text).toBe("hello world");
+    expect(message?.streaming).toBe(false);
+  });
+
+  it("finalizes buffered assistant text on turn completion without trimming Claude-style whitespace deltas", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-claude-message-delta-1"),
+      provider: "claudeCode",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-claude-1"),
+      itemId: asItemId("claude-item-1"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: " let",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-claude-message-delta-2"),
+      provider: "claudeCode",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-claude-1"),
+      itemId: asItemId("claude-item-1"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: " check",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-claude-turn-completed"),
+      provider: "claudeCode",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-claude-1"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:claude-item-1" && !message.streaming,
+      ),
+    );
+    const message = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:claude-item-1",
+    );
+
+    expect(message?.text).toBe(" let check");
     expect(message?.streaming).toBe(false);
   });
 
@@ -1258,6 +1314,102 @@ describe("ProviderRuntimeIngestion", () => {
     expect(checkpoint?.status).toBe("missing");
     expect(checkpoint?.assistantMessageId).toBe("assistant:item-p1-assistant");
     expect(checkpoint?.checkpointRef).toBe("provider-diff:evt-turn-diff-updated");
+  });
+
+  it("projects Claude web_search item lifecycle into tool update/completion activities", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "item.updated",
+      eventId: asEventId("evt-claude-web-search-updated"),
+      provider: "claudeCode",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-web-search"),
+      itemId: asItemId("srvtoolu_1"),
+      payload: {
+        itemType: "web_search",
+        status: "inProgress",
+        title: "web_search",
+        detail: "weather nyc",
+        data: {
+          item: {
+            type: "server_tool_use",
+            toolName: "web_search",
+            input: { query: "weather nyc" },
+            summary: "weather nyc",
+          },
+        },
+      },
+    });
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-claude-web-search-completed"),
+      provider: "claudeCode",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-web-search"),
+      itemId: asItemId("srvtoolu_1"),
+      payload: {
+        itemType: "web_search",
+        status: "completed",
+        title: "web_search",
+        detail: "Weather in NYC - Example",
+        data: {
+          item: {
+            type: "web_search_tool_result",
+            toolName: "web_search",
+            status: "completed",
+            input: { query: "weather nyc" },
+            result: [
+              {
+                type: "web_search_result",
+                title: "Weather in NYC - Example",
+                url: "https://example.com/weather",
+              },
+            ],
+            summary: "Weather in NYC - Example",
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.updated",
+        ) &&
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.completed",
+        ),
+    );
+
+    const updated = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-claude-web-search-updated",
+    );
+    const completed = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-claude-web-search-completed",
+    );
+    const updatedPayload =
+      updated?.payload && typeof updated.payload === "object"
+        ? (updated.payload as Record<string, unknown>)
+        : undefined;
+    const completedPayload =
+      completed?.payload && typeof completed.payload === "object"
+        ? (completed.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(updated?.kind).toBe("tool.updated");
+    expect(updatedPayload?.itemType).toBe("web_search");
+    expect(updatedPayload?.status).toBe("inProgress");
+    expect(updatedPayload?.detail).toBe("weather nyc");
+
+    expect(completed?.kind).toBe("tool.completed");
+    expect(completedPayload?.itemType).toBe("web_search");
+    expect(completedPayload?.detail).toBe("Weather in NYC - Example");
   });
 
   it("projects Codex task lifecycle chunks into thread activities", async () => {

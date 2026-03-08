@@ -93,7 +93,7 @@ describe("ProviderCommandReactor", () => {
         typeof input === "object" &&
         input !== null &&
         "provider" in input &&
-        input.provider === "codex"
+        (input.provider === "codex" || input.provider === "claudeCode")
           ? input.provider
           : "codex";
       const resumeCursor =
@@ -315,6 +315,12 @@ describe("ProviderCommandReactor", () => {
             fastMode: true,
           },
         },
+        providerOptions: {
+          codex: {
+            binaryPath: "/usr/local/bin/codex",
+            homePath: "/tmp/.codex",
+          },
+        },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
@@ -329,6 +335,12 @@ describe("ProviderCommandReactor", () => {
         codex: {
           reasoningEffort: "high",
           fastMode: true,
+        },
+      },
+      providerOptions: {
+        codex: {
+          binaryPath: "/usr/local/bin/codex",
+          homePath: "/tmp/.codex",
         },
       },
     });
@@ -511,6 +523,56 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("restarts claudeCode sessions without falling back to codex when runtime mode changes", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-claude-runtime-mode-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-claude-runtime-mode-1"),
+          role: "user",
+          text: "first claude turn",
+          attachments: [],
+        },
+        provider: "claudeCode",
+        model: "claude-sonnet-4-5",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      provider: "claudeCode",
+      model: "claude-sonnet-4-5",
+      runtimeMode: "approval-required",
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.makeUnsafe("cmd-runtime-mode-set-claude"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        runtimeMode: "full-access",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 2);
+    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      provider: "claudeCode",
+      resumeCursor: { opaque: "cursor-1" },
+      runtimeMode: "full-access",
+    });
   });
 
   it("does not stop the active session when restart fails before rebind", async () => {

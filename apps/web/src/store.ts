@@ -9,7 +9,6 @@ import {
 import {
   getModelOptions,
   normalizeModelSlug,
-  resolveModelSlug,
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
 import { create } from "zustand";
@@ -41,6 +40,13 @@ const initialState: AppState = {
   threadsHydrated: false,
 };
 const persistedExpandedProjectCwds = new Set<string>();
+const PROVIDER_KINDS = ["claudeCode", "codex"] as const satisfies readonly ProviderKind[];
+const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
+  codex: new Set(getModelOptions("codex").map((option) => option.slug)),
+  claudeCode: new Set(getModelOptions("claudeCode").map((option) => option.slug)),
+};
+
+type ModelOptionsByProvider = Record<ProviderKind, ReadonlyArray<{ slug: string }>>;
 
 // ── Persist helpers ──────────────────────────────────────────────────
 
@@ -106,13 +112,17 @@ function mapProjectsFromReadModel(
     const existing =
       previous.find((entry) => entry.id === project.id) ??
       previous.find((entry) => entry.cwd === project.workspaceRoot);
+    const inferredProjectProvider = inferProviderFromModel(project.defaultModel) ?? "codex";
     return {
       id: project.id,
       name: project.title,
       cwd: project.workspaceRoot,
       model:
         existing?.model ??
-        resolveModelSlug(project.defaultModel ?? DEFAULT_MODEL_BY_PROVIDER.codex),
+        resolveModelSlugForProvider(
+          inferredProjectProvider,
+          project.defaultModel ?? DEFAULT_MODEL_BY_PROVIDER[inferredProjectProvider],
+        ),
       expanded:
         existing?.expanded ??
         (persistedExpandedProjectCwds.size > 0
@@ -121,6 +131,43 @@ function mapProjectsFromReadModel(
       scripts: project.scripts.map((script) => ({ ...script })),
     };
   });
+}
+
+function normalizeProviderName(providerName: string | null | undefined): ProviderKind | null {
+  return providerName === "codex" || providerName === "claudeCode" ? providerName : null;
+}
+
+export function inferProviderFromModel(
+  model: string | null | undefined,
+  modelOptionsByProvider?: ModelOptionsByProvider,
+): ProviderKind | null {
+  const modelSlugsByProvider = modelOptionsByProvider
+    ? {
+        codex: new Set(modelOptionsByProvider.codex.map((option) => option.slug)),
+        claudeCode: new Set(modelOptionsByProvider.claudeCode.map((option) => option.slug)),
+      }
+    : BUILT_IN_MODEL_SLUGS_BY_PROVIDER;
+  for (const provider of PROVIDER_KINDS) {
+    const normalizedModel = normalizeModelSlug(model, provider);
+    if (normalizedModel && modelSlugsByProvider[provider].has(normalizedModel)) {
+      return provider;
+    }
+  }
+  return null;
+}
+
+export function resolveEffectiveProvider(input: {
+  readonly explicitProvider?: ProviderKind | null;
+  readonly sessionProviderName?: string | null;
+  readonly model?: string | null | undefined;
+  readonly modelOptionsByProvider?: ModelOptionsByProvider;
+}): ProviderKind {
+  return (
+    input.explicitProvider ??
+    normalizeProviderName(input.sessionProviderName) ??
+    inferProviderFromModel(input.model, input.modelOptionsByProvider) ??
+    "codex"
+  );
 }
 
 function toLegacySessionStatus(
@@ -143,26 +190,16 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex") {
-    return providerName;
-  }
-  return "codex";
+  return normalizeProviderName(providerName) ?? "codex";
 }
-
-const CODEX_MODEL_SLUGS = new Set<string>(getModelOptions("codex").map((option) => option.slug));
 
 function inferProviderForThreadModel(input: {
   readonly model: string;
   readonly sessionProviderName: string | null;
 }): ProviderKind {
-  if (input.sessionProviderName === "codex") {
-    return input.sessionProviderName;
-  }
-  const normalizedCodex = normalizeModelSlug(input.model, "codex");
-  if (normalizedCodex && CODEX_MODEL_SLUGS.has(normalizedCodex)) {
-    return "codex";
-  }
-  return "codex";
+  return (
+    normalizeProviderName(input.sessionProviderName) ?? inferProviderFromModel(input.model) ?? "codex"
+  );
 }
 
 function resolveWsHttpOrigin(): string {

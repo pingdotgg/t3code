@@ -28,9 +28,16 @@ const AppServiceTierSchema = Schema.Literals(["auto", "fast", "flex"]);
 const MODELS_WITH_FAST_SUPPORT = new Set(["gpt-5.4"]);
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
+  claudeCode: new Set(getModelOptions("claudeCode").map((option) => option.slug)),
 };
 
 const AppSettingsSchema = Schema.Struct({
+  claudeBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  claudeHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
   codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
   ),
@@ -42,6 +49,9 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
   codexServiceTier: AppServiceTierSchema.pipe(Schema.withConstructorDefault(() => Option.some("auto"))),
+  customClaudeModels: Schema.Array(Schema.String).pipe(
+    Schema.withConstructorDefault(() => Option.some([])),
+  ),
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
@@ -107,6 +117,7 @@ export function normalizeCustomModelSlugs(
 function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
+    customClaudeModels: normalizeCustomModelSlugs(settings.customClaudeModels, "claudeCode"),
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
   };
 }

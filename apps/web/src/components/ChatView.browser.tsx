@@ -2,9 +2,11 @@
 import "../index.css";
 
 import {
+  EventId,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
   type OrchestrationReadModel,
+  type OrchestrationThreadActivity,
   type ProjectId,
   type ServerConfig,
   type ThreadId,
@@ -134,15 +136,80 @@ function createUserMessage(options: {
   };
 }
 
-function createAssistantMessage(options: { id: MessageId; text: string; offsetSeconds: number }) {
+function createAssistantMessage(options: {
+  id: MessageId;
+  text: string;
+  offsetSeconds: number;
+  streaming?: boolean;
+  updatedOffsetSeconds?: number;
+}) {
   return {
     id: options.id,
     role: "assistant" as const,
     text: options.text,
     turnId: null,
-    streaming: false,
+    streaming: options.streaming ?? false,
     createdAt: isoAt(options.offsetSeconds),
-    updatedAt: isoAt(options.offsetSeconds + 1),
+    updatedAt: isoAt(options.updatedOffsetSeconds ?? options.offsetSeconds + 1),
+  };
+}
+
+function createSnapshotWithMessages(
+  messages: OrchestrationReadModel["threads"][number]["messages"],
+): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-bootstrap" as MessageId,
+    targetText: "bootstrap",
+  });
+
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      Object.assign({}, thread, {
+        messages,
+        latestTurn: null,
+        activities: [],
+        proposedPlans: [],
+        checkpoints: [],
+        updatedAt: NOW_ISO,
+      }),
+    ),
+  };
+}
+
+function createSnapshotWithMessagesAndActivities(options: {
+  messages: OrchestrationReadModel["threads"][number]["messages"];
+  activities: OrchestrationThreadActivity[];
+}): OrchestrationReadModel {
+  const snapshot = createSnapshotWithMessages(options.messages);
+
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      Object.assign({}, thread, {
+        activities: options.activities,
+        updatedAt: NOW_ISO,
+      }),
+    ),
+  };
+}
+
+function createActivity(overrides: {
+  id: string;
+  createdAt: string;
+  kind: OrchestrationThreadActivity["kind"];
+  summary: string;
+  tone: OrchestrationThreadActivity["tone"];
+  payload?: Record<string, unknown>;
+}): OrchestrationThreadActivity {
+  return {
+    id: EventId.makeUnsafe(overrides.id),
+    createdAt: overrides.createdAt,
+    kind: overrides.kind,
+    summary: overrides.summary,
+    tone: overrides.tone,
+    payload: overrides.payload ?? {},
+    turnId: null,
   };
 }
 
@@ -747,6 +814,170 @@ describe("ChatView timeline estimator parity (full app)", () => {
       }
     },
   );
+
+  it("renders streaming assistant text as literal pre-wrapped text without markdown emphasis", async () => {
+    const assistantMessageId = "msg-assistant-streaming-literal" as MessageId;
+    const streamingText = "First line\n  **keep literal bold markers**";
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithMessages([
+        createUserMessage({
+          id: "msg-user-streaming-context" as MessageId,
+          text: "Show me the live reply",
+          offsetSeconds: 0,
+        }),
+        createAssistantMessage({
+          id: assistantMessageId,
+          text: streamingText,
+          offsetSeconds: 3,
+          streaming: true,
+        }),
+      ]),
+    });
+
+    try {
+      const row = await waitForElement(
+        () =>
+          document.querySelector<HTMLElement>(
+            `[data-message-id="${assistantMessageId}"][data-message-role="assistant"]`,
+          ),
+        "Unable to locate targeted streaming assistant row.",
+      );
+      const markdown = await waitForElement(
+        () => row.querySelector<HTMLElement>(".chat-markdown"),
+        "Unable to locate streaming assistant markdown container.",
+      );
+
+      expect(markdown.dataset.chatMarkdownMode).toBe("plain-text");
+      expect(markdown.textContent).toBe(streamingText);
+      expect(row.querySelector("strong")).toBeNull();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("omits sub-second completed assistant durations from message metadata while keeping markdown rendering", async () => {
+    const assistantMessageId = "msg-assistant-complete-meta" as MessageId;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithMessages([
+        createUserMessage({
+          id: "msg-user-complete-context" as MessageId,
+          text: "Finish the reply",
+          offsetSeconds: 0,
+        }),
+        createAssistantMessage({
+          id: assistantMessageId,
+          text: "**Bold when complete**",
+          offsetSeconds: 3,
+          updatedOffsetSeconds: 3.001,
+        }),
+      ]),
+    });
+
+    try {
+      const row = await waitForElement(
+        () =>
+          document.querySelector<HTMLElement>(
+            `[data-message-id="${assistantMessageId}"][data-message-role="assistant"]`,
+          ),
+        "Unable to locate targeted completed assistant row.",
+      );
+      const markdown = await waitForElement(
+        () => row.querySelector<HTMLElement>(".chat-markdown"),
+        "Unable to locate completed assistant markdown container.",
+      );
+      const meta = await waitForElement(
+        () => row.querySelector<HTMLElement>('[data-message-meta="assistant"]'),
+        "Unable to locate assistant metadata label.",
+      );
+
+      expect(markdown.dataset.chatMarkdownMode).toBe("markdown");
+      expect(row.querySelector("strong")?.textContent).toBe("Bold when complete");
+      expect(meta.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+      expect(meta.textContent).not.toContain("•");
+      expect(meta.textContent).not.toContain("ms");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders Claude rich web search activity as visible work-log rows", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithMessagesAndActivities({
+        messages: [
+          createUserMessage({
+            id: "msg-user-web-search" as MessageId,
+            text: "Search the web for weather",
+            offsetSeconds: 0,
+          }),
+          createAssistantMessage({
+            id: "msg-assistant-web-search" as MessageId,
+            text: "Here is the answer.",
+            offsetSeconds: 6,
+          }),
+        ],
+        activities: [
+          createActivity({
+            id: "activity-web-search-updated",
+            createdAt: isoAt(2),
+            kind: "tool.updated",
+            summary: "web_search",
+            tone: "tool",
+            payload: {
+              itemType: "web_search",
+              detail: "weather nyc",
+              data: {
+                item: {
+                  type: "server_tool_use",
+                  toolName: "web_search",
+                  summary: "weather nyc",
+                },
+              },
+            },
+          }),
+          createActivity({
+            id: "activity-web-search-completed",
+            createdAt: isoAt(4),
+            kind: "tool.completed",
+            summary: "web_search complete",
+            tone: "tool",
+            payload: {
+              itemType: "web_search",
+              detail: "Weather in NYC - Example",
+              data: {
+                item: {
+                  type: "web_search_tool_result",
+                  toolName: "web_search",
+                  summary: "Weather in NYC - Example",
+                },
+              },
+            },
+          }),
+        ],
+      }),
+    });
+
+    try {
+      const workRow = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-timeline-row-kind="work"]')).find((row) =>
+            row.textContent?.includes("Searching the web"),
+          ) ?? null,
+        "Unable to locate rendered Claude rich-content work row.",
+      );
+      const workText = workRow.textContent?.replace(/\s+/g, " ").trim() ?? "";
+
+      expect(workText).toContain("Tool calls (2)");
+      expect(workText).toContain("Searching the web");
+      expect(workText).toContain("weather nyc");
+      expect(workText).toContain("Web search complete");
+      expect(workText).toContain("Weather in NYC - Example");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
 
   it("opens the project cwd for draft threads without a worktree path", async () => {
     useComposerDraftStore.setState({

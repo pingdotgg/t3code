@@ -10,6 +10,7 @@
  * @module ProviderServiceLive
  */
 import {
+  DEFAULT_PROVIDER_KIND,
   NonNegativeInt,
   ThreadId,
   ProviderInterruptTurnInput,
@@ -258,10 +259,15 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           payload: rawInput,
         });
 
+        const persistedBinding =
+          parsed.provider === undefined
+            ? Option.getOrUndefined(yield* directory.getBinding(threadId))
+            : undefined;
+
         const input = {
           ...parsed,
           threadId,
-          provider: parsed.provider ?? "codex",
+          provider: parsed.provider ?? persistedBinding?.provider ?? DEFAULT_PROVIDER_KIND,
         };
         const adapter = yield* registry.getByProvider(input.provider);
         const session = yield* adapter.startSession(input);

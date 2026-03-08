@@ -9,6 +9,7 @@ import {
   deriveTimelineEntries,
   deriveWorkLogEntries,
   findLatestProposedPlan,
+  formatElapsed,
   hasToolActivityForTurn,
   isLatestTurnSettled,
 } from "./session-logic";
@@ -35,6 +36,24 @@ function makeActivity(overrides: {
     ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
   };
 }
+
+describe("formatElapsed", () => {
+  it("hides elapsed labels below the configured visibility threshold", () => {
+    expect(
+      formatElapsed("2026-02-23T00:00:00.000Z", "2026-02-23T00:00:00.999Z", {
+        minimumVisibleMs: 1_000,
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps elapsed labels once the configured visibility threshold is reached", () => {
+    expect(
+      formatElapsed("2026-02-23T00:00:00.000Z", "2026-02-23T00:00:01.000Z", {
+        minimumVisibleMs: 1_000,
+      }),
+    ).toBe("1.0s");
+  });
+});
 
 describe("derivePendingApprovals", () => {
   it("tracks open approvals and removes resolved ones", () => {
@@ -343,6 +362,90 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
   });
 
+  it("formats Claude rich web search lifecycle rows with concise labels", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "web-search-updated",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "web_search",
+        tone: "tool",
+        payload: {
+          itemType: "web_search",
+          detail: "weather nyc",
+          data: {
+            item: {
+              type: "server_tool_use",
+              toolName: "web_search",
+              summary: "weather nyc",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "web-search-completed",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "web_search complete",
+        tone: "tool",
+        payload: {
+          itemType: "web_search",
+          detail: "Weather in NYC - Example",
+          data: {
+            item: {
+              type: "web_search_tool_result",
+              toolName: "web_search",
+              summary: "Weather in NYC - Example",
+            },
+          },
+        },
+      }),
+    ];
+
+    expect(deriveWorkLogEntries(activities, undefined)).toEqual([
+      {
+        id: "web-search-updated",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        label: "Searching the web",
+        detail: "weather nyc",
+        tone: "tool",
+      },
+      {
+        id: "web-search-completed",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        label: "Web search complete",
+        detail: "Weather in NYC - Example",
+        tone: "tool",
+      },
+    ]);
+  });
+
+  it("keeps non-rich tool rows unchanged", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        summary: "Run tests complete",
+        kind: "tool.completed",
+        tone: "tool",
+        payload: {
+          itemType: "command_execution",
+          detail: "bun run test -- src/session-logic.test.ts",
+        },
+      }),
+    ];
+
+    expect(deriveWorkLogEntries(activities, undefined)).toEqual([
+      {
+        id: "command-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        label: "Run tests complete",
+        detail: "bun run test -- src/session-logic.test.ts",
+        tone: "tool",
+      },
+    ]);
+  });
+
   it("omits task start and completion lifecycle entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -543,18 +646,18 @@ describe("isLatestTurnSettled", () => {
 });
 
 describe("PROVIDER_OPTIONS", () => {
-  it("keeps Claude Code and Cursor visible as unavailable placeholders in the stack base", () => {
+  it("keeps Claude Code available while leaving Cursor as an unavailable placeholder", () => {
     const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeCode");
     const cursor = PROVIDER_OPTIONS.find((option) => option.value === "cursor");
     expect(PROVIDER_OPTIONS).toEqual([
       { value: "codex", label: "Codex", available: true },
-      { value: "claudeCode", label: "Claude Code", available: false },
+      { value: "claudeCode", label: "Claude Code", available: true },
       { value: "cursor", label: "Cursor", available: false },
     ]);
     expect(claude).toEqual({
       value: "claudeCode",
       label: "Claude Code",
-      available: false,
+      available: true,
     });
     expect(cursor).toEqual({
       value: "cursor",
