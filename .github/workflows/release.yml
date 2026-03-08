@@ -100,6 +100,11 @@ jobs:
             platform: linux
             target: AppImage
             arch: x64
+          - label: Linux x64 deb
+            runner: ubuntu-24.04
+            platform: linux
+            target: deb
+            arch: x64
           - label: Windows x64
             runner: windows-2022
             platform: win
@@ -199,6 +204,7 @@ jobs:
             "release/*.dmg" \
             "release/*.zip" \
             "release/*.AppImage" \
+            "release/*.deb" \
             "release/*.exe" \
             "release/*.blockmap" \
             "release/latest*.yml"; do
@@ -216,7 +222,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          name: desktop-${{ matrix.platform }}-${{ matrix.target }}-${{ matrix.arch }}
           path: release-publish/*
           if-no-files-found: error
 
@@ -275,6 +281,7 @@ jobs:
             release-assets/*.dmg
             release-assets/*.zip
             release-assets/*.AppImage
+            release-assets/*.deb
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/latest*.yml
