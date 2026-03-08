@@ -127,6 +127,8 @@ interface ClaudeSessionContext {
   updatedAt: string;
   lastError: string | undefined;
   resumeCursor: unknown | undefined;
+  /** Whether streaming text/thinking deltas were received for the current turn. */
+  hasStreamedContent: boolean;
 }
 
 // ── SDK Message → ProviderRuntimeEvent mapping ────────────────────────
@@ -150,7 +152,7 @@ function mapSdkMessageToEvents(
     case "assistant":
       return mapAssistantMessage(base, ctx, msg as SDKAssistantMessage);
     case "stream_event":
-      return mapStreamEvent(base, msg as SDKPartialAssistantMessage);
+      return mapStreamEvent(base, ctx, msg as SDKPartialAssistantMessage);
     case "result":
       return mapResultMessage(base, ctx, msg as SDKResultMessage);
     case "tool_progress": {
@@ -380,22 +382,28 @@ function mapAssistantMessage(
 
   for (const block of betaMessage.content) {
     if (block.type === "text") {
-      events.push({
-        ...base,
-        eventId: makeEventId(),
-        type: "content.delta" as const,
-        payload: { streamKind: "assistant_text" as const, delta: block.text },
-      } as ProviderRuntimeEvent);
+      // Skip text blocks that were already delivered via stream_event deltas
+      if (!ctx.hasStreamedContent) {
+        events.push({
+          ...base,
+          eventId: makeEventId(),
+          type: "content.delta" as const,
+          payload: { streamKind: "assistant_text" as const, delta: block.text },
+        } as ProviderRuntimeEvent);
+      }
     } else if (block.type === "thinking") {
-      events.push({
-        ...base,
-        eventId: makeEventId(),
-        type: "content.delta" as const,
-        payload: {
-          streamKind: "reasoning_text" as const,
-          delta: (block as { thinking: string }).thinking,
-        },
-      } as ProviderRuntimeEvent);
+      // Skip thinking blocks that were already delivered via stream_event deltas
+      if (!ctx.hasStreamedContent) {
+        events.push({
+          ...base,
+          eventId: makeEventId(),
+          type: "content.delta" as const,
+          payload: {
+            streamKind: "reasoning_text" as const,
+            delta: (block as { thinking: string }).thinking,
+          },
+        } as ProviderRuntimeEvent);
+      }
     } else if (block.type === "tool_use") {
       const toolBlock = block as { id: string; name: string; input: unknown };
       events.push({
@@ -417,6 +425,7 @@ function mapAssistantMessage(
 
 function mapStreamEvent(
   base: RuntimeEventBase,
+  ctx: ClaudeSessionContext,
   msg: SDKPartialAssistantMessage,
 ): ProviderRuntimeEvent[] {
   const event = msg.event;
@@ -426,6 +435,7 @@ function mapStreamEvent(
     case "content_block_delta": {
       const delta = event.delta as { type: string; text?: string; thinking?: string };
       if (delta.type === "text_delta" && delta.text) {
+        ctx.hasStreamedContent = true;
         return [
           {
             ...base,
@@ -435,6 +445,7 @@ function mapStreamEvent(
         ];
       }
       if (delta.type === "thinking_delta" && delta.thinking) {
+        ctx.hasStreamedContent = true;
         return [
           {
             ...base,
@@ -750,6 +761,7 @@ const makeClaudeCodeAdapter = (options?: ClaudeCodeAdapterLiveOptions) =>
           updatedAt: now,
           lastError: undefined,
           resumeCursor: resumeInfo,
+          hasStreamedContent: false,
         };
         sessions.set(threadId, ctx);
 
@@ -828,6 +840,7 @@ const makeClaudeCodeAdapter = (options?: ClaudeCodeAdapterLiveOptions) =>
         const turnId = makeRuntimeTurnId();
         ctx.currentTurnId = turnId;
         ctx.status = "running";
+        ctx.hasStreamedContent = false;
         ctx.updatedAt = nowIso();
 
         if (input.model && input.model !== ctx.model) {
