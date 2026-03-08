@@ -1207,6 +1207,107 @@ describe("WebSocket Server", () => {
     expect(response.error?.message).toContain("exceeds current turn count");
   });
 
+  it("builds a handoff prompt and compacts the source thread", async () => {
+    const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
+    const compactConversation = vi.fn(() => Effect.void);
+    const createdAt = new Date().toISOString();
+    const providerService: ProviderServiceShape = {
+      startSession: (threadId) =>
+        Effect.succeed({
+          provider: "codex",
+          status: "ready",
+          runtimeMode: "full-access",
+          threadId,
+          createdAt,
+          updatedAt: createdAt,
+        }),
+      sendTurn: ({ threadId }) =>
+        Effect.succeed({
+          threadId,
+          turnId: asTurnId("provider-handoff-turn-1"),
+        }),
+      interruptTurn: () => unsupported(),
+      respondToRequest: () => unsupported(),
+      respondToUserInput: () => unsupported(),
+      stopSession: () => unsupported(),
+      terminateCommandExecution: () => unsupported(),
+      listSessions: () => Effect.succeed([]),
+      getCapabilities: () =>
+        Effect.succeed({
+          sessionModelSwitch: "in-session",
+          commandExecutionTermination: "unsupported",
+        }),
+      rollbackConversation: () => unsupported(),
+      compactConversation,
+      streamEvents: Stream.empty,
+    };
+    const providerLayer = Layer.succeed(ProviderService, providerService);
+
+    server = await createTestServer({
+      cwd: "/test",
+      providerLayer,
+    });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const workspaceRoot = makeTempDir("t3code-ws-handoff-project-");
+    await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "project.create",
+      commandId: "cmd-handoff-project-create",
+      projectId: "project-handoff",
+      title: "Handoff Project",
+      workspaceRoot,
+      defaultModel: "gpt-5-codex",
+      createdAt,
+    });
+    await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "thread.create",
+      commandId: "cmd-handoff-thread-create",
+      threadId: "thread-handoff",
+      projectId: "project-handoff",
+      title: "Handoff Thread",
+      model: "gpt-5-codex",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: "feature/handoff",
+      worktreePath: null,
+      createdAt,
+    });
+    await sendRequest(ws, ORCHESTRATION_WS_METHODS.dispatchCommand, {
+      type: "thread.turn.start",
+      commandId: "cmd-handoff-turn-start",
+      threadId: "thread-handoff",
+      message: {
+        messageId: "msg-handoff-1",
+        role: "user",
+        text: "Prepare a handoff for another model.",
+        attachments: [],
+      },
+      assistantDeliveryMode: "buffered",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt,
+    });
+
+    const response = await sendRequest(ws, ORCHESTRATION_WS_METHODS.compactThread, {
+      threadId: "thread-handoff",
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual(
+      expect.objectContaining({
+        text: expect.stringContaining("Prepare a handoff for another model."),
+      }),
+    );
+    expect(compactConversation).toHaveBeenCalledWith({
+      threadId: asThreadId("thread-handoff"),
+    });
+  });
+
   it("keeps orchestration domain push behavior for provider runtime events", async () => {
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     const emitRuntimeEvent = (event: ProviderRuntimeEvent) => {
@@ -1240,6 +1341,7 @@ describe("WebSocket Server", () => {
           commandExecutionTermination: "unsupported",
         }),
       rollbackConversation: () => unsupported(),
+      compactConversation: () => unsupported(),
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
     };
     const providerLayer = Layer.succeed(ProviderService, providerService);

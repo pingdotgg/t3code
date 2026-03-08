@@ -1418,6 +1418,15 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
         }),
       );
 
+    const compactThread: CursorAdapterShape["compactThread"] = (threadId) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "thread/compact/start",
+          detail: `Cursor ACP does not support thread compaction for thread '${threadId}'.`,
+        }),
+      );
+
     const respondToRequest: CursorAdapterShape["respondToRequest"] = (
       threadId,
       requestId,
@@ -1549,6 +1558,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
       interruptTurn,
       readThread,
       rollbackThread,
+      compactThread,
       respondToRequest,
       respondToUserInput,
       stopSession,

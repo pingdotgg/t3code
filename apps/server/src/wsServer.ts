@@ -73,6 +73,7 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
+import { buildThreadHandoffText } from "./handoff.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -270,6 +271,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   );
 
   const providerStatuses = yield* providerHealth.getStatuses;
+  const providerService = yield* ProviderService;
 
   const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
@@ -758,6 +760,28 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
             }),
           ),
         ).pipe(Effect.map((events) => Array.from(events)));
+      }
+
+      case ORCHESTRATION_WS_METHODS.compactThread: {
+        const { threadId } = request.body;
+        const snapshot = yield* projectionReadModelQuery.getSnapshot();
+        const thread = snapshot.threads.find((entry) => entry.id === threadId && entry.deletedAt === null);
+        if (!thread) {
+          return yield* new RouteRequestError({
+            message: `Thread '${threadId}' not found.`,
+          });
+        }
+        const project = snapshot.projects.find(
+          (entry) => entry.id === thread.projectId && entry.deletedAt === null,
+        );
+        if (!project) {
+          return yield* new RouteRequestError({
+            message: `Project '${thread.projectId}' for thread '${threadId}' not found.`,
+          });
+        }
+        const text = buildThreadHandoffText({ project, thread });
+        yield* providerService.compactConversation({ threadId });
+        return { text };
       }
 
       case WS_METHODS.projectsSearchEntries: {

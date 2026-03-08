@@ -96,6 +96,7 @@ function createProviderServiceHarness(
         commandExecutionTermination: "unsupported",
       }),
     rollbackConversation,
+    compactConversation: () => unsupported(),
     streamEvents: Stream.fromPubSub(runtimeEventPubSub),
   };
 

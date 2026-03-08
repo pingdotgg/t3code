@@ -146,6 +146,7 @@ import {
   FolderClosedIcon,
   LockIcon,
   LockOpenIcon,
+  ArrowRightIcon,
   TerminalSquareIcon,
   Undo2Icon,
   XIcon,
@@ -206,6 +207,7 @@ import {
 } from "~/projectScripts";
 import { Toggle } from "./ui/toggle";
 import { SidebarTrigger } from "./ui/sidebar";
+import { Spinner } from "./ui/spinner";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import {
@@ -447,6 +449,13 @@ type ComposerCommandItem =
 
 type SendPhase = "idle" | "preparing-worktree" | "sending-turn";
 
+type HandoffDraftState = {
+  sourceThreadId: ThreadId;
+  sourceThreadTitle: string;
+  status: "running" | "error";
+  error: string | null;
+};
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -651,6 +660,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const clearDraftThread = useComposerDraftStore((store) => store.clearDraftThread);
+  const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
@@ -664,10 +674,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [localDraftErrorsByThreadId, setLocalDraftErrorsByThreadId] = useState<
     Record<ThreadId, string | null>
   >({});
+  const [handoffDraftsByThreadId, setHandoffDraftsByThreadId] = useState<
+    Record<ThreadId, HandoffDraftState>
+  >({});
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
   const [sendStartedAt, setSendStartedAt] = useState<string | null>(null);
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
+  const [isStartingHandoff, setIsStartingHandoff] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
@@ -779,6 +793,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
+  const activeHandoffDraft = handoffDraftsByThreadId[threadId] ?? null;
+  const isHandoffRunning = activeHandoffDraft?.status === "running";
   const diffSearch = useMemo(
     () => parseDiffRouteSearch(rawSearch as Record<string, unknown>),
     [rawSearch],
@@ -788,6 +804,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
+
+  useEffect(() => {
+    if (!isServerThread || !activeHandoffDraft) {
+      return;
+    }
+    setHandoffDraftsByThreadId((existing) => {
+      if (!existing[threadId]) {
+        return existing;
+      }
+      const next = { ...existing };
+      delete next[threadId];
+      return next;
+    });
+  }, [activeHandoffDraft, isServerThread, threadId]);
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -921,6 +951,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const phase = derivePhase(activeThread?.session ?? null);
   const isSendBusy = sendPhase !== "idle";
+  const canStartHandoff =
+    isServerThread &&
+    (activeThread?.messages.length ?? 0) > 0 &&
+    !isSendBusy &&
+    !isConnecting &&
+    !isStartingHandoff;
   const isPreparingWorktree = sendPhase === "preparing-worktree";
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
   const nowIso = new Date(nowTick).toISOString();
@@ -2464,7 +2500,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     const api = readNativeApi();
-    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (
+      !api ||
+      !activeThread ||
+      isSendBusy ||
+      isConnecting ||
+      isHandoffRunning ||
+      sendInFlightRef.current
+    ) {
+      return;
+    }
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
@@ -3123,6 +3168,117 @@ export default function ChatView({ threadId }: ChatViewProps) {
     syncServerReadModel,
   ]);
 
+  const onStartHandoff = useCallback(async () => {
+    const api = readNativeApi();
+    if (
+      !api ||
+      !activeThread ||
+      !activeProject ||
+      !isServerThread ||
+      activeThread.messages.length === 0 ||
+      isSendBusy ||
+      isConnecting ||
+      isStartingHandoff ||
+      sendInFlightRef.current
+    ) {
+      return;
+    }
+
+    const sourceThreadId = activeThread.id;
+    const sourceThreadTitle = activeThread.title;
+    const nextThreadId = newThreadId();
+    const createdAt = new Date().toISOString();
+
+    setIsStartingHandoff(true);
+    setProjectDraftThreadId(activeProject.id, nextThreadId, {
+      createdAt,
+      branch: activeThread.branch,
+      worktreePath: activeThread.worktreePath,
+      envMode: activeThread.worktreePath ? "worktree" : "local",
+      runtimeMode,
+      interactionMode,
+    });
+    setComposerDraftProvider(nextThreadId, selectedProvider);
+    setComposerDraftModel(nextThreadId, selectedModel);
+    setComposerDraftRuntimeMode(nextThreadId, runtimeMode);
+    setComposerDraftInteractionMode(nextThreadId, interactionMode);
+    setComposerDraftEffort(nextThreadId, selectedProvider === "codex" ? selectedEffort : null);
+    setComposerDraftCodexFastMode(
+      nextThreadId,
+      selectedProvider === "codex" ? selectedCodexFastModeEnabled : false,
+    );
+    setHandoffDraftsByThreadId((existing) => ({
+      ...existing,
+      [nextThreadId]: {
+        sourceThreadId,
+        sourceThreadTitle,
+        status: "running",
+        error: null,
+      },
+    }));
+
+    await navigate({
+      to: "/$threadId",
+      params: { threadId: nextThreadId },
+    });
+
+    void api.orchestration
+      .compactThread({ threadId: sourceThreadId })
+      .then((result) => {
+        setComposerDraftPrompt(nextThreadId, result.text);
+        setHandoffDraftsByThreadId((existing) => {
+          const next = { ...existing };
+          delete next[nextThreadId];
+          return next;
+        });
+        scheduleComposerFocus();
+      })
+      .catch((error) => {
+        const description =
+          error instanceof Error ? error.message : "An error occurred while preparing the handoff.";
+        setHandoffDraftsByThreadId((existing) => ({
+          ...existing,
+          [nextThreadId]: {
+            sourceThreadId,
+            sourceThreadTitle,
+            status: "error",
+            error: description,
+          },
+        }));
+        toastManager.add({
+          type: "error",
+          title: "Could not prepare handoff",
+          description,
+        });
+      })
+      .finally(() => {
+        setIsStartingHandoff(false);
+      });
+  }, [
+    activeProject,
+    activeThread,
+    interactionMode,
+    isConnecting,
+    isSendBusy,
+    isServerThread,
+    isStartingHandoff,
+    navigate,
+    runtimeMode,
+    scheduleComposerFocus,
+    selectedCodexFastModeEnabled,
+    selectedEffort,
+    selectedModel,
+    selectedProvider,
+    setComposerDraftCodexFastMode,
+    setComposerDraftEffort,
+    setComposerDraftInteractionMode,
+    setComposerDraftModel,
+    setComposerDraftPrompt,
+    setComposerDraftProvider,
+    setComposerDraftRuntimeMode,
+    setProjectDraftThreadId,
+  ]);
+
   const onProviderModelSelect = useCallback(
     (provider: ProviderKind, model: ModelSlug) => {
       if (!activeThread) return;
@@ -3536,6 +3692,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {/* Error banner */}
       <ProviderHealthBanner status={activeProviderStatus} />
       <ThreadErrorBanner error={activeThread.error} />
+      <HandoffStatusBanner handoff={activeHandoffDraft} />
       <PlanModePanel activePlan={activePlan} />
 
       {/* Messages */}
@@ -3730,13 +3887,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     ? (activePendingApproval?.detail ?? "Resolve this approval request to continue")
                     : activePendingProgress
                     ? "Type your own answer, or leave this blank to use the selected option"
+                    : isHandoffRunning
+                      ? "Preparing compact handoff..."
                     : showPlanFollowUpPrompt && activeProposedPlan
                       ? "Add feedback to refine the plan, or leave this blank to implement it"
                       : phase === "disconnected"
                         ? "Ask for follow-up changes or attach images"
                         : "Ask anything, @tag files/folders, or use /model"
                 }
-                disabled={isConnecting || isComposerApprovalState}
+                disabled={isConnecting || isComposerApprovalState || isHandoffRunning}
               />
             </div>
 
@@ -3837,6 +3996,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       {runtimeMode === "full-access" ? "Full access" : "Supervised"}
                     </span>
                   </Button>
+
+                  <Button
+                    variant="ghost"
+                    className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                    size="sm"
+                    type="button"
+                    onClick={() => void onStartHandoff()}
+                    disabled={!canStartHandoff}
+                    title="Create a compact handoff in a new chat"
+                  >
+                    <ArrowRightIcon />
+                    <span className="sr-only sm:not-sr-only">
+                      {isStartingHandoff ? "Preparing handoff" : "Handoff"}
+                    </span>
+                  </Button>
                 </div>
 
                 {/* Right side: send / stop button */}
@@ -3899,9 +4073,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           type="submit"
                           size="sm"
                           className="h-9 rounded-full px-4 sm:h-8"
-                          disabled={isSendBusy || isConnecting}
+                          disabled={isSendBusy || isConnecting || isHandoffRunning}
                         >
-                          {isConnecting || isSendBusy ? "Sending..." : "Refine"}
+                          {isHandoffRunning
+                            ? "Preparing..."
+                            : isConnecting || isSendBusy
+                              ? "Sending..."
+                              : "Refine"}
                         </Button>
                       ) : (
                         <div className="flex items-center">
@@ -3909,9 +4087,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             type="submit"
                             size="sm"
                             className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
-                            disabled={isSendBusy || isConnecting}
+                            disabled={isSendBusy || isConnecting || isHandoffRunning}
                           >
-                            {isConnecting || isSendBusy ? "Sending..." : "Implement"}
+                            {isHandoffRunning
+                              ? "Preparing..."
+                              : isConnecting || isSendBusy
+                                ? "Sending..."
+                                : "Implement"}
                           </Button>
                           <Menu>
                             <MenuTrigger
@@ -3921,7 +4103,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                   variant="default"
                                   className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
                                   aria-label="Implementation actions"
-                                  disabled={isSendBusy || isConnecting}
+                                  disabled={isSendBusy || isConnecting || isHandoffRunning}
                                 />
                               }
                             >
@@ -3929,7 +4111,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             </MenuTrigger>
                             <MenuPopup align="end" side="top">
                               <MenuItem
-                                disabled={isSendBusy || isConnecting}
+                                disabled={isSendBusy || isConnecting || isHandoffRunning}
                                 onClick={() => void onImplementPlanInNewThread()}
                               >
                                 Implement in new thread
@@ -3945,19 +4127,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         disabled={
                           isSendBusy ||
                           isConnecting ||
+                          isHandoffRunning ||
                           (!prompt.trim() && composerImages.length === 0)
                         }
                         aria-label={
                           isConnecting
                             ? "Connecting"
-                            : isPreparingWorktree
-                              ? "Preparing worktree"
-                              : isSendBusy
-                                ? "Sending"
-                                : "Send message"
+                            : isHandoffRunning
+                              ? "Preparing handoff"
+                              : isPreparingWorktree
+                                ? "Preparing worktree"
+                                : isSendBusy
+                                  ? "Sending"
+                                  : "Send message"
                         }
                       >
-                        {isConnecting || isSendBusy ? (
+                        {isConnecting || isSendBusy || isHandoffRunning ? (
                           <svg
                             width="14"
                             height="14"
@@ -4278,6 +4463,44 @@ const ThreadErrorBanner = memo(function ThreadErrorBanner({ error }: { error: st
         <CircleAlertIcon />
         <AlertDescription className="line-clamp-3" title={error}>
           {error}
+        </AlertDescription>
+      </Alert>
+    </div>
+  );
+});
+
+const HandoffStatusBanner = memo(function HandoffStatusBanner({
+  handoff,
+}: {
+  handoff: HandoffDraftState | null;
+}) {
+  if (!handoff) {
+    return null;
+  }
+
+  if (handoff.status === "running") {
+    return (
+      <div className="pt-3 mx-auto max-w-3xl">
+        <Alert variant="info">
+          <Spinner className="size-4" />
+          <AlertTitle>Preparing handoff</AlertTitle>
+          <AlertDescription>
+            <span>Compacting “{handoff.sourceThreadTitle}” in the background.</span>
+            <span>Sending is disabled until the handoff prompt is ready.</span>
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pt-3 mx-auto max-w-3xl">
+      <Alert variant="error">
+        <CircleAlertIcon />
+        <AlertTitle>Handoff failed</AlertTitle>
+        <AlertDescription>
+          <span>Could not prepare a compact handoff from “{handoff.sourceThreadTitle}”.</span>
+          {handoff.error ? <span>{handoff.error}</span> : null}
         </AlertDescription>
       </Alert>
     </div>

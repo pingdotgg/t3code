@@ -44,6 +44,10 @@ const ProviderRollbackConversationInput = Schema.Struct({
   numTurns: NonNegativeInt,
 });
 
+const ProviderCompactConversationInput = Schema.Struct({
+  threadId: ThreadId,
+});
+
 function toValidationError(
   operation: string,
   issue: string,
@@ -502,6 +506,24 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         });
       });
 
+    const compactConversation: ProviderServiceShape["compactConversation"] = (rawInput) =>
+      Effect.gen(function* () {
+        const input = yield* decodeInputOrValidationError({
+          operation: "ProviderService.compactConversation",
+          schema: ProviderCompactConversationInput,
+          payload: rawInput,
+        });
+        const routed = yield* resolveRoutableSession({
+          threadId: input.threadId,
+          operation: "ProviderService.compactConversation",
+          allowRecovery: true,
+        });
+        yield* routed.adapter.compactThread(routed.threadId);
+        yield* analytics.record("provider.conversation.compacted", {
+          provider: routed.adapter.provider,
+        });
+      });
+
     const runStopAll = () =>
       Effect.gen(function* () {
         const threadIds = yield* directory.listThreadIds();
@@ -545,6 +567,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       listSessions,
       getCapabilities,
       rollbackConversation,
+      compactConversation,
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
     } satisfies ProviderServiceShape;
   });

@@ -472,6 +472,9 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       sessions.clear();
     });
 
+  const compactThread: ProviderAdapterShape<ProviderAdapterError>["compactThread"] = (threadId) =>
+    sessions.has(threadId) ? Effect.void : missingSessionEffect(provider, threadId);
+
   const adapter: ProviderAdapterShape<ProviderAdapterError> = {
     provider,
     capabilities: {
@@ -496,6 +499,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
     hasSession,
     readThread,
     rollbackThread,
+    compactThread,
     stopAll,
     streamEvents: Stream.fromQueue(runtimeEvents),
   };

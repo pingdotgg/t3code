@@ -1925,6 +1925,15 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         return yield* snapshotThread(context);
       });
 
+    const compactThread: ClaudeCodeAdapterShape["compactThread"] = (threadId) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "thread/compact/start",
+          detail: `Claude Code does not support thread compaction for thread '${threadId}'.`,
+        }),
+      );
+
     const respondToRequest: ClaudeCodeAdapterShape["respondToRequest"] = (
       threadId,
       requestId,
@@ -2007,6 +2016,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
       interruptTurn,
       readThread,
       rollbackThread,
+      compactThread,
       respondToRequest,
       respondToUserInput,
       stopSession,

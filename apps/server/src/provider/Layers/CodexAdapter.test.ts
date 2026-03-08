@@ -68,6 +68,8 @@ class FakeCodexManager extends CodexAppServerManager {
     turns: [],
   }));
 
+  public compactThreadImpl = vi.fn(async (_threadId: ThreadId): Promise<void> => undefined);
+
   public respondToRequestImpl = vi.fn(
     async (
       _threadId: ThreadId,
@@ -104,6 +106,10 @@ class FakeCodexManager extends CodexAppServerManager {
 
   override rollbackThread(threadId: ThreadId, numTurns: number) {
     return this.rollbackThreadImpl(threadId, numTurns);
+  }
+
+  override compactThread(threadId: ThreadId) {
+    return this.compactThreadImpl(threadId);
   }
 
   override respondToRequest(

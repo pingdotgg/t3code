@@ -365,6 +365,20 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards handoff compaction requests to the orchestration websocket method", async () => {
+    requestMock.mockResolvedValue({ text: "handoff prompt" });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.orchestration.compactThread({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(ORCHESTRATION_WS_METHODS.compactThread, {
+      threadId: "thread-1",
+    });
+  });
+
   it("forwards context menu metadata to desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
     Object.defineProperty(getWindowForTest(), "desktopBridge", {

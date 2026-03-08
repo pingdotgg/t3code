@@ -34,6 +34,8 @@ import type {
 import type { ServerUpsertKeybindingInput, ServerUpsertKeybindingResult } from "./server";
 import type {
   ClientOrchestrationCommand,
+  OrchestrationCompactThreadInput,
+  OrchestrationCompactThreadResult,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
   OrchestrationGetTurnDiffInput,
@@ -148,6 +150,9 @@ export interface NativeApi {
       input: OrchestrationGetFullThreadDiffInput,
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
     replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
+    compactThread: (
+      input: OrchestrationCompactThreadInput,
+    ) => Promise<OrchestrationCompactThreadResult>;
     onDomainEvent: (callback: (event: OrchestrationEvent) => void) => () => void;
   };
 }

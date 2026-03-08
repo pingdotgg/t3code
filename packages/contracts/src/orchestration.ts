@@ -22,6 +22,7 @@ export const ORCHESTRATION_WS_METHODS = {
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   replayEvents: "orchestration.replayEvents",
+  compactThread: "orchestration.compactThread",
 } as const;
 
 export const ORCHESTRATION_WS_CHANNELS = {
@@ -1104,6 +1105,16 @@ export type OrchestrationReplayEventsInput = typeof OrchestrationReplayEventsInp
 const OrchestrationReplayEventsResult = Schema.Array(OrchestrationEvent);
 export type OrchestrationReplayEventsResult = typeof OrchestrationReplayEventsResult.Type;
 
+export const OrchestrationCompactThreadInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationCompactThreadInput = typeof OrchestrationCompactThreadInput.Type;
+
+export const OrchestrationCompactThreadResult = Schema.Struct({
+  text: TrimmedNonEmptyString,
+});
+export type OrchestrationCompactThreadResult = typeof OrchestrationCompactThreadResult.Type;
+
 export const OrchestrationRpcSchemas = {
   getSnapshot: {
     input: OrchestrationGetSnapshotInput,
@@ -1124,5 +1135,9 @@ export const OrchestrationRpcSchemas = {
   replayEvents: {
     input: OrchestrationReplayEventsInput,
     output: OrchestrationReplayEventsResult,
+  },
+  compactThread: {
+    input: OrchestrationCompactThreadInput,
+    output: OrchestrationCompactThreadResult,
   },
 } as const;

@@ -166,6 +166,13 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
       Effect.succeed({ threadId, turns: [] }),
   );
 
+  const compactThread = vi.fn(
+    (threadId: ThreadId): Effect.Effect<void, ProviderAdapterError> =>
+      Effect.sync(() => {
+        void threadId;
+      }),
+  );
+
   const stopAll = vi.fn(
     (): Effect.Effect<void, ProviderAdapterError> =>
       Effect.sync(() => {
@@ -198,6 +205,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     hasSession,
     readThread,
     rollbackThread,
+    compactThread,
     stopAll,
     streamEvents: Stream.fromPubSub(runtimeEventPubSub),
   };
@@ -219,6 +227,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     hasSession,
     readThread,
     rollbackThread,
+    compactThread,
     stopAll,
   };
 }

@@ -190,6 +190,7 @@ describe("ProviderCommandReactor", () => {
           commandExecutionTermination: "unsupported",
         }),
       rollbackConversation: () => unsupported(),
+      compactConversation: () => unsupported(),
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
     };
 
