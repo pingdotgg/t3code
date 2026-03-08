@@ -546,14 +546,14 @@ describe("ClaudeCodeAdapterLive", () => {
         provider: "claudeCode",
         runtimeMode: "full-access",
       });
-      assert.equal(session.threadId, undefined);
+      assert.equal(session.threadId, THREAD_ID);
 
       const turn = yield* adapter.sendTurn({
         threadId: session.threadId,
         input: "hello",
         attachments: [],
       });
-      assert.equal(turn.threadId, undefined);
+      assert.equal(turn.threadId, THREAD_ID);
 
       harness.query.emit({
         type: "stream_event",
@@ -592,13 +592,13 @@ describe("ClaudeCodeAdapterLive", () => {
       const sessionStarted = runtimeEvents[0];
       assert.equal(sessionStarted?.type, "session.started");
       if (sessionStarted?.type === "session.started") {
-        assert.equal("threadId" in sessionStarted, false);
+        assert.equal(sessionStarted.threadId, THREAD_ID);
       }
 
       const threadStarted = runtimeEvents[4];
       assert.equal(threadStarted?.type, "thread.started");
       if (threadStarted?.type === "thread.started") {
-        assert.equal(threadStarted.threadId, "sdk-thread-real");
+        assert.equal(threadStarted.threadId, THREAD_ID);
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -700,9 +700,9 @@ describe("ClaudeCodeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      assert.equal(session.threadId, "resume-thread-1");
+      assert.equal(session.threadId, "thread-claude-resume");
       assert.deepEqual(session.resumeCursor, {
-        threadId: "resume-thread-1",
+        threadId: "thread-claude-resume",
         resume: "550e8400-e29b-41d4-a716-446655440000",
         resumeSessionAt: "assistant-99",
         turnCount: 3,

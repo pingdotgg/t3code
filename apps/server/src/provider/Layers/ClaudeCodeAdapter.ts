@@ -91,7 +91,6 @@ interface ToolInFlight {
 }
 
 interface ClaudeSessionContext {
-  readonly lookupKey: ThreadId;
   session: ProviderSession;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
   readonly query: ClaudeQueryRuntime;
@@ -503,6 +502,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
                 provider: PROVIDER,
                 createdAt: observedAt,
                 method: sdkNativeMethod(message),
+                threadId: context.session.threadId,
                 ...(typeof message.session_id === "string"
                   ? { providerThreadId: message.session_id }
                   : {}),
@@ -571,13 +571,6 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         }
         const nextThreadId = message.session_id;
         context.resumeSessionId = message.session_id;
-
-        if (!context.session.threadId) {
-          context.session = {
-            ...context.session,
-            threadId: ThreadId.makeUnsafe(nextThreadId),
-          };
-        }
 
         yield* updateResumeCursor(context);
 
@@ -1360,28 +1353,13 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           });
         }
 
-        sessions.delete(context.lookupKey);
+        sessions.delete(context.session.threadId);
       });
-
-    const findSession = (
-      threadId: ThreadId,
-    ): ClaudeSessionContext | undefined => {
-      const direct = sessions.get(threadId);
-      if (direct) return direct;
-      for (const ctx of sessions.values()) {
-        if (ctx.session.threadId === threadId) return ctx;
-      }
-      if (!threadId) {
-        const all = Array.from(sessions.values());
-        if (all.length === 1) return all[0];
-      }
-      return undefined;
-    };
 
     const requireSession = (
       threadId: ThreadId,
     ): Effect.Effect<ClaudeSessionContext, ProviderAdapterError> => {
-      const context = findSession(threadId);
+      const context = sessions.get(threadId);
       if (!context) {
         return Effect.fail(
           new ProviderAdapterSessionNotFoundError({
@@ -1601,18 +1579,15 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
             }),
         });
 
-        const deferredThreadId = resumeState?.threadId;
-
         const session: ProviderSession = {
-          threadId: deferredThreadId as unknown as ThreadId,
+          threadId,
           provider: PROVIDER,
           status: "ready",
           runtimeMode: input.runtimeMode,
           ...(input.cwd ? { cwd: input.cwd } : {}),
           ...(input.model ? { model: input.model } : {}),
-          ...(deferredThreadId ? { threadId: deferredThreadId } : {}),
           resumeCursor: {
-            ...(deferredThreadId ? { threadId: deferredThreadId } : {}),
+            threadId,
             ...(resumeState?.resume ? { resume: resumeState.resume } : {}),
             ...(resumeState?.resumeSessionAt
               ? { resumeSessionAt: resumeState.resumeSessionAt }
@@ -1624,7 +1599,6 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         };
 
         const context: ClaudeSessionContext = {
-          lookupKey: threadId,
           session,
           promptQueue,
           query: queryRuntime,
@@ -1641,17 +1615,13 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
         yield* Ref.set(contextRef, context);
         sessions.set(threadId, context);
 
-        const threadIdRef = deferredThreadId
-          ? { threadId: deferredThreadId }
-          : {};
-
         const sessionStartedStamp = yield* makeEventStamp();
         yield* offerRuntimeEvent({
           type: "session.started",
           eventId: sessionStartedStamp.eventId,
           provider: PROVIDER,
           createdAt: sessionStartedStamp.createdAt,
-          ...threadIdRef,
+          threadId,
           payload: input.resumeCursor !== undefined ? { resume: input.resumeCursor } : {},
           providerRefs: {},
         } as ProviderRuntimeEvent);
@@ -1662,7 +1632,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           eventId: configuredStamp.eventId,
           provider: PROVIDER,
           createdAt: configuredStamp.createdAt,
-          ...threadIdRef,
+          threadId,
           payload: {
             config: {
               ...(input.model ? { model: input.model } : {}),
@@ -1682,7 +1652,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           eventId: readyStamp.eventId,
           provider: PROVIDER,
           createdAt: readyStamp.createdAt,
-          ...threadIdRef,
+          threadId,
           payload: {
             state: "ready",
           },
@@ -1835,7 +1805,7 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
 
     const hasSession: ClaudeCodeAdapterShape["hasSession"] = (threadId) =>
       Effect.sync(() => {
-        const context = findSession(threadId);
+        const context = sessions.get(threadId);
         return context !== undefined && !context.stopped;
       });
 
