@@ -32,6 +32,27 @@ const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Comm
   }
 });
 
+const resolveLocalTsdownCommand = Effect.fn("resolveLocalTsdownCommand")(function* (
+  serverDir: string,
+) {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const binDir = path.join(serverDir, "node_modules/.bin");
+  const candidates =
+    process.platform === "win32" ? ["tsdown.exe", "tsdown.cmd", "tsdown"] : ["tsdown"];
+
+  for (const candidate of candidates) {
+    const commandPath = path.join(binDir, candidate);
+    if (yield* fs.exists(commandPath)) {
+      return commandPath;
+    }
+  }
+
+  return yield* new CliError({
+    message: `Missing tsdown binary in ${binDir}. Install dependencies and try again.`,
+  });
+});
+
 interface PublishIconBackup {
   readonly targetPath: string;
   readonly backupPath: string;
@@ -125,14 +146,15 @@ const buildCmd = Command.make(
       const fs = yield* FileSystem.FileSystem;
       const repoRoot = yield* RepoRoot;
       const serverDir = path.join(repoRoot, "apps/server");
+      const tsdownCommand = yield* resolveLocalTsdownCommand(serverDir);
 
       yield* Effect.log("[cli] Running tsdown...");
       yield* runCommand(
-        ChildProcess.make({
+        ChildProcess.make(tsdownCommand, [], {
           cwd: serverDir,
           stdout: config.verbose ? "inherit" : "ignore",
           stderr: "inherit",
-        })`bun tsdown`,
+        }),
       );
 
       const webDist = path.join(repoRoot, "apps/web/dist");
