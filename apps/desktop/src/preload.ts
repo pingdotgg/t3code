@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { clipboard, contextBridge, ipcRenderer } from "electron";
 import type { DesktopBridge } from "@t3tools/contracts";
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
@@ -16,6 +16,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: () => wsUrl,
   pickFolder: () => ipcRenderer.invoke(PICK_FOLDER_CHANNEL),
   confirm: (message) => ipcRenderer.invoke(CONFIRM_CHANNEL, message),
+  writeClipboardText: async (text: string) => {
+    clipboard.writeText(text);
+  },
+  readClipboardText: async () => clipboard.readText(),
   showContextMenu: (items, position) => ipcRenderer.invoke(CONTEXT_MENU_CHANNEL, items, position),
   openExternal: (url: string) => ipcRenderer.invoke(OPEN_EXTERNAL_CHANNEL, url),
   onMenuAction: (listener) => {
