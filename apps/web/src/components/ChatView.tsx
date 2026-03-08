@@ -2528,11 +2528,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       onAdvanceActivePendingUserInput();
       return;
     }
-    const trimmed = prompt.trim();
+    const effectivePrompt = override?.text ?? prompt;
+    const effectiveImages = override?.images ?? composerImages;
+    const trimmed = effectivePrompt.trim();
     // Queue the message if the model is currently generating
     if (phase === "running") {
-      if (!trimmed && composerImages.length === 0) return;
-      setQueuedFollowUp({ text: trimmed, images: [...composerImages] });
+      if (!trimmed && effectiveImages.length === 0) return;
+      setQueuedFollowUp({ text: trimmed, images: [...effectiveImages] });
       promptRef.current = "";
       clearComposerDraftContent(activeThread.id);
       setComposerHighlightedItemId(null);
@@ -5771,6 +5773,7 @@ const ReasoningTraitsPicker = memo(function ReasoningTraitsPicker(props: {
     high: "High",
     xhigh: "Extra High",
   };
+  const showFastMode = props.onFastModeChange != null;
   const triggerLabel = [
     reasoningLabelByOption[props.effort],
     ...(showFastMode && props.fastModeEnabled ? ["Fast"] : []),
