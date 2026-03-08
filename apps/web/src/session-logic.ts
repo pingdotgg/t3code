@@ -116,6 +116,15 @@ export function formatElapsed(startIso: string, endIso: string | undefined): str
 type LatestTurnTiming = Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "completedAt">;
 type SessionActivityState = Pick<ThreadSession, "orchestrationStatus" | "activeTurnId">;
 
+interface SendPhaseResetInput {
+  latestTurn: LatestTurnTiming | null;
+  session: SessionActivityState | null;
+  sendStartedAt: string | null;
+  hasPendingApproval: boolean;
+  hasPendingUserInput: boolean;
+  hasThreadError: boolean;
+}
+
 export function isLatestTurnSettled(
   latestTurn: LatestTurnTiming | null,
   session: SessionActivityState | null,
@@ -136,6 +145,29 @@ export function deriveActiveWorkStartedAt(
     return latestTurn?.startedAt ?? sendStartedAt;
   }
   return sendStartedAt;
+}
+
+export function shouldResetSendPhase({
+  latestTurn,
+  session,
+  sendStartedAt,
+  hasPendingApproval,
+  hasPendingUserInput,
+  hasThreadError,
+}: SendPhaseResetInput): boolean {
+  if (session?.orchestrationStatus === "running") return true;
+  if (hasPendingApproval || hasPendingUserInput || hasThreadError) return true;
+  if (!sendStartedAt) return false;
+  if (!isLatestTurnSettled(latestTurn, session)) return false;
+  if (!latestTurn?.completedAt) return false;
+
+  const sendStartedAtMs = Date.parse(sendStartedAt);
+  const completedAtMs = Date.parse(latestTurn.completedAt);
+  if (Number.isNaN(sendStartedAtMs) || Number.isNaN(completedAtMs)) {
+    return false;
+  }
+
+  return completedAtMs >= sendStartedAtMs;
 }
 
 function requestKindFromRequestType(
