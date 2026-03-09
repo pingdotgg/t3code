@@ -1,13 +1,23 @@
 import type { Thread } from "../types";
+import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
 
 export interface ThreadStatusPill {
-  label: "Working" | "Connecting" | "Completed" | "Pending Approval" | "Awaiting Input";
+  label:
+    | "Working"
+    | "Connecting"
+    | "Completed"
+    | "Pending Approval"
+    | "Awaiting Input"
+    | "Plan Ready";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
 }
 
-type ThreadStatusInput = Pick<Thread, "latestTurn" | "lastVisitedAt" | "session">;
+type ThreadStatusInput = Pick<
+  Thread,
+  "interactionMode" | "latestTurn" | "lastVisitedAt" | "proposedPlans" | "session"
+>;
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestTurn?.completedAt) return false;
@@ -60,6 +70,20 @@ export function resolveThreadStatusPill(input: {
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: true,
+    };
+  }
+
+  const hasPlanReadyPrompt =
+    !hasPendingUserInput &&
+    thread.interactionMode === "plan" &&
+    isLatestTurnSettled(thread.latestTurn, thread.session) &&
+    findLatestProposedPlan(thread.proposedPlans, thread.latestTurn?.turnId ?? null) !== null;
+  if (hasPlanReadyPrompt) {
+    return {
+      label: "Plan Ready",
+      colorClass: "text-violet-600 dark:text-violet-300/90",
+      dotClass: "bg-violet-500 dark:bg-violet-300/90",
+      pulse: false,
     };
   }
 
