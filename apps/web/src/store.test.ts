@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { markThreadUnread, syncServerReadModel, type AppState } from "./store";
+import { markThreadUnread, reorderProject, syncServerReadModel, type AppState } from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -93,6 +93,23 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
   };
 }
 
+function makeReadModelProject(
+  id: string,
+  title: string,
+  workspaceRoot: string,
+): OrchestrationReadModel["projects"][number] {
+  return {
+    id: ProjectId.makeUnsafe(id),
+    title,
+    workspaceRoot,
+    defaultModel: "gpt-5.3-codex",
+    createdAt: "2026-02-27T00:00:00.000Z",
+    updatedAt: "2026-02-27T00:00:00.000Z",
+    deletedAt: null,
+    scripts: [],
+  };
+}
+
 describe("store pure functions", () => {
   it("markThreadUnread moves lastVisitedAt before completion for a completed thread", () => {
     const latestTurnCompletedAt = "2026-02-25T12:30:00.000Z";
@@ -132,6 +149,45 @@ describe("store pure functions", () => {
 
     expect(next).toEqual(initialState);
   });
+
+  it("reorderProject moves projects to a target index", () => {
+    const initialState: AppState = {
+      projects: [
+        {
+          id: ProjectId.makeUnsafe("project-1"),
+          name: "Alpha",
+          cwd: "/tmp/alpha",
+          model: "gpt-5-codex",
+          expanded: true,
+          scripts: [],
+        },
+        {
+          id: ProjectId.makeUnsafe("project-2"),
+          name: "Beta",
+          cwd: "/tmp/beta",
+          model: "gpt-5-codex",
+          expanded: true,
+          scripts: [],
+        },
+        {
+          id: ProjectId.makeUnsafe("project-3"),
+          name: "Gamma",
+          cwd: "/tmp/gamma",
+          model: "gpt-5-codex",
+          expanded: true,
+          scripts: [],
+        },
+      ],
+      threads: [],
+      threadsHydrated: true,
+    };
+
+    const movedToTop = reorderProject(initialState, ProjectId.makeUnsafe("project-2"), 0);
+    expect(movedToTop.projects.map((project) => project.name)).toEqual(["Beta", "Alpha", "Gamma"]);
+
+    const movedToEnd = reorderProject(movedToTop, ProjectId.makeUnsafe("project-2"), 2);
+    expect(movedToEnd.projects.map((project) => project.name)).toEqual(["Alpha", "Gamma", "Beta"]);
+  });
 });
 
 describe("store read model sync", () => {
@@ -146,5 +202,46 @@ describe("store read model sync", () => {
     const next = syncServerReadModel(initialState, readModel);
 
     expect(next.threads[0]?.model).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
+  });
+
+  it("preserves the previous project order across read model syncs", () => {
+    const initialState: AppState = {
+      projects: [
+        {
+          id: ProjectId.makeUnsafe("project-2"),
+          name: "Beta",
+          cwd: "/tmp/beta",
+          model: "gpt-5-codex",
+          expanded: true,
+          scripts: [],
+        },
+        {
+          id: ProjectId.makeUnsafe("project-1"),
+          name: "Alpha",
+          cwd: "/tmp/alpha",
+          model: "gpt-5-codex",
+          expanded: true,
+          scripts: [],
+        },
+      ],
+      threads: [],
+      threadsHydrated: true,
+    };
+    const readModel: OrchestrationReadModel = {
+      snapshotSequence: 1,
+      updatedAt: "2026-02-27T00:00:00.000Z",
+      projects: [
+        makeReadModelProject("project-1", "Alpha", "/tmp/alpha"),
+        makeReadModelProject("project-2", "Beta", "/tmp/beta"),
+      ],
+      threads: [],
+    };
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.projects.map((project) => project.id)).toEqual([
+      ProjectId.makeUnsafe("project-2"),
+      ProjectId.makeUnsafe("project-1"),
+    ]);
   });
 });

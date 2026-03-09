@@ -51,7 +51,6 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarHeader,
-  SidebarMenuAction,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -265,6 +264,7 @@ export default function Sidebar() {
   const threads = useStore((store) => store.threads);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
   const toggleProject = useStore((store) => store.toggleProject);
+  const reorderProject = useStore((store) => store.reorderProject);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearThreadDraft);
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
@@ -307,6 +307,11 @@ export default function Sidebar() {
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
+  const [draggedProjectId, setDraggedProjectId] = useState<ProjectId | null>(null);
+  const [projectDropIndicator, setProjectDropIndicator] = useState<{
+    projectId: ProjectId;
+    placement: "before" | "after";
+  } | null>(null);
   const pendingApprovalByThreadId = useMemo(() => {
     const map = new Map<ThreadId, boolean>();
     for (const thread of threads) {
@@ -365,6 +370,85 @@ export default function Sidebar() {
     }
     return map;
   }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
+
+  const clearProjectDragState = useCallback(() => {
+    setDraggedProjectId(null);
+    setProjectDropIndicator(null);
+  }, []);
+
+  const handleProjectDragStart = useCallback(
+    (event: React.DragEvent<HTMLElement>, projectId: ProjectId) => {
+      event.stopPropagation();
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", String(projectId));
+      setDraggedProjectId(projectId);
+      setProjectDropIndicator(null);
+    },
+    [],
+  );
+
+  const handleProjectDragOver = useCallback(
+    (event: React.DragEvent<HTMLDivElement>, projectId: ProjectId) => {
+      if (!draggedProjectId || draggedProjectId === projectId) return;
+
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const placement = event.clientY - bounds.top > bounds.height / 2 ? "after" : "before";
+
+      setProjectDropIndicator((current) => {
+        if (current?.projectId === projectId && current.placement === placement) {
+          return current;
+        }
+        return { projectId, placement };
+      });
+    },
+    [draggedProjectId],
+  );
+
+  const handleProjectDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+    const currentProjectId = event.currentTarget.dataset.projectId;
+
+    setProjectDropIndicator((current) =>
+      current?.projectId === currentProjectId ? null : current,
+    );
+  }, []);
+
+  const handleProjectDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>, targetProjectId: ProjectId) => {
+      if (!draggedProjectId) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (draggedProjectId === targetProjectId) {
+        clearProjectDragState();
+        return;
+      }
+
+      const targetProjectIndex = projects.findIndex((project) => project.id === targetProjectId);
+      const draggedProjectIndex = projects.findIndex((project) => project.id === draggedProjectId);
+      if (targetProjectIndex < 0 || draggedProjectIndex < 0) {
+        clearProjectDragState();
+        return;
+      }
+
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const placement = event.clientY - bounds.top > bounds.height / 2 ? "after" : "before";
+      let targetIndex = placement === "after" ? targetProjectIndex + 1 : targetProjectIndex;
+      if (draggedProjectIndex < targetIndex) {
+        targetIndex -= 1;
+      }
+
+      reorderProject(draggedProjectId, targetIndex);
+      clearProjectDragState();
+    },
+    [clearProjectDragState, draggedProjectId, projects, reorderProject],
+  );
 
   const openPrLink = useCallback((event: React.MouseEvent<HTMLElement>, prUrl: string) => {
     event.preventDefault();
@@ -1135,6 +1219,11 @@ export default function Sidebar() {
                 hasHiddenThreads && !isThreadListExpanded
                   ? projectThreads.slice(0, THREAD_PREVIEW_LIMIT)
                   : projectThreads;
+              const isProjectDragged = draggedProjectId === project.id;
+              const dropPlacement =
+                projectDropIndicator?.projectId === project.id
+                  ? projectDropIndicator.placement
+                  : null;
 
               return (
                 <Collapsible
@@ -1146,21 +1235,52 @@ export default function Sidebar() {
                     toggleProject(project.id);
                   }}
                 >
-                  <SidebarMenuItem>
-                    <div className="group/project-header relative">
+                  <SidebarMenuItem className="transition-[transform,opacity] duration-200 ease-out">
+                    <div
+                      className={`group/project-header relative rounded-lg transition-[transform,opacity,box-shadow] duration-200 ease-out ${
+                        isProjectDragged ? "scale-[0.985] opacity-55" : ""
+                      }`}
+                      data-project-id={project.id}
+                      onDragLeave={handleProjectDragLeave}
+                      onDragOver={(event) => {
+                        handleProjectDragOver(event, project.id);
+                      }}
+                      onDrop={(event) => {
+                        handleProjectDrop(event, project.id);
+                      }}
+                    >
+                      <div
+                        aria-hidden="true"
+                        className={`pointer-events-none absolute inset-x-2 top-0 h-0.5 rounded-full bg-primary transition-opacity duration-150 ${
+                          dropPlacement === "before" ? "opacity-100" : "opacity-0"
+                        }`}
+                      />
+                      <div
+                        aria-hidden="true"
+                        className={`pointer-events-none absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary transition-opacity duration-150 ${
+                          dropPlacement === "after" ? "opacity-100" : "opacity-0"
+                        }`}
+                      />
                       <CollapsibleTrigger
                         render={
                           <SidebarMenuButton
                             size="sm"
-                            className="gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground"
+                            className={`cursor-grab gap-2 px-2 py-1.5 pr-8 text-left transition-[background-color,box-shadow,transform] duration-200 active:cursor-grabbing hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
+                              dropPlacement ? "bg-accent/75 ring-1 ring-primary/40" : ""
+                            }`}
                           />
                         }
+                        draggable
                         onContextMenu={(event) => {
                           event.preventDefault();
                           void handleProjectContextMenu(project.id, {
                             x: event.clientX,
                             y: event.clientY,
                           });
+                        }}
+                        onDragEnd={clearProjectDragState}
+                        onDragStart={(event) => {
+                          handleProjectDragStart(event, project.id);
                         }}
                       >
                         <ChevronRightIcon
@@ -1173,34 +1293,26 @@ export default function Sidebar() {
                           {project.name}
                         </span>
                       </CollapsibleTrigger>
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <SidebarMenuAction
-                              render={
-                                <button
-                                  type="button"
-                                  aria-label={`Create new thread in ${project.name}`}
-                                />
-                              }
-                              showOnHover
-                              className="top-1 right-1 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
-                              onClick={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                void handleNewThread(project.id);
-                              }}
-                            >
-                              <SquarePenIcon className="size-3.5" />
-                            </SidebarMenuAction>
+
+                      <div className="pointer-events-none absolute top-1 right-1 z-10 flex items-center gap-0.5 opacity-0 transition-opacity group-data-[collapsible=icon]:hidden group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100">
+                        <button
+                          type="button"
+                          aria-label={`Create new thread in ${project.name}`}
+                          title={
+                            newThreadShortcutLabel
+                              ? `New thread (${newThreadShortcutLabel})`
+                              : "New thread"
                           }
-                        />
-                        <TooltipPopup side="top">
-                          {newThreadShortcutLabel
-                            ? `New thread (${newThreadShortcutLabel})`
-                            : "New thread"}
-                        </TooltipPopup>
-                      </Tooltip>
+                          className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            void handleNewThread(project.id);
+                          }}
+                        >
+                          <SquarePenIcon className="size-3.5" />
+                        </button>
+                      </div>
                     </div>
 
                     <CollapsibleContent>
