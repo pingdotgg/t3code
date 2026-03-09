@@ -128,6 +128,18 @@
         "vitest": "catalog:",
       },
     },
+    "packages/harness-ws-server": {
+      "name": "@t3tools/harness-ws-server",
+      "version": "0.0.0-alpha.1",
+      "dependencies": {
+        "@t3tools/contracts": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:",
+      },
+    },
     "packages/shared": {
       "name": "@t3tools/shared",
       "version": "0.0.0-alpha.1",
@@ -684,6 +696,8 @@
     "@t3tools/contracts": ["@t3tools/contracts@workspace:packages/contracts"],
 
     "@t3tools/desktop": ["@t3tools/desktop@workspace:apps/desktop"],
+
+    "@t3tools/harness-ws-server": ["@t3tools/harness-ws-server@workspace:packages/harness-ws-server"],
 
     "@t3tools/marketing": ["@t3tools/marketing@workspace:apps/marketing"],
 

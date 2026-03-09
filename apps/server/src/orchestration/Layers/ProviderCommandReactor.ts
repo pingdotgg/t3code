@@ -639,9 +639,13 @@ const make = Effect.gen(function* () {
             return;
           }
           const cachedProviderOptions = threadProviderOptions.get(event.payload.threadId);
-          yield* ensureSessionForThread(event.payload.threadId, event.occurredAt, {
-            ...(cachedProviderOptions !== undefined ? { providerOptions: cachedProviderOptions } : {}),
-          });
+          yield* ensureSessionForThread(
+            event.payload.threadId,
+            event.occurredAt,
+            cachedProviderOptions !== undefined
+              ? { providerOptions: cachedProviderOptions }
+              : {},
+          );
           return;
         }
         case "thread.turn-start-requested":

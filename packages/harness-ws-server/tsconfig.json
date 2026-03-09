@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@t3tools/contracts": ["../contracts/src/index.ts"]
+    }
+  },
+  "include": ["src"]
+}
