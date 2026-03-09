@@ -14,6 +14,23 @@ import { Effect } from "effect";
 import { assertSuccess } from "@effect/vitest/utils";
 
 describe("resolveEditorLaunch", () => {
+  function withTempDirEnv(
+    files: ReadonlyArray<{ name: string; contents: string; mode?: number }>,
+    run: (env: NodeJS.ProcessEnv) => void,
+  ): void {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-open-launch-"));
+    try {
+      for (const file of files) {
+        fs.writeFileSync(path.join(dir, file.name), file.contents, {
+          mode: file.mode ?? 0o755,
+        });
+      }
+      run({ PATH: dir });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
   it.effect("returns commands for command-based editors", () =>
     Effect.gen(function* () {
       const cursorLaunch = yield* resolveEditorLaunch(
@@ -25,23 +42,23 @@ describe("resolveEditorLaunch", () => {
         args: ["/tmp/workspace"],
       });
 
-      const vscodeLaunch = yield* resolveEditorLaunch(
-        { cwd: "/tmp/workspace", editor: "vscode" },
-        "darwin",
+      yield* Effect.sync(() =>
+        withTempDirEnv([{ name: "code", contents: "#!/bin/sh\nexit 0\n" }], (env) => {
+          assert.deepEqual(
+            Effect.runSync(resolveEditorLaunch({ cwd: "/tmp/workspace", editor: "vscode" }, "darwin", env)),
+            { command: "code", args: ["/tmp/workspace"] },
+          );
+        }),
       );
-      assert.deepEqual(vscodeLaunch, {
-        command: "code",
-        args: ["/tmp/workspace"],
-      });
 
-      const zedLaunch = yield* resolveEditorLaunch(
-        { cwd: "/tmp/workspace", editor: "zed" },
-        "darwin",
+      yield* Effect.sync(() =>
+        withTempDirEnv([{ name: "zed", contents: "#!/bin/sh\nexit 0\n" }], (env) => {
+          assert.deepEqual(
+            Effect.runSync(resolveEditorLaunch({ cwd: "/tmp/workspace", editor: "zed" }, "darwin", env)),
+            { command: "zed", args: ["/tmp/workspace"] },
+          );
+        }),
       );
-      assert.deepEqual(zedLaunch, {
-        command: "zed",
-        args: ["/tmp/workspace"],
-      });
     }),
   );
 
@@ -65,53 +82,82 @@ describe("resolveEditorLaunch", () => {
         args: ["--goto", "/tmp/workspace/src/open.ts:71:5"],
       });
 
-      const vscodeLineAndColumn = yield* resolveEditorLaunch(
-        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "vscode" },
-        "darwin",
+      yield* Effect.sync(() =>
+        withTempDirEnv([{ name: "code", contents: "#!/bin/sh\nexit 0\n" }], (env) => {
+          assert.deepEqual(
+            Effect.runSync(
+              resolveEditorLaunch({ cwd: "/tmp/workspace/src/open.ts:71:5", editor: "vscode" }, "darwin", env),
+            ),
+            { command: "code", args: ["--goto", "/tmp/workspace/src/open.ts:71:5"] },
+          );
+        }),
       );
-      assert.deepEqual(vscodeLineAndColumn, {
-        command: "code",
-        args: ["--goto", "/tmp/workspace/src/open.ts:71:5"],
-      });
 
-      const zedLineAndColumn = yield* resolveEditorLaunch(
-        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "zed" },
-        "darwin",
+      yield* Effect.sync(() =>
+        withTempDirEnv([{ name: "zed", contents: "#!/bin/sh\nexit 0\n" }], (env) => {
+          assert.deepEqual(
+            Effect.runSync(
+              resolveEditorLaunch({ cwd: "/tmp/workspace/src/open.ts:71:5", editor: "zed" }, "darwin", env),
+            ),
+            { command: "zed", args: ["/tmp/workspace/src/open.ts:71:5"] },
+          );
+        }),
       );
-      assert.deepEqual(zedLineAndColumn, {
-        command: "zed",
-        args: ["/tmp/workspace/src/open.ts:71:5"],
-      });
     }),
   );
 
   it.effect("maps file-manager editor to OS open commands", () =>
-    Effect.gen(function* () {
-      const launch1 = yield* resolveEditorLaunch(
-        { cwd: "/tmp/workspace", editor: "file-manager" },
-        "darwin",
-      );
-      assert.deepEqual(launch1, {
-        command: "open",
-        args: ["/tmp/workspace"],
+    Effect.sync(() => {
+      withTempDirEnv([{ name: "open", contents: "#!/bin/sh\nexit 0\n" }], (env) => {
+        assert.deepEqual(
+          Effect.runSync(resolveEditorLaunch({ cwd: "/tmp/workspace", editor: "file-manager" }, "darwin", env)),
+          { command: "open", args: ["/tmp/workspace"] },
+        );
       });
-
-      const launch2 = yield* resolveEditorLaunch(
-        { cwd: "C:\\workspace", editor: "file-manager" },
-        "win32",
-      );
-      assert.deepEqual(launch2, {
-        command: "explorer",
-        args: ["C:\\workspace"],
+      withTempDirEnv([{ name: "explorer.EXE", contents: "MZ", mode: 0o755 }], (env) => {
+        assert.deepEqual(
+          Effect.runSync(
+            resolveEditorLaunch(
+              { cwd: "C:\\workspace", editor: "file-manager" },
+              "win32",
+              { ...env, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+            ),
+          ),
+          { command: "explorer", args: ["C:\\workspace"] },
+        );
       });
+      withTempDirEnv([{ name: "xdg-open", contents: "#!/bin/sh\nexit 0\n" }], (env) => {
+        assert.deepEqual(
+          Effect.runSync(resolveEditorLaunch({ cwd: "/tmp/workspace", editor: "file-manager" }, "linux", env)),
+          { command: "xdg-open", args: ["/tmp/workspace"] },
+        );
+      });
+    }),
+  );
 
-      const launch3 = yield* resolveEditorLaunch(
-        { cwd: "/tmp/workspace", editor: "file-manager" },
-        "linux",
+  it.effect("falls back to the file manager when the requested editor is not on PATH", () =>
+    Effect.sync(() => {
+      withTempDirEnv([{ name: "xdg-open", contents: "#!/bin/sh\nexit 0\n" }], (env) =>
+        assert.deepEqual(
+          Effect.runSync(
+            resolveEditorLaunch({ cwd: "/tmp/keybindings.json", editor: "cursor" }, "linux", env),
+          ),
+          { command: "xdg-open", args: ["/tmp/keybindings.json"] },
+        ),
       );
-      assert.deepEqual(launch3, {
-        command: "xdg-open",
-        args: ["/tmp/workspace"],
+    }),
+  );
+
+  it.effect("strips line and column when falling back to the file manager", () =>
+    Effect.sync(() => {
+      withTempDirEnv([{ name: "xdg-open", contents: "#!/bin/sh\nexit 0\n" }], (env) => {
+        const launch = Effect.runSync(
+          resolveEditorLaunch({ cwd: "/tmp/src/open.ts:71:5", editor: "cursor" }, "linux", env),
+        );
+        assert.deepEqual(launch, {
+          command: "xdg-open",
+          args: ["/tmp/src/open.ts"],
+        });
       });
     }),
   );

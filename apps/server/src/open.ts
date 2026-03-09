@@ -32,6 +32,29 @@ interface EditorLaunch {
   readonly args: ReadonlyArray<string>;
 }
 
+function stripLineColumnSuffix(target: string): string {
+  return target.replace(LINE_COLUMN_SUFFIX_PATTERN, "");
+}
+
+function resolveLaunchEditor(
+  requestedEditor: EditorId,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): EditorId | null {
+  const availableEditors = resolveAvailableEditors(platform, env);
+  if (availableEditors.includes(requestedEditor)) {
+    return requestedEditor;
+  }
+
+  for (const editor of EDITORS) {
+    if (editor.command && availableEditors.includes(editor.id)) {
+      return editor.id;
+    }
+  }
+
+  return availableEditors.includes("file-manager") ? "file-manager" : null;
+}
+
 interface CommandAvailabilityOptions {
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
@@ -206,23 +229,29 @@ export class Open extends ServiceMap.Service<Open, OpenShape>()("t3/open") {}
 export const resolveEditorLaunch = Effect.fnUntraced(function* (
   input: OpenInEditorInput,
   platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
 ): Effect.fn.Return<EditorLaunch, OpenError> {
-  const editorDef = EDITORS.find((editor) => editor.id === input.editor);
+  const editorId = resolveLaunchEditor(input.editor, platform, env);
+  if (!editorId) {
+    return yield* new OpenError({ message: "No supported editor command is available" });
+  }
+
+  const editorDef = EDITORS.find((editor) => editor.id === editorId);
   if (!editorDef) {
-    return yield* new OpenError({ message: `Unknown editor: ${input.editor}` });
+    return yield* new OpenError({ message: `Unknown editor: ${editorId}` });
   }
 
   if (editorDef.command) {
-    return shouldUseGotoFlag(editorDef.id, input.cwd)
+    return shouldUseGotoFlag(editorId, input.cwd)
       ? { command: editorDef.command, args: ["--goto", input.cwd] }
       : { command: editorDef.command, args: [input.cwd] };
   }
 
-  if (editorDef.id !== "file-manager") {
-    return yield* new OpenError({ message: `Unsupported editor: ${input.editor}` });
+  if (editorId !== "file-manager") {
+    return yield* new OpenError({ message: `Unsupported editor: ${editorId}` });
   }
 
-  return { command: fileManagerCommandForPlatform(platform), args: [input.cwd] };
+  return { command: fileManagerCommandForPlatform(platform), args: [stripLineColumnSuffix(input.cwd)] };
 });
 
 export const launchDetached = (launch: EditorLaunch) =>
