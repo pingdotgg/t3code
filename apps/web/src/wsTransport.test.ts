@@ -84,6 +84,43 @@ afterEach(() => {
 });
 
 describe("WsTransport", () => {
+  it("queues requests until the socket opens without starting per-request polling timers", async () => {
+    const intervalSpy = vi.spyOn(globalThis, "setInterval");
+    const transport = new WsTransport("ws://localhost:3020");
+    const socket = getSocket();
+
+    const firstRequest = transport.request("projects.list");
+    const secondRequest = transport.request("server.config");
+
+    expect(socket.sent).toEqual([]);
+    expect(intervalSpy).not.toHaveBeenCalled();
+
+    socket.open();
+
+    expect(socket.sent).toHaveLength(2);
+
+    const firstEnvelope = JSON.parse(socket.sent[0] ?? "") as { id: string };
+    const secondEnvelope = JSON.parse(socket.sent[1] ?? "") as { id: string };
+
+    socket.serverMessage(
+      JSON.stringify({
+        id: firstEnvelope.id,
+        result: { projects: [] },
+      }),
+    );
+    socket.serverMessage(
+      JSON.stringify({
+        id: secondEnvelope.id,
+        result: { ok: true },
+      }),
+    );
+
+    await expect(firstRequest).resolves.toEqual({ projects: [] });
+    await expect(secondRequest).resolves.toEqual({ ok: true });
+
+    transport.dispose();
+  });
+
   it("routes valid push envelopes to channel listeners", () => {
     const transport = new WsTransport("ws://localhost:3020");
     const socket = getSocket();
@@ -171,5 +208,26 @@ describe("WsTransport", () => {
     });
 
     transport.dispose();
+  });
+
+  it("rejects queued requests when the transport is disposed before connect", async () => {
+    const transport = new WsTransport("ws://localhost:3020");
+
+    const requestPromise = transport.request("projects.list");
+
+    transport.dispose();
+
+    await expect(requestPromise).rejects.toThrow("Transport disposed");
+  });
+
+  it("does not flush queued requests if a socket opens after dispose", () => {
+    const transport = new WsTransport("ws://localhost:3020");
+    const socket = getSocket();
+
+    void transport.request("projects.list").catch(() => undefined);
+    transport.dispose();
+    socket.open();
+
+    expect(socket.sent).toEqual([]);
   });
 });
