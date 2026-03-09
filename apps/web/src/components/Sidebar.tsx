@@ -84,7 +84,7 @@ function formatRelativeTime(iso: string): string {
 }
 
 interface ThreadStatusPill {
-  label: "Working" | "Connecting" | "Completed" | "Awaiting response";
+  label: "Working" | "Connecting" | "Completed" | "Waiting";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -108,7 +108,7 @@ type ThreadPr = GitStatusResult["pr"];
 function threadStatusPill(status: ThreadStatusState): ThreadStatusPill | null {
   if (status === "awaiting-response") {
     return {
-      label: "Awaiting response",
+      label: "Waiting",
       colorClass: "text-amber-600 dark:text-amber-300/90",
       dotClass: "bg-amber-500 dark:bg-amber-300/90",
       pulse: false,

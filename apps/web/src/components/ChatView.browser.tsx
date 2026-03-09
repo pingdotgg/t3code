@@ -864,7 +864,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("shows Awaiting response in the sidebar when a thread is blocked on structured user input", async () => {
+  it("shows Waiting in the sidebar when a thread is blocked on structured user input", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createAwaitingResponseSnapshot(),
@@ -873,7 +873,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       await vi.waitFor(
         () => {
-          expect(document.body.textContent).toContain("Awaiting response");
+          expect(document.body.textContent).toContain("Waiting");
         },
         { timeout: 8_000, interval: 16 },
       );
