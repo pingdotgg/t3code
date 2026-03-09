@@ -116,17 +116,17 @@ function orderProjects(
   const incomingOrderById = new Map(incoming.map((project, index) => [project.id, index] as const));
 
   return projects.toSorted((left, right) => {
-    const persistedComparison = compareOptionalOrder(
-      persistedOrderByCwd.get(left.cwd),
-      persistedOrderByCwd.get(right.cwd),
-    );
-    if (persistedComparison !== 0) return persistedComparison;
-
     const previousComparison = compareOptionalOrder(
       previousOrderById.get(left.id) ?? previousOrderByCwd.get(left.cwd),
       previousOrderById.get(right.id) ?? previousOrderByCwd.get(right.cwd),
     );
     if (previousComparison !== 0) return previousComparison;
+
+    const persistedComparison = compareOptionalOrder(
+      persistedOrderByCwd.get(left.cwd),
+      persistedOrderByCwd.get(right.cwd),
+    );
+    if (persistedComparison !== 0) return persistedComparison;
 
     return (
       incomingOrderById.get(left.id) ?? Number.POSITIVE_INFINITY
