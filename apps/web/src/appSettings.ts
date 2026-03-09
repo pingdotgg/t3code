@@ -3,6 +3,12 @@ import { Option, Schema } from "effect";
 import { type ProviderKind, type ProviderServiceTier } from "@t3tools/contracts";
 import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
+import {
+  DEFAULT_APP_FONT_FAMILIES,
+  MAX_APP_FONT_FAMILY_LENGTH,
+  normalizeAppFontSetting,
+} from "./appFonts";
+
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
@@ -41,9 +47,20 @@ const AppSettingsSchema = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
-  codexServiceTier: AppServiceTierSchema.pipe(Schema.withConstructorDefault(() => Option.some("auto"))),
+  codexServiceTier: AppServiceTierSchema.pipe(
+    Schema.withConstructorDefault(() => Option.some("auto")),
+  ),
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
+  ),
+  interfaceFontFamily: Schema.String.check(Schema.isMaxLength(MAX_APP_FONT_FAMILY_LENGTH)).pipe(
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_APP_FONT_FAMILIES.interfaceFontFamily)),
+  ),
+  headingFontFamily: Schema.String.check(Schema.isMaxLength(MAX_APP_FONT_FAMILY_LENGTH)).pipe(
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_APP_FONT_FAMILIES.headingFontFamily)),
+  ),
+  monoFontFamily: Schema.String.check(Schema.isMaxLength(MAX_APP_FONT_FAMILY_LENGTH)).pipe(
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_APP_FONT_FAMILIES.monoFontFamily)),
   ),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
@@ -108,6 +125,12 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
+    interfaceFontFamily: normalizeAppFontSetting(
+      "interfaceFontFamily",
+      settings.interfaceFontFamily,
+    ),
+    headingFontFamily: normalizeAppFontSetting("headingFontFamily", settings.headingFontFamily),
+    monoFontFamily: normalizeAppFontSetting("monoFontFamily", settings.monoFontFamily),
   };
 }
 

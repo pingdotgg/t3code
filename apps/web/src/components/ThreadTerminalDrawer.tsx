@@ -25,6 +25,7 @@ import {
   MAX_THREAD_TERMINAL_COUNT,
   type ThreadTerminalGroup,
 } from "../types";
+import { useAppSettings } from "../appSettings";
 import { readNativeApi } from "~/nativeApi";
 
 const MIN_DRAWER_HEIGHT = 180;
@@ -130,11 +131,17 @@ function TerminalViewport({
   resizeEpoch,
   drawerHeight,
 }: TerminalViewportProps) {
+  const {
+    settings: { monoFontFamily },
+  } = useAppSettings();
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const onSessionExitedRef = useRef(onSessionExited);
   const hasHandledExitRef = useRef(false);
+  const monoFontFamilyRef = useRef(monoFontFamily);
+
+  monoFontFamilyRef.current = monoFontFamily;
 
   useEffect(() => {
     onSessionExitedRef.current = onSessionExited;
@@ -152,7 +159,7 @@ function TerminalViewport({
       lineHeight: 1.2,
       fontSize: 12,
       scrollback: 5_000,
-      fontFamily: '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
+      fontFamily: monoFontFamilyRef.current,
       theme: terminalThemeFromApp(),
     });
     terminal.loadAddon(fitAddon);
@@ -393,6 +400,26 @@ function TerminalViewport({
     // it is only read at mount time and must not trigger terminal teardown/recreation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cwd, runtimeEnv, terminalId, threadId]);
+
+  useEffect(() => {
+    const api = readNativeApi();
+    const terminal = terminalRef.current;
+    const fitAddon = fitAddonRef.current;
+    if (!api || !terminal || !fitAddon) {
+      return;
+    }
+
+    terminal.options.fontFamily = monoFontFamily;
+    fitAddon.fit();
+    void api.terminal
+      .resize({
+        threadId,
+        terminalId,
+        cols: terminal.cols,
+        rows: terminal.rows,
+      })
+      .catch(() => undefined);
+  }, [monoFontFamily, terminalId, threadId]);
 
   useEffect(() => {
     if (!autoFocus) return;

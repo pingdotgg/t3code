@@ -9,6 +9,8 @@ import {
 import { useEffect, useRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 
+import { applyAppFontSettings } from "../appFonts";
+import { useAppSettings } from "../appSettings";
 import { APP_DISPLAY_NAME } from "../branding";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
@@ -34,6 +36,18 @@ export const Route = createRootRouteWithContext<{
 });
 
 function RootRouteView() {
+  const {
+    settings: { headingFontFamily, interfaceFontFamily, monoFontFamily },
+  } = useAppSettings();
+
+  useEffect(() => {
+    applyAppFontSettings({
+      headingFontFamily,
+      interfaceFontFamily,
+      monoFontFamily,
+    });
+  }, [headingFontFamily, interfaceFontFamily, monoFontFamily]);
+
   if (!readNativeApi()) {
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">

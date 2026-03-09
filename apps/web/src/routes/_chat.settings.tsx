@@ -1,12 +1,22 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
-import { ZapIcon } from "lucide-react";
+import { RefreshCcwIcon, TypeIcon, ZapIcon } from "lucide-react";
 
 import {
+  APP_FONT_ROLE_DEFINITIONS,
+  DEFAULT_APP_FONT_FAMILIES,
+  getAppFontOptions,
+  getCachedSystemFontFamilies,
+  requestSystemFontFamilies,
+  supportsSystemFontAccess,
+  type AppFontSettingKey,
+} from "../appFonts";
+import {
   APP_SERVICE_TIER_OPTIONS,
+  type AppSettings,
   MAX_CUSTOM_MODEL_LENGTH,
   shouldShowFastTierIcon,
   useAppSettings,
@@ -18,7 +28,13 @@ import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../components/ui/select";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { SidebarInset } from "~/components/ui/sidebar";
 
@@ -86,6 +102,24 @@ function patchCustomModels(provider: ProviderKind, models: string[]) {
   }
 }
 
+function fontSettingsDifferFromDefaults(settings: AppSettings, defaults: AppSettings): boolean {
+  return (
+    settings.interfaceFontFamily !== defaults.interfaceFontFamily ||
+    settings.headingFontFamily !== defaults.headingFontFamily ||
+    settings.monoFontFamily !== defaults.monoFontFamily
+  );
+}
+
+function createFontDrafts(
+  settings: Pick<AppSettings, "interfaceFontFamily" | "headingFontFamily" | "monoFontFamily">,
+): Record<AppFontSettingKey, string> {
+  return {
+    interfaceFontFamily: settings.interfaceFontFamily,
+    headingFontFamily: settings.headingFontFamily,
+    monoFontFamily: settings.monoFontFamily,
+  };
+}
+
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
@@ -100,11 +134,34 @@ function SettingsRouteView() {
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
+  const [systemFontFamilies, setSystemFontFamilies] = useState<string[]>(() =>
+    getCachedSystemFontFamilies(),
+  );
+  const [isRequestingSystemFonts, setIsRequestingSystemFonts] = useState(false);
+  const [systemFontMessage, setSystemFontMessage] = useState<string | null>(() =>
+    systemFontFamilies.length > 0
+      ? `Loaded ${systemFontFamilies.length} cached system font families.`
+      : null,
+  );
+  const [systemFontError, setSystemFontError] = useState<string | null>(null);
+  const [fontDrafts, setFontDrafts] = useState<Record<AppFontSettingKey, string>>(() =>
+    createFontDrafts(settings),
+  );
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const codexServiceTier = settings.codexServiceTier;
+  const interfaceFontFamily = settings.interfaceFontFamily;
+  const headingFontFamily = settings.headingFontFamily;
+  const monoFontFamily = settings.monoFontFamily;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
+  const canRequestSystemFonts = supportsSystemFontAccess();
+  const hasCustomTypography = fontSettingsDifferFromDefaults(settings, defaults);
+  const systemFontButtonLabel = isRequestingSystemFonts
+    ? "Requesting..."
+    : systemFontFamilies.length > 0
+      ? "Refresh system fonts"
+      : "Request system fonts";
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -123,60 +180,113 @@ function SettingsRouteView() {
       });
   }, [keybindingsConfigPath]);
 
-  const addCustomModel = useCallback((provider: ProviderKind) => {
-    const customModelInput = customModelInputByProvider[provider];
-    const customModels = getCustomModelsForProvider(settings, provider);
-    const normalized = normalizeModelSlug(customModelInput, provider);
-    if (!normalized) {
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: "Enter a model slug.",
-      }));
-      return;
-    }
-    if (getModelOptions(provider).some((option) => option.slug === normalized)) {
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: "That model is already built in.",
-      }));
-      return;
-    }
-    if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
-      }));
-      return;
-    }
-    if (customModels.includes(normalized)) {
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: "That custom model is already saved.",
-      }));
-      return;
-    }
+  const addCustomModel = useCallback(
+    (provider: ProviderKind) => {
+      const customModelInput = customModelInputByProvider[provider];
+      const customModels = getCustomModelsForProvider(settings, provider);
+      const normalized = normalizeModelSlug(customModelInput, provider);
+      if (!normalized) {
+        setCustomModelErrorByProvider((existing) => ({
+          ...existing,
+          [provider]: "Enter a model slug.",
+        }));
+        return;
+      }
+      if (getModelOptions(provider).some((option) => option.slug === normalized)) {
+        setCustomModelErrorByProvider((existing) => ({
+          ...existing,
+          [provider]: "That model is already built in.",
+        }));
+        return;
+      }
+      if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
+        setCustomModelErrorByProvider((existing) => ({
+          ...existing,
+          [provider]: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
+        }));
+        return;
+      }
+      if (customModels.includes(normalized)) {
+        setCustomModelErrorByProvider((existing) => ({
+          ...existing,
+          [provider]: "That custom model is already saved.",
+        }));
+        return;
+      }
 
-    updateSettings(patchCustomModels(provider, [...customModels, normalized]));
-    setCustomModelInputByProvider((existing) => ({
-      ...existing,
-      [provider]: "",
-    }));
-    setCustomModelErrorByProvider((existing) => ({
-      ...existing,
-      [provider]: null,
-    }));
-  }, [customModelInputByProvider, settings, updateSettings]);
+      updateSettings(patchCustomModels(provider, [...customModels, normalized]));
+      setCustomModelInputByProvider((existing) => ({
+        ...existing,
+        [provider]: "",
+      }));
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: null,
+      }));
+    },
+    [customModelInputByProvider, settings, updateSettings],
+  );
 
   const removeCustomModel = useCallback(
     (provider: ProviderKind, slug: string) => {
       const customModels = getCustomModelsForProvider(settings, provider);
-      updateSettings(patchCustomModels(provider, customModels.filter((model) => model !== slug)));
+      updateSettings(
+        patchCustomModels(
+          provider,
+          customModels.filter((model) => model !== slug),
+        ),
+      );
       setCustomModelErrorByProvider((existing) => ({
         ...existing,
         [provider]: null,
       }));
     },
     [settings, updateSettings],
+  );
+
+  const requestFonts = useCallback(() => {
+    setSystemFontError(null);
+    setSystemFontMessage(null);
+    setIsRequestingSystemFonts(true);
+    void requestSystemFontFamilies()
+      .then((families) => {
+        setSystemFontFamilies(families);
+        setSystemFontMessage(
+          families.length > 0
+            ? `Loaded ${families.length} system font families from this device.`
+            : "No system font families were returned.",
+        );
+      })
+      .catch((error) => {
+        setSystemFontError(
+          error instanceof Error ? error.message : "Unable to request system fonts.",
+        );
+      })
+      .finally(() => {
+        setIsRequestingSystemFonts(false);
+      });
+  }, []);
+
+  const updateFontSetting = useCallback(
+    (key: AppFontSettingKey, value: string) => {
+      updateSettings({ [key]: value } as Partial<AppSettings>);
+    },
+    [updateSettings],
+  );
+
+  useEffect(() => {
+    setFontDrafts({
+      headingFontFamily,
+      interfaceFontFamily,
+      monoFontFamily,
+    });
+  }, [headingFontFamily, interfaceFontFamily, monoFontFamily]);
+
+  const applyFontDraft = useCallback(
+    (key: AppFontSettingKey) => {
+      updateFontSetting(key, fontDrafts[key]);
+    },
+    [fontDrafts, updateFontSetting],
   );
 
   return (
@@ -240,6 +350,191 @@ function SettingsRouteView() {
               <p className="mt-4 text-xs text-muted-foreground">
                 Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
               </p>
+
+              <div className="mt-6 rounded-xl border border-border bg-background/55 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <h3 className="flex items-center gap-2 text-sm font-medium text-foreground">
+                      <TypeIcon className="size-4 shrink-0" />
+                      Typography
+                    </h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Choose separate fonts for interface text, headings, and monospace surfaces.
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      System fonts come from the browser&apos;s Local Font Access API and may need
+                      permission.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={!canRequestSystemFonts || isRequestingSystemFonts}
+                      onClick={requestFonts}
+                    >
+                      {systemFontButtonLabel}
+                    </Button>
+
+                    {hasCustomTypography ? (
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() =>
+                          updateSettings({
+                            interfaceFontFamily: defaults.interfaceFontFamily,
+                            headingFontFamily: defaults.headingFontFamily,
+                            monoFontFamily: defaults.monoFontFamily,
+                          })
+                        }
+                      >
+                        Reset typography
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="mt-3 space-y-1">
+                  {!canRequestSystemFonts ? (
+                    <p className="text-xs text-muted-foreground">
+                      System font requests are not available in this browser, so only built-in font
+                      stacks are shown.
+                    </p>
+                  ) : null}
+                  {systemFontMessage ? (
+                    <p className="text-xs text-muted-foreground">{systemFontMessage}</p>
+                  ) : null}
+                  {systemFontError ? (
+                    <p className="text-xs text-destructive">{systemFontError}</p>
+                  ) : null}
+                </div>
+
+                <div className="mt-4 grid gap-4">
+                  {APP_FONT_ROLE_DEFINITIONS.map((fontRole) => {
+                    const options = getAppFontOptions(
+                      fontRole.key,
+                      systemFontFamilies,
+                      settings[fontRole.key],
+                    );
+
+                    return (
+                      <div
+                        key={fontRole.key}
+                        className="rounded-lg border border-border bg-card/70 p-3"
+                      >
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
+                          <label className="block min-w-0 flex-1 space-y-1">
+                            <span className="text-xs font-medium text-foreground">
+                              {fontRole.label}
+                            </span>
+                            <Select
+                              items={options.map((option) => ({
+                                label: option.label,
+                                value: option.value,
+                              }))}
+                              value={settings[fontRole.key]}
+                              onValueChange={(value) => {
+                                if (!value) return;
+                                updateFontSetting(fontRole.key, value);
+                              }}
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectPopup alignItemWithTrigger={false}>
+                                {options.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    <div className="flex min-w-0 items-center justify-between gap-3">
+                                      <span
+                                        className="truncate"
+                                        style={{ fontFamily: option.previewFontFamily }}
+                                      >
+                                        {option.label}
+                                      </span>
+                                      {option.source === "system" ? (
+                                        <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                          Local
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  </SelectItem>
+                                ))}
+                              </SelectPopup>
+                            </Select>
+                            <span className="text-xs text-muted-foreground">
+                              {fontRole.description}
+                            </span>
+                          </label>
+
+                          <div className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2">
+                            <div className="mb-1 flex items-center justify-between gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+                              <span>Preview</span>
+                              {settings[fontRole.key] !==
+                              DEFAULT_APP_FONT_FAMILIES[fontRole.key] ? (
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+                                  onClick={() =>
+                                    updateFontSetting(
+                                      fontRole.key,
+                                      DEFAULT_APP_FONT_FAMILIES[fontRole.key],
+                                    )
+                                  }
+                                >
+                                  <RefreshCcwIcon className="size-3" />
+                                  Restore
+                                </button>
+                              ) : null}
+                            </div>
+                            <p
+                              className="text-sm leading-relaxed text-foreground"
+                              style={{ fontFamily: settings[fontRole.key] }}
+                            >
+                              {fontRole.sampleText}
+                            </p>
+
+                            <div className="mt-3 space-y-1">
+                              <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                                Manual font-family
+                              </span>
+                              <div className="flex flex-col gap-2 sm:flex-row">
+                                <Input
+                                  value={fontDrafts[fontRole.key]}
+                                  onChange={(event) =>
+                                    setFontDrafts((existing) => ({
+                                      ...existing,
+                                      [fontRole.key]: event.target.value,
+                                    }))
+                                  }
+                                  onKeyDown={(event) => {
+                                    if (event.key !== "Enter") return;
+                                    event.preventDefault();
+                                    applyFontDraft(fontRole.key);
+                                  }}
+                                  placeholder={DEFAULT_APP_FONT_FAMILIES[fontRole.key]}
+                                  spellCheck={false}
+                                />
+                                <Button
+                                  size="xs"
+                                  variant="outline"
+                                  onClick={() => applyFontDraft(fontRole.key)}
+                                >
+                                  Apply
+                                </Button>
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                Paste a font name or full CSS stack, for example{" "}
+                                <code>"JetBrains Mono", monospace</code>.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">
@@ -426,10 +721,9 @@ function SettingsRouteView() {
                                 variant="outline"
                                 onClick={() =>
                                   updateSettings(
-                                    patchCustomModels(
-                                      provider,
-                                      [...getDefaultCustomModelsForProvider(defaults, provider)],
-                                    ),
+                                    patchCustomModels(provider, [
+                                      ...getDefaultCustomModelsForProvider(defaults, provider),
+                                    ]),
                                   )
                                 }
                               >
@@ -446,7 +740,8 @@ function SettingsRouteView() {
                                   className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2"
                                 >
                                   <div className="flex min-w-0 flex-1 items-center gap-2">
-                                    {provider === "codex" && shouldShowFastTierIcon(slug, codexServiceTier) ? (
+                                    {provider === "codex" &&
+                                    shouldShowFastTierIcon(slug, codexServiceTier) ? (
                                       <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
                                     ) : null}
                                     <code className="min-w-0 flex-1 truncate text-xs text-foreground">
