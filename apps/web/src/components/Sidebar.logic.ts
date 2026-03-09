@@ -4,11 +4,13 @@ import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
 export interface ThreadStatusPill {
   label:
     | "Working"
+    | "Planning"
     | "Connecting"
     | "Completed"
     | "Pending Approval"
     | "Awaiting Input"
-    | "Plan Ready";
+    | "Plan Submitted"
+    | "Errored";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -18,6 +20,28 @@ type ThreadStatusInput = Pick<
   Thread,
   "interactionMode" | "latestTurn" | "lastVisitedAt" | "proposedPlans" | "session"
 >;
+
+function hasUnreadAt(timestamp: string | undefined, lastVisitedAt: string | undefined): boolean {
+  if (!timestamp) {
+    return false;
+  }
+
+  const updatedAt = Date.parse(timestamp);
+  if (Number.isNaN(updatedAt)) {
+    return false;
+  }
+
+  if (!lastVisitedAt) {
+    return true;
+  }
+
+  const visitedAt = Date.parse(lastVisitedAt);
+  if (Number.isNaN(visitedAt)) {
+    return true;
+  }
+
+  return updatedAt > visitedAt;
+}
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestTurn?.completedAt) return false;
@@ -55,6 +79,15 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
+  if (thread.session?.status === "running" && thread.interactionMode === "plan") {
+    return {
+      label: "Planning",
+      colorClass: "text-cyan-600 dark:text-cyan-300/90",
+      dotClass: "bg-cyan-500 dark:bg-cyan-300/90",
+      pulse: true,
+    };
+  }
+
   if (thread.session?.status === "running") {
     return {
       label: "Working",
@@ -80,9 +113,33 @@ export function resolveThreadStatusPill(input: {
     findLatestProposedPlan(thread.proposedPlans, thread.latestTurn?.turnId ?? null) !== null;
   if (hasPlanReadyPrompt) {
     return {
-      label: "Plan Ready",
-      colorClass: "text-violet-600 dark:text-violet-300/90",
-      dotClass: "bg-violet-500 dark:bg-violet-300/90",
+      label: "Plan Submitted",
+      colorClass: "text-teal-600 dark:text-teal-300/90",
+      dotClass: "bg-teal-500 dark:bg-teal-300/90",
+      pulse: false,
+    };
+  }
+
+  if (
+    thread.latestTurn?.state === "error" &&
+    hasUnreadAt(thread.latestTurn.completedAt ?? undefined, thread.lastVisitedAt)
+  ) {
+    return {
+      label: "Errored",
+      colorClass: "text-rose-600 dark:text-rose-300/90",
+      dotClass: "bg-rose-500 dark:bg-rose-300/90",
+      pulse: false,
+    };
+  }
+
+  if (
+    thread.session?.status === "error" &&
+    hasUnreadAt(thread.session.updatedAt, thread.lastVisitedAt)
+  ) {
+    return {
+      label: "Errored",
+      colorClass: "text-rose-600 dark:text-rose-300/90",
+      dotClass: "bg-rose-500 dark:bg-rose-300/90",
       pulse: false,
     };
   }

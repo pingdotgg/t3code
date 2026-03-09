@@ -72,10 +72,23 @@ describe("resolveThreadStatusPill", () => {
         hasPendingApprovals: false,
         hasPendingUserInput: false,
       }),
+    ).toMatchObject({ label: "Planning", pulse: true });
+  });
+
+  it("shows working for non-plan threads that are actively running", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          interactionMode: "default",
+        },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+      }),
     ).toMatchObject({ label: "Working", pulse: true });
   });
 
-  it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {
+  it("shows plan submitted when a settled plan turn has a proposed plan ready for follow-up", () => {
     expect(
       resolveThreadStatusPill({
         thread: {
@@ -99,7 +112,34 @@ describe("resolveThreadStatusPill", () => {
         hasPendingApprovals: false,
         hasPendingUserInput: false,
       }),
-    ).toMatchObject({ label: "Plan Ready", pulse: false });
+    ).toMatchObject({ label: "Plan Submitted", pulse: false });
+  });
+
+  it("shows errored when the latest turn failed after the thread was last visited", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestTurn: {
+            turnId: "turn-1" as never,
+            state: "error",
+            assistantMessageId: null,
+            requestedAt: "2026-03-09T10:00:00.000Z",
+            startedAt: "2026-03-09T10:00:00.000Z",
+            completedAt: "2026-03-09T10:05:00.000Z",
+          },
+          lastVisitedAt: "2026-03-09T10:04:00.000Z",
+          session: {
+            ...baseThread.session,
+            status: "error",
+            updatedAt: "2026-03-09T10:05:00.000Z",
+            orchestrationStatus: "error",
+          },
+        },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+      }),
+    ).toMatchObject({ label: "Errored", pulse: false });
   });
 
   it("shows completed when there is an unseen completion and no active blocker", () => {
