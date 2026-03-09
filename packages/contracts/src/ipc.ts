@@ -15,6 +15,7 @@ import type {
   GitStatusResult,
 } from "./git";
 import type {
+  ProjectRunLifecycleScriptInput,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
   ProjectWriteFileInput,
@@ -121,6 +122,7 @@ export interface NativeApi {
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+    runLifecycleScript: (input: ProjectRunLifecycleScriptInput) => Promise<void>;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;

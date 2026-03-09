@@ -7,6 +7,7 @@ import {
   DEFAULT_RUNTIME_MODE,
   OrchestrationGetTurnDiffInput,
   OrchestrationSession,
+  ProjectScript,
   ProjectCreateCommand,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
@@ -23,6 +24,7 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 );
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
+const decodeProjectScript = Schema.decodeUnknownEffect(ProjectScript);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -155,6 +157,20 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
     });
 
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+  }),
+);
+
+it.effect("decodes legacy project scripts without the delete hook flag", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectScript({
+      id: "script-1",
+      name: "Build",
+      command: "bun run build",
+      icon: "build",
+      runOnWorktreeCreate: false,
+    });
+
+    assert.strictEqual(parsed.runOnWorktreeDelete, false);
   }),
 );
 

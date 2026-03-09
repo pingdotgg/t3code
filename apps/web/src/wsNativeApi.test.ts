@@ -349,6 +349,30 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards lifecycle script runs to the websocket project method", async () => {
+    requestMock.mockResolvedValue(undefined);
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.projects.runLifecycleScript({
+      cwd: "/tmp/worktree",
+      command: "git pull --ff-only",
+      env: {
+        T3CODE_PROJECT_ROOT: "/tmp/project",
+        T3CODE_WORKTREE_PATH: "/tmp/worktree",
+      },
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.projectsRunLifecycleScript, {
+      cwd: "/tmp/worktree",
+      command: "git pull --ff-only",
+      env: {
+        T3CODE_PROJECT_ROOT: "/tmp/project",
+        T3CODE_WORKTREE_PATH: "/tmp/worktree",
+      },
+    });
+  });
+
   it("forwards full-thread diff requests to the orchestration websocket method", async () => {
     requestMock.mockResolvedValue({ diff: "patch" });
     const { createWsNativeApi } = await import("./wsNativeApi");

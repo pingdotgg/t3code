@@ -16,6 +16,10 @@
       "types": "./src/logging.ts",
       "import": "./src/logging.ts"
     },
+    "./projectScripts": {
+      "types": "./src/projectScripts.ts",
+      "import": "./src/projectScripts.ts"
+    },
     "./shell": {
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"

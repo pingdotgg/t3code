@@ -18,6 +18,7 @@ import { createLogger } from "../../logger";
 import { PtyAdapter, PtyAdapterShape, type PtyExitEvent, type PtyProcess } from "../Services/PTY";
 import { runProcess } from "../../processRunner";
 import { ServerConfig } from "../../config";
+import { createTerminalSpawnEnv } from "../spawnEnv";
 import {
   ShellCandidate,
   TerminalError,
@@ -34,7 +35,6 @@ const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
 const DEFAULT_OPEN_ROWS = 30;
-const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
 
 const decodeTerminalOpenInput = Schema.decodeUnknownSync(TerminalOpenInput);
 const decodeTerminalWriteInput = Schema.decodeUnknownSync(TerminalWriteInput);
@@ -266,35 +266,6 @@ function toSafeTerminalId(terminalId: string): string {
 
 function toSessionKey(threadId: string, terminalId: string): string {
   return `${threadId}\u0000${terminalId}`;
-}
-
-function shouldExcludeTerminalEnvKey(key: string): boolean {
-  const normalizedKey = key.toUpperCase();
-  if (normalizedKey.startsWith("T3CODE_")) {
-    return true;
-  }
-  if (normalizedKey.startsWith("VITE_")) {
-    return true;
-  }
-  return TERMINAL_ENV_BLOCKLIST.has(normalizedKey);
-}
-
-function createTerminalSpawnEnv(
-  baseEnv: NodeJS.ProcessEnv,
-  runtimeEnv?: Record<string, string> | null,
-): NodeJS.ProcessEnv {
-  const spawnEnv: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(baseEnv)) {
-    if (value === undefined) continue;
-    if (shouldExcludeTerminalEnvKey(key)) continue;
-    spawnEnv[key] = value;
-  }
-  if (runtimeEnv) {
-    for (const [key, value] of Object.entries(runtimeEnv)) {
-      spawnEnv[key] = value;
-    }
-  }
-  return spawnEnv;
 }
 
 function normalizedRuntimeEnv(

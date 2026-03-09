@@ -1550,6 +1550,52 @@ describe("WebSocket Server", () => {
     );
   });
 
+  it("supports projects.runLifecycleScript", async () => {
+    const workspace = makeTempDir("t3code-ws-run-lifecycle-script-");
+    const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+      "require('node:fs').writeFileSync('lifecycle.txt', process.env.T3CODE_PROJECT_ROOT || '', 'utf8')",
+    )}`;
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.projectsRunLifecycleScript, {
+      cwd: workspace,
+      command,
+      env: {
+        T3CODE_PROJECT_ROOT: "/repo/project",
+      },
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(fs.readFileSync(path.join(workspace, "lifecycle.txt"), "utf8")).toBe("/repo/project");
+  });
+
+  it("returns lifecycle script failures over websocket", async () => {
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.projectsRunLifecycleScript, {
+      cwd: process.cwd(),
+      command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.exit(5)")}`,
+    });
+
+    expect(response.result).toBeUndefined();
+    expect(response.error?.message).toContain(
+      "Project lifecycle script failed: exited with code 5.",
+    );
+  });
+
   it("rejects projects.writeFile paths outside the workspace root", async () => {
     const workspace = makeTempDir("t3code-ws-write-file-reject-");
 

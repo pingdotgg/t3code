@@ -73,6 +73,7 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
+import { runProjectLifecycleScript } from "./projectScriptRunner";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -794,6 +795,20 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           ),
         );
         return { relativePath: target.relativePath };
+      }
+
+      case WS_METHODS.projectsRunLifecycleScript: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => runProjectLifecycleScript(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message:
+                cause instanceof Error
+                  ? cause.message
+                  : "Project lifecycle script failed: Unknown error.",
+            }),
+        });
       }
 
       case WS_METHODS.shellOpenInEditor: {

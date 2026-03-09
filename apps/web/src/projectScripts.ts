@@ -4,6 +4,7 @@ import {
   type KeybindingCommand,
   type ProjectScript,
 } from "@t3tools/contracts";
+import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Schema } from "effect";
 
 function normalizeScriptId(value: string): string {
@@ -55,34 +56,65 @@ export function nextProjectScriptId(name: string, existingIds: Iterable<string>)
   return `${baseId}-${Date.now()}`.slice(0, MAX_SCRIPT_ID_LENGTH);
 }
 
-interface ProjectScriptRuntimeEnvInput {
-  project: {
-    cwd: string;
-  };
-  worktreePath?: string | null;
-  extraEnv?: Record<string, string>;
+function isLifecycleProjectScript(script: ProjectScript): boolean {
+  return script.runOnWorktreeCreate || script.runOnWorktreeDelete;
 }
 
-export function projectScriptRuntimeEnv(
-  input: ProjectScriptRuntimeEnvInput,
-): Record<string, string> {
-  const env: Record<string, string> = {
-    T3CODE_PROJECT_ROOT: input.project.cwd,
-  };
-  if (input.worktreePath) {
-    env.T3CODE_WORKTREE_PATH = input.worktreePath;
-  }
-  if (input.extraEnv) {
-    return { ...env, ...input.extraEnv };
-  }
-  return env;
-}
+export { projectScriptRuntimeEnv };
 
 export function primaryProjectScript(scripts: ProjectScript[]): ProjectScript | null {
-  const regular = scripts.find((script) => !script.runOnWorktreeCreate);
+  const regular = scripts.find((script) => !isLifecycleProjectScript(script));
   return regular ?? scripts[0] ?? null;
 }
 
 export function setupProjectScript(scripts: ProjectScript[]): ProjectScript | null {
   return scripts.find((script) => script.runOnWorktreeCreate) ?? null;
+}
+
+export function cleanupProjectScript(scripts: ProjectScript[]): ProjectScript | null {
+  return scripts.find((script) => script.runOnWorktreeDelete) ?? null;
+}
+
+export function projectScriptLifecycleLabel(script: ProjectScript): string | null {
+  if (script.runOnWorktreeCreate && script.runOnWorktreeDelete) {
+    return "setup, cleanup";
+  }
+  if (script.runOnWorktreeCreate) {
+    return "setup";
+  }
+  if (script.runOnWorktreeDelete) {
+    return "cleanup";
+  }
+  return null;
+}
+
+export function upsertProjectScript(
+  scripts: ProjectScript[],
+  nextScript: ProjectScript,
+): ProjectScript[] {
+  const nextScripts: ProjectScript[] = [];
+  let replacedExisting = false;
+
+  for (const script of scripts) {
+    if (script.id === nextScript.id) {
+      nextScripts.push(nextScript);
+      replacedExisting = true;
+      continue;
+    }
+
+    let normalizedScript = script;
+    if (nextScript.runOnWorktreeCreate && normalizedScript.runOnWorktreeCreate) {
+      normalizedScript = { ...normalizedScript, runOnWorktreeCreate: false };
+    }
+    if (nextScript.runOnWorktreeDelete && normalizedScript.runOnWorktreeDelete) {
+      normalizedScript = { ...normalizedScript, runOnWorktreeDelete: false };
+    }
+    nextScripts.push(normalizedScript);
+  }
+
+  if (!replacedExisting) {
+    nextScripts.push(nextScript);
+  }
+
+  return nextScripts;
 }

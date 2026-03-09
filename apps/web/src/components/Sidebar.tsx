@@ -68,6 +68,7 @@ import {
 } from "./ui/sidebar";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
+import { deleteThreadWorktree } from "../worktreeDeleteFlow";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -689,13 +690,40 @@ export default function Sidebar() {
           .catch(() => undefined);
       }
 
-      try {
-        await api.terminal.close({
-          threadId,
-          deleteHistory: true,
-        });
-      } catch {
-        // Terminal may already be closed
+      if (shouldDeleteWorktree && orphanedWorktreePath && threadProject) {
+        try {
+          await deleteThreadWorktree({
+            api,
+            thread,
+            project: threadProject,
+            worktreePath: orphanedWorktreePath,
+            removeWorktree: (input) => removeWorktreeMutation.mutateAsync(input),
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Unknown error removing worktree.";
+          console.error("Failed to remove orphaned worktree before thread deletion", {
+            threadId,
+            projectCwd: threadProject.cwd,
+            worktreePath: orphanedWorktreePath,
+            error,
+          });
+          toastManager.add({
+            type: "error",
+            title: "Failed to delete worktree",
+            description: `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`,
+          });
+          return;
+        }
+      } else {
+        try {
+          await api.terminal.close({
+            threadId,
+            deleteHistory: true,
+          });
+        } catch {
+          // Terminal may already be closed
+        }
       }
 
       const shouldNavigateToFallback = routeThreadId === threadId;
@@ -705,6 +733,16 @@ export default function Sidebar() {
         commandId: newCommandId(),
         threadId,
       });
+
+      if (shouldDeleteWorktree && orphanedWorktreePath && threadProject) {
+        await api.terminal
+          .close({
+            threadId,
+            deleteHistory: true,
+          })
+          .catch(() => undefined);
+      }
+
       clearComposerDraftForThread(threadId);
       clearProjectDraftThreadById(thread.projectId, thread.id);
       clearTerminalState(threadId);
@@ -718,31 +756,6 @@ export default function Sidebar() {
         } else {
           void navigate({ to: "/", replace: true });
         }
-      }
-
-      if (!shouldDeleteWorktree || !orphanedWorktreePath || !threadProject) {
-        return;
-      }
-
-      try {
-        await removeWorktreeMutation.mutateAsync({
-          cwd: threadProject.cwd,
-          path: orphanedWorktreePath,
-          force: true,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown error removing worktree.";
-        console.error("Failed to remove orphaned worktree after thread deletion", {
-          threadId,
-          projectCwd: threadProject.cwd,
-          worktreePath: orphanedWorktreePath,
-          error,
-        });
-        toastManager.add({
-          type: "error",
-          title: "Thread deleted, but worktree removal failed",
-          description: `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`,
-        });
       }
     },
     [
