@@ -106,7 +106,7 @@ function sanitizeRemoteName(value: string): string {
 }
 
 function normalizeRemoteUrl(value: string): string {
-  return value.trim().replace(/\.git$/i, "").replace(/\/+$/g, "").toLowerCase();
+  return value.trim().replace(/\/+$/g, "").replace(/\.git$/i, "").toLowerCase();
 }
 
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
