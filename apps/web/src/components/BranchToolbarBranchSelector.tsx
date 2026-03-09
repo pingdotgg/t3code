@@ -27,6 +27,7 @@ import {
   deriveLocalBranchNameFromRemoteRef,
   EnvMode,
   filterBranchPickerItems,
+  resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
 } from "./BranchToolbar.logic";
 import { Button } from "./ui/button";
@@ -175,10 +176,15 @@ export function BranchToolbarBranchSelector({
       return;
     }
 
+    const selectionTarget = resolveBranchSelectionTarget({
+      activeProjectCwd,
+      activeWorktreePath,
+      branch,
+    });
+
     // If the branch already lives in a worktree, point the thread there.
-    if (branch.worktreePath) {
-      const isMainWorktree = branch.worktreePath === activeProjectCwd;
-      onSetThreadBranch(branch.name, isMainWorktree ? null : branch.worktreePath);
+    if (selectionTarget.reuseExistingWorktree) {
+      onSetThreadBranch(branch.name, selectionTarget.nextWorktreePath);
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
       return;
@@ -194,7 +200,7 @@ export function BranchToolbarBranchSelector({
     runBranchAction(async () => {
       setOptimisticBranch(selectedBranchName);
       try {
-        await api.git.checkout({ cwd: branchCwd, branch: branch.name });
+        await api.git.checkout({ cwd: selectionTarget.checkoutCwd, branch: branch.name });
         await invalidateGitQueries(queryClient);
       } catch (error) {
         toastManager.add({
@@ -214,7 +220,7 @@ export function BranchToolbarBranchSelector({
       }
 
       setOptimisticBranch(nextBranchName);
-      onSetThreadBranch(nextBranchName, activeWorktreePath);
+      onSetThreadBranch(nextBranchName, selectionTarget.nextWorktreePath);
     });
   };
 

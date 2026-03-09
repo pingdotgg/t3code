@@ -4,6 +4,7 @@ import {
   filterBranchPickerItems,
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  resolveBranchSelectionTarget,
   resolveDraftEnvModeAfterBranchChange,
   resolveBranchToolbarValue,
 } from "./BranchToolbar.logic";
@@ -221,5 +222,75 @@ describe("filterBranchPickerItems", () => {
         checkoutPullRequestItemValue: null,
       }),
     ).toEqual(["feature/488", "__create_new_branch__:48"]);
+  });
+});
+
+describe("resolveBranchSelectionTarget", () => {
+  it("reuses an existing secondary worktree for the selected branch", () => {
+    expect(
+      resolveBranchSelectionTarget({
+        activeProjectCwd: "/repo",
+        activeWorktreePath: "/repo/.t3/worktrees/feature-a",
+        branch: {
+          isDefault: false,
+          worktreePath: "/repo/.t3/worktrees/feature-b",
+        },
+      }),
+    ).toEqual({
+      checkoutCwd: "/repo/.t3/worktrees/feature-b",
+      nextWorktreePath: "/repo/.t3/worktrees/feature-b",
+      reuseExistingWorktree: true,
+    });
+  });
+
+  it("switches back to the main repo when the branch already lives there", () => {
+    expect(
+      resolveBranchSelectionTarget({
+        activeProjectCwd: "/repo",
+        activeWorktreePath: "/repo/.t3/worktrees/feature-a",
+        branch: {
+          isDefault: true,
+          worktreePath: "/repo",
+        },
+      }),
+    ).toEqual({
+      checkoutCwd: "/repo",
+      nextWorktreePath: null,
+      reuseExistingWorktree: true,
+    });
+  });
+
+  it("checks out the default branch in the main repo when leaving a secondary worktree", () => {
+    expect(
+      resolveBranchSelectionTarget({
+        activeProjectCwd: "/repo",
+        activeWorktreePath: "/repo/.t3/worktrees/feature-a",
+        branch: {
+          isDefault: true,
+          worktreePath: null,
+        },
+      }),
+    ).toEqual({
+      checkoutCwd: "/repo",
+      nextWorktreePath: null,
+      reuseExistingWorktree: false,
+    });
+  });
+
+  it("keeps checkout in the current worktree for non-default branches", () => {
+    expect(
+      resolveBranchSelectionTarget({
+        activeProjectCwd: "/repo",
+        activeWorktreePath: "/repo/.t3/worktrees/feature-a",
+        branch: {
+          isDefault: false,
+          worktreePath: null,
+        },
+      }),
+    ).toEqual({
+      checkoutCwd: "/repo/.t3/worktrees/feature-a",
+      nextWorktreePath: "/repo/.t3/worktrees/feature-a",
+      reuseExistingWorktree: false,
+    });
   });
 });
