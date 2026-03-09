@@ -1,4 +1,5 @@
 import {
+  ArrowLeftIcon,
   ChevronRightIcon,
   FolderIcon,
   GitPullRequestIcon,
@@ -19,7 +20,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL } from "../branding";
@@ -280,6 +281,7 @@ export default function Sidebar() {
     (store) => store.clearProjectDraftThreadById,
   );
   const navigate = useNavigate();
+  const isOnSettings = useLocation({ select: (loc) => loc.pathname === "/settings" });
   const { settings: appSettings } = useAppSettings();
   const routeThreadId = useParams({
     strict: false,
@@ -1391,14 +1393,25 @@ export default function Sidebar() {
       <SidebarFooter className="p-2">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton
-              size="sm"
-              className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
-              onClick={() => void navigate({ to: "/settings" })}
-            >
-              <SettingsIcon className="size-3.5" />
-              <span className="text-xs">Settings</span>
-            </SidebarMenuButton>
+            {isOnSettings ? (
+              <SidebarMenuButton
+                size="sm"
+                className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                onClick={() => void navigate({ to: "/" })}
+              >
+                <ArrowLeftIcon className="size-3.5" />
+                <span className="text-xs">Back</span>
+              </SidebarMenuButton>
+            ) : (
+              <SidebarMenuButton
+                size="sm"
+                className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                onClick={() => void navigate({ to: "/settings" })}
+              >
+                <SettingsIcon className="size-3.5" />
+                <span className="text-xs">Settings</span>
+              </SidebarMenuButton>
+            )}
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
