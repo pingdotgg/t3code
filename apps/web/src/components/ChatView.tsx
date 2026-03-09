@@ -647,11 +647,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     useState<Record<string, number>>({});
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
-  // Tracks the turnId for which the plan sidebar was last auto-opened.
-  // Prevents re-opening after the user explicitly closes it during the same turn.
-  const planSidebarAutoOpenedForTurnRef = useRef<string | null>(null);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
+  // When set, the thread-change reset effect will open the sidebar instead of closing it.
+  // Used by "Implement in new thread" to carry the sidebar-open intent across navigation.
+  const planSidebarOpenOnNextThreadRef = useRef(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
@@ -1937,24 +1937,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   useEffect(() => {
     setExpandedWorkGroups({});
-    setPlanSidebarOpen(false);
-    planSidebarAutoOpenedForTurnRef.current = null;
+    if (planSidebarOpenOnNextThreadRef.current) {
+      planSidebarOpenOnNextThreadRef.current = false;
+      setPlanSidebarOpen(true);
+    } else {
+      setPlanSidebarOpen(false);
+    }
     planSidebarDismissedForTurnRef.current = null;
   }, [activeThread?.id]);
 
-  // Auto-open plan sidebar when a plan first appears for a new turn.
-  // Does not re-open if the user dismissed it during the same turn.
-  useEffect(() => {
-    if (!activePlan || activePlan.steps.length === 0) return;
-    const turnKey = activePlan.turnId ?? "unknown";
-    // Already auto-opened for this turn — don't force re-open.
-    if (planSidebarAutoOpenedForTurnRef.current === turnKey) return;
-    // User explicitly closed sidebar for this turn — respect that.
-    if (planSidebarDismissedForTurnRef.current === turnKey) return;
-    planSidebarAutoOpenedForTurnRef.current = turnKey;
-    setPlanSidebarOpen(true);
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on stable sub-properties, not full activePlan reference which changes on every streaming tick
-  }, [activePlan?.turnId, activePlan?.steps.length]);
+
 
   useEffect(() => {
     if (!composerMenuOpen) {
@@ -2690,12 +2682,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
         createdAt: messageCreatedAt,
       });
       turnStartSucceeded = true;
-      // Optimistically open the plan sidebar as soon as a plan-mode turn starts,
-      // so the user sees it immediately instead of waiting for server plan data.
-      if (interactionMode === "plan") {
-        planSidebarDismissedForTurnRef.current = null;
-        setPlanSidebarOpen(true);
-      }
       if (isFirstMessage) {
         clearDraftThread(threadIdForSend);
       }
@@ -2974,6 +2960,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
           interactionMode: nextInteractionMode,
           createdAt: messageCreatedAt,
         });
+        // Optimistically open the plan sidebar when implementing (not refining).
+        // "default" mode here means the agent is executing the plan, which produces
+        // step-tracking activities that the sidebar will display.
+        if (nextInteractionMode === "default") {
+          planSidebarDismissedForTurnRef.current = null;
+          setPlanSidebarOpen(true);
+        }
         sendInFlightRef.current = false;
       } catch (err) {
         setOptimisticUserMessages((existing) =>
@@ -3082,6 +3075,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       .then(() => api.orchestration.getSnapshot())
       .then((snapshot) => {
         syncServerReadModel(snapshot);
+        // Signal that the plan sidebar should open on the new thread.
+        planSidebarOpenOnNextThreadRef.current = true;
         return navigate({
           to: "/$threadId",
           params: { threadId: nextThreadId },
@@ -4417,20 +4412,40 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
   }, []);
 
-  // Keyboard shortcut: number keys 1-9 select corresponding option and auto-advance
+  const selectOptionAndAutoAdvance = useCallback(
+    (questionId: string, optionLabel: string) => {
+      onSelectOption(questionId, optionLabel);
+      if (autoAdvanceTimerRef.current !== null) {
+        window.clearTimeout(autoAdvanceTimerRef.current);
+      }
+      autoAdvanceTimerRef.current = window.setTimeout(() => {
+        autoAdvanceTimerRef.current = null;
+        onAdvance();
+      }, 200);
+    },
+    [onSelectOption, onAdvance],
+  );
+
+  // Keyboard shortcut: number keys 1-9 select corresponding option and auto-advance.
+  // Works even when the Lexical composer (contenteditable) has focus — the composer
+  // doubles as a custom-answer field during user input, and when it's empty the digit
+  // keys should pick options instead of typing into the editor.
   useEffect(() => {
     if (!activeQuestion || isResponding) return;
     const handler = (event: globalThis.KeyboardEvent) => {
-      // Only handle bare number keys (no modifiers)
       if (event.metaKey || event.ctrlKey || event.altKey) return;
-      // Don't intercept when the user is typing in any editable element
       const target = event.target;
       if (
         target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        (target instanceof HTMLElement && target.isContentEditable)
+        target instanceof HTMLTextAreaElement
       ) {
         return;
+      }
+      // If the user has started typing a custom answer in the contenteditable
+      // composer, let digit keys pass through so they can type numbers.
+      if (target instanceof HTMLElement && target.isContentEditable) {
+        const hasCustomText = progress.customAnswer.length > 0;
+        if (hasCustomText) return;
       }
       const digit = Number.parseInt(event.key, 10);
       if (Number.isNaN(digit) || digit < 1 || digit > 9) return;
@@ -4439,19 +4454,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       const option = activeQuestion.options[optionIndex];
       if (!option) return;
       event.preventDefault();
-      onSelectOption(activeQuestion.id, option.label);
-      // Auto-advance after a short delay for visual feedback
-      if (autoAdvanceTimerRef.current !== null) {
-        window.clearTimeout(autoAdvanceTimerRef.current);
-      }
-      autoAdvanceTimerRef.current = window.setTimeout(() => {
-        autoAdvanceTimerRef.current = null;
-        onAdvance();
-      }, 200);
+      selectOptionAndAutoAdvance(activeQuestion.id, option.label);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, isResponding, onSelectOption, onAdvance]);
+  }, [activeQuestion, isResponding, selectOptionAndAutoAdvance, progress.customAnswer.length]);
 
   if (!activeQuestion) {
     return null;
@@ -4481,7 +4488,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               key={`${activeQuestion.id}:${option.label}`}
               type="button"
               disabled={isResponding}
-              onClick={() => onSelectOption(activeQuestion.id, option.label)}
+              onClick={() => selectOptionAndAutoAdvance(activeQuestion.id, option.label)}
               className={cn(
                 "group flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-all duration-150",
                 isSelected
