@@ -1,6 +1,8 @@
-import fs from "node:fs";
+import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
+
+import { listProjectFilePaths } from "./projectFiles";
 
 const FAVICON_MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -11,7 +13,6 @@ const FAVICON_MIME_TYPES: Record<string, string> = {
 
 const FALLBACK_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#6b728080" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-fallback="project-favicon"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg>`;
 
-// Well-known favicon paths checked in order.
 const FAVICON_CANDIDATES = [
   "favicon.svg",
   "favicon.ico",
@@ -33,9 +34,8 @@ const FAVICON_CANDIDATES = [
   "assets/icon.png",
   "assets/logo.svg",
   "assets/logo.png",
-];
+] as const;
 
-// Files that may contain a <link rel="icon"> or icon metadata declaration.
 const ICON_SOURCE_FILES = [
   "index.html",
   "public/index.html",
@@ -44,13 +44,28 @@ const ICON_SOURCE_FILES = [
   "app/root.tsx",
   "src/root.tsx",
   "src/index.html",
-];
+] as const;
 
-// Matches <link ...> tags or object-like icon metadata where rel/href can appear in any order.
+const RECURSIVE_FAVICON_FILENAMES = [
+  "favicon.svg",
+  "favicon.ico",
+  "favicon.png",
+  "icon.svg",
+  "icon.png",
+  "icon.ico",
+  "logo.svg",
+  "logo.png",
+] as const;
+
 const LINK_ICON_HTML_RE =
   /<link\b(?=[^>]*\brel=["'](?:icon|shortcut icon)["'])(?=[^>]*\bhref=["']([^"'?]+))[^>]*>/i;
 const LINK_ICON_OBJ_RE =
   /(?=[^}]*\brel\s*:\s*["'](?:icon|shortcut icon)["'])(?=[^}]*\bhref\s*:\s*["']([^"'?]+))[^}]*/i;
+
+const RECURSIVE_FAVICON_FILENAME_SET = new Set<string>(RECURSIVE_FAVICON_FILENAMES);
+const RECURSIVE_FAVICON_PRIORITY = new Map<string, number>(
+  RECURSIVE_FAVICON_FILENAMES.map((filename, index) => [filename, index]),
+);
 
 function extractIconHref(source: string): string | null {
   const htmlMatch = source.match(LINK_ICON_HTML_RE);
@@ -70,24 +85,37 @@ function isPathWithinProject(projectCwd: string, candidatePath: string): boolean
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function serveFaviconFile(filePath: string, res: http.ServerResponse): void {
+async function isFile(filePath: string): Promise<boolean> {
+  try {
+    const stats = await fs.stat(filePath);
+    return stats.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function serveFaviconFile(filePath: string, res: http.ServerResponse): Promise<void> {
   const ext = path.extname(filePath).toLowerCase();
   const contentType = FAVICON_MIME_TYPES[ext] ?? "application/octet-stream";
-  fs.readFile(filePath, (readErr, data) => {
-    if (readErr) {
-      res.writeHead(500, { "Content-Type": "text/plain" });
-      res.end("Read error");
-      return;
-    }
+  try {
+    const data = await fs.readFile(filePath);
     res.writeHead(200, {
       "Content-Type": contentType,
       "Cache-Control": "public, max-age=3600",
     });
     res.end(data);
-  });
+  } catch {
+    if (!res.headersSent) {
+      res.writeHead(500, { "Content-Type": "text/plain" });
+      res.end("Read error");
+    }
+  }
 }
 
 function serveFallbackFavicon(res: http.ServerResponse): void {
+  if (res.headersSent) {
+    return;
+  }
   res.writeHead(200, {
     "Content-Type": "image/svg+xml",
     "Cache-Control": "public, max-age=3600",
@@ -95,77 +123,163 @@ function serveFallbackFavicon(res: http.ServerResponse): void {
   res.end(FALLBACK_FAVICON_SVG);
 }
 
+function basenameOfPosixPath(relativePath: string): string {
+  const segments = relativePath.split("/");
+  return segments[segments.length - 1] ?? relativePath;
+}
+
+function relativePathWithinApp(relativePath: string): string | null {
+  const segments = relativePath.split("/");
+  if (segments.length < 3 || segments[0] !== "apps") {
+    return null;
+  }
+  return segments.slice(2).join("/");
+}
+
+function recursiveFaviconLocationRank(relativePath: string): number {
+  const appRelativePath = relativePathWithinApp(relativePath);
+  if (!appRelativePath) {
+    return 4;
+  }
+  if (appRelativePath.startsWith("public/")) {
+    return 0;
+  }
+  if (appRelativePath.startsWith("app/")) {
+    return 1;
+  }
+  if (appRelativePath.startsWith("src/app/")) {
+    return 2;
+  }
+  if (!appRelativePath.includes("/")) {
+    return 3;
+  }
+  return 4;
+}
+
+function recursiveFaviconDepth(relativePath: string): number {
+  const scopedPath = relativePathWithinApp(relativePath) ?? relativePath;
+  return Math.max(0, scopedPath.split("/").length - 1);
+}
+
+function recursiveFaviconFilenamePriority(relativePath: string): number {
+  return (
+    RECURSIVE_FAVICON_PRIORITY.get(basenameOfPosixPath(relativePath)) ?? Number.MAX_SAFE_INTEGER
+  );
+}
+
+function compareRecursiveFaviconPaths(left: string, right: string): number {
+  const leftInApps = relativePathWithinApp(left) ? 0 : 1;
+  const rightInApps = relativePathWithinApp(right) ? 0 : 1;
+  if (leftInApps !== rightInApps) {
+    return leftInApps - rightInApps;
+  }
+
+  const locationDelta = recursiveFaviconLocationRank(left) - recursiveFaviconLocationRank(right);
+  if (locationDelta !== 0) {
+    return locationDelta;
+  }
+
+  const depthDelta = recursiveFaviconDepth(left) - recursiveFaviconDepth(right);
+  if (depthDelta !== 0) {
+    return depthDelta;
+  }
+
+  const filenameDelta =
+    recursiveFaviconFilenamePriority(left) - recursiveFaviconFilenamePriority(right);
+  if (filenameDelta !== 0) {
+    return filenameDelta;
+  }
+
+  return left.localeCompare(right);
+}
+
+async function tryServeResolvedPaths(
+  projectCwd: string,
+  candidatePaths: readonly string[],
+  res: http.ServerResponse,
+): Promise<boolean> {
+  for (const candidatePath of candidatePaths) {
+    if (!isPathWithinProject(projectCwd, candidatePath) || !(await isFile(candidatePath))) {
+      continue;
+    }
+    await serveFaviconFile(candidatePath, res);
+    return true;
+  }
+  return false;
+}
+
+async function findRecursiveFaviconPath(projectCwd: string): Promise<string | null> {
+  const relativeFilePaths = await listProjectFilePaths(projectCwd);
+  const bestCandidate = relativeFilePaths
+    .filter((relativePath) => RECURSIVE_FAVICON_FILENAME_SET.has(basenameOfPosixPath(relativePath)))
+    .toSorted(compareRecursiveFaviconPaths)[0];
+  if (!bestCandidate) {
+    return null;
+  }
+
+  const absolutePath = path.join(projectCwd, bestCandidate);
+  if (!isPathWithinProject(projectCwd, absolutePath)) {
+    return null;
+  }
+  return absolutePath;
+}
+
+async function handleProjectFaviconRequest(url: URL, res: http.ServerResponse): Promise<void> {
+  const projectCwd = url.searchParams.get("cwd");
+  if (!projectCwd) {
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    res.end("Missing cwd parameter");
+    return;
+  }
+
+  for (const relativeCandidate of FAVICON_CANDIDATES) {
+    const candidatePath = path.join(projectCwd, relativeCandidate);
+    if (await tryServeResolvedPaths(projectCwd, [candidatePath], res)) {
+      return;
+    }
+  }
+
+  for (const sourceRelativePath of ICON_SOURCE_FILES) {
+    const sourceFilePath = path.join(projectCwd, sourceRelativePath);
+    let content: string;
+    try {
+      content = await fs.readFile(sourceFilePath, "utf8");
+    } catch {
+      continue;
+    }
+
+    const href = extractIconHref(content);
+    if (!href) {
+      continue;
+    }
+
+    if (await tryServeResolvedPaths(projectCwd, resolveIconHref(projectCwd, href), res)) {
+      return;
+    }
+  }
+
+  try {
+    const recursiveFaviconPath = await findRecursiveFaviconPath(projectCwd);
+    if (
+      recursiveFaviconPath &&
+      (await tryServeResolvedPaths(projectCwd, [recursiveFaviconPath], res))
+    ) {
+      return;
+    }
+  } catch {
+    // Fall back to the generated icon if recursive discovery fails.
+  }
+
+  serveFallbackFavicon(res);
+}
+
 export function tryHandleProjectFaviconRequest(url: URL, res: http.ServerResponse): boolean {
   if (url.pathname !== "/api/project-favicon") {
     return false;
   }
 
-  const projectCwd = url.searchParams.get("cwd");
-  if (!projectCwd) {
-    res.writeHead(400, { "Content-Type": "text/plain" });
-    res.end("Missing cwd parameter");
-    return true;
-  }
-
-  const tryResolvedPaths = (paths: string[], index: number, onExhausted: () => void): void => {
-    if (index >= paths.length) {
-      onExhausted();
-      return;
-    }
-    const candidate = paths[index]!;
-    if (!isPathWithinProject(projectCwd, candidate)) {
-      tryResolvedPaths(paths, index + 1, onExhausted);
-      return;
-    }
-    fs.stat(candidate, (err, stats) => {
-      if (err || !stats?.isFile()) {
-        tryResolvedPaths(paths, index + 1, onExhausted);
-        return;
-      }
-      serveFaviconFile(candidate, res);
-    });
-  };
-
-  const trySourceFiles = (index: number): void => {
-    if (index >= ICON_SOURCE_FILES.length) {
-      serveFallbackFavicon(res);
-      return;
-    }
-    const sourceFile = path.join(projectCwd, ICON_SOURCE_FILES[index]!);
-    fs.readFile(sourceFile, "utf8", (err, content) => {
-      if (err) {
-        trySourceFiles(index + 1);
-        return;
-      }
-      const href = extractIconHref(content);
-      if (!href) {
-        trySourceFiles(index + 1);
-        return;
-      }
-      const candidates = resolveIconHref(projectCwd, href);
-      tryResolvedPaths(candidates, 0, () => trySourceFiles(index + 1));
-    });
-  };
-
-  const tryCandidates = (index: number): void => {
-    if (index >= FAVICON_CANDIDATES.length) {
-      trySourceFiles(0);
-      return;
-    }
-    const candidate = path.join(projectCwd, FAVICON_CANDIDATES[index]!);
-    if (!isPathWithinProject(projectCwd, candidate)) {
-      tryCandidates(index + 1);
-      return;
-    }
-    fs.stat(candidate, (err, stats) => {
-      if (err || !stats?.isFile()) {
-        tryCandidates(index + 1);
-        return;
-      }
-      serveFaviconFile(candidate, res);
-    });
-  };
-
-  tryCandidates(0);
+  void handleProjectFaviconRequest(url, res).catch(() => {
+    serveFallbackFavicon(res);
+  });
   return true;
 }
