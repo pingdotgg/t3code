@@ -6,7 +6,11 @@ type StorageLike = Pick<Storage, "getItem" | "setItem">;
 
 function defaultStorage(): StorageLike | null {
   if (typeof window === "undefined") return null;
-  return window.localStorage;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
 function isEditorId(value: string | null): value is EditorId {
