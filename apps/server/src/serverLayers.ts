@@ -32,6 +32,10 @@ import { GitCoreLive } from "./git/Layers/GitCore";
 import { GitHubCliLive } from "./git/Layers/GitHubCli";
 import { CodexTextGenerationLive } from "./git/Layers/CodexTextGeneration";
 import { GitServiceLive } from "./git/Layers/GitService";
+import { VcsProcessLive } from "./vcs/Layers/VcsProcess";
+import { VcsResolverLive } from "./vcs/Layers/VcsResolver";
+import { VcsCoreLive } from "./vcs/Layers/VcsCore";
+import { VcsManagerLive } from "./vcs/Layers/VcsManager";
 import { BunPtyAdapterLive } from "./terminal/Layers/BunPTY";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
@@ -118,11 +122,20 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provideMerge(GitHubCliLive),
     Layer.provideMerge(textGenerationLayer),
   );
+  const vcsCoreLayer = VcsCoreLive.pipe(
+    Layer.provideMerge(gitCoreLayer),
+    Layer.provideMerge(gitManagerLayer),
+    Layer.provideMerge(VcsResolverLive.pipe(Layer.provideMerge(VcsProcessLive))),
+    Layer.provideMerge(VcsProcessLive),
+  );
+  const vcsManagerLayer = VcsManagerLive.pipe(Layer.provideMerge(vcsCoreLayer));
 
   return Layer.mergeAll(
     orchestrationReactorLayer,
     gitCoreLayer,
     gitManagerLayer,
+    vcsCoreLayer,
+    vcsManagerLayer,
     terminalLayer,
     KeybindingsLive,
   ).pipe(Layer.provideMerge(NodeServices.layer));

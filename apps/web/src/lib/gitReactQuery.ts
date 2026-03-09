@@ -1,4 +1,4 @@
-import type { GitStackedAction } from "@t3tools/contracts";
+import type { GitStackedAction, VcsRefKind, VcsStatusResult } from "@t3tools/contracts";
 import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureNativeApi } from "../nativeApi";
 
@@ -29,8 +29,19 @@ export function gitStatusQueryOptions(cwd: string | null) {
     queryKey: gitQueryKeys.status(cwd),
     queryFn: async () => {
       const api = ensureNativeApi();
-      if (!cwd) throw new Error("Git status is unavailable.");
-      return api.git.status({ cwd });
+      if (!cwd) throw new Error("VCS status is unavailable.");
+      const result = await api.vcs.status({ cwd });
+      return {
+        ...result,
+        branch: result.refName,
+        pr: result.pr
+          ? {
+              ...result.pr,
+              baseBranch: result.pr.baseRef,
+              headBranch: result.pr.headRef,
+            }
+          : null,
+      };
     },
     enabled: cwd !== null,
     staleTime: GIT_STATUS_STALE_TIME_MS,
@@ -45,8 +56,12 @@ export function gitBranchesQueryOptions(cwd: string | null) {
     queryKey: gitQueryKeys.branches(cwd),
     queryFn: async () => {
       const api = ensureNativeApi();
-      if (!cwd) throw new Error("Git branches are unavailable.");
-      return api.git.listBranches({ cwd });
+      if (!cwd) throw new Error("VCS refs are unavailable.");
+      const result = await api.vcs.listRefs({ cwd });
+      return {
+        ...result,
+        branches: result.refs,
+      };
     },
     enabled: cwd !== null,
     staleTime: GIT_BRANCHES_STALE_TIME_MS,
@@ -61,8 +76,8 @@ export function gitInitMutationOptions(input: { cwd: string | null; queryClient:
     mutationKey: gitMutationKeys.init(input.cwd),
     mutationFn: async () => {
       const api = ensureNativeApi();
-      if (!input.cwd) throw new Error("Git init is unavailable.");
-      return api.git.init({ cwd: input.cwd });
+      if (!input.cwd) throw new Error("VCS init is unavailable.");
+      return api.vcs.init({ cwd: input.cwd });
     },
     onSuccess: async () => {
       await invalidateGitQueries(input.queryClient);
@@ -78,8 +93,8 @@ export function gitCheckoutMutationOptions(input: {
     mutationKey: gitMutationKeys.checkout(input.cwd),
     mutationFn: async (branch: string) => {
       const api = ensureNativeApi();
-      if (!input.cwd) throw new Error("Git checkout is unavailable.");
-      return api.git.checkout({ cwd: input.cwd, branch });
+      if (!input.cwd) throw new Error("VCS checkout is unavailable.");
+      return api.vcs.checkoutRef({ cwd: input.cwd, refName: branch, refKind: "branch" });
     },
     onSuccess: async () => {
       await invalidateGitQueries(input.queryClient);
@@ -90,6 +105,7 @@ export function gitCheckoutMutationOptions(input: {
 export function gitRunStackedActionMutationOptions(input: {
   cwd: string | null;
   queryClient: QueryClient;
+  gitStatus?: VcsStatusResult | null;
 }) {
   return mutationOptions({
     mutationKey: gitMutationKeys.runStackedAction(input.cwd),
@@ -104,6 +120,9 @@ export function gitRunStackedActionMutationOptions(input: {
     }) => {
       const api = ensureNativeApi();
       if (!input.cwd) throw new Error("Git action is unavailable.");
+      if (!input.gitStatus?.capabilities.supportsRunStackedAction) {
+        throw new Error("Git actions are unavailable for this repository backend.");
+      }
       return api.git.runStackedAction({
         cwd: input.cwd,
         action,
@@ -136,17 +155,32 @@ export function gitCreateWorktreeMutationOptions(input: { queryClient: QueryClie
     mutationFn: async ({
       cwd,
       branch,
+      refKind,
       newBranch,
       path,
     }: {
       cwd: string;
       branch: string;
-      newBranch: string;
+      refKind?: VcsRefKind;
+      newBranch?: string;
       path?: string | null;
     }) => {
       const api = ensureNativeApi();
-      if (!cwd) throw new Error("Git worktree creation is unavailable.");
-      return api.git.createWorktree({ cwd, branch, newBranch, path: path ?? null });
+      if (!cwd) throw new Error("Workspace creation is unavailable.");
+      const result = await api.vcs.createWorkspace({
+        cwd,
+        refName: branch,
+        refKind: refKind ?? "branch",
+        ...(newBranch ? { newRefName: newBranch } : {}),
+        path: path ?? null,
+      });
+      return {
+        ...result,
+        worktree: {
+          path: result.workspace.path,
+          branch: result.workspace.refName,
+        },
+      };
     },
     mutationKey: ["git", "mutation", "create-worktree"] as const,
     onSettled: async () => {
@@ -159,8 +193,8 @@ export function gitRemoveWorktreeMutationOptions(input: { queryClient: QueryClie
   return mutationOptions({
     mutationFn: async ({ cwd, path, force }: { cwd: string; path: string; force?: boolean }) => {
       const api = ensureNativeApi();
-      if (!cwd) throw new Error("Git worktree removal is unavailable.");
-      return api.git.removeWorktree({ cwd, path, force });
+      if (!cwd) throw new Error("Workspace removal is unavailable.");
+      return api.vcs.removeWorkspace({ cwd, path, force });
     },
     mutationKey: ["git", "mutation", "remove-worktree"] as const,
     onSettled: async () => {

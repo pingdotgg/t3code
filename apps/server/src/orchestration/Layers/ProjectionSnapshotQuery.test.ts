@@ -236,8 +236,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           model: "gpt-5-codex",
           interactionMode: "default",
           runtimeMode: "full-access",
-          branch: null,
-          worktreePath: null,
+          vcsBackend: "git",
+          refName: null,
+          refKind: null,
+          workspacePath: null,
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",

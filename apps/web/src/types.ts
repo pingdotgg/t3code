@@ -12,6 +12,8 @@ import type {
   ProviderKind,
   ProviderInteractionMode,
   RuntimeMode,
+  VcsBackend,
+  VcsRefKind,
 } from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -98,6 +100,10 @@ export interface Thread {
   createdAt: string;
   latestTurn: OrchestrationLatestTurn | null;
   lastVisitedAt?: string | undefined;
+  vcsBackend: VcsBackend;
+  refName: string | null;
+  refKind: VcsRefKind | null;
+  workspacePath: string | null;
   branch: string | null;
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];

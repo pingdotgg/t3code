@@ -159,8 +159,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           model: command.model,
           runtimeMode: command.runtimeMode,
           interactionMode: command.interactionMode,
-          branch: command.branch,
-          worktreePath: command.worktreePath,
+          vcsBackend: command.vcsBackend ?? "git",
+          refName: command.refName ?? command.branch ?? null,
+          refKind:
+            command.refKind !== undefined
+              ? command.refKind
+              : command.branch !== undefined
+                ? "branch"
+                : null,
+          workspacePath: command.workspacePath ?? command.worktreePath ?? null,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -208,8 +215,22 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.model !== undefined ? { model: command.model } : {}),
-          ...(command.branch !== undefined ? { branch: command.branch } : {}),
-          ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.vcsBackend !== undefined ? { vcsBackend: command.vcsBackend } : {}),
+          ...(command.refName !== undefined
+            ? { refName: command.refName }
+            : command.branch !== undefined
+              ? { refName: command.branch }
+              : {}),
+          ...(command.refKind !== undefined
+            ? { refKind: command.refKind }
+            : command.branch !== undefined
+              ? { refKind: "branch" }
+              : {}),
+          ...(command.workspacePath !== undefined
+            ? { workspacePath: command.workspacePath }
+            : command.worktreePath !== undefined
+              ? { workspacePath: command.worktreePath }
+              : {}),
           updatedAt: occurredAt,
         },
       };

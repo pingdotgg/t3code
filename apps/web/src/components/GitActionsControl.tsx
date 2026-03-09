@@ -15,6 +15,7 @@ import {
   resolveQuickAction,
   summarizeGitResult,
 } from "./GitActionsControl.logic";
+import { formatCurrentVcsRefNames, getCurrentVcsRefNames } from "./BranchToolbar.logic";
 import { Button } from "~/components/ui/button";
 import {
   Dialog,
@@ -154,7 +155,18 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const { data: branchList = null } = useQuery(gitBranchesQueryOptions(gitCwd));
   // Default to true while loading so we don't flash init controls.
   const isRepo = branchList?.isRepo ?? true;
-  const currentBranch = branchList?.branches.find((branch) => branch.current)?.name ?? null;
+  const currentRefNames = useMemo(
+    () =>
+      branchList
+        ? getCurrentVcsRefNames({ backend: branchList.backend, refs: branchList.branches })
+        : [],
+    [branchList],
+  );
+  const currentBranch = currentRefNames[0] ?? null;
+  const currentRefDisplayValue = useMemo(
+    () => formatCurrentVcsRefNames(currentRefNames),
+    [currentRefNames],
+  );
   const isGitStatusOutOfSync =
     !!gitStatus?.branch && !!currentBranch && gitStatus.branch !== currentBranch;
 
@@ -168,7 +180,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const initMutation = useMutation(gitInitMutationOptions({ cwd: gitCwd, queryClient }));
 
   const runImmediateGitActionMutation = useMutation(
-    gitRunStackedActionMutationOptions({ cwd: gitCwd, queryClient }),
+    gitRunStackedActionMutationOptions({ cwd: gitCwd, queryClient, gitStatus: gitStatusForActions }),
   );
   const pullMutation = useMutation(gitPullMutationOptions({ cwd: gitCwd, queryClient }));
 
@@ -176,6 +188,8 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     useIsMutating({ mutationKey: gitMutationKeys.runStackedAction(gitCwd) }) > 0;
   const isPullRunning = useIsMutating({ mutationKey: gitMutationKeys.pull(gitCwd) }) > 0;
   const isGitActionRunning = isRunStackedActionRunning || isPullRunning;
+  const supportsGitActions = gitStatus?.capabilities.supportsRunStackedAction ?? true;
+  const backendLabel = gitStatus?.backend === "jj" ? "Base bookmark" : "Branch";
   const isDefaultBranch = useMemo(() => {
     const branchName = gitStatusForActions?.branch;
     if (!branchName) return false;
@@ -578,6 +592,17 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   );
 
   if (!gitCwd) return null;
+  if (isRepo && !supportsGitActions) {
+    const readOnlyRefDisplayValue =
+      gitStatus?.backend === "jj" ? (currentRefDisplayValue ?? gitStatus.refName ?? "None") : (gitStatus?.refName ?? "None");
+    return (
+      <div className="flex items-center gap-2 text-xs text-muted-foreground/70">
+        <span>{backendLabel}:</span>
+        <span className="font-medium text-foreground/80">{readOnlyRefDisplayValue}</span>
+        <span>{gitStatus?.hasWorkingTreeChanges ? "Dirty workspace" : "Clean workspace"}</span>
+      </div>
+    );
+  }
 
   return (
     <>

@@ -642,8 +642,10 @@ describe("WebSocket Server", () => {
           projectId: bootstrapProjectId,
           title: "New thread",
           model: "gpt-5-codex",
-          branch: null,
-          worktreePath: null,
+          vcsBackend: "git",
+          refName: null,
+          refKind: null,
+          workspacePath: null,
         }),
       ]),
     );

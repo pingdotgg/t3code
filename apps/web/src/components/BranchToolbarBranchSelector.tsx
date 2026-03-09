@@ -1,4 +1,4 @@
-import type { GitBranch } from "@t3tools/contracts";
+import type { VcsRef } from "@t3tools/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDownIcon } from "lucide-react";
@@ -18,7 +18,8 @@ import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   EnvMode,
-  resolveBranchToolbarValue,
+  getCurrentVcsRefNames,
+  resolveBranchToolbarState,
 } from "./BranchToolbar.logic";
 import { Button } from "./ui/button";
 import {
@@ -50,16 +51,18 @@ function toBranchActionErrorMessage(error: unknown): string {
 function getBranchTriggerLabel(input: {
   activeWorktreePath: string | null;
   effectiveEnvMode: EnvMode;
-  resolvedActiveBranch: string | null;
+  displayValue: string | null;
+  backend: "git" | "jj";
 }): string {
-  const { activeWorktreePath, effectiveEnvMode, resolvedActiveBranch } = input;
-  if (!resolvedActiveBranch) {
-    return "Select branch";
+  const { activeWorktreePath, effectiveEnvMode, displayValue, backend } = input;
+  const refLabel = backend === "jj" ? "base bookmark" : "branch";
+  if (!displayValue) {
+    return `Select ${refLabel}`;
   }
-  if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
-    return `From ${resolvedActiveBranch}`;
+  if (backend === "git" && effectiveEnvMode === "worktree" && !activeWorktreePath) {
+    return `From ${displayValue}`;
   }
-  return resolvedActiveBranch;
+  return displayValue;
 }
 
 export function BranchToolbarBranchSelector({
@@ -78,15 +81,22 @@ export function BranchToolbarBranchSelector({
 
   const branchesQuery = useQuery(gitBranchesQueryOptions(branchCwd));
   const branches = useMemo(
-    () => dedupeRemoteBranchesWithLocalMatches(branchesQuery.data?.branches ?? []),
-    [branchesQuery.data?.branches],
+    () => dedupeRemoteBranchesWithLocalMatches(branchesQuery.data?.refs ?? []),
+    [branchesQuery.data?.refs],
   );
-  const currentGitBranch = branches.find((branch) => branch.current)?.name ?? null;
-  const canonicalActiveBranch = resolveBranchToolbarValue({
+  const backend = branchesQuery.data?.backend ?? "git";
+  const capabilities = branchesQuery.data?.capabilities;
+  const currentRefNames = useMemo(
+    () => getCurrentVcsRefNames({ backend, refs: branches }),
+    [backend, branches],
+  );
+  const currentGitBranch = backend === "git" ? (currentRefNames[0] ?? null) : null;
+  const canonicalToolbarState = resolveBranchToolbarState({
+    backend,
     envMode: effectiveEnvMode,
     activeWorktreePath,
     activeThreadBranch,
-    currentGitBranch,
+    currentRefNames,
   });
   const branchNames = useMemo(() => branches.map((branch) => branch.name), [branches]);
   const branchByName = useMemo(
@@ -95,7 +105,10 @@ export function BranchToolbarBranchSelector({
   );
   const trimmedBranchQuery = branchQuery.trim();
   const normalizedBranchQuery = trimmedBranchQuery.toLowerCase();
-  const canCreateBranch = effectiveEnvMode === "local" && trimmedBranchQuery.length > 0;
+  const canCreateBranch =
+    effectiveEnvMode === "local" &&
+    trimmedBranchQuery.length > 0 &&
+    !!capabilities?.supportsCreateRef;
   const hasExactBranchMatch = branchByName.has(trimmedBranchQuery);
   const createBranchItemValue = canCreateBranch
     ? `__create_new_branch__:${trimmedBranchQuery}`
@@ -118,7 +131,7 @@ export function BranchToolbarBranchSelector({
     [branchPickerItems, createBranchItemValue, normalizedBranchQuery],
   );
   const [resolvedActiveBranch, setOptimisticBranch] = useOptimistic(
-    canonicalActiveBranch,
+    canonicalToolbarState.displayValue,
     (_currentBranch: string | null, optimisticBranch: string | null) => optimisticBranch,
   );
   const [isBranchActionPending, startBranchActionTransition] = useTransition();
@@ -130,7 +143,7 @@ export function BranchToolbarBranchSelector({
     });
   };
 
-  const selectBranch = (branch: GitBranch) => {
+  const selectBranch = (branch: VcsRef) => {
     const api = readNativeApi();
     if (!api || !branchCwd || isBranchActionPending) return;
 
@@ -143,15 +156,28 @@ export function BranchToolbarBranchSelector({
     }
 
     // If the branch already lives in a worktree, point the thread there.
-    if (branch.worktreePath) {
-      const isMainWorktree = branch.worktreePath === activeProjectCwd;
-      onSetThreadBranch(branch.name, isMainWorktree ? null : branch.worktreePath);
+    if (branch.workspacePath) {
+      const isMainWorktree = branch.workspacePath === activeProjectCwd;
+      onSetThreadBranch(branch.name, isMainWorktree ? null : branch.workspacePath);
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
       return;
     }
 
-    const selectedBranchName = branch.isRemote
+    if (backend === "jj") {
+      onSetThreadBranch(branch.name, null);
+      setIsBranchMenuOpen(false);
+      onComposerFocusRequest?.();
+      return;
+    }
+
+    if (!capabilities?.supportsCheckoutRef) {
+      setIsBranchMenuOpen(false);
+      onComposerFocusRequest?.();
+      return;
+    }
+
+    const selectedBranchName = branch.kind === "remoteBranch" || branch.kind === "remoteBookmark"
       ? deriveLocalBranchNameFromRemoteRef(branch.name)
       : branch.name;
 
@@ -161,7 +187,7 @@ export function BranchToolbarBranchSelector({
     runBranchAction(async () => {
       setOptimisticBranch(selectedBranchName);
       try {
-        await api.git.checkout({ cwd: branchCwd, branch: branch.name });
+        await api.vcs.checkoutRef({ cwd: branchCwd, refName: branch.name, refKind: branch.kind });
         await invalidateGitQueries(queryClient);
       } catch (error) {
         toastManager.add({
@@ -173,10 +199,10 @@ export function BranchToolbarBranchSelector({
       }
 
       let nextBranchName = selectedBranchName;
-      if (branch.isRemote) {
-        const status = await api.git.status({ cwd: branchCwd }).catch(() => null);
-        if (status?.branch) {
-          nextBranchName = status.branch;
+      if (branch.kind === "remoteBranch" || branch.kind === "remoteBookmark") {
+        const status = await api.vcs.status({ cwd: branchCwd }).catch(() => null);
+        if (status?.refName) {
+          nextBranchName = status.refName;
         }
       }
 
@@ -197,13 +223,21 @@ export function BranchToolbarBranchSelector({
       setOptimisticBranch(name);
 
       try {
-        await api.git.createBranch({ cwd: branchCwd, branch: name });
+        await api.vcs.createRef({
+          cwd: branchCwd,
+          refName: name,
+          refKind: backend === "jj" ? "bookmark" : "branch",
+        });
         try {
-          await api.git.checkout({ cwd: branchCwd, branch: name });
+          await api.vcs.checkoutRef({
+            cwd: branchCwd,
+            refName: name,
+            refKind: backend === "jj" ? "bookmark" : "branch",
+          });
         } catch (error) {
           toastManager.add({
             type: "error",
-            title: "Failed to checkout branch.",
+            title: `Failed to checkout ${backend === "jj" ? "bookmark" : "branch"}.`,
             description: toBranchActionErrorMessage(error),
           });
           return;
@@ -211,7 +245,7 @@ export function BranchToolbarBranchSelector({
       } catch (error) {
         toastManager.add({
           type: "error",
-          title: "Failed to create branch.",
+          title: `Failed to create ${backend === "jj" ? "bookmark" : "branch"}.`,
           description: toBranchActionErrorMessage(error),
         });
         return;
@@ -225,6 +259,7 @@ export function BranchToolbarBranchSelector({
 
   useEffect(() => {
     if (
+      backend !== "git" ||
       effectiveEnvMode !== "worktree" ||
       activeWorktreePath ||
       activeThreadBranch ||
@@ -236,6 +271,7 @@ export function BranchToolbarBranchSelector({
   }, [
     activeThreadBranch,
     activeWorktreePath,
+    backend,
     currentGitBranch,
     effectiveEnvMode,
     onSetThreadBranch,
@@ -289,7 +325,8 @@ export function BranchToolbarBranchSelector({
   const triggerLabel = getBranchTriggerLabel({
     activeWorktreePath,
     effectiveEnvMode,
-    resolvedActiveBranch,
+    displayValue: resolvedActiveBranch,
+    backend,
   });
 
   return (
@@ -304,7 +341,7 @@ export function BranchToolbarBranchSelector({
       }}
       onOpenChange={handleOpenChange}
       open={isBranchMenuOpen}
-      value={resolvedActiveBranch}
+      value={backend === "git" ? resolvedActiveBranch : canonicalToolbarState.selectedValue}
     >
       <ComboboxTrigger
         render={<Button variant="ghost" size="xs" />}
@@ -319,14 +356,16 @@ export function BranchToolbarBranchSelector({
           <ComboboxInput
             className="[&_input]:font-sans rounded-md"
             inputClassName="ring-0"
-            placeholder="Search branches..."
+            placeholder={`Search ${backend === "jj" ? "base bookmarks" : "branches"}...`}
             showTrigger={false}
             size="sm"
             value={branchQuery}
             onChange={(event) => setBranchQuery(event.target.value)}
           />
         </div>
-        <ComboboxEmpty>No branches found.</ComboboxEmpty>
+        <ComboboxEmpty>
+          {`No ${backend === "jj" ? "base bookmarks" : "branches"} found.`}
+        </ComboboxEmpty>
 
         <ComboboxList ref={setBranchListRef} className="max-h-56">
           <div
@@ -354,7 +393,9 @@ export function BranchToolbarBranchSelector({
                     }}
                     onClick={() => createBranch(trimmedBranchQuery)}
                   >
-                    <span className="truncate">Create new branch "{trimmedBranchQuery}"</span>
+                    <span className="truncate">
+                      {`Create new ${backend === "jj" ? "bookmark" : "branch"} "${trimmedBranchQuery}"`}
+                    </span>
                   </ComboboxItem>
                 );
               }
@@ -363,12 +404,12 @@ export function BranchToolbarBranchSelector({
               if (!branch) return null;
 
               const hasSecondaryWorktree =
-                branch.worktreePath && branch.worktreePath !== activeProjectCwd;
+                branch.workspacePath && branch.workspacePath !== activeProjectCwd;
               const badge = branch.current
                 ? "current"
                 : hasSecondaryWorktree
-                  ? "worktree"
-                  : branch.isRemote
+                  ? "workspace"
+                  : branch.kind === "remoteBranch" || branch.kind === "remoteBookmark"
                     ? "remote"
                     : branch.isDefault
                       ? "default"

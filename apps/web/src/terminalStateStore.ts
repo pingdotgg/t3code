@@ -14,6 +14,7 @@ import {
   MAX_THREAD_TERMINAL_COUNT,
   type ThreadTerminalGroup,
 } from "./types";
+import { ensureLocalStorage } from "./lib/localStorageShim";
 
 interface ThreadTerminalState {
   terminalOpen: boolean;
@@ -523,7 +524,7 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
     {
       name: TERMINAL_STATE_STORAGE_KEY,
       version: 1,
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(ensureLocalStorage),
       partialize: (state) => ({
         terminalStateByThreadId: state.terminalStateByThreadId,
       }),

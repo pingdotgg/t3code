@@ -367,16 +367,17 @@ const make = Effect.gen(function* () {
 
   const maybeGenerateAndRenameWorktreeBranchForFirstTurn = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
-    readonly branch: string | null;
-    readonly worktreePath: string | null;
+    readonly vcsBackend: "git" | "jj";
+    readonly refName: string | null;
+    readonly workspacePath: string | null;
     readonly messageId: string;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
   }) {
-    if (!input.branch || !input.worktreePath) {
+    if (input.vcsBackend !== "git" || !input.refName || !input.workspacePath) {
       return;
     }
-    if (!isTemporaryWorktreeBranch(input.branch)) {
+    if (!isTemporaryWorktreeBranch(input.refName)) {
       return;
     }
 
@@ -390,8 +391,8 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const oldBranch = input.branch;
-    const cwd = input.worktreePath;
+    const oldBranch = input.refName;
+    const cwd = input.workspacePath;
     const attachments = input.attachments ?? [];
     yield* textGeneration
       .generateBranchName({
@@ -419,8 +420,10 @@ const make = Effect.gen(function* () {
                 type: "thread.meta.update",
                 commandId: serverCommandId("worktree-branch-rename"),
                 threadId: input.threadId,
-                branch: renamed.branch,
-                worktreePath: cwd,
+                vcsBackend: "git",
+                refName: renamed.branch,
+                refKind: "branch",
+                workspacePath: cwd,
               }),
           );
         }),
@@ -461,8 +464,9 @@ const make = Effect.gen(function* () {
 
     yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
       threadId: event.payload.threadId,
-      branch: thread.branch,
-      worktreePath: thread.worktreePath,
+      vcsBackend: thread.vcsBackend ?? "git",
+      refName: thread.refName ?? thread.branch ?? null,
+      workspacePath: thread.workspacePath ?? thread.worktreePath ?? null,
       messageId: message.id,
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),

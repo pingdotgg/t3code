@@ -12,14 +12,14 @@ export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number
 export function resolveThreadWorkspaceCwd(input: {
   readonly thread: {
     readonly projectId: ProjectId;
-    readonly worktreePath: string | null;
+    readonly workspacePath: string | null;
   };
   readonly projects: ReadonlyArray<{
     readonly id: ProjectId;
     readonly workspaceRoot: string;
   }>;
 }): string | undefined {
-  const worktreeCwd = input.thread.worktreePath ?? undefined;
+  const worktreeCwd = input.thread.workspacePath ?? undefined;
   if (worktreeCwd) {
     return worktreeCwd;
   }

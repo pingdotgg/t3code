@@ -21,6 +21,15 @@ import {
   GitStatusInput,
 } from "./git";
 import {
+  VcsCheckoutRefInput,
+  VcsCreateRefInput,
+  VcsCreateWorkspaceInput,
+  VcsInitInput,
+  VcsListRefsInput,
+  VcsRemoveWorkspaceInput,
+  VcsStatusInput,
+} from "./vcs";
+import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalOpenInput,
@@ -55,6 +64,15 @@ export const WS_METHODS = {
   gitCreateBranch: "git.createBranch",
   gitCheckout: "git.checkout",
   gitInit: "git.init",
+
+  // VCS methods
+  vcsStatus: "vcs.status",
+  vcsListRefs: "vcs.listRefs",
+  vcsCreateWorkspace: "vcs.createWorkspace",
+  vcsRemoveWorkspace: "vcs.removeWorkspace",
+  vcsCreateRef: "vcs.createRef",
+  vcsCheckoutRef: "vcs.checkoutRef",
+  vcsInit: "vcs.init",
 
   // Terminal methods
   terminalOpen: "terminal.open",
@@ -117,6 +135,15 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.gitCreateBranch, GitCreateBranchInput),
   tagRequestBody(WS_METHODS.gitCheckout, GitCheckoutInput),
   tagRequestBody(WS_METHODS.gitInit, GitInitInput),
+
+  // VCS methods
+  tagRequestBody(WS_METHODS.vcsStatus, VcsStatusInput),
+  tagRequestBody(WS_METHODS.vcsListRefs, VcsListRefsInput),
+  tagRequestBody(WS_METHODS.vcsCreateWorkspace, VcsCreateWorkspaceInput),
+  tagRequestBody(WS_METHODS.vcsRemoveWorkspace, VcsRemoveWorkspaceInput),
+  tagRequestBody(WS_METHODS.vcsCreateRef, VcsCreateRefInput),
+  tagRequestBody(WS_METHODS.vcsCheckoutRef, VcsCheckoutRefInput),
+  tagRequestBody(WS_METHODS.vcsInit, VcsInitInput),
 
   // Terminal methods
   tagRequestBody(WS_METHODS.terminalOpen, TerminalOpenInput),

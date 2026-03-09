@@ -1,9 +1,12 @@
-import type { GitBranch } from "@t3tools/contracts";
+import type { GitBranch, VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import {
   dedupeRemoteBranchesWithLocalMatches,
+  formatCurrentVcsRefNames,
+  getCurrentVcsRefNames,
   deriveLocalBranchNameFromRemoteRef,
   resolveDraftEnvModeAfterBranchChange,
+  resolveBranchToolbarState,
   resolveBranchToolbarValue,
 } from "./BranchToolbar.logic";
 
@@ -71,6 +74,120 @@ describe("resolveBranchToolbarValue", () => {
         currentGitBranch: "main",
       }),
     ).toBe("main");
+  });
+});
+
+describe("getCurrentVcsRefNames", () => {
+  it("returns the current git branch name", () => {
+    const refs: VcsRef[] = [
+      {
+        name: "main",
+        kind: "branch",
+        current: true,
+        isDefault: true,
+        workspacePath: null,
+      },
+      {
+        name: "origin/main",
+        kind: "remoteBranch",
+        current: false,
+        isDefault: true,
+        remoteName: "origin",
+        workspacePath: null,
+      },
+    ];
+
+    expect(getCurrentVcsRefNames({ backend: "git", refs })).toEqual(["main"]);
+  });
+
+  it("returns sorted current jj base bookmarks", () => {
+    const refs: VcsRef[] = [
+      {
+        name: "release/1.2",
+        kind: "bookmark",
+        current: true,
+        isDefault: false,
+        workspacePath: null,
+      },
+      {
+        name: "main",
+        kind: "bookmark",
+        current: true,
+        isDefault: true,
+        workspacePath: null,
+      },
+      {
+        name: "main@origin",
+        kind: "remoteBookmark",
+        current: false,
+        isDefault: true,
+        remoteName: "origin",
+        workspacePath: null,
+      },
+    ];
+
+    expect(getCurrentVcsRefNames({ backend: "jj", refs })).toEqual(["main", "release/1.2"]);
+  });
+});
+
+describe("formatCurrentVcsRefNames", () => {
+  it("formats a single current ref name", () => {
+    expect(formatCurrentVcsRefNames(["main"])).toBe("main");
+  });
+
+  it("formats multiple current ref names", () => {
+    expect(formatCurrentVcsRefNames(["main", "release/1.2"])).toBe("main, release/1.2");
+  });
+
+  it("returns null when there are no current ref names", () => {
+    expect(formatCurrentVcsRefNames([])).toBeNull();
+  });
+});
+
+describe("resolveBranchToolbarState", () => {
+  it("prefers the explicit jj thread bookmark over inferred bookmarks", () => {
+    expect(
+      resolveBranchToolbarState({
+        backend: "jj",
+        envMode: "local",
+        activeWorktreePath: null,
+        activeThreadBranch: "feature/base",
+        currentRefNames: ["main"],
+      }),
+    ).toEqual({
+      displayValue: "feature/base",
+      selectedValue: "feature/base",
+    });
+  });
+
+  it("uses a single inferred jj bookmark for display and selection", () => {
+    expect(
+      resolveBranchToolbarState({
+        backend: "jj",
+        envMode: "local",
+        activeWorktreePath: null,
+        activeThreadBranch: null,
+        currentRefNames: ["main"],
+      }),
+    ).toEqual({
+      displayValue: "main",
+      selectedValue: "main",
+    });
+  });
+
+  it("shows multiple inferred jj bookmarks without selecting one", () => {
+    expect(
+      resolveBranchToolbarState({
+        backend: "jj",
+        envMode: "local",
+        activeWorktreePath: null,
+        activeThreadBranch: null,
+        currentRefNames: ["main", "release/1.2"],
+      }),
+    ).toEqual({
+      displayValue: "main, release/1.2",
+      selectedValue: null,
+    });
   });
 });
 

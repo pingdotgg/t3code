@@ -36,8 +36,8 @@ export default function BranchToolbar({
   const activeProjectId = serverThread?.projectId ?? draftThread?.projectId ?? null;
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
-  const activeThreadBranch = serverThread?.branch ?? draftThread?.branch ?? null;
-  const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const activeThreadBranch = serverThread?.refName ?? draftThread?.branch ?? null;
+  const activeWorktreePath = serverThread?.workspacePath ?? draftThread?.worktreePath ?? null;
   const branchCwd = activeWorktreePath ?? activeProject?.cwd ?? null;
   const hasServerThread = serverThread !== undefined;
   const effectiveEnvMode = resolveEffectiveEnvMode({
@@ -67,8 +67,10 @@ export default function BranchToolbar({
           type: "thread.meta.update",
           commandId: newCommandId(),
           threadId: activeThreadId,
-          branch,
-          worktreePath,
+          vcsBackend: serverThread?.vcsBackend ?? "git",
+          refName: branch,
+          refKind: branch ? (serverThread?.vcsBackend === "jj" ? "bookmark" : "branch") : null,
+          workspacePath: worktreePath,
         });
       }
       if (hasServerThread) {
@@ -89,6 +91,7 @@ export default function BranchToolbar({
     [
       activeThreadId,
       serverThread?.session,
+      serverThread?.vcsBackend,
       activeWorktreePath,
       hasServerThread,
       setThreadBranchAction,

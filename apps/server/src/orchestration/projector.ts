@@ -8,6 +8,7 @@ import {
 import { Effect, Schema } from "effect";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
+import { normalizeLegacyThreadVcsMetadata } from "./threadVcsMetadata.ts";
 import {
   MessageSentPayloadSchema,
   ProjectCreatedPayload,
@@ -246,6 +247,12 @@ export function projectEvent(
           event.type,
           "payload",
         );
+        const vcsMetadata = normalizeLegacyThreadVcsMetadata(
+          payload as typeof payload & {
+            readonly branch?: string | null;
+            readonly worktreePath?: string | null;
+          },
+        );
         const thread: OrchestrationThread = yield* decodeForEvent(
           OrchestrationThread,
           {
@@ -255,8 +262,7 @@ export function projectEvent(
             model: payload.model,
             runtimeMode: payload.runtimeMode,
             interactionMode: payload.interactionMode,
-            branch: payload.branch,
-            worktreePath: payload.worktreePath,
+            ...vcsMetadata,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -291,16 +297,34 @@ export function projectEvent(
 
     case "thread.meta-updated":
       return decodeForEvent(ThreadMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            ...(payload.title !== undefined ? { title: payload.title } : {}),
-            ...(payload.model !== undefined ? { model: payload.model } : {}),
-            ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
-            ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
-            updatedAt: payload.updatedAt,
-          }),
-        })),
+        Effect.map((payload) => {
+          const vcsMetadata = normalizeLegacyThreadVcsMetadata(
+            payload as typeof payload & {
+              readonly branch?: string | null;
+              readonly worktreePath?: string | null;
+            },
+          );
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              ...(payload.title !== undefined ? { title: payload.title } : {}),
+              ...(payload.model !== undefined ? { model: payload.model } : {}),
+              ...(payload.vcsBackend !== undefined || payload.branch !== undefined
+                ? { vcsBackend: vcsMetadata.vcsBackend }
+                : {}),
+              ...(payload.refName !== undefined || payload.branch !== undefined
+                ? { refName: vcsMetadata.refName }
+                : {}),
+              ...(payload.refKind !== undefined || payload.branch !== undefined
+                ? { refKind: vcsMetadata.refKind }
+                : {}),
+              ...(payload.workspacePath !== undefined || payload.worktreePath !== undefined
+                ? { workspacePath: vcsMetadata.workspacePath }
+                : {}),
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
       );
 
     case "thread.runtime-mode-set":

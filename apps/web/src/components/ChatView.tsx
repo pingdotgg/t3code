@@ -328,6 +328,7 @@ function buildLocalDraftThread(
   draftThread: DraftThreadState,
   fallbackModel: string,
   error: string | null,
+  vcsBackend: "git" | "jj",
 ): Thread {
   return {
     id: threadId,
@@ -343,6 +344,10 @@ function buildLocalDraftThread(
     createdAt: draftThread.createdAt,
     latestTurn: null,
     lastVisitedAt: draftThread.createdAt,
+    vcsBackend,
+    refName: draftThread.branch,
+    refKind: draftThread.branch ? (vcsBackend === "jj" ? "bookmark" : "branch") : null,
+    workspacePath: draftThread.worktreePath,
     branch: draftThread.branch,
     worktreePath: draftThread.worktreePath,
     turnDiffSummaries: [],
@@ -725,6 +730,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const serverThread = threads.find((t) => t.id === threadId);
   const fallbackDraftProject = projects.find((project) => project.id === draftThread?.projectId);
+  const fallbackDraftProjectVcsQuery = useQuery(
+    gitBranchesQueryOptions(fallbackDraftProject?.cwd ?? null),
+  );
   const localDraftError = serverThread ? null : (localDraftErrorsByThreadId[threadId] ?? null);
   const localDraftThread = useMemo(
     () =>
@@ -734,9 +742,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
             draftThread,
             fallbackDraftProject?.model ?? DEFAULT_MODEL_BY_PROVIDER.codex,
             localDraftError,
+            fallbackDraftProjectVcsQuery.data?.backend ?? "git",
           )
         : undefined,
-    [draftThread, fallbackDraftProject?.model, localDraftError, threadId],
+    [
+      draftThread,
+      fallbackDraftProject?.model,
+      fallbackDraftProjectVcsQuery.data?.backend,
+      localDraftError,
+      threadId,
+    ],
   );
   const activeThread = serverThread ?? localDraftThread;
   const runtimeMode =
@@ -1162,7 +1177,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     latestTurnSettled,
     timelineEntries,
   ]);
-  const gitCwd = activeThread?.worktreePath ?? activeProject?.cwd ?? null;
+  const gitCwd = activeThread?.workspacePath ?? activeProject?.cwd ?? null;
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
   const isPathTrigger = composerTriggerKind === "path";
@@ -1270,7 +1285,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeProvider, providerStatuses],
   );
   const activeProjectCwd = activeProject?.cwd ?? null;
-  const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
+  const activeThreadWorktreePath = activeThread?.workspacePath ?? null;
   const threadTerminalRuntimeEnv = useMemo(() => {
     if (!activeProjectCwd) return {};
     return projectScriptRuntimeEnv({
@@ -2127,7 +2142,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [closeExpandedImage, expandedImage, navigateExpandedImage]);
 
-  const activeWorktreePath = activeThread?.worktreePath;
+  const activeWorktreePath = activeThread?.workspacePath;
   const envMode: DraftThreadEnvMode = activeWorktreePath
     ? "worktree"
     : isLocalDraftThread
@@ -2467,18 +2482,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
-      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
-        ? activeThread.branch
+      isFirstMessage && envMode === "worktree" && !activeThread.workspacePath
+        ? activeThread.refName
         : null;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
     const shouldCreateWorktree =
-      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThread.branch) {
+      isFirstMessage && envMode === "worktree" && !activeThread.workspacePath;
+    if (shouldCreateWorktree && !activeThread.refName) {
       setStoreThreadError(
         threadIdForSend,
-        "Select a base branch before sending in New worktree mode.",
+        `Select a base ${activeThread.vcsBackend === "jj" ? "bookmark" : "branch"} before sending in New workspace mode.`,
       );
       return;
     }
@@ -2530,31 +2545,37 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     let createdServerThreadForLocalDraft = false;
     let turnStartSucceeded = false;
-    let nextThreadBranch = activeThread.branch;
-    let nextThreadWorktreePath = activeThread.worktreePath;
+    let nextThreadBranch = activeThread.refName;
+    let nextThreadRefKind = activeThread.refKind;
+    let nextThreadWorktreePath = activeThread.workspacePath;
     await (async () => {
       // On first message: lock in branch + create worktree if needed.
       if (baseBranchForWorktree) {
         beginSendPhase("preparing-worktree");
-        const newBranch = buildTemporaryWorktreeBranchName();
         const result = await createWorktreeMutation.mutateAsync({
           cwd: activeProject.cwd,
           branch: baseBranchForWorktree,
-          newBranch,
+          refKind: activeThread.refKind ?? (activeThread.vcsBackend === "jj" ? "bookmark" : "branch"),
+          ...(activeThread.vcsBackend === "jj"
+            ? {}
+            : { newBranch: buildTemporaryWorktreeBranchName() }),
         });
-        nextThreadBranch = result.worktree.branch;
-        nextThreadWorktreePath = result.worktree.path;
+        nextThreadBranch = result.workspace.refName;
+        nextThreadRefKind = result.workspace.refKind;
+        nextThreadWorktreePath = result.workspace.path;
         if (isServerThread) {
           await api.orchestration.dispatchCommand({
             type: "thread.meta.update",
             commandId: newCommandId(),
             threadId: threadIdForSend,
-            branch: result.worktree.branch,
-            worktreePath: result.worktree.path,
+            vcsBackend: result.backend,
+            refName: result.workspace.refName,
+            refKind: result.workspace.refKind,
+            workspacePath: result.workspace.path,
           });
           // Keep local thread state in sync immediately so terminal drawer opens
           // with the worktree cwd/env instead of briefly using the project root.
-          setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
+          setStoreThreadBranch(threadIdForSend, result.workspace.refName, result.workspace.path);
         }
       }
 
@@ -2587,8 +2608,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
           model: threadCreateModel,
           runtimeMode,
           interactionMode,
-          branch: nextThreadBranch,
-          worktreePath: nextThreadWorktreePath,
+          vcsBackend: activeThread.vcsBackend,
+          refName: nextThreadBranch,
+          refKind: nextThreadRefKind,
+          workspacePath: nextThreadWorktreePath,
           createdAt: activeThread.createdAt,
         });
         createdServerThreadForLocalDraft = true;
@@ -3027,8 +3050,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
         model: nextThreadModel,
         runtimeMode,
         interactionMode: "default",
-        branch: activeThread.branch,
-        worktreePath: activeThread.worktreePath,
+        vcsBackend: activeThread.vcsBackend,
+        refName: activeThread.refName,
+        refKind: activeThread.refKind,
+        workspacePath: activeThread.workspacePath,
         createdAt,
       })
       .then(() => {
@@ -3441,7 +3466,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
           isGitRepo={isGitRepo}
-          openInCwd={activeThread.worktreePath ?? activeProject?.cwd ?? null}
+          openInCwd={activeThread.workspacePath ?? activeProject?.cwd ?? null}
           activeProjectScripts={activeProject?.scripts}
           preferredScriptId={
             activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null

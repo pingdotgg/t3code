@@ -15,6 +15,18 @@ import type {
   GitStatusResult,
 } from "./git";
 import type {
+  VcsCheckoutRefInput,
+  VcsCreateRefInput,
+  VcsCreateWorkspaceInput,
+  VcsCreateWorkspaceResult,
+  VcsInitInput,
+  VcsListRefsInput,
+  VcsListRefsResult,
+  VcsRemoveWorkspaceInput,
+  VcsStatusInput,
+  VcsStatusResult,
+} from "./vcs";
+import type {
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
   ProjectWriteFileInput,
@@ -138,6 +150,15 @@ export interface NativeApi {
     pull: (input: GitPullInput) => Promise<GitPullResult>;
     status: (input: GitStatusInput) => Promise<GitStatusResult>;
     runStackedAction: (input: GitRunStackedActionInput) => Promise<GitRunStackedActionResult>;
+  };
+  vcs: {
+    status: (input: VcsStatusInput) => Promise<VcsStatusResult>;
+    listRefs: (input: VcsListRefsInput) => Promise<VcsListRefsResult>;
+    createWorkspace: (input: VcsCreateWorkspaceInput) => Promise<VcsCreateWorkspaceResult>;
+    removeWorkspace: (input: VcsRemoveWorkspaceInput) => Promise<void>;
+    createRef: (input: VcsCreateRefInput) => Promise<void>;
+    checkoutRef: (input: VcsCheckoutRefInput) => Promise<void>;
+    init: (input: VcsInitInput) => Promise<void>;
   };
   contextMenu: {
     show: <T extends string>(

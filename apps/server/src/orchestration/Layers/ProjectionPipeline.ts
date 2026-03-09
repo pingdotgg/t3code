@@ -42,6 +42,7 @@ import {
   OrchestrationProjectionPipeline,
   type OrchestrationProjectionPipelineShape,
 } from "../Services/ProjectionPipeline.ts";
+import { normalizeLegacyThreadVcsMetadata } from "../threadVcsMetadata.ts";
 import {
   attachmentRelativePath,
   parseAttachmentIdFromRelativePath,
@@ -417,7 +418,8 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
   const applyThreadsProjection: ProjectorDefinition["apply"] = (event, attachmentSideEffects) =>
     Effect.gen(function* () {
       switch (event.type) {
-        case "thread.created":
+        case "thread.created": {
+          const vcsMetadata = normalizeLegacyThreadVcsMetadata(event.payload);
           yield* projectionThreadRepository.upsert({
             threadId: event.payload.threadId,
             projectId: event.payload.projectId,
@@ -425,14 +427,14 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             model: event.payload.model,
             runtimeMode: event.payload.runtimeMode,
             interactionMode: event.payload.interactionMode,
-            branch: event.payload.branch,
-            worktreePath: event.payload.worktreePath,
+            ...vcsMetadata,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
             deletedAt: null,
           });
           return;
+        }
 
         case "thread.meta-updated": {
           const existingRow = yield* projectionThreadRepository.getById({
@@ -441,13 +443,22 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           if (Option.isNone(existingRow)) {
             return;
           }
+          const vcsMetadata = normalizeLegacyThreadVcsMetadata(event.payload);
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
             ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
-            ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
-            ...(event.payload.worktreePath !== undefined
-              ? { worktreePath: event.payload.worktreePath }
+            ...(event.payload.vcsBackend !== undefined || event.payload.branch !== undefined
+              ? { vcsBackend: vcsMetadata.vcsBackend }
+              : {}),
+            ...(event.payload.refName !== undefined || event.payload.branch !== undefined
+              ? { refName: vcsMetadata.refName }
+              : {}),
+            ...(event.payload.refKind !== undefined || event.payload.branch !== undefined
+              ? { refKind: vcsMetadata.refKind }
+              : {}),
+            ...(event.payload.workspacePath !== undefined || event.payload.worktreePath !== undefined
+              ? { workspacePath: vcsMetadata.workspacePath }
               : {}),
             updatedAt: event.payload.updatedAt,
           });

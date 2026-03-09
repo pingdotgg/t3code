@@ -13,6 +13,8 @@ import {
   RuntimeMode,
   ThreadId,
   TurnId,
+  VcsBackend,
+  VcsRefKind,
 } from "@t3tools/contracts";
 import { Option, Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
@@ -26,8 +28,10 @@ export const ProjectionThread = Schema.Struct({
   model: Schema.String,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
-  branch: Schema.NullOr(Schema.String),
-  worktreePath: Schema.NullOr(Schema.String),
+  vcsBackend: VcsBackend,
+  refName: Schema.NullOr(Schema.String),
+  refKind: Schema.NullOr(VcsRefKind),
+  workspacePath: Schema.NullOr(Schema.String),
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

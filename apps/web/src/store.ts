@@ -266,8 +266,12 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         createdAt: thread.createdAt,
         latestTurn: thread.latestTurn,
         lastVisitedAt: existing?.lastVisitedAt ?? thread.updatedAt,
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
+        vcsBackend: thread.vcsBackend ?? "git",
+        refName: thread.refName ?? thread.branch ?? null,
+        refKind: thread.refKind ?? (thread.refName ?? thread.branch ? "branch" : null),
+        workspacePath: thread.workspacePath ?? thread.worktreePath ?? null,
+        branch: thread.refName ?? thread.branch ?? null,
+        worktreePath: thread.workspacePath ?? thread.worktreePath ?? null,
         turnDiffSummaries: thread.checkpoints.map((checkpoint) => ({
           turnId: checkpoint.turnId,
           completedAt: checkpoint.completedAt,
@@ -361,6 +365,10 @@ export function setThreadBranch(
     const cwdChanged = t.worktreePath !== worktreePath;
     return {
       ...t,
+      vcsBackend: "git",
+      refName: branch,
+      refKind: branch ? "branch" : null,
+      workspacePath: worktreePath,
       branch,
       worktreePath,
       ...(cwdChanged ? { session: null } : {}),
