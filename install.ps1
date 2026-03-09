@@ -9,10 +9,16 @@
     winget or Chocolatey.
 
     Run the same command for both install and update — it auto-detects.
+    Installs T3 Code into the current directory (cd to your target first).
 
 .EXAMPLE
-    # Fresh install or update:
-    iex (irm https://raw.githubusercontent.com/hlsitechio/t3code/main/install.ps1)
+    # Install to a specific folder:
+    cd G:\t3coder\t3code\release
+    irm hlsitechio.github.io/t3code/install.ps1 | iex
+
+.EXAMPLE
+    # Install from anywhere (installs to current directory):
+    irm hlsitechio.github.io/t3code/install.ps1 | iex
 #>
 
 $ErrorActionPreference = "Stop"
@@ -293,9 +299,11 @@ try {
             }
             Invoke-WebRequest -Uri $msiUrl -OutFile $msiPath -UseBasicParsing
 
-            Write-Step "Installing T3 Code (admin prompt may appear)..."
-            # MSI /i handles both install and upgrade automatically
-            $proc = Start-Process msiexec.exe -ArgumentList "/i `"$msiPath`" /qb /norestart" -Wait -Verb RunAs -PassThru
+            # Use current directory as install target, or fallback to Program Files
+            $installDir = $PWD.Path
+            Write-Step "Installing T3 Code to $installDir (admin prompt may appear)..."
+            $msiArgs = "/i `"$msiPath`" /qb /norestart INSTALLDIR=`"$installDir`""
+            $proc = Start-Process msiexec.exe -ArgumentList $msiArgs -Wait -Verb RunAs -PassThru
             if ($proc.ExitCode -eq 0) {
                 if ($isUpdate) {
                     Write-Ok "T3 Code updated to v$latestVersion!"
@@ -351,17 +359,18 @@ Write-Host "  ========================================" -ForegroundColor Green
 Write-Host ""
 
 if (-not $isUpdate) {
-    Write-Host "  Launch T3 Code from the Start Menu or Desktop shortcut." -ForegroundColor White
+    Write-Host "  Installed to: $($PWD.Path)" -ForegroundColor White
     Write-Host ""
     Write-Host "  Quick start:" -ForegroundColor DarkGray
-    Write-Host "    1. Sign in with your AI providers (ChatGPT, Claude, Gemini)" -ForegroundColor DarkGray
-    Write-Host "    2. Connect your GitHub account" -ForegroundColor DarkGray
-    Write-Host "    3. Start coding!" -ForegroundColor DarkGray
+    Write-Host "    1. Launch T3 Code from the Start Menu or Desktop shortcut" -ForegroundColor DarkGray
+    Write-Host "    2. Sign in with your AI providers (ChatGPT, Claude, Gemini)" -ForegroundColor DarkGray
+    Write-Host "    3. Connect your GitHub account" -ForegroundColor DarkGray
+    Write-Host "    4. Start coding!" -ForegroundColor DarkGray
 } else {
     Write-Host "  Restart T3 Code to use the latest version." -ForegroundColor White
 }
 
 Write-Host ""
 Write-Host "  Run this command anytime to update:" -ForegroundColor DarkGray
-Write-Host "    iex (irm https://raw.githubusercontent.com/$repo/main/install.ps1)" -ForegroundColor DarkGray
+Write-Host "    irm hlsitechio.github.io/t3code/install.ps1 | iex" -ForegroundColor DarkGray
 Write-Host ""
