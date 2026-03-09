@@ -1304,18 +1304,24 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
   ),
 );
 
+/** Cached fallback draft keyed by `provider|model` to avoid creating new objects in selectors. */
+const lastSelectedFallbackCache = new Map<string, ComposerThreadDraftState>();
+function getLastSelectedFallback(provider: ProviderKind | null, model: string | null): ComposerThreadDraftState {
+  if (!provider && !model) return EMPTY_THREAD_DRAFT;
+  const key = `${provider ?? ""}|${model ?? ""}`;
+  let cached = lastSelectedFallbackCache.get(key);
+  if (!cached) {
+    cached = { ...EMPTY_THREAD_DRAFT, provider, model };
+    lastSelectedFallbackCache.set(key, cached);
+  }
+  return cached;
+}
+
 export function useComposerThreadDraft(threadId: ThreadId): ComposerThreadDraftState {
   return useComposerDraftStore((state) => {
     const draft = state.draftsByThreadId[threadId];
     if (draft) return draft;
-    if (state.lastSelectedProvider || state.lastSelectedModel) {
-      return {
-        ...EMPTY_THREAD_DRAFT,
-        provider: state.lastSelectedProvider,
-        model: state.lastSelectedModel,
-      };
-    }
-    return EMPTY_THREAD_DRAFT;
+    return getLastSelectedFallback(state.lastSelectedProvider, state.lastSelectedModel);
   });
 }
 
