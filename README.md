@@ -1,3 +1,16 @@
+# Fork details
+
+This is a personal fork. It contains features I need for testing. All features are experimental, and I do not consider them fully done yet.
+
+## Changes
+
+- `feat/nix-flake-support`: Adds Nix flake packaging/build setup for this fork.
+- `feat/nix-flake-devshell-integration`: Adds Nix flake dev shell integration and the runtime toggle.
+- `feat/ctrl-enter-send`: Adds configurable Ctrl+Enter-to-send behavior in the chat composer.
+- `fix/session-resume`: Reuses persisted provider resume cursor when live runtime session is missing.
+
+Stack of all changes is on `stack/all`.
+
 # T3 Code
 
 T3 Code is a minimal web GUI for coding agents. Currently Codex-first, with Claude Code support coming soon.
