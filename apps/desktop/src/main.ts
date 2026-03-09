@@ -4,7 +4,7 @@ import * as FS from "node:fs";
 import * as OS from "node:os";
 import * as Path from "node:path";
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell, clipboard } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
@@ -1169,6 +1169,15 @@ function createWindow(): BrowserWindow {
         menuTemplate.push({ label: "No suggestions", enabled: false });
       }
       menuTemplate.push({ type: "separator" });
+    }
+
+    const externalUrl = getSafeExternalUrl(params.linkURL);
+    if (externalUrl) {
+      menuTemplate.push(
+        { label: "Open Link", click: () => void shell.openExternal(externalUrl) },
+        { label: "Copy Link Address", click: () => clipboard.writeText(externalUrl) },
+        { type: "separator" },
+      );
     }
 
     menuTemplate.push(
