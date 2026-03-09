@@ -60,8 +60,22 @@ You should see a version number. If it hangs for more than 5 seconds, something'
 
 **If it doesn't detect:**
 
-- Mac/Linux: Set path to `/usr/local/bin/codex`
-- Windows: Set path to `C:\Users\YourUsername\AppData\Roaming\npm\codex.cmd`
+First, find your exact Codex path:
+
+```bash
+which codex        # Mac/Linux
+where codex        # Windows
+```
+
+Then set that path in T3 Code settings.
+
+**Common installation paths:**
+
+- **Mac (npm)**: `/usr/local/bin/codex` or `~/.codex`
+- **Mac (Homebrew - Intel)**: `/usr/local/bin/codex`
+- **Mac (Homebrew - Apple Silicon)**: `/opt/homebrew/bin/codex`
+- **Linux**: `/usr/local/bin/codex` or `~/.npm-global/bin/codex`
+- **Windows**: `C:\Users\YourUsername\AppData\Roaming\npm\codex.cmd`
 
 ## Common Problems
 
