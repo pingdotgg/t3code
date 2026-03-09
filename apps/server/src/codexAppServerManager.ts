@@ -202,6 +202,16 @@ function asArray(value: unknown): unknown[] | undefined {
   return Array.isArray(value) ? value : undefined;
 }
 
+export function resolveCodexSpawnCommand(
+  binaryPath: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform === "win32" && binaryPath.includes(" ")) {
+    return `"${binaryPath}"`;
+  }
+  return binaryPath;
+}
+
 export function readCodexAccountSnapshot(response: unknown): CodexAccountSnapshot {
   const record = asObject(response);
   const account = asObject(record?.account) ?? record;
@@ -579,7 +589,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         cwd: resolvedCwd,
         ...(codexHomePath ? { homePath: codexHomePath } : {}),
       });
-      const child = spawn(codexBinaryPath, ["app-server"], {
+      const child = spawn(resolveCodexSpawnCommand(codexBinaryPath), ["app-server"], {
         cwd: resolvedCwd,
         env: {
           ...process.env,
@@ -1175,7 +1185,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       ...(input.homePath ? { homePath: input.homePath } : {}),
     });
 
-    const child = spawn(binaryPath, ["app-server"], {
+    const child = spawn(resolveCodexSpawnCommand(binaryPath), ["app-server"], {
       cwd: input.cwd,
       env: {
         ...process.env,
@@ -1275,8 +1285,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     clearTimeout(pending.timeout);
     context.pending.delete(key);
 
-    if (response.error?.message) {
-      pending.reject(new Error(`${pending.method} failed: ${String(response.error.message)}`));
+    if (response.error) {
+      const detail = response.error.message?.trim();
+      pending.reject(new Error(detail ? `${pending.method} failed: ${detail}` : `${pending.method} failed.`));
       return;
     }
 
@@ -1919,7 +1930,7 @@ function assertSupportedCodexCliVersion(input: {
   readonly cwd: string;
   readonly homePath?: string;
 }): void {
-  const result = spawnSync(input.binaryPath, ["--version"], {
+  const result = spawnSync(resolveCodexSpawnCommand(input.binaryPath), ["--version"], {
     cwd: input.cwd,
     env: {
       ...process.env,

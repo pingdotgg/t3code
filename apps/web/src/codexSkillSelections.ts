@@ -126,3 +126,22 @@ export function reconcileComposerSkillSelections(input: {
     .filter((selection) => isSelectionStillValid(input.nextPrompt, selection, matchedRanges))
     .toSorted((left, right) => left.rangeStart - right.rangeStart);
 }
+
+export function insertComposerSkillSelection(input: {
+  previousPrompt: string;
+  nextPrompt: string;
+  selections: readonly ComposerSkillSelection[];
+  insertedSelection: ComposerSkillSelection;
+}): ComposerSkillSelection[] {
+  const matchedRanges = new Set<string>();
+  return [
+    ...reconcileComposerSkillSelections({
+      previousPrompt: input.previousPrompt,
+      nextPrompt: input.nextPrompt,
+      selections: input.selections,
+    }),
+    input.insertedSelection,
+  ]
+    .toSorted((left, right) => left.rangeStart - right.rangeStart)
+    .filter((selection) => isSelectionStillValid(input.nextPrompt, selection, matchedRanges));
+}

@@ -14,6 +14,7 @@ import {
   isRecoverableThreadResumeError,
   normalizeCodexModelSlug,
   readCodexAccountSnapshot,
+  resolveCodexSpawnCommand,
   resolveCodexModelForAccount,
 } from "./codexAppServerManager";
 
@@ -180,6 +181,20 @@ describe("normalizeCodexModelSlug", () => {
   it("keeps non-aliased models as-is", () => {
     expect(normalizeCodexModelSlug("gpt-5.2-codex")).toBe("gpt-5.2-codex");
     expect(normalizeCodexModelSlug("gpt-5.2")).toBe("gpt-5.2");
+  });
+});
+
+describe("resolveCodexSpawnCommand", () => {
+  it("quotes Windows binary paths that contain spaces", () => {
+    expect(resolveCodexSpawnCommand("C:\\Program Files\\Codex\\codex.exe", "win32")).toBe(
+      '"C:\\Program Files\\Codex\\codex.exe"',
+    );
+  });
+
+  it("keeps binary paths unchanged on other platforms", () => {
+    expect(resolveCodexSpawnCommand("/usr/local/bin/codex", "darwin")).toBe(
+      "/usr/local/bin/codex",
+    );
   });
 });
 
@@ -745,6 +760,45 @@ describe("respondToUserInput", () => {
     const request = Array.from(context.pendingApprovals.values())[0];
     expect(request?.requestKind).toBe("file-read");
     expect(request?.method).toBe("item/fileRead/requestApproval");
+  });
+
+  it("rejects probe responses when an error object is present without a message", () => {
+    const manager = new CodexAppServerManager();
+    const reject = vi.fn();
+    const resolve = vi.fn();
+    const timeout = setTimeout(() => {}, 60_000);
+    const context = {
+      pending: new Map([
+        [
+          "42",
+          {
+            method: "skills/list",
+            timeout,
+            resolve,
+            reject,
+          },
+        ],
+      ]),
+    };
+
+    (
+      manager as unknown as {
+        handleProbeResponse: (
+          context: { pending: Map<string, unknown> },
+          response: Record<string, unknown>,
+        ) => void;
+      }
+    ).handleProbeResponse(context, {
+      id: 42,
+      error: {
+        code: -32000,
+      },
+    });
+
+    clearTimeout(timeout);
+    expect(reject).toHaveBeenCalledWith(new Error("skills/list failed."));
+    expect(resolve).not.toHaveBeenCalled();
+    expect(context.pending.size).toBe(0);
   });
 });
 

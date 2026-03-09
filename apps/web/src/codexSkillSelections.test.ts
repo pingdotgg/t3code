@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createComposerSkillSelection,
+  insertComposerSkillSelection,
   reconcileComposerSkillSelections,
 } from "./codexSkillSelections";
 
@@ -61,5 +62,27 @@ describe("reconcileComposerSkillSelections", () => {
         ],
       }),
     ).toEqual([]);
+  });
+
+  it("keeps a newly inserted selection after replacing the active trigger", () => {
+    expect(
+      insertComposerSkillSelection({
+        previousPrompt: "$cre",
+        nextPrompt: "$create-pr ",
+        selections: [],
+        insertedSelection: createComposerSkillSelection({
+          name: "create-pr",
+          path: "/tmp/create-pr/SKILL.md",
+          rangeStart: 0,
+        }),
+      }),
+    ).toEqual([
+      {
+        name: "create-pr",
+        path: "/tmp/create-pr/SKILL.md",
+        rangeStart: 0,
+        rangeEnd: 10,
+      },
+    ]);
   });
 });
