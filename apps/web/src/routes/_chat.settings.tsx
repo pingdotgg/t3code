@@ -11,6 +11,7 @@ import {
   shouldShowFastTierIcon,
   useAppSettings,
 } from "../appSettings";
+import { APP_VERSION } from "../branding";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -596,6 +597,27 @@ function SettingsRouteView() {
                   </Button>
                 </div>
               ) : null}
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">About</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Version and app information.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Version</p>
+                  <p className="text-xs text-muted-foreground">
+                    Currently installed version of T3 Code.
+                  </p>
+                </div>
+                <code className="rounded bg-muted px-2 py-1 text-xs font-medium text-foreground">
+                  {APP_VERSION}
+                </code>
+              </div>
             </section>
           </div>
         </div>
