@@ -3474,6 +3474,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }
           keybindings={keybindings}
           availableEditors={availableEditors}
+          terminalAvailable={activeProject !== undefined}
+          terminalOpen={terminalState.terminalOpen}
+          terminalToggleShortcutLabel={terminalToggleShortcutLabel}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
           diffOpen={diffOpen}
@@ -3483,6 +3486,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
+          onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
         />
       </header>
