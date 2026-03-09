@@ -3764,9 +3764,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           aria-label={
                             envMode === "worktree"
                               ? activeWorktreePath
-                                ? "Dedicated workspace active"
-                                : "Dedicated workspace pending"
-                              : "Primary workspace active"
+                                ? "Linked worktree active"
+                                : "Linked worktree pending"
+                              : "Main worktree active"
                           }
                         >
                           {envMode === "worktree" ? <FolderClosedIcon /> : <FolderIcon />}
@@ -3776,11 +3776,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     <TooltipPopup side="top">
                       {envMode === "worktree"
                         ? activeWorktreePath
-                          ? "Dedicated workspace active"
+                          ? "Linked worktree active"
                           : defaultProjectBranch
-                            ? `Dedicated workspace will branch from ${defaultProjectBranch}`
-                            : "Dedicated workspace will be created before the first turn"
-                        : "Primary workspace active"}
+                            ? `Linked worktree will branch from ${defaultProjectBranch}`
+                            : "Linked worktree will be created before the first turn"
+                        : "Main worktree active"}
                     </TooltipPopup>
                   </Tooltip>
 
