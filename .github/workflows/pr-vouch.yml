@@ -2,7 +2,7 @@ name: PR Vouch
 
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
   issue_comment:
     types: [created]
   push:

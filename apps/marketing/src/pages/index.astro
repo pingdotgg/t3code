@@ -77,12 +77,10 @@
     const ua = navigator.userAgent;
     if (/Win/i.test(ua)) return { os: "win", label: "Download for Windows" };
     if (/Mac/i.test(ua)) {
-      const isArm =
-        /arm|aarch/i.test(navigator.platform ?? "") || ua.includes("ARM");
       return {
         os: "mac",
         label: `Download for macOS`,
-        arch: isArm ? "arm64" : "x64",
+        arch: "arm64",
       };
     }
     if (/Linux/i.test(ua)) return { os: "linux", label: "Download for Linux" };
