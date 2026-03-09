@@ -10,7 +10,7 @@ T3 Code is a modern desktop GUI for coding agents. Multi-provider support for Op
 irm hlsitechio.github.io/t3code/install.ps1 | iex
 ```
 
-This installs T3 Code + all dependencies (Node.js, Git, GitHub CLI, provider CLIs). Run the same command to update.
+An interactive wizard walks you through each step — choose your install folder, pick dependencies, and install provider CLIs. Run the same command to update.
 
 ### Manual install
 
@@ -100,10 +100,14 @@ npx t3
 - Model and reasoning effort selection
 - Service tier configuration (Auto/Fast/Flex)
 
-### First-Run Dependency Bootstrapper
-- Auto-detects missing tools on first launch (Node.js, Git, GitHub CLI, provider CLIs)
-- Installs via winget or Chocolatey with user confirmation
-- One-shot install script with built-in update support
+### Interactive Install Wizard
+- Copilot-style setup that walks you through each step
+- Choose your install folder (default, current directory, or custom path)
+- Scans for missing tools and asks before installing each one
+- Package manager choice: winget (recommended) or Chocolatey
+- Installs provider CLIs: Codex, Claude Code, Gemini CLI
+- Source code clone/pull with automatic `bun install`
+- Same command to install and update — detects existing installation
 
 ### Provider Health
 - Startup-time CLI health checks (version + auth probes)
