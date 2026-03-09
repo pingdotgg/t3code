@@ -601,6 +601,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       } catch (error) {
         console.log("codex account/read failed", error);
       }
+      this.fetchAndEmitRateLimits(context);
 
       const normalizedModel = resolveCodexModelForAccount(
         normalizeCodexModelSlug(input.model),
@@ -1168,6 +1169,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         activeTurnId: undefined,
         lastError: errorMessage ?? context.session.lastError,
       });
+      this.fetchAndEmitRateLimits(context);
       return;
     }
 
@@ -1303,6 +1305,24 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     context.child.stdin.write(`${encoded}\n`);
+  }
+
+  private fetchAndEmitRateLimits(context: CodexSessionContext): void {
+    this.sendRequest(context, "account/rateLimits/read", {})
+      .then((rateLimitsResponse) => {
+        this.emitEvent({
+          id: EventId.makeUnsafe(randomUUID()),
+          kind: "notification",
+          provider: "codex",
+          threadId: context.session.threadId,
+          createdAt: new Date().toISOString(),
+          method: "account/rateLimits/updated",
+          payload: rateLimitsResponse,
+        });
+      })
+      .catch(() => {
+        // Rate limits may not be available for all auth modes.
+      });
   }
 
   private emitLifecycleEvent(context: CodexSessionContext, method: string, message: string): void {

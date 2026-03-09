@@ -75,6 +75,7 @@ export const WS_CHANNELS = {
   terminalEvent: "terminal.event",
   serverWelcome: "server.welcome",
   serverConfigUpdated: "server.configUpdated",
+  providerRateLimitsUpdated: "provider.rateLimitsUpdated",
 } as const;
 
 // -- Tagged Union of all request body schemas ─────────────────────────
