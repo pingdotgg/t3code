@@ -636,6 +636,22 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
+  const providerService = yield* ProviderService;
+  yield* Stream.runForEach(
+    Stream.filter(
+      providerService.streamEvents,
+      (event) => event.type === "account.rate-limits.updated",
+    ),
+    (event) => {
+      const payload = (event as { payload?: { rateLimits?: unknown } }).payload;
+      return broadcastPush({
+        type: "push",
+        channel: WS_CHANNELS.providerRateLimitsUpdated,
+        data: payload?.rateLimits ?? {},
+      });
+    },
+  ).pipe(Effect.forkIn(subscriptionsScope));
+
   yield* Scope.provide(orchestrationReactor.start, subscriptionsScope);
 
   let welcomeBootstrapProjectId: ProjectId | undefined;

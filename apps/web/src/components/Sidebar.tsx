@@ -33,6 +33,7 @@ import { derivePendingApprovals } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
+import { WeeklyLimitPill } from "./WeeklyLimitPill";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
@@ -1424,7 +1425,9 @@ export default function Sidebar() {
       </SidebarContent>
 
       <SidebarSeparator />
-      <SidebarFooter className="p-2">
+      <SidebarFooter className="gap-0 p-2">
+        <WeeklyLimitPill />
+        <SidebarSeparator className="my-1.5" />
         <SidebarMenu>
           <SidebarMenuItem>
             {isOnSettings ? (
