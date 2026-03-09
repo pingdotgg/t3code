@@ -31,6 +31,8 @@ import {
 } from "@t3tools/shared/model";
 import {
   memo,
+  type ComponentProps,
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -250,6 +252,7 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
 
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
+
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
@@ -3720,49 +3723,85 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
 
                   {/* Interaction mode toggle */}
-                  <Button
-                    variant="ghost"
-                    className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-                    size="sm"
-                    type="button"
-                    onClick={toggleInteractionMode}
-                    title={
-                      interactionMode === "plan"
-                        ? "Plan mode — click to return to normal chat mode"
-                        : "Default mode — click to enter plan mode"
-                    }
-                  >
-                    <BotIcon />
-                    <span className="sr-only sm:not-sr-only">
-                      {interactionMode === "plan" ? "Plan" : "Chat"}
-                    </span>
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          variant="ghost"
+                          className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                          size="sm"
+                          type="button"
+                          onClick={toggleInteractionMode}
+                          aria-description={
+                            interactionMode === "plan"
+                              ? "Plan mode — click to return to normal chat mode"
+                              : "Default mode — click to enter plan mode"
+                          }
+                        >
+                          <BotIcon />
+                          <span className="sr-only sm:not-sr-only">
+                            {interactionMode === "plan" ? "Plan" : "Chat"}
+                          </span>
+                        </Button>
+                      }
+                    />
+                    <TooltipPopup
+                      side="top"
+                      className="max-w-72 whitespace-normal leading-tight"
+                    >
+                      <span className="flex flex-col items-center gap-1">
+                        <span>
+                          {interactionMode === "plan"
+                            ? "Plan mode — click to return to normal chat mode"
+                            : "Default mode — click to enter plan mode"}
+                        </span>
+                        <kbd className="inline-flex shrink-0 items-center gap-0.5 rounded bg-foreground/10 px-1 py-0.5 font-medium font-sans text-[10px]">
+                          <span>⇧</span>
+                          <span>Tab</span>
+                        </kbd>
+                      </span>
+                    </TooltipPopup>
+                  </Tooltip>
 
                   {/* Divider */}
                   <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
 
                   {/* Runtime mode toggle */}
-                  <Button
-                    variant="ghost"
-                    className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-                    size="sm"
-                    type="button"
-                    onClick={() =>
-                      void handleRuntimeModeChange(
-                        runtimeMode === "full-access" ? "approval-required" : "full-access",
-                      )
-                    }
-                    title={
-                      runtimeMode === "full-access"
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          variant="ghost"
+                          className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                          size="sm"
+                          type="button"
+                          onClick={() =>
+                            void handleRuntimeModeChange(
+                              runtimeMode === "full-access" ? "approval-required" : "full-access",
+                            )
+                          }
+                          aria-description={
+                            runtimeMode === "full-access"
+                              ? "Full access — click to require approvals"
+                              : "Approval required — click for full access"
+                          }
+                        >
+                          {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
+                          <span className="sr-only sm:not-sr-only">
+                            {runtimeMode === "full-access" ? "Full access" : "Supervised"}
+                          </span>
+                        </Button>
+                      }
+                    />
+                    <TooltipPopup
+                      side="top"
+                      className="max-w-72 whitespace-normal leading-tight"
+                    >
+                      {runtimeMode === "full-access"
                         ? "Full access — click to require approvals"
-                        : "Approval required — click for full access"
-                    }
-                  >
-                    {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
-                    <span className="sr-only sm:not-sr-only">
-                      {runtimeMode === "full-access" ? "Full access" : "Supervised"}
-                    </span>
-                  </Button>
+                        : "Approval required — click for full access"}
+                    </TooltipPopup>
+                  </Tooltip>
 
                   {/* Plan sidebar toggle */}
                   {(activePlan || activeProposedPlan || planSidebarOpen) ? (
