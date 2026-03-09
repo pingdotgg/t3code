@@ -37,17 +37,6 @@ const GitWorktree = Schema.Struct({
 });
 export type GitWorktree = typeof GitWorktree.Type;
 
-export const GitWorktreeEntry = Schema.Struct({
-  path: TrimmedNonEmptyStringSchema,
-  branch: Schema.NullOr(TrimmedNonEmptyStringSchema),
-  isCurrent: Schema.Boolean,
-  isMainWorktree: Schema.Boolean,
-  hasWorkingTreeChanges: Schema.Boolean,
-  hasConflicts: Schema.Boolean,
-  conflictedFiles: Schema.Array(TrimmedNonEmptyStringSchema),
-});
-export type GitWorktreeEntry = typeof GitWorktreeEntry.Type;
-
 // RPC Inputs
 
 export const GitStatusInput = Schema.Struct({
@@ -93,11 +82,6 @@ export const GitCreateBranchInput = Schema.Struct({
   branch: TrimmedNonEmptyStringSchema,
 });
 export type GitCreateBranchInput = typeof GitCreateBranchInput.Type;
-
-export const GitListWorktreesInput = Schema.Struct({
-  cwd: TrimmedNonEmptyStringSchema,
-});
-export type GitListWorktreesInput = typeof GitListWorktreesInput.Type;
 
 export const GitMergeBranchesInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -178,13 +162,6 @@ export const GitCreateWorktreeResult = Schema.Struct({
   worktree: GitWorktree,
 });
 export type GitCreateWorktreeResult = typeof GitCreateWorktreeResult.Type;
-
-export const GitListWorktreesResult = Schema.Struct({
-  isRepo: Schema.Boolean,
-  repoRoot: Schema.NullOr(TrimmedNonEmptyStringSchema),
-  worktrees: Schema.Array(GitWorktreeEntry),
-});
-export type GitListWorktreesResult = typeof GitListWorktreesResult.Type;
 
 export const GitMergeBranchesResult = Schema.Struct({
   status: Schema.Literals(["merged", "conflicted"]),

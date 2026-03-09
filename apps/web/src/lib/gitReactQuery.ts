@@ -12,7 +12,6 @@ export const gitQueryKeys = {
   all: ["git"] as const,
   status: (cwd: string | null) => ["git", "status", cwd] as const,
   branches: (cwd: string | null) => ["git", "branches", cwd] as const,
-  worktrees: (cwd: string | null) => ["git", "worktrees", cwd] as const,
   repositoryContext: (cwd: string | null) => ["git", "repository-context", cwd] as const,
 };
 
@@ -73,22 +72,6 @@ export function gitRepositoryContextQueryOptions(cwd: string | null) {
     staleTime: GIT_REPOSITORY_CONTEXT_STALE_TIME_MS,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
-  });
-}
-
-export function gitWorktreesQueryOptions(cwd: string | null) {
-  return queryOptions({
-    queryKey: gitQueryKeys.worktrees(cwd),
-    queryFn: async () => {
-      const api = ensureNativeApi();
-      if (!cwd) throw new Error("Git worktrees are unavailable.");
-      return api.git.listWorktrees({ cwd });
-    },
-    enabled: cwd !== null,
-    staleTime: GIT_BRANCHES_STALE_TIME_MS,
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
-    refetchInterval: GIT_BRANCHES_REFETCH_INTERVAL_MS,
   });
 }
 

@@ -105,7 +105,6 @@ const makeIsolatedGitCore = (gitService: GitServiceShape) =>
       readConfigValue: (cwd, key) => core.readConfigValue(cwd, key),
       getRepositoryContext: (cwd) => core.getRepositoryContext(cwd),
       listBranches: (input) => core.listBranches(input),
-      listWorktrees: (input) => core.listWorktrees(input),
       createWorktree: (input) => core.createWorktree(input),
       removeWorktree: (input) => core.removeWorktree(input),
       renameBranch: (input) => core.renameBranch(input),
@@ -157,27 +156,6 @@ function removeGitWorktree(input: Parameters<GitCoreShape["removeWorktree"]>[0])
   return Effect.gen(function* () {
     const core = yield* GitCore;
     return yield* core.removeWorktree(input);
-  });
-}
-
-function listGitWorktrees(input: Parameters<GitCoreShape["listWorktrees"]>[0]) {
-  return Effect.gen(function* () {
-    const core = yield* GitCore;
-    return yield* core.listWorktrees(input);
-  });
-}
-
-function mergeGitBranches(input: Parameters<GitCoreShape["mergeBranches"]>[0]) {
-  return Effect.gen(function* () {
-    const core = yield* GitCore;
-    return yield* core.mergeBranches(input);
-  });
-}
-
-function abortGitMerge(cwd: string) {
-  return Effect.gen(function* () {
-    const core = yield* GitCore;
-    return yield* core.abortMerge(cwd);
   });
 }
 
@@ -1135,82 +1113,6 @@ it.layer(TestLayer)("git integration", (it) => {
 
         yield* removeGitWorktree({ cwd: tmp, path: wtPath, force: true });
         expect(existsSync(wtPath)).toBe(false);
-      }),
-    );
-
-    it.effect("listGitWorktrees reports primary and dedicated worktrees", () =>
-      Effect.gen(function* () {
-        const tmp = yield* makeTmpDir();
-        yield* initRepoWithCommit(tmp);
-
-        const wtParent = yield* makeTmpDir("git-worktree-report-");
-        const wtPath = path.join(wtParent, "worktree");
-        const mainBranch = (yield* listGitBranches({ cwd: tmp })).branches.find(
-          (branch) => branch.current,
-        )!.name;
-
-        yield* createGitWorktree({
-          cwd: tmp,
-          branch: mainBranch,
-          newBranch: "wt-report",
-          path: wtPath,
-        });
-
-        const worktrees = yield* listGitWorktrees({ cwd: tmp });
-        expect(worktrees.isRepo).toBe(true);
-        expect(worktrees.worktrees).toHaveLength(2);
-        expect(worktrees.worktrees.some((worktree) => worktree.isMainWorktree)).toBe(true);
-        expect(
-          worktrees.worktrees.some(
-            (worktree) => worktree.branch === "wt-report" && worktree.path === wtPath,
-          ),
-        ).toBe(true);
-
-        yield* removeGitWorktree({ cwd: tmp, path: wtPath });
-      }),
-    );
-  });
-
-  describe("mergeGitBranches", () => {
-    it.effect("reports merge conflicts and can abort them", () =>
-      Effect.gen(function* () {
-        const tmp = yield* makeTmpDir();
-        yield* initRepoWithCommit(tmp);
-
-        const mainBranch = (yield* listGitBranches({ cwd: tmp })).branches.find(
-          (branch) => branch.current,
-        )!.name;
-        const wtParent = yield* makeTmpDir("git-worktree-merge-");
-        const wtPath = path.join(wtParent, "worktree");
-        yield* createGitWorktree({
-          cwd: tmp,
-          branch: mainBranch,
-          newBranch: "feature/conflict",
-          path: wtPath,
-        });
-
-        yield* writeTextFile(path.join(tmp, "README.md"), "main branch change\n");
-        yield* git(tmp, ["add", "README.md"]);
-        yield* git(tmp, ["commit", "-m", "Main branch change"]);
-
-        yield* writeTextFile(path.join(wtPath, "README.md"), "feature branch change\n");
-        yield* git(wtPath, ["add", "README.md"]);
-        yield* git(wtPath, ["commit", "-m", "Feature branch change"]);
-
-        const mergeResult = yield* mergeGitBranches({
-          cwd: tmp,
-          sourceBranch: "feature/conflict",
-          targetBranch: mainBranch,
-        });
-
-        expect(mergeResult.status).toBe("conflicted");
-        expect(mergeResult.targetWorktreePath).toBe(tmp);
-        expect(mergeResult.conflictedFiles).toContain("README.md");
-
-        const abortResult = yield* abortGitMerge(tmp);
-        expect(abortResult.status).toBe("aborted");
-
-        yield* removeGitWorktree({ cwd: tmp, path: wtPath, force: true });
       }),
     );
   });

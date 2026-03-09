@@ -39,7 +39,7 @@ import {
   useState,
   useId,
 } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import {
@@ -49,11 +49,12 @@ import {
 } from "@tanstack/react-virtual";
 import {
   gitBranchesQueryOptions,
+  gitCreateWorktreeMutationOptions,
   gitRepositoryContextQueryOptions,
 } from "~/lib/gitReactQuery";
+import { buildTemporaryWorktreeBranchName } from "~/gitWorktree";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
-import { createDedicatedThreadWorkspace, resolveDefaultLocalBranch } from "~/threadWorktree";
 
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams, stripGitHubSearchParams } from "../diffRouteSearch";
@@ -615,6 +616,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   });
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
+  const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
   const composerDraft = useComposerThreadDraft(threadId);
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
@@ -1201,33 +1203,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       enabled: isPathTrigger,
       limit: 80,
     }),
-  );
-  const defaultProjectBranch = useMemo(() => {
-    return resolveDefaultLocalBranch(branchesQuery.data?.branches ?? []);
-  }, [branchesQuery.data?.branches]);
-  const resolveBaseBranchForDedicatedWorkspace = useCallback(
-    (preferredBranch: string | null | undefined) => preferredBranch ?? defaultProjectBranch,
-    [defaultProjectBranch],
-  );
-  const createDedicatedWorktree = useCallback(
-    async (baseBranch: string) => {
-      const api = readNativeApi();
-      const cwd = projectGitCwd ?? activeProject?.cwd;
-      if (!api || !cwd) {
-        throw new Error("Git worktree creation is unavailable.");
-      }
-      const result = await createDedicatedThreadWorkspace({
-        api,
-        cwd,
-        preferredBaseBranch: baseBranch,
-        queryClient,
-      });
-      return {
-        branch: result.branch,
-        worktreePath: result.worktreePath,
-      };
-    },
-    [activeProject?.cwd, projectGitCwd, queryClient],
   );
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
@@ -2562,17 +2537,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
       isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
-        ? resolveBaseBranchForDedicatedWorkspace(activeThread.branch)
+        ? activeThread.branch
         : null;
 
-    // In worktree mode, require a resolved base branch so we don't silently
-    // fall back to primary workspace execution.
+    // In worktree mode, require an explicit base branch so we don't silently
+    // fall back to local execution when branch selection is missing.
     const shouldCreateWorktree =
       isFirstMessage && envMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !baseBranchForWorktree) {
+    if (shouldCreateWorktree && !activeThread.branch) {
       setStoreThreadError(
         threadIdForSend,
-        "Select a base branch before sending in Dedicated mode.",
+        "Select a base branch before sending in New worktree mode.",
       );
       return;
     }
@@ -2630,24 +2605,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
       // On first message: lock in branch + create worktree if needed.
       if (baseBranchForWorktree) {
         beginSendPhase("preparing-worktree");
-        const dedicatedWorktree = await createDedicatedWorktree(baseBranchForWorktree);
-        nextThreadBranch = dedicatedWorktree.branch;
-        nextThreadWorktreePath = dedicatedWorktree.worktreePath;
+        const newBranch = buildTemporaryWorktreeBranchName();
+        const result = await createWorktreeMutation.mutateAsync({
+          cwd: activeProject.cwd,
+          branch: baseBranchForWorktree,
+          newBranch,
+        });
+        nextThreadBranch = result.worktree.branch;
+        nextThreadWorktreePath = result.worktree.path;
         if (isServerThread) {
           await api.orchestration.dispatchCommand({
             type: "thread.meta.update",
             commandId: newCommandId(),
             threadId: threadIdForSend,
-            branch: dedicatedWorktree.branch,
-            worktreePath: dedicatedWorktree.worktreePath,
+            branch: result.worktree.branch,
+            worktreePath: result.worktree.path,
           });
           // Keep local thread state in sync immediately so terminal drawer opens
           // with the worktree cwd/env instead of briefly using the project root.
-          setStoreThreadBranch(
-            threadIdForSend,
-            dedicatedWorktree.branch,
-            dedicatedWorktree.worktreePath,
-          );
+          setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
         }
       }
 
@@ -3089,23 +3065,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       (activeThread.model as ModelSlug) ||
       (activeProject.model as ModelSlug) ||
       DEFAULT_MODEL_BY_PROVIDER.codex;
-    const baseBranchForNextThread = resolveBaseBranchForDedicatedWorkspace(activeThread.branch);
 
     sendInFlightRef.current = true;
-    beginSendPhase(baseBranchForNextThread ? "preparing-worktree" : "sending-turn");
+    beginSendPhase("sending-turn");
     const finish = () => {
       sendInFlightRef.current = false;
       resetSendPhase();
     };
-
-    let nextThreadBranch = baseBranchForNextThread;
-    let nextThreadWorktreePath: string | null = null;
-
-    if (baseBranchForNextThread) {
-      const dedicatedWorktree = await createDedicatedWorktree(baseBranchForNextThread);
-      nextThreadBranch = dedicatedWorktree.branch;
-      nextThreadWorktreePath = dedicatedWorktree.worktreePath;
-    }
 
     await api.orchestration
       .dispatchCommand({
@@ -3117,8 +3083,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         model: nextThreadModel,
         runtimeMode,
         interactionMode: "default",
-        branch: nextThreadBranch,
-        worktreePath: nextThreadWorktreePath,
+        branch: activeThread.branch,
+        worktreePath: activeThread.worktreePath,
         createdAt,
       })
       .then(() =>
@@ -3181,16 +3147,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     isConnecting,
     isSendBusy,
     isServerThread,
-      navigate,
-      resetSendPhase,
-      runtimeMode,
-      createDedicatedWorktree,
-      resolveBaseBranchForDedicatedWorkspace,
-      selectedModel,
-      selectedModelOptionsForDispatch,
-      selectedProvider,
-      settings.enableAssistantStreaming,
-      syncServerReadModel,
+    navigate,
+    resetSendPhase,
+    runtimeMode,
+    selectedModel,
+    selectedModelOptionsForDispatch,
+    selectedProvider,
+    settings.enableAssistantStreaming,
+    syncServerReadModel,
   ]);
 
   const onProviderModelSelect = useCallback(
@@ -3751,36 +3715,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       {runtimeMode === "full-access"
                         ? "Full access active — click to require approvals"
                         : "Approval required — click for full access"}
-                    </TooltipPopup>
-                  </Tooltip>
-
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          variant="outline"
-                          size="icon-sm"
-                          className="pointer-events-auto rounded-full border-border/60 bg-background/80 text-muted-foreground/75 shadow-xs/5 backdrop-blur-sm hover:bg-background hover:text-foreground"
-                          aria-label={
-                            envMode === "worktree"
-                              ? activeWorktreePath
-                                ? "Linked worktree active"
-                                : "Linked worktree pending"
-                              : "Main worktree active"
-                          }
-                        >
-                          {envMode === "worktree" ? <FolderClosedIcon /> : <FolderIcon />}
-                        </Button>
-                      }
-                    />
-                    <TooltipPopup side="top">
-                      {envMode === "worktree"
-                        ? activeWorktreePath
-                          ? "Linked worktree active"
-                          : defaultProjectBranch
-                            ? `Linked worktree will branch from ${defaultProjectBranch}`
-                            : "Linked worktree will be created before the first turn"
-                        : "Main worktree active"}
                     </TooltipPopup>
                   </Tooltip>
 

@@ -58,7 +58,6 @@ import {
   SidebarSeparator,
   SidebarTrigger,
 } from "./ui/sidebar";
-import { createDedicatedThreadWorkspace } from "../threadWorktree";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 
@@ -313,10 +312,6 @@ export default function Sidebar() {
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
   );
-  const projectById = useMemo(
-    () => new Map(projects.map((project) => [project.id, project] as const)),
-    [projects],
-  );
   const threadGitTargets = useMemo(
     () =>
       threads.map((thread) => ({
@@ -395,64 +390,18 @@ export default function Sidebar() {
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
       },
-    ): Promise<void> =>
-      (async () => {
-        const resolveThreadContext = async (input?: {
-          branch?: string | null;
-          worktreePath?: string | null;
-          envMode?: DraftThreadEnvMode;
-        }) => {
-          const branch = input?.branch ?? null;
-          const worktreePath = input?.worktreePath ?? null;
-          const envMode = input?.envMode ?? "worktree";
-          if (envMode !== "worktree" || worktreePath) {
-            return { branch, worktreePath, envMode };
-          }
-
-          const project = projectById.get(projectId);
-          const api = readNativeApi();
-          if (!project?.cwd || !api) {
-            throw new Error("Dedicated workspace creation is unavailable.");
-          }
-
-          const workspace = await createDedicatedThreadWorkspace({
-            api,
-            cwd: project.cwd,
-            preferredBaseBranch: branch,
-            queryClient,
-          });
-          return {
-            branch: workspace.branch,
-            worktreePath: workspace.worktreePath,
-            envMode,
-          };
-        };
-
-        const hasBranchOption = options?.branch !== undefined;
-        const hasWorktreePathOption = options?.worktreePath !== undefined;
-        const hasEnvModeOption = options?.envMode !== undefined;
-        const storedDraftThread = getDraftThreadByProjectId(projectId);
-        if (storedDraftThread) {
-          const resolvedThreadContext = await resolveThreadContext({
-            branch: hasBranchOption ? (options?.branch ?? null) : storedDraftThread.branch,
-            worktreePath:
-              hasWorktreePathOption ? (options?.worktreePath ?? null) : storedDraftThread.worktreePath,
-            envMode:
-              hasEnvModeOption ? (options?.envMode ?? storedDraftThread.envMode) : storedDraftThread.envMode,
-          });
-
-          if (
-            hasBranchOption ||
-            hasWorktreePathOption ||
-            hasEnvModeOption ||
-            resolvedThreadContext.branch !== storedDraftThread.branch ||
-            resolvedThreadContext.worktreePath !== storedDraftThread.worktreePath ||
-            resolvedThreadContext.envMode !== storedDraftThread.envMode
-          ) {
+    ): Promise<void> => {
+      const hasBranchOption = options?.branch !== undefined;
+      const hasWorktreePathOption = options?.worktreePath !== undefined;
+      const hasEnvModeOption = options?.envMode !== undefined;
+      const storedDraftThread = getDraftThreadByProjectId(projectId);
+      if (storedDraftThread) {
+        return (async () => {
+          if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
             setDraftThreadContext(storedDraftThread.threadId, {
-              branch: resolvedThreadContext.branch,
-              worktreePath: resolvedThreadContext.worktreePath,
-              envMode: resolvedThreadContext.envMode,
+              ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
+              ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
+              ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
             });
           }
           setProjectDraftThreadId(projectId, storedDraftThread.threadId);
@@ -463,69 +412,44 @@ export default function Sidebar() {
             to: "/$threadId",
             params: { threadId: storedDraftThread.threadId },
           });
-          return;
-        }
+        })();
+      }
+      clearProjectDraftThreadId(projectId);
 
-        clearProjectDraftThreadId(projectId);
-
-        const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
-        if (activeDraftThread && routeThreadId && activeDraftThread.projectId === projectId) {
-          const resolvedThreadContext = await resolveThreadContext({
-            branch: hasBranchOption ? (options?.branch ?? null) : activeDraftThread.branch,
-            worktreePath:
-              hasWorktreePathOption ? (options?.worktreePath ?? null) : activeDraftThread.worktreePath,
-            envMode:
-              hasEnvModeOption
-                ? (options?.envMode ?? activeDraftThread.envMode)
-                : activeDraftThread.envMode,
+      const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
+      if (activeDraftThread && routeThreadId && activeDraftThread.projectId === projectId) {
+        if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
+          setDraftThreadContext(routeThreadId, {
+            ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
+            ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
+            ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
           });
-
-          if (
-            hasBranchOption ||
-            hasWorktreePathOption ||
-            hasEnvModeOption ||
-            resolvedThreadContext.branch !== activeDraftThread.branch ||
-            resolvedThreadContext.worktreePath !== activeDraftThread.worktreePath ||
-            resolvedThreadContext.envMode !== activeDraftThread.envMode
-          ) {
-            setDraftThreadContext(routeThreadId, {
-              branch: resolvedThreadContext.branch,
-              worktreePath: resolvedThreadContext.worktreePath,
-              envMode: resolvedThreadContext.envMode,
-            });
-          }
-          setProjectDraftThreadId(projectId, routeThreadId);
-          return;
         }
-
-        const threadId = newThreadId();
-        const createdAt = new Date().toISOString();
-        const resolvedThreadContext = await resolveThreadContext(options);
+        setProjectDraftThreadId(projectId, routeThreadId);
+        return Promise.resolve();
+      }
+      const threadId = newThreadId();
+      const createdAt = new Date().toISOString();
+      return (async () => {
         setProjectDraftThreadId(projectId, threadId, {
           createdAt,
-          branch: resolvedThreadContext.branch,
-          worktreePath: resolvedThreadContext.worktreePath,
-          envMode: resolvedThreadContext.envMode,
+          branch: options?.branch ?? null,
+          worktreePath: options?.worktreePath ?? null,
+          envMode: options?.envMode ?? "local",
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
 
-      await navigate({
-        to: "/$threadId",
-        params: { threadId },
-      });
-    })().catch((error) => {
-      toastManager.add({
-        title: "Could not prepare dedicated workspace",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
-    }),
+        await navigate({
+          to: "/$threadId",
+          params: { threadId },
+        });
+      })();
+    },
     [
       clearProjectDraftThreadId,
       getDraftThreadByProjectId,
-      projectById,
       navigate,
       getDraftThread,
-      queryClient,
       routeThreadId,
       setDraftThreadContext,
       setProjectDraftThreadId,
@@ -901,7 +825,11 @@ export default function Sidebar() {
       const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
       if (!projectId) return;
       event.preventDefault();
-      void handleNewThread(projectId);
+      void handleNewThread(projectId, {
+        branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,
+        worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
+        envMode: activeDraftThread?.envMode ?? (activeThread?.worktreePath ? "worktree" : "local"),
+      });
     };
 
     window.addEventListener("keydown", onWindowKeyDown);

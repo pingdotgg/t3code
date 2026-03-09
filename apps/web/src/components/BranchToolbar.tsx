@@ -105,7 +105,7 @@ export default function BranchToolbar({
       <div className="flex items-center gap-2">
         {envLocked || activeWorktreePath ? (
           <span className="border border-transparent px-[calc(--spacing(2)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
-            {activeWorktreePath ? "Dedicated" : "Primary"}
+            {activeWorktreePath ? "Worktree" : "Local"}
           </span>
         ) : (
           <Button
@@ -115,7 +115,7 @@ export default function BranchToolbar({
             size="xs"
             onClick={() => onEnvModeChange(effectiveEnvMode === "local" ? "worktree" : "local")}
           >
-            {effectiveEnvMode === "worktree" ? "Dedicated" : "Primary"}
+            {effectiveEnvMode === "worktree" ? "New worktree" : "Local"}
           </Button>
         )}
       </div>

@@ -146,61 +146,6 @@ function parseTrackingBranchByUpstreamRef(stdout: string, upstreamRef: string): 
   return null;
 }
 
-interface ParsedWorktreeEntry {
-  path: string;
-  branch: string | null;
-}
-
-function normalizePathForComparison(value: string): string {
-  return value.replace(/\\/g, "/").replace(/\/+$/g, "");
-}
-
-function isPathWithinOrEqual(candidate: string, container: string): boolean {
-  const normalizedCandidate = normalizePathForComparison(candidate);
-  const normalizedContainer = normalizePathForComparison(container);
-  return (
-    normalizedCandidate === normalizedContainer ||
-    normalizedCandidate.startsWith(`${normalizedContainer}/`)
-  );
-}
-
-function parseWorktreePorcelain(stdout: string): ReadonlyArray<ParsedWorktreeEntry> {
-  const entries: ParsedWorktreeEntry[] = [];
-  let currentPath: string | null = null;
-  let currentBranch: string | null = null;
-
-  const pushCurrent = () => {
-    if (!currentPath) {
-      return;
-    }
-    entries.push({
-      path: currentPath,
-      branch: currentBranch,
-    });
-  };
-
-  for (const line of stdout.split("\n")) {
-    if (line.startsWith("worktree ")) {
-      pushCurrent();
-      currentPath = line.slice("worktree ".length).trim();
-      currentBranch = null;
-      continue;
-    }
-    if (line.startsWith("branch refs/heads/")) {
-      currentBranch = line.slice("branch refs/heads/".length).trim() || null;
-      continue;
-    }
-    if (line === "") {
-      pushCurrent();
-      currentPath = null;
-      currentBranch = null;
-    }
-  }
-
-  pushCurrent();
-  return entries;
-}
-
 function deriveLocalBranchNameFromRemoteRef(branchName: string): string | null {
   const separatorIndex = branchName.indexOf("/");
   if (separatorIndex <= 0 || separatorIndex === branchName.length - 1) {
@@ -1057,13 +1002,19 @@ const makeGitCore = Effect.gen(function* () {
 
       const worktreeMap = new Map<string, string>();
       if (worktreeList.code === 0) {
-        for (const entry of parseWorktreePorcelain(worktreeList.stdout)) {
-          const exists = yield* fileSystem.stat(entry.path).pipe(
-            Effect.map(() => true),
-            Effect.catch(() => Effect.succeed(false)),
-          );
-          if (exists && entry.branch) {
-            worktreeMap.set(entry.branch, entry.path);
+        let currentPath: string | null = null;
+        for (const line of worktreeList.stdout.split("\n")) {
+          if (line.startsWith("worktree ")) {
+            const candidatePath = line.slice("worktree ".length);
+            const exists = yield* fileSystem.stat(candidatePath).pipe(
+              Effect.map(() => true),
+              Effect.catch(() => Effect.succeed(false)),
+            );
+            currentPath = exists ? candidatePath : null;
+          } else if (line.startsWith("branch refs/heads/") && currentPath) {
+            worktreeMap.set(line.slice("branch refs/heads/".length), currentPath);
+          } else if (line === "") {
+            currentPath = null;
           }
         }
       }
@@ -1130,74 +1081,6 @@ const makeGitCore = Effect.gen(function* () {
       return { branches, isRepo: true };
     });
 
-  const listWorktrees: GitCoreShape["listWorktrees"] = (input) =>
-    Effect.gen(function* () {
-      const context = yield* getRepositoryContext(input.cwd);
-      if (!context.isRepo || !context.repoRoot) {
-        return { isRepo: false, repoRoot: null, worktrees: [] };
-      }
-
-      const worktreeList = yield* executeGit(
-        "GitCore.listWorktrees.worktreeList",
-        input.cwd,
-        ["worktree", "list", "--porcelain"],
-        {
-          timeoutMs: 5_000,
-          allowNonZeroExit: true,
-        },
-      );
-
-      if (worktreeList.code !== 0) {
-        return yield* createGitCommandError(
-          "GitCore.listWorktrees",
-          input.cwd,
-          ["worktree", "list", "--porcelain"],
-          worktreeList.stderr.trim() || "git worktree list failed",
-        );
-      }
-
-      const entries = parseWorktreePorcelain(worktreeList.stdout);
-      const existingEntries = yield* Effect.forEach(entries, (entry) =>
-        fileSystem.stat(entry.path).pipe(
-          Effect.map(() => entry),
-          Effect.catch(() => Effect.succeed(null)),
-        ));
-      const worktrees = yield* Effect.forEach(
-        existingEntries.filter((entry): entry is ParsedWorktreeEntry => entry !== null),
-        (entry) =>
-          Effect.all([
-            statusDetails(entry.path).pipe(Effect.catch(() => Effect.succeed(null))),
-            readConflictedFiles(entry.path).pipe(Effect.catch(() => Effect.succeed([]))),
-          ]).pipe(
-            Effect.map(([status, conflictedFiles]) => ({
-              path: entry.path,
-              branch: entry.branch,
-              isCurrent: isPathWithinOrEqual(input.cwd, entry.path),
-              isMainWorktree:
-                normalizePathForComparison(entry.path) ===
-                normalizePathForComparison(context.repoRoot ?? entry.path),
-              hasWorkingTreeChanges: status?.hasWorkingTreeChanges ?? conflictedFiles.length > 0,
-              hasConflicts: conflictedFiles.length > 0,
-              conflictedFiles,
-            })),
-          ),
-        { concurrency: "unbounded" },
-      );
-
-      return {
-        isRepo: true,
-        repoRoot: context.repoRoot,
-        worktrees: worktrees.toSorted((left, right) => {
-          const leftPriority = left.isCurrent ? 0 : left.isMainWorktree ? 1 : 2;
-          const rightPriority = right.isCurrent ? 0 : right.isMainWorktree ? 1 : 2;
-          if (leftPriority !== rightPriority) {
-            return leftPriority - rightPriority;
-          }
-          return left.path.localeCompare(right.path);
-        }),
-      };
-    });
-
   const createWorktree: GitCoreShape["createWorktree"] = (input) =>
     Effect.gen(function* () {
       const sanitizedBranch = input.newBranch.replace(/\//g, "-");
@@ -1246,32 +1129,6 @@ const makeGitCore = Effect.gen(function* () {
       );
     });
 
-  const renameBranch: GitCoreShape["renameBranch"] = (input) =>
-    Effect.gen(function* () {
-      if (input.oldBranch === input.newBranch) {
-        return { branch: input.newBranch };
-      }
-      const targetBranch = yield* resolveAvailableBranchName(input.cwd, input.newBranch);
-
-      yield* executeGit(
-        "GitCore.renameBranch",
-        input.cwd,
-        ["branch", "-m", "--", input.oldBranch, targetBranch],
-        {
-          timeoutMs: 10_000,
-          fallbackErrorMessage: "git branch rename failed",
-        },
-      );
-
-      return { branch: targetBranch };
-    });
-
-  const createBranch: GitCoreShape["createBranch"] = (input) =>
-    executeGit("GitCore.createBranch", input.cwd, ["branch", input.branch], {
-      timeoutMs: 10_000,
-      fallbackErrorMessage: "git branch create failed",
-    }).pipe(Effect.asVoid);
-
   const mergeBranches: GitCoreShape["mergeBranches"] = (input) =>
     Effect.gen(function* () {
       if (input.sourceBranch === input.targetBranch) {
@@ -1283,33 +1140,44 @@ const makeGitCore = Effect.gen(function* () {
         );
       }
 
-      const worktreesResult = yield* listWorktrees({ cwd: input.cwd });
-      const targetWorktree = worktreesResult.worktrees.find(
-        (worktree) => worktree.branch === input.targetBranch,
-      );
+      const currentBranch = yield* runGitStdout(
+        "GitCore.mergeBranches.currentBranch",
+        input.cwd,
+        ["branch", "--show-current"],
+      ).pipe(Effect.map((stdout) => stdout.trim()));
 
-      if (!targetWorktree) {
+      if (currentBranch.length === 0) {
         return yield* createGitCommandError(
           "GitCore.mergeBranches",
           input.cwd,
           ["merge", input.sourceBranch],
-          `Target branch ${input.targetBranch} is not attached to a worktree.`,
+          "Detached HEAD: checkout a target branch before merging.",
         );
       }
 
-      if (targetWorktree.hasWorkingTreeChanges) {
+      if (currentBranch !== input.targetBranch) {
         return yield* createGitCommandError(
           "GitCore.mergeBranches",
-          targetWorktree.path,
+          input.cwd,
           ["merge", input.sourceBranch],
-          `Target worktree for ${input.targetBranch} has local changes.`,
+          `Target branch ${input.targetBranch} is not checked out in ${input.cwd}.`,
+        );
+      }
+
+      const targetStatus = yield* status({ cwd: input.cwd });
+      if (targetStatus.hasWorkingTreeChanges) {
+        return yield* createGitCommandError(
+          "GitCore.mergeBranches",
+          input.cwd,
+          ["merge", input.sourceBranch],
+          `Target workspace for ${input.targetBranch} has local changes.`,
         );
       }
 
       const mergeArgs = ["merge", "--no-ff", "--no-edit", input.sourceBranch] as const;
       const mergeResult = yield* executeGit(
         "GitCore.mergeBranches.merge",
-        targetWorktree.path,
+        input.cwd,
         mergeArgs,
         {
           timeoutMs: 30_000,
@@ -1320,33 +1188,33 @@ const makeGitCore = Effect.gen(function* () {
       if (mergeResult.code === 0) {
         const mergeCommitSha = yield* runGitStdout(
           "GitCore.mergeBranches.revParseHead",
-          targetWorktree.path,
+          input.cwd,
           ["rev-parse", "HEAD"],
-        );
+        ).pipe(Effect.map((stdout) => stdout.trim()));
         return {
           status: "merged" as const,
           sourceBranch: input.sourceBranch,
           targetBranch: input.targetBranch,
-          targetWorktreePath: targetWorktree.path,
+          targetWorktreePath: input.cwd,
           conflictedFiles: [],
           mergeCommitSha,
         };
       }
 
-      const conflictedFiles = yield* readConflictedFiles(targetWorktree.path);
+      const conflictedFiles = yield* readConflictedFiles(input.cwd);
       if (conflictedFiles.length > 0) {
         return {
           status: "conflicted" as const,
           sourceBranch: input.sourceBranch,
           targetBranch: input.targetBranch,
-          targetWorktreePath: targetWorktree.path,
+          targetWorktreePath: input.cwd,
           conflictedFiles,
         };
       }
 
       return yield* createGitCommandError(
         "GitCore.mergeBranches",
-        targetWorktree.path,
+        input.cwd,
         mergeArgs,
         mergeResult.stderr.trim() || "git merge failed",
       );
@@ -1381,6 +1249,32 @@ const makeGitCore = Effect.gen(function* () {
         cwd,
       };
     });
+
+  const renameBranch: GitCoreShape["renameBranch"] = (input) =>
+    Effect.gen(function* () {
+      if (input.oldBranch === input.newBranch) {
+        return { branch: input.newBranch };
+      }
+      const targetBranch = yield* resolveAvailableBranchName(input.cwd, input.newBranch);
+
+      yield* executeGit(
+        "GitCore.renameBranch",
+        input.cwd,
+        ["branch", "-m", "--", input.oldBranch, targetBranch],
+        {
+          timeoutMs: 10_000,
+          fallbackErrorMessage: "git branch rename failed",
+        },
+      );
+
+      return { branch: targetBranch };
+    });
+
+  const createBranch: GitCoreShape["createBranch"] = (input) =>
+    executeGit("GitCore.createBranch", input.cwd, ["branch", input.branch], {
+      timeoutMs: 10_000,
+      fallbackErrorMessage: "git branch create failed",
+    }).pipe(Effect.asVoid);
 
   const checkoutBranch: GitCoreShape["checkoutBranch"] = (input) =>
     Effect.gen(function* () {
@@ -1492,7 +1386,6 @@ const makeGitCore = Effect.gen(function* () {
     readConfigValue,
     getRepositoryContext,
     listBranches,
-    listWorktrees,
     createWorktree,
     removeWorktree,
     renameBranch,

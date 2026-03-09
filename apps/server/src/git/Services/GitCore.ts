@@ -17,8 +17,6 @@ import type {
   GitInitInput,
   GitListBranchesInput,
   GitListBranchesResult,
-  GitListWorktreesInput,
-  GitListWorktreesResult,
   GitMergeBranchesInput,
   GitMergeBranchesResult,
   GitRepositoryContextResult,
@@ -131,13 +129,6 @@ export interface GitCoreShape {
   ) => Effect.Effect<GitListBranchesResult, GitCommandError>;
 
   /**
-   * List worktrees and lightweight status metadata.
-   */
-  readonly listWorktrees: (
-    input: GitListWorktreesInput,
-  ) => Effect.Effect<GitListWorktreesResult, GitCommandError>;
-
-  /**
    * Pull current branch from upstream using fast-forward only.
    */
   readonly pullCurrentBranch: (cwd: string) => Effect.Effect<GitPullResult, GitCommandError>;
@@ -167,14 +158,14 @@ export interface GitCoreShape {
   readonly createBranch: (input: GitCreateBranchInput) => Effect.Effect<void, GitCommandError>;
 
   /**
-   * Merge one local branch into another branch's attached worktree.
+   * Merge one local branch into the target branch currently checked out in cwd.
    */
   readonly mergeBranches: (
     input: GitMergeBranchesInput,
   ) => Effect.Effect<GitMergeBranchesResult, GitCommandError>;
 
   /**
-   * Abort an in-progress merge in the provided worktree.
+   * Abort an in-progress merge in the provided cwd.
    */
   readonly abortMerge: (cwd: string) => Effect.Effect<GitAbortMergeResult, GitCommandError>;
 
