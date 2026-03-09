@@ -204,4 +204,32 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
 
       fs.rmSync(tempDir, { recursive: true, force: true });
     }));
+
+  it("accepts persisted gemini provider bindings", () =>
+    Effect.gen(function* () {
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = ThreadId.makeUnsafe("thread-gemini");
+
+      yield* runtimeRepository.upsert({
+        threadId,
+        providerName: "gemini",
+        adapterKey: "gemini",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: new Date().toISOString(),
+        resumeCursor: { sessionId: "gemini-session-1" },
+        runtimePayload: { model: "gemini-2.5-pro" },
+      });
+
+      const provider = yield* directory.getProvider(threadId);
+      assert.equal(provider, "gemini");
+
+      const binding = yield* directory.getBinding(threadId);
+      assert.equal(Option.isSome(binding), true);
+      if (Option.isSome(binding)) {
+        assert.equal(binding.value.provider, "gemini");
+        assert.deepEqual(binding.value.resumeCursor, { sessionId: "gemini-session-1" });
+      }
+    }));
 });

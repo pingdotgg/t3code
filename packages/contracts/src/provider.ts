@@ -19,6 +19,7 @@ import {
   ProviderKind,
   ProviderRequestKind,
   ProviderSandboxMode,
+  ProviderServiceTier,
   ProviderUserInputAnswers,
   RuntimeMode,
 } from "./orchestration";
@@ -64,6 +65,7 @@ export const ProviderSessionStartInput = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyStringSchema),
   modelOptions: Schema.optional(ProviderModelOptions),
   resumeCursor: Schema.optional(Schema.Unknown),
+  serviceTier: Schema.optional(Schema.NullOr(ProviderServiceTier)),
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
   providerOptions: Schema.optional(ProviderStartOptions),
@@ -80,6 +82,7 @@ export const ProviderSendTurnInput = Schema.Struct({
     Schema.Array(ChatAttachment).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
   ),
   model: Schema.optional(TrimmedNonEmptyStringSchema),
+  serviceTier: Schema.optional(Schema.NullOr(ProviderServiceTier)),
   modelOptions: Schema.optional(ProviderModelOptions),
   interactionMode: Schema.optional(ProviderInteractionMode),
 });

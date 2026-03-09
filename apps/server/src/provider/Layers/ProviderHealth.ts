@@ -16,6 +16,7 @@ import type {
 import { Effect, Layer, Option, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import { isGeminiCliAvailable } from "../../cliEnvironment";
 import {
   formatCodexCliUpgradeMessage,
   isCodexCliVersionSupported,
@@ -25,6 +26,7 @@ import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHe
 
 const DEFAULT_TIMEOUT_MS = 4_000;
 const CODEX_PROVIDER = "codex" as const;
+const GEMINI_PROVIDER = "gemini" as const;
 
 // ── Pure helpers ────────────────────────────────────────────────────
 
@@ -307,14 +309,40 @@ export const checkCodexProviderStatus: Effect.Effect<
   } satisfies ServerProviderStatus;
 });
 
+export const checkGeminiProviderStatus: Effect.Effect<ServerProviderStatus, never> = Effect.sync(() => {
+  const checkedAt = new Date().toISOString();
+
+  if (!isGeminiCliAvailable()) {
+    return {
+      provider: GEMINI_PROVIDER,
+      status: "error" as const,
+      available: false,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message: "Gemini CLI (`gemini`) is not installed or not on PATH.",
+    };
+  }
+
+  return {
+    provider: GEMINI_PROVIDER,
+    status: "ready" as const,
+    available: true,
+    authStatus: process.env.GEMINI_API_KEY ? "authenticated" : "unknown",
+    checkedAt,
+  } satisfies ServerProviderStatus;
+});
+
 // ── Layer ───────────────────────────────────────────────────────────
 
 export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
-    const codexStatus = yield* checkCodexProviderStatus;
+    const [codexStatus, geminiStatus] = yield* Effect.all(
+      [checkCodexProviderStatus, checkGeminiProviderStatus],
+      { concurrency: 2 },
+    );
     return {
-      getStatuses: Effect.succeed([codexStatus]),
+      getStatuses: Effect.succeed([codexStatus, geminiStatus]),
     } satisfies ProviderHealthShape;
   }),
 );

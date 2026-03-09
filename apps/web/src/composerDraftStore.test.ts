@@ -30,17 +30,23 @@ function makeImage(input: {
   };
 }
 
+function resetComposerDraftStore(): void {
+  useComposerDraftStore.setState({
+    draftsByThreadId: {},
+    draftThreadsByThreadId: {},
+    projectDraftThreadIdByProjectId: {},
+    lastUsedProvider: null,
+    lastUsedModelByProvider: {},
+  });
+}
+
 describe("composerDraftStore addImages", () => {
   const threadId = ThreadId.makeUnsafe("thread-dedupe");
   let originalRevokeObjectUrl: typeof URL.revokeObjectURL;
   let revokeSpy: ReturnType<typeof vi.fn<(url: string) => void>>;
 
   beforeEach(() => {
-    useComposerDraftStore.setState({
-      draftsByThreadId: {},
-      draftThreadsByThreadId: {},
-      projectDraftThreadIdByProjectId: {},
-    });
+    resetComposerDraftStore();
     originalRevokeObjectUrl = URL.revokeObjectURL;
     revokeSpy = vi.fn();
     URL.revokeObjectURL = revokeSpy;
@@ -125,11 +131,7 @@ describe("composerDraftStore clearComposerContent", () => {
   let revokeSpy: ReturnType<typeof vi.fn<(url: string) => void>>;
 
   beforeEach(() => {
-    useComposerDraftStore.setState({
-      draftsByThreadId: {},
-      draftThreadsByThreadId: {},
-      projectDraftThreadIdByProjectId: {},
-    });
+    resetComposerDraftStore();
     originalRevokeObjectUrl = URL.revokeObjectURL;
     revokeSpy = vi.fn();
     URL.revokeObjectURL = revokeSpy;
@@ -161,11 +163,7 @@ describe("composerDraftStore project draft thread mapping", () => {
   const otherThreadId = ThreadId.makeUnsafe("thread-b");
 
   beforeEach(() => {
-    useComposerDraftStore.setState({
-      draftsByThreadId: {},
-      draftThreadsByThreadId: {},
-      projectDraftThreadIdByProjectId: {},
-    });
+    resetComposerDraftStore();
   });
 
   it("stores and reads project draft thread ids via actions", () => {
@@ -337,11 +335,7 @@ describe("composerDraftStore codex fast mode", () => {
   const threadId = ThreadId.makeUnsafe("thread-service-tier");
 
   beforeEach(() => {
-    useComposerDraftStore.setState({
-      draftsByThreadId: {},
-      draftThreadsByThreadId: {},
-      projectDraftThreadIdByProjectId: {},
-    });
+    resetComposerDraftStore();
   });
 
   it("stores codex fast mode in the draft", () => {
@@ -364,11 +358,7 @@ describe("composerDraftStore setModel", () => {
   const threadId = ThreadId.makeUnsafe("thread-model");
 
   beforeEach(() => {
-    useComposerDraftStore.setState({
-      draftsByThreadId: {},
-      draftThreadsByThreadId: {},
-      projectDraftThreadIdByProjectId: {},
-    });
+    resetComposerDraftStore();
   });
 
   it("keeps explicit DEFAULT_MODEL overrides instead of coercing to null", () => {
@@ -378,17 +368,23 @@ describe("composerDraftStore setModel", () => {
 
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.model).toBe("gpt-5.3-codex");
   });
+
+  it("tracks the last used model for the selected provider", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "gemini");
+    store.setModel(threadId, "gemini-2.5-pro");
+
+    expect(useComposerDraftStore.getState().lastUsedProvider).toBe("gemini");
+    expect(useComposerDraftStore.getState().lastUsedModelByProvider.gemini).toBe("gemini-2.5-pro");
+  });
 });
 
 describe("composerDraftStore setProvider", () => {
   const threadId = ThreadId.makeUnsafe("thread-provider");
 
   beforeEach(() => {
-    useComposerDraftStore.setState({
-      draftsByThreadId: {},
-      draftThreadsByThreadId: {},
-      projectDraftThreadIdByProjectId: {},
-    });
+    resetComposerDraftStore();
   });
 
   it("persists provider-only selection even when prompt/model are empty", () => {
@@ -397,6 +393,7 @@ describe("composerDraftStore setProvider", () => {
     store.setProvider(threadId, "codex");
 
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.provider).toBe("codex");
+    expect(useComposerDraftStore.getState().lastUsedProvider).toBe("codex");
   });
 
   it("removes empty provider-only draft when provider is reset", () => {
@@ -413,11 +410,7 @@ describe("composerDraftStore runtime and interaction settings", () => {
   const threadId = ThreadId.makeUnsafe("thread-settings");
 
   beforeEach(() => {
-    useComposerDraftStore.setState({
-      draftsByThreadId: {},
-      draftThreadsByThreadId: {},
-      projectDraftThreadIdByProjectId: {},
-    });
+    resetComposerDraftStore();
   });
 
   it("stores runtime mode overrides in the composer draft", () => {

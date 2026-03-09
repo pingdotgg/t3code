@@ -1,12 +1,28 @@
 import assert from "node:assert/strict";
+
 import { it } from "@effect/vitest";
 import { Effect, Layer, Sink, Stream } from "effect";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { afterEach, vi } from "vitest";
 
-import { checkCodexProviderStatus, parseAuthStatusFromOutput } from "./ProviderHealth";
+const { isGeminiCliAvailableMock } = vi.hoisted(() => ({
+  isGeminiCliAvailableMock: vi.fn<(env?: NodeJS.ProcessEnv) => boolean>(),
+}));
 
-// ── Test helpers ────────────────────────────────────────────────────
+vi.mock("../../cliEnvironment", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../cliEnvironment")>();
+  return {
+    ...actual,
+    isGeminiCliAvailable: isGeminiCliAvailableMock,
+  };
+});
+
+import {
+  checkCodexProviderStatus,
+  checkGeminiProviderStatus,
+  parseAuthStatusFromOutput,
+} from "./ProviderHealth";
 
 const encoder = new TextEncoder();
 
@@ -53,7 +69,10 @@ function failingSpawnerLayer(description: string) {
   );
 }
 
-// ── Tests ───────────────────────────────────────────────────────────
+afterEach(() => {
+  isGeminiCliAvailableMock.mockReset();
+  vi.unstubAllEnvs();
+});
 
 it.effect("returns ready when codex is installed and authenticated", () =>
   Effect.gen(function* () {
@@ -132,30 +151,29 @@ it.effect("returns unauthenticated when auth probe reports login required", () =
   ),
 );
 
-it.effect(
-  "returns unauthenticated when login status output includes 'not logged in'",
-  () =>
-    Effect.gen(function* () {
-      const status = yield* checkCodexProviderStatus;
-      assert.strictEqual(status.provider, "codex");
-      assert.strictEqual(status.status, "error");
-      assert.strictEqual(status.available, true);
-      assert.strictEqual(status.authStatus, "unauthenticated");
-      assert.strictEqual(
-        status.message,
-        "Codex CLI is not authenticated. Run `codex login` and try again.",
-      );
-    }).pipe(
-      Effect.provide(
-        mockSpawnerLayer((args) => {
-          const joined = args.join(" ");
-          if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
-          if (joined === "login status")
-            return { stdout: "Not logged in\n", stderr: "", code: 1 };
-          throw new Error(`Unexpected args: ${joined}`);
-        }),
-      ),
+it.effect("returns unauthenticated when login status output includes 'not logged in'", () =>
+  Effect.gen(function* () {
+    const status = yield* checkCodexProviderStatus;
+    assert.strictEqual(status.provider, "codex");
+    assert.strictEqual(status.status, "error");
+    assert.strictEqual(status.available, true);
+    assert.strictEqual(status.authStatus, "unauthenticated");
+    assert.strictEqual(
+      status.message,
+      "Codex CLI is not authenticated. Run `codex login` and try again.",
+    );
+  }).pipe(
+    Effect.provide(
+      mockSpawnerLayer((args) => {
+        const joined = args.join(" ");
+        if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+        if (joined === "login status") {
+          return { stdout: "Not logged in\n", stderr: "", code: 1 };
+        }
+        throw new Error(`Unexpected args: ${joined}`);
+      }),
     ),
+  ),
 );
 
 it.effect("returns warning when login status command is unsupported", () =>
@@ -183,7 +201,44 @@ it.effect("returns warning when login status command is unsupported", () =>
   ),
 );
 
-// ── Pure function tests ─────────────────────────────────────────────
+it.effect("returns ready when gemini is available without API key", () =>
+  Effect.gen(function* () {
+    isGeminiCliAvailableMock.mockReturnValue(true);
+    vi.stubEnv("GEMINI_API_KEY", "");
+
+    const status = yield* checkGeminiProviderStatus;
+    assert.strictEqual(status.provider, "gemini");
+    assert.strictEqual(status.status, "ready");
+    assert.strictEqual(status.available, true);
+    assert.strictEqual(status.authStatus, "unknown");
+  }),
+);
+
+it.effect("returns authenticated when gemini is available with API key", () =>
+  Effect.gen(function* () {
+    isGeminiCliAvailableMock.mockReturnValue(true);
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+
+    const status = yield* checkGeminiProviderStatus;
+    assert.strictEqual(status.provider, "gemini");
+    assert.strictEqual(status.status, "ready");
+    assert.strictEqual(status.available, true);
+    assert.strictEqual(status.authStatus, "authenticated");
+  }),
+);
+
+it.effect("returns unavailable when gemini is missing", () =>
+  Effect.gen(function* () {
+    isGeminiCliAvailableMock.mockReturnValue(false);
+
+    const status = yield* checkGeminiProviderStatus;
+    assert.strictEqual(status.provider, "gemini");
+    assert.strictEqual(status.status, "error");
+    assert.strictEqual(status.available, false);
+    assert.strictEqual(status.authStatus, "unknown");
+    assert.strictEqual(status.message, "Gemini CLI (`gemini`) is not installed or not on PATH.");
+  }),
+);
 
 it("parseAuthStatusFromOutput: exit code 0 with no auth markers is ready", () => {
   const parsed = parseAuthStatusFromOutput({ stdout: "OK\n", stderr: "", code: 0 });

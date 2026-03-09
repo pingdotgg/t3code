@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   getAppModelOptions,
+  getCustomModelsForProvider,
   getSlashModelOptions,
   normalizeCustomModelSlugs,
+  patchCustomModelsForProvider,
+  resolveAppServiceTier,
+  shouldShowFastTierIcon,
   resolveAppModelSelection,
 } from "./appSettings";
 
@@ -34,6 +38,16 @@ describe("getAppModelOptions", () => {
       "gpt-5.2",
       "custom/internal-model",
     ]);
+  });
+
+  it("supports provider-specific Gemini custom models", () => {
+    const options = getAppModelOptions("gemini", ["gemini/internal-preview"]);
+
+    expect(options.at(-1)).toEqual({
+      slug: "gemini/internal-preview",
+      name: "gemini/internal-preview",
+      isCustom: true,
+    });
   });
 
   it("keeps the currently selected custom model available even if it is no longer saved", () => {
@@ -80,5 +94,41 @@ describe("getSlashModelOptions", () => {
     );
 
     expect(options.map((option) => option.slug)).toEqual(["openai/gpt-oss-120b"]);
+  });
+});
+
+describe("resolveAppServiceTier", () => {
+  it("maps automatic to no override", () => {
+    expect(resolveAppServiceTier("auto")).toBeNull();
+  });
+
+  it("preserves explicit service tier overrides", () => {
+    expect(resolveAppServiceTier("fast")).toBe("fast");
+    expect(resolveAppServiceTier("flex")).toBe("flex");
+  });
+});
+
+describe("shouldShowFastTierIcon", () => {
+  it("shows the fast-tier icon only for gpt-5.4 on fast tier", () => {
+    expect(shouldShowFastTierIcon("gpt-5.4", "fast")).toBe(true);
+    expect(shouldShowFastTierIcon("gpt-5.4", "auto")).toBe(false);
+    expect(shouldShowFastTierIcon("gpt-5.3-codex", "fast")).toBe(false);
+  });
+});
+
+describe("provider custom model helpers", () => {
+  it("reads the correct settings key for Gemini custom models", () => {
+    expect(
+      getCustomModelsForProvider("gemini", {
+        customCodexModels: ["codex-custom"],
+        customGeminiModels: ["gemini-custom"],
+      }),
+    ).toEqual(["gemini-custom"]);
+  });
+
+  it("patches the correct settings key for Gemini custom models", () => {
+    expect(patchCustomModelsForProvider("gemini", ["gemini-custom"])).toEqual({
+      customGeminiModels: ["gemini-custom"],
+    });
   });
 });

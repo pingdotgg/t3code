@@ -145,6 +145,7 @@ import {
   XIcon,
   CopyIcon,
   CheckIcon,
+  ZapIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -203,7 +204,11 @@ import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import {
   getAppModelOptions,
+  getCustomModelsForProvider,
   resolveAppModelSelection,
+  resolveAppServiceTier,
+  shouldShowFastTierIcon,
+  type AppServiceTier,
   useAppSettings,
 } from "../appSettings";
 import {
@@ -406,6 +411,7 @@ type ComposerCommandItem =
       model: ModelSlug;
       label: string;
       description: string;
+      showFastBadge: boolean;
     };
 
 type SendPhase = "idle" | "preparing-worktree" | "sending-turn";
@@ -516,6 +522,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         </Badge>
       ) : null}
       <span className="flex min-w-0 items-center gap-1.5 truncate">
+        {props.item.type === "model" && props.item.showFastBadge ? (
+          <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
+        ) : null}
         <span className="truncate">{props.item.label}</span>
       </span>
       <span className="truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
@@ -594,6 +603,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const setComposerDraftProvider = useComposerDraftStore((store) => store.setProvider);
   const setComposerDraftModel = useComposerDraftStore((store) => store.setModel);
+  const lastUsedProvider = useComposerDraftStore((store) => store.lastUsedProvider);
+  const lastUsedModelByProvider = useComposerDraftStore((store) => store.lastUsedModelByProvider);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
@@ -626,7 +637,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   >({});
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
   const [sendStartedAt, setSendStartedAt] = useState<string | null>(null);
-  const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
@@ -777,15 +787,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activeThread.messages.length > 0 ||
       activeThread.session !== null),
   );
+  const selectedServiceTierSetting = settings.codexServiceTier;
+  const selectedServiceTier = resolveAppServiceTier(selectedServiceTierSetting);
   const lockedProvider: ProviderKind | null = hasThreadStarted
     ? (sessionProvider ?? selectedProviderByThreadId ?? null)
     : null;
-  const selectedProvider: ProviderKind = lockedProvider ?? selectedProviderByThreadId ?? "codex";
+  const selectedProvider: ProviderKind =
+    lockedProvider ?? selectedProviderByThreadId ?? lastUsedProvider ?? "codex";
+  const fallbackModelForSelectedProvider = lastUsedModelByProvider[selectedProvider] ?? null;
+  const activeThreadModel = hasThreadStarted ? activeThread?.model : null;
   const baseThreadModel = resolveModelSlugForProvider(
     selectedProvider,
-    activeThread?.model ?? activeProject?.model ?? getDefaultModel(selectedProvider),
+    activeThreadModel ??
+      fallbackModelForSelectedProvider ??
+      activeProject?.model ??
+      getDefaultModel(selectedProvider),
   );
-  const customModelsForSelectedProvider = settings.customCodexModels;
+  const customModelsForSelectedProvider = getCustomModelsForProvider(selectedProvider, settings);
   const selectedModel = useMemo(() => {
     const draftModel = composerDraft.model;
     if (!draftModel) {
@@ -852,9 +870,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [lockedProvider, modelOptionsByProvider],
   );
   const phase = derivePhase(activeThread?.session ?? null);
+  const isConnecting = phase === "connecting";
   const isSendBusy = sendPhase !== "idle";
   const isPreparingWorktree = sendPhase === "preparing-worktree";
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const workingStatusLabel = isRevertingCheckpoint
+    ? "Reverting"
+    : isPreparingWorktree
+      ? "Preparing"
+      : isConnecting || (isSendBusy && phase !== "running")
+        ? "Connecting"
+        : "Working";
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
@@ -1244,8 +1270,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
         model: slug,
         label: name,
         description: `${providerLabel} · ${slug}`,
+        showFastBadge:
+          provider === "codex" && shouldShowFastTierIcon(slug, selectedServiceTierSetting),
       }));
-  }, [composerTrigger, searchableModelOptions, workspaceEntries]);
+  }, [composerTrigger, searchableModelOptions, selectedServiceTierSetting, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -1773,7 +1801,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
         "button, summary, [role='button'], [data-scroll-anchor-target]",
       );
       if (!trigger || !scrollContainer.contains(trigger)) return;
-      if (trigger.closest("[data-scroll-anchor-ignore]")) return;
 
       pendingInteractionAnchorRef.current = {
         element: trigger,
@@ -2653,6 +2680,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           attachments: turnAttachments,
         },
         model: selectedModel || undefined,
+        serviceTier: selectedServiceTier,
         ...(selectedModelOptionsForDispatch
           ? { modelOptions: selectedModelOptionsForDispatch }
           : {}),
@@ -3117,7 +3145,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerDraftProvider(activeThread.id, provider);
       setComposerDraftModel(
         activeThread.id,
-        resolveAppModelSelection(provider, settings.customCodexModels, model),
+        resolveAppModelSelection(provider, getCustomModelsForProvider(provider, settings), model),
       );
       scheduleComposerFocus();
     },
@@ -3127,7 +3155,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       scheduleComposerFocus,
       setComposerDraftModel,
       setComposerDraftProvider,
-      settings.customCodexModels,
+      settings,
     ],
   );
   const onEffortSelect = useCallback(
@@ -3491,6 +3519,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           key={activeThread.id}
           hasMessages={timelineEntries.length > 0}
           isWorking={isWorking}
+          workingStatusLabel={workingStatusLabel}
           activeTurnInProgress={isWorking || !latestTurnSettled}
           activeTurnStartedAt={activeWorkStartedAt}
           scrollContainer={messagesScrollElement}
@@ -3687,6 +3716,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     model={selectedModelForPickerWithCustomFallback}
                     lockedProvider={lockedProvider}
                     modelOptionsByProvider={modelOptionsByProvider}
+                    serviceTierSetting={selectedServiceTierSetting}
                     onProviderModelChange={onProviderModelSelect}
                   />
 
@@ -4807,12 +4837,7 @@ const ProposedPlanCard = memo(function ProposedPlanCard({
         </div>
         {canCollapse ? (
           <div className="mt-4 flex justify-center">
-            <Button
-              size="sm"
-              variant="outline"
-              data-scroll-anchor-ignore
-              onClick={() => setExpanded((value) => !value)}
-            >
+            <Button size="sm" variant="outline" onClick={() => setExpanded((value) => !value)}>
               {expanded ? "Collapse plan" : "Expand plan"}
             </Button>
           </div>
@@ -4873,6 +4898,7 @@ const ProposedPlanCard = memo(function ProposedPlanCard({
 interface MessagesTimelineProps {
   hasMessages: boolean;
   isWorking: boolean;
+  workingStatusLabel: "Connecting" | "Preparing" | "Reverting" | "Working";
   activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
   scrollContainer: HTMLDivElement | null;
@@ -4927,6 +4953,7 @@ function estimateTimelineProposedPlanHeight(proposedPlan: TimelineProposedPlan):
 const MessagesTimeline = memo(function MessagesTimeline({
   hasMessages,
   isWorking,
+  workingStatusLabel,
   activeTurnInProgress,
   activeTurnStartedAt,
   scrollContainer,
@@ -5410,15 +5437,15 @@ const MessagesTimeline = memo(function MessagesTimeline({
             <span className="inline-flex items-center gap-[3px]">
               <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
               <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
-            </span>
-            <span>
-              {row.createdAt
-                ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
-                : "Working..."}
-            </span>
-          </div>
+            <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
+          </span>
+          <span>
+            {row.createdAt
+              ? `${workingStatusLabel} for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
+              : `${workingStatusLabel}...`}
+          </span>
         </div>
+      </div>
       )}
     </div>
   );
@@ -5477,21 +5504,21 @@ function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): o
 
 const AVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter(isAvailableProviderOption);
 const UNAVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter((option) => !option.available);
-const COMING_SOON_PROVIDER_OPTIONS = [
-  { id: "opencode", label: "OpenCode", icon: OpenCodeIcon },
-  { id: "gemini", label: "Gemini", icon: Gemini },
-] as const;
+const COMING_SOON_PROVIDER_OPTIONS = [{ id: "opencode", label: "OpenCode", icon: OpenCodeIcon }] as const;
 
 function getCustomModelOptionsByProvider(settings: {
   customCodexModels: readonly string[];
+  customGeminiModels: readonly string[];
 }): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
   return {
     codex: getAppModelOptions("codex", settings.customCodexModels),
+    gemini: getAppModelOptions("gemini", settings.customGeminiModels),
   };
 }
 
 const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
   codex: OpenAI,
+  gemini: Gemini,
   claudeCode: ClaudeAI,
   cursor: CursorIcon,
 };
@@ -5534,6 +5561,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   model: ModelSlug;
   lockedProvider: ProviderKind | null;
   modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
+  serviceTierSetting: AppServiceTier;
   disabled?: boolean;
   onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
 }) {
@@ -5566,6 +5594,9 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       >
         <span className="flex min-w-0 items-center gap-2">
           <ProviderIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/70" />
+          {props.provider === "codex" && shouldShowFastTierIcon(props.model, props.serviceTierSetting) ? (
+            <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
+          ) : null}
           <span className="truncate">{selectedModelLabel}</span>
           <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
         </span>
@@ -5608,6 +5639,10 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                         value={modelOption.slug}
                         onClick={() => setIsMenuOpen(false)}
                       >
+                        {option.value === "codex" &&
+                        shouldShowFastTierIcon(modelOption.slug, props.serviceTierSetting) ? (
+                          <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
+                        ) : null}
                         {modelOption.name}
                       </MenuRadioItem>
                     ))}

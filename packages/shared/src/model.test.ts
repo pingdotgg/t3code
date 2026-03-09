@@ -14,6 +14,7 @@ describe("normalizeModelSlug", () => {
   it("maps known aliases to canonical slugs", () => {
     expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
     expect(normalizeModelSlug("gpt-5.3")).toBe("gpt-5.3-codex");
+    expect(normalizeModelSlug("flash", "gemini")).toBe("gemini-2.5-flash");
   });
 
   it("returns null for empty or missing values", () => {
@@ -49,10 +50,18 @@ describe("resolveModelSlug", () => {
     for (const model of MODEL_OPTIONS_BY_PROVIDER.codex) {
       expect(resolveModelSlug(model.slug)).toBe(model.slug);
     }
+    for (const model of MODEL_OPTIONS_BY_PROVIDER.gemini) {
+      expect(resolveModelSlug(model.slug, "gemini")).toBe(model.slug);
+    }
   });
   it("keeps codex defaults for backward compatibility", () => {
     expect(getDefaultModel()).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
     expect(getModelOptions()).toEqual(MODEL_OPTIONS_BY_PROVIDER.codex);
+  });
+
+  it("returns Gemini defaults when requested", () => {
+    expect(getDefaultModel("gemini")).toBe(DEFAULT_MODEL_BY_PROVIDER.gemini);
+    expect(getModelOptions("gemini")).toEqual(MODEL_OPTIONS_BY_PROVIDER.gemini);
   });
 });
 
@@ -65,5 +74,6 @@ describe("getReasoningEffortOptions", () => {
 describe("getDefaultReasoningEffort", () => {
   it("returns provider-scoped defaults", () => {
     expect(getDefaultReasoningEffort("codex")).toBe("high");
+    expect(getDefaultReasoningEffort("gemini")).toBeNull();
   });
 });
