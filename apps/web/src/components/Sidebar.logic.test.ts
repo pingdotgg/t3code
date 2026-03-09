@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { hasUnseenCompletion, resolveThreadStatusPill } from "./Sidebar.logic";
+import {
+  compareThreadsByRecentActivity,
+  hasUnseenCompletion,
+  resolveThreadActivityAt,
+  resolveThreadStatusPill,
+} from "./Sidebar.logic";
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
@@ -27,6 +32,95 @@ describe("hasUnseenCompletion", () => {
         session: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("resolveThreadActivityAt", () => {
+  it("prefers updatedAt over createdAt when present", () => {
+    expect(
+      resolveThreadActivityAt({
+        id: "thread-1" as never,
+        createdAt: "2026-03-09T10:00:00.000Z",
+        updatedAt: "2026-03-09T10:05:00.000Z",
+      }),
+    ).toBe("2026-03-09T10:05:00.000Z");
+  });
+
+  it("falls back to createdAt when updatedAt is missing", () => {
+    expect(
+      resolveThreadActivityAt({
+        id: "thread-1" as never,
+        createdAt: "2026-03-09T10:00:00.000Z",
+      }),
+    ).toBe("2026-03-09T10:00:00.000Z");
+  });
+
+  it("falls back to createdAt when updatedAt is invalid", () => {
+    expect(
+      resolveThreadActivityAt({
+        id: "thread-1" as never,
+        createdAt: "2026-03-09T10:00:00.000Z",
+        updatedAt: "not-a-date",
+      }),
+    ).toBe("2026-03-09T10:00:00.000Z");
+  });
+});
+
+describe("compareThreadsByRecentActivity", () => {
+  it("sorts threads by most recent activity first", () => {
+    const threads = [
+      {
+        id: "thread-1" as never,
+        createdAt: "2026-03-09T10:00:00.000Z",
+        updatedAt: "2026-03-09T10:01:00.000Z",
+      },
+      {
+        id: "thread-2" as never,
+        createdAt: "2026-03-09T09:00:00.000Z",
+        updatedAt: "2026-03-09T10:05:00.000Z",
+      },
+    ];
+
+    expect(threads.toSorted(compareThreadsByRecentActivity).map((thread) => thread.id)).toEqual([
+      "thread-2",
+      "thread-1",
+    ]);
+  });
+
+  it("sorts a valid activity timestamp ahead of an invalid one", () => {
+    const threads = [
+      {
+        id: "thread-1" as never,
+        createdAt: "not-a-date",
+      },
+      {
+        id: "thread-2" as never,
+        createdAt: "2026-03-09T10:05:00.000Z",
+      },
+    ];
+
+    expect(threads.toSorted(compareThreadsByRecentActivity).map((thread) => thread.id)).toEqual([
+      "thread-2",
+      "thread-1",
+    ]);
+  });
+
+  it("sorts two invalid timestamps by id as a stable fallback", () => {
+    const threads = [
+      {
+        id: "thread-1" as never,
+        createdAt: "not-a-date",
+      },
+      {
+        id: "thread-2" as never,
+        createdAt: "still-not-a-date",
+      },
+    ];
+
+    expect(threads.toSorted(compareThreadsByRecentActivity).map((thread) => thread.id)).toEqual([
+      "thread-2",
+      "thread-1",
+    ]);
   });
 });
 

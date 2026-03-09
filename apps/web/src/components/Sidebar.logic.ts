@@ -19,6 +19,48 @@ type ThreadStatusInput = Pick<
   "interactionMode" | "latestTurn" | "lastVisitedAt" | "proposedPlans" | "session"
 >;
 
+type ThreadActivityInput = Pick<Thread, "createdAt" | "id"> & {
+  updatedAt?: string | undefined;
+};
+
+function parseIsoDate(value: string | undefined): number {
+  if (!value) return Number.NaN;
+  return Date.parse(value);
+}
+
+export function resolveThreadActivityAt(thread: ThreadActivityInput): string {
+  const { updatedAt } = thread;
+  if (updatedAt) {
+    const updatedAtMs = parseIsoDate(updatedAt);
+    if (!Number.isNaN(updatedAtMs)) {
+      return updatedAt;
+    }
+  }
+  return thread.createdAt;
+}
+
+export function compareThreadsByRecentActivity(
+  left: ThreadActivityInput,
+  right: ThreadActivityInput,
+): number {
+  const rightActivityAt = parseIsoDate(resolveThreadActivityAt(right));
+  const leftActivityAt = parseIsoDate(resolveThreadActivityAt(left));
+  if (
+    !Number.isNaN(rightActivityAt) &&
+    !Number.isNaN(leftActivityAt) &&
+    rightActivityAt !== leftActivityAt
+  ) {
+    return rightActivityAt - leftActivityAt;
+  }
+  if (!Number.isNaN(rightActivityAt) && Number.isNaN(leftActivityAt)) {
+    return 1;
+  }
+  if (Number.isNaN(rightActivityAt) && !Number.isNaN(leftActivityAt)) {
+    return -1;
+  }
+  return right.id.localeCompare(left.id);
+}
+
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestTurn?.completedAt) return false;
   const completedAt = Date.parse(thread.latestTurn.completedAt);
