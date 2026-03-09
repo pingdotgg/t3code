@@ -5619,7 +5619,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         }
         setIsMenuOpen(open);
       }}
-    >max-w-42
+    >
       <MenuTrigger
         render={
           <Button
@@ -5627,8 +5627,8 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             variant="ghost"
             className={cn(
               "min-w-0 shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80",
-              props.compact ? "max-w-[10.5rem]" : "sm:px-3",
-            )}max-w-36
+              props.compact ? "max-w-42" : "sm:px-3",
+            )}
             disabled={props.disabled}
           />
         }
@@ -5636,7 +5636,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         <span
           className={cn(
             "flex min-w-0 items-center gap-2",
-            props.compact ? "max-w-[9rem]" : undefined,
+            props.compact ? "max-w-36" : undefined,
           )}
         >
           <ProviderIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/70" />
