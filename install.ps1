@@ -377,6 +377,33 @@ try {
             Write-Host ""
 
             if (Ask-YesNo "Download and install T3 Code v$($latestVersion)?") {
+                # Ask for install folder
+                $defaultDir = Join-Path $env:ProgramFiles "T3 Code"
+                Write-Host ""
+                Write-Bot "Where do you want to install T3 Code?"
+                Write-Host "    Default: $defaultDir" -ForegroundColor DarkGray
+                Write-Host "    Current: $($PWD.Path)" -ForegroundColor DarkGray
+                Write-Host ""
+                Write-Host "    [1] Default ($defaultDir)" -ForegroundColor Cyan
+                Write-Host "    [2] Current folder ($($PWD.Path))" -ForegroundColor Cyan
+                Write-Host "    [3] Custom path" -ForegroundColor Cyan
+                Write-Host ""
+                $folderChoice = Read-Host "  Your choice (1/2/3)"
+                switch ($folderChoice) {
+                    "2" { $installDir = $PWD.Path }
+                    "3" {
+                        $customPath = Read-Host "  Enter full path"
+                        if ($customPath -and (Test-Path (Split-Path $customPath -Parent) -ErrorAction SilentlyContinue)) {
+                            $installDir = $customPath
+                        } else {
+                            Write-Warn "Invalid path, using default"
+                            $installDir = $defaultDir
+                        }
+                    }
+                    default { $installDir = $defaultDir }
+                }
+                Write-Host ""
+
                 $tempDir = Join-Path $env:TEMP "t3code-install"
                 $msiPath = Join-Path $tempDir $msiName
                 if (-not (Test-Path $tempDir)) { New-Item -ItemType Directory -Path $tempDir -Force | Out-Null }
@@ -387,11 +414,11 @@ try {
                 Invoke-WebRequest -Uri $msiUrl -OutFile $msiPath -UseBasicParsing
                 $ProgressPreference = $prevPref
 
-                Write-Step "Launching installer (pick your install folder)..."
-                $msiArgs = "/i `"$msiPath`" /norestart"
+                Write-Step "Installing T3 Code to $installDir..."
+                $msiArgs = "/i `"$msiPath`" /qb /norestart APPLICATIONFOLDER=`"$installDir`""
                 $proc = Start-Process msiexec.exe -ArgumentList $msiArgs -Wait -Verb RunAs -PassThru
                 if ($proc.ExitCode -eq 0) {
-                    Write-Ok "T3 Code v$latestVersion installed!"
+                    Write-Ok "T3 Code v$latestVersion installed to $installDir"
                 } else {
                     Write-Err "MSI returned exit code $($proc.ExitCode)"
                 }
