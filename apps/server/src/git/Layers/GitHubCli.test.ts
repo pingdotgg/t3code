@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect } from "effect";
 import { afterEach, expect, vi } from "vitest";
 
 vi.mock("../../processRunner", () => ({
@@ -11,7 +11,7 @@ import { GitHubCli } from "../Services/GitHubCli.ts";
 import { GitHubCliLive } from "./GitHubCli.ts";
 
 const mockedRunProcess = vi.mocked(runProcess);
-const layer = it.layer(Layer.empty);
+const layer = it.layer(GitHubCliLive);
 
 afterEach(() => {
   mockedRunProcess.mockReset();
@@ -49,7 +49,7 @@ layer("GitHubCliLive", (it) => {
           cwd: "/repo",
           reference: "#42",
         });
-      }).pipe(Effect.provide(GitHubCliLive));
+      });
 
       assert.deepStrictEqual(result, {
         number: 42,
@@ -96,7 +96,7 @@ layer("GitHubCliLive", (it) => {
           cwd: "/repo",
           repository: "octocat/codething-mvp",
         });
-      }).pipe(Effect.provide(GitHubCliLive));
+      });
 
       assert.deepStrictEqual(result, {
         nameWithOwner: "octocat/codething-mvp",
@@ -120,7 +120,7 @@ layer("GitHubCliLive", (it) => {
           cwd: "/repo",
           reference: "4888",
         });
-      }).pipe(Effect.provide(GitHubCliLive), Effect.flip);
+      }).pipe(Effect.flip);
 
       assert.equal(error.message.includes("Pull request not found"), true);
     }),
