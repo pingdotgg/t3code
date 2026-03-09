@@ -182,6 +182,34 @@ validationLayer("CodexAdapterLive validation", (it) => {
       });
     }),
   );
+
+  it.effect("preserves an explicit service tier before starting a session", () =>
+    Effect.gen(function* () {
+      validationManager.startSessionImpl.mockClear();
+      const adapter = yield* CodexAdapter;
+
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        model: "gpt-5.3-codex",
+        serviceTier: "flex",
+        modelOptions: {
+          codex: {
+            fastMode: true,
+          },
+        },
+        runtimeMode: "full-access",
+      });
+
+      assert.deepStrictEqual(validationManager.startSessionImpl.mock.calls[0]?.[0], {
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        model: "gpt-5.3-codex",
+        serviceTier: "flex",
+        runtimeMode: "full-access",
+      });
+    }),
+  );
 });
 
 const sessionErrorManager = new FakeCodexManager();
@@ -249,6 +277,37 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         model: "gpt-5.3-codex",
         effort: "high",
         serviceTier: "fast",
+      });
+    }),
+  );
+
+  it.effect("preserves an explicit service tier before sending a turn", () =>
+    Effect.gen(function* () {
+      sessionErrorManager.sendTurnImpl.mockClear();
+      const adapter = yield* CodexAdapter;
+
+      yield* Effect.ignore(
+        adapter.sendTurn({
+          threadId: asThreadId("sess-missing"),
+          input: "hello",
+          model: "gpt-5.3-codex",
+          serviceTier: "flex",
+          modelOptions: {
+            codex: {
+              reasoningEffort: "high",
+              fastMode: true,
+            },
+          },
+          attachments: [],
+        }),
+      );
+
+      assert.deepStrictEqual(sessionErrorManager.sendTurnImpl.mock.calls[0]?.[0], {
+        threadId: asThreadId("sess-missing"),
+        input: "hello",
+        model: "gpt-5.3-codex",
+        effort: "high",
+        serviceTier: "flex",
       });
     }),
   );

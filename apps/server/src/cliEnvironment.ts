@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import { isCommandAvailable } from "./open";
@@ -26,10 +26,6 @@ function resolveGeminiDistFromDirectory(directory: string): string | null {
 }
 
 function resolveGeminiDistFromPath(env: NodeJS.ProcessEnv): string | null {
-  if (process.platform !== "win32") {
-    return null;
-  }
-
   for (const entry of splitPathEntries(env, process.platform)) {
     const candidate = resolveGeminiDistFromDirectory(entry);
     if (candidate) {
@@ -49,6 +45,48 @@ function resolveWindowsGeminiDist(env: NodeJS.ProcessEnv): string | null {
   }
 
   return resolveGeminiDistFromPath(env);
+}
+
+function resolveGeminiExecutablePath(env: NodeJS.ProcessEnv): string | null {
+  if (!isCommandAvailable("gemini", { env, platform: process.platform })) {
+    return null;
+  }
+
+  const executableName = process.platform === "win32" ? "gemini.cmd" : "gemini";
+  for (const entry of splitPathEntries(env, process.platform)) {
+    const candidate = path.join(entry, executableName);
+    if (!existsSync(candidate)) {
+      continue;
+    }
+    try {
+      return realpathSync(candidate);
+    } catch {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function resolveGeminiDistFromExecutable(env: NodeJS.ProcessEnv): string | null {
+  const executablePath = resolveGeminiExecutablePath(env);
+  if (!executablePath) {
+    return null;
+  }
+
+  const binDirectory = path.dirname(executablePath);
+  const candidates = [
+    path.resolve(binDirectory, "..", "node_modules", "@google", "gemini-cli", "dist", "index.js"),
+    path.resolve(binDirectory, "..", "lib", "node_modules", "@google", "gemini-cli", "dist", "index.js"),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function resolveGeminiPackageRootFromDist(distPath: string): string | null {
@@ -92,7 +130,8 @@ export function resolveGeminiCliLaunchSpec(env: NodeJS.ProcessEnv = process.env)
 
 export function resolveGeminiAcpModulePath(env: NodeJS.ProcessEnv = process.env): string | null {
   const launch = resolveGeminiCliLaunchSpec(env);
-  const distPath = launch?.argsPrefix[0];
+  const distPath =
+    launch?.argsPrefix[0] ?? (launch?.command === "gemini" ? resolveGeminiDistFromExecutable(env) : null);
   if (!distPath || !existsSync(distPath)) {
     return null;
   }

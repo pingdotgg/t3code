@@ -199,6 +199,11 @@ export class GeminiCliManager extends EventEmitter {
   }
 
   startSession(input: GeminiStartSessionInput): GeminiSessionContext {
+    const previous = this.sessions.get(input.threadId);
+    if (previous?.geminiSessionId) {
+      this.threadIdByGeminiSessionId.delete(previous.geminiSessionId);
+    }
+
     const context: GeminiSessionContext = {
       sessionId: randomUUID(),
       threadId: input.threadId,
@@ -296,7 +301,13 @@ export class GeminiCliManager extends EventEmitter {
     if (this.canUseAcp()) {
       void this.runTurnViaAcp(context, turnId, trimmedText, input.prompt, desiredMode);
     } else {
-      this.runTurnViaLegacyCli(context, turnId, trimmedText, approvalMode);
+      try {
+        this.runTurnViaLegacyCli(context, turnId, trimmedText, approvalMode);
+      } catch (error) {
+        context.activeTurnId = null;
+        context.status = "idle";
+        throw error;
+      }
     }
 
     return {
@@ -312,10 +323,17 @@ export class GeminiCliManager extends EventEmitter {
       return;
     }
 
-    if (context.geminiSessionId && this.canUseAcp()) {
+    if (this.canUseAcp() && context.geminiSessionId) {
+      const sessionId = context.geminiSessionId;
       void this.ensureAcpRuntime(context.model)
-        .then((runtime) => runtime.cancel(context.geminiSessionId!))
+        .then((runtime) => runtime.cancel(sessionId))
         .catch(() => undefined);
+      return;
+    }
+
+    if (this.canUseAcp() && context.sessionSetupPromise && context.activeTurnId) {
+      context.activeTurnId = null;
+      context.status = "idle";
       return;
     }
 
@@ -330,9 +348,10 @@ export class GeminiCliManager extends EventEmitter {
       return;
     }
 
-    if (context.geminiSessionId && this.canUseAcp()) {
+    const sessionId = context.geminiSessionId;
+    if (sessionId && this.canUseAcp()) {
       void this.ensureAcpRuntime(context.model)
-        .then((runtime) => runtime.cancel(context.geminiSessionId!))
+        .then((runtime) => runtime.cancel(sessionId))
         .catch(() => undefined);
     }
 
@@ -845,10 +864,7 @@ export class GeminiCliManager extends EventEmitter {
       case "tool_call_update": {
         const normalizedStatus = normalizeToolCallStatus(update.status);
         const toolName = typeof update.title === "string" ? update.title : "Gemini tool";
-        const output =
-          flattenToolCallContent(update.content) ??
-          stringifyUnknown(update.rawOutput) ??
-          flattenContentBlocks(update.content);
+        const output = flattenToolCallContent(update.content) ?? stringifyUnknown(update.rawOutput);
 
         this.emit("event", {
           type: "tool_update",
@@ -938,7 +954,7 @@ export class GeminiCliManager extends EventEmitter {
     const context = threadId ? this.sessions.get(threadId) : undefined;
     const options = Array.isArray(params.options) ? params.options : [];
 
-    if (context?.currentMode === "plan") {
+    if (context?.currentMode === "plan" || context?.currentMode === "default") {
       return { outcome: { outcome: "cancelled" } };
     }
 
@@ -1133,24 +1149,6 @@ function readContentText(content: unknown): string | undefined {
   return typeof text === "string" && text.length > 0 ? text : undefined;
 }
 
-function flattenContentBlocks(content: unknown): string | undefined {
-  if (!Array.isArray(content)) {
-    return undefined;
-  }
-
-  const text = content
-    .map((entry) => {
-      if (!entry || typeof entry !== "object") {
-        return "";
-      }
-      const contentBlock = (entry as { content?: unknown }).content;
-      return readContentText(contentBlock) ?? "";
-    })
-    .join("");
-
-  return text.length > 0 ? text : undefined;
-}
-
 function flattenToolCallContent(content: unknown): string | undefined {
   if (!Array.isArray(content)) {
     return undefined;
@@ -1171,7 +1169,7 @@ function flattenToolCallContent(content: unknown): string | undefined {
         const terminalId = typeof record.terminalId === "string" ? record.terminalId : "terminal";
         return `Terminal activity: ${terminalId}`;
       }
-      const contentBlock = record.content;
+      const contentBlock = record.content ?? entry;
       return readContentText(contentBlock) ?? "";
     })
     .filter((entry) => entry.length > 0)
@@ -1207,8 +1205,8 @@ function inputPromptBlocks(
 }
 
 function stringifyUnknown(value: unknown): string | undefined {
-  if (typeof value === "string" && value.trim().length > 0) {
-    return value.trim();
+  if (typeof value === "string") {
+    return value;
   }
   if (value === null || value === undefined) {
     return undefined;

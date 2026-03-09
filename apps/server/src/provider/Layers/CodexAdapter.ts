@@ -1293,6 +1293,8 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         );
       }
 
+      const serviceTier =
+        input.serviceTier ?? (input.modelOptions?.codex?.fastMode ? "fast" : undefined);
       const managerInput: CodexAppServerStartSessionInput = {
         threadId: input.threadId,
         provider: "codex",
@@ -1301,7 +1303,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         ...(input.providerOptions !== undefined ? { providerOptions: input.providerOptions } : {}),
         runtimeMode: input.runtimeMode,
         ...(input.model !== undefined ? { model: input.model } : {}),
-        ...(input.modelOptions?.codex?.fastMode ? { serviceTier: "fast" } : {}),
+        ...(serviceTier !== undefined ? { serviceTier } : {}),
       };
 
       return Effect.tryPromise({
@@ -1350,14 +1352,20 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
 
         return yield* Effect.tryPromise({
           try: () => {
+            const serviceTier =
+              input.serviceTier !== undefined
+                ? input.serviceTier
+                : input.modelOptions?.codex?.fastMode
+                  ? "fast"
+                  : undefined;
             const managerInput = {
               threadId: input.threadId,
               ...(input.input !== undefined ? { input: input.input } : {}),
               ...(input.model !== undefined ? { model: input.model } : {}),
+              ...(serviceTier !== undefined ? { serviceTier } : {}),
               ...(input.modelOptions?.codex?.reasoningEffort !== undefined
                 ? { effort: input.modelOptions.codex.reasoningEffort }
                 : {}),
-              ...(input.modelOptions?.codex?.fastMode ? { serviceTier: "fast" } : {}),
               ...(input.interactionMode !== undefined
                 ? { interactionMode: input.interactionMode }
                 : {}),
