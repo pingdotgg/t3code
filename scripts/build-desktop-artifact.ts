@@ -473,6 +473,9 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       icon: "icon.png",
       category: "Development",
     };
+    buildConfig.toolsets = {
+      appimage: "1.0.2",
+    };
   }
 
   if (platform === "win") {
