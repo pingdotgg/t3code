@@ -8,6 +8,7 @@
  */
 import {
   IsoDateTime,
+  OrchestrationThreadHeartbeat,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -32,6 +33,9 @@ export const ProjectionThread = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
+  heartbeat: Schema.optional(Schema.NullOr(OrchestrationThreadHeartbeat)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;
 

@@ -5,6 +5,8 @@ import {
   type ProviderSession,
   type ProviderTurnStartResult,
   type ChatAttachment,
+  type ProviderModelOptions,
+  ProviderApprovalDecision,
   EventId,
   RuntimeItemId,
   RuntimeTaskId,
@@ -632,7 +634,9 @@ const makeGeminiAdapter = () =>
       respondToRequest: (threadId, requestId, decision) =>
         Effect.try({
           try: () => {
-            manager.respondToRequest(String(threadId), String(requestId), decision);
+            const geminiDecision =
+              decision === "accept" || decision === "acceptForSession" ? "approved" : "rejected";
+            manager.respondToRequest(String(threadId), String(requestId), geminiDecision);
           },
           catch: (cause: unknown) =>
             new ProviderAdapterRequestError({
@@ -646,7 +650,15 @@ const makeGeminiAdapter = () =>
       respondToUserInput: (threadId, requestId, answers) =>
         Effect.try({
           try: () => {
-            manager.respondToUserInput(String(threadId), String(requestId), answers);
+            const normalizedAnswers: Record<string, string | string[]> = {};
+            for (const [key, value] of Object.entries(answers)) {
+              if (typeof value === "string" || Array.isArray(value)) {
+                normalizedAnswers[key] = value as string | string[];
+              } else {
+                normalizedAnswers[key] = String(value);
+              }
+            }
+            manager.respondToUserInput(String(threadId), String(requestId), normalizedAnswers);
           },
           catch: (cause: unknown) =>
             new ProviderAdapterRequestError({

@@ -3,6 +3,7 @@ import type {
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
+  OrchestrationThreadHeartbeat,
   ProjectScript as ContractProjectScript,
   ThreadId,
   ProjectId,
@@ -102,6 +103,7 @@ export interface Thread {
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
+  heartbeat?: OrchestrationThreadHeartbeat | null | undefined;
 }
 
 export interface ThreadSession {

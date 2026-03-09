@@ -16,6 +16,8 @@ import {
   ThreadActivityAppendedPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
+  ThreadHeartbeatUpdatedPayload,
+  ThreadHeartbeatSentPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
@@ -610,6 +612,57 @@ export function projectEvent(
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.heartbeat-updated":
+      return decodeForEvent(
+        ThreadHeartbeatUpdatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+
+          const nextHeartbeat = {
+            enabled: payload.enabled ?? thread.heartbeat?.enabled ?? false,
+            intervalMs: payload.intervalMs ?? thread.heartbeat?.intervalMs ?? 60_000,
+            prompt: payload.prompt ?? thread.heartbeat?.prompt ?? "",
+            lastSentAt: thread.heartbeat?.lastSentAt ?? null,
+          };
+
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              heartbeat: nextHeartbeat,
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.heartbeat-sent":
+      return decodeForEvent(ThreadHeartbeatSentPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread || !thread.heartbeat) {
+            return nextBase;
+          }
+
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              heartbeat: {
+                ...thread.heartbeat,
+                lastSentAt: payload.sentAt,
+              },
               updatedAt: event.occurredAt,
             }),
           };

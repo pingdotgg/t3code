@@ -5,6 +5,7 @@ import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { OrchestrationReactor } from "../Services/OrchestrationReactor.ts";
+import { HeartbeatReactor } from "../Services/HeartbeatReactor.ts";
 import { makeOrchestrationReactor } from "./OrchestrationReactor.ts";
 
 describe("OrchestrationReactor", () => {
@@ -17,7 +18,7 @@ describe("OrchestrationReactor", () => {
     runtime = null;
   });
 
-  it("starts provider ingestion, provider command, and checkpoint reactors", async () => {
+  it("starts provider ingestion, provider command, heartbeat, and checkpoint reactors", async () => {
     const started: string[] = [];
 
     runtime = ManagedRuntime.make(
@@ -43,6 +44,13 @@ describe("OrchestrationReactor", () => {
             }),
           }),
         ),
+        Layer.provideMerge(
+          Layer.succeed(HeartbeatReactor, {
+            start: Effect.sync(() => {
+              started.push("heartbeat-reactor");
+            }),
+          }),
+        ),
       ),
     );
 
@@ -54,6 +62,7 @@ describe("OrchestrationReactor", () => {
       "provider-runtime-ingestion",
       "provider-command-reactor",
       "checkpoint-reactor",
+      "heartbeat-reactor",
     ]);
 
     await Effect.runPromise(Scope.close(scope, Exit.void));

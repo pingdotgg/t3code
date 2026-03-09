@@ -539,6 +539,12 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
   });
 
+  const bufferedTaskDescriptionByTaskId = yield* Cache.make<string, string>({
+    capacity: 10_000,
+    timeToLive: Duration.minutes(30),
+    lookup: () => Effect.succeed(""),
+  });
+
   const isGitRepoForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === threadId);
@@ -999,9 +1005,14 @@ const make = Effect.gen(function* () {
         });
       }
 
+      if (event.type === "task.completed") {
+        yield* Cache.invalidate(bufferedTaskDescriptionByTaskId, event.payload.taskId);
+      }
+
       if (event.type === "turn.completed") {
         const turnId = toTurnId(event.turnId);
         if (turnId) {
+          yield* Cache.invalidate(bufferedTaskDescriptionByTaskId, `gemini-thought:${turnId}`);
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(
             assistantMessageIds,
@@ -1090,6 +1101,44 @@ const make = Effect.gen(function* () {
             checkpointTurnCount: thread.checkpoints.length + 1,
             createdAt: now,
           });
+        }
+      }
+
+      if (event.type === "task.progress") {
+        const taskId = event.payload.taskId;
+        const currentDescription = event.payload.description;
+        const previousDescription = yield* Cache.getOption(bufferedTaskDescriptionByTaskId, taskId).pipe(
+          Effect.map(Option.getOrElse(() => "")),
+        );
+
+        const shouldDispatch =
+          previousDescription === "" ||
+          currentDescription.length - previousDescription.length > 50 || // Throttle until at least 50 chars added
+          currentDescription.endsWith(".") || // Or end of a sentence
+          currentDescription.endsWith("\n");
+
+        if (shouldDispatch) {
+          yield* Cache.set(bufferedTaskDescriptionByTaskId, taskId, currentDescription);
+        } else {
+          // Skip dispatching this command to avoid flooding the engine
+          return;
+        }
+      }
+
+      if (event.type === "item.updated") {
+        // Debounce tool updates specifically for Gemini thinking or partial tool calls
+        if (event.provider === "gemini" && event.payload.itemType === "dynamic_tool_call") {
+          const itemId = event.itemId;
+          if (itemId) {
+            const previousDetail = yield* Cache.getOption(bufferedTaskDescriptionByTaskId, `tool:${itemId}`).pipe(
+              Effect.map(Option.getOrElse(() => "")),
+            );
+            const currentDetail = event.payload.detail ?? "";
+            if (currentDetail.length - previousDetail.length < 100 && !event.payload.status) {
+              return;
+            }
+            yield* Cache.set(bufferedTaskDescriptionByTaskId, `tool:${itemId}`, currentDetail);
+          }
         }
       }
 

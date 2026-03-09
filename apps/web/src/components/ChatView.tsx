@@ -138,6 +138,7 @@ import {
   CopyIcon,
   CheckIcon,
   ZapIcon,
+  HeartIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -674,6 +675,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [animatedAssistantMessageId, setAnimatedAssistantMessageId] = useState<MessageId | null>(
     null,
   );
+  const [isHeartbeatDialogOpen, setIsHeartbeatDialogOpen] = useState(false);
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
@@ -3476,6 +3478,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         )}
       >
         <ChatHeader
+          activeThread={activeThread}
           activeThreadId={activeThread.id}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
@@ -3496,6 +3499,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onToggleDiff={onToggleDiff}
+          onHeartbeatClick={() => setIsHeartbeatDialogOpen(true)}
         />
       </header>
 
@@ -3543,6 +3547,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
           onRevertUserMessage={onRevertUserMessage}
           isRevertingCheckpoint={isRevertingCheckpoint}
+          sessionProvider={sessionProvider}
           onImageExpand={onExpandTimelineImage}
           markdownCwd={gitCwd ?? undefined}
           workspaceRoot={activeProject?.cwd ?? undefined}
@@ -3962,6 +3967,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
         />
       )}
 
+      {activeThread && (
+        <ThreadHeartbeatDialog
+          open={isHeartbeatDialogOpen}
+          onOpenChange={setIsHeartbeatDialogOpen}
+          thread={activeThread}
+        />
+      )}
+
       {(() => {
         if (!terminalState.terminalOpen || !activeProject) {
           return null;
@@ -4062,6 +4075,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 }
 
 interface ChatHeaderProps {
+  activeThread: Thread;
   activeThreadId: ThreadId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
@@ -4078,9 +4092,11 @@ interface ChatHeaderProps {
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onToggleDiff: () => void;
+  onHeartbeatClick: () => void;
 }
 
 const ChatHeader = memo(function ChatHeader({
+  activeThread,
   activeThreadId,
   activeThreadTitle,
   activeProjectName,
@@ -4097,6 +4113,7 @@ const ChatHeader = memo(function ChatHeader({
   onAddProjectScript,
   onUpdateProjectScript,
   onToggleDiff,
+  onHeartbeatClick,
 }: ChatHeaderProps) {
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -4130,6 +4147,25 @@ const ChatHeader = memo(function ChatHeader({
             onUpdateScript={onUpdateProjectScript}
           />
         )}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                size="icon-xs"
+                variant="outline"
+                className={cn("shrink-0", activeThread.heartbeat?.enabled && "text-rose-500")}
+                onClick={onHeartbeatClick}
+              >
+                <HeartIcon className="size-3.5" />
+              </Button>
+            }
+          />
+          <TooltipPopup side="bottom">
+            {activeThread.heartbeat?.enabled
+              ? `Heartbeat enabled (${activeThread.heartbeat.intervalMs}ms)`
+              : "Configure heartbeat"}
+          </TooltipPopup>
+        </Tooltip>
         {activeProjectName && (
           <OpenInPicker
             keybindings={keybindings}
@@ -4671,6 +4707,7 @@ interface MessagesTimelineProps {
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
+  sessionProvider: ProviderKind | null;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
   workspaceRoot: string | undefined;
@@ -4965,6 +5002,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   isRevertingCheckpoint,
+  sessionProvider,
   onImageExpand,
   markdownCwd,
   workspaceRoot,
@@ -5198,7 +5236,8 @@ const MessagesTimeline = memo(function MessagesTimeline({
         row.message.role === "user" &&
         (() => {
           const userImages = row.message.attachments ?? [];
-          const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
+          const canRevertAgentWork =
+            sessionProvider !== "gemini" && revertTurnCountByUserMessageId.has(row.message.id);
           return (
             <div className="flex justify-end">
               <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
@@ -5664,6 +5703,117 @@ const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
         </MenuGroup>
       </MenuPopup>
     </Menu>
+  );
+});
+
+const ThreadHeartbeatDialog = memo(function ThreadHeartbeatDialog(props: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  thread: Thread;
+}) {
+  const [enabled, setEnabled] = useState(props.thread.heartbeat?.enabled ?? false);
+  const [intervalMs, setIntervalMs] = useState(props.thread.heartbeat?.intervalMs ?? 60_000);
+  const [prompt, setPrompt] = useState(props.thread.heartbeat?.prompt ?? "");
+  const [isSaving, setIsAddingProject] = useState(false);
+
+  useEffect(() => {
+    setEnabled(props.thread.heartbeat?.enabled ?? false);
+    setIntervalMs(props.thread.heartbeat?.intervalMs ?? 60_000);
+    setPrompt(props.thread.heartbeat?.prompt ?? "");
+  }, [props.thread.heartbeat, props.open]);
+
+  const handleSave = async () => {
+    const api = readNativeApi();
+    if (!api) return;
+    setIsAddingProject(true);
+    try {
+      await api.orchestration.dispatchCommand({
+        type: "thread.heartbeat.update",
+        commandId: newCommandId(),
+        threadId: props.thread.id,
+        enabled,
+        intervalMs,
+        prompt,
+      });
+      props.onOpenChange(false);
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Failed to update heartbeat",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    } finally {
+      setIsAddingProject(false);
+    }
+  };
+
+  return (
+    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+      <DialogPopup className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Thread Heartbeat</DialogTitle>
+          <DialogDescription>
+            Configure a periodic prompt to keep the agent focused on long-term goals.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel className="space-y-4">
+          <div className="flex items-center justify-between">
+            <label htmlFor="heartbeat-enabled" className="text-sm font-medium">
+              Enable Heartbeat
+            </label>
+            <Toggle
+              id="heartbeat-enabled"
+              pressed={enabled}
+              onPressedChange={setEnabled}
+              variant="outline"
+              size="sm"
+            >
+              {enabled ? "Enabled" : "Disabled"}
+            </Toggle>
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="heartbeat-interval" className="text-sm font-medium">
+              Interval (ms)
+            </label>
+            <Input
+              id="heartbeat-interval"
+              type="number"
+              min={1000}
+              step={1000}
+              value={intervalMs}
+              onChange={(e) => setIntervalMs(Number(e.target.value))}
+              placeholder="60000"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              How often to send the heartbeat prompt (minimum 1000ms).
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="heartbeat-prompt" className="text-sm font-medium">
+              Heartbeat Prompt
+            </label>
+            <textarea
+              id="heartbeat-prompt"
+              className="flex min-h-32 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="Continuously push to continue and keep track of long term goals..."
+            />
+            <p className="text-[11px] text-muted-foreground">
+              This prompt will be sent to the agent automatically at the specified interval.
+            </p>
+          </div>
+        </DialogPanel>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => props.onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={isSaving}>
+            {isSaving ? "Saving..." : "Save Settings"}
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
   );
 });
 

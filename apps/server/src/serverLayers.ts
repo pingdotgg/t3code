@@ -14,6 +14,7 @@ import { OrchestrationEngineLive } from "./orchestration/Layers/OrchestrationEng
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor";
+import { HeartbeatReactorLive } from "./orchestration/Layers/HeartbeatReactor";
 import { OrchestrationProjectionPipelineLive } from "./orchestration/Layers/ProjectionPipeline";
 import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers/ProjectionSnapshotQuery";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion";
@@ -102,10 +103,14 @@ export function makeServerRuntimeServicesLayer() {
   const checkpointReactorLayer = CheckpointReactorLive.pipe(
     Layer.provideMerge(runtimeServicesLayer),
   );
+  const heartbeatReactorLayer = HeartbeatReactorLive.pipe(
+    Layer.provideMerge(runtimeServicesLayer),
+  );
   const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
     Layer.provideMerge(runtimeIngestionLayer),
     Layer.provideMerge(providerCommandReactorLayer),
     Layer.provideMerge(checkpointReactorLayer),
+    Layer.provideMerge(heartbeatReactorLayer),
   );
 
   const terminalLayer = TerminalManagerLive.pipe(

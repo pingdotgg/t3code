@@ -47,6 +47,7 @@ import { OrchestrationProjectionPipelineLive } from "../src/orchestration/Layers
 import { OrchestrationProjectionSnapshotQueryLive } from "../src/orchestration/Layers/ProjectionSnapshotQuery.ts";
 import { OrchestrationReactorLive } from "../src/orchestration/Layers/OrchestrationReactor.ts";
 import { ProviderCommandReactorLive } from "../src/orchestration/Layers/ProviderCommandReactor.ts";
+import { HeartbeatReactorLive } from "../src/orchestration/Layers/HeartbeatReactor.ts";
 import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/ProviderRuntimeIngestion.ts";
 import {
   OrchestrationEngineService,
@@ -287,10 +288,14 @@ export const makeOrchestrationIntegrationHarness = (
     const checkpointReactorLayer = CheckpointReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
     );
+    const heartbeatReactorLayer = HeartbeatReactorLive.pipe(
+      Layer.provideMerge(runtimeServicesLayer),
+    );
     const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
       Layer.provideMerge(runtimeIngestionLayer),
       Layer.provideMerge(providerCommandReactorLayer),
       Layer.provideMerge(checkpointReactorLayer),
+      Layer.provideMerge(heartbeatReactorLayer),
     );
     const layer = orchestrationReactorLayer.pipe(
       Layer.provide(persistenceLayer),

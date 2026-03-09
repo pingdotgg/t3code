@@ -423,8 +423,8 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             projectId: event.payload.projectId,
             title: event.payload.title,
             model: event.payload.model,
-            runtimeMode: event.payload.runtimeMode,
-            interactionMode: event.payload.interactionMode,
+            runtimeMode: event.payload.runtimeMode ?? "full-access",
+            interactionMode: event.payload.interactionMode ?? "default",
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
             latestTurnId: null,
@@ -556,6 +556,44 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             latestTurnId: null,
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
+        case "thread.heartbeat-updated": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            heartbeat: {
+              enabled: event.payload.enabled ?? existingRow.value.heartbeat?.enabled ?? false,
+              intervalMs: event.payload.intervalMs ?? existingRow.value.heartbeat?.intervalMs ?? 60_000,
+              prompt: event.payload.prompt ?? existingRow.value.heartbeat?.prompt ?? "",
+              lastSentAt: existingRow.value.heartbeat?.lastSentAt ?? null,
+            },
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.heartbeat-sent": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow) || !existingRow.value.heartbeat) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            heartbeat: {
+              ...existingRow.value.heartbeat,
+              lastSentAt: event.payload.sentAt,
+            },
             updatedAt: event.occurredAt,
           });
           return;

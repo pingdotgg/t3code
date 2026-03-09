@@ -245,6 +245,14 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+export const OrchestrationThreadHeartbeat = Schema.Struct({
+  enabled: Schema.Boolean,
+  intervalMs: NonNegativeInt,
+  lastSentAt: Schema.NullOr(IsoDateTime),
+  prompt: Schema.String,
+});
+export type OrchestrationThreadHeartbeat = typeof OrchestrationThreadHeartbeat.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -267,6 +275,9 @@ export const OrchestrationThread = Schema.Struct({
   activities: Schema.Array(OrchestrationThreadActivity),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
+  heartbeat: Schema.optional(Schema.NullOr(OrchestrationThreadHeartbeat)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
 
@@ -367,8 +378,10 @@ export const ThreadTurnStartCommand = Schema.Struct({
   serviceTier: Schema.optional(Schema.NullOr(ProviderServiceTier)),
   modelOptions: Schema.optional(ProviderModelOptions),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
-  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
-  interactionMode: ProviderInteractionMode.pipe(
+  runtimeMode: Schema.optional(RuntimeMode).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE),
+  ),
+  interactionMode: Schema.optional(ProviderInteractionMode).pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
   ),
   createdAt: IsoDateTime,
@@ -435,6 +448,15 @@ const ThreadSessionStopCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadHeartbeatUpdateCommand = Schema.Struct({
+  type: Schema.Literal("thread.heartbeat.update"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  enabled: Schema.optional(Schema.Boolean),
+  intervalMs: Schema.optional(NonNegativeInt),
+  prompt: Schema.optional(Schema.String),
+});
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -450,6 +472,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  ThreadHeartbeatUpdateCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -537,6 +560,14 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadHeartbeatSentCommand = Schema.Struct({
+  type: Schema.Literal("thread.heartbeat.sent"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sentAt: IsoDateTime,
+  createdAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -545,6 +576,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  ThreadHeartbeatSentCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -575,6 +607,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "thread.heartbeat-updated",
+  "thread.heartbeat-sent",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -611,8 +645,10 @@ export const ThreadCreatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
-  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
-  interactionMode: ProviderInteractionMode.pipe(
+  runtimeMode: Schema.optional(RuntimeMode).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE),
+  ),
+  interactionMode: Schema.optional(ProviderInteractionMode).pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
@@ -669,8 +705,10 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   serviceTier: Schema.optional(Schema.NullOr(ProviderServiceTier)),
   modelOptions: Schema.optional(ProviderModelOptions),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
-  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
-  interactionMode: ProviderInteractionMode.pipe(
+  runtimeMode: Schema.optional(RuntimeMode).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE),
+  ),
+  interactionMode: Schema.optional(ProviderInteractionMode).pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
   ),
   createdAt: IsoDateTime,
@@ -736,6 +774,19 @@ export const ThreadTurnDiffCompletedPayload = Schema.Struct({
 export const ThreadActivityAppendedPayload = Schema.Struct({
   threadId: ThreadId,
   activity: OrchestrationThreadActivity,
+});
+
+export const ThreadHeartbeatUpdatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  enabled: Schema.optional(Schema.Boolean),
+  intervalMs: Schema.optional(NonNegativeInt),
+  prompt: Schema.optional(Schema.String),
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadHeartbeatSentPayload = Schema.Struct({
+  threadId: ThreadId,
+  sentAt: IsoDateTime,
 });
 
 export const OrchestrationEventMetadata = Schema.Struct({
@@ -874,6 +925,16 @@ export const OrchestrationEvent = Schema.Union([
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
   }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.heartbeat-updated"),
+    payload: ThreadHeartbeatUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.heartbeat-sent"),
+    payload: ThreadHeartbeatSentPayload,
+  }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
 
@@ -977,6 +1038,16 @@ export const OrchestrationPersistedEvent = Schema.Union([
     ...PersistedEventBaseFields,
     eventType: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.heartbeat-updated"),
+    payload: ThreadHeartbeatUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.heartbeat-sent"),
+    payload: ThreadHeartbeatSentPayload,
   }),
 ]);
 export type OrchestrationPersistedEvent = typeof OrchestrationPersistedEvent.Type;

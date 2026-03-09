@@ -608,6 +608,52 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.heartbeat.update": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.heartbeat-updated",
+        payload: {
+          threadId: command.threadId,
+          enabled: command.enabled,
+          intervalMs: command.intervalMs,
+          prompt: command.prompt,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.heartbeat.sent": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.heartbeat-sent",
+        payload: {
+          threadId: command.threadId,
+          sentAt: command.sentAt,
+        },
+      };
+    }
+
     default: {
       command satisfies never;
       const fallback = command as never as { type: string };

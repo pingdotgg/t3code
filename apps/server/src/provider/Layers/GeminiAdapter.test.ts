@@ -1,6 +1,6 @@
-import { ThreadId, TurnId } from "@t3tools/contracts";
-import { Effect, Fiber, Queue, Stream } from "effect";
-import { NodeFileSystem } from "@effect/platform-node";
+import { ThreadId } from "@t3tools/contracts";
+import { Effect, Stream } from "effect";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import { ProviderAdapterRequestError } from "../Errors.ts";

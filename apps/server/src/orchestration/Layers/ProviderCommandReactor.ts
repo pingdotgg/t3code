@@ -472,7 +472,7 @@ const make = Effect.gen(function* () {
       ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
       ...(event.payload.serviceTier !== undefined ? { serviceTier: event.payload.serviceTier } : {}),
       ...(event.payload.modelOptions !== undefined ? { modelOptions: event.payload.modelOptions } : {}),
-      interactionMode: event.payload.interactionMode,
+      interactionMode: event.payload.interactionMode ?? "default",
       createdAt: event.payload.createdAt,
     });
   });

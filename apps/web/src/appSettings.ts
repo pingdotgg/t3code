@@ -82,9 +82,13 @@ let cachedRawSettings: string | null | undefined;
 let cachedSnapshot: AppSettings = DEFAULT_APP_SETTINGS;
 
 export function normalizeCustomModelSlugs(
-  models: Iterable<string | null | undefined>,
+  models: Iterable<string | null | undefined> | undefined,
   provider: ProviderKind = "codex",
 ): string[] {
+  if (!models) {
+    return [];
+  }
+
   const normalizedModels: string[] = [];
   const seen = new Set<string>();
   const builtInModelSlugs = BUILT_IN_MODEL_SLUGS_BY_PROVIDER[provider];
@@ -124,10 +128,10 @@ export function getCustomModelsForProvider(
 ): readonly string[] {
   switch (provider) {
     case "gemini":
-      return settings.customGeminiModels;
+      return settings.customGeminiModels ?? [];
     case "codex":
     default:
-      return settings.customCodexModels;
+      return settings.customCodexModels ?? [];
   }
 }
 

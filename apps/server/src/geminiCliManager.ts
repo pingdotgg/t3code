@@ -7,6 +7,7 @@ import { Readable, Writable } from "node:stream";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
 import { normalizeModelSlug } from "@t3tools/shared/model";
+import { type GeminiThinkingLevel } from "@t3tools/contracts";
 
 import {
   buildPopupSafeEnv,
@@ -82,6 +83,7 @@ interface GeminiAcpRequestPermissionOption {
 interface GeminiAcpRequestPermissionParams {
   readonly sessionId?: unknown;
   readonly options?: ReadonlyArray<GeminiAcpRequestPermissionOption>;
+  readonly message?: string;
 }
 
 interface GeminiAcpPromptResult {
