@@ -112,6 +112,25 @@ function formatErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function getSafeExternalUrl(rawUrl: unknown): string | null {
+  if (typeof rawUrl !== "string" || rawUrl.length === 0) {
+    return null;
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
+    return null;
+  }
+
+  return parsedUrl.toString();
+}
+
 function writeDesktopStreamChunk(
   streamName: "stdout" | "stderr",
   chunk: unknown,
@@ -1033,23 +1052,13 @@ function registerIpcHandlers(): void {
 
   ipcMain.removeHandler(OPEN_EXTERNAL_CHANNEL);
   ipcMain.handle(OPEN_EXTERNAL_CHANNEL, async (_event, rawUrl: unknown) => {
-    if (typeof rawUrl !== "string" || rawUrl.length === 0) {
-      return false;
-    }
-
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(rawUrl);
-    } catch {
-      return false;
-    }
-
-    if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
+    const externalUrl = getSafeExternalUrl(rawUrl);
+    if (!externalUrl) {
       return false;
     }
 
     try {
-      await shell.openExternal(parsedUrl.toString());
+      await shell.openExternal(externalUrl);
       return true;
     } catch {
       return false;
@@ -1142,7 +1151,14 @@ function createWindow(): BrowserWindow {
     Menu.buildFromTemplate(menuTemplate).popup({ window });
   });
 
-  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    const externalUrl = getSafeExternalUrl(url);
+    if (externalUrl) {
+      void shell.openExternal(externalUrl);
+    }
+    return { action: "deny" };
+  });
+
   window.on("page-title-updated", (event) => {
     event.preventDefault();
     window.setTitle(APP_DISPLAY_NAME);
