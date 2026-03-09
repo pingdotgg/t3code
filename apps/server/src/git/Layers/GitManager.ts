@@ -344,70 +344,84 @@ export const makeGitManager = Effect.gen(function* () {
       };
     });
 
-  const runPrStep = (cwd: string, fallbackBranch: string | null) =>
-    Effect.gen(function* () {
-      const details = yield* gitCore.statusDetails(cwd);
-      const branch = details.branch ?? fallbackBranch;
-      if (!branch) {
-        return yield* gitManagerError(
-          "runPrStep",
-          "Cannot create a pull request from detached HEAD.",
-        );
+  const runPrStep = (cwd: string, fallbackBranch: string | null, baseRepoSelection?: string) =>
+  Effect.gen(function* () {
+  const details = yield* gitCore.statusDetails(cwd);
+  const branch = details.branch ?? fallbackBranch;
+  if (!branch) {
+  return yield* gitManagerError(
+  "runPrStep",
+  "Cannot create a pull request from detached HEAD.",
+  );
+  }
+  if (!details.hasUpstream) {
+  return yield* gitManagerError(
+  "runPrStep",
+  "Current branch has not been pushed. Push before creating a PR.",
+  );
+  }
+
+  const existing = yield* findOpenPr(cwd, branch);
+  if (existing) {
+  return {
+  status: "opened_existing" as const,
+  url: existing.url,
+  number: existing.number,
+  baseBranch: existing.baseRefName,
+  headBranch: existing.headRefName,
+  title: existing.title,
+  };
+  }
+
+  const repoInfo = yield* gitHubCli.getRepositoryInfo({ cwd }).pipe(Effect.catch(() => Effect.succeed(null)));
+  let targetRepo: string | undefined = undefined;
+      let headQualified = branch;
+
+  if (repoInfo && repoInfo.isFork && repoInfo.parent) {
+  if (baseRepoSelection === "upstream") {
+    targetRepo = `${repoInfo.parent.owner}/${repoInfo.parent.name}`;
+    headQualified = `${repoInfo.owner}:${branch}`;
+  } else if (baseRepoSelection === "origin") {
+    targetRepo = `${repoInfo.owner}/${repoInfo.name}`;
+    }
       }
-      if (!details.hasUpstream) {
-        return yield* gitManagerError(
-          "runPrStep",
-          "Current branch has not been pushed. Push before creating a PR.",
-        );
-      }
 
-      const existing = yield* findOpenPr(cwd, branch);
-      if (existing) {
-        return {
-          status: "opened_existing" as const,
-          url: existing.url,
-          number: existing.number,
-          baseBranch: existing.baseRefName,
-          headBranch: existing.headRefName,
-          title: existing.title,
-        };
-      }
+  const baseBranch = yield* resolveBaseBranch(cwd, branch, details.upstreamRef);
+  const rangeContext = yield* gitCore.readRangeContext(cwd, baseBranch);
 
-      const baseBranch = yield* resolveBaseBranch(cwd, branch, details.upstreamRef);
-      const rangeContext = yield* gitCore.readRangeContext(cwd, baseBranch);
+  const generated = yield* textGeneration.generatePrContent({
+  cwd,
+  baseBranch,
+  headBranch: branch,
+    commitSummary: limitContext(rangeContext.commitSummary, 20_000),
+  diffSummary: limitContext(rangeContext.diffSummary, 20_000),
+  diffPatch: limitContext(rangeContext.diffPatch, 60_000),
+  });
 
-      const generated = yield* textGeneration.generatePrContent({
-        cwd,
-        baseBranch,
-        headBranch: branch,
-        commitSummary: limitContext(rangeContext.commitSummary, 20_000),
-        diffSummary: limitContext(rangeContext.diffSummary, 20_000),
-        diffPatch: limitContext(rangeContext.diffPatch, 60_000),
-      });
-
-      const bodyFile = path.join(tempDir, `t3code-pr-body-${process.pid}-${randomUUID()}.md`);
-      yield* fileSystem
-        .writeFileString(bodyFile, generated.body)
-        .pipe(
+  const bodyFile = path.join(tempDir, `t3code-pr-body-${process.pid}-${randomUUID()}.md`);
+  yield* fileSystem
+  .writeFileString(bodyFile, generated.body)
+  .pipe(
           Effect.mapError((cause) =>
-            gitManagerError("runPrStep", "Failed to write pull request body temp file.", cause),
-          ),
-        );
-      yield* gitHubCli
-        .createPullRequest({
-          cwd,
-          baseBranch,
-          headBranch: branch,
-          title: generated.title,
+        gitManagerError("runPrStep", "Failed to write pull request body temp file.", cause),
+      ),
+  );
+  yield* gitHubCli
+  .createPullRequest({
+  cwd,
+  baseBranch,
+    headBranch: headQualified,
+      title: generated.title,
           bodyFile,
-        })
-        .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.catch(() => Effect.void))));
+      repo: targetRepo,
+  })
+  .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.catch(() => Effect.void))));
 
-      const created = yield* findOpenPr(cwd, branch);
-      if (!created) {
-        return {
-          status: "created" as const,
-          baseBranch,
+  const created = yield* findOpenPr(cwd, branch);
+  if (!created) {
+  return {
+      status: "created" as const,
+        baseBranch,
           headBranch: branch,
           title: generated.title,
         };
@@ -434,6 +448,10 @@ export const makeGitManager = Effect.gen(function* () {
           )
         : null;
 
+    const repoInfo = yield* gitHubCli
+      .getRepositoryInfo({ cwd: input.cwd })
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+
     return {
       branch: details.branch,
       hasWorkingTreeChanges: details.hasWorkingTreeChanges,
@@ -442,6 +460,7 @@ export const makeGitManager = Effect.gen(function* () {
       aheadCount: details.aheadCount,
       behindCount: details.behindCount,
       pr,
+      repo: repoInfo,
     };
   });
 
@@ -521,7 +540,7 @@ export const makeGitManager = Effect.gen(function* () {
         : { status: "skipped_not_requested" as const };
 
       const pr = wantsPr
-        ? yield* runPrStep(input.cwd, currentBranch)
+        ? yield* runPrStep(input.cwd, currentBranch, input.baseRepo)
         : { status: "skipped_not_requested" as const };
 
       return {

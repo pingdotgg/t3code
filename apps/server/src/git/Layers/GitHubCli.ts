@@ -149,22 +149,27 @@ const makeGitHubCli = Effect.sync(() => {
           }),
         ),
       ),
-    createPullRequest: (input) =>
-      execute({
+    createPullRequest: (input) => {
+      const args = [
+        "pr",
+        "create",
+        "--base",
+        input.baseBranch,
+        "--head",
+        input.headBranch,
+        "--title",
+        input.title,
+        "--body-file",
+        input.bodyFile,
+      ];
+      if (input.repo) {
+        args.push("--repo", input.repo);
+      }
+      return execute({
         cwd: input.cwd,
-        args: [
-          "pr",
-          "create",
-          "--base",
-          input.baseBranch,
-          "--head",
-          input.headBranch,
-          "--title",
-          input.title,
-          "--body-file",
-          input.bodyFile,
-        ],
-      }).pipe(Effect.asVoid),
+        args,
+      }).pipe(Effect.asVoid);
+    },
     getDefaultBranch: (input) =>
       execute({
         cwd: input.cwd,
@@ -173,6 +178,30 @@ const makeGitHubCli = Effect.sync(() => {
         Effect.map((value) => {
           const trimmed = value.stdout.trim();
           return trimmed.length > 0 ? trimmed : null;
+        }),
+      ),
+    getRepositoryInfo: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: ["repo", "view", "--json", "name,owner,isFork,parent"],
+      }).pipe(
+        Effect.map((value) => {
+          const trimmed = value.stdout.trim();
+          if (trimmed.length === 0) return null;
+          try {
+            const parsed = JSON.parse(trimmed);
+            return {
+              name: parsed.name,
+              owner: parsed.owner.login,
+              isFork: parsed.isFork,
+              parent: parsed.parent ? {
+                name: parsed.parent.name,
+                owner: parsed.parent.owner.login
+              } : undefined
+            } satisfies GitHubRepositoryInfo;
+          } catch {
+            return null;
+          }
         }),
       ),
   } satisfies GitHubCliShape;

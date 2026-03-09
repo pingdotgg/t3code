@@ -7,6 +7,9 @@ const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 
 export const GitStackedAction = Schema.Literals(["commit", "commit_push", "commit_push_pr"]);
 export type GitStackedAction = typeof GitStackedAction.Type;
+
+export const GitBaseRepoSelection = Schema.Literals(["origin", "upstream"]);
+export type GitBaseRepoSelection = typeof GitBaseRepoSelection.Type;
 const GitCommitStepStatus = Schema.Literals(["created", "skipped_no_changes"]);
 const GitPushStepStatus = Schema.Literals([
   "pushed",
@@ -53,6 +56,7 @@ export const GitRunStackedActionInput = Schema.Struct({
   action: GitStackedAction,
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
+  baseRepo: Schema.optional(GitBaseRepoSelection),
 });
 export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 
@@ -104,6 +108,18 @@ const GitStatusPr = Schema.Struct({
   state: GitStatusPrState,
 });
 
+const GitRepoInfo = Schema.Struct({
+  name: Schema.String,
+  owner: Schema.String,
+  isFork: Schema.Boolean,
+  parent: Schema.optional(
+    Schema.Struct({
+      name: Schema.String,
+      owner: Schema.String,
+    }),
+  ),
+});
+
 export const GitStatusResult = Schema.Struct({
   branch: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
   hasWorkingTreeChanges: Schema.Boolean,
@@ -122,6 +138,7 @@ export const GitStatusResult = Schema.Struct({
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
   pr: Schema.NullOr(GitStatusPr),
+  repo: Schema.optional(Schema.NullOr(GitRepoInfo)),
 });
 export type GitStatusResult = typeof GitStatusResult.Type;
 

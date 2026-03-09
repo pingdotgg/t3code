@@ -19,6 +19,16 @@ export interface GitHubPullRequestSummary {
   readonly headRefName: string;
 }
 
+export interface GitHubRepositoryInfo {
+  readonly name: string;
+  readonly owner: string;
+  readonly isFork: boolean;
+  readonly parent?: {
+    readonly name: string;
+    readonly owner: string;
+  };
+}
+
 /**
  * GitHubCliShape - Service API for executing GitHub CLI commands.
  */
@@ -31,6 +41,13 @@ export interface GitHubCliShape {
     readonly args: ReadonlyArray<string>;
     readonly timeoutMs?: number;
   }) => Effect.Effect<ProcessRunResult, GitHubCliError>;
+
+  /**
+   * Get repository information.
+   */
+  readonly getRepositoryInfo: (input: {
+    readonly cwd: string;
+  }) => Effect.Effect<GitHubRepositoryInfo | null, GitHubCliError>;
 
   /**
    * List open pull requests for a head branch.
@@ -50,6 +67,7 @@ export interface GitHubCliShape {
     readonly headBranch: string;
     readonly title: string;
     readonly bodyFile: string;
+    readonly repo?: string;
   }) => Effect.Effect<void, GitHubCliError>;
 
   /**
