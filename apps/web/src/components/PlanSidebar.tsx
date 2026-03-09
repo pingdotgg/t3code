@@ -1,4 +1,4 @@
-import { memo, useState, useCallback, useRef, useEffect } from "react";
+import { memo, useState, useCallback } from "react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
@@ -65,15 +65,6 @@ const PlanSidebar = memo(function PlanSidebar({
   const [proposedPlanExpanded, setProposedPlanExpanded] = useState(false);
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
   const [copied, setCopied] = useState(false);
-  const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (copiedTimeoutRef.current !== null) {
-        clearTimeout(copiedTimeoutRef.current);
-      }
-    };
-  }, []);
 
   const planMarkdown = activeProposedPlan?.planMarkdown ?? null;
   const planTitle = planMarkdown ? proposedPlanTitle(planMarkdown) : null;
@@ -82,13 +73,7 @@ const PlanSidebar = memo(function PlanSidebar({
     if (!planMarkdown) return;
     void navigator.clipboard.writeText(planMarkdown);
     setCopied(true);
-    if (copiedTimeoutRef.current !== null) {
-      clearTimeout(copiedTimeoutRef.current);
-    }
-    copiedTimeoutRef.current = setTimeout(() => {
-      setCopied(false);
-      copiedTimeoutRef.current = null;
-    }, 2000);
+    setTimeout(() => setCopied(false), 2000);
   }, [planMarkdown]);
 
   const handleDownload = useCallback(() => {
@@ -203,9 +188,9 @@ const PlanSidebar = memo(function PlanSidebar({
               <p className="mb-2 text-[10px] font-semibold tracking-widest text-muted-foreground/40 uppercase">
                 Steps
               </p>
-              {activePlan.steps.map((step, index) => (
+              {activePlan.steps.map((step) => (
                 <div
-                  key={`step-${index}`}
+                  key={`${step.status}:${step.step}`}
                   className={cn(
                     "flex items-start gap-2.5 rounded-lg px-2.5 py-2 transition-colors duration-200",
                     step.status === "inProgress" && "bg-blue-500/5",

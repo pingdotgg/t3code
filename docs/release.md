@@ -36,6 +36,9 @@ This document covers how to run desktop releases from one tag, first without sig
   - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)
   - `latest*.yml` metadata
   - `*.blockmap` files (used for differential downloads)
+- macOS metadata note:
+  - `electron-updater` reads `latest-mac.yml` for both Intel and Apple Silicon.
+  - The workflow merges the per-arch mac manifests into one `latest-mac.yml` before publishing the GitHub Release.
 
 ## 0) npm OIDC trusted publishing setup (CLI)
 

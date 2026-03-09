@@ -87,8 +87,13 @@ The installer supports **npm, yarn, pnpm, bun, and deno** detection, and will au
  - [Kilo](https://kilo.dev)
  - [OpenCode](https://opencode.ai)
 
+## Contributing
+
+Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
+
+Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
+
 ## Notes
 
  - This project is very early in development. Expect bugs. (Especially with my fork)
- - Interested in contributing? See [CONTRIBUTING.md](CONTRIBUTING.md).
  - Maintaining a custom fork or alpha branch? See [docs/custom-alpha-workflow.md](docs/custom-alpha-workflow.md).

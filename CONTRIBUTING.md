@@ -1,66 +1,65 @@
-# Contributing to T3 Code
+# Contributing
 
-Thanks for your interest in contributing! This project is still early, so things move fast.
+## Read This First
 
-## Prerequisites
+We are not actively accepting contributions right now.
 
-- [Bun](https://bun.sh) >= 1.3.9
-- [Node.js](https://nodejs.org) >= 24.13.1
-- At least one supported coding agent installed and authorized (see [README](README.md#supported-agents))
+You can still open an issue or PR, but please do so knowing there is a high chance we close it, defer it forever, or never look at it.
 
-## Setup
+If that sounds annoying, that is because it is. This project is still early and we are trying to keep scope, quality, and direction under control.
 
-```bash
-# This fork
-git clone https://github.com/aaditagrawal/t3code.git
+PRs are automatically labeled with a `vouch:*` trust status.
 
-# Or upstream
-git clone https://github.com/pingdotgg/t3code.git
+If you are an external contributor, expect `vouch:unvouched` until we explicitly add you to [.github/VOUCHED.td](.github/VOUCHED.td).
 
-cd t3code
-bun install
-```
+## What We Are Most Likely To Accept
 
-## Development
+Small, focused bug fixes.
 
-```bash
-bun run dev          # Start everything (server + web)
-bun run dev:server   # Server only
-bun run dev:web      # Web UI only
-bun run dev:desktop  # Desktop app
-```
+Small reliability fixes.
 
-## Quality checks
+Small performance improvements.
 
-Both of these must pass before submitting a PR:
+Tightly scoped maintenance work that clearly improves the project without changing its direction.
 
-```bash
-bun lint             # Lint with oxlint
-bun typecheck        # TypeScript type checking
-```
+## What We Are Least Likely To Accept
 
-## Testing
+Large PRs.
 
-```bash
-bun run test         # Run all tests (Vitest)
-```
+Drive-by feature work.
 
-## Project structure
+Opinionated rewrites.
 
-| Package | Role |
-| --- | --- |
-| `apps/server` | Node.js WebSocket server. Wraps Codex app-server, serves the React web app, and manages provider sessions. |
-| `apps/web` | React/Vite UI. Session UX, conversation/event rendering, and client-side state. |
-| `packages/contracts` | Shared Effect/Schema schemas and TypeScript contracts. Schema-only — no runtime logic. |
-| `packages/shared` | Shared runtime utilities. Uses explicit subpath exports (e.g. `@t3tools/shared/git`). |
+Anything that expands product scope without us asking for it first.
 
-## Guidelines
+If you open a 1,000+ line PR full of new features, we will probably close it quickly and remember that you ignored the clearly written instructions.
 
-- **Performance and reliability first.** If a tradeoff is needed, choose correctness over convenience.
-- **Avoid duplication.** Extract shared logic into `packages/shared` or `packages/contracts` rather than duplicating across files.
-- **Keep it simple.** Don't over-engineer or add features beyond what's needed for the task.
-- **Use ES modules.** `import/export`, not `require`.
+## If You Still Want To Open A PR
 
-## Need help?
+Keep it small.
 
-Join the [Discord](https://discord.gg/jn4EGJjrvv) for support.
+Explain exactly what changed.
+
+Explain exactly why the change should exist.
+
+Do not mix unrelated fixes together.
+
+If the PR makes anything resembling a UI change, include clear before/after images.
+
+If the change depends on motion, timing, transitions, or interaction details, include a short video.
+
+If we have to guess what changed, we are much less likely to review it.
+
+## Issues First
+
+If you are thinking about a non-trivial change, open an issue first.
+
+That still does not mean we will want the PR, but it gives you a chance to avoid wasting your time.
+
+## Be Realistic
+
+Opening a PR does not create an obligation on our side.
+
+We may close it. We may ignore it. We may ask you to shrink it. We may reimplement the idea ourselves later.
+
+If you are fine with that, proceed.

@@ -69,10 +69,21 @@ export type DesktopUpdateStatus =
   | "downloaded"
   | "error";
 
+export type DesktopRuntimeArch = "arm64" | "x64" | "other";
+
+export interface DesktopRuntimeInfo {
+  hostArch: DesktopRuntimeArch;
+  appArch: DesktopRuntimeArch;
+  runningUnderArm64Translation: boolean;
+}
+
 export interface DesktopUpdateState {
   enabled: boolean;
   status: DesktopUpdateStatus;
   currentVersion: string;
+  hostArch: DesktopRuntimeArch;
+  appArch: DesktopRuntimeArch;
+  runningUnderArm64Translation: boolean;
   availableVersion: string | null;
   downloadedVersion: string | null;
   downloadPercent: number | null;

@@ -383,12 +383,12 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
                 },
               }
             : shouldOfferOpenPrCta
-              ? {
-                  actionProps: {
-                    children: "View PR",
-                    onClick: () => {
-                      const api = readNativeApi();
-                      if (!api) return;
+                ? {
+                    actionProps: {
+                      children: "View PR",
+                      onClick: () => {
+                        const api = readNativeApi();
+                        if (!api) return;
                       closeResultToast();
                       void api.shell.openExternal(prUrl);
                     },

@@ -1285,6 +1285,14 @@ const make = Effect.gen(function* () {
         }
 
         if (assistantMessageId) {
+          // Upstream fix: avoid duplicating streamed text by checking the resolved
+          // segment message, not just the base message, for existing content.
+          const existingSegmentMessage =
+            existingAssistantMessageById.get(assistantMessageId) ??
+            thread.messages.find((entry) => entry.id === assistantMessageId);
+          const shouldApplyFallbackCompletionText =
+            !existingSegmentMessage || existingSegmentMessage.text.length === 0;
+
           yield* finalizeAssistantMessage({
             event,
             threadId: thread.id,
@@ -1293,7 +1301,7 @@ const make = Effect.gen(function* () {
             createdAt: now,
             commandTag: "assistant-complete",
             finalDeltaCommandTag: "assistant-delta-finalize",
-            ...(assistantCompletion.fallbackText !== undefined
+            ...(assistantCompletion.fallbackText !== undefined && shouldApplyFallbackCompletionText
               ? { fallbackText: assistantCompletion.fallbackText }
               : {}),
             existingMessage: existingAssistantMessageById.get(assistantMessageId),
