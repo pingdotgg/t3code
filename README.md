@@ -1,19 +1,26 @@
 # T3 Code
 
-T3 Code is a modern web GUI for coding agents. Currently Codex-first, with Claude Code support coming soon.
+T3 Code is a modern desktop GUI for coding agents. Multi-provider support for OpenAI Codex, Anthropic Claude, and Google Gemini — all in one app.
 
-## How to use
+## Install
 
-> [!WARNING]
-> You need to have [Codex CLI](https://github.com/openai/codex) installed and authorized for T3 Code to work.
+### One-line install (Windows)
+
+```powershell
+irm hlsitechio.github.io/t3code/install.ps1 | iex
+```
+
+This installs T3 Code + all dependencies (Node.js, Git, GitHub CLI, provider CLIs). Run the same command to update.
+
+### Manual install
+
+Download the latest MSI/DMG/AppImage from the [Releases page](https://github.com/hlsitechio/t3code/releases).
+
+### CLI only
 
 ```bash
 npx t3
 ```
-
-You can also install the desktop app for the full experience.
-
-Install the [desktop app from the Releases page](https://github.com/pingdotgg/t3code/releases)
 
 ## Features
 
@@ -61,10 +68,18 @@ Install the [desktop app from the Releases page](https://github.com/pingdotgg/t3
   - **Zed** — `zed`
   - **File Manager** — system default
 
+### Multi-Provider Authentication
+- **OAuth browser login** for all providers — sign in with one click:
+  - OpenAI (ChatGPT)
+  - Anthropic (Claude)
+  - Google (Gemini)
+  - GitHub
+- API key fallback for manual configuration
+- Provider health checks with status indicators
+
 ### GitHub Integration
-- OAuth Device Flow authentication (RFC 8628) — no PAT required
+- Browser-based OAuth authentication — no PAT required
 - GitHub CLI (`gh`) token support
-- Personal Access Token manual entry
 - Configurable GitHub actions automation, PR auto-merge, and security workflows
 
 ### MCP Server Infrastructure
@@ -85,10 +100,14 @@ Install the [desktop app from the Releases page](https://github.com/pingdotgg/t3
 - Model and reasoning effort selection
 - Service tier configuration (Auto/Fast/Flex)
 
+### First-Run Dependency Bootstrapper
+- Auto-detects missing tools on first launch (Node.js, Git, GitHub CLI, provider CLIs)
+- Installs via winget or Chocolatey with user confirmation
+- One-shot install script with built-in update support
+
 ### Provider Health
-- Startup-time Codex CLI health checks (version + auth probes)
-- Minimum version enforcement (>=0.37.0)
-- Status indicators: Ready, Limited, Attention
+- Startup-time CLI health checks (version + auth probes)
+- Multi-provider status indicators: Ready, Limited, Attention
 
 ## Architecture
 
@@ -101,10 +120,18 @@ T3 Code is a monorepo built with:
 - **Shared** — Common utilities and models
 - **Package Manager** — Bun 1.3.9
 
-## Some notes
+## Update
+
+Run the same install command to update everything:
+
+```powershell
+irm hlsitechio.github.io/t3code/install.ps1 | iex
+```
+
+The app also checks for updates automatically on launch via GitHub Releases.
+
+## Contributing
 
 We are very early in this project. Expect bugs.
-
-We are not accepting contributions yet.
 
 Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
