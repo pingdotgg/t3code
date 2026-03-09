@@ -312,7 +312,7 @@ export class GeminiCliManager extends EventEmitter {
     if (this.canUseAcp()) {
       void this.runTurnViaAcp(context, turnId, trimmedText, input.prompt, desiredMode);
     } else {
-      this.runTurnViaLegacyCli(context, turnId, trimmedText, input.prompt, approvalMode);
+      this.runTurnViaLegacyCli(context, turnId, trimmedText, input.prompt, approvalMode, input.thinkingLevel);
     }
 
     return {
@@ -534,6 +534,7 @@ export class GeminiCliManager extends EventEmitter {
     text: string,
     prompt: ReadonlyArray<GeminiAcpPromptBlock> | undefined,
     approvalMode: GeminiApprovalMode,
+    thinkingLevel: GeminiThinkingLevel | undefined,
   ): void {
     const launch = resolveGeminiLaunch();
     const args = [
@@ -548,8 +549,8 @@ export class GeminiCliManager extends EventEmitter {
       context.model,
     ];
 
-    if (input.thinkingLevel) {
-      args.push("--thinking-level", input.thinkingLevel);
+    if (thinkingLevel) {
+      args.push("--thinking-level", thinkingLevel);
     }
 
     if (prompt) {

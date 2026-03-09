@@ -1,6 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 
 import { GeminiCliManager } from "./geminiCliManager";
+
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual("node:child_process");
+  return {
+    ...actual,
+    spawn: vi.fn(),
+  };
+});
 
 function promptText(
   prompt: ReadonlyArray<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>,
@@ -32,6 +42,71 @@ function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
 describe("GeminiCliManager", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("passes thinkingLevel and images to legacy CLI", async () => {
+    const stdin = { write: vi.fn(), end: vi.fn() };
+    const stdout = Object.assign(new EventEmitter(), { resume: vi.fn(), pause: vi.fn() });
+    const stderr = new EventEmitter();
+    const child = Object.assign(new EventEmitter(), { stdin, stdout, stderr, kill: vi.fn() });
+    
+    (spawn as any).mockReturnValue(child);
+
+    const manager = new GeminiCliManager({ prewarmSessions: false });
+    (manager as any).canUseAcp = () => false; // Force legacy path for this test
+    manager.startSession({ threadId: "legacy-test", model: "gemini-2.5-pro", cwd: "/tmp" });
+    
+    manager.sendTurn({
+      threadId: "legacy-test",
+      text: "test thinking",
+      thinkingLevel: "high",
+      prompt: [{ type: "image", uri: "file:///tmp/img.png", mimeType: "image/png" } as any],
+    });
+
+    await waitFor(() => (spawn as any).mock.calls.length > 0);
+    const spawnCall = (spawn as any).mock.calls.find((call: any) => call[1].includes("--prompt"));
+    expect(spawnCall).toBeDefined();
+    const args = spawnCall[1];
+    expect(args).toContain("--thinking-level");
+    expect(args).toContain("high");
+    expect(args).toContain("--image");
+    expect(args[args.indexOf("--image") + 1]).toBe("/tmp/img.png");
+  });
+
+  it("handles mid-turn interactivity by writing to legacy CLI stdin", async () => {
+    const stdin = { write: vi.fn(), end: vi.fn() };
+    const stdout = Object.assign(new EventEmitter(), { resume: vi.fn(), pause: vi.fn() });
+    const stderr = new EventEmitter();
+    const child = Object.assign(new EventEmitter(), { stdin, stdout, stderr, kill: vi.fn() });
+    
+    (spawn as any).mockReturnValue(child);
+
+    const manager = new GeminiCliManager({ prewarmSessions: false });
+    (manager as any).canUseAcp = () => false; // Force legacy path
+    manager.startSession({ threadId: "interactive-test", model: "gemini-2.5-pro", cwd: "/tmp" });
+    
+    manager.sendTurn({ threadId: "interactive-test", text: "ask me something" });
+
+    await waitFor(() => (spawn as any).mock.calls.length > 0);
+
+    // Simulate CLI asking a question
+    const toolUse = JSON.stringify({
+      type: "tool_use",
+      tool_name: "ask_user",
+      tool_id: "req-1",
+      parameters: { questions: [{ id: "q1", question: "yes?", options: [{ label: "Yes", description: "y" }] }] }
+    });
+    (stdout as any).emit("data", Buffer.from(toolUse + "\n"));
+
+    // Wait for manager to register the pending input
+    await waitFor(() => manager.listSessions().find(s => s.threadId === "interactive-test")?.pendingUserInputs.has("req-1") === true);
+
+    // Respond
+    manager.respondToUserInput("interactive-test", "req-1", { q1: "Yes" });
+
+    expect(stdin.write).toHaveBeenCalledWith(expect.stringContaining('"type":"tool_result"'));
+    expect(stdin.write).toHaveBeenCalledWith(expect.stringContaining('"tool_id":"req-1"'));
+    expect(stdin.write).toHaveBeenCalledWith(expect.stringContaining('"output":"{\\"q1\\":\\"Yes\\"}"'));
   });
 
   it("reuses a warm ACP runtime for follow-up turns on the same thread", async () => {
