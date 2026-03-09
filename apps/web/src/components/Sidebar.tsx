@@ -503,6 +503,8 @@ export default function Sidebar() {
     void addProjectFromPath(newCwd);
   };
 
+  const canAddProject = newCwd.trim().length > 0 && !isAddingProject;
+
   const handlePickFolder = async () => {
     const api = readNativeApi();
     if (!api || isPickingFolder) return;
@@ -1105,7 +1107,7 @@ export default function Sidebar() {
                   type="button"
                   className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
                   onClick={handleAddProject}
-                  disabled={isAddingProject}
+                  disabled={!canAddProject}
                 >
                   {isAddingProject ? "Adding..." : "Add"}
                 </button>
