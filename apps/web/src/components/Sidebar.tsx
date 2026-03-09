@@ -32,6 +32,7 @@ import { type Thread } from "../types";
 import { derivePendingApprovals } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { readNativeApi } from "../nativeApi";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
@@ -49,6 +50,7 @@ import {
 } from "./desktopUpdate.logic";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
+import { shouldOpenProjectFolderPickerImmediately } from "./Sidebar.logic";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
@@ -266,6 +268,7 @@ function ProjectFavicon({ cwd }: { cwd: string }) {
 }
 
 export default function Sidebar() {
+  const isMobile = useMediaQuery("(max-width: 767px)");
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
@@ -312,6 +315,11 @@ export default function Sidebar() {
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
+  const shouldBrowseForProjectImmediately = shouldOpenProjectFolderPickerImmediately({
+    isElectron,
+    isMobile,
+  });
+  const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
   const pendingApprovalByThreadId = useMemo(() => {
     const map = new Map<ThreadId, boolean>();
     for (const thread of threads) {
@@ -550,10 +558,19 @@ export default function Sidebar() {
     }
     if (pickedPath) {
       await addProjectFromPath(pickedPath);
-    } else {
+    } else if (!shouldBrowseForProjectImmediately) {
       addProjectInputRef.current?.focus();
     }
     setIsPickingFolder(false);
+  };
+
+  const handleStartAddProject = () => {
+    setAddProjectError(null);
+    if (shouldBrowseForProjectImmediately) {
+      void handlePickFolder();
+      return;
+    }
+    setAddingProject((prev) => !prev);
   };
 
   const cancelRename = useCallback(() => {
@@ -1075,21 +1092,23 @@ export default function Sidebar() {
                   <button
                     type="button"
                     aria-label="Add project"
+                    aria-pressed={shouldShowProjectPathEntry}
                     className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                    onClick={() => {
-                      setAddingProject((prev) => !prev);
-                      setAddProjectError(null);
-                    }}
+                    onClick={handleStartAddProject}
                   />
                 }
               >
-                <PlusIcon className="size-3.5" />
+                <PlusIcon
+                  className={`size-3.5 transition-transform duration-150 ${
+                    shouldShowProjectPathEntry ? "rotate-45" : "rotate-0"
+                  }`}
+                />
               </TooltipTrigger>
               <TooltipPopup side="right">Add project</TooltipPopup>
             </Tooltip>
           </div>
 
-          {addingProject && (
+          {shouldShowProjectPathEntry && (
             <div className="mb-2 px-1">
               {isElectron && (
                 <button
@@ -1415,7 +1434,7 @@ export default function Sidebar() {
             })}
           </SidebarMenu>
 
-          {projects.length === 0 && !addingProject && (
+          {projects.length === 0 && !shouldShowProjectPathEntry && (
             <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
               No projects yet
             </div>
