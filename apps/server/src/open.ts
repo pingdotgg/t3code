@@ -173,7 +173,11 @@ export function isCommandAvailable(
 }
 
 function isMacApplicationAvailable(appName: string): boolean {
-  const result = spawnSync("open", ["-Ra", appName], { stdio: "ignore" });
+  const result = spawnSync(
+    "osascript",
+    ["-e", `id of application "${appName}"`],
+    { stdio: "pipe" },
+  );
   return result.status === 0;
 }
 
