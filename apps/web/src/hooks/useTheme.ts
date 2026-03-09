@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 
+import type { DesktopWindowTheme } from "@t3tools/contracts";
+
 type Theme = "light" | "dark" | "system";
 type ThemeSnapshot = {
   theme: Theme;
@@ -25,11 +27,23 @@ function getStored(): Theme {
   return "system";
 }
 
+function resolveTheme(theme: Theme): DesktopWindowTheme {
+  return theme === "system" ? (getSystemDark() ? "dark" : "light") : theme;
+}
+
+function syncDesktopWindowTheme(theme: Theme) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.desktopBridge?.setWindowTheme?.(theme);
+}
+
 function applyTheme(theme: Theme, suppressTransitions = false) {
   if (suppressTransitions) {
     document.documentElement.classList.add("no-transitions");
   }
-  const isDark = theme === "dark" || (theme === "system" && getSystemDark());
+  const isDark = resolveTheme(theme) === "dark";
   document.documentElement.classList.toggle("dark", isDark);
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
@@ -43,6 +57,7 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
 
 // Apply immediately on module load to prevent flash
 applyTheme(getStored());
+syncDesktopWindowTheme(getStored());
 
 function getSnapshot(): ThemeSnapshot {
   const theme = getStored();
@@ -62,7 +77,10 @@ function subscribe(listener: () => void): () => void {
   // Listen for system preference changes
   const mq = window.matchMedia(MEDIA_QUERY);
   const handleChange = () => {
-    if (getStored() === "system") applyTheme("system", true);
+    if (getStored() === "system") {
+      applyTheme("system", true);
+      syncDesktopWindowTheme("system");
+    }
     emitChange();
   };
   mq.addEventListener("change", handleChange);
@@ -70,7 +88,9 @@ function subscribe(listener: () => void): () => void {
   // Listen for storage changes from other tabs
   const handleStorage = (e: StorageEvent) => {
     if (e.key === STORAGE_KEY) {
-      applyTheme(getStored(), true);
+      const nextTheme = getStored();
+      applyTheme(nextTheme, true);
+      syncDesktopWindowTheme(nextTheme);
       emitChange();
     }
   };
@@ -93,13 +113,15 @@ export function useTheme() {
   const setTheme = useCallback((next: Theme) => {
     localStorage.setItem(STORAGE_KEY, next);
     applyTheme(next, true);
+    syncDesktopWindowTheme(next);
     emitChange();
   }, []);
 
   // Keep DOM in sync on mount/change
   useEffect(() => {
     applyTheme(theme);
-  }, [theme]);
+    syncDesktopWindowTheme(theme);
+  }, [resolvedTheme, theme]);
 
   return { theme, setTheme, resolvedTheme } as const;
 }
