@@ -78,7 +78,7 @@ import {
   type ProviderPickerKind,
   PROVIDER_OPTIONS,
   deriveWorkLogEntries,
-  hasToolActivityForTurn,
+  hasToolActivitySince,
   isLatestTurnSettled,
   formatElapsed,
   formatTimestamp,
@@ -957,17 +957,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [serverMessages],
   );
   const workLogEntries = useMemo(
-    () =>
-      deriveWorkLogEntries(
-        threadActivities,
-        activeLatestTurn?.turnId ?? undefined,
-        latestUserMessageCreatedAt,
-      ),
-    [activeLatestTurn?.turnId, latestUserMessageCreatedAt, threadActivities],
+    () => deriveWorkLogEntries(threadActivities, undefined, latestUserMessageCreatedAt),
+    [latestUserMessageCreatedAt, threadActivities],
   );
-  const latestTurnHasToolActivity = useMemo(
-    () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),
-    [activeLatestTurn?.turnId, threadActivities],
+  const latestResponseHasToolActivity = useMemo(
+    () => hasToolActivitySince(threadActivities, latestUserMessageCreatedAt),
+    [latestUserMessageCreatedAt, threadActivities],
   );
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingDraftAnswers = useMemo(
@@ -1211,7 +1206,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!latestTurnSettled) return null;
     if (!activeLatestTurn?.startedAt) return null;
     if (!activeLatestTurn.completedAt) return null;
-    if (!latestTurnHasToolActivity) return null;
+    if (!latestResponseHasToolActivity) return null;
 
     const turnStartedAt = Date.parse(activeLatestTurn.startedAt);
     const turnCompletedAt = Date.parse(activeLatestTurn.completedAt);
@@ -1234,7 +1229,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [
     activeLatestTurn?.completedAt,
     activeLatestTurn?.startedAt,
-    latestTurnHasToolActivity,
+    latestResponseHasToolActivity,
     latestTurnSettled,
     timelineEntries,
   ]);

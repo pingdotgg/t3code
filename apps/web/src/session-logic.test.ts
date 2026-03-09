@@ -10,6 +10,7 @@ import {
   deriveTimelineEntries,
   deriveWorkLogEntries,
   findLatestProposedPlan,
+  hasToolActivitySince,
   hasToolActivityForTurn,
   isLatestTurnSettled,
 } from "./session-logic";
@@ -479,6 +480,41 @@ describe("deriveWorkLogEntries", () => {
       "apps/web/src/session-logic.ts",
     ]);
   });
+
+  it("keeps multi-turn tool activity since the latest user message", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "before-user",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: "turn-1",
+        summary: "Old tool call",
+        kind: "tool.completed",
+        tone: "tool",
+      }),
+      makeActivity({
+        id: "after-user-first-turn",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        turnId: "turn-2",
+        summary: "First Copilot tool call",
+        kind: "tool.completed",
+        tone: "tool",
+      }),
+      makeActivity({
+        id: "after-user-second-turn",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        turnId: "turn-3",
+        summary: "Second Copilot tool call",
+        kind: "tool.completed",
+        tone: "tool",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined, "2026-02-23T00:00:02.000Z");
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "after-user-first-turn",
+      "after-user-second-turn",
+    ]);
+  });
 });
 
 describe("deriveTimelineEntries", () => {
@@ -540,6 +576,30 @@ describe("hasToolActivityForTurn", () => {
 
     expect(hasToolActivityForTurn(activities, TurnId.makeUnsafe("turn-1"))).toBe(true);
     expect(hasToolActivityForTurn(activities, TurnId.makeUnsafe("turn-2"))).toBe(false);
+  });
+});
+
+describe("hasToolActivitySince", () => {
+  it("tracks tool activity across multiple turns since the latest user message", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "before-user",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: "turn-1",
+        kind: "tool.completed",
+        tone: "tool",
+      }),
+      makeActivity({
+        id: "after-user",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        turnId: "turn-2",
+        kind: "tool.completed",
+        tone: "tool",
+      }),
+    ];
+
+    expect(hasToolActivitySince(activities, "2026-02-23T00:00:02.000Z")).toBe(true);
+    expect(hasToolActivitySince(activities, "2026-02-23T00:00:04.000Z")).toBe(false);
   });
 });
 
@@ -641,13 +701,20 @@ describe("deriveActiveWorkStartedAt", () => {
 
 describe("PROVIDER_OPTIONS", () => {
   it("keeps Claude Code and Cursor visible as unavailable placeholders in the stack base", () => {
+    const copilot = PROVIDER_OPTIONS.find((option) => option.value === "copilot");
     const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeCode");
     const cursor = PROVIDER_OPTIONS.find((option) => option.value === "cursor");
     expect(PROVIDER_OPTIONS).toEqual([
       { value: "codex", label: "Codex", available: true },
+      { value: "copilot", label: "GitHub Copilot", available: true },
       { value: "claudeCode", label: "Claude Code", available: false },
       { value: "cursor", label: "Cursor", available: false },
     ]);
+    expect(copilot).toEqual({
+      value: "copilot",
+      label: "GitHub Copilot",
+      available: true,
+    });
     expect(claude).toEqual({
       value: "claudeCode",
       label: "Claude Code",

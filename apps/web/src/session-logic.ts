@@ -575,6 +575,16 @@ export function hasToolActivityForTurn(
   return activities.some((activity) => activity.turnId === turnId && activity.tone === "tool");
 }
 
+export function hasToolActivitySince(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  sinceCreatedAt: string | undefined,
+): boolean {
+  return activities.some(
+    (activity) =>
+      activity.tone === "tool" && (sinceCreatedAt ? activity.createdAt >= sinceCreatedAt : true),
+  );
+}
+
 export function deriveTimelineEntries(
   messages: ChatMessage[],
   proposedPlans: ProposedPlan[],
