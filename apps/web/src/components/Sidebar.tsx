@@ -14,9 +14,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   type DragCancelEvent,
+  type CollisionDetection,
   PointerSensor,
   type DragStartEvent,
-  closestCenter,
+  closestCorners,
+  pointerWithin,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -841,6 +843,14 @@ export default function Sidebar() {
       activationConstraint: { distance: 6 },
     }),
   );
+  const projectCollisionDetection = useCallback<CollisionDetection>((args) => {
+    const pointerCollisions = pointerWithin(args);
+    if (pointerCollisions.length > 0) {
+      return pointerCollisions;
+    }
+
+    return closestCorners(args);
+  }, []);
 
   const handleProjectDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -1241,7 +1251,7 @@ export default function Sidebar() {
 
           <DndContext
             sensors={projectDnDSensors}
-            collisionDetection={closestCenter}
+            collisionDetection={projectCollisionDetection}
             modifiers={[restrictToVerticalAxis, restrictToParentElement]}
             onDragStart={handleProjectDragStart}
             onDragEnd={handleProjectDragEnd}
