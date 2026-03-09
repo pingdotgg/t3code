@@ -1205,7 +1205,7 @@ export default function Sidebar() {
           )}
 
           <SidebarMenu>
-            {projects.map((project) => {
+            {projects.map((project, projectIndex) => {
               const projectThreads = threads
                 .filter((thread) => thread.projectId === project.id)
                 .toSorted((a, b) => {
@@ -1224,10 +1224,16 @@ export default function Sidebar() {
                 projectDropIndicator?.projectId === project.id
                   ? projectDropIndicator.placement
                   : null;
+              const projectLayoutKey = [
+                project.id,
+                projects[projectIndex - 1]?.id ?? "start",
+                projects[projectIndex + 1]?.id ?? "end",
+              ].join(":");
 
               return (
                 <Collapsible
-                  key={project.id}
+                  // Force a remount after reordering so the open panel remeasures its height.
+                  key={projectLayoutKey}
                   className="group/collapsible"
                   open={project.expanded}
                   onOpenChange={(open) => {
