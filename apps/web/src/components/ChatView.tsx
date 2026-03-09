@@ -4132,7 +4132,7 @@ const ChatHeader = memo(function ChatHeader({
           {activeThreadTitle}
         </h2>
         {activeProjectName && (
-          <Badge variant="outline" className="max-w-28 shrink-0 truncate">
+          <Badge variant="outline" className="min-w-0 shrink truncate">
             {activeProjectName}
           </Badge>
         )}
