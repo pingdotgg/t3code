@@ -575,6 +575,10 @@ const makeGeminiAdapter = () =>
             { concurrency: 1 },
           );
 
+          const options = input.modelOptions as ProviderModelOptions | undefined;
+          const geminiOptions = options?.gemini;
+          const thinkingLevel = geminiOptions?.thinkingLevel;
+
           const result = yield* Effect.try({
             try: () =>
               manager.sendTurn({
@@ -583,6 +587,7 @@ const makeGeminiAdapter = () =>
                 prompt: [{ type: "text", text }, ...promptAttachments],
                 ...(input.model ? { model: input.model } : {}),
                 approvalMode: input.interactionMode === "plan" ? "plan" : "yolo",
+                ...(thinkingLevel ? { thinkingLevel } : {}),
               }),
             catch: (cause: unknown) => {
               const message = toMessage(cause, "Failed to send Gemini turn");

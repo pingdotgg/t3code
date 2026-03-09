@@ -64,5 +64,8 @@
     "workerDirectory": [
       "apps/web/public"
     ]
+  },
+  "dependencies": {
+    "node-pty": "^1.1.0"
   }
 }

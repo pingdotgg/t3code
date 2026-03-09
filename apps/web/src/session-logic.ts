@@ -538,6 +538,14 @@ function extractWorkDetail(
     asTrimmedString(data?.output) ??
     asTrimmedString(data?.rawOutput);
 
+  if (changedFiles.length > 0) {
+    const fileSummary = `Updated ${changedFiles.slice(0, 3).join(", ")}`;
+    if (rawDetail && !looksLikeCodeOrMarkup(rawDetail)) {
+      return `${fileSummary}: ${summarizeVerboseText(rawDetail, 120)}`;
+    }
+    return fileSummary;
+  }
+
   if (rawDetail) {
     return summarizeVerboseText(rawDetail);
   }
@@ -545,10 +553,6 @@ function extractWorkDetail(
   const locationPaths = extractLocationPaths(payload);
   if (locationPaths.length > 0) {
     return `Working in ${locationPaths.slice(0, 3).join(", ")}`;
-  }
-
-  if (changedFiles.length > 0) {
-    return `Updated ${changedFiles.slice(0, 3).join(", ")}`;
   }
 
   return null;

@@ -175,6 +175,7 @@ export interface GeminiSendTurnInput {
   readonly model?: string;
   readonly cwd?: string;
   readonly approvalMode?: GeminiApprovalMode;
+  readonly thinkingLevel?: GeminiThinkingLevel;
 }
 
 export interface GeminiTurnResult {
@@ -187,6 +188,7 @@ export class GeminiCliManager extends EventEmitter {
   private readonly sessions = new Map<string, GeminiSessionContext>();
   private readonly threadIdByGeminiSessionId = new Map<string, string>();
   private readonly runtimePromises = new Map<string, Promise<GeminiAcpRuntime>>();
+  private readonly pendingAcpApprovals = new Map<string, (decision: "approved" | "rejected") => void>();
   private readonly runtimeFactory: GeminiAcpRuntimeFactory;
   private readonly prewarmSessions: boolean;
   private readonly acpModulePath: string | null;
@@ -341,8 +343,8 @@ export class GeminiCliManager extends EventEmitter {
 
   respondToRequest(threadId: string, requestId: string, decision: "approved" | "rejected"): void {
     const context = this.sessions.get(threadId);
-    if (!context || !context.activeProcess || !context.activeProcess.stdin) {
-      throw new Error(`Cannot respond to request ${requestId}: no active process with stdin`);
+    if (!context) {
+      throw new Error(`No session for thread: ${threadId}`);
     }
 
     if (!context.pendingApprovals.has(requestId)) {
@@ -350,14 +352,24 @@ export class GeminiCliManager extends EventEmitter {
     }
 
     context.pendingApprovals.delete(requestId);
-    
+
+    const acpResolver = this.pendingAcpApprovals.get(requestId);
+    if (acpResolver) {
+      acpResolver(decision);
+      return;
+    }
+
+    if (!context.activeProcess || !context.activeProcess.stdin) {
+      throw new Error(`Cannot respond to request ${requestId}: no active process with stdin`);
+    }
+
     const responsePayload = JSON.stringify({
       type: "tool_result",
       tool_id: requestId,
       status: decision === "approved" ? "completed" : "failed",
       output: decision === "approved" ? "User approved the request." : "User rejected the request."
     });
-    
+
     context.activeProcess.stdin.write(responsePayload + "\n");
   }
 
@@ -535,6 +547,10 @@ export class GeminiCliManager extends EventEmitter {
       "--model",
       context.model,
     ];
+
+    if (input.thinkingLevel) {
+      args.push("--thinking-level", input.thinkingLevel);
+    }
 
     if (prompt) {
       for (const block of prompt) {
@@ -998,17 +1014,41 @@ export class GeminiCliManager extends EventEmitter {
     const context = threadId ? this.sessions.get(threadId) : undefined;
     const options = Array.isArray(params.options) ? params.options : [];
 
-    if (context?.currentMode === "plan") {
+    if (!context || context.currentMode === "plan") {
       return { outcome: { outcome: "cancelled" } };
     }
+
+    const requestId = `acp_${randomUUID().slice(0, 8)}`;
+    context.pendingApprovals.add(requestId);
 
     const allowOption = options.find((option) => {
       const kind = typeof option.kind === "string" ? option.kind : "";
       return kind.includes("allow") || kind.includes("approve");
     });
-    const selected = allowOption ?? options[0];
-    const optionId = typeof selected?.optionId === "string" ? selected.optionId : undefined;
-    return optionId
+    const optionId = typeof allowOption?.optionId === "string" ? allowOption.optionId : (typeof options[0]?.optionId === "string" ? options[0]?.optionId : undefined);
+
+    if (!optionId) {
+      return { outcome: { outcome: "cancelled" } };
+    }
+
+    // Emit event to UI
+    this.emit("event", {
+      type: "approval",
+      method: "gemini/approval_requested",
+      kind: "data",
+      threadId: context.threadId,
+      requestId,
+      provider: "gemini",
+      message: params.message ?? "Permission required",
+    });
+
+    const decision = await new Promise<"approved" | "rejected">((resolve) => {
+      this.pendingAcpApprovals.set(requestId, resolve);
+    });
+
+    this.pendingAcpApprovals.delete(requestId);
+
+    return decision === "approved"
       ? { outcome: { outcome: "selected", optionId } }
       : { outcome: { outcome: "cancelled" } };
   }
