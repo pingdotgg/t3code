@@ -675,6 +675,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerFormHeightRef = useRef(0);
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
+  const activePendingCustomAnswerRef = useRef("");
   const composerSelectLockRef = useRef(false);
   const composerMenuOpenRef = useRef(false);
   const composerMenuItemsRef = useRef<ComposerCommandItem[]>([]);
@@ -684,6 +685,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const sendInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
+  const focusComposerAtEndOnPendingQuestionChangeRef = useRef(false);
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
     messagesScrollRef.current = element;
     setMessagesScrollElement(element);
@@ -950,6 +952,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     pendingUserInputs.length > 0 ||
     (showPlanFollowUpPrompt && activeProposedPlan !== null);
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
+  const activePendingRequestId = activePendingUserInput?.requestId ?? null;
+  const activePendingQuestionId = activePendingProgress?.activeQuestion?.id ?? null;
+  const activePendingCustomAnswer = activePendingProgress?.customAnswer ?? "";
+  activePendingCustomAnswerRef.current = activePendingCustomAnswer;
   useEffect(() => {
     syncPendingUserInputRequests(
       threadId,
@@ -957,22 +963,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
     );
   }, [pendingUserInputs, syncPendingUserInputRequests, threadId]);
   useEffect(() => {
-    if (!activePendingProgress) {
+    if (activePendingRequestId === null || activePendingQuestionId === null) {
       return;
     }
-    promptRef.current = activePendingProgress.customAnswer;
-    setComposerCursor(activePendingProgress.customAnswer.length);
+    const restoredAnswer = activePendingCustomAnswerRef.current;
+    const restoredCursor = restoredAnswer.length;
+    promptRef.current = restoredAnswer;
+    setComposerCursor(restoredCursor);
     setComposerTrigger(
       detectComposerTrigger(
-        activePendingProgress.customAnswer,
-        expandCollapsedComposerCursor(
-          activePendingProgress.customAnswer,
-          activePendingProgress.customAnswer.length,
-        ),
+        restoredAnswer,
+        expandCollapsedComposerCursor(restoredAnswer, restoredCursor),
       ),
     );
     setComposerHighlightedItemId(null);
-  }, [activePendingProgress, activePendingUserInput?.requestId]);
+    if (!focusComposerAtEndOnPendingQuestionChangeRef.current) {
+      return;
+    }
+    focusComposerAtEndOnPendingQuestionChangeRef.current = false;
+    window.requestAnimationFrame(() => {
+      composerEditorRef.current?.focusAt(restoredCursor);
+    });
+  }, [activePendingQuestionId, activePendingRequestId]);
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
@@ -2884,6 +2896,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       return;
     }
+    focusComposerAtEndOnPendingQuestionChangeRef.current = true;
     setActivePendingUserInputQuestionIndex(activePendingProgress.questionIndex + 1);
   }, [
     activePendingProgress,
@@ -2897,6 +2910,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!activePendingProgress) {
       return;
     }
+    focusComposerAtEndOnPendingQuestionChangeRef.current = true;
     setActivePendingUserInputQuestionIndex(Math.max(activePendingProgress.questionIndex - 1, 0));
   }, [activePendingProgress, setActivePendingUserInputQuestionIndex]);
 
