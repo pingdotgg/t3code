@@ -10,6 +10,7 @@ import { DEVELOPMENT_ICON_OVERRIDES, PUBLISH_ICON_OVERRIDES } from "../../../scr
 import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
 import rootPackageJson from "../../../package.json" with { type: "json" };
 import serverPackageJson from "../package.json" with { type: "json" };
+import { resolveShellCommand } from "../src/windowsShell.ts";
 
 class CliError extends Data.TaggedError("CliError")<{
   readonly message: string;
@@ -125,16 +126,16 @@ const buildCmd = Command.make(
       const fs = yield* FileSystem.FileSystem;
       const repoRoot = yield* RepoRoot;
       const serverDir = path.join(repoRoot, "apps/server");
+      const tsdownCommand = resolveShellCommand("bun", ["tsdown"], { cwd: serverDir });
 
       yield* Effect.log("[cli] Running tsdown...");
       yield* runCommand(
-        ChildProcess.make({
-          cwd: serverDir,
+        ChildProcess.make(tsdownCommand.command, [...tsdownCommand.args], {
+          cwd: tsdownCommand.cwd,
           stdout: config.verbose ? "inherit" : "ignore",
           stderr: "inherit",
-          // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
-          shell: process.platform === "win32",
-        })`bun tsdown`,
+          shell: tsdownCommand.shell,
+        }),
       );
 
       const webDist = path.join(repoRoot, "apps/web/dist");
@@ -220,15 +221,15 @@ const publishCmd = Command.make(
             const args = ["publish", "--access", config.access, "--tag", config.tag];
             if (config.provenance) args.push("--provenance");
             if (config.dryRun) args.push("--dry-run");
+            const publishCommand = resolveShellCommand("npm", args, { cwd: serverDir });
 
             yield* Effect.log(`[cli] Running: npm ${args.join(" ")}`);
             yield* runCommand(
-              ChildProcess.make("npm", [...args], {
-                cwd: serverDir,
+              ChildProcess.make(publishCommand.command, [...publishCommand.args], {
+                cwd: publishCommand.cwd,
                 stdout: config.verbose ? "inherit" : "ignore",
                 stderr: "inherit",
-                // Windows needs shell mode to resolve .cmd shims.
-                shell: process.platform === "win32",
+                shell: publishCommand.shell,
               }),
             );
           }),
