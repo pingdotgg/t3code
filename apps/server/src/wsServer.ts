@@ -72,7 +72,7 @@ import {
 } from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
-import { expandHomePath } from "./os-jank.ts";
+import { resolveWorkspaceRoot } from "./workspaceRoot";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -307,21 +307,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     readonly command: ClientOrchestrationCommand;
   }) {
     const normalizeProjectWorkspaceRoot = Effect.fnUntraced(function* (workspaceRoot: string) {
-      const normalizedWorkspaceRoot = path.resolve(yield* expandHomePath(workspaceRoot.trim()));
-      const workspaceStat = yield* fileSystem
-        .stat(normalizedWorkspaceRoot)
-        .pipe(Effect.catch(() => Effect.succeed(null)));
-      if (!workspaceStat) {
-        return yield* new RouteRequestError({
-          message: `Project directory does not exist: ${normalizedWorkspaceRoot}`,
-        });
-      }
-      if (workspaceStat.type !== "Directory") {
-        return yield* new RouteRequestError({
-          message: `Project path is not a directory: ${normalizedWorkspaceRoot}`,
-        });
-      }
-      return normalizedWorkspaceRoot;
+      return yield* resolveWorkspaceRoot(workspaceRoot).pipe(
+        Effect.mapError(
+          (cause) =>
+            new RouteRequestError({
+              message: cause.message,
+            }),
+        ),
+      );
     });
 
     if (input.command.type === "project.create") {

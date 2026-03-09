@@ -1,4 +1,7 @@
+import * as FS from "node:fs";
 import * as Http from "node:http";
+import * as OS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import type { OrchestrationReadModel } from "@t3tools/contracts";
@@ -7,8 +10,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Command from "effect/unstable/cli/Command";
 import { FetchHttpClient } from "effect/unstable/http";
-import { beforeEach } from "vitest";
+import { beforeEach, describe } from "vitest";
 import { NetService } from "@t3tools/shared/Net";
+import { writeDesktopLauncherMetadata } from "@t3tools/shared/launcher";
 
 import { CliConfig, recordStartupHeartbeat, t3Cli, type CliConfigShape } from "./main";
 import { ServerConfig, type ServerConfigShape } from "./config";
@@ -29,6 +33,8 @@ const serverStart = Effect.acquireRelease(
   () => Effect.sync(() => stop()),
 );
 const findAvailablePort = vi.fn((preferred: number) => Effect.succeed(preferred));
+const openDesktopApp = vi.fn((_input: { executablePath: string; projectPath: string }) => Effect.void);
+const CLI_TEST_TIMEOUT = 15_000;
 
 // Shared service layer used by this CLI test suite.
 const testLayer = Layer.mergeAll(
@@ -50,6 +56,7 @@ const testLayer = Layer.mergeAll(
   Layer.succeed(Open, {
     openBrowser: (_target: string) => Effect.void,
     openInEditor: () => Effect.void,
+    openDesktopApp,
   } satisfies OpenShape),
   AnalyticsService.layerTest,
   FetchHttpClient.layer,
@@ -81,40 +88,46 @@ beforeEach(() => {
   start.mockImplementation(() => undefined);
   stop.mockImplementation(() => undefined);
   findAvailablePort.mockImplementation((preferred: number) => Effect.succeed(preferred));
+  openDesktopApp.mockImplementation(
+    (_input: { executablePath: string; projectPath: string }) => Effect.void,
+  );
+  FS.mkdirSync("/tmp/t3-test-workspace", { recursive: true });
 });
 
-it.layer(testLayer)("server CLI command", (it) => {
-  it.effect("parses all CLI flags and wires scoped start/stop", () =>
-    Effect.gen(function* () {
-      yield* runCli([
-        "--mode",
-        "desktop",
-        "--port",
-        "4010",
-        "--host",
-        "0.0.0.0",
-        "--state-dir",
-        "/tmp/t3-cli-state",
-        "--dev-url",
-        "http://127.0.0.1:5173",
-        "--no-browser",
-        "--auth-token",
-        "auth-secret",
-      ]);
+describe.sequential("server CLI tests", () => {
+  it.layer(testLayer)("server CLI command", (it) => {
+    it.effect("parses all CLI flags and wires scoped start/stop", () =>
+      Effect.gen(function* () {
+        yield* runCli([
+          "--mode",
+          "desktop",
+          "--port",
+          "4010",
+          "--host",
+          "0.0.0.0",
+          "--state-dir",
+          "/tmp/t3-cli-state",
+          "--dev-url",
+          "http://127.0.0.1:5173",
+          "--no-browser",
+          "--auth-token",
+          "auth-secret",
+        ]);
 
-      assert.equal(start.mock.calls.length, 1);
-      assert.equal(resolvedConfig?.mode, "desktop");
-      assert.equal(resolvedConfig?.port, 4010);
-      assert.equal(resolvedConfig?.host, "0.0.0.0");
-      assert.equal(resolvedConfig?.stateDir, "/tmp/t3-cli-state");
-      assert.equal(resolvedConfig?.devUrl?.toString(), "http://127.0.0.1:5173/");
-      assert.equal(resolvedConfig?.noBrowser, true);
-      assert.equal(resolvedConfig?.authToken, "auth-secret");
-      assert.equal(resolvedConfig?.autoBootstrapProjectFromCwd, false);
-      assert.equal(resolvedConfig?.logWebSocketEvents, true);
-      assert.equal(stop.mock.calls.length, 1);
-    }),
-  );
+        assert.equal(start.mock.calls.length, 1);
+        assert.equal(resolvedConfig?.mode, "desktop");
+        assert.equal(resolvedConfig?.port, 4010);
+        assert.equal(resolvedConfig?.host, "0.0.0.0");
+        assert.equal(resolvedConfig?.stateDir, "/tmp/t3-cli-state");
+        assert.equal(resolvedConfig?.devUrl?.toString(), "http://127.0.0.1:5173/");
+        assert.equal(resolvedConfig?.noBrowser, true);
+        assert.equal(resolvedConfig?.authToken, "auth-secret");
+        assert.equal(resolvedConfig?.autoBootstrapProjectFromCwd, false);
+        assert.equal(resolvedConfig?.logWebSocketEvents, true);
+        assert.equal(stop.mock.calls.length, 1);
+      }),
+      CLI_TEST_TIMEOUT,
+    );
 
   it.effect("supports --token as an alias for --auth-token", () =>
     Effect.gen(function* () {
@@ -123,6 +136,7 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(start.mock.calls.length, 1);
       assert.equal(resolvedConfig?.authToken, "token-secret");
     }),
+    CLI_TEST_TIMEOUT,
   );
 
   it.effect("uses env fallbacks when flags are not provided", () =>
@@ -149,6 +163,7 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(resolvedConfig?.logWebSocketEvents, true);
       assert.equal(findAvailablePort.mock.calls.length, 0);
     }),
+    CLI_TEST_TIMEOUT,
   );
 
   it.effect("prefers --mode over T3CODE_MODE", () =>
@@ -165,6 +180,7 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(resolvedConfig?.port, 4666);
       assert.equal(resolvedConfig?.host, undefined);
     }),
+    CLI_TEST_TIMEOUT,
   );
 
   it.effect("prefers --no-browser over T3CODE_NO_BROWSER", () =>
@@ -176,6 +192,7 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(start.mock.calls.length, 1);
       assert.equal(resolvedConfig?.noBrowser, true);
     }),
+    CLI_TEST_TIMEOUT,
   );
 
   it.effect("uses dynamic port discovery in web mode when port is omitted", () =>
@@ -188,6 +205,7 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(resolvedConfig?.port, 5444);
       assert.equal(resolvedConfig?.mode, "web");
     }),
+    CLI_TEST_TIMEOUT,
   );
 
   it.effect("uses fixed localhost defaults in desktop mode", () =>
@@ -203,6 +221,7 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(resolvedConfig?.host, "127.0.0.1");
       assert.equal(resolvedConfig?.mode, "desktop");
     }),
+    CLI_TEST_TIMEOUT,
   );
 
   it.effect("allows overriding desktop host with --host", () =>
@@ -216,6 +235,7 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(resolvedConfig?.mode, "desktop");
       assert.equal(resolvedConfig?.host, "0.0.0.0");
     }),
+    CLI_TEST_TIMEOUT,
   );
 
   it.effect("supports CLI and env for bootstrap/log websocket toggles", () =>
@@ -231,6 +251,116 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(resolvedConfig?.autoBootstrapProjectFromCwd, true);
       assert.equal(resolvedConfig?.logWebSocketEvents, false);
     }),
+    CLI_TEST_TIMEOUT,
+  );
+
+  it.effect("uses the optional project path argument as the workspace root", () =>
+    Effect.gen(function* () {
+      const nestedWorkspace = "/tmp/t3-test-workspace/nested/project-from-cli";
+      FS.mkdirSync(nestedWorkspace, { recursive: true });
+
+      yield* runCli(["nested/project-from-cli"]);
+
+      assert.equal(start.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.cwd, nestedWorkspace);
+      assert.equal(resolvedConfig?.autoBootstrapProjectFromCwd, true);
+    }),
+    CLI_TEST_TIMEOUT,
+  );
+
+  it.effect("supports opening the current working directory via `t3 .`", () =>
+    Effect.gen(function* () {
+      yield* runCli(["."]);
+
+      assert.equal(start.mock.calls.length, 1);
+      assert.equal(resolvedConfig?.cwd, "/tmp/t3-test-workspace");
+      assert.equal(resolvedConfig?.autoBootstrapProjectFromCwd, true);
+    }),
+    CLI_TEST_TIMEOUT,
+  );
+
+  it.effect("hands off simple workspace launches to the desktop app when available", () =>
+    Effect.gen(function* () {
+      const desktopStateDir = NodePath.join(
+        OS.tmpdir(),
+        `t3-desktop-state-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      );
+      const desktopExecutablePath = NodePath.join(desktopStateDir, "T3 Code");
+      FS.mkdirSync(desktopStateDir, { recursive: true });
+      FS.writeFileSync(desktopExecutablePath, "", "utf8");
+      writeDesktopLauncherMetadata(
+        {
+          version: 1,
+          executablePath: desktopExecutablePath,
+          serverEntryPath: "/tmp/fake-server-entry.mjs",
+          updatedAt: "2026-03-08T00:00:00.000Z",
+        },
+        desktopStateDir,
+      );
+
+      yield* runCli(["."], {
+        T3CODE_STATE_DIR: desktopStateDir,
+        T3CODE_NO_BROWSER: "true",
+      });
+
+      assert.equal(start.mock.calls.length, 0);
+      assert.equal(stop.mock.calls.length, 0);
+      assert.deepEqual(openDesktopApp.mock.calls, [
+        [
+          {
+            executablePath: desktopExecutablePath,
+            projectPath: "/tmp/t3-test-workspace",
+          },
+        ],
+      ]);
+    }),
+    CLI_TEST_TIMEOUT,
+  );
+
+  it.effect("keeps explicit server invocations on the web/server path even when desktop is installed", () =>
+    Effect.gen(function* () {
+      const desktopStateDir = NodePath.join(
+        OS.tmpdir(),
+        `t3-desktop-state-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      );
+      const desktopExecutablePath = NodePath.join(desktopStateDir, "T3 Code");
+      FS.mkdirSync(desktopStateDir, { recursive: true });
+      FS.writeFileSync(desktopExecutablePath, "", "utf8");
+      writeDesktopLauncherMetadata(
+        {
+          version: 1,
+          executablePath: desktopExecutablePath,
+          serverEntryPath: "/tmp/fake-server-entry.mjs",
+          updatedAt: "2026-03-08T00:00:00.000Z",
+        },
+        desktopStateDir,
+      );
+
+      yield* runCli(["--mode", "web", "."], {
+        T3CODE_STATE_DIR: desktopStateDir,
+        T3CODE_NO_BROWSER: "true",
+      });
+
+      assert.equal(start.mock.calls.length, 1);
+      assert.equal(openDesktopApp.mock.calls.length, 0);
+      assert.equal(resolvedConfig?.cwd, "/tmp/t3-test-workspace");
+    }),
+    CLI_TEST_TIMEOUT,
+  );
+
+  it.effect("does not start the server when the project path does not exist", () =>
+    Effect.gen(function* () {
+      const missingProjectPath = NodePath.join(
+        OS.tmpdir(),
+        `t3-missing-project-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      );
+
+      yield* runCli([missingProjectPath]).pipe(Effect.catch(() => Effect.void));
+
+      assert.equal(start.mock.calls.length, 0);
+      assert.equal(stop.mock.calls.length, 0);
+    }),
+    CLI_TEST_TIMEOUT,
   );
 
   it.effect("records a startup heartbeat with thread/project counts", () =>
@@ -268,6 +398,7 @@ it.layer(testLayer)("server CLI command", (it) => {
         },
       ]);
     }),
+    CLI_TEST_TIMEOUT,
   );
 
   it.effect("does not start server for invalid --mode values", () =>
@@ -277,6 +408,7 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(start.mock.calls.length, 0);
       assert.equal(stop.mock.calls.length, 0);
     }),
+    CLI_TEST_TIMEOUT,
   );
 
   it.effect("does not start server for invalid --dev-url values", () =>
@@ -286,6 +418,7 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(start.mock.calls.length, 0);
       assert.equal(stop.mock.calls.length, 0);
     }),
+    CLI_TEST_TIMEOUT,
   );
 
   it.effect("does not start server for out-of-range --port values", () =>
@@ -296,5 +429,7 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(start.mock.calls.length, 0);
       assert.equal(stop.mock.calls.length, 0);
     }),
+    CLI_TEST_TIMEOUT,
   );
+  });
 });

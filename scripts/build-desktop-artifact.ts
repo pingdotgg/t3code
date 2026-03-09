@@ -307,6 +307,15 @@ function stageMacIcons(stageResourcesDir: string, verbose: boolean) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const iconPngPath = path.join(stageResourcesDir, "icon.png");
+    const iconIcnsPath = path.join(stageResourcesDir, "icon.icns");
+    const existingIconPng = yield* fs.exists(iconPngPath);
+    const existingIconIcns = yield* fs.exists(iconIcnsPath);
+
+    if (existingIconPng && existingIconIcns) {
+      return;
+    }
+
     const iconSource = yield* ProductionMacIconSource;
     if (!(yield* fs.exists(iconSource))) {
       return yield* new BuildScriptError({
@@ -317,9 +326,6 @@ function stageMacIcons(stageResourcesDir: string, verbose: boolean) {
     const tmpRoot = yield* fs.makeTempDirectoryScoped({
       prefix: "t3code-icon-build-",
     });
-
-    const iconPngPath = path.join(stageResourcesDir, "icon.png");
-    const iconIcnsPath = path.join(stageResourcesDir, "icon.icns");
 
     yield* runCommand(
       ChildProcess.make({

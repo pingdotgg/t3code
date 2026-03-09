@@ -20,6 +20,10 @@
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
     },
+    "./launcher": {
+      "types": "./src/launcher.ts",
+      "import": "./src/launcher.ts"
+    },
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"

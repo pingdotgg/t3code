@@ -27,9 +27,16 @@ export interface OpenInEditorInput {
   readonly editor: EditorId;
 }
 
-interface EditorLaunch {
+export interface OpenDesktopAppInput {
+  readonly executablePath: string;
+  readonly projectPath: string;
+}
+
+interface ProcessLaunch {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly shell?: boolean;
 }
 
 interface CommandAvailabilityOptions {
@@ -190,6 +197,11 @@ export interface OpenShape {
    * Launches the editor as a detached process so server startup is not blocked.
    */
   readonly openInEditor: (input: OpenInEditorInput) => Effect.Effect<void, OpenError>;
+
+  /**
+   * Launch the desktop app and hand off a workspace path.
+   */
+  readonly openDesktopApp: (input: OpenDesktopAppInput) => Effect.Effect<void, OpenError>;
 }
 
 /**
@@ -204,7 +216,7 @@ export class Open extends ServiceMap.Service<Open, OpenShape>()("t3/open") {}
 export const resolveEditorLaunch = Effect.fnUntraced(function* (
   input: OpenInEditorInput,
   platform: NodeJS.Platform = process.platform,
-): Effect.fn.Return<EditorLaunch, OpenError> {
+): Effect.fn.Return<ProcessLaunch, OpenError> {
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
     return yield* new OpenError({ message: `Unknown editor: ${input.editor}` });
@@ -223,7 +235,29 @@ export const resolveEditorLaunch = Effect.fnUntraced(function* (
   return { command: fileManagerCommandForPlatform(platform), args: [input.cwd] };
 });
 
-export const launchDetached = (launch: EditorLaunch) =>
+export const resolveDesktopAppLaunch = (
+  input: OpenDesktopAppInput,
+): Effect.Effect<ProcessLaunch, OpenError> =>
+  Effect.gen(function* () {
+    if (input.executablePath.trim().length === 0) {
+      return yield* new OpenError({ message: "Desktop app executable path is missing" });
+    }
+    if (input.projectPath.trim().length === 0) {
+      return yield* new OpenError({ message: "Desktop app project path is missing" });
+    }
+
+    const childEnv = { ...process.env };
+    delete childEnv.ELECTRON_RUN_AS_NODE;
+
+    return {
+      command: input.executablePath,
+      args: [`--t3-project-path=${input.projectPath}`],
+      env: childEnv,
+      shell: false,
+    } satisfies ProcessLaunch;
+  });
+
+export const launchDetached = (launch: ProcessLaunch) =>
   Effect.gen(function* () {
     if (!isCommandAvailable(launch.command)) {
       return yield* new OpenError({ message: `Editor command not found: ${launch.command}` });
@@ -234,8 +268,9 @@ export const launchDetached = (launch: EditorLaunch) =>
       try {
         child = spawn(launch.command, [...launch.args], {
           detached: true,
+          env: launch.env,
           stdio: "ignore",
-          shell: process.platform === "win32",
+          shell: launch.shell ?? process.platform === "win32",
         });
       } catch (error) {
         return resume(
@@ -270,6 +305,7 @@ const make = Effect.gen(function* () {
         catch: (cause) => new OpenError({ message: "Browser auto-open failed", cause }),
       }),
     openInEditor: (input) => Effect.flatMap(resolveEditorLaunch(input), launchDetached),
+    openDesktopApp: (input) => Effect.flatMap(resolveDesktopAppLaunch(input), launchDetached),
   } satisfies OpenShape;
 });
 

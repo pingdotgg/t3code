@@ -6,9 +6,11 @@
  *
  * @module CliConfig
  */
+import * as FS from "node:fs";
 import { Config, Data, Effect, FileSystem, Layer, Option, Path, Schema, ServiceMap } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/unstable/cli";
 import { NetService } from "@t3tools/shared/Net";
+import { readDesktopLauncherMetadata } from "@t3tools/shared/launcher";
 import {
   DEFAULT_PORT,
   resolveStaticDir,
@@ -26,6 +28,7 @@ import { Server } from "./wsServer";
 import { ServerLoggerLive } from "./serverLogger";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
+import { resolveWorkspaceRoot } from "./workspaceRoot";
 
 export class StartupError extends Data.TaggedError("StartupError")<{
   readonly message: string;
@@ -33,6 +36,7 @@ export class StartupError extends Data.TaggedError("StartupError")<{
 }> {}
 
 interface CliInput {
+  readonly projectPath: Option.Option<string>;
   readonly mode: Option.Option<RuntimeMode>;
   readonly port: Option.Option<number>;
   readonly host: Option.Option<string>;
@@ -125,6 +129,89 @@ const CliEnvConfig = Config.all({
 const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
   Option.getOrElse(Option.filter(flag, Boolean), () => envValue);
 
+const resolveRequestedWorkspaceRoot = (projectPath: Option.Option<string>, baseDir: string) => {
+  const requestedProjectPath = Option.getOrUndefined(projectPath);
+  if (requestedProjectPath === undefined) {
+    return Effect.succeed(baseDir);
+  }
+
+  return resolveWorkspaceRoot(requestedProjectPath, { baseDir }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new StartupError({
+          message: cause.message,
+          cause,
+        }),
+    ),
+  );
+};
+
+const hasExplicitBooleanFlag = (flag: Option.Option<boolean>): boolean =>
+  Option.isSome(Option.filter(flag, Boolean));
+
+const hasExplicitServerOverrides = (input: CliInput): boolean =>
+  Option.isSome(input.mode) ||
+  Option.isSome(input.port) ||
+  Option.isSome(input.host) ||
+  Option.isSome(input.stateDir) ||
+  Option.isSome(input.devUrl) ||
+  hasExplicitBooleanFlag(input.noBrowser) ||
+  Option.isSome(input.authToken) ||
+  hasExplicitBooleanFlag(input.autoBootstrapProjectFromCwd) ||
+  hasExplicitBooleanFlag(input.logWebSocketEvents);
+
+const shouldAttemptDesktopHandoff = (input: CliInput): boolean => {
+  if (hasExplicitServerOverrides(input)) {
+    return false;
+  }
+  return true;
+};
+
+/**
+ * Lightweight desktop handoff — runs before any heavy server initialization
+ * (SQLite, orchestration, etc.) so that `t3 .` is fast and silent when the
+ * desktop app is installed.
+ */
+const maybeLaunchDesktopFromCli = (input: CliInput) =>
+  Effect.gen(function* () {
+    if (!shouldAttemptDesktopHandoff(input)) {
+      return false;
+    }
+
+    const cliConfig = yield* CliConfig;
+    const openDeps = yield* Open;
+    const env = yield* CliEnvConfig.asEffect().pipe(
+      Effect.mapError(
+        (cause) =>
+          new StartupError({ message: "Failed to read environment configuration", cause }),
+      ),
+    );
+    if (env.mode === "desktop") {
+      return false;
+    }
+    const stateDir = yield* resolveStateDir(
+      Option.getOrUndefined(input.stateDir) ?? env.stateDir,
+    );
+    const desktopMetadata = readDesktopLauncherMetadata(stateDir);
+    if (!desktopMetadata) {
+      return false;
+    }
+    if (!FS.existsSync(desktopMetadata.executablePath)) {
+      return false;
+    }
+
+    const workspaceRoot = yield* resolveRequestedWorkspaceRoot(input.projectPath, cliConfig.cwd);
+    return yield* openDeps
+      .openDesktopApp({
+        executablePath: desktopMetadata.executablePath,
+        projectPath: workspaceRoot,
+      })
+      .pipe(
+        Effect.as(true),
+        Effect.catchTag("OpenError", () => Effect.succeed(false)),
+      );
+  });
+
 const ServerConfigLive = (input: CliInput) =>
   Layer.effect(
     ServerConfig,
@@ -139,6 +226,8 @@ const ServerConfigLive = (input: CliInput) =>
       );
 
       const mode = Option.getOrElse(input.mode, () => env.mode);
+      const cwd = yield* resolveRequestedWorkspaceRoot(input.projectPath, cliConfig.cwd);
+      const projectPath = Option.getOrUndefined(input.projectPath);
 
       const port = yield* Option.match(input.port, {
         onSome: (value) => Effect.succeed(value),
@@ -158,10 +247,13 @@ const ServerConfigLive = (input: CliInput) =>
       const devUrl = Option.getOrElse(input.devUrl, () => env.devUrl);
       const noBrowser = resolveBooleanFlag(input.noBrowser, env.noBrowser ?? mode === "desktop");
       const authToken = Option.getOrUndefined(input.authToken) ?? env.authToken;
-      const autoBootstrapProjectFromCwd = resolveBooleanFlag(
-        input.autoBootstrapProjectFromCwd,
-        env.autoBootstrapProjectFromCwd ?? mode === "web",
-      );
+      const autoBootstrapProjectFromCwd =
+        projectPath !== undefined
+          ? true
+          : resolveBooleanFlag(
+              input.autoBootstrapProjectFromCwd,
+              env.autoBootstrapProjectFromCwd ?? mode === "web",
+            );
       const logWebSocketEvents = resolveBooleanFlag(
         input.logWebSocketEvents,
         env.logWebSocketEvents ?? Boolean(devUrl),
@@ -177,7 +269,7 @@ const ServerConfigLive = (input: CliInput) =>
       const config: ServerConfigShape = {
         mode,
         port,
-        cwd: cliConfig.cwd,
+        cwd,
         keybindingsConfigPath,
         host,
         stateDir,
@@ -237,50 +329,60 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
 
 const makeServerProgram = (input: CliInput) =>
   Effect.gen(function* () {
-    const cliConfig = yield* CliConfig;
-    const { start, stopSignal } = yield* Server;
-    const openDeps = yield* Open;
-    yield* cliConfig.fixPath;
-
-    const config = yield* ServerConfig;
-
-    if (!config.devUrl && !config.staticDir) {
-      yield* Effect.logWarning(
-        "web bundle missing and no VITE_DEV_SERVER_URL; web UI unavailable",
-        {
-          hint: "Run `bun run --cwd apps/web build` or set VITE_DEV_SERVER_URL for dev mode.",
-        },
-      );
+    // Fast path: attempt desktop handoff before heavy server initialization.
+    // This keeps `t3 .` fast and silent when the desktop app is installed,
+    // avoiding SQLite/orchestration/migration startup entirely.
+    yield* (yield* CliConfig).fixPath;
+    const handedOffToDesktop = yield* maybeLaunchDesktopFromCli(input);
+    if (handedOffToDesktop) {
+      return;
     }
 
-    yield* start;
-    yield* Effect.forkChild(recordStartupHeartbeat);
+    // Full server path — heavy layers (SQLite, orchestration, etc.) only
+    // initialize here, after confirming desktop handoff is not available.
+    yield* Effect.gen(function* () {
+      const { start, stopSignal } = yield* Server;
+      const openDeps = yield* Open;
+      const config = yield* ServerConfig;
 
-    const localUrl = `http://localhost:${config.port}`;
-    const bindUrl =
-      config.host && !isWildcardHost(config.host)
-        ? `http://${formatHostForUrl(config.host)}:${config.port}`
-        : localUrl;
-    const { authToken, devUrl, ...safeConfig } = config;
-    yield* Effect.logInfo("T3 Code running", {
-      ...safeConfig,
-      devUrl: devUrl?.toString(),
-      authEnabled: Boolean(authToken),
-    });
+      if (!config.devUrl && !config.staticDir) {
+        yield* Effect.logWarning(
+          "web bundle missing and no VITE_DEV_SERVER_URL; web UI unavailable",
+          {
+            hint: "Run `bun run --cwd apps/web build` or set VITE_DEV_SERVER_URL for dev mode.",
+          },
+        );
+      }
 
-    if (!config.noBrowser) {
-      const target = config.devUrl?.toString() ?? bindUrl;
-      yield* openDeps.openBrowser(target).pipe(
-        Effect.catch(() =>
-          Effect.logInfo("browser auto-open unavailable", {
-            hint: `Open ${target} in your browser.`,
-          }),
-        ),
-      );
-    }
+      yield* start;
+      yield* Effect.forkChild(recordStartupHeartbeat);
 
-    return yield* stopSignal;
-  }).pipe(Effect.provide(LayerLive(input)));
+      const localUrl = `http://localhost:${config.port}`;
+      const bindUrl =
+        config.host && !isWildcardHost(config.host)
+          ? `http://${formatHostForUrl(config.host)}:${config.port}`
+          : localUrl;
+      const { authToken, devUrl, ...safeConfig } = config;
+      yield* Effect.logInfo("T3 Code running", {
+        ...safeConfig,
+        devUrl: devUrl?.toString(),
+        authEnabled: Boolean(authToken),
+      });
+
+      if (!config.noBrowser) {
+        const target = config.devUrl?.toString() ?? bindUrl;
+        yield* openDeps.openBrowser(target).pipe(
+          Effect.catch(() =>
+            Effect.logInfo("browser auto-open unavailable", {
+              hint: `Open ${target} in your browser.`,
+            }),
+          ),
+        );
+      }
+
+      return yield* stopSignal;
+    }).pipe(Effect.provide(LayerLive(input)));
+  });
 
 /**
  * These flags mirrors the environment variables and the config shape.
@@ -289,6 +391,12 @@ const makeServerProgram = (input: CliInput) =>
 const modeFlag = Flag.choice("mode", ["web", "desktop"]).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
   Flag.optional,
+);
+const projectPathArgument = Argument.string("project-path").pipe(
+  Argument.withDescription(
+    "Optional project directory to open. Supports relative paths like `.` or `../my-app`.",
+  ),
+  Argument.optional,
 );
 const portFlag = Flag.integer("port").pipe(
   Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
@@ -332,6 +440,7 @@ const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
 );
 
 export const t3Cli = Command.make("t3", {
+  projectPath: projectPathArgument,
   mode: modeFlag,
   port: portFlag,
   host: hostFlag,
@@ -342,6 +451,6 @@ export const t3Cli = Command.make("t3", {
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,
 }).pipe(
-  Command.withDescription("Run the T3 Code server."),
+  Command.withDescription("Run the T3 Code server and optionally open a project path."),
   Command.withHandler((input) => Effect.scoped(makeServerProgram(input))),
 );

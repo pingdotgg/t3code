@@ -7,7 +7,12 @@ import * as Path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
-import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import type {
+  DesktopLauncherInstallResult,
+  DesktopLauncherState,
+  DesktopUpdateActionResult,
+  DesktopUpdateState,
+} from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
@@ -15,6 +20,12 @@ import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { fixPath } from "./fixPath";
+import {
+  getDesktopLauncherState,
+  installDesktopLauncher,
+  publishDesktopLauncherMetadata,
+} from "./launcherManager";
+import { resolvePendingProjectPath } from "./projectPathParser";
 import {
   getAutoUpdateDisabledReason,
   shouldBroadcastDownloadProgress,
@@ -43,6 +54,12 @@ const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
+const LAUNCHER_STATE_CHANNEL = "desktop:launcher-state";
+const LAUNCHER_GET_STATE_CHANNEL = "desktop:launcher-get-state";
+const LAUNCHER_INSTALL_CHANNEL = "desktop:launcher-install";
+const PROJECT_OPEN_CHANNEL = "desktop:project-open";
+const PROJECT_OPEN_GET_PENDING_CHANNEL = "desktop:project-open-get-pending";
+const PROJECT_OPEN_CLEAR_PENDING_CHANNEL = "desktop:project-open-clear-pending";
 const STATE_DIR =
   process.env.T3CODE_STATE_DIR?.trim() || Path.join(OS.homedir(), ".t3", "userdata");
 const DESKTOP_SCHEME = "t3";
@@ -229,6 +246,12 @@ let updateCheckInFlight = false;
 let updateDownloadInFlight = false;
 let updaterConfigured = false;
 let updateState: DesktopUpdateState = initialUpdateState();
+let launcherState: DesktopLauncherState = getDesktopLauncherState({
+  stateDir: STATE_DIR,
+  executablePath: process.execPath,
+  serverEntryPath: resolveBackendEntry(),
+});
+let pendingProjectPath: string | null = resolvePendingProjectPath(process.argv);
 
 function resolveUpdaterErrorContext(): DesktopUpdateErrorContext {
   if (updateDownloadInFlight) return "download";
@@ -253,6 +276,66 @@ function resolveAppRoot(): string {
     return ROOT_DIR;
   }
   return app.getAppPath();
+}
+
+
+function focusWindow(window: BrowserWindow): void {
+  if (window.isMinimized()) {
+    window.restore();
+  }
+  if (!window.isVisible()) {
+    window.show();
+  }
+  window.focus();
+}
+
+function ensureMainWindow(): BrowserWindow {
+  const existingWindow = mainWindow ?? BrowserWindow.getAllWindows()[0];
+  if (existingWindow) {
+    return existingWindow;
+  }
+
+  const createdWindow = createWindow();
+  mainWindow = createdWindow;
+  return createdWindow;
+}
+
+function emitLauncherState(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) continue;
+    window.webContents.send(LAUNCHER_STATE_CHANNEL, launcherState);
+  }
+}
+
+function deliverPendingProjectPath(window: BrowserWindow, projectPath: string): void {
+  const send = () => {
+    if (window.isDestroyed()) return;
+    window.webContents.send(PROJECT_OPEN_CHANNEL, projectPath);
+    focusWindow(window);
+  };
+
+  if (window.webContents.isLoadingMainFrame()) {
+    window.webContents.once("did-finish-load", send);
+    return;
+  }
+
+  send();
+}
+
+function dispatchPendingProjectPath(projectPath: string): void {
+  pendingProjectPath = projectPath;
+  const window = ensureMainWindow();
+  deliverPendingProjectPath(window, projectPath);
+}
+
+function refreshLauncherState(): void {
+  launcherState = getDesktopLauncherState({
+    stateDir: STATE_DIR,
+    executablePath: app.getPath("exe"),
+    serverEntryPath: resolveBackendEntry(),
+    env: process.env,
+  });
+  emitLauncherState();
 }
 
 /** Read the baked-in app-update.yml config (if applicable). */
@@ -1085,6 +1168,40 @@ function registerIpcHandlers(): void {
       state: updateState,
     } satisfies DesktopUpdateActionResult;
   });
+
+  ipcMain.removeHandler(LAUNCHER_GET_STATE_CHANNEL);
+  ipcMain.handle(LAUNCHER_GET_STATE_CHANNEL, async () => launcherState);
+
+  ipcMain.removeHandler(LAUNCHER_INSTALL_CHANNEL);
+  ipcMain.handle(LAUNCHER_INSTALL_CHANNEL, async (_event, rawOptions: unknown) => {
+    const updatePath =
+      typeof rawOptions === "object" &&
+      rawOptions !== null &&
+      "updatePath" in rawOptions &&
+      rawOptions.updatePath === true;
+
+    const result = installDesktopLauncher({
+      stateDir: STATE_DIR,
+      executablePath: app.getPath("exe"),
+      serverEntryPath: resolveBackendEntry(),
+      updatePath,
+      env: process.env,
+    });
+    launcherState = result.state;
+    emitLauncherState();
+    return {
+      completed: result.completed,
+      state: launcherState,
+    } satisfies DesktopLauncherInstallResult;
+  });
+
+  ipcMain.removeHandler(PROJECT_OPEN_GET_PENDING_CHANNEL);
+  ipcMain.handle(PROJECT_OPEN_GET_PENDING_CHANNEL, async () => pendingProjectPath);
+
+  ipcMain.removeHandler(PROJECT_OPEN_CLEAR_PENDING_CHANNEL);
+  ipcMain.handle(PROJECT_OPEN_CLEAR_PENDING_CHANNEL, async () => {
+    pendingProjectPath = null;
+  });
 }
 
 function getIconOption(): { icon: string } | Record<string, never> {
@@ -1122,6 +1239,10 @@ function createWindow(): BrowserWindow {
   window.webContents.on("did-finish-load", () => {
     window.setTitle(APP_DISPLAY_NAME);
     emitUpdateState();
+    emitLauncherState();
+    if (pendingProjectPath) {
+      deliverPendingProjectPath(window, pendingProjectPath);
+    }
   });
   window.once("ready-to-show", () => {
     window.show();
@@ -1157,6 +1278,18 @@ async function bootstrap(): Promise<void> {
   backendWsUrl = `ws://127.0.0.1:${backendPort}/?token=${encodeURIComponent(backendAuthToken)}`;
   process.env.T3CODE_DESKTOP_WS_URL = backendWsUrl;
   writeDesktopLogHeader(`bootstrap resolved websocket url=${backendWsUrl}`);
+  try {
+    publishDesktopLauncherMetadata({
+      stateDir: STATE_DIR,
+      executablePath: app.getPath("exe"),
+      serverEntryPath: resolveBackendEntry(),
+      env: process.env,
+    });
+  } catch (error) {
+    writeDesktopLogHeader(`bootstrap launcher metadata publish failed=${formatErrorMessage(error)}`);
+  }
+  refreshLauncherState();
+  writeDesktopLogHeader(`bootstrap launcher status=${launcherState.status}`);
 
   registerIpcHandlers();
   writeDesktopLogHeader("bootstrap ipc handlers registered");
@@ -1174,27 +1307,41 @@ app.on("before-quit", () => {
   restoreStdIoCapture?.();
 });
 
-app
-  .whenReady()
-  .then(() => {
-    writeDesktopLogHeader("app ready");
-    configureAppIdentity();
-    configureApplicationMenu();
-    registerDesktopProtocol();
-    configureAutoUpdater();
-    void bootstrap().catch((error) => {
-      handleFatalStartupError("bootstrap", error);
-    });
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
-    app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        mainWindow = createWindow();
-      }
-    });
-  })
-  .catch((error) => {
-    handleFatalStartupError("whenReady", error);
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", (_event, commandLine) => {
+    const requestedProjectPath = resolvePendingProjectPath(commandLine);
+    const window = ensureMainWindow();
+    focusWindow(window);
+    if (requestedProjectPath) {
+      dispatchPendingProjectPath(requestedProjectPath);
+    }
   });
+  app
+    .whenReady()
+    .then(() => {
+      writeDesktopLogHeader("app ready");
+      configureAppIdentity();
+      configureApplicationMenu();
+      registerDesktopProtocol();
+      configureAutoUpdater();
+      void bootstrap().catch((error) => {
+        handleFatalStartupError("bootstrap", error);
+      });
+
+      app.on("activate", () => {
+        if (BrowserWindow.getAllWindows().length === 0) {
+          mainWindow = createWindow();
+        }
+      });
+    })
+    .catch((error) => {
+      handleFatalStartupError("whenReady", error);
+    });
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

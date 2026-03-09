@@ -77,6 +77,27 @@ export interface DesktopUpdateActionResult {
   state: DesktopUpdateState;
 }
 
+export type DesktopLauncherStatus = "installed" | "missing" | "needs-path" | "error";
+
+export interface DesktopLauncherState {
+  command: "t3";
+  status: DesktopLauncherStatus;
+  installDir: string;
+  launcherPath: string;
+  pathConfigured: boolean;
+  pathUpdateTarget: string | null;
+  message: string | null;
+}
+
+export interface DesktopLauncherInstallOptions {
+  updatePath: boolean;
+}
+
+export interface DesktopLauncherInstallResult {
+  completed: boolean;
+  state: DesktopLauncherState;
+}
+
 export interface DesktopBridge {
   getWsUrl: () => string | null;
   pickFolder: () => Promise<string | null>;
@@ -91,6 +112,12 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  getLauncherState: () => Promise<DesktopLauncherState>;
+  installLauncher: (options: DesktopLauncherInstallOptions) => Promise<DesktopLauncherInstallResult>;
+  onLauncherState: (listener: (state: DesktopLauncherState) => void) => () => void;
+  getPendingProjectPath: () => Promise<string | null>;
+  clearPendingProjectPath: () => Promise<void>;
+  onProjectOpen: (listener: (cwd: string) => void) => () => void;
 }
 
 export interface NativeApi {

@@ -11,6 +11,15 @@ T3 Code is a minimal web GUI for coding agents. Currently Codex-first, with Clau
 npx t3
 ```
 
+If you have the CLI installed or linked locally, you can open a project directly:
+
+```bash
+t3 .
+t3 ../my-app
+```
+
+If the desktop app is installed, `t3` prefers opening the desktop app. If the `t3` command is missing, the desktop app can prompt you to install it globally.
+
 You can also just install the desktop app. It's cooler.
 
 Install the [desktop app from the Releases page](https://github.com/pingdotgg/t3code/releases)

@@ -8,6 +8,7 @@ import {
   isCommandAvailable,
   launchDetached,
   resolveAvailableEditors,
+  resolveDesktopAppLaunch,
   resolveEditorLaunch,
 } from "./open";
 import { Effect } from "effect";
@@ -131,10 +132,34 @@ describe("launchDetached", () => {
   it.effect("rejects when command does not exist", () =>
     Effect.gen(function* () {
       const result = yield* launchDetached({
-        command: `t3code-no-such-command-${Date.now()}`,
+        command: `/definitely-not-installed/t3code-no-such-command-${Date.now()}`,
         args: [],
       }).pipe(Effect.result);
       assert.equal(result._tag, "Failure");
+    }),
+  );
+});
+
+describe("resolveDesktopAppLaunch", () => {
+  it.effect("clears ELECTRON_RUN_AS_NODE when launching the desktop app", () =>
+    Effect.gen(function* () {
+      const original = process.env.ELECTRON_RUN_AS_NODE;
+      process.env.ELECTRON_RUN_AS_NODE = "1";
+      try {
+        const launch = yield* resolveDesktopAppLaunch({
+          executablePath: "/Applications/T3 Code.app/Contents/MacOS/T3 Code",
+          projectPath: "/tmp/workspace",
+        });
+
+        assert.deepEqual(launch.args, ["--t3-project-path=/tmp/workspace"]);
+        assert.equal(launch.env?.ELECTRON_RUN_AS_NODE, undefined);
+      } finally {
+        if (original === undefined) {
+          delete process.env.ELECTRON_RUN_AS_NODE;
+        } else {
+          process.env.ELECTRON_RUN_AS_NODE = original;
+        }
+      }
     }),
   );
 });

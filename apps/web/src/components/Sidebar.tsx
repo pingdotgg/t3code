@@ -32,6 +32,7 @@ import { readNativeApi } from "../nativeApi";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
+import { workspacePathsMatch } from "../lib/workspacePaths";
 import {
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
@@ -465,12 +466,13 @@ export default function Sidebar() {
           if (byDate !== 0) return byDate;
           return b.id.localeCompare(a.id);
         })[0];
-      if (!latestThread) return;
+      if (!latestThread) return false;
 
       void navigate({
         to: "/$threadId",
         params: { threadId: latestThread.id },
       });
+      return true;
     },
     [navigate, threads],
   );
@@ -489,9 +491,11 @@ export default function Sidebar() {
         setAddingProject(false);
       };
 
-      const existing = projects.find((project) => project.cwd === cwd);
+      const existing = projects.find((project) => workspacePathsMatch(project.cwd, cwd));
       if (existing) {
-        focusMostRecentThreadForProject(existing.id);
+        if (!focusMostRecentThreadForProject(existing.id)) {
+          await handleNewThread(existing.id).catch(() => undefined);
+        }
         finishAddingProject();
         return;
       }
