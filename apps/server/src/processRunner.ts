@@ -140,7 +140,9 @@ export async function runProcess(
     const resolvedCommand = resolveShellCommand(command, args, { cwd: options.cwd });
     const child = spawn(resolvedCommand.command, resolvedCommand.args, {
       cwd: resolvedCommand.cwd,
-      env: options.env,
+      env: resolvedCommand.env
+        ? { ...(options.env ?? process.env), ...resolvedCommand.env }
+        : options.env,
       stdio: "pipe",
       shell: resolvedCommand.shell,
     });

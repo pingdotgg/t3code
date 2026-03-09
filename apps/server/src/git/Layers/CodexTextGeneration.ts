@@ -230,6 +230,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
           [...resolvedCommand.args],
           {
             cwd: resolvedCommand.cwd,
+            ...(resolvedCommand.env ? { env: resolvedCommand.env } : {}),
             shell: resolvedCommand.shell,
             stdin: {
               stream: Stream.make(new TextEncoder().encode(prompt)),

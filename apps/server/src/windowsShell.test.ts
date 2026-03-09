@@ -41,12 +41,38 @@ describe("resolveShellCommand", () => {
       command: "cmd.exe",
       args: [
         "/d",
-        "/v:on",
-        "/s",
         "/c",
-        'pushd "\\\\wsl.localhost\\Ubuntu\\home\\user\\repo" && ("codex" "app-server" & set "T3CODE_EXIT_CODE=!ERRORLEVEL!" & popd & exit /b !T3CODE_EXIT_CODE!)',
+        'pushd %__T3CODE_WINDOWS_UNC_CWD% && %__T3CODE_WINDOWS_UNC_COMMAND% %__T3CODE_WINDOWS_UNC_ARG_0%',
       ],
       cwd: undefined,
+      env: {
+        __T3CODE_WINDOWS_UNC_COMMAND: '"codex"',
+        __T3CODE_WINDOWS_UNC_CWD: '"\\\\wsl.localhost\\Ubuntu\\home\\user\\repo"',
+        __T3CODE_WINDOWS_UNC_ARG_0: '"app-server"',
+      },
+      shell: false,
+    });
+  });
+
+  it("quotes command paths with spaces for UNC cwd values", () => {
+    expect(
+      resolveShellCommand("C:\\Users\\user\\AppData\\Roaming\\npm\\codex.cmd", ["--version"], {
+        cwd: "\\\\wsl.localhost\\Ubuntu\\home\\user\\repo",
+        platform: "win32",
+      }),
+    ).toEqual({
+      command: "cmd.exe",
+      args: [
+        "/d",
+        "/c",
+        "pushd %__T3CODE_WINDOWS_UNC_CWD% && call %__T3CODE_WINDOWS_UNC_COMMAND% %__T3CODE_WINDOWS_UNC_ARG_0%",
+      ],
+      cwd: undefined,
+      env: {
+        __T3CODE_WINDOWS_UNC_COMMAND: '"C:\\Users\\user\\AppData\\Roaming\\npm\\codex.cmd"',
+        __T3CODE_WINDOWS_UNC_CWD: '"\\\\wsl.localhost\\Ubuntu\\home\\user\\repo"',
+        __T3CODE_WINDOWS_UNC_ARG_0: '"--version"',
+      },
       shell: false,
     });
   });

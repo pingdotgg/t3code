@@ -183,6 +183,7 @@ const runCodexCommand = (args: ReadonlyArray<string>) =>
     const resolvedCommand = resolveShellCommand("codex", args);
     const command = ChildProcess.make(resolvedCommand.command, [...resolvedCommand.args], {
       cwd: resolvedCommand.cwd,
+      ...(resolvedCommand.env ? { env: resolvedCommand.env } : {}),
       shell: resolvedCommand.shell,
     });
 
