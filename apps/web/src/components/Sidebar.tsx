@@ -295,6 +295,8 @@ export default function Sidebar() {
   const [newCwd, setNewCwd] = useState("");
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
+  const [addProjectError, setAddProjectError] = useState<string | null>(null);
+  const addProjectInputRef = useRef<HTMLInputElement | null>(null);
   const [renamingThreadId, setRenamingThreadId] = useState<ThreadId | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
@@ -488,6 +490,7 @@ export default function Sidebar() {
       const finishAddingProject = () => {
         setIsAddingProject(false);
         setNewCwd("");
+        setAddProjectError(null);
         setAddingProject(false);
       };
 
@@ -514,12 +517,9 @@ export default function Sidebar() {
         await handleNewThread(projectId).catch(() => undefined);
       } catch (error) {
         setIsAddingProject(false);
-        toastManager.add({
-          type: "error",
-          title: "Unable to add project",
-          description:
-            error instanceof Error ? error.message : "An error occurred while adding the project.",
-        });
+        setAddProjectError(
+          error instanceof Error ? error.message : "An error occurred while adding the project.",
+        );
         return;
       }
       finishAddingProject();
@@ -543,6 +543,8 @@ export default function Sidebar() {
     }
     if (pickedPath) {
       await addProjectFromPath(pickedPath);
+    } else {
+      addProjectInputRef.current?.focus();
     }
     setIsPickingFolder(false);
   };
@@ -1038,7 +1040,10 @@ export default function Sidebar() {
                     type="button"
                     aria-label="Add project"
                     className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                    onClick={() => setAddingProject((prev) => !prev)}
+                    onClick={() => {
+                      setAddingProject((prev) => !prev);
+                      setAddProjectError(null);
+                    }}
                   />
                 }
               >
@@ -1049,41 +1054,63 @@ export default function Sidebar() {
           </div>
 
           {addingProject && (
-            <div className="mb-2 rounded-md border border-border bg-secondary/30 p-2">
-              <input
-                className="mb-2 w-full rounded-md border border-border bg-secondary px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
-                placeholder="/path/to/project"
-                value={newCwd}
-                onChange={(event) => setNewCwd(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") handleAddProject();
-                  if (event.key === "Escape") setAddingProject(false);
-                }}
-                autoFocus
-              />
+            <div className="mb-2 px-1">
               {isElectron && (
                 <button
                   type="button"
-                  className="mb-2 flex w-full items-center justify-center rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                  className="mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-xs text-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={() => void handlePickFolder()}
                   disabled={isPickingFolder || isAddingProject}
                 >
+                  <FolderIcon className="size-3.5" />
                   {isPickingFolder ? "Picking folder..." : "Browse for folder"}
                 </button>
               )}
-              <div className="flex gap-2">
+              <div className="flex gap-1.5">
+                <input
+                  ref={addProjectInputRef}
+                  className={`min-w-0 flex-1 rounded-md border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none ${
+                    addProjectError
+                      ? "border-red-500/70 focus:border-red-500"
+                      : "border-border focus:border-ring"
+                  }`}
+                  placeholder="/path/to/project"
+                  value={newCwd}
+                  onChange={(event) => {
+                    setNewCwd(event.target.value);
+                    setAddProjectError(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") handleAddProject();
+                    if (event.key === "Escape") {
+                      setAddingProject(false);
+                      setAddProjectError(null);
+                    }
+                  }}
+                  autoFocus
+                />
                 <button
                   type="button"
-                  className="flex-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90"
+                  className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
                   onClick={handleAddProject}
                   disabled={isAddingProject}
                 >
                   {isAddingProject ? "Adding..." : "Add"}
                 </button>
+              </div>
+              {addProjectError && (
+                <p className="mt-1 px-0.5 text-[11px] leading-tight text-red-400">
+                  {addProjectError}
+                </p>
+              )}
+              <div className="mt-1.5 px-0.5">
                 <button
                   type="button"
-                  className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary"
-                  onClick={() => setAddingProject(false)}
+                  className="text-[11px] text-muted-foreground/50 transition-colors hover:text-muted-foreground"
+                  onClick={() => {
+                    setAddingProject(false);
+                    setAddProjectError(null);
+                  }}
                 >
                   Cancel
                 </button>
