@@ -63,6 +63,13 @@ export interface LatestProposedPlanState {
   planMarkdown: string;
 }
 
+export type ThreadStatusState =
+  | "idle"
+  | "awaiting-response"
+  | "working"
+  | "connecting"
+  | "completed";
+
 export type TimelineEntry =
   | {
       id: string;
@@ -115,6 +122,10 @@ export function formatElapsed(startIso: string, endIso: string | undefined): str
 
 type LatestTurnTiming = Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "completedAt">;
 type SessionActivityState = Pick<ThreadSession, "orchestrationStatus" | "activeTurnId">;
+type ThreadStatusSessionState = Pick<
+  ThreadSession,
+  "status" | "orchestrationStatus" | "activeTurnId"
+>;
 
 export function isLatestTurnSettled(
   latestTurn: LatestTurnTiming | null,
@@ -297,6 +308,48 @@ export function derivePendingUserInputs(
   return [...openByRequestId.values()].toSorted((left, right) =>
     left.createdAt.localeCompare(right.createdAt),
   );
+}
+
+function hasUnseenCompletion(input: {
+  latestTurn: LatestTurnTiming | null;
+  lastVisitedAt?: string | undefined;
+}): boolean {
+  if (!input.latestTurn?.completedAt) return false;
+  const completedAt = Date.parse(input.latestTurn.completedAt);
+  if (Number.isNaN(completedAt)) return false;
+  if (!input.lastVisitedAt) return true;
+
+  const lastVisitedAt = Date.parse(input.lastVisitedAt);
+  if (Number.isNaN(lastVisitedAt)) return true;
+  return completedAt > lastVisitedAt;
+}
+
+export function deriveThreadStatusState(input: {
+  activities: ReadonlyArray<OrchestrationThreadActivity>;
+  latestTurn: LatestTurnTiming | null;
+  session: ThreadStatusSessionState | null;
+  lastVisitedAt?: string | undefined;
+}): ThreadStatusState {
+  if (
+    derivePendingApprovals(input.activities).length > 0 ||
+    derivePendingUserInputs(input.activities).length > 0
+  ) {
+    return "awaiting-response";
+  }
+
+  if (input.session?.status === "running") {
+    return "working";
+  }
+
+  if (input.session?.status === "connecting") {
+    return "connecting";
+  }
+
+  if (hasUnseenCompletion(input)) {
+    return "completed";
+  }
+
+  return "idle";
 }
 
 export function deriveActivePlanState(

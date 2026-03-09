@@ -4,14 +4,15 @@ import { describe, expect, it } from "vitest";
 import {
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
-  PROVIDER_OPTIONS,
   derivePendingApprovals,
   derivePendingUserInputs,
+  deriveThreadStatusState,
   deriveTimelineEntries,
   deriveWorkLogEntries,
   findLatestProposedPlan,
   hasToolActivityForTurn,
   isLatestTurnSettled,
+  PROVIDER_OPTIONS,
 } from "./session-logic";
 
 function makeActivity(overrides: {
@@ -219,6 +220,101 @@ describe("derivePendingUserInputs", () => {
         ],
       },
     ]);
+  });
+});
+
+describe("deriveThreadStatusState", () => {
+  it("surfaces awaiting-response when approvals are pending", () => {
+    expect(
+      deriveThreadStatusState({
+        activities: [
+          makeActivity({
+            id: "approval-open",
+            kind: "approval.requested",
+            tone: "approval",
+            payload: {
+              requestId: "req-approval",
+              requestKind: "command",
+            },
+          }),
+        ],
+        latestTurn: null,
+        session: {
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId: undefined,
+        },
+      }),
+    ).toBe("awaiting-response");
+  });
+
+  it("surfaces awaiting-response when structured user input is pending", () => {
+    expect(
+      deriveThreadStatusState({
+        activities: [
+          makeActivity({
+            id: "user-input-open",
+            kind: "user-input.requested",
+            tone: "info",
+            payload: {
+              requestId: "req-user-input",
+              questions: [
+                {
+                  id: "scope",
+                  header: "Scope",
+                  question: "Which path should we take?",
+                  options: [
+                    {
+                      label: "Small fix",
+                      description: "Keep the change focused.",
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+        ],
+        latestTurn: null,
+        session: {
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId: undefined,
+        },
+      }),
+    ).toBe("awaiting-response");
+  });
+
+  it("falls back to working when the thread is not blocked", () => {
+    expect(
+      deriveThreadStatusState({
+        activities: [],
+        latestTurn: null,
+        session: {
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId: undefined,
+        },
+      }),
+    ).toBe("working");
+  });
+
+  it("marks unseen completions as completed", () => {
+    expect(
+      deriveThreadStatusState({
+        activities: [],
+        latestTurn: {
+          turnId: TurnId.makeUnsafe("turn-1"),
+          startedAt: "2026-02-23T00:00:00.000Z",
+          completedAt: "2026-02-23T00:00:05.000Z",
+        },
+        session: {
+          status: "ready",
+          orchestrationStatus: "ready",
+          activeTurnId: undefined,
+        },
+        lastVisitedAt: "2026-02-23T00:00:04.000Z",
+      }),
+    ).toBe("completed");
   });
 });
 

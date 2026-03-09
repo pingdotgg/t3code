@@ -2,6 +2,7 @@
 import "../index.css";
 
 import {
+  EventId,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
   type OrchestrationReadModel,
@@ -253,6 +254,66 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   return {
     ...snapshot,
     threads: [],
+  };
+}
+
+function createAwaitingResponseSnapshot(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-awaiting-response" as MessageId,
+    targetText: "status target",
+  });
+  const [thread] = snapshot.threads;
+  if (!thread) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    threads: [
+      {
+        ...thread,
+        activities: [
+          {
+            id: EventId.makeUnsafe("evt-user-input-requested"),
+            createdAt: isoAt(90),
+            kind: "user-input.requested",
+            summary: "Need user input",
+            tone: "info",
+            turnId: null,
+            payload: {
+              requestId: "req-awaiting-response",
+              questions: [
+                {
+                  id: "scope",
+                  header: "Scope",
+                  question: "Which path should we take?",
+                  options: [
+                    {
+                      label: "Small fix",
+                      description: "Keep the change focused.",
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+        session: thread.session
+          ? {
+              ...thread.session,
+              status: "running",
+            }
+          : {
+              threadId: THREAD_ID,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: NOW_ISO,
+            },
+      },
+    ],
   };
 }
 
@@ -795,6 +856,24 @@ describe("ChatView timeline estimator parity (full app)", () => {
             cwd: "/repo/project",
             editor: "vscode",
           });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows Awaiting response in the sidebar when a thread is blocked on structured user input", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createAwaitingResponseSnapshot(),
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Awaiting response");
         },
         { timeout: 8_000, interval: 16 },
       );

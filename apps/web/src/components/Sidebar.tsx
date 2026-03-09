@@ -27,8 +27,7 @@ import { APP_STAGE_LABEL } from "../branding";
 import { newCommandId, newProjectId, newThreadId } from "../lib/utils";
 import { useStore } from "../store";
 import { isChatNewLocalShortcut, isChatNewShortcut, shortcutLabelForCommand } from "../keybindings";
-import { type Thread } from "../types";
-import { derivePendingApprovals } from "../session-logic";
+import { deriveThreadStatusState, type ThreadStatusState } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
@@ -85,7 +84,7 @@ function formatRelativeTime(iso: string): string {
 }
 
 interface ThreadStatusPill {
-  label: "Working" | "Connecting" | "Completed" | "Pending Approval";
+  label: "Working" | "Connecting" | "Completed" | "Awaiting response";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -106,28 +105,17 @@ interface PrStatusIndicator {
 
 type ThreadPr = GitStatusResult["pr"];
 
-function hasUnseenCompletion(thread: Thread): boolean {
-  if (!thread.latestTurn?.completedAt) return false;
-  const completedAt = Date.parse(thread.latestTurn.completedAt);
-  if (Number.isNaN(completedAt)) return false;
-  if (!thread.lastVisitedAt) return true;
-
-  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(lastVisitedAt)) return true;
-  return completedAt > lastVisitedAt;
-}
-
-function threadStatusPill(thread: Thread, hasPendingApprovals: boolean): ThreadStatusPill | null {
-  if (hasPendingApprovals) {
+function threadStatusPill(status: ThreadStatusState): ThreadStatusPill | null {
+  if (status === "awaiting-response") {
     return {
-      label: "Pending Approval",
+      label: "Awaiting response",
       colorClass: "text-amber-600 dark:text-amber-300/90",
       dotClass: "bg-amber-500 dark:bg-amber-300/90",
       pulse: false,
     };
   }
 
-  if (thread.session?.status === "running") {
+  if (status === "working") {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",
@@ -136,7 +124,7 @@ function threadStatusPill(thread: Thread, hasPendingApprovals: boolean): ThreadS
     };
   }
 
-  if (thread.session?.status === "connecting") {
+  if (status === "connecting") {
     return {
       label: "Connecting",
       colorClass: "text-sky-600 dark:text-sky-300/80",
@@ -145,7 +133,7 @@ function threadStatusPill(thread: Thread, hasPendingApprovals: boolean): ThreadS
     };
   }
 
-  if (hasUnseenCompletion(thread)) {
+  if (status === "completed") {
     return {
       label: "Completed",
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
@@ -307,10 +295,18 @@ export default function Sidebar() {
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
-  const pendingApprovalByThreadId = useMemo(() => {
-    const map = new Map<ThreadId, boolean>();
+  const threadStatusStateByThreadId = useMemo(() => {
+    const map = new Map<ThreadId, ThreadStatusState>();
     for (const thread of threads) {
-      map.set(thread.id, derivePendingApprovals(thread.activities).length > 0);
+      map.set(
+        thread.id,
+        deriveThreadStatusState({
+          activities: thread.activities,
+          latestTurn: thread.latestTurn,
+          session: thread.session,
+          lastVisitedAt: thread.lastVisitedAt,
+        }),
+      );
     }
     return map;
   }, [threads]);
@@ -1208,8 +1204,7 @@ export default function Sidebar() {
                         {visibleThreads.map((thread) => {
                           const isActive = routeThreadId === thread.id;
                           const threadStatus = threadStatusPill(
-                            thread,
-                            pendingApprovalByThreadId.get(thread.id) === true,
+                            threadStatusStateByThreadId.get(thread.id) ?? "idle",
                           );
                           const prStatus = prStatusIndicator(prByThreadId.get(thread.id) ?? null);
                           const terminalStatus = terminalStatusFromRunningIds(
