@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 
 import { Effect, FileSystem, Layer, Path } from "effect";
-import { resolveAutoFeatureBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import {
+  resolveAutoFeatureBranchName,
+  sanitizeBranchFragment,
+  sanitizeFeatureBranchName,
+} from "@t3tools/shared/git";
 
 import { GitManagerError } from "../Errors.ts";
 import { GitManager, type GitManagerShape } from "../Services/GitManager.ts";
@@ -64,6 +68,18 @@ function resolveHeadRepositoryNameWithOwner(
   }
 
   return `${ownerLogin}/${repositoryName}`;
+}
+
+function resolvePullRequestWorktreeLocalBranchName(
+  pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+): string {
+  if (!pullRequest.isCrossRepository) {
+    return pullRequest.headBranch;
+  }
+
+  const sanitizedHeadBranch = sanitizeBranchFragment(pullRequest.headBranch).trim();
+  const suffix = sanitizedHeadBranch.length > 0 ? sanitizedHeadBranch : "head";
+  return `pr/${pullRequest.number}-${suffix}`;
 }
 
 function parsePullRequestList(raw: unknown): PullRequestInfo[] {
@@ -322,6 +338,7 @@ export const makeGitManager = Effect.gen(function* () {
   const materializePullRequestHeadBranch = (
     cwd: string,
     pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+    localBranch = pullRequest.headBranch,
   ) =>
     Effect.gen(function* () {
       const repositoryNameWithOwner = resolveHeadRepositoryNameWithOwner(pullRequest) ?? "";
@@ -330,7 +347,7 @@ export const makeGitManager = Effect.gen(function* () {
         yield* gitCore.fetchPullRequestBranch({
           cwd,
           prNumber: pullRequest.number,
-          branch: pullRequest.headBranch,
+          branch: localBranch,
         });
         return;
       }
@@ -355,11 +372,11 @@ export const makeGitManager = Effect.gen(function* () {
         cwd,
         remoteName,
         remoteBranch: pullRequest.headBranch,
-        localBranch: pullRequest.headBranch,
+        localBranch,
       });
       yield* gitCore.setBranchUpstream({
         cwd,
-        branch: pullRequest.headBranch,
+        branch: localBranch,
         remoteName,
         remoteBranch: pullRequest.headBranch,
       });
@@ -368,7 +385,7 @@ export const makeGitManager = Effect.gen(function* () {
         gitCore.fetchPullRequestBranch({
           cwd,
           prNumber: pullRequest.number,
-          branch: pullRequest.headBranch,
+          branch: localBranch,
         }),
       ),
     );
@@ -701,14 +718,32 @@ export const makeGitManager = Effect.gen(function* () {
           ...pullRequest,
           ...toPullRequestHeadRemoteInfo(pullRequestSummary),
         } as const;
+      const localPullRequestBranch = resolvePullRequestWorktreeLocalBranchName(
+        pullRequestWithRemoteInfo,
+      );
 
       const findLocalHeadBranch = (cwd: string) =>
         gitCore.listBranches({ cwd }).pipe(
-          Effect.map((result) =>
-            result.branches.find(
-              (branch) => !branch.isRemote && branch.name === pullRequest.headBranch,
-            ),
-          ),
+          Effect.map((result) => {
+            const localBranch = result.branches.find(
+              (branch) => !branch.isRemote && branch.name === localPullRequestBranch,
+            );
+            if (localBranch) {
+              return localBranch;
+            }
+            if (localPullRequestBranch === pullRequest.headBranch) {
+              return null;
+            }
+            return (
+              result.branches.find(
+                (branch) =>
+                  !branch.isRemote &&
+                  branch.name === pullRequest.headBranch &&
+                  branch.worktreePath !== null &&
+                  canonicalizeExistingPath(branch.worktreePath) !== rootWorktreePath,
+              ) ?? null
+            );
+          }),
         );
 
       const existingBranchBeforeFetch = yield* findLocalHeadBranch(input.cwd);
@@ -722,7 +757,7 @@ export const makeGitManager = Effect.gen(function* () {
         yield* ensureExistingWorktreeUpstream(existingBranchBeforeFetch.worktreePath);
         return {
           pullRequest,
-          branch: pullRequest.headBranch,
+          branch: localPullRequestBranch,
           worktreePath: existingBranchBeforeFetch.worktreePath,
         };
       }
@@ -733,7 +768,11 @@ export const makeGitManager = Effect.gen(function* () {
         );
       }
 
-      yield* materializePullRequestHeadBranch(input.cwd, pullRequestWithRemoteInfo);
+      yield* materializePullRequestHeadBranch(
+        input.cwd,
+        pullRequestWithRemoteInfo,
+        localPullRequestBranch,
+      );
 
       const existingBranchAfterFetch = yield* findLocalHeadBranch(input.cwd);
       const existingBranchAfterFetchPath = existingBranchAfterFetch?.worktreePath
@@ -746,7 +785,7 @@ export const makeGitManager = Effect.gen(function* () {
         yield* ensureExistingWorktreeUpstream(existingBranchAfterFetch.worktreePath);
         return {
           pullRequest,
-          branch: pullRequest.headBranch,
+          branch: localPullRequestBranch,
           worktreePath: existingBranchAfterFetch.worktreePath,
         };
       }
@@ -759,7 +798,7 @@ export const makeGitManager = Effect.gen(function* () {
 
       const worktree = yield* gitCore.createWorktree({
         cwd: input.cwd,
-        branch: pullRequest.headBranch,
+        branch: localPullRequestBranch,
         path: null,
       });
       yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
