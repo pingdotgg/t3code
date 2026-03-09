@@ -14,6 +14,7 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { showDesktopConfirmDialog } from "./confirmDialog";
+import { showEditableContextMenu } from "./editableContextMenu";
 import { fixPath } from "./fixPath";
 import {
   getAutoUpdateDisabledReason,
@@ -1115,6 +1116,9 @@ function createWindow(): BrowserWindow {
   });
 
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("context-menu", (_event, params) => {
+    showEditableContextMenu(window, params);
+  });
   window.on("page-title-updated", (event) => {
     event.preventDefault();
     window.setTitle(APP_DISPLAY_NAME);
