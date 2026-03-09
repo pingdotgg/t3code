@@ -83,25 +83,76 @@ function Test-Command($cmd) {
     catch { return $false }
 }
 
-$hasWinget = Test-Command "winget"
-$hasChoco  = Test-Command "choco"
-
-if ($hasWinget) {
-    Write-Ok "winget detected (primary package manager)"
-} elseif ($hasChoco) {
-    Write-Ok "Chocolatey detected (package manager)"
-} else {
-    Write-Warn "No package manager found (winget or Chocolatey)"
-    Write-Step "Installing Chocolatey..."
+function Test-ChocoWorks {
     try {
-        Set-ExecutionPolicy Bypass -Scope Process -Force
-        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-        $hasChoco = $true
-        Write-Ok "Chocolatey installed"
+        $null = & choco --version 2>&1
+        return ($LASTEXITCODE -eq 0)
     } catch {
-        Write-Err "Could not install Chocolatey: $_"
+        return $false
     }
+}
+
+$hasWinget = Test-Command "winget"
+$hasChoco  = (Test-Command "choco") -and (Test-ChocoWorks)
+
+# Report what we found
+$pkgMgrFound = $false
+if ($hasWinget) {
+    Write-Ok "winget detected"
+    $pkgMgrFound = $true
+}
+if ($hasChoco) {
+    Write-Ok "Chocolatey detected"
+    $pkgMgrFound = $true
+}
+
+if (-not $pkgMgrFound) {
+    Write-Warn "No working package manager found"
+    Write-Host ""
+    Write-Host "  A package manager is needed to install dependencies." -ForegroundColor White
+    Write-Host "  Choose one:" -ForegroundColor White
+    Write-Host ""
+    Write-Host "    [1] winget  (recommended, built into Windows 10/11)" -ForegroundColor Cyan
+    Write-Host "    [2] Chocolatey  (community package manager)" -ForegroundColor Cyan
+    Write-Host "    [3] Skip  (I'll install dependencies manually)" -ForegroundColor DarkGray
+    Write-Host ""
+    $choice = Read-Host "  Enter choice (1/2/3)"
+
+    switch ($choice) {
+        "1" {
+            Write-Step "Checking for winget..."
+            # winget is built into modern Windows — if missing, point to MS Store
+            if (Test-Command "winget") {
+                $hasWinget = $true
+                Write-Ok "winget is available"
+            } else {
+                Write-Warn "winget not found. Install 'App Installer' from the Microsoft Store:"
+                Write-Host "    ms-windows-store://pdp/?productid=9NBLGGH4NNS1" -ForegroundColor Cyan
+                Write-Host "    Then re-run this installer." -ForegroundColor DarkGray
+            }
+        }
+        "2" {
+            Write-Step "Installing Chocolatey..."
+            try {
+                Set-ExecutionPolicy Bypass -Scope Process -Force
+                [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+                Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+                $hasChoco = $true
+                Write-Ok "Chocolatey installed"
+            } catch {
+                Write-Err "Could not install Chocolatey: $_"
+            }
+        }
+        default {
+            Write-Skip "Skipping package manager — dependencies must be installed manually"
+        }
+    }
+} elseif ($hasWinget -and $hasChoco) {
+    Write-Ok "Using winget (primary), Chocolatey (fallback)"
+} elseif ($hasWinget) {
+    Write-Ok "Using winget"
+} else {
+    Write-Ok "Using Chocolatey"
 }
 
 function Refresh-Path {
