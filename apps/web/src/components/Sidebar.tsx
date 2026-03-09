@@ -872,7 +872,6 @@ export default function Sidebar() {
 
   const handleProjectDragCancel = useCallback((_event: DragCancelEvent) => {
     dragInProgressRef.current = false;
-    suppressProjectClickAfterDragRef.current = false;
   }, []);
 
   const handleProjectTitlePointerDownCapture = useCallback(() => {
