@@ -189,7 +189,7 @@ export interface OrchestrationIntegrationHarness {
 }
 
 interface MakeOrchestrationIntegrationHarnessOptions {
-  readonly provider?: "codex";
+  readonly provider?: "codex" | "gemini";
   readonly realCodex?: boolean;
 }
 
