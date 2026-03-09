@@ -97,6 +97,30 @@ describe("buildEditableContextMenuTemplate", () => {
     });
   });
 
+  it("trims and deduplicates spelling suggestions before rendering them", () => {
+    const template = buildEditableContextMenuTemplate(
+      {
+        dictionarySuggestions: [" hello ", "hello", "", "help", "help", "hero"],
+        editFlags,
+        isEditable: true,
+        misspelledWord: " helo ",
+        x: 0,
+        y: 0,
+      },
+      {
+        replaceMisspelling: vi.fn(),
+        addWordToDictionary: vi.fn(),
+      },
+    );
+
+    expect(template.slice(0, 4)).toMatchObject([
+      { label: "hello" },
+      { label: "help" },
+      { label: "hero" },
+      { label: "Add to Dictionary" },
+    ]);
+  });
+
   it("includes standard edit actions even without a misspelling", () => {
     const template = buildEditableContextMenuTemplate(
       {
