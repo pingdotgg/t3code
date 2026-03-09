@@ -9,3 +9,19 @@
 #   -github:username reason for denouncement
 #
 # Keep entries sorted alphabetically.
+github:adityavardhansharma
+github:binbandit
+github:chuks-qua
+github:cursoragent
+github:gbarros-dev
+github:github-actions[bot]
+github:hwanseoc
+github:jamesx0416
+github:jasonLaster
+github:JoeEverest
+github:nmggithub
+github:notkainoa
+github:PatrickBauer
+github:realAhmedRoach
+github:shiroyasha9
+github:Yash-Singh1
