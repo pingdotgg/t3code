@@ -158,7 +158,7 @@ function TerminalViewport({
       terminal.scrollToBottom();
     }
 
-    const nextSignature = `${width}x${height}:${terminal.cols}x${terminal.rows}`;
+    const nextSignature = `${terminal.cols}x${terminal.rows}`;
     if (viewportSignatureRef.current === nextSignature) return;
     viewportSignatureRef.current = nextSignature;
 
