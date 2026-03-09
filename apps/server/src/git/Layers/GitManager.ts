@@ -38,6 +38,34 @@ interface PullRequestHeadRemoteInfo {
   headRepositoryOwnerLogin?: string | null;
 }
 
+function parseRepositoryNameFromPullRequestUrl(url: string): string | null {
+  const trimmed = url.trim();
+  const match = /^https:\/\/github\.com\/[^/]+\/([^/]+)\/pull\/\d+(?:\/.*)?$/i.exec(trimmed);
+  const repositoryName = match?.[1]?.trim() ?? "";
+  return repositoryName.length > 0 ? repositoryName : null;
+}
+
+function resolveHeadRepositoryNameWithOwner(
+  pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+): string | null {
+  const explicitRepository = pullRequest.headRepositoryNameWithOwner?.trim() ?? "";
+  if (explicitRepository.length > 0) {
+    return explicitRepository;
+  }
+
+  if (!pullRequest.isCrossRepository) {
+    return null;
+  }
+
+  const ownerLogin = pullRequest.headRepositoryOwnerLogin?.trim() ?? "";
+  const repositoryName = parseRepositoryNameFromPullRequestUrl(pullRequest.url);
+  if (ownerLogin.length === 0 || !repositoryName) {
+    return null;
+  }
+
+  return `${ownerLogin}/${repositoryName}`;
+}
+
 function parsePullRequestList(raw: unknown): PullRequestInfo[] {
   if (!Array.isArray(raw)) return [];
 
@@ -253,9 +281,10 @@ export const makeGitManager = Effect.gen(function* () {
   const configurePullRequestHeadUpstream = (
     cwd: string,
     pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+    localBranch = pullRequest.headBranch,
   ) =>
     Effect.gen(function* () {
-      const repositoryNameWithOwner = pullRequest.headRepositoryNameWithOwner?.trim() ?? "";
+      const repositoryNameWithOwner = resolveHeadRepositoryNameWithOwner(pullRequest) ?? "";
       if (repositoryNameWithOwner.length === 0) {
         return;
       }
@@ -278,14 +307,14 @@ export const makeGitManager = Effect.gen(function* () {
 
       yield* gitCore.setBranchUpstream({
         cwd,
-        branch: pullRequest.headBranch,
+        branch: localBranch,
         remoteName,
         remoteBranch: pullRequest.headBranch,
       });
     }).pipe(
       Effect.catch((error) =>
         Effect.logWarning(
-          `GitManager.configurePullRequestHeadUpstream: failed to configure upstream for ${pullRequest.headBranch} in ${cwd}: ${error.message}`,
+          `GitManager.configurePullRequestHeadUpstream: failed to configure upstream for ${localBranch} -> ${pullRequest.headBranch} in ${cwd}: ${error.message}`,
         ).pipe(Effect.asVoid),
       ),
     );
@@ -295,7 +324,7 @@ export const makeGitManager = Effect.gen(function* () {
     pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
   ) =>
     Effect.gen(function* () {
-      const repositoryNameWithOwner = pullRequest.headRepositoryNameWithOwner?.trim() ?? "";
+      const repositoryNameWithOwner = resolveHeadRepositoryNameWithOwner(pullRequest) ?? "";
 
       if (repositoryNameWithOwner.length === 0) {
         yield* gitCore.fetchPullRequestBranch({
@@ -639,17 +668,39 @@ export const makeGitManager = Effect.gen(function* () {
           reference: normalizedReference,
           force: true,
         });
-        yield* configurePullRequestHeadUpstream(input.cwd, {
-          ...pullRequest,
-          ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-        });
         const details = yield* gitCore.statusDetails(input.cwd);
+        yield* configurePullRequestHeadUpstream(
+          input.cwd,
+          {
+            ...pullRequest,
+            ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+          },
+          details.branch ?? pullRequest.headBranch,
+        );
         return {
           pullRequest,
           branch: details.branch ?? pullRequest.headBranch,
           worktreePath: null,
         };
       }
+
+      const ensureExistingWorktreeUpstream = (worktreePath: string) =>
+        Effect.gen(function* () {
+          const details = yield* gitCore.statusDetails(worktreePath);
+          yield* configurePullRequestHeadUpstream(
+            worktreePath,
+            {
+              ...pullRequest,
+              ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+            },
+            details.branch ?? pullRequest.headBranch,
+          );
+        });
+
+      const pullRequestWithRemoteInfo = {
+          ...pullRequest,
+          ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+        } as const;
 
       const findLocalHeadBranch = (cwd: string) =>
         gitCore.listBranches({ cwd }).pipe(
@@ -668,6 +719,7 @@ export const makeGitManager = Effect.gen(function* () {
         existingBranchBeforeFetch?.worktreePath &&
         existingBranchBeforeFetchPath !== rootWorktreePath
       ) {
+        yield* ensureExistingWorktreeUpstream(existingBranchBeforeFetch.worktreePath);
         return {
           pullRequest,
           branch: pullRequest.headBranch,
@@ -681,10 +733,7 @@ export const makeGitManager = Effect.gen(function* () {
         );
       }
 
-      yield* materializePullRequestHeadBranch(input.cwd, {
-        ...pullRequest,
-        ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-      });
+      yield* materializePullRequestHeadBranch(input.cwd, pullRequestWithRemoteInfo);
 
       const existingBranchAfterFetch = yield* findLocalHeadBranch(input.cwd);
       const existingBranchAfterFetchPath = existingBranchAfterFetch?.worktreePath
@@ -694,6 +743,7 @@ export const makeGitManager = Effect.gen(function* () {
         existingBranchAfterFetch?.worktreePath &&
         existingBranchAfterFetchPath !== rootWorktreePath
       ) {
+        yield* ensureExistingWorktreeUpstream(existingBranchAfterFetch.worktreePath);
         return {
           pullRequest,
           branch: pullRequest.headBranch,
@@ -712,6 +762,7 @@ export const makeGitManager = Effect.gen(function* () {
         branch: pullRequest.headBranch,
         path: null,
       });
+      yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
 
       return {
         pullRequest,
