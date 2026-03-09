@@ -120,28 +120,42 @@ function Install-Dep {
         $action = if ($ForceUpgrade) { "upgrade" } else { "install" }
         Write-Step "$( if ($ForceUpgrade) { 'Updating' } else { 'Installing' } ) $Name via winget..."
         $result = winget $action --id $WingetId --accept-package-agreements --accept-source-agreements --disable-interactivity --silent 2>&1
-        if ($LASTEXITCODE -eq 0 -or "$result" -match "already installed" -or "$result" -match "No available upgrade") {
+        $resultStr = "$result"
+        $wingetOk = ($LASTEXITCODE -eq 0) -or ($resultStr -match "already installed|No available upgrade|No installed package|No newer package|No applicable update|no applicable|is running")
+        if ($wingetOk) {
             Write-Ok "$Name up to date (winget)"
             Refresh-Path
-            return $true
+            return
+        }
+        # If upgrade failed, try install (handles version mismatch)
+        if ($ForceUpgrade) {
+            $result2 = winget install --id $WingetId --accept-package-agreements --accept-source-agreements --disable-interactivity --silent 2>&1
+            if ($LASTEXITCODE -eq 0 -or "$result2" -match "already installed") {
+                Write-Ok "$Name up to date (winget)"
+                Refresh-Path
+                return
+            }
         }
     }
 
     # Fallback to Chocolatey
     if ($hasChoco) {
-        $action = if ($ForceUpgrade) { "upgrade" } else { "install" }
-        Write-Step "$( if ($ForceUpgrade) { 'Updating' } else { 'Installing' } ) $Name via Chocolatey..."
-        choco $action $ChocoId -y --no-progress 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Ok "$Name up to date (Chocolatey)"
-            Refresh-Path
-            return $true
+        try {
+            $action = if ($ForceUpgrade) { "upgrade" } else { "install" }
+            Write-Step "$( if ($ForceUpgrade) { 'Updating' } else { 'Installing' } ) $Name via Chocolatey..."
+            choco $action $ChocoId -y --no-progress 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Ok "$Name up to date (Chocolatey)"
+                Refresh-Path
+                return
+            }
+        } catch {
+            # Chocolatey binary missing or broken — skip silently
         }
     }
 
     Write-Err "Could not install $Name automatically"
     Write-Warn "Install manually: $ManualUrl"
-    return $false
 }
 
 # ---------------------------------------------------------------------------
@@ -155,11 +169,8 @@ Write-Host "  -----------------------" -ForegroundColor DarkGray
 # Node.js
 if (Test-Command "node") {
     $nodeVer = & node --version 2>$null
-    if ($isUpdate) {
-        Install-Dep -Name "Node.js LTS" -WingetId "OpenJS.NodeJS.LTS" -ChocoId "nodejs-lts" -ManualUrl "https://nodejs.org" -ForceUpgrade
-    } else {
-        Write-Ok "Node.js $nodeVer (already installed)"
-    }
+    Write-Ok "Node.js $nodeVer (installed)"
+    if ($isUpdate) { Install-Dep -Name "Node.js LTS" -WingetId "OpenJS.NodeJS.LTS" -ChocoId "nodejs-lts" -ManualUrl "https://nodejs.org" -ForceUpgrade }
 } else {
     Install-Dep -Name "Node.js LTS" -WingetId "OpenJS.NodeJS.LTS" -ChocoId "nodejs-lts" -ManualUrl "https://nodejs.org"
 }
@@ -167,11 +178,8 @@ if (Test-Command "node") {
 # Git
 if (Test-Command "git") {
     $gitVer = & git --version 2>$null
-    if ($isUpdate) {
-        Install-Dep -Name "Git" -WingetId "Git.Git" -ChocoId "git" -ManualUrl "https://git-scm.com" -ForceUpgrade
-    } else {
-        Write-Ok "$gitVer (already installed)"
-    }
+    Write-Ok "$gitVer (installed)"
+    if ($isUpdate) { Install-Dep -Name "Git" -WingetId "Git.Git" -ChocoId "git" -ManualUrl "https://git-scm.com" -ForceUpgrade }
 } else {
     Install-Dep -Name "Git" -WingetId "Git.Git" -ChocoId "git" -ManualUrl "https://git-scm.com"
 }
@@ -179,11 +187,8 @@ if (Test-Command "git") {
 # GitHub CLI
 if (Test-Command "gh") {
     $ghVer = & gh --version 2>$null | Select-Object -First 1
-    if ($isUpdate) {
-        Install-Dep -Name "GitHub CLI" -WingetId "GitHub.cli" -ChocoId "gh" -ManualUrl "https://cli.github.com" -ForceUpgrade
-    } else {
-        Write-Ok "$ghVer (already installed)"
-    }
+    Write-Ok "$ghVer (installed)"
+    if ($isUpdate) { Install-Dep -Name "GitHub CLI" -WingetId "GitHub.cli" -ChocoId "gh" -ManualUrl "https://cli.github.com" -ForceUpgrade }
 } else {
     Install-Dep -Name "GitHub CLI" -WingetId "GitHub.cli" -ChocoId "gh" -ManualUrl "https://cli.github.com"
 }
