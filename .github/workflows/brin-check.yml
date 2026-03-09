@@ -1,0 +1,116 @@
+name: Contributor Trust Check
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check:
+    name: Scan PR author
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: brin-check-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Query Brin API
+        id: brin
+        run: |
+          AUTHOR="${{ github.event.pull_request.user.login }}"
+          RESPONSE=$(curl -sf "https://api.brin.sh/contributor/${AUTHOR}?details=true&mode=full" || echo '{}')
+          echo "response<<BRIN_EOF" >> "$GITHUB_OUTPUT"
+          echo "$RESPONSE" >> "$GITHUB_OUTPUT"
+          echo "BRIN_EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Post or update comment
+        uses: actions/github-script@v7
+        env:
+          BRIN_RESPONSE: ${{ steps.brin.outputs.response }}
+        with:
+          script: |
+            const marker = "<!-- brin-check -->";
+            const pr = context.payload.pull_request;
+            let data;
+            try {
+              data = JSON.parse(process.env.BRIN_RESPONSE);
+            } catch {
+              core.warning("Failed to parse Brin API response");
+              return;
+            }
+
+            if (!data.score && data.score !== 0) {
+              core.warning("Brin API returned no score");
+              return;
+            }
+
+            const score = data.score;
+            const verdict = data.verdict ?? "unknown";
+            const confidence = data.confidence ?? "unknown";
+
+            const verdictEmoji = {
+              safe: "\u2705",
+              caution: "\u26A0\uFE0F",
+              suspicious: "\u26D4",
+              dangerous: "\uD83D\uDEA8",
+            }[verdict] ?? "\u2753";
+
+            const sub = data.sub_scores ?? {};
+            const fmt = (v) => (v != null ? String(Math.round(v)) : "—");
+
+            let body = `${marker}\n`;
+            body += `### ${verdictEmoji} Contributor Trust Check\n\n`;
+            body += `| | |\n|---|---|\n`;
+            body += `| **Author** | [@${data.name}](https://github.com/${data.name}) |\n`;
+            body += `| **Score** | **${score}**/100 |\n`;
+            body += `| **Verdict** | ${verdict} |\n`;
+            body += `| **Confidence** | ${confidence} |\n\n`;
+
+            body += `<details>\n<summary>Dimension breakdown</summary>\n\n`;
+            body += `| Dimension | Score |\n|-----------|-------|\n`;
+            body += `| Identity | ${fmt(sub.identity)} |\n`;
+            body += `| Behavior | ${fmt(sub.behavior)} |\n`;
+            body += `| Content | ${fmt(sub.content)} |\n`;
+            body += `| Graph | ${fmt(sub.graph)} |\n`;
+            body += `</details>\n\n`;
+
+            if (data.threats && data.threats.length > 0) {
+              body += `#### Detected threats\n\n`;
+              body += `| Type | Severity | Detail |\n|------|----------|--------|\n`;
+              for (const t of data.threats) {
+                body += `| ${t.type} | ${t.severity} | ${t.detail} |\n`;
+              }
+              body += `\n`;
+            }
+
+            body += `<sub>Scanned by [Brin](https://brin.sh) — analyzes GitHub identity, behavior, and contribution patterns to help maintainers assess contributor trust. `;
+            body += `[Full profile](${data.url}?details=true)</sub>\n`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              per_page: 100,
+            });
+
+            const existing = comments.find((c) => c.body?.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+              core.info(`Updated comment ${existing.id} on PR #${pr.number}`);
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body,
+              });
+              core.info(`Created comment on PR #${pr.number}`);
+            }
