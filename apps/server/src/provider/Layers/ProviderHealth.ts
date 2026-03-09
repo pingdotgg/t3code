@@ -13,7 +13,7 @@ import type {
   ServerProviderStatus,
   ServerProviderStatusState,
 } from "@t3tools/contracts";
-import { Effect, Layer, Option, Result, Stream } from "effect";
+import { Array, Effect, Fiber, Layer, Option, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { isGeminiCliAvailable } from "../../cliEnvironment";
@@ -337,12 +337,12 @@ export const checkGeminiProviderStatus: Effect.Effect<ServerProviderStatus, neve
 export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
-    const [codexStatus, geminiStatus] = yield* Effect.all(
+    const statusesFiber = yield* Effect.all(
       [checkCodexProviderStatus, checkGeminiProviderStatus],
       { concurrency: 2 },
-    );
+    ).pipe(Effect.forkScoped);
     return {
-      getStatuses: Effect.succeed([codexStatus, geminiStatus]),
+      getStatuses: Fiber.join(statusesFiber),
     } satisfies ProviderHealthShape;
   }),
 );
