@@ -20,6 +20,7 @@ import React, {
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { isElectron } from "../env";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
@@ -240,7 +241,31 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
       a({ node: _node, href, ...props }) {
         const targetPath = resolveMarkdownFileLinkTarget(href, cwd);
         if (!targetPath) {
-          return <a {...props} href={href} target="_blank" rel="noreferrer" />;
+          if (!isElectron) {
+            return <a {...props} href={href} target="_blank" rel="noreferrer" />;
+          }
+
+          return (
+            <a
+              {...props}
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(event) => {
+                if (!href) {
+                  return;
+                }
+                const api = readNativeApi();
+                if (api) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void api.shell.openExternal(href);
+                } else {
+                  console.warn("Unable to open external link.");
+                }
+              }}
+            />
+          );
         }
 
         return (
