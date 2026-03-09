@@ -53,8 +53,14 @@ const CodexProviderStartOptions = Schema.Struct({
   homePath: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 
+const ClaudeCodeProviderStartOptions = Schema.Struct({
+  apiKey: Schema.optional(TrimmedNonEmptyStringSchema),
+  baseUrl: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+
 export const ProviderStartOptions = Schema.Struct({
   codex: Schema.optional(CodexProviderStartOptions),
+  claudeCode: Schema.optional(ClaudeCodeProviderStartOptions),
 });
 export type ProviderStartOptions = typeof ProviderStartOptions.Type;
 
@@ -76,10 +82,14 @@ export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 export const ProviderSendTurnInput = Schema.Struct({
   threadId: ThreadId,
   input: Schema.optional(
-    TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
+    TrimmedNonEmptyStringSchema.check(
+      Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
+    ),
   ),
   attachments: Schema.optional(
-    Schema.Array(ChatAttachment).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
+    Schema.Array(ChatAttachment).check(
+      Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
+    ),
   ),
   model: Schema.optional(TrimmedNonEmptyStringSchema),
   serviceTier: Schema.optional(Schema.NullOr(ProviderServiceTier)),
@@ -111,16 +121,23 @@ export const ProviderRespondToRequestInput = Schema.Struct({
   requestId: ApprovalRequestId,
   decision: ProviderApprovalDecision,
 });
-export type ProviderRespondToRequestInput = typeof ProviderRespondToRequestInput.Type;
+export type ProviderRespondToRequestInput =
+  typeof ProviderRespondToRequestInput.Type;
 
 export const ProviderRespondToUserInputInput = Schema.Struct({
   threadId: ThreadId,
   requestId: ApprovalRequestId,
   answers: ProviderUserInputAnswers,
 });
-export type ProviderRespondToUserInputInput = typeof ProviderRespondToUserInputInput.Type;
+export type ProviderRespondToUserInputInput =
+  typeof ProviderRespondToUserInputInput.Type;
 
-const ProviderEventKind = Schema.Literals(["session", "notification", "request", "error"]);
+const ProviderEventKind = Schema.Literals([
+  "session",
+  "notification",
+  "request",
+  "error",
+]);
 
 export const ProviderEvent = Schema.Struct({
   id: EventId,

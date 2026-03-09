@@ -1,7 +1,14 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { Option, Schema } from "effect";
-import { type ProviderKind, type ProviderServiceTier } from "@t3tools/contracts";
-import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  type ProviderKind,
+  type ProviderServiceTier,
+} from "@t3tools/contracts";
+import {
+  getDefaultModel,
+  getModelOptions,
+  normalizeModelSlug,
+} from "@t3tools/shared/model";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
@@ -26,8 +33,14 @@ export const APP_SERVICE_TIER_OPTIONS = [
 export type AppServiceTier = (typeof APP_SERVICE_TIER_OPTIONS)[number]["value"];
 const AppServiceTierSchema = Schema.Literals(["auto", "fast", "flex"]);
 const MODELS_WITH_FAST_SUPPORT = new Set(["gpt-5.4"]);
-const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
+const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<
+  ProviderKind,
+  ReadonlySet<string>
+> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
+  claudeCode: new Set(
+    getModelOptions("claudeCode" as ProviderKind).map((option) => option.slug),
+  ),
 };
 
 const AppSettingsSchema = Schema.Struct({
@@ -37,12 +50,25 @@ const AppSettingsSchema = Schema.Struct({
   codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
   ),
-  confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
+  confirmThreadDelete: Schema.Boolean.pipe(
+    Schema.withConstructorDefault(() => Option.some(true)),
+  ),
   enableAssistantStreaming: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
-  codexServiceTier: AppServiceTierSchema.pipe(Schema.withConstructorDefault(() => Option.some("auto"))),
+  codexServiceTier: AppServiceTierSchema.pipe(
+    Schema.withConstructorDefault(() => Option.some("auto")),
+  ),
   customCodexModels: Schema.Array(Schema.String).pipe(
+    Schema.withConstructorDefault(() => Option.some([])),
+  ),
+  claudeCodeApiKey: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  claudeCodeBaseUrl: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  customClaudeCodeModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
 });
@@ -53,7 +79,9 @@ export interface AppModelOption {
   isCustom: boolean;
 }
 
-export function resolveAppServiceTier(serviceTier: AppServiceTier): ProviderServiceTier | null {
+export function resolveAppServiceTier(
+  serviceTier: AppServiceTier,
+): ProviderServiceTier | null {
   return serviceTier === "auto" ? null : serviceTier;
 }
 
@@ -107,7 +135,14 @@ export function normalizeCustomModelSlugs(
 function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
-    customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
+    customCodexModels: normalizeCustomModelSlugs(
+      settings.customCodexModels,
+      "codex",
+    ),
+    customClaudeCodeModels: normalizeCustomModelSlugs(
+      settings.customClaudeCodeModels,
+      "claudeCode",
+    ),
   };
 }
 
@@ -116,11 +151,13 @@ export function getAppModelOptions(
   customModels: readonly string[],
   selectedModel?: string | null,
 ): AppModelOption[] {
-  const options: AppModelOption[] = getModelOptions(provider).map(({ slug, name }) => ({
-    slug,
-    name,
-    isCustom: false,
-  }));
+  const options: AppModelOption[] = getModelOptions(provider).map(
+    ({ slug, name }) => ({
+      slug,
+      name,
+      isCustom: false,
+    }),
+  );
   const seen = new Set(options.map((option) => option.slug));
 
   for (const slug of normalizeCustomModelSlugs(customModels, provider)) {
@@ -156,13 +193,16 @@ export function resolveAppModelSelection(
   const options = getAppModelOptions(provider, customModels, selectedModel);
   const trimmedSelectedModel = selectedModel?.trim();
   if (trimmedSelectedModel) {
-    const direct = options.find((option) => option.slug === trimmedSelectedModel);
+    const direct = options.find(
+      (option) => option.slug === trimmedSelectedModel,
+    );
     if (direct) {
       return direct.slug;
     }
 
     const byName = options.find(
-      (option) => option.name.toLowerCase() === trimmedSelectedModel.toLowerCase(),
+      (option) =>
+        option.name.toLowerCase() === trimmedSelectedModel.toLowerCase(),
     );
     if (byName) {
       return byName.slug;
@@ -195,7 +235,10 @@ export function getSlashModelOptions(
   return options.filter((option) => {
     const searchSlug = option.slug.toLowerCase();
     const searchName = option.name.toLowerCase();
-    return searchSlug.includes(normalizedQuery) || searchName.includes(normalizedQuery);
+    return (
+      searchSlug.includes(normalizedQuery) ||
+      searchName.includes(normalizedQuery)
+    );
   });
 }
 
@@ -211,7 +254,9 @@ function parsePersistedSettings(value: string | null): AppSettings {
   }
 
   try {
-    return normalizeAppSettings(Schema.decodeSync(Schema.fromJsonString(AppSettingsSchema))(value));
+    return normalizeAppSettings(
+      Schema.decodeSync(Schema.fromJsonString(AppSettingsSchema))(value),
+    );
   } catch {
     return DEFAULT_APP_SETTINGS;
   }

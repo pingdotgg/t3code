@@ -25,8 +25,8 @@ function decodeProviderKind(
   providerName: string,
   operation: string,
 ): Effect.Effect<ProviderKind, ProviderSessionDirectoryPersistenceError> {
-  if (providerName === "codex") {
-    return Effect.succeed(providerName);
+  if (providerName === "codex" || providerName === "claudeCode") {
+    return Effect.succeed(providerName as ProviderKind);
   }
   return Effect.fail(
     new ProviderSessionDirectoryPersistenceError({
@@ -58,12 +58,17 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
 
   const getBinding = (threadId: ThreadId) =>
     repository.getByThreadId({ threadId }).pipe(
-      Effect.mapError(toPersistenceError("ProviderSessionDirectory.getBinding:getByThreadId")),
+      Effect.mapError(
+        toPersistenceError("ProviderSessionDirectory.getBinding:getByThreadId"),
+      ),
       Effect.flatMap((runtime) =>
         Option.match(runtime, {
           onNone: () => Effect.succeed(Option.none<ProviderRuntimeBinding>()),
           onSome: (value) =>
-            decodeProviderKind(value.providerName, "ProviderSessionDirectory.getBinding").pipe(
+            decodeProviderKind(
+              value.providerName,
+              "ProviderSessionDirectory.getBinding",
+            ).pipe(
               Effect.map((provider) =>
                 Option.some({
                   threadId: value.threadId,
@@ -80,46 +85,64 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       ),
     );
 
-  const upsert: ProviderSessionDirectoryShape["upsert"] = Effect.fn(function* (binding) {
-    const existing = yield* repository
-      .getByThreadId({ threadId: binding.threadId })
-      .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:getByThreadId")));
+  const upsert: ProviderSessionDirectoryShape["upsert"] = Effect.fn(
+    function* (binding) {
+      const existing = yield* repository
+        .getByThreadId({ threadId: binding.threadId })
+        .pipe(
+          Effect.mapError(
+            toPersistenceError("ProviderSessionDirectory.upsert:getByThreadId"),
+          ),
+        );
 
-    const existingRuntime = Option.getOrUndefined(existing);
-    const resolvedThreadId = binding.threadId ?? existingRuntime?.threadId;
-    if (!resolvedThreadId) {
-      return yield* new ProviderValidationError({
-        operation: "ProviderSessionDirectory.upsert",
-        issue: "threadId must be a non-empty string.",
-      });
-    }
+      const existingRuntime = Option.getOrUndefined(existing);
+      const resolvedThreadId = binding.threadId ?? existingRuntime?.threadId;
+      if (!resolvedThreadId) {
+        return yield* new ProviderValidationError({
+          operation: "ProviderSessionDirectory.upsert",
+          issue: "threadId must be a non-empty string.",
+        });
+      }
 
-    const now = new Date().toISOString();
-    const providerChanged =
-      existingRuntime !== undefined && existingRuntime.providerName !== binding.provider;
-    yield* repository
-      .upsert({
-        threadId: resolvedThreadId,
-        providerName: binding.provider,
-        adapterKey:
-          binding.adapterKey ??
-          (providerChanged ? binding.provider : (existingRuntime?.adapterKey ?? binding.provider)),
-        runtimeMode: binding.runtimeMode ?? existingRuntime?.runtimeMode ?? "full-access",
-        status: binding.status ?? existingRuntime?.status ?? "running",
-        lastSeenAt: now,
-        resumeCursor:
-          binding.resumeCursor !== undefined
-            ? binding.resumeCursor
-            : (existingRuntime?.resumeCursor ?? null),
-        runtimePayload: mergeRuntimePayload(
-          existingRuntime?.runtimePayload ?? null,
-          binding.runtimePayload,
-        ),
-      })
-      .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:upsert")));
-  });
+      const now = new Date().toISOString();
+      const providerChanged =
+        existingRuntime !== undefined &&
+        existingRuntime.providerName !== binding.provider;
+      yield* repository
+        .upsert({
+          threadId: resolvedThreadId,
+          providerName: binding.provider,
+          adapterKey:
+            binding.adapterKey ??
+            (providerChanged
+              ? binding.provider
+              : (existingRuntime?.adapterKey ?? binding.provider)),
+          runtimeMode:
+            binding.runtimeMode ??
+            existingRuntime?.runtimeMode ??
+            "full-access",
+          status: binding.status ?? existingRuntime?.status ?? "running",
+          lastSeenAt: now,
+          resumeCursor:
+            binding.resumeCursor !== undefined
+              ? binding.resumeCursor
+              : (existingRuntime?.resumeCursor ?? null),
+          runtimePayload: mergeRuntimePayload(
+            existingRuntime?.runtimePayload ?? null,
+            binding.runtimePayload,
+          ),
+        })
+        .pipe(
+          Effect.mapError(
+            toPersistenceError("ProviderSessionDirectory.upsert:upsert"),
+          ),
+        );
+    },
+  );
 
-  const getProvider: ProviderSessionDirectoryShape["getProvider"] = (threadId) =>
+  const getProvider: ProviderSessionDirectoryShape["getProvider"] = (
+    threadId,
+  ) =>
     getBinding(threadId).pipe(
       Effect.flatMap((binding) =>
         Option.match(binding, {
@@ -138,11 +161,19 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
   const remove: ProviderSessionDirectoryShape["remove"] = (threadId) =>
     repository
       .deleteByThreadId({ threadId })
-      .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.remove:deleteByThreadId")));
+      .pipe(
+        Effect.mapError(
+          toPersistenceError(
+            "ProviderSessionDirectory.remove:deleteByThreadId",
+          ),
+        ),
+      );
 
   const listThreadIds: ProviderSessionDirectoryShape["listThreadIds"] = () =>
     repository.list().pipe(
-      Effect.mapError(toPersistenceError("ProviderSessionDirectory.listThreadIds:list")),
+      Effect.mapError(
+        toPersistenceError("ProviderSessionDirectory.listThreadIds:list"),
+      ),
       Effect.map((rows) => rows.map((row) => row.threadId)),
     );
 
