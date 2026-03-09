@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  type ContextMenuItem,
   DEFAULT_RUNTIME_MODE,
   DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
@@ -66,6 +67,14 @@ import { isNonEmpty as isNonEmptyString } from "effect/String";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
+
+type ProjectContextMenuAction = "copy-folder-path" | "change-folder" | "delete";
+
+const PROJECT_CONTEXT_MENU_ITEMS: readonly ContextMenuItem<ProjectContextMenuAction>[] = [
+  { id: "copy-folder-path", label: "Copy folder path" },
+  { id: "change-folder", label: "Change folder..." },
+  { id: "delete", label: "Delete", destructive: true },
+];
 
 async function copyTextToClipboard(text: string): Promise<void> {
   if (typeof navigator === "undefined" || navigator.clipboard?.writeText === undefined) {
@@ -758,14 +767,82 @@ export default function Sidebar() {
     async (projectId: ProjectId, position: { x: number; y: number }) => {
       const api = readNativeApi();
       if (!api) return;
-      const clicked = await api.contextMenu.show(
-        [{ id: "delete", label: "Delete", destructive: true }],
-        position,
-      );
-      if (clicked !== "delete") return;
-
       const project = projects.find((entry) => entry.id === projectId);
       if (!project) return;
+      const clicked = await api.contextMenu.show(PROJECT_CONTEXT_MENU_ITEMS, position);
+      if (clicked === null) return;
+
+      if (clicked === "copy-folder-path") {
+        try {
+          await copyTextToClipboard(project.cwd);
+          toastManager.add({
+            type: "success",
+            title: "Folder path copied",
+            description: project.cwd,
+          });
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Could not copy folder path",
+            description:
+              error instanceof Error ? error.message : "Clipboard is unavailable right now.",
+          });
+        }
+        return;
+      }
+
+      if (clicked === "change-folder") {
+        const pickedPath = isElectron
+          ? await api.dialogs.pickFolder()
+          : typeof window !== "undefined"
+            ? window.prompt(`Enter a new folder for "${project.name}"`, project.cwd)?.trim() ??
+              null
+            : null;
+        const nextWorkspaceRoot = pickedPath?.trim() ?? "";
+        if (!nextWorkspaceRoot || nextWorkspaceRoot === project.cwd) {
+          return;
+        }
+
+        const duplicateProject = projects.find(
+          (entry) => entry.id !== projectId && entry.cwd === nextWorkspaceRoot,
+        );
+        if (duplicateProject) {
+          toastManager.add({
+            type: "warning",
+            title: "Folder already added",
+            description: `"${duplicateProject.name}" already uses ${nextWorkspaceRoot}.`,
+          });
+          return;
+        }
+
+        const nextTitle =
+          nextWorkspaceRoot.split(/[/\\]/).findLast(isNonEmptyString) ?? project.name;
+        try {
+          await api.orchestration.dispatchCommand({
+            type: "project.meta.update",
+            commandId: newCommandId(),
+            projectId,
+            title: nextTitle,
+            workspaceRoot: nextWorkspaceRoot,
+          });
+          toastManager.add({
+            type: "success",
+            title: "Project folder updated",
+            description: nextWorkspaceRoot,
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Unknown error updating project folder.";
+          toastManager.add({
+            type: "error",
+            title: `Failed to update "${project.name}"`,
+            description: message,
+          });
+        }
+        return;
+      }
+
+      if (clicked !== "delete") return;
 
       const projectThreads = threads.filter((thread) => thread.projectId === projectId);
       if (projectThreads.length > 0) {
@@ -1169,9 +1246,28 @@ export default function Sidebar() {
                           }`}
                         />
                         <ProjectFavicon cwd={project.cwd} />
-                        <span className="flex-1 truncate text-xs font-medium text-foreground/90">
-                          {project.name}
-                        </span>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <span className="flex-1 truncate text-xs font-medium text-foreground/90" />
+                            }
+                          >
+                            {project.name}
+                          </TooltipTrigger>
+                          <TooltipPopup side="right" className="max-w-sm">
+                            <div className="flex flex-col gap-1.5 py-0.5">
+                              <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground/70">
+                                Workspace folder
+                              </span>
+                              <code className="whitespace-normal break-all font-mono text-[11px] leading-relaxed text-foreground/90">
+                                {project.cwd}
+                              </code>
+                              <span className="text-[10px] text-muted-foreground/70">
+                                Right-click to copy or change it.
+                              </span>
+                            </div>
+                          </TooltipPopup>
+                        </Tooltip>
                       </CollapsibleTrigger>
                       <Tooltip>
                         <TooltipTrigger
