@@ -3468,7 +3468,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
       {/* Main content area with optional plan sidebar */}
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 min-w-0 flex-1">
         {/* Chat column */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
 
@@ -3953,6 +3953,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
         </form>
       </div>
 
+      {isGitRepo && (
+        <BranchToolbar
+          threadId={activeThread.id}
+          onEnvModeChange={onEnvModeChange}
+          envLocked={envLocked}
+          onComposerFocusRequest={scheduleComposerFocus}
+        />
+      )}
+
         </div>{/* end chat column */}
 
         {/* Plan sidebar */}
@@ -3973,15 +3982,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           />
         ) : null}
       </div>{/* end horizontal flex container */}
-
-      {isGitRepo && (
-        <BranchToolbar
-          threadId={activeThread.id}
-          onEnvModeChange={onEnvModeChange}
-          envLocked={envLocked}
-          onComposerFocusRequest={scheduleComposerFocus}
-        />
-      )}
 
       {(() => {
         if (!terminalState.terminalOpen || !activeProject) {
