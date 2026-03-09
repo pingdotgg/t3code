@@ -54,6 +54,13 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     placeholder: "your-codex-model-slug",
     example: "gpt-6.7-codex-ultra-preview",
   },
+  {
+    provider: "claude",
+    title: "Claude Code",
+    description: "Save additional Claude model slugs for the picker and /model command.",
+    placeholder: "your-claude-model-slug",
+    example: "claude-sonnet-4-7-20260301",
+  },
 ] as const;
 
 const TIMESTAMP_FORMAT_LABELS = {
@@ -67,6 +74,10 @@ function getCustomModelsForProvider(
   provider: ProviderKind,
 ) {
   switch (provider) {
+    case "glm":
+      return settings.customGlmModels;
+    case "claude":
+      return settings.customClaudeModels;
     case "codex":
     default:
       return settings.customCodexModels;
@@ -78,6 +89,10 @@ function getDefaultCustomModelsForProvider(
   provider: ProviderKind,
 ) {
   switch (provider) {
+    case "glm":
+      return defaults.customGlmModels;
+    case "claude":
+      return defaults.customClaudeModels;
     case "codex":
     default:
       return defaults.customCodexModels;
@@ -86,6 +101,10 @@ function getDefaultCustomModelsForProvider(
 
 function patchCustomModels(provider: ProviderKind, models: string[]) {
   switch (provider) {
+    case "glm":
+      return { customGlmModels: models };
+    case "claude":
+      return { customClaudeModels: models };
     case "codex":
     default:
       return { customCodexModels: models };
@@ -102,6 +121,8 @@ function SettingsRouteView() {
     Record<ProviderKind, string>
   >({
     codex: "",
+    glm: "",
+    claude: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
@@ -364,6 +385,50 @@ function SettingsRouteView() {
                     }
                   >
                     Reset codex overrides
+                  </Button>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Claude Code</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Path to the Claude Code CLI binary. Authentication is managed by the CLI itself
+                  (run <code>claude auth</code> to configure).
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <label htmlFor="claude-binary-path" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Claude binary path</span>
+                  <Input
+                    id="claude-binary-path"
+                    value={settings.claudeBinaryPath}
+                    onChange={(event) => updateSettings({ claudeBinaryPath: event.target.value })}
+                    placeholder="claude"
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Leave blank to use <code>claude</code> from your PATH.
+                  </span>
+                </label>
+
+                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <p>
+                    Binary source:{" "}
+                    <span className="font-medium text-foreground">{settings.claudeBinaryPath || "PATH"}</span>
+                  </p>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      updateSettings({
+                        claudeBinaryPath: defaults.claudeBinaryPath,
+                      })
+                    }
+                  >
+                    Reset claude override
                   </Button>
                 </div>
               </div>

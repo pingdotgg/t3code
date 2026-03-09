@@ -4,7 +4,9 @@ import { assertFailure } from "@effect/vitest/utils";
 
 import { Effect, Layer, Stream } from "effect";
 
-import { CodexAdapter, CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import { ClaudeAdapter, type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
+import { CodexAdapter, type CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import { GlmAdapter, type GlmAdapterShape } from "../Services/GlmAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderAdapterRegistryLive } from "./ProviderAdapterRegistry.ts";
 import { ProviderUnsupportedError } from "../Errors.ts";
@@ -27,9 +29,50 @@ const fakeCodexAdapter: CodexAdapterShape = {
   streamEvents: Stream.empty,
 };
 
+const fakeGlmAdapter: GlmAdapterShape = {
+  provider: "glm",
+  capabilities: { sessionModelSwitch: "in-session" },
+  startSession: vi.fn(),
+  sendTurn: vi.fn(),
+  interruptTurn: vi.fn(),
+  respondToRequest: vi.fn(),
+  respondToUserInput: vi.fn(),
+  stopSession: vi.fn(),
+  listSessions: vi.fn(),
+  hasSession: vi.fn(),
+  readThread: vi.fn(),
+  rollbackThread: vi.fn(),
+  stopAll: vi.fn(),
+  streamEvents: Stream.empty,
+};
+
+const fakeClaudeAdapter: ClaudeAdapterShape = {
+  provider: "claude",
+  capabilities: { sessionModelSwitch: "in-session" },
+  startSession: vi.fn(),
+  sendTurn: vi.fn(),
+  interruptTurn: vi.fn(),
+  respondToRequest: vi.fn(),
+  respondToUserInput: vi.fn(),
+  stopSession: vi.fn(),
+  listSessions: vi.fn(),
+  hasSession: vi.fn(),
+  readThread: vi.fn(),
+  rollbackThread: vi.fn(),
+  stopAll: vi.fn(),
+  streamEvents: Stream.empty,
+};
+
 const layer = it.layer(
   Layer.mergeAll(
-    Layer.provide(ProviderAdapterRegistryLive, Layer.succeed(CodexAdapter, fakeCodexAdapter)),
+    Layer.provide(
+      ProviderAdapterRegistryLive,
+      Layer.mergeAll(
+        Layer.succeed(CodexAdapter, fakeCodexAdapter),
+        Layer.succeed(GlmAdapter, fakeGlmAdapter),
+        Layer.succeed(ClaudeAdapter, fakeClaudeAdapter),
+      ),
+    ),
     NodeServices.layer,
   ),
 );
@@ -41,8 +84,17 @@ layer("ProviderAdapterRegistryLive", (it) => {
       const codex = yield* registry.getByProvider("codex");
       assert.equal(codex, fakeCodexAdapter);
 
+      const glm = yield* registry.getByProvider("glm");
+      assert.equal(glm, fakeGlmAdapter);
+
+      const claude = yield* registry.getByProvider("claude");
+      assert.equal(claude, fakeClaudeAdapter);
+
       const providers = yield* registry.listProviders();
-      assert.deepEqual(providers, ["codex"]);
+      assert.equal(providers.length, 3);
+      assert.ok(providers.includes("codex"));
+      assert.ok(providers.includes("glm"));
+      assert.ok(providers.includes("claude"));
     }),
   );
 

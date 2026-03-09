@@ -25,6 +25,7 @@ import {
   getDefaultModel,
   getDefaultReasoningEffort,
   getReasoningEffortOptions,
+  inferProviderFromModel,
   normalizeModelSlug,
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
@@ -494,12 +495,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const lockedProvider: ProviderKind | null = hasThreadStarted
     ? (sessionProvider ?? selectedProviderByThreadId ?? null)
     : null;
-  const selectedProvider: ProviderKind = lockedProvider ?? selectedProviderByThreadId ?? "codex";
+  const inferredProvider = inferProviderFromModel(activeThread?.model ?? activeProject?.model);
+  const selectedProvider: ProviderKind = lockedProvider ?? selectedProviderByThreadId ?? inferredProvider;
   const baseThreadModel = resolveModelSlugForProvider(
     selectedProvider,
     activeThread?.model ?? activeProject?.model ?? getDefaultModel(selectedProvider),
   );
-  const customModelsForSelectedProvider = settings.customCodexModels;
+  const customModelsForSelectedProvider =
+    selectedProvider === "claude"
+      ? settings.customClaudeModels
+      : selectedProvider === "glm"
+        ? settings.customGlmModels
+        : settings.customCodexModels;
   const selectedModel = useMemo(() => {
     const draftModel = composerDraft.model;
     if (!draftModel) {
@@ -2878,9 +2885,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
       setComposerDraftProvider(activeThread.id, provider);
+      const customModels =
+        provider === "claude"
+          ? settings.customClaudeModels
+          : provider === "glm"
+            ? settings.customGlmModels
+            : settings.customCodexModels;
       setComposerDraftModel(
         activeThread.id,
-        resolveAppModelSelection(provider, settings.customCodexModels, model),
+        resolveAppModelSelection(provider, customModels, model),
       );
       scheduleComposerFocus();
     },
@@ -2891,6 +2904,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerDraftModel,
       setComposerDraftProvider,
       settings.customCodexModels,
+      settings.customGlmModels,
+      settings.customClaudeModels,
     ],
   );
   const onEffortSelect = useCallback(

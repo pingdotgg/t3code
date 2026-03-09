@@ -52,8 +52,14 @@ const CodexProviderStartOptions = Schema.Struct({
   homePath: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 
+const ClaudeProviderStartOptions = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
+  apiKey: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+
 export const ProviderStartOptions = Schema.Struct({
   codex: Schema.optional(CodexProviderStartOptions),
+  claude: Schema.optional(ClaudeProviderStartOptions),
 });
 export type ProviderStartOptions = typeof ProviderStartOptions.Type;
 

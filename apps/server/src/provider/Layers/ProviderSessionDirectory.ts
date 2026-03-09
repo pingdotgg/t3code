@@ -18,12 +18,14 @@ function toPersistenceError(operation: string) {
     });
 }
 
+const KNOWN_PROVIDER_KINDS = new Set<string>(["codex", "glm", "claude"]);
+
 function decodeProviderKind(
   providerName: string,
   operation: string,
 ): Effect.Effect<ProviderKind, ProviderSessionDirectoryPersistenceError> {
-  if (providerName === "codex") {
-    return Effect.succeed(providerName);
+  if (KNOWN_PROVIDER_KINDS.has(providerName)) {
+    return Effect.succeed(providerName as ProviderKind);
   }
   return Effect.fail(
     new ProviderSessionDirectoryPersistenceError({

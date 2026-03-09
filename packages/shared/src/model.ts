@@ -12,6 +12,8 @@ type CatalogProvider = keyof typeof MODEL_OPTIONS_BY_PROVIDER;
 
 const MODEL_SLUG_SET_BY_PROVIDER: Record<CatalogProvider, ReadonlySet<ModelSlug>> = {
   codex: new Set(MODEL_OPTIONS_BY_PROVIDER.codex.map((option) => option.slug)),
+  glm: new Set(MODEL_OPTIONS_BY_PROVIDER.glm.map((option) => option.slug)),
+  claude: new Set(MODEL_OPTIONS_BY_PROVIDER.claude.map((option) => option.slug)),
 };
 
 export function getModelOptions(provider: ProviderKind = "codex") {
@@ -73,6 +75,24 @@ export function getDefaultReasoningEffort(
   provider: ProviderKind = "codex",
 ): CodexReasoningEffort | null {
   return provider === "codex" ? "high" : null;
+}
+
+const PROVIDER_KINDS: readonly ProviderKind[] = ["codex", "claude", "glm"] as const;
+
+/**
+ * Infer the provider kind from a model slug. Returns the first provider
+ * whose catalog contains a matching slug (after alias resolution), or
+ * falls back to `"glm"`.
+ */
+export function inferProviderFromModel(model: string | null | undefined): ProviderKind {
+  if (!model) return "glm";
+  for (const provider of PROVIDER_KINDS) {
+    const normalized = normalizeModelSlug(model, provider);
+    if (normalized && MODEL_SLUG_SET_BY_PROVIDER[provider].has(normalized)) {
+      return provider;
+    }
+  }
+  return "glm";
 }
 
 export { CODEX_REASONING_EFFORT_OPTIONS };

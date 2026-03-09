@@ -12,6 +12,8 @@ export type TimestampFormat = (typeof TIMESTAMP_FORMAT_OPTIONS)[number];
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
+  glm: new Set(getModelOptions("glm").map((option) => option.slug)),
+  claude: new Set(getModelOptions("claude").map((option) => option.slug)),
 };
 
 const AppSettingsSchema = Schema.Struct({
@@ -19,6 +21,9 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some("")),
   ),
   codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  claudeBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
   ),
   defaultThreadEnvMode: Schema.Literals(["local", "worktree"]).pipe(
@@ -32,6 +37,12 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some(DEFAULT_TIMESTAMP_FORMAT)),
   ),
   customCodexModels: Schema.Array(Schema.String).pipe(
+    Schema.withConstructorDefault(() => Option.some([])),
+  ),
+  customGlmModels: Schema.Array(Schema.String).pipe(
+    Schema.withConstructorDefault(() => Option.some([])),
+  ),
+  customClaudeModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
 });
@@ -72,6 +83,16 @@ export function normalizeCustomModelSlugs(
 
   return normalizedModels;
 }
+
+function normalizeAppSettings(settings: AppSettings): AppSettings {
+  return {
+    ...settings,
+    customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
+    customGlmModels: normalizeCustomModelSlugs(settings.customGlmModels, "glm"),
+    customClaudeModels: normalizeCustomModelSlugs(settings.customClaudeModels, "claude"),
+  };
+}
+
 
 export function getAppModelOptions(
   provider: ProviderKind,

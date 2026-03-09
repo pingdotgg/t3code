@@ -195,13 +195,26 @@ describe("store read model sync", () => {
     const initialState = makeState(makeThread());
     const readModel = makeReadModel(
       makeReadModelThread({
+        model: "nonexistent-model-xyz",
+      }),
+    );
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.threads[0]?.model).toBe(DEFAULT_MODEL_BY_PROVIDER.glm);
+  });
+
+  it("resolves a claude model without falling back", () => {
+    const initialState = makeState(makeThread());
+    const readModel = makeReadModel(
+      makeReadModelThread({
         model: "claude-opus-4-6",
       }),
     );
 
     const next = syncServerReadModel(initialState, readModel);
 
-    expect(next.threads[0]?.model).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
+    expect(next.threads[0]?.model).toBe("claude-opus-4-6");
   });
 
   it("preserves the current project order when syncing incoming read model updates", () => {
