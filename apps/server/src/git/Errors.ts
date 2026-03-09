@@ -16,17 +16,29 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
 }
 
 /**
- * GitHubCliError - GitHub CLI execution or authentication failed.
+ * GitHostingCliError - Git hosting CLI (gh, glab, etc.) execution or authentication failed.
  */
-export class GitHubCliError extends Schema.TaggedErrorClass<GitHubCliError>()("GitHubCliError", {
-  operation: Schema.String,
-  detail: Schema.String,
-  cause: Schema.optional(Schema.Defect),
-}) {
+export class GitHostingCliError extends Schema.TaggedErrorClass<GitHostingCliError>()(
+  "GitHostingCliError",
+  {
+    operation: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
   override get message(): string {
-    return `GitHub CLI failed in ${this.operation}: ${this.detail}`;
+    return `Git hosting CLI failed in ${this.operation}: ${this.detail}`;
   }
 }
+
+/**
+ * @deprecated Use GitHostingCliError instead. Kept for backwards compatibility.
+ */
+export type GitHubCliError = GitHostingCliError;
+/**
+ * @deprecated Use GitHostingCliError instead. Kept for backwards compatibility.
+ */
+export const GitHubCliError = GitHostingCliError;
 
 /**
  * TextGenerationError - Commit or PR text generation failed.
@@ -63,5 +75,5 @@ export class GitManagerError extends Schema.TaggedErrorClass<GitManagerError>()(
 export type GitManagerServiceError =
   | GitManagerError
   | GitCommandError
-  | GitHubCliError
+  | GitHostingCliError
   | TextGenerationError;

@@ -6,7 +6,7 @@ import { resolveAutoFeatureBranchName, sanitizeFeatureBranchName } from "@t3tool
 import { GitManagerError } from "../Errors.ts";
 import { GitManager, type GitManagerShape } from "../Services/GitManager.ts";
 import { GitCore } from "../Services/GitCore.ts";
-import { GitHubCli } from "../Services/GitHubCli.ts";
+import { GitHostingCli } from "../Services/GitHostingCli.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
 
 interface OpenPrInfo {
@@ -177,7 +177,7 @@ function toStatusPr(pr: PullRequestInfo): {
 
 export const makeGitManager = Effect.gen(function* () {
   const gitCore = yield* GitCore;
-  const gitHubCli = yield* GitHubCli;
+  const gitHostingCli = yield* GitHostingCli;
   const textGeneration = yield* TextGeneration;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -185,7 +185,7 @@ export const makeGitManager = Effect.gen(function* () {
   const tempDir = process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP ?? "/tmp";
 
   const findOpenPr = (cwd: string, branch: string) =>
-    gitHubCli
+    gitHostingCli
       .listOpenPullRequests({
         cwd,
         headBranch: branch,
@@ -211,7 +211,7 @@ export const makeGitManager = Effect.gen(function* () {
 
   const findLatestPr = (cwd: string, branch: string) =>
     Effect.gen(function* () {
-      const stdout = yield* gitHubCli
+      const stdout = yield* gitHostingCli
         .execute({
           cwd,
           args: [
@@ -265,7 +265,7 @@ export const makeGitManager = Effect.gen(function* () {
         }
       }
 
-      const defaultFromGh = yield* gitHubCli
+      const defaultFromGh = yield* gitHostingCli
         .getDefaultBranch({ cwd })
         .pipe(Effect.catch(() => Effect.succeed(null)));
       if (defaultFromGh) {
@@ -393,7 +393,7 @@ export const makeGitManager = Effect.gen(function* () {
             gitManagerError("runPrStep", "Failed to write pull request body temp file.", cause),
           ),
         );
-      yield* gitHubCli
+      yield* gitHostingCli
         .createPullRequest({
           cwd,
           baseBranch,
