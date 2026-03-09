@@ -750,6 +750,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
 
   useEffect(() => {
+    if (!serverThread || !draftThread) {
+      return;
+    }
+
+    clearDraftThread(threadId);
+  }, [clearDraftThread, draftThread, serverThread, threadId]);
+
+  useEffect(() => {
     if (!activeThread?.id) return;
     if (!latestTurnSettled) return;
     if (!activeLatestTurn?.completedAt) return;
@@ -2690,9 +2698,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
         createdAt: messageCreatedAt,
       });
       turnStartSucceeded = true;
-      if (isFirstMessage) {
-        clearDraftThread(threadIdForSend);
-      }
     })().catch(async (err: unknown) => {
       if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
         await api.orchestration

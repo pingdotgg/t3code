@@ -85,6 +85,7 @@ interface MountedChatView {
   cleanup: () => Promise<void>;
   measureUserRow: (targetMessageId: MessageId) => Promise<UserRowMeasurement>;
   setViewport: (viewport: ViewportSpec) => Promise<void>;
+  syncSnapshot: (snapshot: OrchestrationReadModel) => Promise<void>;
 }
 
 function isoAt(offsetSeconds: number): string {
@@ -590,6 +591,10 @@ async function mountChatView(options: {
       await setViewport(viewport);
       await waitForProductionStyles();
     },
+    syncSnapshot: async (snapshot: OrchestrationReadModel) => {
+      useStore.getState().syncServerReadModel(snapshot);
+      await waitForLayout();
+    },
   };
 }
 
@@ -802,6 +807,73 @@ describe("ChatView timeline estimator parity (full app)", () => {
       }
     },
   );
+
+  it("keeps a local draft thread registered until the synced server thread arrives", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "draft send regression");
+      await waitForLayout();
+
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('[data-chat-composer-form="true"]'),
+        "Unable to find composer form.",
+      );
+      composerForm.dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+
+      await vi.waitFor(
+        () => {
+          const commandTags = wsRequests
+            .filter((request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand)
+            .map((request) => {
+              const command = request.command as { type?: string } | undefined;
+              return command?.type ?? null;
+            });
+          expect(commandTags).toContain("thread.create");
+          expect(commandTags).toContain("thread.turn.start");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(useComposerDraftStore.getState().getDraftThread(THREAD_ID)).not.toBeNull();
+
+      await mounted.syncSnapshot(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-target-created-thread" as MessageId,
+          targetText: "draft send regression",
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(useComposerDraftStore.getState().getDraftThread(THREAD_ID)).toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
 
   it("opens the project cwd for draft threads without a worktree path", async () => {
     useComposerDraftStore.setState({
