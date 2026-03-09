@@ -978,7 +978,7 @@ export default function Sidebar() {
   const wordmark = (
     <div className="flex items-center gap-2">
       <SidebarTrigger className="shrink-0 md:hidden" />
-      <div className="flex min-w-0 flex-1 items-center gap-1 mt-2 ml-1">
+      <div className="flex min-w-0 flex-1 items-center gap-1 mt-1.5 ml-1">
         <T3Wordmark />
         <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
           Code
@@ -994,7 +994,7 @@ export default function Sidebar() {
     <>
       {isElectron ? (
         <>
-          <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[82px]">
+          <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[90px]">
             {wordmark}
             {showDesktopUpdateButton && (
               <Tooltip>
@@ -1005,7 +1005,7 @@ export default function Sidebar() {
                       aria-label={desktopUpdateTooltip}
                       aria-disabled={desktopUpdateButtonDisabled || undefined}
                       disabled={desktopUpdateButtonDisabled}
-                      className={`inline-flex size-7 ml-auto mt-2 items-center justify-center rounded-md text-muted-foreground transition-colors ${desktopUpdateButtonInteractivityClasses} ${desktopUpdateButtonClasses}`}
+                      className={`inline-flex size-7 ml-auto mt-1.5 items-center justify-center rounded-md text-muted-foreground transition-colors ${desktopUpdateButtonInteractivityClasses} ${desktopUpdateButtonClasses}`}
                       onClick={handleDesktopUpdateButtonClick}
                     >
                       <RocketIcon className="size-3.5" />
