@@ -668,6 +668,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const [messagesScrollElement, setMessagesScrollElement] = useState<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const lastKnownScrollTopRef = useRef(0);
   const isPointerScrollActiveRef = useRef(false);
   const lastTouchClientYRef = useRef<number | null>(null);
@@ -1840,7 +1841,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         shouldAutoScrollRef.current = false;
       }
     } else if (shouldAutoScrollRef.current && !isNearBottom) {
-      // Catch-all for keyboard/assistive scroll interactions.
+      // catch-all for keyboard/assistive scroll interactions
       const scrolledUp = currentScrollTop < lastKnownScrollTopRef.current - 1;
       if (scrolledUp) {
         shouldAutoScrollRef.current = false;
@@ -1848,6 +1849,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     lastKnownScrollTopRef.current = currentScrollTop;
+    /* show the scroll to bottom button whenever the user is not pinned to the bottom */
+    setShowScrollToBottom(!shouldAutoScrollRef.current);
   }, []);
   const onMessagesWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if (event.deltaY < 0) {
@@ -3486,7 +3489,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {/* Main content area with optional plan sidebar */}
       <div className="flex min-h-0 flex-1">
         {/* Chat column */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
 
       {/* Messages */}
       <div
@@ -3529,7 +3532,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
       </div>
 
       {/* Input bar */}
-      <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
+      <div className={cn("relative px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
+        {/* scroll to bottom pill, floats above the composer when the user has scrolled up */}
+        {showScrollToBottom && (
+          <div className="pointer-events-none absolute inset-x-3 top-0 z-30 flex -translate-y-full justify-center sm:inset-x-5">
+            <button
+              type="button"
+              aria-label="Scroll to bottom"
+              onClick={() => {
+                setShowScrollToBottom(false);
+                scrollMessagesToBottom("smooth");
+              }}
+              className="pointer-events-auto mb-2 inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <ChevronDownIcon className="size-3" />
+              Scroll to bottom
+            </button>
+          </div>
+        )}
         <form
           ref={composerFormRef}
           onSubmit={onSend}
