@@ -115,6 +115,38 @@ describe("resolveEditorLaunch", () => {
       });
     }),
   );
+
+  it.effect("maps macOS terminal app editors to open -a launches", () =>
+    Effect.gen(function* () {
+      const terminalLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "terminal" },
+        "darwin",
+      );
+      assert.deepEqual(terminalLaunch, {
+        command: "open",
+        args: ["-a", "Terminal", "/tmp/workspace"],
+      });
+
+      const iTermLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "iterm2" },
+        "darwin",
+      );
+      assert.deepEqual(iTermLaunch, {
+        command: "open",
+        args: ["-a", "iTerm", "/tmp/workspace"],
+      });
+    }),
+  );
+
+  it.effect("rejects terminal app editors on unsupported platforms", () =>
+    Effect.gen(function* () {
+      const result = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "terminal" },
+        "linux",
+      ).pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+    }),
+  );
 });
 
 describe("launchDetached", () => {
@@ -215,6 +247,24 @@ describe("resolveAvailableEditors", () => {
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
       });
       assert.deepEqual(editors, ["cursor", "file-manager"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("includes macOS terminal app editors when their apps are installed", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-mac-editors-"));
+    try {
+      const openPath = path.join(dir, "open");
+      fs.writeFileSync(openPath, "#!/bin/sh\nexit 0\n", "utf8");
+      fs.chmodSync(openPath, 0o755);
+
+      const editors = resolveAvailableEditors(
+        "darwin",
+        { PATH: dir },
+        (appName) => appName === "Terminal" || appName === "iTerm",
+      );
+      assert.deepEqual(editors, ["terminal", "iterm2", "file-manager"]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

@@ -170,8 +170,10 @@ import {
   CursorIcon,
   Gemini,
   Icon,
+  ITerm2Icon,
   OpenAI,
   OpenCodeIcon,
+  TerminalAppIcon,
   VisualStudioCode,
   Zed,
 } from "./Icons";
@@ -5779,6 +5781,16 @@ const OpenInPicker = memo(function OpenInPicker({
         label: "Zed",
         Icon: Zed,
         value: "zed",
+      },
+      {
+        label: "Terminal",
+        Icon: TerminalAppIcon,
+        value: "terminal",
+      },
+      {
+        label: "iTerm2",
+        Icon: ITerm2Icon,
+        value: "iterm2",
       },
       {
         label: isMacPlatform(navigator.platform)

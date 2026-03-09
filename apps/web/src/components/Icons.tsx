@@ -1,4 +1,5 @@
 import { type SVGProps, useId } from "react";
+import iTerm2AppIcon from "../assets/iterm2-icon.png";
 
 export type Icon = React.FC<SVGProps<SVGSVGElement>>;
 
@@ -142,6 +143,25 @@ export const Zed: Icon = (props) => {
     </svg>
   );
 };
+
+export const TerminalAppIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 24 24" fill="none">
+    <rect x="3" y="4" width="18" height="16" rx="2.5" stroke="currentColor" strokeWidth="1.75" />
+    <path
+      d="m7 9 3 3-3 3M12.75 15H17"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+export const ITerm2Icon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 24 24" fill="none">
+    <image href={iTerm2AppIcon} width="24" height="24" preserveAspectRatio="xMidYMid meet" />
+  </svg>
+);
 
 export const OpenAI: Icon = (props) => (
   <svg {...props} preserveAspectRatio="xMidYMid" viewBox="0 0 256 260" fill="currentColor">
