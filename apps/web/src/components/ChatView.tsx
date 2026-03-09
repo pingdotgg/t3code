@@ -87,6 +87,10 @@ import {
   setPendingUserInputCustomAnswer,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
+import {
+  selectPendingUserInputRequestState,
+  usePendingUserInputStore,
+} from "../pendingUserInputStore";
 import { useStore } from "../store";
 import {
   buildPlanImplementationThreadTitle,
@@ -633,11 +637,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
   >([]);
-  const [pendingUserInputAnswersByRequestId, setPendingUserInputAnswersByRequestId] = useState<
-    Record<string, Record<string, PendingUserInputDraftAnswer>>
-  >({});
-  const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
-    useState<Record<string, number>>({});
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
@@ -692,6 +691,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const terminalState = useTerminalStateStore((state) =>
     selectThreadTerminalState(state.terminalStateByThreadId, threadId),
+  );
+  const setPendingUserInputQuestionIndex = usePendingUserInputStore(
+    (state) => state.setQuestionIndex,
+  );
+  const setPendingUserInputAnswer = usePendingUserInputStore((state) => state.setQuestionAnswer);
+  const syncPendingUserInputRequests = usePendingUserInputStore(
+    (state) => state.syncThreadRequests,
   );
   const storeSetTerminalOpen = useTerminalStateStore((s) => s.setTerminalOpen);
   const storeSetTerminalHeight = useTerminalStateStore((s) => s.setTerminalHeight);
@@ -881,16 +887,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [threadActivities],
   );
   const activePendingUserInput = pendingUserInputs[0] ?? null;
+  const activePendingRequestState = usePendingUserInputStore((state) =>
+    activePendingUserInput
+      ? selectPendingUserInputRequestState(
+          state.threadStateByThreadId,
+          threadId,
+          activePendingUserInput.requestId,
+        )
+      : null,
+  );
   const activePendingDraftAnswers = useMemo(
     () =>
-      activePendingUserInput
-        ? (pendingUserInputAnswersByRequestId[activePendingUserInput.requestId] ??
-          EMPTY_PENDING_USER_INPUT_ANSWERS)
-        : EMPTY_PENDING_USER_INPUT_ANSWERS,
-    [activePendingUserInput, pendingUserInputAnswersByRequestId],
+      activePendingRequestState?.answersByQuestionId ?? EMPTY_PENDING_USER_INPUT_ANSWERS,
+    [activePendingRequestState],
   );
   const activePendingQuestionIndex = activePendingUserInput
-    ? (pendingUserInputQuestionIndexByRequestId[activePendingUserInput.requestId] ?? 0)
+    ? (activePendingRequestState?.questionIndex ?? 0)
     : 0;
   const activePendingProgress = useMemo(
     () =>
@@ -938,6 +950,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     pendingUserInputs.length > 0 ||
     (showPlanFollowUpPrompt && activeProposedPlan !== null);
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
+  useEffect(() => {
+    syncPendingUserInputRequests(
+      threadId,
+      new Set(pendingUserInputs.map((pendingUserInput) => pendingUserInput.requestId)),
+    );
+  }, [pendingUserInputs, syncPendingUserInputRequests, threadId]);
   useEffect(() => {
     if (!activePendingProgress) {
       return;
@@ -2813,12 +2831,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (!activePendingUserInput) {
         return;
       }
-      setPendingUserInputQuestionIndexByRequestId((existing) => ({
-        ...existing,
-        [activePendingUserInput.requestId]: nextQuestionIndex,
-      }));
+      setPendingUserInputQuestionIndex(threadId, activePendingUserInput.requestId, nextQuestionIndex);
     },
-    [activePendingUserInput],
+    [activePendingUserInput, setPendingUserInputQuestionIndex, threadId],
   );
 
   const onSelectActivePendingUserInputOption = useCallback(
@@ -2826,21 +2841,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (!activePendingUserInput) {
         return;
       }
-      setPendingUserInputAnswersByRequestId((existing) => ({
-        ...existing,
-        [activePendingUserInput.requestId]: {
-          ...existing[activePendingUserInput.requestId],
-          [questionId]: {
-            selectedOptionLabel: optionLabel,
-            customAnswer: "",
-          },
-        },
-      }));
+      setPendingUserInputAnswer(threadId, activePendingUserInput.requestId, questionId, {
+        selectedOptionLabel: optionLabel,
+        customAnswer: "",
+      });
       promptRef.current = "";
       setComposerCursor(0);
       setComposerTrigger(null);
     },
-    [activePendingUserInput],
+    [activePendingUserInput, setPendingUserInputAnswer, threadId],
   );
 
   const onChangeActivePendingUserInputCustomAnswer = useCallback(
@@ -2849,16 +2858,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
       promptRef.current = value;
-      setPendingUserInputAnswersByRequestId((existing) => ({
-        ...existing,
-        [activePendingUserInput.requestId]: {
-          ...existing[activePendingUserInput.requestId],
-          [questionId]: setPendingUserInputCustomAnswer(
-            existing[activePendingUserInput.requestId]?.[questionId],
-            value,
-          ),
-        },
-      }));
+      setPendingUserInputAnswer(
+        threadId,
+        activePendingUserInput.requestId,
+        questionId,
+        setPendingUserInputCustomAnswer(activePendingDraftAnswers[questionId], value),
+      );
       setComposerCursor(nextCursor);
       setComposerTrigger(
         cursorAdjacentToMention
@@ -2866,7 +2871,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           : detectComposerTrigger(value, expandCollapsedComposerCursor(value, nextCursor)),
       );
     },
-    [activePendingUserInput],
+    [activePendingDraftAnswers, activePendingUserInput, setPendingUserInputAnswer, threadId],
   );
 
   const onAdvanceActivePendingUserInput = useCallback(() => {
@@ -3206,16 +3211,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
       promptRef.current = next.text;
       const activePendingQuestion = activePendingProgress?.activeQuestion;
       if (activePendingQuestion && activePendingUserInput) {
-        setPendingUserInputAnswersByRequestId((existing) => ({
-          ...existing,
-          [activePendingUserInput.requestId]: {
-            ...existing[activePendingUserInput.requestId],
-            [activePendingQuestion.id]: setPendingUserInputCustomAnswer(
-              existing[activePendingUserInput.requestId]?.[activePendingQuestion.id],
-              next.text,
-            ),
-          },
-        }));
+        setPendingUserInputAnswer(
+          threadId,
+          activePendingUserInput.requestId,
+          activePendingQuestion.id,
+          setPendingUserInputCustomAnswer(
+            activePendingDraftAnswers[activePendingQuestion.id],
+            next.text,
+          ),
+        );
       } else {
         setPrompt(next.text);
       }
@@ -3226,7 +3230,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       return true;
     },
-    [activePendingProgress?.activeQuestion, activePendingUserInput, setPrompt],
+    [
+      activePendingDraftAnswers,
+      activePendingProgress?.activeQuestion,
+      activePendingUserInput,
+      setPendingUserInputAnswer,
+      setPrompt,
+      threadId,
+    ],
   );
 
   const readComposerSnapshot = useCallback((): { value: string; cursor: number } => {
