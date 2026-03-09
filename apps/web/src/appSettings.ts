@@ -29,6 +29,7 @@ const MODELS_WITH_FAST_SUPPORT = new Set(["gpt-5.4"]);
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
   gemini: new Set(getModelOptions("gemini").map((option) => option.slug)),
+  opencode: new Set(getModelOptions("opencode").map((option) => option.slug)),
 };
 
 const AppSettingsSchema = Schema.Struct({
@@ -48,6 +49,10 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => [])
   ),
   customGeminiModels: Schema.optional(Schema.Array(Schema.String)).pipe(
+    Schema.withDecodingDefault(() => []),
+    Schema.withConstructorDefault(() => [])
+  ),
+  customOpencodeModels: Schema.optional(Schema.Array(Schema.String)).pipe(
     Schema.withDecodingDefault(() => []),
     Schema.withConstructorDefault(() => [])
   ),
@@ -119,16 +124,19 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
     ...settings,
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
     customGeminiModels: normalizeCustomModelSlugs(settings.customGeminiModels, "gemini"),
+    customOpencodeModels: normalizeCustomModelSlugs(settings.customOpencodeModels, "opencode"),
   };
 }
 
 export function getCustomModelsForProvider(
-  settings: Pick<AppSettings, "customCodexModels" | "customGeminiModels">,
+  settings: Pick<AppSettings, "customCodexModels" | "customGeminiModels" | "customOpencodeModels">,
   provider: ProviderKind,
 ): readonly string[] {
   switch (provider) {
     case "gemini":
       return settings.customGeminiModels ?? [];
+    case "opencode":
+      return settings.customOpencodeModels ?? [];
     case "codex":
     default:
       return settings.customCodexModels ?? [];
@@ -139,6 +147,8 @@ export function patchCustomModelsForProvider(provider: ProviderKind, models: str
   switch (provider) {
     case "gemini":
       return { customGeminiModels: models } satisfies Partial<AppSettings>;
+    case "opencode":
+      return { customOpencodeModels: models } satisfies Partial<AppSettings>;
     case "codex":
     default:
       return { customCodexModels: models } satisfies Partial<AppSettings>;

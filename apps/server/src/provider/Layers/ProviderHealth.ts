@@ -17,11 +17,12 @@ import type {
 } from "@t3tools/contracts";
 import { Effect, Layer } from "effect";
 
-import { isCodexCliAvailable, isGeminiCliAvailable } from "../../cliEnvironment";
+import { isCodexCliAvailable, isGeminiCliAvailable, isOpencodeCliAvailable } from "../../cliEnvironment";
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
 
 const CODEX_PROVIDER = "codex" as const;
 const GEMINI_PROVIDER = "gemini" as const;
+const OPENCODE_PROVIDER = "opencode" as const;
 
 export interface CommandResult {
   readonly stdout: string;
@@ -195,16 +196,39 @@ export const checkGeminiProviderStatus: Effect.Effect<ServerProviderStatus, neve
   };
 });
 
+export const checkOpencodeProviderStatus: Effect.Effect<ServerProviderStatus, never> = Effect.sync(() => {
+  const checkedAt = new Date().toISOString();
+
+  if (!isOpencodeCliAvailable()) {
+    return {
+      provider: OPENCODE_PROVIDER,
+      status: "error" as const,
+      available: false,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message: "Opencode CLI (`opencode`) is not installed or not on PATH.",
+    };
+  }
+
+  return {
+    provider: OPENCODE_PROVIDER,
+    status: "ready" as const,
+    available: true,
+    authStatus: "unknown" as const,
+    checkedAt,
+  };
+});
+
 export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
-    const [codexStatus, geminiStatus] = yield* Effect.all(
-      [checkCodexProviderStatus, checkGeminiProviderStatus],
-      { concurrency: 2 },
+    const [codexStatus, geminiStatus, opencodeStatus] = yield* Effect.all(
+      [checkCodexProviderStatus, checkGeminiProviderStatus, checkOpencodeProviderStatus],
+      { concurrency: 3 },
     );
 
     return {
-      getStatuses: Effect.succeed([codexStatus, geminiStatus]),
+      getStatuses: Effect.succeed([codexStatus, geminiStatus, opencodeStatus]),
     } satisfies ProviderHealthShape;
   }),
 );

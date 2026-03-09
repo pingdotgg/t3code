@@ -155,3 +155,7 @@ export function isCodexCliAvailable(env: NodeJS.ProcessEnv = process.env): boole
 export function isGeminiCliAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
   return resolveGeminiCliLaunchSpec(env) !== null;
 }
+
+export function isOpencodeCliAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isCommandAvailable("opencode", { env, platform: process.platform });
+}

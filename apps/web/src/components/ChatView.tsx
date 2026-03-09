@@ -285,6 +285,7 @@ function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
 function providerDisplayName(provider: ProviderKind | null | undefined): string {
   if (provider === "gemini") return "Gemini";
   if (provider === "codex") return "Codex";
+  if (provider === "opencode") return "Opencode";
   return "Assistant";
 }
 
@@ -5440,23 +5441,24 @@ function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): o
 
 const AVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter(isAvailableProviderOption);
 const UNAVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter((option) => !option.available);
-const COMING_SOON_PROVIDER_OPTIONS = [
-  { id: "opencode", label: "OpenCode", icon: OpenCodeIcon },
-] as const;
+const COMING_SOON_PROVIDER_OPTIONS = [] as const;
 
 function getCustomModelOptionsByProvider(settings: {
   customCodexModels: readonly string[];
   customGeminiModels: readonly string[];
+  customOpencodeModels: readonly string[];
 }): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
   return {
     codex: getAppModelOptions("codex", settings.customCodexModels),
     gemini: getAppModelOptions("gemini", settings.customGeminiModels),
+    opencode: getAppModelOptions("opencode", settings.customOpencodeModels),
   };
 }
 
 const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
   codex: OpenAI,
   gemini: Gemini,
+  opencode: OpenCodeIcon,
   claudeCode: ClaudeAI,
   cursor: CursorIcon,
 };
