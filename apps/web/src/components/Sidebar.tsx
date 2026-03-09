@@ -475,6 +475,47 @@ export default function Sidebar() {
     [navigate, threads],
   );
 
+  const activateProjectContext = useCallback(
+    async (projectId: ProjectId) => {
+      const activeThread = routeThreadId
+        ? threads.find((thread) => thread.id === routeThreadId)
+        : undefined;
+      const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
+
+      if (activeThread?.projectId === projectId || activeDraftThread?.projectId === projectId) {
+        return;
+      }
+
+      const storedDraftThread = getDraftThreadByProjectId(projectId);
+      if (storedDraftThread) {
+        await navigate({
+          to: "/$threadId",
+          params: { threadId: storedDraftThread.threadId },
+        });
+        return;
+      }
+
+      const latestThread = threads
+        .filter((thread) => thread.projectId === projectId)
+        .toSorted((a, b) => {
+          const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+          if (byDate !== 0) return byDate;
+          return b.id.localeCompare(a.id);
+        })[0];
+
+      if (latestThread) {
+        await navigate({
+          to: "/$threadId",
+          params: { threadId: latestThread.id },
+        });
+        return;
+      }
+
+      await handleNewThread(projectId);
+    },
+    [getDraftThread, getDraftThreadByProjectId, handleNewThread, navigate, routeThreadId, threads],
+  );
+
   const addProjectFromPath = useCallback(
     async (rawCwd: string) => {
       const cwd = rawCwd.trim();
@@ -1060,6 +1101,9 @@ export default function Sidebar() {
                             className="gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground"
                           />
                         }
+                        onClick={() => {
+                          void activateProjectContext(project.id);
+                        }}
                         onContextMenu={(event) => {
                           event.preventDefault();
                           void handleProjectContextMenu(project.id, {

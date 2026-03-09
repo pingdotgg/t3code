@@ -14,7 +14,7 @@ Track the phased overhaul for GitHub panel correctness, workspace awareness, rep
 | --- | --- | --- | --- | --- | --- |
 | 1 | Define canonical panel context and scope ownership | DONE | PASS | `refactor(web): define canonical github panel context` | Repo scope and workspace scope are explicit |
 | 2 | Reset stale panel state and query results on context change | DONE | PASS | `fix(web): reset github panel state on context changes` | Context switches now clear local panel state and force a fresh fetch |
-| 3 | Make project and thread switching rules explicit | TODO | TODO | TODO | Ensure panel follows the intended active entity |
+| 3 | Make project and thread switching rules explicit | DONE | PASS | `refactor(web): align project clicks with panel scope` | Project header clicks now activate that project thread context |
 | 4 | Split panel into repo and workspace sections and improve responsiveness | TODO | TODO | TODO | Improve overflow handling, stacking, and density |
 | 5 | Integrate promotion state and next action guidance | TODO | TODO | TODO | Apply the workflow spec to the active workspace card |
 
@@ -79,10 +79,10 @@ Make the active entity rules explicit so the panel consistently follows the inte
 
 | Step | Change | Files | Done criteria |
 | --- | --- | --- | --- |
-| 3.1 | Define active panel scope rules for thread scoped and project scoped views | `apps/web/src/lib/gitPanelContext.ts`, `docs/workspace_promotion_spec.md` | Rules are encoded and documented |
-| 3.2 | Audit sidebar project clicks and thread selection behavior | `apps/web/src/components/Sidebar.tsx` | Clicking a project updates the intended panel scope or clearly does not |
-| 3.3 | Add explicit UI copy that names the current panel scope | `apps/web/src/components/GitHubPanel.tsx` | User can tell whether the panel follows a thread or project |
-| 3.4 | Ensure empty project states and draft thread states resolve correctly | `apps/web/src/components/ChatView.tsx`, `apps/web/src/components/GitHubPanel.tsx` | Panel remains coherent with no active server thread |
+| 3.1 | Define active panel scope rules for thread scoped and project scoped views | `apps/web/src/lib/gitPanelContext.ts`, `docs/workspace_promotion_spec.md` | DONE |
+| 3.2 | Audit sidebar project clicks and thread selection behavior | `apps/web/src/components/Sidebar.tsx` | DONE |
+| 3.3 | Add explicit UI copy that names the current panel scope | `apps/web/src/components/GitHubPanel.tsx` | DONE |
+| 3.4 | Ensure empty project states and draft thread states resolve correctly | `apps/web/src/components/ChatView.tsx`, `apps/web/src/components/GitHubPanel.tsx` | DONE |
 
 ### Validation
 
