@@ -7,6 +7,7 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shar
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { GitCore } from "../Services/GitCore.ts";
 import { TextGenerationError } from "../Errors.ts";
 import {
   type BranchNameGenerationInput,
@@ -20,6 +21,8 @@ import {
 const CODEX_MODEL = "gpt-5.3-codex";
 const CODEX_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
+
+const GITMOJI_CONFIG_KEY = "t3code.commitMessageStyle";
 
 function toCodexOutputJsonSchema(schema: Schema.Top): unknown {
   const document = Schema.toJsonSchemaDocument(schema);
@@ -100,6 +103,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverConfig = yield* Effect.service(ServerConfig);
+  const gitCore = yield* GitCore;
 
   type MaterializedImageAttachments = {
     readonly imagePaths: ReadonlyArray<string>;
@@ -313,58 +317,98 @@ const makeCodexTextGeneration = Effect.gen(function* () {
     });
 
   const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = (input) => {
-    const wantsBranch = input.includeBranch === true;
+    return Effect.gen(function* () {
+      const configValue = yield* gitCore
+        .readConfigValue(input.cwd, GITMOJI_CONFIG_KEY)
+        .pipe(Effect.catch(() => Effect.succeed(null)));
 
-    const prompt = [
-      "You write concise git commit messages.",
-      wantsBranch
-        ? "Return a JSON object with keys: subject, body, branch."
-        : "Return a JSON object with keys: subject, body.",
-      "Rules:",
-      "- subject must be imperative, <= 72 chars, and no trailing period",
-      "- body can be empty string or short bullet points",
-      ...(wantsBranch
-        ? ["- branch must be a short semantic git branch fragment for this change"]
-        : []),
-      "- capture the primary user-visible or developer-visible change",
-      "",
-      `Branch: ${input.branch ?? "(detached)"}`,
-      "",
-      "Staged files:",
-      limitSection(input.stagedSummary, 6_000),
-      "",
-      "Staged patch:",
-      limitSection(input.stagedPatch, 40_000),
-    ].join("\n");
+      const useGitmoji = configValue === "gitmoji" ||
+        (configValue !== "conventional" && configValue !== null && configValue.toLowerCase().includes("gitmoji"));
 
-    const outputSchemaJson = wantsBranch
-      ? Schema.Struct({
-          subject: Schema.String,
-          body: Schema.String,
-          branch: Schema.String,
-        })
-      : Schema.Struct({
-          subject: Schema.String,
-          body: Schema.String,
-        });
+      const wantsBranch = input.includeBranch === true;
 
-    return runCodexJson({
-      operation: "generateCommitMessage",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson,
-    }).pipe(
-      Effect.map(
-        (generated) =>
-          ({
-            subject: sanitizeCommitSubject(generated.subject),
-            body: generated.body.trim(),
-            ...("branch" in generated && typeof generated.branch === "string"
-              ? { branch: sanitizeFeatureBranchName(generated.branch) }
-              : {}),
-          }) satisfies CommitMessageGenerationResult,
-      ),
-    );
+      const promptSections = [
+        "You write concise git commit messages.",
+        wantsBranch
+          ? "Return a JSON object with keys: subject, body, branch."
+          : "Return a JSON object with keys: subject, body.",
+        "Rules:",
+      ];
+
+      if (useGitmoji) {
+        promptSections.push(
+          "- subject must start with a gitmoji emoji (e.g., ✨, 🐛, ♻️, 📝, etc.)",
+          "- after the emoji, add a space and write the commit message in imperative mood",
+          "- subject must be <= 72 chars total (including emoji) and no trailing period",
+          "- body can be empty string or short bullet points",
+          ...(wantsBranch
+            ? ["- branch must be a short semantic git branch fragment for this change"]
+            : []),
+          "- capture the primary user-visible or developer-visible change",
+          "",
+          "Common gitmoji examples:",
+          "✨ feat: new feature",
+          "🐛 fix: bug fix",
+          "♻️ refactor: code refactoring",
+          "📝 docs: documentation",
+          "✅ test: tests",
+          "🎨 style: formatting",
+          "⚡ perf: performance",
+          "🔧 chore: maintenance",
+        );
+      } else {
+        promptSections.push(
+          "- subject must be imperative, <= 72 chars, and no trailing period",
+          "- body can be empty string or short bullet points",
+          ...(wantsBranch
+            ? ["- branch must be a short semantic git branch fragment for this change"]
+            : []),
+          "- capture the primary user-visible or developer-visible change",
+        );
+      }
+
+      promptSections.push(
+        "",
+        `Branch: ${input.branch ?? "(detached)"}`,
+        "",
+        "Staged files:",
+        limitSection(input.stagedSummary, 6_000),
+        "",
+        "Staged patch:",
+        limitSection(input.stagedPatch, 40_000),
+      );
+
+      const prompt = promptSections.join("\n");
+
+      const outputSchemaJson = wantsBranch
+        ? Schema.Struct({
+            subject: Schema.String,
+            body: Schema.String,
+            branch: Schema.String,
+          })
+        : Schema.Struct({
+            subject: Schema.String,
+            body: Schema.String,
+          });
+
+      return yield* runCodexJson({
+        operation: "generateCommitMessage",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson,
+      }).pipe(
+        Effect.map(
+          (generated) =>
+            ({
+              subject: sanitizeCommitSubject(generated.subject),
+              body: generated.body.trim(),
+              ...("branch" in generated && typeof generated.branch === "string"
+                ? { branch: sanitizeFeatureBranchName(generated.branch) }
+                : {}),
+            }) satisfies CommitMessageGenerationResult,
+        ),
+      );
+    });
   };
 
   const generatePrContent: TextGenerationShape["generatePrContent"] = (input) => {

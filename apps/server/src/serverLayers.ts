@@ -69,7 +69,7 @@ export function makeServerProviderLayer(): Layer.Layer<
 
 export function makeServerRuntimeServicesLayer() {
   const gitCoreLayer = GitCoreLive.pipe(Layer.provideMerge(GitServiceLive));
-  const textGenerationLayer = CodexTextGenerationLive;
+  const textGenerationLayer = CodexTextGenerationLive.pipe(Layer.provide(gitCoreLayer));
 
   const orchestrationLayer = OrchestrationEngineLive.pipe(
     Layer.provide(OrchestrationProjectionPipelineLive),
