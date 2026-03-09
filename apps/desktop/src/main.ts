@@ -308,18 +308,10 @@ function emitLauncherState(): void {
 }
 
 function deliverPendingProjectPath(window: BrowserWindow, projectPath: string): void {
-  const send = () => {
-    if (window.isDestroyed()) return;
-    window.webContents.send(PROJECT_OPEN_CHANNEL, projectPath);
-    focusWindow(window);
-  };
-
-  if (window.webContents.isLoadingMainFrame()) {
-    window.webContents.once("did-finish-load", send);
-    return;
-  }
-
-  send();
+  if (window.isDestroyed()) return;
+  if (window.webContents.isLoadingMainFrame()) return;
+  window.webContents.send(PROJECT_OPEN_CHANNEL, projectPath);
+  focusWindow(window);
 }
 
 function dispatchPendingProjectPath(projectPath: string): void {

@@ -274,15 +274,21 @@ export function isDirectoryOnPath(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): boolean {
-  const normalizedDirectory = Path.resolve(directory);
+  const pathModule = pathModuleForPlatform(platform);
+  const normalizedDirectory = pathModule.resolve(directory);
   const pathValue = resolvePathEnvironmentVariable(env);
   if (pathValue.length === 0) return false;
+
+  const caseInsensitive = platform === "win32" || platform === "darwin";
+  const comparePaths = caseInsensitive
+    ? (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+    : (a: string, b: string) => a === b;
 
   return pathValue
     .split(resolvePathDelimiter(platform))
     .map((entry) => stripWrappingQuotes(entry.trim()))
     .filter((entry) => entry.length > 0)
-    .some((entry) => Path.resolve(entry) === normalizedDirectory);
+    .some((entry) => comparePaths(pathModule.resolve(entry), normalizedDirectory));
 }
 
 export function isCommandAvailable(
@@ -334,7 +340,7 @@ export function resolveShellProfilePath(options: ShellProfileOptions = {}): stri
     return Path.join(homeDir, platform === "darwin" ? ".bash_profile" : ".bashrc");
   }
   if (shellName === "zsh") {
-    return Path.join(homeDir, ".zprofile");
+    return Path.join(homeDir, platform === "darwin" ? ".zprofile" : ".zshrc");
   }
 
   return Path.join(homeDir, ".profile");
@@ -352,6 +358,10 @@ export function buildPathExportSnippet(
   installDir: string,
   options: ShellProfileOptions = {},
 ): string {
+  const platform = options.platform ?? process.platform;
+  if (platform === "win32") {
+    return "";
+  }
   const profilePath = resolveShellProfilePath(options);
   const escapedInstallDir = installDir.replaceAll('"', '\\"');
   const body =

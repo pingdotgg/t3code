@@ -30,4 +30,10 @@ describe("workspace path comparison", () => {
     expect(normalizeWorkspacePathForComparison("/", "linux")).toBe("/");
     expect(normalizeWorkspacePathForComparison("C:\\", "win32")).toBe("c:/");
   });
+
+  it("preserves Windows drive roots with multiple trailing separators", () => {
+    expect(normalizeWorkspacePathForComparison("C:\\\\", "win32")).toBe("c:/");
+    expect(normalizeWorkspacePathForComparison("C://", "win32")).toBe("c:/");
+    expect(workspacePathsMatch("C:\\\\", "C:\\", "win32")).toBe(true);
+  });
 });

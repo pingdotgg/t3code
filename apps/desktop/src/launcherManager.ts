@@ -140,7 +140,11 @@ function applyPosixPathUpdate(
   }
 
   const existingContent = FS.existsSync(profilePath) ? FS.readFileSync(profilePath, "utf8") : "";
-  if (hasManagedPathSnippet(existingContent) || existingContent.includes(installDir)) {
+  if (
+    hasManagedPathSnippet(existingContent) ||
+    existingContent.includes(`"${installDir}"`) ||
+    existingContent.includes(`"${installDir}:`)
+  ) {
     return;
   }
 

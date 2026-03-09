@@ -161,6 +161,15 @@ describe("shell profile helpers", () => {
     ).toContain('export PATH="/Users/example/.t3/bin:$PATH"');
   });
 
+  it("uses .zshrc on Linux and .zprofile on macOS for zsh", () => {
+    expect(
+      resolveShellProfilePath({ platform: "linux", shell: "/bin/zsh", homeDir: "/home/example" }),
+    ).toBe("/home/example/.zshrc");
+    expect(
+      resolveShellProfilePath({ platform: "darwin", shell: "/bin/zsh", homeDir: "/Users/example" }),
+    ).toBe("/Users/example/.zprofile");
+  });
+
   it("uses fish_add_path for fish shells and recognizes existing managed snippets", () => {
     const snippet = buildPathExportSnippet("/home/example/.t3/bin", {
       platform: "linux",

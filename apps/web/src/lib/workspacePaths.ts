@@ -30,8 +30,8 @@ function trimTrailingSeparators(path: string): string {
   if (slashNormalized === "/") {
     return slashNormalized;
   }
-  if (/^[a-z]:\/$/i.test(slashNormalized)) {
-    return slashNormalized;
+  if (/^[a-z]:\/+$/i.test(slashNormalized)) {
+    return slashNormalized.slice(0, 3);
   }
   return slashNormalized.replace(/\/+$/g, "");
 }
