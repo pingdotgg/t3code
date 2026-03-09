@@ -136,7 +136,9 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
     defaultCodexModel:
       normalizedDefaultCodexModel === APP_DEFAULT_MODEL_AUTO
         ? APP_DEFAULT_MODEL_AUTO
-        : resolveAppModelSelection("codex", customCodexModels, normalizedDefaultCodexModel),
+        : resolveAppModelSelection("codex", customCodexModels, normalizedDefaultCodexModel, {
+            preserveUnknownSelectedModel: false,
+          }),
   };
 }
 
@@ -144,13 +146,16 @@ export function getAppModelOptions(
   provider: ProviderKind,
   customModels: readonly string[],
   selectedModel?: string | null,
+  config?: {
+    includeSelectedModel?: boolean;
+  },
 ): AppModelOption[] {
-  const options: AppModelOption[] = getModelOptions(provider).map(({ slug, name }) => ({
+  const modelOptions: AppModelOption[] = getModelOptions(provider).map(({ slug, name }) => ({
     slug,
     name,
     isCustom: false,
   }));
-  const seen = new Set(options.map((option) => option.slug));
+  const seen = new Set(modelOptions.map((option) => option.slug));
 
   for (const slug of normalizeCustomModelSlugs(customModels, provider)) {
     if (seen.has(slug)) {
@@ -158,39 +163,47 @@ export function getAppModelOptions(
     }
 
     seen.add(slug);
-    options.push({
+    modelOptions.push({
       slug,
       name: slug,
       isCustom: true,
     });
   }
 
-  const normalizedSelectedModel = normalizeModelSlug(selectedModel, provider);
-  if (normalizedSelectedModel && !seen.has(normalizedSelectedModel)) {
-    options.push({
-      slug: normalizedSelectedModel,
-      name: normalizedSelectedModel,
-      isCustom: true,
-    });
+  if (config?.includeSelectedModel ?? true) {
+    const normalizedSelectedModel = normalizeModelSlug(selectedModel, provider);
+    if (normalizedSelectedModel && !seen.has(normalizedSelectedModel)) {
+      modelOptions.push({
+        slug: normalizedSelectedModel,
+        name: normalizedSelectedModel,
+        isCustom: true,
+      });
+    }
   }
 
-  return options;
+  return modelOptions;
 }
 
 export function resolveAppModelSelection(
   provider: ProviderKind,
   customModels: readonly string[],
   selectedModel: string | null | undefined,
+  options?: {
+    preserveUnknownSelectedModel?: boolean;
+  },
 ): string {
-  const options = getAppModelOptions(provider, customModels, selectedModel);
+  const preserveUnknownSelectedModel = options?.preserveUnknownSelectedModel ?? true;
+  const modelOptions = getAppModelOptions(provider, customModels, selectedModel, {
+    includeSelectedModel: preserveUnknownSelectedModel,
+  });
   const trimmedSelectedModel = selectedModel?.trim();
   if (trimmedSelectedModel) {
-    const direct = options.find((option) => option.slug === trimmedSelectedModel);
+    const direct = modelOptions.find((option) => option.slug === trimmedSelectedModel);
     if (direct) {
       return direct.slug;
     }
 
-    const byName = options.find(
+    const byName = modelOptions.find(
       (option) => option.name.toLowerCase() === trimmedSelectedModel.toLowerCase(),
     );
     if (byName) {
@@ -204,7 +217,7 @@ export function resolveAppModelSelection(
   }
 
   return (
-    options.find((option) => option.slug === normalizedSelectedModel)?.slug ??
+    modelOptions.find((option) => option.slug === normalizedSelectedModel)?.slug ??
     getDefaultModel(provider)
   );
 }

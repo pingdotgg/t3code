@@ -68,6 +68,14 @@ describe("getAppModelOptions", () => {
       isCustom: true,
     });
   });
+
+  it("can omit selected-model injection for strict validation paths", () => {
+    const options = getAppModelOptions("codex", [], "custom/selected-model", {
+      includeSelectedModel: false,
+    });
+
+    expect(options.some((option) => option.slug === "custom/selected-model")).toBe(false);
+  });
 });
 
 describe("resolveAppModelSelection", () => {
@@ -79,6 +87,14 @@ describe("resolveAppModelSelection", () => {
 
   it("falls back to the provider default when no model is selected", () => {
     expect(resolveAppModelSelection("codex", [], "")).toBe("gpt-5.4");
+  });
+
+  it("falls back to the provider default when unknown models are not preserved", () => {
+    expect(
+      resolveAppModelSelection("codex", [], "custom/deleted-model", {
+        preserveUnknownSelectedModel: false,
+      }),
+    ).toBe("gpt-5.4");
   });
 });
 
