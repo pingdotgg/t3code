@@ -10,6 +10,7 @@ import {
   type CanonicalItemType,
   type CanonicalRequestType,
   type ProviderEvent,
+  PROVIDER_CAPABILITIES_BY_PROVIDER,
   type ProviderRuntimeEvent,
   type ProviderUserInputAnswers,
   RuntimeItemId,
@@ -1492,9 +1493,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
 
     return {
       provider: PROVIDER,
-      capabilities: {
-        sessionModelSwitch: "in-session",
-      },
+      capabilities: PROVIDER_CAPABILITIES_BY_PROVIDER.codex,
       startSession,
       sendTurn,
       interruptTurn,

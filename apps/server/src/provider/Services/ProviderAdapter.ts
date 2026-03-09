@@ -9,6 +9,7 @@
  */
 import type {
   ApprovalRequestId,
+  ProviderCapabilities,
   ProviderApprovalDecision,
   ProviderKind,
   ProviderUserInputAnswers,
@@ -23,14 +24,7 @@ import type {
 import type { Effect } from "effect";
 import type { Stream } from "effect";
 
-export type ProviderSessionModelSwitchMode = "in-session" | "restart-session" | "unsupported";
-
-export interface ProviderAdapterCapabilities {
-  /**
-   * Declares whether changing the model on an existing session is supported.
-   */
-  readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
-}
+export type ProviderAdapterCapabilities = ProviderCapabilities;
 
 export interface ProviderThreadTurnSnapshot {
   readonly id: TurnId;

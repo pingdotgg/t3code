@@ -12,6 +12,7 @@ import type {
 import {
   ApprovalRequestId,
   EventId,
+  PROVIDER_CAPABILITIES_BY_PROVIDER,
   type ProviderKind,
   ProviderSessionStartInput,
   ThreadId,
@@ -175,7 +176,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
   const adapter: ProviderAdapterShape<ProviderAdapterError> = {
     provider,
     capabilities: {
-      sessionModelSwitch: "in-session",
+      ...PROVIDER_CAPABILITIES_BY_PROVIDER[provider],
     },
     startSession,
     sendTurn,

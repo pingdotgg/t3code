@@ -1,6 +1,8 @@
 import { Fragment, type ReactNode, createElement, useEffect } from "react";
 import {
+  DEFAULT_PROVIDER_KIND,
   DEFAULT_MODEL_BY_PROVIDER,
+  PROVIDER_KIND_VALUES,
   type ProviderKind,
   ThreadId,
   type OrchestrationReadModel,
@@ -112,7 +114,7 @@ function mapProjectsFromReadModel(
       cwd: project.workspaceRoot,
       model:
         existing?.model ??
-        resolveModelSlug(project.defaultModel ?? DEFAULT_MODEL_BY_PROVIDER.codex),
+        resolveModelSlug(project.defaultModel ?? DEFAULT_MODEL_BY_PROVIDER[DEFAULT_PROVIDER_KIND]),
       expanded:
         existing?.expanded ??
         (persistedExpandedProjectCwds.size > 0
@@ -143,26 +145,35 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex") {
-    return providerName;
-  }
-  return "codex";
+  return typeof providerName === "string" && PROVIDER_KIND_VALUES.includes(providerName as ProviderKind)
+    ? (providerName as ProviderKind)
+    : DEFAULT_PROVIDER_KIND;
 }
 
-const CODEX_MODEL_SLUGS = new Set<string>(getModelOptions("codex").map((option) => option.slug));
+const MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
+  codex: new Set<string>(getModelOptions("codex").map((option) => option.slug)),
+  claudeCode: new Set<string>(getModelOptions("claudeCode").map((option) => option.slug)),
+};
 
 function inferProviderForThreadModel(input: {
   readonly model: string;
   readonly sessionProviderName: string | null;
 }): ProviderKind {
-  if (input.sessionProviderName === "codex") {
-    return input.sessionProviderName;
+  if (
+    typeof input.sessionProviderName === "string" &&
+    PROVIDER_KIND_VALUES.includes(input.sessionProviderName as ProviderKind)
+  ) {
+    return input.sessionProviderName as ProviderKind;
   }
-  const normalizedCodex = normalizeModelSlug(input.model, "codex");
-  if (normalizedCodex && CODEX_MODEL_SLUGS.has(normalizedCodex)) {
-    return "codex";
+
+  for (const provider of PROVIDER_KIND_VALUES) {
+    const normalizedModel = normalizeModelSlug(input.model, provider);
+    if (normalizedModel && MODEL_SLUGS_BY_PROVIDER[provider].has(normalizedModel)) {
+      return provider;
+    }
   }
-  return "codex";
+
+  return DEFAULT_PROVIDER_KIND;
 }
 
 function resolveWsHttpOrigin(): string {

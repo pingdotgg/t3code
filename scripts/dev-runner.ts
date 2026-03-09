@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { NetService } from "@t3tools/shared/Net";
+import { formatHostForUrl, isLoopbackHost, isWildcardHost } from "@t3tools/shared/host";
 import { Config, Data, Effect, Hash, Layer, Logger, Option, Path, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import { ChildProcess } from "effect/unstable/process";
@@ -115,6 +116,27 @@ function resolveStateDir(stateDir: string | undefined): Effect.Effect<string, ne
   });
 }
 
+function resolvePublicDevHost(params: {
+  readonly mode: DevMode;
+  readonly host: string | undefined;
+  readonly devUrl: URL | undefined;
+}): string | undefined {
+  if (params.mode === "dev:desktop") {
+    return undefined;
+  }
+
+  if (params.host && !isWildcardHost(params.host)) {
+    return formatHostForUrl(params.host);
+  }
+
+  const devUrlHost = params.devUrl?.hostname;
+  if (!devUrlHost || isLoopbackHost(devUrlHost)) {
+    return undefined;
+  }
+
+  return formatHostForUrl(devUrlHost);
+}
+
 interface CreateDevRunnerEnvInput {
   readonly mode: DevMode;
   readonly baseEnv: NodeJS.ProcessEnv;
@@ -148,14 +170,17 @@ export function createDevRunnerEnv({
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
     const resolvedStateDir = yield* resolveStateDir(stateDir);
+    const publicDevHost = resolvePublicDevHost({ mode, host, devUrl });
+    const defaultDevServerUrl = `http://${publicDevHost ?? "localhost"}:${webPort}`;
+    const defaultWebSocketUrl = `ws://${publicDevHost ?? "localhost"}:${serverPort}`;
 
     const output: NodeJS.ProcessEnv = {
       ...baseEnv,
       T3CODE_PORT: String(serverPort),
       PORT: String(webPort),
       ELECTRON_RENDERER_PORT: String(webPort),
-      VITE_WS_URL: `ws://localhost:${serverPort}`,
-      VITE_DEV_SERVER_URL: devUrl?.toString() ?? `http://localhost:${webPort}`,
+      VITE_WS_URL: defaultWebSocketUrl,
+      VITE_DEV_SERVER_URL: devUrl?.toString() ?? defaultDevServerUrl,
       T3CODE_STATE_DIR: resolvedStateDir,
     };
 

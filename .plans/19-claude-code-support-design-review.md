@@ -1,120 +1,120 @@
-# Design Review: Claude Code Support
+# Claude Code Support — Execution Plan
 
-## Summary
+## Goal
 
-T3 Code is clearly being shaped toward multi-provider support, but the current implementation remains codex-first in both contracts and runtime assumptions. Claude Code support should land as a real provider adapter, not as a UI-only toggle.
+Ship `claudeCode` as a first-class provider in the current `apps/server` + `apps/web` stack, with predictable lifecycle behavior, canonical runtime events, and capability-driven UI gating.
 
-## What Already Helps
+## Architecture Fit
 
-- provider service / adapter architecture already exists under `apps/server/src/provider`
-- provider session directory and resume binding already exist
-- runtime events are normalized through canonical provider runtime ingestion
-- the web UI already gestures at unavailable providers in the picker
+This track is intentionally aligned to the current codebase, not legacy `apps/renderer` assumptions.
 
-These are strong foundations.
-
-## Where Codex Still Leaks Through
-
-### Contracts
-
-`ProviderKind` is still effectively locked to Codex, so any provider abstraction above it is narrower than it appears.
-
-Areas to widen first:
-
-- `packages/contracts/src/orchestration.ts`
-- `packages/contracts/src/provider.ts`
-- `packages/contracts/src/model.ts`
-
-### Runtime protocol assumptions
-
-Codex-specific semantics are still embedded in:
-
-- `apps/server/src/codexAppServerManager.ts`
-- `apps/server/src/provider/Layers/CodexAdapter.ts`
-- collaboration mode / effort settings
-- model selection and account handling
-- resume semantics and turn lifecycle mapping
-
-### UI assumptions
-
-The UI already lists `claudeCode` as unavailable, but provider capabilities are not yet modeled deeply enough for different approval semantics, tool event shapes, or model option behavior.
-
-## Recommended Direction
-
-Treat Claude Code support as a canonical provider implementation with a first-class adapter and a capability matrix.
-
-### Phase 1 — widen contracts
-
-- expand `ProviderKind` to include `claudeCode`
-- add provider capability contracts:
-  - model switch mode
-  - approval support
-  - user input support
-  - collaboration / planning support
-  - resume support level
-
-### Phase 2 — add adapter
-
-Introduce:
+### Server runtime path
 
 - `apps/server/src/provider/Layers/ClaudeCodeAdapter.ts`
 - `apps/server/src/provider/Services/ClaudeCodeAdapter.ts`
+- `apps/server/src/provider/Layers/ProviderAdapterRegistry.ts`
+- `apps/server/src/provider/Layers/ProviderService.ts`
+- `apps/server/src/provider/Layers/ProviderSessionDirectory.ts`
+- `apps/server/src/provider/Layers/ProviderHealth.ts`
+- `apps/server/src/serverLayers.ts`
+- `apps/server/src/wsServer.ts`
 
-This adapter should be responsible for:
+### Shared contracts / model path
 
-- session startup
-- send turn
-- interrupt / stop
-- request/approval response mapping
-- event normalization into canonical `ProviderRuntimeEvent`
+- `packages/contracts/src/orchestration.ts`
+- `packages/contracts/src/provider.ts`
+- `packages/contracts/src/providerRuntime.ts`
+- `packages/contracts/src/model.ts`
+- `packages/contracts/src/server.ts`
+- `packages/shared/src/model.ts`
 
-### Phase 3 — runtime normalization
+### Web path
 
-Ensure `ProviderRuntimeIngestion` stays provider-agnostic by consuming canonical runtime events only.
+- `apps/web/src/components/ChatView.tsx`
+- `apps/web/src/composerDraftStore.ts`
+- `apps/web/src/store.ts`
+- `apps/web/src/session-logic.ts`
+- `apps/web/src/appSettings.ts`
+- `apps/web/src/routes/_chat.settings.tsx`
+- `apps/web/src/wsNativeApi.ts`
 
-If Claude requires provider-specific preprocessing, keep that inside the adapter layer.
+## Execution Tracks
 
-### Phase 4 — UI enablement
+### 1. Contracts and capability matrix
 
-- enable Claude in the provider picker only after the adapter is usable
-- gate unsupported features off capability flags, not hardcoded provider checks
+- Widen `ProviderKind` to include `claudeCode`.
+- Define provider capability contracts in `packages/contracts/src/provider.ts`:
+  - `sessionModelSwitch`
+  - `supportsApprovals`
+  - `supportsUserInput`
+  - `supportsResume`
+  - `supportsCollaborationMode`
+  - `supportsImageInputs`
+  - `supportsReasoningEffort`
+  - `supportsServiceTier`
+  - `supportsConversationRollback`
+- Extend provider model options in `packages/contracts/src/model.ts`:
+  - Codex: `reasoningEffort`, `fastMode`
+  - Claude Code: `effort`
+- Extend runtime raw-source contracts in `packages/contracts/src/providerRuntime.ts` for Claude-native stream events.
+- Surface provider capabilities through `packages/contracts/src/server.ts` so `server.getConfig` becomes the single source of truth for provider availability + feature gating.
 
-## Capability Matrix to Add
+### 2. Server adapter and session lifecycle
 
-Every provider should declare at least:
+- Add a dedicated `ClaudeCodeAdapter` under `apps/server/src/provider`.
+- Keep Codex-specific logic isolated in Codex modules.
+- Use the Claude runtime adapter to own:
+  - session startup / resume
+  - turn dispatch
+  - interrupt / stop
+  - canonical event emission
+  - capability reporting
+- Preserve `ProviderService` as the cross-provider routing layer.
+- Preserve `ProviderSessionDirectory` as the persisted thread → provider binding / resume binding layer.
+- Register Claude in `ProviderAdapterRegistryLive` and `makeServerProviderLayer()`.
 
-- `sessionModelSwitch`
-- `supportsApprovals`
-- `supportsUserInput`
-- `supportsResume`
-- `supportsCollaborationMode`
-- `supportsImageInputs`
-- `supportsReasoningEffort`
-- `supportsServiceTier`
+### 3. Health checks and WebSocket/API surface
 
-This avoids future branching scattered across `ChatView.tsx`.
+- Extend `ProviderHealthLive` to probe Claude install/auth status alongside Codex.
+- Keep `server.getConfig` as the main transport surface for provider status + capability data.
+- Ensure `server.configUpdated` pushes continue to carry the latest provider status objects.
+- Do not add a parallel Claude-specific RPC surface unless the orchestration path cannot express a required operation.
 
-## Reentry Feature Implications
+### 4. Web provider parity
 
-Claude support should plug into the proposed reentry engine in two ways:
+- Drive provider availability from `server.getConfig().providers`, not hardcoded placeholders.
+- Keep `PROVIDER_OPTIONS` as the UI label list, but compute selectable / unavailable providers from server status.
+- Extend settings to support custom Claude model slugs.
+- Extend the composer model / effort controls so they respect provider capabilities.
+- Gate unsupported features via capabilities instead of provider-name checks:
+  - image inputs
+  - plan/default interaction mode
+  - service tier
+  - conversation rollback
+- Keep event rendering provider-agnostic by consuming orchestration projections only.
 
-1. as a runtime signal source through canonical provider events
-2. as an optional recap writer backend once the provider is stable
+### 5. Reliability requirements
 
-The recap system should not assume Codex-only event fields or model option semantics.
+- Resume / reconnect must rely on persisted provider session bindings, not fragile UI state.
+- Provider restarts must keep behavior deterministic:
+  - no silent provider swapping
+  - no hidden capability fallback without an explicit runtime warning
+- Partial stream handling must continue to produce stable timeline state if a turn is interrupted mid-stream.
+- Session stop / interrupt flows must settle orchestration thread state instead of leaving it ambiguous.
 
-## Risks
+## Current implementation notes
 
-- resume behavior may not match Codex thread recovery semantics
-- approval and tool event taxonomies may be materially different
-- collaboration mode may not have a direct Claude equivalent
-- provider-specific prompt tuning for recap generation could leak into server orchestration if not isolated
+This implementation track favors shared abstractions over one-off branching:
 
-## Recommendation
+- provider capabilities are shared through contracts and reused by both server and web
+- provider status and capability data flow through `server.getConfig`
+- UI gating uses capability data instead of hardcoded `provider === "codex"` checks where possible
+- Claude support is added through the existing adapter / registry / service architecture instead of special-casing `wsServer`
 
-Do **not** bolt Claude Code onto `CodexAppServerManager`. Instead:
+## Follow-up work after this track
 
-- keep Codex-specific runtime logic in Codex modules
-- add provider capability contracts first
-- ship Claude through the existing adapter / registry / service architecture
-- keep recap generation behind a separate model broker so runtime provider and recap writer provider can differ
+- Persist a thread-level preferred provider so idle threads do not need model-based provider inference.
+- Add richer Claude permission / elicitation bridging if the adapter surface stabilizes enough to expose it predictably.
+- Add Claude image-input support once the runtime path supports structured non-text turn inputs cleanly.
+- Revisit rollback / checkpoint parity if Claude exposes reversible conversation history primitives.
+- Add targeted integration tests for reconnect, restart, and interrupted partial-stream recovery on Claude sessions.

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   ApprovalRequestId,
   EventId,
+  PROVIDER_CAPABILITIES_BY_PROVIDER,
   ProviderApprovalDecision,
   ProviderRuntimeEvent,
   RuntimeSessionId,
@@ -35,7 +36,7 @@ export interface TestTurnResponse {
 export type FixtureProviderRuntimeEvent = {
   readonly type: string;
   readonly eventId: EventId;
-  readonly provider: "codex";
+  readonly provider: "codex" | "claudeCode";
   readonly createdAt: string;
   readonly threadId: string;
   readonly turnId?: string | undefined;
@@ -474,9 +475,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
 
   const adapter: ProviderAdapterShape<ProviderAdapterError> = {
     provider,
-    capabilities: {
-      sessionModelSwitch: "in-session",
-    },
+    capabilities: PROVIDER_CAPABILITIES_BY_PROVIDER[provider],
     startSession,
     sendTurn,
     interruptTurn,

@@ -3,6 +3,7 @@ import {
   type ContextMenuItem,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
+  PROVIDER_CAPABILITIES_BY_PROVIDER,
   ProjectId,
   ThreadId,
   WS_CHANNELS,
@@ -70,6 +71,7 @@ const defaultProviders: ReadonlyArray<ServerProviderStatus> = [
     status: "ready",
     available: true,
     authStatus: "authenticated",
+    capabilities: PROVIDER_CAPABILITIES_BY_PROVIDER.codex,
     checkedAt: "2026-01-01T00:00:00.000Z",
   },
 ];

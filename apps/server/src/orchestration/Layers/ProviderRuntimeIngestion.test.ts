@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { OrchestrationReadModel, ProviderRuntimeEvent } from "@t3tools/contracts";
+import type { OrchestrationReadModel, ProviderKind, ProviderRuntimeEvent } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
   CommandId,
@@ -10,6 +10,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  PROVIDER_CAPABILITIES_BY_PROVIDER,
   ProviderItemId,
   ThreadId,
   TurnId,
@@ -45,7 +46,7 @@ const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
   readonly eventId: EventId;
-  readonly provider: "codex";
+  readonly provider: ProviderKind;
   readonly createdAt: string;
   readonly threadId: ThreadId;
   readonly turnId?: string | undefined;
@@ -67,7 +68,7 @@ function createProviderServiceHarness() {
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions: () => Effect.succeed([]),
-    getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+    getCapabilities: () => Effect.succeed(PROVIDER_CAPABILITIES_BY_PROVIDER.codex),
     rollbackConversation: () => unsupported(),
     streamEvents: Stream.fromPubSub(runtimeEventPubSub),
   };

@@ -10,6 +10,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  PROVIDER_CAPABILITIES_BY_PROVIDER,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -18,7 +19,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "../../git/Errors.ts";
-import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
+import {
+  ProviderAdapterProcessError,
+  ProviderAdapterRequestError,
+} from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -87,7 +91,7 @@ describe("ProviderCommandReactor", () => {
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     let nextSessionIndex = 1;
     const runtimeSessions: Array<ProviderSession> = [];
-    const startSession = vi.fn((_: unknown, input: unknown) => {
+    const startSession = vi.fn<ProviderServiceShape["startSession"]>((_: unknown, input: unknown) => {
       const sessionIndex = nextSessionIndex++;
       const provider =
         typeof input === "object" &&
@@ -184,9 +188,7 @@ describe("ProviderCommandReactor", () => {
       stopSession: stopSession as ProviderServiceShape["stopSession"],
       listSessions: () => Effect.succeed(runtimeSessions),
       getCapabilities: (provider) =>
-        Effect.succeed({
-          sessionModelSwitch: provider === "codex" ? "in-session" : "in-session",
-        }),
+        Effect.succeed(PROVIDER_CAPABILITIES_BY_PROVIDER[provider]),
       rollbackConversation: () => unsupported(),
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
     };
@@ -792,6 +794,56 @@ describe("ProviderCommandReactor", () => {
         (activity.payload as Record<string, unknown>).requestId === "approval-request-1",
     );
     expect(resolvedActivity).toBeUndefined();
+  });
+
+  it("projects provider turn-start failures into thread session error state", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    harness.startSession.mockImplementationOnce(() =>
+      Effect.fail(
+        new ProviderAdapterProcessError({
+          provider: "claudeCode",
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          detail: "Timed out while waiting for Claude Code session initialization.",
+        }),
+      ),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-failure"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("msg-start-failure"),
+          role: "user",
+          text: "Hello Claude",
+          attachments: [],
+        },
+        provider: "claudeCode",
+        model: "claude-sonnet-4-6",
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+      return thread?.session?.status === "error";
+    });
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(thread?.session?.status).toBe("error");
+    expect(thread?.session?.providerName).toBe("claudeCode");
+    expect(thread?.session?.lastError).toContain(
+      "Timed out while waiting for Claude Code session initialization.",
+    );
+    expect(
+      thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed"),
+    ).toBe(true);
   });
 
   it("reacts to thread.session.stop by stopping provider session and clearing thread session state", async () => {

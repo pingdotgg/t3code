@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
-import { ZapIcon } from "lucide-react";
+import { CopyIcon, ExternalLinkIcon, ZapIcon } from "lucide-react";
 
 import {
   APP_SERVICE_TIER_OPTIONS,
@@ -15,12 +15,20 @@ import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
+import {
+  CLAUDE_CODE_GETTING_STARTED_DOCS_URL,
+  getProviderAuthGuidance,
+} from "../providerAuthGuidance";
+import { copyTextToClipboard } from "../clipboard";
 import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { toastManager } from "../components/ui/toast";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { SidebarInset } from "~/components/ui/sidebar";
+
+const CLAUDE_AUTH_LOGIN_COMMAND = "claude auth login";
 
 const THEME_OPTIONS = [
   {
@@ -54,6 +62,13 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     placeholder: "your-codex-model-slug",
     example: "gpt-6.7-codex-ultra-preview",
   },
+  {
+    provider: "claudeCode",
+    title: "Claude Code",
+    description: "Save additional Claude model aliases or full model names for the picker and `/model` command.",
+    placeholder: "your-claude-model-alias",
+    example: "claude-opus-4-1",
+  },
 ] as const;
 
 function getCustomModelsForProvider(
@@ -61,6 +76,8 @@ function getCustomModelsForProvider(
   provider: ProviderKind,
 ) {
   switch (provider) {
+    case "claudeCode":
+      return settings.customClaudeCodeModels;
     case "codex":
     default:
       return settings.customCodexModels;
@@ -72,6 +89,8 @@ function getDefaultCustomModelsForProvider(
   provider: ProviderKind,
 ) {
   switch (provider) {
+    case "claudeCode":
+      return defaults.customClaudeCodeModels;
     case "codex":
     default:
       return defaults.customCodexModels;
@@ -80,6 +99,8 @@ function getDefaultCustomModelsForProvider(
 
 function patchCustomModels(provider: ProviderKind, models: string[]) {
   switch (provider) {
+    case "claudeCode":
+      return { customClaudeCodeModels: models };
     case "codex":
     default:
       return { customCodexModels: models };
@@ -96,6 +117,7 @@ function SettingsRouteView() {
     Record<ProviderKind, string>
   >({
     codex: "",
+    claudeCode: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
@@ -103,7 +125,10 @@ function SettingsRouteView() {
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const claudeBinaryPath = settings.claudeBinaryPath;
+  const claudeHomePath = settings.claudeHomePath;
   const codexServiceTier = settings.codexServiceTier;
+  const claudeAuthGuidance = getProviderAuthGuidance("claudeCode");
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
   const openKeybindingsFile = useCallback(() => {
@@ -122,6 +147,35 @@ function SettingsRouteView() {
         setIsOpeningKeybindings(false);
       });
   }, [keybindingsConfigPath]);
+
+  const copyClaudeAuthCommand = useCallback(() => {
+    void copyTextToClipboard(CLAUDE_AUTH_LOGIN_COMMAND)
+      .then(() => {
+        toastManager.add({
+          type: "success",
+          title: "Claude auth command copied",
+          description: CLAUDE_AUTH_LOGIN_COMMAND,
+        });
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Failed to copy Claude auth command",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      });
+  }, []);
+
+  const openClaudeDocs = useCallback(() => {
+    const api = ensureNativeApi();
+    void api.shell.openExternal(CLAUDE_CODE_GETTING_STARTED_DOCS_URL).catch((error) => {
+      toastManager.add({
+        type: "error",
+        title: "Failed to open Claude docs",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    });
+  }, []);
 
   const addCustomModel = useCallback((provider: ProviderKind) => {
     const customModelInput = customModelInputByProvider[provider];
@@ -295,6 +349,84 @@ function SettingsRouteView() {
                     }
                   >
                     Reset codex overrides
+                  </Button>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Claude Code</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  These overrides apply to new Claude sessions and let you use a non-default Claude install or config directory.
+                </p>
+                {claudeAuthGuidance ? (
+                  <div className="mt-2 space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      {claudeAuthGuidance.summary} {claudeAuthGuidance.detail}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <code className="rounded bg-background px-2 py-1 text-foreground">
+                        {CLAUDE_AUTH_LOGIN_COMMAND}
+                      </code>
+                      <Button size="xs" variant="outline" onClick={copyClaudeAuthCommand}>
+                        <CopyIcon className="size-3" />
+                        Copy command
+                      </Button>
+                      <Button size="xs" variant="ghost" onClick={openClaudeDocs}>
+                        <ExternalLinkIcon className="size-3" />
+                        Open Claude docs
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="space-y-4">
+                <label htmlFor="claude-binary-path" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Claude binary path</span>
+                  <Input
+                    id="claude-binary-path"
+                    value={claudeBinaryPath}
+                    onChange={(event) => updateSettings({ claudeBinaryPath: event.target.value })}
+                    placeholder="claude"
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Leave blank to use <code>claude</code> from your PATH.
+                  </span>
+                </label>
+
+                <label htmlFor="claude-home-path" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">CLAUDE_CONFIG_DIR path</span>
+                  <Input
+                    id="claude-home-path"
+                    value={claudeHomePath}
+                    onChange={(event) => updateSettings({ claudeHomePath: event.target.value })}
+                    placeholder="/Users/you/.claude"
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Optional custom Claude config directory.
+                  </span>
+                </label>
+
+                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <p>
+                    Binary source:{" "}
+                    <span className="font-medium text-foreground">{claudeBinaryPath || "PATH"}</span>
+                  </p>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      updateSettings({
+                        claudeBinaryPath: defaults.claudeBinaryPath,
+                        claudeHomePath: defaults.claudeHomePath,
+                      })
+                    }
+                  >
+                    Reset Claude overrides
                   </Button>
                 </div>
               </div>

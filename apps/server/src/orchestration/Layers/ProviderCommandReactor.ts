@@ -5,8 +5,9 @@ import {
   type OrchestrationEvent,
   type ProviderModelOptions,
   type ProviderKind,
+  type ProviderSessionStartInput,
   type ProviderServiceTier,
-  type ProviderStartOptions,
+  PROVIDER_KIND_VALUES,
   type OrchestrationSession,
   ThreadId,
   type ProviderSession,
@@ -145,7 +146,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const threadProviderOptions = new Map<string, ProviderStartOptions>();
+  const threadProviderOptions = new Map<string, ProviderSessionStartInput["providerOptions"]>();
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -193,6 +194,27 @@ const make = Effect.gen(function* () {
       createdAt: input.createdAt,
     });
 
+  const setThreadSessionError = (input: {
+    readonly threadId: ThreadId;
+    readonly providerName: ProviderKind | null;
+    readonly runtimeMode: RuntimeMode;
+    readonly detail: string;
+    readonly createdAt: string;
+  }) =>
+    setThreadSession({
+      threadId: input.threadId,
+      session: {
+        threadId: input.threadId,
+        status: "error",
+        providerName: input.providerName,
+        runtimeMode: input.runtimeMode,
+        activeTurnId: null,
+        lastError: input.detail,
+        updatedAt: input.createdAt,
+      },
+      createdAt: input.createdAt,
+    });
+
   const resolveThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const readModel = yield* orchestrationEngine.getReadModel();
     return readModel.threads.find((entry) => entry.id === threadId);
@@ -205,8 +227,8 @@ const make = Effect.gen(function* () {
       readonly provider?: ProviderKind;
       readonly model?: string;
       readonly modelOptions?: ProviderModelOptions;
+      readonly providerOptions?: ProviderSessionStartInput["providerOptions"];
       readonly serviceTier?: ProviderServiceTier | null;
-      readonly providerOptions?: ProviderStartOptions;
     },
   ) {
     const readModel = yield* orchestrationEngine.getReadModel();
@@ -217,7 +239,10 @@ const make = Effect.gen(function* () {
 
     const desiredRuntimeMode = thread.runtimeMode;
     const currentProvider: ProviderKind | undefined =
-      thread.session?.providerName === "codex" ? thread.session.providerName : undefined;
+      thread.session?.providerName &&
+      PROVIDER_KIND_VALUES.includes(thread.session.providerName as ProviderKind)
+        ? (thread.session.providerName as ProviderKind)
+        : undefined;
     const preferredProvider: ProviderKind | undefined = options?.provider ?? currentProvider;
     const desiredModel = options?.model ?? thread.model;
     const effectiveCwd = resolveThreadWorkspaceCwd({
@@ -330,7 +355,7 @@ const make = Effect.gen(function* () {
     readonly model?: string;
     readonly serviceTier?: ProviderServiceTier | null;
     readonly modelOptions?: ProviderModelOptions;
-    readonly providerOptions?: ProviderStartOptions;
+    readonly providerOptions?: ProviderSessionStartInput["providerOptions"];
     readonly interactionMode?: "default" | "plan";
     readonly createdAt: string;
   }) {
@@ -482,10 +507,39 @@ const make = Effect.gen(function* () {
       ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
       ...(event.payload.serviceTier !== undefined ? { serviceTier: event.payload.serviceTier } : {}),
       ...(event.payload.modelOptions !== undefined ? { modelOptions: event.payload.modelOptions } : {}),
-      ...(event.payload.providerOptions !== undefined ? { providerOptions: event.payload.providerOptions } : {}),
+      ...(event.payload.providerOptions !== undefined
+        ? { providerOptions: event.payload.providerOptions }
+        : {}),
       interactionMode: event.payload.interactionMode,
       createdAt: event.payload.createdAt,
-    });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.gen(function* () {
+          const error = Cause.squash(cause);
+          const detail = toErrorMessage(error);
+          yield* setThreadSessionError({
+            threadId: event.payload.threadId,
+            providerName:
+              event.payload.provider ??
+              (thread.session?.providerName &&
+              PROVIDER_KIND_VALUES.includes(thread.session.providerName as ProviderKind)
+                ? (thread.session.providerName as ProviderKind)
+                : null),
+            runtimeMode: thread.session?.runtimeMode ?? thread.runtimeMode,
+            detail,
+            createdAt: event.payload.createdAt,
+          });
+          yield* appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.turn.start.failed",
+            summary: "Provider turn start failed",
+            detail,
+            turnId: null,
+            createdAt: event.payload.createdAt,
+          });
+        }),
+      ),
+    );
   });
 
   const processTurnInterruptRequested = Effect.fnUntraced(function* (
@@ -639,9 +693,11 @@ const make = Effect.gen(function* () {
             return;
           }
           const cachedProviderOptions = threadProviderOptions.get(event.payload.threadId);
-          yield* ensureSessionForThread(event.payload.threadId, event.occurredAt, {
-            ...(cachedProviderOptions !== undefined ? { providerOptions: cachedProviderOptions } : {}),
-          });
+          yield* ensureSessionForThread(
+            event.payload.threadId,
+            event.occurredAt,
+            cachedProviderOptions !== undefined ? { providerOptions: cachedProviderOptions } : {},
+          );
           return;
         }
         case "thread.turn-start-requested":

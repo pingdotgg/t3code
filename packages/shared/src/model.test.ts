@@ -14,6 +14,7 @@ describe("normalizeModelSlug", () => {
   it("maps known aliases to canonical slugs", () => {
     expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
     expect(normalizeModelSlug("gpt-5.3")).toBe("gpt-5.3-codex");
+    expect(normalizeModelSlug("sonnet", "claudeCode")).toBe("claude-sonnet-4-6");
   });
 
   it("returns null for empty or missing values", () => {
@@ -49,10 +50,17 @@ describe("resolveModelSlug", () => {
     for (const model of MODEL_OPTIONS_BY_PROVIDER.codex) {
       expect(resolveModelSlug(model.slug)).toBe(model.slug);
     }
+    for (const model of MODEL_OPTIONS_BY_PROVIDER.claudeCode) {
+      expect(resolveModelSlug(model.slug, "claudeCode")).toBe(model.slug);
+    }
   });
   it("keeps codex defaults for backward compatibility", () => {
     expect(getDefaultModel()).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
     expect(getModelOptions()).toEqual(MODEL_OPTIONS_BY_PROVIDER.codex);
+  });
+
+  it("resolves claude defaults when the model is missing", () => {
+    expect(resolveModelSlug(undefined, "claudeCode")).toBe(DEFAULT_MODEL_BY_PROVIDER.claudeCode);
   });
 });
 
@@ -60,10 +68,15 @@ describe("getReasoningEffortOptions", () => {
   it("returns codex reasoning options for codex", () => {
     expect(getReasoningEffortOptions("codex")).toEqual(["xhigh", "high", "medium", "low"]);
   });
+
+  it("returns claude reasoning options for claude code", () => {
+    expect(getReasoningEffortOptions("claudeCode")).toEqual(["max", "high", "medium", "low"]);
+  });
 });
 
 describe("getDefaultReasoningEffort", () => {
   it("returns provider-scoped defaults", () => {
     expect(getDefaultReasoningEffort("codex")).toBe("high");
+    expect(getDefaultReasoningEffort("claudeCode")).toBe("high");
   });
 });

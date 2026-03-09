@@ -98,6 +98,28 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
+    it.effect("uses explicit remote hosts for default dev URLs in web modes", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: {},
+          serverOffset: 20,
+          webOffset: 20,
+          stateDir: undefined,
+          authToken: undefined,
+          noBrowser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: "100.88.10.4",
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.VITE_WS_URL, "ws://100.88.10.4:3793");
+        assert.equal(env.VITE_DEV_SERVER_URL, "http://100.88.10.4:5753");
+      }),
+    );
+
     it.effect("does not force websocket logging on in dev mode when unset", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({

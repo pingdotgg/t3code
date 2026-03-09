@@ -17,6 +17,7 @@ import {
   EventId,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
+  PROVIDER_CAPABILITIES_BY_PROVIDER,
   ProviderItemId,
   ThreadId,
   TurnId,
@@ -75,6 +76,7 @@ const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
     status: "ready",
     available: true,
     authStatus: "authenticated",
+    capabilities: PROVIDER_CAPABILITIES_BY_PROVIDER.codex,
     checkedAt: "2026-01-01T00:00:00.000Z",
   },
 ];
@@ -1170,7 +1172,7 @@ describe("WebSocket Server", () => {
       respondToUserInput: () => unsupported(),
       stopSession: () => unsupported(),
       listSessions: () => Effect.succeed([]),
-      getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+      getCapabilities: () => Effect.succeed(PROVIDER_CAPABILITIES_BY_PROVIDER.codex),
       rollbackConversation: () => unsupported(),
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
     };

@@ -10,6 +10,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  PROVIDER_CAPABILITIES_BY_PROVIDER,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -89,7 +90,7 @@ function createProviderServiceHarness(
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions,
-    getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+    getCapabilities: () => Effect.succeed(PROVIDER_CAPABILITIES_BY_PROVIDER[providerName]),
     rollbackConversation,
     streamEvents: Stream.fromPubSub(runtimeEventPubSub),
   };

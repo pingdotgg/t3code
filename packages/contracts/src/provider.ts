@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 import { TrimmedNonEmptyString } from "./baseSchemas";
 import { ProviderModelOptions } from "./model";
+import { ProviderStartOptions } from "./providerOptions";
 import {
   ApprovalRequestId,
   EventId,
@@ -25,6 +26,54 @@ import {
 } from "./orchestration";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
+export const ProviderSessionModelSwitchMode = Schema.Literals([
+  "in-session",
+  "restart-session",
+  "unsupported",
+]);
+export type ProviderSessionModelSwitchMode = typeof ProviderSessionModelSwitchMode.Type;
+
+export const ProviderResumeSupport = Schema.Literals(["none", "thread", "provider-session-id"]);
+export type ProviderResumeSupport = typeof ProviderResumeSupport.Type;
+
+export const ProviderCapabilities = Schema.Struct({
+  sessionModelSwitch: ProviderSessionModelSwitchMode,
+  supportsApprovals: Schema.Boolean,
+  supportsUserInput: Schema.Boolean,
+  supportsResume: ProviderResumeSupport,
+  supportsCollaborationMode: Schema.Boolean,
+  supportsImageInputs: Schema.Boolean,
+  supportsReasoningEffort: Schema.Boolean,
+  supportsServiceTier: Schema.Boolean,
+  supportsConversationRollback: Schema.Boolean,
+});
+export type ProviderCapabilities = typeof ProviderCapabilities.Type;
+
+export const PROVIDER_CAPABILITIES_BY_PROVIDER = {
+  codex: {
+    sessionModelSwitch: "in-session",
+    supportsApprovals: true,
+    supportsUserInput: true,
+    supportsResume: "thread",
+    supportsCollaborationMode: true,
+    supportsImageInputs: true,
+    supportsReasoningEffort: true,
+    supportsServiceTier: true,
+    supportsConversationRollback: true,
+  },
+  claudeCode: {
+    sessionModelSwitch: "restart-session",
+    supportsApprovals: true,
+    supportsUserInput: true,
+    supportsResume: "provider-session-id",
+    supportsCollaborationMode: true,
+    supportsImageInputs: false,
+    supportsReasoningEffort: true,
+    supportsServiceTier: false,
+    supportsConversationRollback: false,
+  },
+} as const satisfies Record<ProviderKind, ProviderCapabilities>;
+
 const ProviderSessionStatus = Schema.Literals([
   "connecting",
   "ready",
@@ -47,17 +96,6 @@ export const ProviderSession = Schema.Struct({
   lastError: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ProviderSession = typeof ProviderSession.Type;
-
-const CodexProviderStartOptions = Schema.Struct({
-  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
-  homePath: Schema.optional(TrimmedNonEmptyStringSchema),
-});
-
-export const ProviderStartOptions = Schema.Struct({
-  codex: Schema.optional(CodexProviderStartOptions),
-});
-export type ProviderStartOptions = typeof ProviderStartOptions.Type;
-
 export const ProviderSessionStartInput = Schema.Struct({
   threadId: ThreadId,
   provider: Schema.optional(ProviderKind),

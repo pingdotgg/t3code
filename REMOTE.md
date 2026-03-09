@@ -63,3 +63,23 @@ Open from any device in your tailnet:
 `http://<tailnet-ip>:3773`
 
 You can also bind `--host 0.0.0.0` and connect through the Tailnet IP, but binding directly to the Tailnet IP limits exposure.
+
+## 3) Tailnet access in `dev` / `dev-branch`
+
+For the dev runner, prefer an explicit Tailnet host so the injected Vite URL, HMR socket, and app WebSocket URL all use the same remote-friendly address.
+
+```bash
+T3CODE_HOST="$(tailscale ip -4)" \
+T3CODE_NO_BROWSER=1 \
+T3CODE_PORT_OFFSET=20 \
+T3CODE_STATE_DIR=~/.t3/dev-claude-branch \
+./scripts/dev-branch.sh
+```
+
+Then open from another device in your tailnet:
+
+`http://<tailnet-ip>:5753`
+
+If you prefer to land on the server port first, open:
+
+`http://<tailnet-ip>:3793`

@@ -1,5 +1,6 @@
 import { Option, Schema, SchemaIssue, Struct } from "effect";
 import { ProviderModelOptions } from "./model";
+import { ProviderStartOptions } from "./providerOptions";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -27,7 +28,8 @@ export const ORCHESTRATION_WS_CHANNELS = {
   domainEvent: "orchestration.domainEvent",
 } as const;
 
-export const ProviderKind = Schema.Literal("codex");
+export const PROVIDER_KIND_VALUES = ["codex", "claudeCode"] as const;
+export const ProviderKind = Schema.Literals(PROVIDER_KIND_VALUES);
 export type ProviderKind = typeof ProviderKind.Type;
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
@@ -45,13 +47,6 @@ export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
 export const ProviderServiceTier = Schema.Literals(["fast", "flex"]);
 export type ProviderServiceTier = typeof ProviderServiceTier.Type;
 export const DEFAULT_PROVIDER_KIND: ProviderKind = "codex";
-const CodexProviderStartOptions = Schema.Struct({
-  binaryPath: Schema.optional(TrimmedNonEmptyString),
-  homePath: Schema.optional(TrimmedNonEmptyString),
-});
-const ProviderStartOptions = Schema.Struct({
-  codex: Schema.optional(CodexProviderStartOptions),
-});
 export const RuntimeMode = Schema.Literals(["approval-required", "full-access"]);
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
