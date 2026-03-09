@@ -1,7 +1,6 @@
 import type { GitBranch } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import {
-  filterBranchPickerItems,
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchSelectionTarget,
@@ -194,34 +193,6 @@ describe("dedupeRemoteBranchesWithLocalMatches", () => {
     expect(dedupeRemoteBranchesWithLocalMatches(input).map((branch) => branch.name)).toEqual([
       "upstream/feature",
     ]);
-  });
-});
-
-describe("filterBranchPickerItems", () => {
-  it("shows only the pull request action when the query is a PR reference", () => {
-    expect(
-      filterBranchPickerItems({
-        itemValues: [
-          "__checkout_pull_request__:488",
-          "codething/76f09488",
-          "origin/cursor/rollback-error",
-        ],
-        normalizedQuery: "488",
-        createBranchItemValue: null,
-        checkoutPullRequestItemValue: "__checkout_pull_request__:488",
-      }),
-    ).toEqual(["__checkout_pull_request__:488"]);
-  });
-
-  it("filters branch items normally when the query is not a PR reference", () => {
-    expect(
-      filterBranchPickerItems({
-        itemValues: ["feature/488", "main", "__create_new_branch__:48"],
-        normalizedQuery: "48",
-        createBranchItemValue: "__create_new_branch__:48",
-        checkoutPullRequestItemValue: null,
-      }),
-    ).toEqual(["feature/488", "__create_new_branch__:48"]);
   });
 });
 
