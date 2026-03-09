@@ -125,9 +125,30 @@ function Install-Dep {
     if ($hasWinget) {
         $action = if ($ForceUpgrade) { "upgrade" } else { "install" }
         Write-Step "$( if ($ForceUpgrade) { 'Updating' } else { 'Installing' } ) $Name via winget..."
-        $result = winget $action --id $WingetId --accept-package-agreements --accept-source-agreements --disable-interactivity --silent 2>&1
-        $resultStr = "$result"
-        $wingetOk = ($LASTEXITCODE -eq 0) -or ($resultStr -match "already installed|No available upgrade|No installed package|No newer package|No applicable update|no applicable|is running")
+
+        # Run winget with visible progress (no --silent), stream output live
+        $wingetArgs = "$action --id $WingetId --accept-package-agreements --accept-source-agreements --disable-interactivity"
+        $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+        $pinfo.FileName = "winget"
+        $pinfo.Arguments = $wingetArgs
+        $pinfo.RedirectStandardOutput = $true
+        $pinfo.RedirectStandardError = $true
+        $pinfo.UseShellExecute = $false
+        $pinfo.CreateNoWindow = $true
+        $p = [System.Diagnostics.Process]::Start($pinfo)
+        $allOutput = ""
+        while (-not $p.StandardOutput.EndOfStream) {
+            $line = $p.StandardOutput.ReadLine()
+            $allOutput += "$line`n"
+            # Show progress lines (contain %, MB, KB, etc.)
+            if ($line -match '\d+%|MB|KB|download|Download|install|Install|Found|found') {
+                Write-Host "    $line" -ForegroundColor DarkGray
+            }
+        }
+        $p.WaitForExit()
+        $wingetExit = $p.ExitCode
+
+        $wingetOk = ($wingetExit -eq 0) -or ($allOutput -match "already installed|No available upgrade|No installed package|No newer package|No applicable update|no applicable|is running")
         if ($wingetOk) {
             Write-Ok "$Name up to date (winget)"
             Refresh-Path
@@ -135,7 +156,8 @@ function Install-Dep {
         }
         # If upgrade failed, try install (handles version mismatch)
         if ($ForceUpgrade) {
-            $result2 = winget install --id $WingetId --accept-package-agreements --accept-source-agreements --disable-interactivity --silent 2>&1
+            Write-Step "Retrying $Name install via winget..."
+            $result2 = winget install --id $WingetId --accept-package-agreements --accept-source-agreements --disable-interactivity 2>&1
             if ($LASTEXITCODE -eq 0 -or "$result2" -match "already installed") {
                 Write-Ok "$Name up to date (winget)"
                 Refresh-Path
@@ -297,7 +319,10 @@ try {
             } else {
                 Write-Step "Downloading $msiName ($sizeMB MB)..."
             }
+            $prevPref = $ProgressPreference
+            $ProgressPreference = "Continue"
             Invoke-WebRequest -Uri $msiUrl -OutFile $msiPath -UseBasicParsing
+            $ProgressPreference = $prevPref
 
             # Use current directory as install target, or fallback to Program Files
             $installDir = $PWD.Path
