@@ -1,7 +1,6 @@
 import {
   type ApprovalRequestId,
   DEFAULT_MODEL_BY_PROVIDER,
-  EDITORS,
   type EditorId,
   type KeybindingCommand,
   type CodexReasoningEffort,
@@ -29,6 +28,11 @@ import {
   normalizeModelSlug,
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
+import {
+  readStoredPreferredEditor,
+  resolvePreferredEditor,
+  writeStoredPreferredEditor,
+} from "../editorPreferences";
 import {
   memo,
   useCallback,
@@ -251,7 +255,6 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
-const LAST_EDITOR_KEY = "t3code:last-editor";
 const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
@@ -5758,10 +5761,7 @@ const OpenInPicker = memo(function OpenInPicker({
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
 }) {
-  const [lastEditor, setLastEditor] = useState<EditorId>(() => {
-    const stored = localStorage.getItem(LAST_EDITOR_KEY);
-    return EDITORS.some((e) => e.id === stored) ? (stored as EditorId) : EDITORS[0].id;
-  });
+  const [lastEditor, setLastEditor] = useState<EditorId | null>(() => readStoredPreferredEditor());
 
   const allOptions = useMemo<Array<{ label: string; Icon: Icon; value: EditorId }>>(
     () => [
@@ -5797,10 +5797,18 @@ const OpenInPicker = memo(function OpenInPicker({
     [allOptions, availableEditors],
   );
 
-  const effectiveEditor = options.some((option) => option.value === lastEditor)
-    ? lastEditor
-    : (options[0]?.value ?? null);
+  const effectiveEditor =
+    lastEditor && options.some((option) => option.value === lastEditor)
+      ? lastEditor
+      : resolvePreferredEditor(availableEditors);
   const primaryOption = options.find(({ value }) => value === effectiveEditor) ?? null;
+
+  useEffect(() => {
+    if (!effectiveEditor) return;
+    const stored = readStoredPreferredEditor();
+    if (stored === effectiveEditor) return;
+    writeStoredPreferredEditor(effectiveEditor);
+  }, [effectiveEditor]);
 
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
@@ -5809,7 +5817,7 @@ const OpenInPicker = memo(function OpenInPicker({
       const editor = editorId ?? effectiveEditor;
       if (!editor) return;
       void api.shell.openInEditor(openInCwd, editor);
-      localStorage.setItem(LAST_EDITOR_KEY, editor);
+      writeStoredPreferredEditor(editor);
       setLastEditor(editor);
     },
     [effectiveEditor, openInCwd, setLastEditor],
