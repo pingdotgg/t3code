@@ -8,6 +8,7 @@ import {
   SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
+  TriangleAlertIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -36,14 +37,18 @@ import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraft
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
 import {
+  getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
+  shouldShowArm64IntelBuildWarning,
   shouldHighlightDesktopUpdateError,
   shouldShowDesktopUpdateButton,
   shouldToastDesktopUpdateActionResult,
 } from "./desktopUpdate.logic";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
+import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
@@ -887,6 +892,12 @@ export default function Sidebar() {
   const desktopUpdateButtonAction = desktopUpdateState
     ? resolveDesktopUpdateButtonAction(desktopUpdateState)
     : "none";
+  const showArm64IntelBuildWarning =
+    isElectron && shouldShowArm64IntelBuildWarning(desktopUpdateState);
+  const arm64IntelBuildWarningDescription =
+    desktopUpdateState && showArm64IntelBuildWarning
+      ? getArm64IntelBuildWarningDescription(desktopUpdateState)
+      : null;
   const desktopUpdateButtonInteractivityClasses = desktopUpdateButtonDisabled
     ? "cursor-not-allowed opacity-60"
     : "hover:bg-accent hover:text-foreground";
@@ -1030,6 +1041,29 @@ export default function Sidebar() {
       )}
 
       <SidebarContent className="gap-0">
+        {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
+          <SidebarGroup className="px-2 pt-2 pb-0">
+            <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
+              <TriangleAlertIcon />
+              <AlertTitle>Intel build on Apple Silicon</AlertTitle>
+              <AlertDescription>{arm64IntelBuildWarningDescription}</AlertDescription>
+              {desktopUpdateButtonAction !== "none" ? (
+                <AlertAction>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={desktopUpdateButtonDisabled}
+                    onClick={handleDesktopUpdateButtonClick}
+                  >
+                    {desktopUpdateButtonAction === "download"
+                      ? "Download ARM build"
+                      : "Install ARM build"}
+                  </Button>
+                </AlertAction>
+              ) : null}
+            </Alert>
+          </SidebarGroup>
+        ) : null}
         <SidebarGroup className="px-2 py-2">
           <div className="mb-1 flex items-center justify-between px-2">
             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
