@@ -322,33 +322,7 @@ jobs:
         name: Update version strings
         env:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
-        run: |
-          node --input-type=module -e '
-            import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
-
-            const files = [
-              "apps/server/package.json",
-              "apps/desktop/package.json",
-              "apps/web/package.json",
-              "packages/contracts/package.json",
-            ];
-
-            let changed = false;
-            for (const file of files) {
-              const packageJson = JSON.parse(readFileSync(file, "utf8"));
-              if (packageJson.version !== process.env.RELEASE_VERSION) {
-                packageJson.version = process.env.RELEASE_VERSION;
-                writeFileSync(file, `${JSON.stringify(packageJson, null, 2)}\n`);
-                changed = true;
-              }
-            }
-
-            if (!changed) {
-              console.log("All package.json versions already match release version.");
-            }
-
-            appendFileSync(process.env.GITHUB_OUTPUT, `changed=${changed}\n`);
-          '
+        run: node scripts/update-release-package-versions.ts "$RELEASE_VERSION" --github-output
 
       - name: Format package.json files
         if: steps.update_versions.outputs.changed == 'true'
@@ -356,7 +330,7 @@ jobs:
 
       - name: Refresh lockfile
         if: steps.update_versions.outputs.changed == 'true'
-        run: bun install
+        run: bun install --lockfile-only --ignore-scripts
 
       - name: Commit and push version bump
         if: steps.update_versions.outputs.changed == 'true'
