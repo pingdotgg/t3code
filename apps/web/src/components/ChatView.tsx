@@ -33,6 +33,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -938,23 +939,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
     pendingUserInputs.length > 0 ||
     (showPlanFollowUpPrompt && activeProposedPlan !== null);
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
-  useEffect(() => {
-    if (!activePendingProgress) {
-      return;
-    }
-    promptRef.current = activePendingProgress.customAnswer;
-    setComposerCursor(activePendingProgress.customAnswer.length);
+  const activePendingRequestId = activePendingUserInput?.requestId ?? null;
+  const activePendingQuestionId = activePendingProgress?.activeQuestion?.id ?? null;
+  const activePendingCustomAnswer = activePendingProgress?.customAnswer ?? "";
+  const syncActivePendingQuestionComposer = useEffectEvent(() => {
+    promptRef.current = activePendingCustomAnswer;
+    setComposerCursor(activePendingCustomAnswer.length);
     setComposerTrigger(
       detectComposerTrigger(
-        activePendingProgress.customAnswer,
-        expandCollapsedComposerCursor(
-          activePendingProgress.customAnswer,
-          activePendingProgress.customAnswer.length,
-        ),
+        activePendingCustomAnswer,
+        expandCollapsedComposerCursor(activePendingCustomAnswer, activePendingCustomAnswer.length),
       ),
     );
     setComposerHighlightedItemId(null);
-  }, [activePendingProgress, activePendingUserInput?.requestId]);
+  });
+  useEffect(() => {
+    if (activePendingRequestId === null || activePendingQuestionId === null) {
+      return;
+    }
+    syncActivePendingQuestionComposer();
+  }, [activePendingQuestionId, activePendingRequestId]);
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
