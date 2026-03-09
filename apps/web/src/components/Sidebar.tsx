@@ -3,6 +3,7 @@ import {
   FolderIcon,
   GitPullRequestIcon,
   RocketIcon,
+  SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
 } from "lucide-react";
@@ -17,7 +18,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL } from "../branding";
@@ -57,6 +58,7 @@ import {
   SidebarMenuSubItem,
   SidebarSeparator,
   SidebarTrigger,
+  useSidebar,
 } from "./ui/sidebar";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
@@ -258,6 +260,7 @@ function ProjectFavicon({ cwd }: { cwd: string }) {
 }
 
 export default function Sidebar() {
+  const { isMobile, setOpenMobile } = useSidebar();
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
@@ -278,6 +281,7 @@ export default function Sidebar() {
     (store) => store.clearProjectDraftThreadById,
   );
   const navigate = useNavigate();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
   const { settings: appSettings } = useAppSettings();
   const routeThreadId = useParams({
     strict: false,
@@ -898,6 +902,7 @@ export default function Sidebar() {
       shortcutLabelForCommand(keybindings, "chat.new"),
     [keybindings],
   );
+  const isSettingsRoute = pathname === "/settings";
 
   const handleDesktopUpdateButtonClick = useCallback(() => {
     const bridge = window.desktopBridge;
@@ -974,6 +979,13 @@ export default function Sidebar() {
       return next;
     });
   }, []);
+
+  const handleOpenSettings = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigate({ to: "/settings" });
+  }, [isMobile, navigate, setOpenMobile]);
 
   const wordmark = (
     <div className="flex items-center gap-2">
@@ -1342,13 +1354,28 @@ export default function Sidebar() {
             </div>
           </>
         ) : (
-          <button
-            type="button"
-            className="flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-border py-2 text-xs text-muted-foreground/70 transition-colors duration-150 hover:border-ring hover:text-muted-foreground"
-            onClick={() => setAddingProject(true)}
-          >
-            + Add project
-          </button>
+          <>
+            <button
+              type="button"
+              className="flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-border py-2 text-xs text-muted-foreground/70 transition-colors duration-150 hover:border-ring hover:text-muted-foreground"
+              onClick={() => setAddingProject(true)}
+            >
+              + Add project
+            </button>
+            <button
+              type="button"
+              aria-current={isSettingsRoute ? "page" : undefined}
+              className={`flex w-full items-center justify-center gap-1.5 rounded-md border px-3 py-2 text-xs transition-colors duration-150 ${
+                isSettingsRoute
+                  ? "border-border/70 bg-accent/85 font-medium text-foreground ring-1 ring-border/70 dark:bg-accent/55 dark:ring-border/50"
+                  : "border-border text-muted-foreground/80 hover:bg-secondary hover:text-foreground"
+              }`}
+              onClick={handleOpenSettings}
+            >
+              <SettingsIcon className="size-3.5 shrink-0" />
+              <span>Settings</span>
+            </button>
+          </>
         )}
       </SidebarFooter>
     </>

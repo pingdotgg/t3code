@@ -409,6 +409,16 @@ async function waitForInteractionModeButton(expectedLabel: "Chat" | "Plan"): Pro
   );
 }
 
+async function waitForButtonByLabel(label: string): Promise<HTMLButtonElement> {
+  return waitForElement(
+    () =>
+      Array.from(document.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === label,
+      ) as HTMLButtonElement | null,
+    `Unable to find ${label} button.`,
+  );
+}
+
 async function waitForImagesToLoad(scope: ParentNode): Promise<void> {
   const images = Array.from(scope.querySelectorAll("img"));
   if (images.length === 0) {
@@ -795,6 +805,40 @@ describe("ChatView timeline estimator parity (full app)", () => {
             cwd: "/repo/project",
             editor: "vscode",
           });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens settings from the sidebar footer", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-settings-nav" as MessageId,
+        targetText: "settings navigation target",
+      }),
+    });
+
+    try {
+      const settingsButton = await waitForButtonByLabel("Settings");
+      settingsButton.click();
+
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("h1")).find(
+            (heading) => heading.textContent?.trim() === "Settings",
+          ) as HTMLHeadingElement | null,
+        "Unable to find Settings heading.",
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain(
+            "Configure app-level preferences for this device.",
+          );
         },
         { timeout: 8_000, interval: 16 },
       );
