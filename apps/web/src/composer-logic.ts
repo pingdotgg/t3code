@@ -1,7 +1,7 @@
 import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "slash-model";
-export type ComposerSlashCommand = "model" | "plan" | "default";
+export type ComposerSlashCommand = "model" | "plan" | "default" | "checkout-pr";
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -10,7 +10,12 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
-const SLASH_COMMANDS: readonly ComposerSlashCommand[] = ["model", "plan", "default"];
+const SLASH_COMMANDS: readonly ComposerSlashCommand[] = [
+  "model",
+  "plan",
+  "default",
+  "checkout-pr",
+];
 
 function clampCursor(text: string, cursor: number): number {
   if (!Number.isFinite(cursor)) return text.length;
@@ -164,11 +169,14 @@ export function parseStandaloneComposerSlashCommand(text: string): Exclude<
   ComposerSlashCommand,
   "model"
 > | null {
-  const match = /^\/(plan|default)\s*$/i.exec(text.trim());
+  const match = /^\/(plan|default|checkout-pr)\s*$/i.exec(text.trim());
   if (!match) {
     return null;
   }
-  return match[1]?.toLowerCase() === "plan" ? "plan" : "default";
+  const command = match[1]?.toLowerCase();
+  if (command === "plan") return "plan";
+  if (command === "checkout-pr") return "checkout-pr";
+  return "default";
 }
 
 export function replaceTextRange(

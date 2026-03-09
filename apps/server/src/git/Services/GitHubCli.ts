@@ -17,6 +17,7 @@ export interface GitHubPullRequestSummary {
   readonly url: string;
   readonly baseRefName: string;
   readonly headRefName: string;
+  readonly state?: "open" | "closed" | "merged";
 }
 
 /**
@@ -42,6 +43,14 @@ export interface GitHubCliShape {
   }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
 
   /**
+   * Resolve a pull request by URL, number, or branch-ish identifier.
+   */
+  readonly getPullRequest: (input: {
+    readonly cwd: string;
+    readonly reference: string;
+  }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
+
+  /**
    * Create a pull request from branch context and body file.
    */
   readonly createPullRequest: (input: {
@@ -58,6 +67,15 @@ export interface GitHubCliShape {
   readonly getDefaultBranch: (input: {
     readonly cwd: string;
   }) => Effect.Effect<string | null, GitHubCliError>;
+
+  /**
+   * Checkout a pull request into the current repository worktree.
+   */
+  readonly checkoutPullRequest: (input: {
+    readonly cwd: string;
+    readonly reference: string;
+    readonly force?: boolean;
+  }) => Effect.Effect<void, GitHubCliError>;
 }
 
 /**

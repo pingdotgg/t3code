@@ -105,6 +105,7 @@ const makeIsolatedGitCore = (gitService: GitServiceShape) =>
       readConfigValue: (cwd, key) => core.readConfigValue(cwd, key),
       listBranches: (input) => core.listBranches(input),
       createWorktree: (input) => core.createWorktree(input),
+      fetchPullRequestBranch: (input) => core.fetchPullRequestBranch(input),
       removeWorktree: (input) => core.removeWorktree(input),
       renameBranch: (input) => core.renameBranch(input),
       createBranch: (input) => core.createBranch(input),
@@ -146,6 +147,15 @@ function createGitWorktree(input: Parameters<GitCoreShape["createWorktree"]>[0])
   return Effect.gen(function* () {
     const core = yield* GitCore;
     return yield* core.createWorktree(input);
+  });
+}
+
+function fetchGitPullRequestBranch(
+  input: Parameters<GitCoreShape["fetchPullRequestBranch"]>[0],
+) {
+  return Effect.gen(function* () {
+    const core = yield* GitCore;
+    return yield* core.fetchPullRequestBranch(input);
   });
 }
 
@@ -1006,6 +1016,28 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect("creates a worktree for an existing branch when newBranch is omitted", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        yield* createGitBranch({ cwd: tmp, branch: "feature/existing-worktree" });
+
+        const wtPath = path.join(tmp, "wt-existing");
+        const result = yield* createGitWorktree({
+          cwd: tmp,
+          branch: "feature/existing-worktree",
+          path: wtPath,
+        });
+
+        expect(result.worktree.path).toBe(wtPath);
+        expect(result.worktree.branch).toBe("feature/existing-worktree");
+        const branchOutput = yield* git(wtPath, ["branch", "--show-current"]);
+        expect(branchOutput).toBe("feature/existing-worktree");
+
+        yield* removeGitWorktree({ cwd: tmp, path: wtPath });
+      }),
+    );
+
     it.effect("throws when new branch name already exists", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
@@ -1164,6 +1196,37 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(wtBranch).toBe("feature-wt");
 
         yield* removeGitWorktree({ cwd: tmp, path: wtPath });
+      }),
+    );
+  });
+
+  describe("fetchPullRequestBranch", () => {
+    it.effect("fetches a GitHub pull request ref into a local branch without checkout", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const remoteDir = yield* makeTmpDir("git-remote-");
+        yield* git(remoteDir, ["init", "--bare"]);
+        yield* git(tmp, ["remote", "add", "origin", remoteDir]);
+        yield* git(tmp, ["push", "-u", "origin", "main"]);
+        yield* git(tmp, ["checkout", "-b", "feature/pr-fetch"]);
+        yield* writeTextFile(path.join(tmp, "pr-fetch.txt"), "fetch me\n");
+        yield* git(tmp, ["add", "pr-fetch.txt"]);
+        yield* git(tmp, ["commit", "-m", "Add PR fetch branch"]);
+        yield* git(tmp, ["push", "-u", "origin", "feature/pr-fetch"]);
+        yield* git(tmp, ["push", "origin", "HEAD:refs/pull/55/head"]);
+        yield* git(tmp, ["checkout", "main"]);
+
+        yield* fetchGitPullRequestBranch({
+          cwd: tmp,
+          prNumber: 55,
+          branch: "feature/pr-fetch",
+        });
+
+        const localBranches = yield* git(tmp, ["branch", "--list", "feature/pr-fetch"]);
+        expect(localBranches).toContain("feature/pr-fetch");
+        const currentBranch = yield* git(tmp, ["branch", "--show-current"]);
+        expect(currentBranch).toBe("main");
       }),
     );
   });

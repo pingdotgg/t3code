@@ -23,6 +23,14 @@ interface FakeGhScenario {
   prListSequence?: string[];
   createdPrUrl?: string;
   defaultBranch?: string;
+  pullRequest?: {
+    number: number;
+    title: string;
+    url: string;
+    baseRefName: string;
+    headRefName: string;
+    state?: "open" | "closed" | "merged";
+  };
   failWith?: GitHubCliError;
 }
 
@@ -204,6 +212,26 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
 
     if (args[0] === "pr" && args[1] === "view") {
       return Effect.succeed({
+        stdout:
+          JSON.stringify(
+            scenario.pullRequest ?? {
+              number: 101,
+              title: "Pull request",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/101",
+              baseRefName: "main",
+              headRefName: "feature/pull-request",
+              state: "OPEN",
+            },
+          ) + "\n",
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
+    }
+
+    if (args[0] === "pr" && args[1] === "checkout") {
+      return Effect.succeed({
         stdout: "",
         stderr: "",
         code: 0,
@@ -279,6 +307,29 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             return value.length > 0 ? value : null;
           }),
         ),
+      getPullRequest: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "pr",
+            "view",
+            input.reference,
+            "--json",
+            "number,title,url,baseRefName,headRefName,state,mergedAt",
+          ],
+        }).pipe(
+          Effect.map((result) => JSON.parse(result.stdout) as GitHubPullRequestSummary),
+        ),
+      checkoutPullRequest: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "pr",
+            "checkout",
+            input.reference,
+            ...(input.force ? ["--force"] : []),
+          ],
+        }).pipe(Effect.asVoid),
     },
     ghCalls,
   };
@@ -294,6 +345,17 @@ function runStackedAction(
   },
 ) {
   return manager.runStackedAction(input);
+}
+
+function resolvePullRequest(manager: GitManagerShape, input: { cwd: string; reference: string }) {
+  return manager.resolvePullRequest(input);
+}
+
+function preparePullRequestThread(
+  manager: GitManagerShape,
+  input: { cwd: string; reference: string; mode: "local" | "worktree" },
+) {
+  return manager.preparePullRequestThread(input);
 }
 
 function makeManager(input?: {
@@ -922,6 +984,191 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         Effect.map((error) => error.message),
       );
       expect(errorMessage).toContain("gh auth login");
+    }),
+  );
+
+  it.effect("resolves pull requests from #number references", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 42,
+            title: "Resolve PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+            baseRefName: "main",
+            headRefName: "feature/resolve-pr",
+            state: "open",
+          },
+        },
+      });
+
+      const result = yield* resolvePullRequest(manager, {
+        cwd: repoDir,
+        reference: "#42",
+      });
+
+      expect(result.pullRequest).toEqual({
+        number: 42,
+        title: "Resolve PR",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+        baseBranch: "main",
+        headBranch: "feature/resolve-pr",
+        state: "open",
+      });
+      expect(ghCalls.some((call) => call.startsWith("pr view 42 "))).toBe(true);
+    }),
+  );
+
+  it.effect("prepares pull request threads in local mode by checking out the PR branch", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-local"]);
+      fs.writeFileSync(path.join(repoDir, "local.txt"), "local\n");
+      yield* runGit(repoDir, ["add", "local.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Local PR branch"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 64,
+            title: "Local PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/64",
+            baseRefName: "main",
+            headRefName: "feature/pr-local",
+            state: "open",
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "#64",
+        mode: "local",
+      });
+
+      expect(result.branch).toBe("feature/pr-local");
+      expect(result.worktreePath).toBeNull();
+      const branch = (yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim();
+      expect(branch).toBe("feature/pr-local");
+      expect(ghCalls).toContain("pr checkout 64 --force");
+    }),
+  );
+
+  it.effect("prepares pull request threads in worktree mode on the PR head branch", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-worktree"]);
+      fs.writeFileSync(path.join(repoDir, "worktree.txt"), "worktree\n");
+      yield* runGit(repoDir, ["add", "worktree.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "PR worktree branch"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-worktree"]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/77/head"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 77,
+            title: "Worktree PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/77",
+            baseRefName: "main",
+            headRefName: "feature/pr-worktree",
+            state: "open",
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "77",
+        mode: "worktree",
+      });
+
+      expect(result.branch).toBe("feature/pr-worktree");
+      expect(result.worktreePath).not.toBeNull();
+      expect(fs.existsSync(result.worktreePath as string)).toBe(true);
+      const worktreeBranch = (
+        yield* runGit(result.worktreePath as string, ["branch", "--show-current"])
+      ).stdout.trim();
+      expect(worktreeBranch).toBe("feature/pr-worktree");
+    }),
+  );
+
+  it.effect("reuses an existing dedicated worktree for the PR head branch", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-existing-worktree"]);
+      fs.writeFileSync(path.join(repoDir, "existing.txt"), "existing\n");
+      yield* runGit(repoDir, ["add", "existing.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Existing worktree branch"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      const worktreePath = path.join(repoDir, "..", `pr-existing-${Date.now()}`);
+      yield* runGit(repoDir, ["worktree", "add", worktreePath, "feature/pr-existing-worktree"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 78,
+            title: "Existing worktree PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/78",
+            baseRefName: "main",
+            headRefName: "feature/pr-existing-worktree",
+            state: "open",
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "78",
+        mode: "worktree",
+      });
+
+      expect(result.worktreePath && fs.realpathSync.native(result.worktreePath)).toBe(
+        fs.realpathSync.native(worktreePath),
+      );
+      expect(result.branch).toBe("feature/pr-existing-worktree");
+    }),
+  );
+
+  it.effect("rejects worktree prep when the PR head branch is checked out in the main repo", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-root-only"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 79,
+            title: "Root-only PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/79",
+            baseRefName: "main",
+            headRefName: "feature/pr-root-only",
+            state: "open",
+          },
+        },
+      });
+
+      const errorMessage = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "79",
+        mode: "worktree",
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+
+      expect(errorMessage).toContain("already checked out in the main repo");
     }),
   );
 });

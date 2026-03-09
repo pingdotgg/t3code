@@ -134,6 +134,10 @@ describe("parseStandaloneComposerSlashCommand", () => {
     expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
   });
 
+  it("parses standalone /checkout-pr command", () => {
+    expect(parseStandaloneComposerSlashCommand(" /checkout-pr ")).toBe("checkout-pr");
+  });
+
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
   });

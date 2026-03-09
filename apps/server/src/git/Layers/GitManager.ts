@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 
 import { Effect, FileSystem, Layer, Path } from "effect";
 import { resolveAutoFeatureBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
@@ -20,6 +21,15 @@ interface OpenPrInfo {
 interface PullRequestInfo extends OpenPrInfo {
   state: "open" | "closed" | "merged";
   updatedAt: string | null;
+}
+
+interface ResolvedPullRequest {
+  number: number;
+  title: string;
+  url: string;
+  baseBranch: string;
+  headBranch: string;
+  state: "open" | "closed" | "merged";
 }
 
 function parsePullRequestList(raw: unknown): PullRequestInfo[] {
@@ -172,6 +182,38 @@ function toStatusPr(pr: PullRequestInfo): {
     baseBranch: pr.baseRefName,
     headBranch: pr.headRefName,
     state: pr.state,
+  };
+}
+
+function normalizePullRequestReference(reference: string): string {
+  const trimmed = reference.trim();
+  const hashNumber = /^#(\d+)$/.exec(trimmed);
+  return hashNumber?.[1] ?? trimmed;
+}
+
+function canonicalizeExistingPath(value: string): string {
+  try {
+    return realpathSync.native(value);
+  } catch {
+    return value;
+  }
+}
+
+function toResolvedPullRequest(pr: {
+  number: number;
+  title: string;
+  url: string;
+  baseRefName: string;
+  headRefName: string;
+  state?: "open" | "closed" | "merged";
+}): ResolvedPullRequest {
+  return {
+    number: pr.number,
+    title: pr.title,
+    url: pr.url,
+    baseBranch: pr.baseRefName,
+    headBranch: pr.headRefName,
+    state: pr.state ?? "open",
   };
 }
 
@@ -445,6 +487,115 @@ export const makeGitManager = Effect.gen(function* () {
     };
   });
 
+  const resolvePullRequest: GitManagerShape["resolvePullRequest"] = Effect.fnUntraced(function* (
+    input,
+  ) {
+    const pullRequest = yield* gitHubCli
+      .getPullRequest({
+        cwd: input.cwd,
+        reference: normalizePullRequestReference(input.reference),
+      })
+      .pipe(Effect.map((resolved) => toResolvedPullRequest(resolved)));
+
+    return { pullRequest };
+  });
+
+  const preparePullRequestThread: GitManagerShape["preparePullRequestThread"] = Effect.fnUntraced(
+    function* (input) {
+      const normalizedReference = normalizePullRequestReference(input.reference);
+      const rootWorktreePath = canonicalizeExistingPath(input.cwd);
+      const pullRequest = yield* gitHubCli
+        .getPullRequest({
+          cwd: input.cwd,
+          reference: normalizedReference,
+        })
+        .pipe(Effect.map((resolved) => toResolvedPullRequest(resolved)));
+
+      if (input.mode === "local") {
+        yield* gitHubCli.checkoutPullRequest({
+          cwd: input.cwd,
+          reference: normalizedReference,
+          force: true,
+        });
+        const details = yield* gitCore.statusDetails(input.cwd);
+        return {
+          pullRequest,
+          branch: details.branch ?? pullRequest.headBranch,
+          worktreePath: null,
+        };
+      }
+
+      const findLocalHeadBranch = (cwd: string) =>
+        gitCore.listBranches({ cwd }).pipe(
+          Effect.map((result) =>
+            result.branches.find(
+              (branch) => !branch.isRemote && branch.name === pullRequest.headBranch,
+            ),
+          ),
+        );
+
+      const existingBranchBeforeFetch = yield* findLocalHeadBranch(input.cwd);
+      const existingBranchBeforeFetchPath = existingBranchBeforeFetch?.worktreePath
+        ? canonicalizeExistingPath(existingBranchBeforeFetch.worktreePath)
+        : null;
+      if (
+        existingBranchBeforeFetch?.worktreePath &&
+        existingBranchBeforeFetchPath !== rootWorktreePath
+      ) {
+        return {
+          pullRequest,
+          branch: pullRequest.headBranch,
+          worktreePath: existingBranchBeforeFetch.worktreePath,
+        };
+      }
+      if (existingBranchBeforeFetchPath === rootWorktreePath) {
+        return yield* gitManagerError(
+          "preparePullRequestThread",
+          "This PR branch is already checked out in the main repo. Use Local, or switch the main repo off that branch before creating a worktree thread.",
+        );
+      }
+
+      yield* gitCore.fetchPullRequestBranch({
+        cwd: input.cwd,
+        prNumber: pullRequest.number,
+        branch: pullRequest.headBranch,
+      });
+
+      const existingBranchAfterFetch = yield* findLocalHeadBranch(input.cwd);
+      const existingBranchAfterFetchPath = existingBranchAfterFetch?.worktreePath
+        ? canonicalizeExistingPath(existingBranchAfterFetch.worktreePath)
+        : null;
+      if (
+        existingBranchAfterFetch?.worktreePath &&
+        existingBranchAfterFetchPath !== rootWorktreePath
+      ) {
+        return {
+          pullRequest,
+          branch: pullRequest.headBranch,
+          worktreePath: existingBranchAfterFetch.worktreePath,
+        };
+      }
+      if (existingBranchAfterFetchPath === rootWorktreePath) {
+        return yield* gitManagerError(
+          "preparePullRequestThread",
+          "This PR branch is already checked out in the main repo. Use Local, or switch the main repo off that branch before creating a worktree thread.",
+        );
+      }
+
+      const worktree = yield* gitCore.createWorktree({
+        cwd: input.cwd,
+        branch: pullRequest.headBranch,
+        path: null,
+      });
+
+      return {
+        pullRequest,
+        branch: worktree.worktree.branch,
+        worktreePath: worktree.worktree.path,
+      };
+    },
+  );
+
   const runFeatureBranchStep = (cwd: string, branch: string | null, commitMessage?: string) =>
     Effect.gen(function* () {
       const suggestion = yield* resolveCommitAndBranchSuggestion({
@@ -536,6 +687,8 @@ export const makeGitManager = Effect.gen(function* () {
 
   return {
     status,
+    resolvePullRequest,
+    preparePullRequestThread,
     runStackedAction,
   } satisfies GitManagerShape;
 });

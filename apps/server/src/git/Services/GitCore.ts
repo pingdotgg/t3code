@@ -56,6 +56,12 @@ export interface GitRenameBranchResult {
   branch: string;
 }
 
+export interface GitFetchPullRequestBranchInput {
+  cwd: string;
+  prNumber: number;
+  branch: string;
+}
+
 /**
  * GitCoreShape - Service API for low-level Git repository interactions.
  */
@@ -128,6 +134,13 @@ export interface GitCoreShape {
   readonly createWorktree: (
     input: GitCreateWorktreeInput,
   ) => Effect.Effect<GitCreateWorktreeResult, GitCommandError>;
+
+  /**
+   * Materialize a GitHub pull request head as a local branch without switching checkout.
+   */
+  readonly fetchPullRequestBranch: (
+    input: GitFetchPullRequestBranchInput,
+  ) => Effect.Effect<void, GitCommandError>;
 
   /**
    * Remove an existing worktree.

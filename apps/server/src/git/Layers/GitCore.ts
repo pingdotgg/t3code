@@ -418,6 +418,29 @@ const makeGitCore = Effect.gen(function* () {
       allowNonZeroExit: true,
     }).pipe(Effect.map((result) => result.code === 0));
 
+  const listRemoteNames = (cwd: string): Effect.Effect<ReadonlyArray<string>, GitCommandError> =>
+    runGitStdout("GitCore.listRemoteNames", cwd, ["remote"]).pipe(
+      Effect.map((stdout) => parseRemoteNames(stdout).toReversed()),
+    );
+
+  const resolvePrimaryRemoteName = (cwd: string): Effect.Effect<string, GitCommandError> =>
+    Effect.gen(function* () {
+      if (yield* originRemoteExists(cwd)) {
+        return "origin";
+      }
+      const remotes = yield* listRemoteNames(cwd);
+      const [firstRemote] = remotes;
+      if (firstRemote) {
+        return firstRemote;
+      }
+      return yield* createGitCommandError(
+        "GitCore.resolvePrimaryRemoteName",
+        cwd,
+        ["remote"],
+        "No git remote is configured for this repository.",
+      );
+    });
+
   const resolveBaseBranchForNoUpstream = (
     cwd: string,
     branch: string,
@@ -1015,16 +1038,20 @@ const makeGitCore = Effect.gen(function* () {
 
   const createWorktree: GitCoreShape["createWorktree"] = (input) =>
     Effect.gen(function* () {
-      const sanitizedBranch = input.newBranch.replace(/\//g, "-");
+      const targetBranch = input.newBranch ?? input.branch;
+      const sanitizedBranch = targetBranch.replace(/\//g, "-");
       const repoName = path.basename(input.cwd);
       const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "/tmp";
       const worktreePath =
         input.path ?? path.join(homeDir, ".t3", "worktrees", repoName, sanitizedBranch);
+      const args = input.newBranch
+        ? ["worktree", "add", "-b", input.newBranch, worktreePath, input.branch]
+        : ["worktree", "add", worktreePath, input.branch];
 
       yield* executeGit(
         "GitCore.createWorktree",
         input.cwd,
-        ["worktree", "add", "-b", input.newBranch, worktreePath, input.branch],
+        args,
         {
           fallbackErrorMessage: "git worktree add failed",
         },
@@ -1033,10 +1060,29 @@ const makeGitCore = Effect.gen(function* () {
       return {
         worktree: {
           path: worktreePath,
-          branch: input.newBranch,
+          branch: targetBranch,
         },
       };
     });
+
+  const fetchPullRequestBranch: GitCoreShape["fetchPullRequestBranch"] = (input) =>
+    Effect.gen(function* () {
+      const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
+      yield* executeGit(
+        "GitCore.fetchPullRequestBranch",
+        input.cwd,
+        [
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          remoteName,
+          `+refs/pull/${input.prNumber}/head:refs/heads/${input.branch}`,
+        ],
+        {
+          fallbackErrorMessage: "git fetch pull request branch failed",
+        },
+      );
+    }).pipe(Effect.asVoid);
 
   const removeWorktree: GitCoreShape["removeWorktree"] = (input) =>
     Effect.gen(function* () {
@@ -1197,6 +1243,7 @@ const makeGitCore = Effect.gen(function* () {
     readConfigValue,
     listBranches,
     createWorktree,
+    fetchPullRequestBranch,
     removeWorktree,
     renameBranch,
     createBranch,

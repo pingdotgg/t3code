@@ -14,6 +14,7 @@ import {
 
 import { gitBranchesQueryOptions, gitQueryKeys, invalidateGitQueries } from "../lib/gitReactQuery";
 import { readNativeApi } from "../nativeApi";
+import { parsePullRequestReference } from "../pullRequestReference";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
@@ -40,6 +41,7 @@ interface BranchToolbarBranchSelectorProps {
   effectiveEnvMode: EnvMode;
   envLocked: boolean;
   onSetThreadBranch: (branch: string | null, worktreePath: string | null) => void;
+  onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
 }
 
@@ -70,6 +72,7 @@ export function BranchToolbarBranchSelector({
   effectiveEnvMode,
   envLocked,
   onSetThreadBranch,
+  onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
   const queryClient = useQueryClient();
@@ -95,17 +98,27 @@ export function BranchToolbarBranchSelector({
   );
   const trimmedBranchQuery = branchQuery.trim();
   const normalizedBranchQuery = trimmedBranchQuery.toLowerCase();
+  const prReference = parsePullRequestReference(trimmedBranchQuery);
+  const checkoutPullRequestItemValue = prReference && onCheckoutPullRequestRequest
+    ? `__checkout_pull_request__:${prReference}`
+    : null;
   const canCreateBranch = effectiveEnvMode === "local" && trimmedBranchQuery.length > 0;
   const hasExactBranchMatch = branchByName.has(trimmedBranchQuery);
   const createBranchItemValue = canCreateBranch
     ? `__create_new_branch__:${trimmedBranchQuery}`
     : null;
   const branchPickerItems = useMemo(
-    () =>
-      createBranchItemValue && !hasExactBranchMatch
-        ? [...branchNames, createBranchItemValue]
-        : branchNames,
-    [branchNames, createBranchItemValue, hasExactBranchMatch],
+    () => {
+      const items = [...branchNames];
+      if (createBranchItemValue && !hasExactBranchMatch) {
+        items.push(createBranchItemValue);
+      }
+      if (checkoutPullRequestItemValue) {
+        items.unshift(checkoutPullRequestItemValue);
+      }
+      return items;
+    },
+    [branchNames, checkoutPullRequestItemValue, createBranchItemValue, hasExactBranchMatch],
   );
   const filteredBranchPickerItems = useMemo(
     () =>
@@ -338,6 +351,37 @@ export function BranchToolbarBranchSelector({
             {virtualBranchRows.map((virtualRow) => {
               const itemValue = filteredBranchPickerItems[virtualRow.index];
               if (!itemValue) return null;
+              if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
+                return (
+                  <ComboboxItem
+                    hideIndicator
+                    key={itemValue}
+                    index={virtualRow.index}
+                    value={itemValue}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                    onClick={() => {
+                      if (!prReference || !onCheckoutPullRequestRequest) {
+                        return;
+                      }
+                      setIsBranchMenuOpen(false);
+                      setBranchQuery("");
+                      onComposerFocusRequest?.();
+                      onCheckoutPullRequestRequest(prReference);
+                    }}
+                  >
+                    <div className="flex min-w-0 flex-col items-start">
+                      <span className="truncate font-medium">Checkout Pull Request</span>
+                      <span className="truncate text-muted-foreground text-xs">{prReference}</span>
+                    </div>
+                  </ComboboxItem>
+                );
+              }
               if (createBranchItemValue && itemValue === createBranchItemValue) {
                 return (
                   <ComboboxItem

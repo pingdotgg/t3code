@@ -1,6 +1,9 @@
 import type {
   GitCheckoutInput,
   GitCreateBranchInput,
+  GitPreparePullRequestThreadInput,
+  GitPreparePullRequestThreadResult,
+  GitPullRequestRefInput,
   GitCreateWorktreeInput,
   GitCreateWorktreeResult,
   GitInitInput,
@@ -9,6 +12,7 @@ import type {
   GitPullInput,
   GitPullResult,
   GitRemoveWorktreeInput,
+  GitResolvePullRequestResult,
   GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStatusInput,
@@ -134,6 +138,10 @@ export interface NativeApi {
     createBranch: (input: GitCreateBranchInput) => Promise<void>;
     checkout: (input: GitCheckoutInput) => Promise<void>;
     init: (input: GitInitInput) => Promise<void>;
+    resolvePullRequest: (input: GitPullRequestRefInput) => Promise<GitResolvePullRequestResult>;
+    preparePullRequestThread: (
+      input: GitPreparePullRequestThreadInput,
+    ) => Promise<GitPreparePullRequestThreadResult>;
     // Stacked action API
     pull: (input: GitPullInput) => Promise<GitPullResult>;
     status: (input: GitStatusInput) => Promise<GitStatusResult>;
