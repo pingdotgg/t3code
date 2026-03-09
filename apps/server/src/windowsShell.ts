@@ -14,7 +14,7 @@ export function isWindowsUncPath(
     return false;
   }
 
-  return /^[/\\]{2}/.test(cwd);
+  return /^[/\\]{2}(?!\?\\)/.test(cwd);
 }
 
 function quoteForCmd(value: string): string {

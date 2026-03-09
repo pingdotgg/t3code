@@ -132,6 +132,7 @@ const buildCmd = Command.make(
       yield* runCommand(
         ChildProcess.make(tsdownCommand.command, [...tsdownCommand.args], {
           cwd: tsdownCommand.cwd,
+          ...(tsdownCommand.env ? { env: { ...process.env, ...tsdownCommand.env } } : {}),
           stdout: config.verbose ? "inherit" : "ignore",
           stderr: "inherit",
           shell: tsdownCommand.shell,
@@ -227,6 +228,7 @@ const publishCmd = Command.make(
             yield* runCommand(
               ChildProcess.make(publishCommand.command, [...publishCommand.args], {
                 cwd: publishCommand.cwd,
+                ...(publishCommand.env ? { env: { ...process.env, ...publishCommand.env } } : {}),
                 stdout: config.verbose ? "inherit" : "ignore",
                 stderr: "inherit",
                 shell: publishCommand.shell,

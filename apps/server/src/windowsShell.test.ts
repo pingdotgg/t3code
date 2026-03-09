@@ -14,6 +14,10 @@ describe("isWindowsUncPath", () => {
   it("ignores UNC-looking paths on non-Windows platforms", () => {
     expect(isWindowsUncPath("\\\\wsl.localhost\\Ubuntu\\home\\user\\repo", "linux")).toBe(false);
   });
+
+  it("ignores Windows verbatim paths on Windows", () => {
+    expect(isWindowsUncPath("\\\\?\\C:\\Users\\user\\repo", "win32")).toBe(false);
+  });
 });
 
 describe("resolveShellCommand", () => {
