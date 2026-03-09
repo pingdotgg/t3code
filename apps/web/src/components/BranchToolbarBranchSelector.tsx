@@ -26,7 +26,6 @@ import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   EnvMode,
-  filterBranchPickerItems,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
 } from "./BranchToolbar.logic";
@@ -137,18 +136,13 @@ export function BranchToolbarBranchSelector({
   );
   const filteredBranchPickerItems = useMemo(
     () =>
-      filterBranchPickerItems({
-        itemValues: branchPickerItems,
-        normalizedQuery: normalizedDeferredBranchQuery,
-        createBranchItemValue,
-        checkoutPullRequestItemValue,
-      }),
-    [
-      branchPickerItems,
-      checkoutPullRequestItemValue,
-      createBranchItemValue,
-      normalizedDeferredBranchQuery,
-    ],
+      normalizedDeferredBranchQuery.length === 0
+        ? branchPickerItems
+        : branchPickerItems.filter((itemValue) => {
+            if (createBranchItemValue && itemValue === createBranchItemValue) return true;
+            return itemValue.toLowerCase().includes(normalizedDeferredBranchQuery);
+          }),
+    [branchPickerItems, createBranchItemValue, normalizedDeferredBranchQuery],
   );
   const [resolvedActiveBranch, setOptimisticBranch] = useOptimistic(
     canonicalActiveBranch,
