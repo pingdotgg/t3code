@@ -12,7 +12,6 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_RUNTIME_MODE,
-  DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
   ProjectId,
   ThreadId,
@@ -21,7 +20,7 @@ import {
 } from "@t3tools/contracts";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
-import { useAppSettings } from "../appSettings";
+import { resolveProjectDefaultModelForNewThread, useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL } from "../branding";
 import { newCommandId, newProjectId, newThreadId } from "../lib/utils";
@@ -513,7 +512,14 @@ export default function Sidebar() {
           projectId,
           title,
           workspaceRoot: cwd,
-          defaultModel: DEFAULT_MODEL_BY_PROVIDER.codex,
+          defaultModel: resolveProjectDefaultModelForNewThread({
+            projectId,
+            projectModel: null,
+            threads: [],
+            defaultModelSetting: appSettings.defaultCodexModel,
+            customModels: appSettings.customCodexModels,
+            provider: "codex",
+          }),
           createdAt,
         });
         await handleNewThread(projectId).catch(() => undefined);
@@ -526,7 +532,14 @@ export default function Sidebar() {
       }
       finishAddingProject();
     },
-    [focusMostRecentThreadForProject, handleNewThread, isAddingProject, projects],
+    [
+      appSettings.customCodexModels,
+      appSettings.defaultCodexModel,
+      focusMostRecentThreadForProject,
+      handleNewThread,
+      isAddingProject,
+      projects,
+    ],
   );
 
   const handleAddProject = () => {

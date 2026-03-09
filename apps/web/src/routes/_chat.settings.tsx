@@ -344,68 +344,69 @@ function SettingsRouteView() {
               </div>
 
               <div className="space-y-5">
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">
-                    Default model for new chats
-                  </span>
-                  <Select
-                    items={[
-                      { label: "Auto", value: APP_DEFAULT_MODEL_AUTO },
-                      ...defaultCodexModelOptions.map((option) => ({
-                        label: option.name,
-                        value: option.slug,
-                      })),
-                    ]}
-                    value={defaultCodexModel}
-                    onValueChange={(value) => {
-                      if (!value) return;
-                      updateSettings({ defaultCodexModel: value });
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectPopup alignItemWithTrigger={false}>
-                      <SelectItem value={APP_DEFAULT_MODEL_AUTO}>
-                        <div className="flex min-w-0 items-center gap-2">
-                          <span className="size-3.5 shrink-0" aria-hidden="true" />
-                          <span className="truncate">Auto</span>
-                        </div>
-                      </SelectItem>
-                      {defaultCodexModelOptions.map((option) => (
-                        <SelectItem key={option.slug} value={option.slug}>
+                <div className="space-y-1">
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-foreground">
+                      Default model for new chats
+                    </span>
+                    <Select
+                      items={[
+                        { label: "Auto", value: APP_DEFAULT_MODEL_AUTO },
+                        ...defaultCodexModelOptions.map((option) => ({
+                          label: option.name,
+                          value: option.slug,
+                        })),
+                      ]}
+                      value={defaultCodexModel}
+                      onValueChange={(value) => {
+                        if (!value) return;
+                        updateSettings({ defaultCodexModel: value });
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectPopup alignItemWithTrigger={false}>
+                        <SelectItem value={APP_DEFAULT_MODEL_AUTO}>
                           <div className="flex min-w-0 items-center gap-2">
-                            {shouldShowFastTierIcon(option.slug, codexServiceTier) ? (
-                              <ZapIcon className="size-3.5 text-amber-500" />
-                            ) : (
-                              <span className="size-3.5 shrink-0" aria-hidden="true" />
-                            )}
-                            <span className="truncate">{option.name}</span>
+                            <span className="size-3.5 shrink-0" aria-hidden="true" />
+                            <span className="truncate">Auto</span>
                           </div>
                         </SelectItem>
-                      ))}
-                    </SelectPopup>
-                  </Select>
-                  <span className="text-xs text-muted-foreground">
-                    {defaultCodexModel === APP_DEFAULT_MODEL_AUTO
-                      ? "Auto uses the most-used model across existing chats in each project."
-                      : `Always start new chats with ${defaultCodexModelLabel}.`}
-                  </span>
-                </label>
-
-                {defaultCodexModel !== normalizedDefaultCodexModel ? (
-                  <div className="flex justify-end">
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      onClick={() =>
-                        updateSettings({ defaultCodexModel: normalizedDefaultCodexModel })
-                      }
-                    >
-                      Restore default model setting
-                    </Button>
+                        {defaultCodexModelOptions.map((option) => (
+                          <SelectItem key={option.slug} value={option.slug}>
+                            <div className="flex min-w-0 items-center gap-2">
+                              {shouldShowFastTierIcon(option.slug, codexServiceTier) ? (
+                                <ZapIcon className="size-3.5 text-amber-500" />
+                              ) : (
+                                <span className="size-3.5 shrink-0" aria-hidden="true" />
+                              )}
+                              <span className="truncate">{option.name}</span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectPopup>
+                    </Select>
+                  </label>
+                  <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <span className="min-w-0 flex-1 text-muted-foreground">
+                      {defaultCodexModel === APP_DEFAULT_MODEL_AUTO
+                        ? "Auto uses the most-used model across existing chats in each project."
+                        : `Always start new chats with ${defaultCodexModelLabel}.`}
+                    </span>
+                    {defaultCodexModel !== normalizedDefaultCodexModel ? (
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() =>
+                          updateSettings({ defaultCodexModel: normalizedDefaultCodexModel })
+                        }
+                      >
+                        Restore default model setting
+                      </Button>
+                    ) : null}
                   </div>
-                ) : null}
+                </div>
 
                 <label className="block space-y-1">
                   <span className="text-xs font-medium text-foreground">Default service tier</span>

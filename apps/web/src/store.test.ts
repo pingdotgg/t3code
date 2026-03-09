@@ -161,12 +161,48 @@ describe("store read model sync", () => {
     expect(next.projects[0]?.model).toBe("gpt-5.3-codex");
   });
 
-  it("preserves existing project model across read-model syncs", () => {
+  it("uses the latest read-model project default across syncs", () => {
     const initialState = makeState(makeThread());
     const readModel = makeReadModel(makeReadModelThread({}));
 
     const next = syncServerReadModel(initialState, readModel);
 
-    expect(next.projects[0]?.model).toBe("gpt-5.4");
+    expect(next.projects[0]?.model).toBe("gpt-5.3-codex");
+  });
+
+  it("preserves saved custom project defaults across read-model syncs", () => {
+    const initialState = makeState(makeThread());
+    const readModel: OrchestrationReadModel = {
+      ...makeReadModel(makeReadModelThread({ model: "acme/internal-codex" })),
+      projects: [
+        {
+          id: ProjectId.makeUnsafe("project-1"),
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModel: "acme/internal-codex",
+          createdAt: "2026-02-27T00:00:00.000Z",
+          updatedAt: "2026-02-27T00:00:00.000Z",
+          deletedAt: null,
+          scripts: [],
+        },
+      ],
+    };
+
+    const next = syncServerReadModel(initialState, readModel, ["acme/internal-codex"]);
+
+    expect(next.projects[0]?.model).toBe("acme/internal-codex");
+  });
+
+  it("preserves saved custom thread models across read-model syncs", () => {
+    const initialState = makeState(makeThread());
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        model: "acme/internal-codex",
+      }),
+    );
+
+    const next = syncServerReadModel(initialState, readModel, ["acme/internal-codex"]);
+
+    expect(next.threads[0]?.model).toBe("acme/internal-codex");
   });
 });

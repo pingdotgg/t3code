@@ -6,13 +6,9 @@ import {
   type OrchestrationReadModel,
   type OrchestrationSessionStatus,
 } from "@t3tools/contracts";
-import {
-  getModelOptions,
-  normalizeModelSlug,
-  resolveModelSlug,
-  resolveModelSlugForProvider,
-} from "@t3tools/shared/model";
+import { getModelOptions, getDefaultModel, normalizeModelSlug } from "@t3tools/shared/model";
 import { create } from "zustand";
+import { getAppSettingsSnapshot } from "./appSettings";
 import { type ChatMessage, type Project, type Thread } from "./types";
 
 // ── State ────────────────────────────────────────────────────────────
@@ -99,9 +95,24 @@ function updateThread(
   return changed ? next : threads;
 }
 
+function resolveStoredCodexModel(
+  model: string | null | undefined,
+  customCodexModels: ReadonlySet<string>,
+): string {
+  const normalizedModel = normalizeModelSlug(model, "codex");
+  if (!normalizedModel) {
+    return getDefaultModel("codex");
+  }
+  if (CODEX_MODEL_SLUGS.has(normalizedModel) || customCodexModels.has(normalizedModel)) {
+    return normalizedModel;
+  }
+  return getDefaultModel("codex");
+}
+
 function mapProjectsFromReadModel(
   incoming: OrchestrationReadModel["projects"],
   previous: Project[],
+  customCodexModels: ReadonlySet<string>,
 ): Project[] {
   return incoming.map((project) => {
     const existing =
@@ -111,8 +122,9 @@ function mapProjectsFromReadModel(
       id: project.id,
       name: project.title,
       cwd: project.workspaceRoot,
-      model: resolveModelSlug(
-        existing?.model ?? project.defaultModel ?? DEFAULT_MODEL_BY_PROVIDER.codex,
+      model: resolveStoredCodexModel(
+        project.defaultModel ?? existing?.model ?? DEFAULT_MODEL_BY_PROVIDER.codex,
+        customCodexModels,
       ),
       expanded:
         existing?.expanded ??
@@ -200,10 +212,20 @@ function attachmentPreviewRoutePath(attachmentId: string): string {
 
 // ── Pure state transition functions ────────────────────────────────────
 
-export function syncServerReadModel(state: AppState, readModel: OrchestrationReadModel): AppState {
+export function syncServerReadModel(
+  state: AppState,
+  readModel: OrchestrationReadModel,
+  customCodexModels: readonly string[] = [],
+): AppState {
+  const customCodexModelSet = new Set(
+    customCodexModels
+      .map((model) => normalizeModelSlug(model, "codex"))
+      .filter((model): model is string => model !== null),
+  );
   const projects = mapProjectsFromReadModel(
     readModel.projects.filter((project) => project.deletedAt === null),
     state.projects,
+    customCodexModelSet,
   );
   const existingThreadById = new Map(state.threads.map((thread) => [thread.id, thread] as const));
   const threads = readModel.threads
@@ -215,12 +237,14 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
         codexThreadId: null,
         projectId: thread.projectId,
         title: thread.title,
-        model: resolveModelSlugForProvider(
+        model: resolveStoredCodexModel(
           inferProviderForThreadModel({
             model: thread.model,
             sessionProviderName: thread.session?.providerName ?? null,
-          }),
-          thread.model,
+          }) === "codex"
+            ? thread.model
+            : null,
+          customCodexModelSet,
         ),
         runtimeMode: thread.runtimeMode,
         interactionMode: thread.interactionMode,
@@ -383,7 +407,10 @@ interface AppStore extends AppState {
 
 export const useStore = create<AppStore>((set) => ({
   ...readPersistedState(),
-  syncServerReadModel: (readModel) => set((state) => syncServerReadModel(state, readModel)),
+  syncServerReadModel: (readModel) =>
+    set((state) =>
+      syncServerReadModel(state, readModel, getAppSettingsSnapshot().customCodexModels),
+    ),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId) => set((state) => markThreadUnread(state, threadId)),
