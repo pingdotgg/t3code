@@ -21,6 +21,7 @@ import {
   OrchestrationThreadActivity,
   RuntimeMode,
   ProviderInteractionMode,
+  ProviderStartOptions,
 } from "@t3tools/contracts";
 import {
   getDefaultModel,
@@ -38,6 +39,7 @@ import {
   useRef,
   useState,
   useId,
+  Fragment,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
@@ -223,6 +225,8 @@ import {
   shouldShowFastTierIcon,
   type AppServiceTier,
   useAppSettings,
+  type AppSettings,
+  type AppModelOption,
 } from "../appSettings";
 import {
   type ComposerImageAttachment,
@@ -909,7 +913,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activeProject?.model ??
       getDefaultModel(selectedProvider),
   );
-  const customModelsForSelectedProvider = settings.customCodexModels;
+  const modelOptionsByProvider = useMemo(
+    () => getCustomModelOptionsByProvider(settings),
+    [settings],
+  );
   const selectedModel = useMemo(() => {
     const draftModel = composerDraft.model;
     if (!draftModel) {
@@ -917,21 +924,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     return resolveAppModelSelection(
       selectedProvider,
-      customModelsForSelectedProvider,
+      settings,
       draftModel,
     ) as ModelSlug;
-  }, [
-    baseThreadModel,
-    composerDraft.model,
-    customModelsForSelectedProvider,
-    selectedProvider,
-  ]);
+  }, [baseThreadModel, composerDraft.model, settings, selectedProvider]);
+  const selectedModelOption = useMemo(() => {
+    const options = modelOptionsByProvider[selectedProvider];
+    return options.find((o) => o.slug === selectedModel) ?? null;
+  }, [modelOptionsByProvider, selectedModel, selectedProvider]);
+
   const reasoningOptions = getReasoningEffortOptions(selectedProvider);
   const supportsReasoningEffort = reasoningOptions.length > 0;
   const selectedEffort =
     composerDraft.effort ?? getDefaultReasoningEffort(selectedProvider);
   const selectedCodexFastModeEnabled =
     selectedProvider === "codex" ? composerDraft.codexFastMode : false;
+
   const selectedModelOptionsForDispatch = useMemo(() => {
     if (selectedProvider !== "codex") {
       return undefined;
@@ -951,24 +959,36 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedProvider,
     supportsReasoningEffort,
   ]);
+
   const providerOptionsForDispatch = useMemo(() => {
-    if (!settings.codexBinaryPath && !settings.codexHomePath) {
-      return undefined;
-    }
-    return {
-      codex: {
-        ...(settings.codexBinaryPath
-          ? { binaryPath: settings.codexBinaryPath }
-          : {}),
-        ...(settings.codexHomePath ? { homePath: settings.codexHomePath } : {}),
-      },
+    const codex =
+      settings.codexBinaryPath || settings.codexHomePath
+        ? {
+            ...(settings.codexBinaryPath
+              ? { binaryPath: settings.codexBinaryPath }
+              : {}),
+            ...(settings.codexHomePath
+              ? { homePath: settings.codexHomePath }
+              : {}),
+          }
+        : undefined;
+
+    const claudeCode =
+      selectedProvider === "claudeCode" && selectedModelOption?.endpoint
+        ? {
+            apiKey: selectedModelOption.endpoint.apiKey,
+            baseUrl: selectedModelOption.endpoint.baseUrl,
+          }
+        : undefined;
+
+    const options: ProviderStartOptions = {
+      ...(codex ? { codex } : {}),
+      ...(claudeCode ? { claudeCode } : {}),
     };
-  }, [settings.codexBinaryPath, settings.codexHomePath]);
+    return Object.keys(options).length > 0 ? options : undefined;
+  }, [settings, selectedProvider, selectedModelOption]);
+
   const selectedModelForPicker = selectedModel;
-  const modelOptionsByProvider = useMemo(
-    () => getCustomModelOptionsByProvider(settings),
-    [settings],
-  );
   const selectedModelForPickerWithCustomFallback = useMemo(() => {
     const currentOptions = modelOptionsByProvider[selectedProvider];
     return currentOptions.some(
@@ -3518,7 +3538,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerDraftProvider(activeThread.id, provider);
       setComposerDraftModel(
         activeThread.id,
-        resolveAppModelSelection(provider, settings.customCodexModels, model),
+        resolveAppModelSelection(provider, settings, model),
       );
       scheduleComposerFocus();
     },
@@ -3528,7 +3548,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       scheduleComposerFocus,
       setComposerDraftModel,
       setComposerDraftProvider,
-      settings.customCodexModels,
+      settings,
     ],
   );
   const onEffortSelect = useCallback(
@@ -6193,16 +6213,12 @@ const COMING_SOON_PROVIDER_OPTIONS = [
   { id: "gemini", label: "Gemini", icon: Gemini },
 ] as const;
 
-function getCustomModelOptionsByProvider(settings: {
-  customCodexModels: readonly string[];
-  customClaudeCodeModels: readonly string[];
-}): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
+function getCustomModelOptionsByProvider(
+  settings: AppSettings,
+): Record<ProviderKind, ReadonlyArray<AppModelOption>> {
   return {
-    codex: getAppModelOptions("codex", settings.customCodexModels),
-    claudeCode: getAppModelOptions(
-      "claudeCode",
-      settings.customClaudeCodeModels,
-    ),
+    codex: getAppModelOptions("codex", settings),
+    claudeCode: getAppModelOptions("claudeCode", settings),
   };
 }
 
@@ -6251,10 +6267,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   provider: ProviderKind;
   model: ModelSlug;
   lockedProvider: ProviderKind | null;
-  modelOptionsByProvider: Record<
-    ProviderKind,
-    ReadonlyArray<{ slug: string; name: string }>
-  >;
+  modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<AppModelOption>>;
   serviceTierSetting: AppServiceTier;
   disabled?: boolean;
   onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
@@ -6333,24 +6346,34 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                       setIsMenuOpen(false);
                     }}
                   >
-                    {props.modelOptionsByProvider[option.value].map(
-                      (modelOption) => (
-                        <MenuRadioItem
-                          key={`${option.value}:${modelOption.slug}`}
-                          value={modelOption.slug}
-                          onClick={() => setIsMenuOpen(false)}
-                        >
-                          {option.value === "codex" &&
-                          shouldShowFastTierIcon(
-                            modelOption.slug,
-                            props.serviceTierSetting,
-                          ) ? (
-                            <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
-                          ) : null}
-                          {modelOption.name}
-                        </MenuRadioItem>
-                      ),
-                    )}
+                    {groupModelsByEndpoint(
+                      props.modelOptionsByProvider[option.value],
+                    ).map((group) => (
+                      <Fragment key={group.id}>
+                        {group.name && (
+                          <div className="px-2 py-1 pb-0.5 text-[10px] font-bold text-muted-foreground/50 uppercase tracking-widest">
+                            {group.name}
+                          </div>
+                        )}
+                        {group.models.map((modelOption) => (
+                          <MenuRadioItem
+                            key={`${option.value}:${modelOption.slug}`}
+                            value={modelOption.slug}
+                            onClick={() => setIsMenuOpen(false)}
+                          >
+                            {option.value === "codex" &&
+                            shouldShowFastTierIcon(
+                              modelOption.slug,
+                              props.serviceTierSetting,
+                            ) ? (
+                              <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
+                            ) : null}
+                            <span className="truncate">{modelOption.name}</span>
+                          </MenuRadioItem>
+                        ))}
+                        <MenuDivider />
+                      </Fragment>
+                    ))}
                   </MenuRadioGroup>
                 </MenuGroup>
               </MenuSubPopup>
@@ -6398,6 +6421,55 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     </Menu>
   );
 });
+
+function groupModelsByEndpoint(options: ReadonlyArray<AppModelOption>) {
+  const groups: {
+    id: string;
+    name: string | null;
+    models: AppModelOption[];
+  }[] = [];
+  const nativeGroup = {
+    id: "native",
+    name: "Native Models",
+    models: [] as AppModelOption[],
+  };
+  const customNoEndpoint = {
+    id: "custom-no-endpoint",
+    name: "Custom Models",
+    models: [] as AppModelOption[],
+  };
+  const endpointGroups = new Map<
+    string,
+    { id: string; name: string; models: AppModelOption[] }
+  >();
+
+  for (const option of options) {
+    if (!option.isCustom) {
+      nativeGroup.models.push(option);
+    } else if (option.endpoint) {
+      let group = endpointGroups.get(option.endpoint.id);
+      if (!group) {
+        group = {
+          id: option.endpoint.id,
+          name: option.endpoint.name,
+          models: [],
+        };
+        endpointGroups.set(option.endpoint.id, group);
+      }
+      group.models.push(option);
+    } else {
+      customNoEndpoint.models.push(option);
+    }
+  }
+
+  if (nativeGroup.models.length > 0) groups.push(nativeGroup);
+  for (const group of endpointGroups.values()) {
+    groups.push(group);
+  }
+  if (customNoEndpoint.models.length > 0) groups.push(customNoEndpoint);
+
+  return groups;
+}
 
 const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
   effort: CodexReasoningEffort;

@@ -39,9 +39,18 @@ const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<
 > = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
   claudeCode: new Set(
-    getModelOptions("claudeCode" as ProviderKind).map((option) => option.slug),
+    getModelOptions("claudeCode").map((option) => option.slug),
   ),
 };
+
+const ClaudeCodeEndpointSchema = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String.check(Schema.isMaxLength(256)),
+  baseUrl: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
+  apiKey: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
+  models: Schema.Array(Schema.String),
+});
+export type ClaudeCodeEndpoint = typeof ClaudeCodeEndpointSchema.Type;
 
 const AppSettingsSchema = Schema.Struct({
   codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
@@ -71,12 +80,17 @@ const AppSettingsSchema = Schema.Struct({
   customClaudeCodeModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
+  claudeCodeEndpoints: Schema.Array(ClaudeCodeEndpointSchema).pipe(
+    Schema.withConstructorDefault(() => Option.some([])),
+  ),
 });
 export type AppSettings = typeof AppSettingsSchema.Type;
 export interface AppModelOption {
   slug: string;
   name: string;
   isCustom: boolean;
+  provider: ProviderKind;
+  endpoint?: ClaudeCodeEndpoint;
 }
 
 export function resolveAppServiceTier(
@@ -143,12 +157,16 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
       settings.customClaudeCodeModels,
       "claudeCode",
     ),
+    claudeCodeEndpoints: settings.claudeCodeEndpoints.map((endpoint) => ({
+      ...endpoint,
+      models: normalizeCustomModelSlugs(endpoint.models, "claudeCode"),
+    })),
   };
 }
 
 export function getAppModelOptions(
   provider: ProviderKind,
-  customModels: readonly string[],
+  settings: AppSettings,
   selectedModel?: string | null,
 ): AppModelOption[] {
   const options: AppModelOption[] = getModelOptions(provider).map(
@@ -156,29 +174,63 @@ export function getAppModelOptions(
       slug,
       name,
       isCustom: false,
+      provider,
     }),
   );
-  const seen = new Set(options.map((option) => option.slug));
+  const seenSlugs = new Set(options.map((option) => option.slug));
 
-  for (const slug of normalizeCustomModelSlugs(customModels, provider)) {
-    if (seen.has(slug)) {
-      continue;
+  if (provider === "claudeCode") {
+    // Add models grouped by endpoint
+    for (const endpoint of settings.claudeCodeEndpoints) {
+      for (const slug of normalizeCustomModelSlugs(endpoint.models, provider)) {
+        options.push({
+          slug,
+          name: slug,
+          isCustom: true,
+          provider,
+          endpoint,
+        });
+      }
     }
 
-    seen.add(slug);
-    options.push({
-      slug,
-      name: slug,
-      isCustom: true,
-    });
+    // Add legacy custom models (global ones)
+    for (const slug of normalizeCustomModelSlugs(
+      settings.customClaudeCodeModels,
+      provider,
+    )) {
+      if (seenSlugs.has(slug)) continue;
+      seenSlugs.add(slug);
+      options.push({
+        slug,
+        name: slug,
+        isCustom: true,
+        provider,
+      });
+    }
+  } else {
+    const customModels = provider === "codex" ? settings.customCodexModels : [];
+    for (const slug of normalizeCustomModelSlugs(customModels, provider)) {
+      if (seenSlugs.has(slug)) continue;
+      seenSlugs.add(slug);
+      options.push({
+        slug,
+        name: slug,
+        isCustom: true,
+        provider,
+      });
+    }
   }
 
   const normalizedSelectedModel = normalizeModelSlug(selectedModel, provider);
-  if (normalizedSelectedModel && !seen.has(normalizedSelectedModel)) {
+  if (
+    normalizedSelectedModel &&
+    !options.some((o) => o.slug === normalizedSelectedModel)
+  ) {
     options.push({
       slug: normalizedSelectedModel,
       name: normalizedSelectedModel,
       isCustom: true,
+      provider,
     });
   }
 
@@ -187,10 +239,10 @@ export function getAppModelOptions(
 
 export function resolveAppModelSelection(
   provider: ProviderKind,
-  customModels: readonly string[],
+  settings: AppSettings,
   selectedModel: string | null | undefined,
 ): string {
-  const options = getAppModelOptions(provider, customModels, selectedModel);
+  const options = getAppModelOptions(provider, settings, selectedModel);
   const trimmedSelectedModel = selectedModel?.trim();
   if (trimmedSelectedModel) {
     const direct = options.find(
@@ -222,12 +274,12 @@ export function resolveAppModelSelection(
 
 export function getSlashModelOptions(
   provider: ProviderKind,
-  customModels: readonly string[],
+  settings: AppSettings,
   query: string,
   selectedModel?: string | null,
 ): AppModelOption[] {
   const normalizedQuery = query.trim().toLowerCase();
-  const options = getAppModelOptions(provider, customModels, selectedModel);
+  const options = getAppModelOptions(provider, settings, selectedModel);
   if (!normalizedQuery) {
     return options;
   }

@@ -151,7 +151,95 @@ function SettingsRouteView() {
         setIsOpeningKeybindings(false);
       });
   }, [keybindingsConfigPath]);
+  const [newEndpointName, setNewEndpointName] = useState("");
+  const [newEndpointBaseUrl, setNewEndpointBaseUrl] = useState("");
+  const [newEndpointApiKey, setNewEndpointApiKey] = useState("");
+  const [newModelSlugByEndpointId, setNewModelSlugByEndpointId] = useState<
+    Record<string, string>
+  >({});
+  const [endpointModelErrorByEndpointId, setEndpointModelErrorByEndpointId] =
+    useState<Record<string, string | null>>({});
 
+  const addClaudeCodeEndpoint = useCallback(() => {
+    if (!newEndpointName.trim()) return;
+    const newEndpoint = {
+      id: crypto.randomUUID(),
+      name: newEndpointName.trim(),
+      baseUrl: newEndpointBaseUrl.trim() || undefined,
+      apiKey: newEndpointApiKey.trim() || undefined,
+      models: [],
+    };
+    updateSettings({
+      claudeCodeEndpoints: [...settings.claudeCodeEndpoints, newEndpoint],
+    });
+    setNewEndpointName("");
+    setNewEndpointBaseUrl("");
+    setNewEndpointApiKey("");
+  }, [
+    newEndpointName,
+    newEndpointBaseUrl,
+    newEndpointApiKey,
+    settings.claudeCodeEndpoints,
+    updateSettings,
+  ]);
+
+  const removeClaudeCodeEndpoint = useCallback(
+    (id: string) => {
+      updateSettings({
+        claudeCodeEndpoints: settings.claudeCodeEndpoints.filter(
+          (e) => e.id !== id,
+        ),
+      });
+    },
+    [settings.claudeCodeEndpoints, updateSettings],
+  );
+
+  const addModelToEndpoint = useCallback(
+    (endpointId: string) => {
+      const slug = newModelSlugByEndpointId[endpointId];
+      if (!slug) return;
+      const normalized = normalizeModelSlug(slug, "claudeCode");
+      if (!normalized) return;
+
+      const endpoint = settings.claudeCodeEndpoints.find(
+        (e) => e.id === endpointId,
+      );
+      if (!endpoint) return;
+
+      if (endpoint.models.includes(normalized)) {
+        setEndpointModelErrorByEndpointId((prev) => ({
+          ...prev,
+          [endpointId]: "Model already added to this endpoint.",
+        }));
+        return;
+      }
+
+      updateSettings({
+        claudeCodeEndpoints: settings.claudeCodeEndpoints.map((e) =>
+          e.id === endpointId ? { ...e, models: [...e.models, normalized] } : e,
+        ),
+      });
+      setNewModelSlugByEndpointId((prev) => ({ ...prev, [endpointId]: "" }));
+      setEndpointModelErrorByEndpointId((prev) => ({
+        ...prev,
+        [endpointId]: null,
+      }));
+    },
+    [newModelSlugByEndpointId, settings.claudeCodeEndpoints, updateSettings],
+  );
+
+  const removeModelFromEndpoint = useCallback(
+    (endpointId: string, slug: string) => {
+      updateSettings({
+        claudeCodeEndpoints: settings.claudeCodeEndpoints.map((e) =>
+          e.id === endpointId
+            ? { ...e, models: e.models.filter((m) => m !== slug) }
+            : e,
+        ),
+      });
+    },
+    [settings.claudeCodeEndpoints, updateSettings],
+  );
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
       const customModelInput = customModelInputByProvider[provider];
@@ -626,6 +714,170 @@ function SettingsRouteView() {
                     </div>
                   );
                 })}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">
+                  Claude Code Endpoints
+                </h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Configure custom Claude Code endpoints with specific API keys
+                  and base URLs.
+                </p>
+              </div>
+
+              <div className="space-y-6">
+                <div className="rounded-xl border border-border bg-background/50 p-4 space-y-4">
+                  <h3 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                    Add New Endpoint
+                  </h3>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-medium text-foreground uppercase tracking-tight">
+                        Endpoint Name
+                      </label>
+                      <Input
+                        placeholder="e.g., Local Proxy"
+                        value={newEndpointName}
+                        onChange={(e) => setNewEndpointName(e.target.value)}
+                        className="h-9"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-medium text-foreground uppercase tracking-tight">
+                        Base URL (optional)
+                      </label>
+                      <Input
+                        placeholder="https://api.anthropic.com"
+                        value={newEndpointBaseUrl}
+                        onChange={(e) => setNewEndpointBaseUrl(e.target.value)}
+                        className="h-9"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-medium text-foreground uppercase tracking-tight">
+                      API Key (optional)
+                    </label>
+                    <Input
+                      type="password"
+                      placeholder="sk-ant-..."
+                      value={newEndpointApiKey}
+                      onChange={(e) => setNewEndpointApiKey(e.target.value)}
+                      className="h-9"
+                    />
+                  </div>
+                  <Button
+                    onClick={addClaudeCodeEndpoint}
+                    disabled={!newEndpointName}
+                    className="w-full sm:w-auto"
+                  >
+                    Add Endpoint
+                  </Button>
+                </div>
+
+                <div className="space-y-4">
+                  {settings.claudeCodeEndpoints.map((endpoint) => (
+                    <div
+                      key={endpoint.id}
+                      className="rounded-xl border border-border bg-background/30 p-4 space-y-4"
+                    >
+                      <div className="flex items-center justify-between gap-4">
+                        <h3 className="text-sm font-semibold text-foreground truncate">
+                          {endpoint.name}
+                        </h3>
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          className="text-destructive hover:bg-destructive/10 shrink-0"
+                          onClick={() => removeClaudeCodeEndpoint(endpoint.id)}
+                        >
+                          Delete Endpoint
+                        </Button>
+                      </div>
+
+                      <div className="grid gap-2 text-[11px]">
+                        <div className="flex justify-between border-b border-border/50 py-1">
+                          <span className="text-muted-foreground">
+                            Base URL:
+                          </span>
+                          <span className="font-mono truncate ml-4">
+                            {endpoint.baseUrl || "Default"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between border-b border-border/50 py-1">
+                          <span className="text-muted-foreground">
+                            API Key:
+                          </span>
+                          <span className="font-mono">
+                            {endpoint.apiKey ? "********" : "Default"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 pt-2">
+                        <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+                          Models
+                        </h4>
+                        <div className="flex gap-2">
+                          <Input
+                            placeholder="claude-3-5-sonnet-..."
+                            className="h-8 text-xs flex-1"
+                            value={newModelSlugByEndpointId[endpoint.id] || ""}
+                            onChange={(e) =>
+                              setNewModelSlugByEndpointId((prev) => ({
+                                ...prev,
+                                [endpoint.id]: e.target.value,
+                              }))
+                            }
+                            onKeyDown={(e) =>
+                              e.key === "Enter" &&
+                              addModelToEndpoint(endpoint.id)
+                            }
+                          />
+                          <Button
+                            size="xs"
+                            onClick={() => addModelToEndpoint(endpoint.id)}
+                          >
+                            Add
+                          </Button>
+                        </div>
+                        {endpointModelErrorByEndpointId[endpoint.id] && (
+                          <p className="text-[10px] text-destructive">
+                            {endpointModelErrorByEndpointId[endpoint.id]}
+                          </p>
+                        )}
+                        <div className="flex flex-wrap gap-2">
+                          {endpoint.models.map((slug) => (
+                            <div
+                              key={slug}
+                              className="group flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs"
+                            >
+                              <code className="text-[11px] font-mono leading-none">
+                                {slug}
+                              </code>
+                              <button
+                                onClick={() =>
+                                  removeModelFromEndpoint(endpoint.id, slug)
+                                }
+                                className="text-muted-foreground/50 hover:text-destructive transition-colors"
+                              >
+                                &times;
+                              </button>
+                            </div>
+                          ))}
+                          {endpoint.models.length === 0 && (
+                            <span className="text-[11px] text-muted-foreground italic">
+                              No models added yet.
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </section>
 
