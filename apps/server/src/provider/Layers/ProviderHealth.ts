@@ -21,7 +21,7 @@ import {
   isCodexCliVersionSupported,
   parseCodexCliVersion,
 } from "../codexCliVersion";
-import { resolveShellCommand } from "../windowsShell";
+import { resolveShellCommand } from "../../windowsShell.ts";
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
 
 const DEFAULT_TIMEOUT_MS = 4_000;
