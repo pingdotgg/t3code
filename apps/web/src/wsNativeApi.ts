@@ -159,6 +159,7 @@ export function createWsNativeApi(): NativeApi {
     }
   });
   transport.subscribe(WS_CHANNELS.providerRateLimitsUpdated, (data) => {
+    if (!data || typeof data !== "object") return;
     const payload = data as RateLimitsPayload;
     lastRateLimits = payload;
     for (const listener of rateLimitsListeners) {
