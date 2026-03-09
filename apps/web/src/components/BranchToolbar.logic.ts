@@ -88,3 +88,27 @@ export function dedupeRemoteBranchesWithLocalMatches(
     return !localBranchCandidates.some((candidate) => localBranchNames.has(candidate));
   });
 }
+
+export function filterBranchPickerItems(input: {
+  itemValues: ReadonlyArray<string>;
+  normalizedQuery: string;
+  createBranchItemValue: string | null;
+  checkoutPullRequestItemValue: string | null;
+}): ReadonlyArray<string> {
+  const { itemValues, normalizedQuery, createBranchItemValue, checkoutPullRequestItemValue } = input;
+
+  if (checkoutPullRequestItemValue) {
+    return [checkoutPullRequestItemValue];
+  }
+
+  if (normalizedQuery.length === 0) {
+    return itemValues;
+  }
+
+  return itemValues.filter((itemValue) => {
+    if (createBranchItemValue && itemValue === createBranchItemValue) {
+      return true;
+    }
+    return itemValue.toLowerCase().includes(normalizedQuery);
+  });
+}

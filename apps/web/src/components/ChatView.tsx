@@ -757,6 +757,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
+  const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
@@ -764,12 +765,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
 
   const openPullRequestComposerMenu = useCallback((reference?: string) => {
+    if (!canCheckoutPullRequestIntoThread) {
+      return;
+    }
     setPullRequestComposerMenuState({
       initialReference: reference ?? null,
       key: Date.now(),
     });
     setComposerHighlightedItemId(null);
-  }, []);
+  }, [canCheckoutPullRequestIntoThread]);
 
   const closePullRequestComposerMenu = useCallback(() => {
     setPullRequestComposerMenuState(null);
@@ -1315,11 +1319,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
           description: "Create a new thread from a GitHub pull request",
         },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
+      const availableSlashCommandItems = canCheckoutPullRequestIntoThread
+        ? slashCommandItems
+        : slashCommandItems.filter((item) => item.command !== "checkout-pr");
       const query = composerTrigger.query.trim().toLowerCase();
       if (!query) {
-        return [...slashCommandItems];
+        return [...availableSlashCommandItems];
       }
-      return slashCommandItems.filter(
+      return availableSlashCommandItems.filter(
         (item) => item.command.includes(query) || item.label.slice(1).includes(query),
       );
     }
@@ -1340,7 +1347,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: name,
         description: `${providerLabel} · ${slug}`,
       }));
-  }, [composerTrigger, searchableModelOptions, workspaceEntries]);
+  }, [canCheckoutPullRequestIntoThread, composerTrigger, searchableModelOptions, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger) || pullRequestComposerMenuOpen;
   const activeComposerMenuItem = useMemo(
     () =>
@@ -2582,7 +2589,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     const standaloneSlashCommand =
       composerImages.length === 0 ? parseStandaloneComposerSlashCommand(trimmed) : null;
-    if (standaloneSlashCommand) {
+    const shouldHandleStandaloneSlashCommand =
+      standaloneSlashCommand !== null &&
+      (standaloneSlashCommand !== "checkout-pr" || canCheckoutPullRequestIntoThread);
+    if (shouldHandleStandaloneSlashCommand && standaloneSlashCommand) {
       if (standaloneSlashCommand === "checkout-pr") {
         openPullRequestComposerMenu();
       } else {
