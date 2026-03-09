@@ -1,5 +1,5 @@
 import { ThreadId } from "@t3tools/contracts";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Outlet, createFileRoute, useMatch, useNavigate } from "@tanstack/react-router";
 import { Suspense, lazy, type ReactNode, useCallback, useEffect } from "react";
 
 import ChatView from "../components/ChatView";
@@ -177,8 +177,14 @@ function ChatThreadRouteView() {
     }
   }, [navigate, routeThreadExists, threadsHydrated, threadId]);
 
+  const hasChildRoute = useMatch({ from: "/_chat/$threadId/events", shouldThrow: false });
+
   if (!threadsHydrated || !routeThreadExists) {
     return null;
+  }
+
+  if (hasChildRoute) {
+    return <Outlet />;
   }
 
   if (!shouldUseDiffSheet) {

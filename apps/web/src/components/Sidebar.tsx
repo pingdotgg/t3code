@@ -1298,16 +1298,7 @@ export default function Sidebar() {
 
       <SidebarSeparator />
       <SidebarFooter className="gap-0 p-3">
-        <div className="mb-2 grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-            onClick={() => {
-              void navigate({ to: "/events" });
-            }}
-          >
-            Events
-          </button>
+        <div className="mb-2 grid grid-cols-1 gap-2">
           <button
             type="button"
             className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"

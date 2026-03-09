@@ -3,6 +3,8 @@ import {
   type AssistantDeliveryMode,
   CommandId,
   MessageId,
+  type OrchestrationDiagnostic,
+  type OrchestrationDiagnosticKind,
   type OrchestrationEvent,
   CheckpointRef,
   ThreadId,
@@ -486,6 +488,143 @@ function runtimeEventToActivities(
   }
 
   return [];
+}
+
+function makeDiagnostic(
+  event: ProviderRuntimeEvent,
+  kind: OrchestrationDiagnosticKind,
+  summary: string,
+  payload: unknown,
+): OrchestrationDiagnostic {
+  return {
+    id: event.eventId,
+    kind,
+    summary,
+    payload,
+    turnId: toTurnId(event.turnId) ?? null,
+    createdAt: event.createdAt,
+  };
+}
+
+function runtimeEventToDiagnostic(
+  event: ProviderRuntimeEvent,
+): OrchestrationDiagnostic | undefined {
+  switch (event.type) {
+    case "turn.started":
+      return makeDiagnostic(event, "turn.started", "Turn started", {
+        turnId: event.turnId,
+      });
+
+    case "turn.completed": {
+      const state = runtimeTurnState(event);
+      const errorMessage = runtimeTurnErrorMessage(event);
+      return makeDiagnostic(
+        event,
+        "turn.completed",
+        state === "failed"
+          ? "Turn failed"
+          : state === "interrupted"
+            ? "Turn interrupted"
+            : "Turn completed",
+        {
+          turnId: event.turnId,
+          state,
+          ...(errorMessage ? { errorMessage: truncateDetail(errorMessage) } : {}),
+        },
+      );
+    }
+
+    case "turn.aborted":
+      return makeDiagnostic(event, "turn.aborted", "Turn aborted", {
+        turnId: event.turnId,
+      });
+
+    case "session.configured":
+      return makeDiagnostic(event, "session.configured", "Session configured", {
+        model: runtimePayloadRecord(event)?.model,
+        provider: event.provider,
+      });
+
+    case "session.exited":
+      return makeDiagnostic(event, "session.exited", "Session exited", {
+        exitKind: runtimePayloadRecord(event)?.exitKind,
+        reason: runtimePayloadRecord(event)?.reason,
+      });
+
+    case "thread.token-usage.updated": {
+      const payload = runtimePayloadRecord(event);
+      return makeDiagnostic(event, "token-usage.updated", "Token usage updated", {
+        inputTokens: payload?.inputTokens,
+        outputTokens: payload?.outputTokens,
+        totalTokens: payload?.totalTokens,
+        ...(payload?.cost !== undefined ? { cost: payload.cost } : {}),
+      });
+    }
+
+    case "hook.started":
+      return makeDiagnostic(event, "hook.started", "Hook started", {
+        hookName: runtimePayloadRecord(event)?.hookName,
+      });
+
+    case "hook.progress":
+      return makeDiagnostic(event, "hook.progress", "Hook progress", {
+        hookName: runtimePayloadRecord(event)?.hookName,
+        output: runtimePayloadRecord(event)?.output,
+      });
+
+    case "hook.completed":
+      return makeDiagnostic(event, "hook.completed", "Hook completed", {
+        hookName: runtimePayloadRecord(event)?.hookName,
+        status: runtimePayloadRecord(event)?.status,
+      });
+
+    case "tool.summary":
+      return makeDiagnostic(event, "tool.summary", "Tool summary", {
+        itemId: event.itemId,
+        summary: runtimePayloadRecord(event)?.summary,
+        toolName: runtimePayloadRecord(event)?.toolName,
+      });
+
+    case "model.rerouted":
+      return makeDiagnostic(event, "model.rerouted", "Model rerouted", {
+        fromModel: runtimePayloadRecord(event)?.fromModel,
+        toModel: runtimePayloadRecord(event)?.toModel,
+        reason: runtimePayloadRecord(event)?.reason,
+      });
+
+    case "files.persisted":
+      return makeDiagnostic(event, "files.persisted", "Files persisted", {
+        files: runtimePayloadRecord(event)?.files,
+      });
+
+    case "item.completed": {
+      if (event.payload.itemType === "assistant_message") {
+        return makeDiagnostic(event, "message.completed", "Assistant message completed", {
+          itemType: event.payload.itemType,
+          itemId: event.itemId,
+          ...(event.payload.title ? { title: event.payload.title } : {}),
+          ...(event.payload.detail ? { detail: event.payload.detail } : {}),
+          ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+        });
+      }
+      return makeDiagnostic(
+        event,
+        "item.completed",
+        `${event.payload.title ?? event.payload.itemType} completed`,
+        {
+          itemType: event.payload.itemType,
+          itemId: event.itemId,
+          ...(event.payload.status ? { status: event.payload.status } : {}),
+          ...(event.payload.title ? { title: event.payload.title } : {}),
+          ...(event.payload.detail ? { detail: event.payload.detail } : {}),
+          ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+        },
+      );
+    }
+
+    default:
+      return undefined;
+  }
 }
 
 const make = Effect.gen(function* () {
@@ -1088,6 +1227,17 @@ const make = Effect.gen(function* () {
           createdAt: activity.createdAt,
         }),
       ).pipe(Effect.asVoid);
+
+      const diagnostic = runtimeEventToDiagnostic(event);
+      if (diagnostic) {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.diagnostic.append",
+          commandId: providerCommandId(event, "thread-diagnostic-append"),
+          threadId: thread.id,
+          diagnostic,
+          createdAt: diagnostic.createdAt,
+        });
+      }
     });
 
   const processDomainEvent = (event: TurnStartRequestedDomainEvent) =>

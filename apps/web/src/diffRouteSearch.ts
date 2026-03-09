@@ -4,6 +4,8 @@ export interface DiffRouteSearch {
   diff?: "1";
   diffTurnId?: TurnId;
   diffFilePath?: string;
+  /** Passed through from child routes (events page). */
+  event?: number;
 }
 
 function isDiffOpenValue(value: unknown): boolean {
@@ -31,9 +33,11 @@ export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRoute
   const diffTurnId = diffTurnIdRaw ? TurnId.makeUnsafe(diffTurnIdRaw) : undefined;
   const diffFilePath = diff && diffTurnId ? normalizeSearchString(search.diffFilePath) : undefined;
 
+  const event = Number(search.event);
   return {
     ...(diff ? { diff } : {}),
     ...(diffTurnId ? { diffTurnId } : {}),
     ...(diffFilePath ? { diffFilePath } : {}),
+    ...(Number.isFinite(event) ? { event } : {}),
   };
 }

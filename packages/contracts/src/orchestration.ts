@@ -529,6 +529,42 @@ const ThreadActivityAppendCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const OrchestrationDiagnosticKind = Schema.Literals([
+  "turn.started",
+  "turn.completed",
+  "turn.aborted",
+  "session.configured",
+  "session.exited",
+  "token-usage.updated",
+  "hook.started",
+  "hook.progress",
+  "hook.completed",
+  "tool.summary",
+  "model.rerouted",
+  "files.persisted",
+  "item.completed",
+  "message.completed",
+]);
+export type OrchestrationDiagnosticKind = typeof OrchestrationDiagnosticKind.Type;
+
+export const OrchestrationDiagnostic = Schema.Struct({
+  id: EventId,
+  kind: OrchestrationDiagnosticKind,
+  summary: TrimmedNonEmptyString,
+  payload: Schema.Unknown,
+  turnId: Schema.NullOr(TurnId),
+  createdAt: IsoDateTime,
+});
+export type OrchestrationDiagnostic = typeof OrchestrationDiagnostic.Type;
+
+const ThreadDiagnosticAppendCommand = Schema.Struct({
+  type: Schema.Literal("thread.diagnostic.append"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  diagnostic: OrchestrationDiagnostic,
+  createdAt: IsoDateTime,
+});
+
 const ThreadRevertCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.revert.complete"),
   commandId: CommandId,
@@ -544,6 +580,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
+  ThreadDiagnosticAppendCommand,
   ThreadRevertCompleteCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
@@ -575,6 +612,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "thread.diagnostic-appended",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -738,6 +776,11 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
   activity: OrchestrationThreadActivity,
 });
 
+export const ThreadDiagnosticAppendedPayload = Schema.Struct({
+  threadId: ThreadId,
+  diagnostic: OrchestrationDiagnostic,
+});
+
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
@@ -874,6 +917,11 @@ export const OrchestrationEvent = Schema.Union([
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
   }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.diagnostic-appended"),
+    payload: ThreadDiagnosticAppendedPayload,
+  }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
 
@@ -977,6 +1025,11 @@ export const OrchestrationPersistedEvent = Schema.Union([
     ...PersistedEventBaseFields,
     eventType: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...PersistedEventBaseFields,
+    eventType: Schema.Literal("thread.diagnostic-appended"),
+    payload: ThreadDiagnosticAppendedPayload,
   }),
 ]);
 export type OrchestrationPersistedEvent = typeof OrchestrationPersistedEvent.Type;
