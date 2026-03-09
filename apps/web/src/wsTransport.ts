@@ -37,7 +37,7 @@ export class WsTransport {
     const bridgeUrl = window.desktopBridge?.getWsUrl();
     // In dev mode, VITE_WS_URL points to the server's WebSocket endpoint.
     // In production, the page is served by the WS server on the same host:port.
-    const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
+    const envUrl = import.meta.env.DEV ? (import.meta.env.VITE_WS_URL as string | undefined) : undefined;
     this.url =
       url ??
       (bridgeUrl && bridgeUrl.length > 0
