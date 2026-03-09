@@ -120,6 +120,34 @@ if ($isUpdate) {
 Write-Host ""
 
 # =========================================================================
+#  INSTALL FOLDER (ask first)
+# =========================================================================
+
+$defaultDir = Join-Path $env:ProgramFiles "T3 Code"
+Write-Bot "First — where do you want T3 Code installed?"
+Write-Host ""
+Write-Host "    [1] Default ($defaultDir)" -ForegroundColor Cyan
+Write-Host "    [2] Current folder ($($PWD.Path))" -ForegroundColor Cyan
+Write-Host "    [3] Custom path" -ForegroundColor Cyan
+Write-Host ""
+$folderChoice = Read-Host "  Your choice (1/2/3)"
+switch ($folderChoice) {
+    "2" { $installDir = $PWD.Path }
+    "3" {
+        $customPath = Read-Host "  Enter full path"
+        if ($customPath -and $customPath.Length -gt 2) {
+            $installDir = $customPath
+        } else {
+            Write-Warn "Invalid path, using default"
+            $installDir = $defaultDir
+        }
+    }
+    default { $installDir = $defaultDir }
+}
+Write-Ok "Install folder: $installDir"
+Write-Host ""
+
+# =========================================================================
 #  PACKAGE MANAGER
 # =========================================================================
 
@@ -458,33 +486,6 @@ try {
             Write-Host ""
 
             if (Ask-YesNo "Download and install T3 Code v$($latestVersion)?") {
-                # Ask for install folder
-                $defaultDir = Join-Path $env:ProgramFiles "T3 Code"
-                Write-Host ""
-                Write-Bot "Where do you want to install T3 Code?"
-                Write-Host "    Default: $defaultDir" -ForegroundColor DarkGray
-                Write-Host "    Current: $($PWD.Path)" -ForegroundColor DarkGray
-                Write-Host ""
-                Write-Host "    [1] Default ($defaultDir)" -ForegroundColor Cyan
-                Write-Host "    [2] Current folder ($($PWD.Path))" -ForegroundColor Cyan
-                Write-Host "    [3] Custom path" -ForegroundColor Cyan
-                Write-Host ""
-                $folderChoice = Read-Host "  Your choice (1/2/3)"
-                switch ($folderChoice) {
-                    "2" { $installDir = $PWD.Path }
-                    "3" {
-                        $customPath = Read-Host "  Enter full path"
-                        if ($customPath -and (Test-Path (Split-Path $customPath -Parent) -ErrorAction SilentlyContinue)) {
-                            $installDir = $customPath
-                        } else {
-                            Write-Warn "Invalid path, using default"
-                            $installDir = $defaultDir
-                        }
-                    }
-                    default { $installDir = $defaultDir }
-                }
-                Write-Host ""
-
                 $tempDir = Join-Path $env:TEMP "t3code-install"
                 $msiPath = Join-Path $tempDir $msiName
                 if (-not (Test-Path $tempDir)) { New-Item -ItemType Directory -Path $tempDir -Force | Out-Null }
