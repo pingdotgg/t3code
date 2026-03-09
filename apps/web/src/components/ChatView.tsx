@@ -624,6 +624,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
   );
   const promptRef = useRef(prompt);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -1843,6 +1844,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     }
 
+    setShowScrollToBottom(!shouldAutoScrollRef.current);
     lastKnownScrollTopRef.current = currentScrollTop;
   }, []);
   const onMessagesWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
@@ -3523,6 +3525,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
           workspaceRoot={activeProject?.cwd ?? undefined}
         />
       </div>
+
+      {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
+      {showScrollToBottom && (
+        <div className="flex justify-center py-1.5">
+          <button
+            type="button"
+            onClick={() => scrollMessagesToBottom("smooth")}
+            className="flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+          >
+            <ChevronDownIcon className="size-3.5" />
+            Scroll to bottom
+          </button>
+        </div>
+      )}
 
       {/* Input bar */}
       <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
