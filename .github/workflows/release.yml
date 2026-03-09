@@ -255,6 +255,16 @@ jobs:
     needs: [preflight, build, publish_cli]
     runs-on: ubuntu-24.04
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+
       - name: Download all desktop artifacts
         uses: actions/download-artifact@v4
         with:
