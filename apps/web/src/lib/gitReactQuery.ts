@@ -12,6 +12,7 @@ export const gitQueryKeys = {
   all: ["git"] as const,
   status: (cwd: string | null) => ["git", "status", cwd] as const,
   branches: (cwd: string | null) => ["git", "branches", cwd] as const,
+  worktrees: (cwd: string | null) => ["git", "worktrees", cwd] as const,
   repositoryContext: (cwd: string | null) => ["git", "repository-context", cwd] as const,
 };
 
@@ -20,6 +21,8 @@ export const gitMutationKeys = {
   checkout: (cwd: string | null) => ["git", "mutation", "checkout", cwd] as const,
   runStackedAction: (cwd: string | null) => ["git", "mutation", "run-stacked-action", cwd] as const,
   pull: (cwd: string | null) => ["git", "mutation", "pull", cwd] as const,
+  mergeBranches: (cwd: string | null) => ["git", "mutation", "merge-branches", cwd] as const,
+  abortMerge: (cwd: string | null) => ["git", "mutation", "abort-merge", cwd] as const,
 };
 
 export function invalidateGitQueries(queryClient: QueryClient) {
@@ -70,6 +73,22 @@ export function gitRepositoryContextQueryOptions(cwd: string | null) {
     staleTime: GIT_REPOSITORY_CONTEXT_STALE_TIME_MS,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
+  });
+}
+
+export function gitWorktreesQueryOptions(cwd: string | null) {
+  return queryOptions({
+    queryKey: gitQueryKeys.worktrees(cwd),
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      if (!cwd) throw new Error("Git worktrees are unavailable.");
+      return api.git.listWorktrees({ cwd });
+    },
+    enabled: cwd !== null,
+    staleTime: GIT_BRANCHES_STALE_TIME_MS,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchInterval: GIT_BRANCHES_REFETCH_INTERVAL_MS,
   });
 }
 
@@ -180,6 +199,41 @@ export function gitRemoveWorktreeMutationOptions(input: { queryClient: QueryClie
       return api.git.removeWorktree({ cwd, path, force });
     },
     mutationKey: ["git", "mutation", "remove-worktree"] as const,
+    onSettled: async () => {
+      await invalidateGitQueries(input.queryClient);
+    },
+  });
+}
+
+export function gitMergeBranchesMutationOptions(input: {
+  cwd: string | null;
+  queryClient: QueryClient;
+}) {
+  return mutationOptions({
+    mutationKey: gitMutationKeys.mergeBranches(input.cwd),
+    mutationFn: async ({ sourceBranch, targetBranch }: { sourceBranch: string; targetBranch: string }) => {
+      const api = ensureNativeApi();
+      if (!input.cwd) throw new Error("Git merge is unavailable.");
+      return api.git.mergeBranches({ cwd: input.cwd, sourceBranch, targetBranch });
+    },
+    onSettled: async () => {
+      await invalidateGitQueries(input.queryClient);
+    },
+  });
+}
+
+export function gitAbortMergeMutationOptions(input: {
+  cwd: string | null;
+  queryClient: QueryClient;
+}) {
+  return mutationOptions({
+    mutationKey: gitMutationKeys.abortMerge(input.cwd),
+    mutationFn: async (cwdOverride?: string | null) => {
+      const api = ensureNativeApi();
+      const cwd = cwdOverride ?? input.cwd;
+      if (!cwd) throw new Error("Git merge abort is unavailable.");
+      return api.git.abortMerge({ cwd });
+    },
     onSettled: async () => {
       await invalidateGitQueries(input.queryClient);
     },

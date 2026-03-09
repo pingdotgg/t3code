@@ -9,6 +9,7 @@
 import { ServiceMap } from "effect";
 import type { Effect, Scope } from "effect";
 import type {
+  GitAbortMergeResult,
   GitCheckoutInput,
   GitCreateBranchInput,
   GitCreateWorktreeInput,
@@ -16,6 +17,10 @@ import type {
   GitInitInput,
   GitListBranchesInput,
   GitListBranchesResult,
+  GitListWorktreesInput,
+  GitListWorktreesResult,
+  GitMergeBranchesInput,
+  GitMergeBranchesResult,
   GitRepositoryContextResult,
   GitPullResult,
   GitRemoveWorktreeInput,
@@ -126,6 +131,13 @@ export interface GitCoreShape {
   ) => Effect.Effect<GitListBranchesResult, GitCommandError>;
 
   /**
+   * List worktrees and lightweight status metadata.
+   */
+  readonly listWorktrees: (
+    input: GitListWorktreesInput,
+  ) => Effect.Effect<GitListWorktreesResult, GitCommandError>;
+
+  /**
    * Pull current branch from upstream using fast-forward only.
    */
   readonly pullCurrentBranch: (cwd: string) => Effect.Effect<GitPullResult, GitCommandError>;
@@ -153,6 +165,18 @@ export interface GitCoreShape {
    * Create a local branch.
    */
   readonly createBranch: (input: GitCreateBranchInput) => Effect.Effect<void, GitCommandError>;
+
+  /**
+   * Merge one local branch into another branch's attached worktree.
+   */
+  readonly mergeBranches: (
+    input: GitMergeBranchesInput,
+  ) => Effect.Effect<GitMergeBranchesResult, GitCommandError>;
+
+  /**
+   * Abort an in-progress merge in the provided worktree.
+   */
+  readonly abortMerge: (cwd: string) => Effect.Effect<GitAbortMergeResult, GitCommandError>;
 
   /**
    * Checkout an existing branch and refresh its upstream metadata in background.

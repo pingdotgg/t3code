@@ -824,6 +824,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* git.listBranches(body);
       }
 
+      case WS_METHODS.gitListWorktrees: {
+        const body = stripRequestTag(request.body);
+        return yield* git.listWorktrees(body);
+      }
+
       case WS_METHODS.gitCreateWorktree: {
         const body = stripRequestTag(request.body);
         return yield* git.createWorktree(body);
@@ -837,6 +842,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.gitCreateBranch: {
         const body = stripRequestTag(request.body);
         return yield* git.createBranch(body);
+      }
+
+      case WS_METHODS.gitMergeBranches: {
+        const body = stripRequestTag(request.body);
+        return yield* git.mergeBranches(body);
+      }
+
+      case WS_METHODS.gitAbortMerge: {
+        const body = stripRequestTag(request.body);
+        return yield* git.abortMerge(body.cwd);
       }
 
       case WS_METHODS.gitCheckout: {

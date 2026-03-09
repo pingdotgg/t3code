@@ -1,5 +1,11 @@
-import type { GitStackedAction, GitStatusResult, ThreadId } from "@t3tools/contracts";
+import type {
+  GitMergeBranchesResult,
+  GitStackedAction,
+  GitStatusResult,
+  ThreadId,
+} from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CloudUploadIcon,
@@ -40,16 +46,26 @@ import {
   invalidateGitHubQueries,
 } from "~/lib/githubReactQuery";
 import {
+  gitAbortMergeMutationOptions,
   gitBranchesQueryOptions,
   gitInitMutationOptions,
+  gitMergeBranchesMutationOptions,
   gitMutationKeys,
   gitPullMutationOptions,
+  gitRemoveWorktreeMutationOptions,
   gitRunStackedActionMutationOptions,
   gitStatusQueryOptions,
+  gitWorktreesQueryOptions,
   invalidateGitQueries,
 } from "~/lib/gitReactQuery";
 import { preferredTerminalEditor, resolvePathLinkTarget } from "~/terminal-links";
 import { readNativeApi } from "~/nativeApi";
+import { useStore } from "~/store";
+import { useComposerDraftStore } from "~/composerDraftStore";
+import { newCommandId, newThreadId } from "~/lib/utils";
+import { createDedicatedThreadWorkspace } from "~/threadWorktree";
+import { formatWorktreePathForDisplay } from "~/worktreeCleanup";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -146,7 +162,79 @@ function formatGitHubTimestamp(value: string): string {
   }).format(date);
 }
 
+function renderWorkspaceHealthBadge(input: {
+  hasConflicts: boolean;
+  hasWorkingTreeChanges: boolean;
+}) {
+  const badge = input.hasConflicts ? (
+    <Badge variant="error">Conflicts</Badge>
+  ) : input.hasWorkingTreeChanges ? (
+    <Badge variant="warning">Dirty</Badge>
+  ) : (
+    <Badge variant="success">Clean</Badge>
+  );
+
+  const tooltip = input.hasConflicts
+    ? "This workspace has unresolved merge conflicts. Resolve or abort the merge before continuing."
+    : input.hasWorkingTreeChanges
+      ? "This workspace has local changes. Dirty includes staged, unstaged, untracked, renamed, or deleted files."
+      : "This workspace has no local file changes.";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={badge} />
+      <TooltipPopup side="top">{tooltip}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function buildConflictDraftPrompt(input: {
+  sourceBranch: string;
+  targetBranch: string;
+  targetWorktreePath: string;
+  conflictedFiles: ReadonlyArray<string>;
+}): string {
+  const conflictedFilesSection =
+    input.conflictedFiles.length > 0
+      ? input.conflictedFiles.map((file) => `- ${file}`).join("\n")
+      : "- No conflicted files were reported.";
+
+  return [
+    `Resolve merge conflicts from \`${input.sourceBranch}\` into \`${input.targetBranch}\`.`,
+    "",
+    "Context",
+    `- Target branch: \`${input.targetBranch}\``,
+    `- Source branch: \`${input.sourceBranch}\``,
+    `- Target workspace: \`${input.targetWorktreePath}\``,
+    "",
+    "Conflicted files",
+    conflictedFilesSection,
+    "",
+    "Instructions",
+    "- Resolve only the listed merge conflicts in the target workspace.",
+    "- Preserve both branch intents where possible.",
+    "- Keep unrelated files unchanged.",
+    "- Stop when the merge conflicts are cleared and summarize what changed.",
+  ].join("\n");
+}
+
 export default function GitHubPanel({ gitCwd, projectGitCwd, activeThreadId }: GitActionsControlProps) {
+  const navigate = useNavigate();
+  const threads = useStore((store) => store.threads);
+  const setThreadBranch = useStore((store) => store.setThreadBranch);
+  const activeServerThread = useMemo(
+    () => threads.find((thread) => thread.id === activeThreadId) ?? null,
+    [activeThreadId, threads],
+  );
+  const activeDraftThread = useComposerDraftStore((store) =>
+    activeThreadId ? store.getDraftThread(activeThreadId) : null,
+  );
+  const getDraftThreadByProjectId = useComposerDraftStore((store) => store.getDraftThreadByProjectId);
+  const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const draftPromptsByThreadId = useComposerDraftStore((store) => store.draftsByThreadId);
+  const setPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const activeProjectId = activeServerThread?.projectId ?? activeDraftThread?.projectId ?? null;
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
@@ -157,10 +245,13 @@ export default function GitHubPanel({ gitCwd, projectGitCwd, activeThreadId }: G
   const [issueState, setIssueState] = useState<"open" | "closed" | "all">("open");
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
     useState<PendingDefaultBranchAction | null>(null);
+  const [mergeSourceBranch, setMergeSourceBranch] = useState("");
+  const [lastMergeResult, setLastMergeResult] = useState<GitMergeBranchesResult | null>(null);
 
   const { data: gitStatus = null, error: gitStatusError } = useQuery(gitStatusQueryOptions(gitCwd));
 
   const { data: branchList = null } = useQuery(gitBranchesQueryOptions(gitCwd));
+  const worktreesQuery = useQuery(gitWorktreesQueryOptions(projectGitCwd ?? gitCwd));
   const githubStatusQuery = useQuery(githubStatusQueryOptions(projectGitCwd));
   // Default to true while loading so we don't flash init controls.
   const isRepo = branchList?.isRepo ?? true;
@@ -195,17 +286,110 @@ export default function GitHubPanel({ gitCwd, projectGitCwd, activeThreadId }: G
     gitRunStackedActionMutationOptions({ cwd: gitCwd, queryClient }),
   );
   const pullMutation = useMutation(gitPullMutationOptions({ cwd: gitCwd, queryClient }));
+  const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
+  const mergeBranchesMutation = useMutation(
+    gitMergeBranchesMutationOptions({ cwd: projectGitCwd ?? gitCwd, queryClient }),
+  );
+  const abortMergeMutation = useMutation(
+    gitAbortMergeMutationOptions({ cwd: projectGitCwd ?? gitCwd, queryClient }),
+  );
 
   const isRunStackedActionRunning =
     useIsMutating({ mutationKey: gitMutationKeys.runStackedAction(gitCwd) }) > 0;
   const isPullRunning = useIsMutating({ mutationKey: gitMutationKeys.pull(gitCwd) }) > 0;
+  const isMergeRunning =
+    useIsMutating({ mutationKey: gitMutationKeys.mergeBranches(projectGitCwd ?? gitCwd) }) > 0;
+  const isAbortMergeRunning =
+    useIsMutating({ mutationKey: gitMutationKeys.abortMerge(projectGitCwd ?? gitCwd) }) > 0;
   const isGitActionRunning = isRunStackedActionRunning || isPullRunning;
+  const localBranches = useMemo(
+    () => (branchList?.branches ?? []).filter((branch) => !branch.isRemote),
+    [branchList?.branches],
+  );
+  const defaultBranch = useMemo(
+    () => localBranches.find((branch) => branch.isDefault)?.name ?? null,
+    [localBranches],
+  );
+  const worktrees = useMemo(() => worktreesQuery.data?.worktrees ?? [], [worktreesQuery.data?.worktrees]);
+  const currentWorktree = useMemo(
+    () =>
+      worktrees.find((worktree) => worktree.isCurrent) ??
+      worktrees.find((worktree) => worktree.path === (gitCwd ?? "")) ??
+      null,
+    [gitCwd, worktrees],
+  );
+  const linkedThreadCountByWorktreePath = useMemo(() => {
+    const counts = new Map<string, number>();
+    if (!activeProjectId) {
+      return counts;
+    }
+    for (const thread of threads) {
+      if (thread.projectId !== activeProjectId) {
+        continue;
+      }
+      const targetPath = thread.worktreePath ?? projectGitCwd;
+      if (!targetPath) {
+        continue;
+      }
+      counts.set(targetPath, (counts.get(targetPath) ?? 0) + 1);
+    }
+    return counts;
+  }, [activeProjectId, projectGitCwd, threads]);
+  const activeWorkspacePath = currentWorktree?.path ?? gitCwd;
+  const activeWorkspaceBranch = currentWorktree?.branch ?? gitStatusForActions?.branch ?? currentBranch;
+  const activeWorkspaceName =
+    currentWorktree?.isMainWorktree || !activeWorkspacePath
+      ? "Primary workspace"
+      : formatWorktreePathForDisplay(activeWorkspacePath);
+  const activeWorkspaceScopeCopy = currentWorktree?.isMainWorktree
+    ? "This thread works in the primary workspace."
+    : "This thread works in a dedicated workspace.";
+  const activeWorkspaceLinkCount = activeWorkspacePath
+    ? (linkedThreadCountByWorktreePath.get(activeWorkspacePath) ?? 0)
+    : 0;
+  const activeWorkspaceHasConflicts =
+    currentWorktree?.hasConflicts === true ||
+    (lastMergeResult?.status === "conflicted" && lastMergeResult.targetWorktreePath === activeWorkspacePath);
+  const activeWorkspaceHasWorkingTreeChanges =
+    currentWorktree?.hasWorkingTreeChanges ?? gitStatusForActions?.hasWorkingTreeChanges ?? false;
   const isDefaultBranch = useMemo(() => {
-    const branchName = gitStatusForActions?.branch;
+    const branchName = activeWorkspaceBranch;
     if (!branchName) return false;
     const current = branchList?.branches.find((branch) => branch.name === branchName);
     return current?.isDefault ?? (branchName === "main" || branchName === "master");
-  }, [branchList?.branches, gitStatusForActions?.branch]);
+  }, [activeWorkspaceBranch, branchList?.branches]);
+
+  useEffect(() => {
+    const localBranchNames = localBranches.map((branch) => branch.name);
+    if (localBranchNames.length === 0 || !activeWorkspaceBranch) {
+      if (mergeSourceBranch.length > 0) {
+        setMergeSourceBranch("");
+      }
+      return;
+    }
+
+    const suggestedSourceBranch =
+      localBranchNames.find((branchName) => branchName !== activeWorkspaceBranch) ??
+      "";
+
+    if (
+      mergeSourceBranch.length === 0 ||
+      !localBranchNames.includes(mergeSourceBranch) ||
+      mergeSourceBranch === activeWorkspaceBranch
+    ) {
+      setMergeSourceBranch(suggestedSourceBranch);
+    }
+  }, [activeWorkspaceBranch, localBranches, mergeSourceBranch]);
+
+  useEffect(() => {
+    if (
+      lastMergeResult &&
+      (lastMergeResult.targetWorktreePath !== activeWorkspacePath ||
+        lastMergeResult.targetBranch !== activeWorkspaceBranch)
+    ) {
+      setLastMergeResult(null);
+    }
+  }, [activeWorkspaceBranch, activeWorkspacePath, lastMergeResult]);
 
   const gitActionMenuItems = useMemo(
     () => buildMenuItems(gitStatusForActions, isGitActionRunning),
@@ -218,6 +402,302 @@ export default function GitHubPanel({ gitCwd, projectGitCwd, activeThreadId }: G
         includesCommit: pendingDefaultBranchAction.includesCommit,
       })
     : null;
+
+  const openPathInEditor = useCallback(
+    (targetPath: string) => {
+      const api = readNativeApi();
+      if (!api) {
+        toastManager.add({
+          type: "error",
+          title: "Editor opening is unavailable.",
+          data: threadToastData,
+        });
+        return;
+      }
+      void api.shell.openInEditor(targetPath, preferredTerminalEditor()).catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to open path",
+          description: error instanceof Error ? error.message : "An error occurred.",
+          data: threadToastData,
+        });
+      });
+    },
+    [threadToastData],
+  );
+
+  const moveThreadToDedicatedWorkspace = useCallback(async () => {
+    const api = readNativeApi();
+    const baseCwd = projectGitCwd ?? gitCwd;
+    if (!api || !activeThreadId || !baseCwd) {
+      toastManager.add({
+        type: "error",
+        title: "Dedicated workspace creation is unavailable.",
+        data: threadToastData,
+      });
+      return;
+    }
+
+    try {
+      const preferredBaseBranch =
+        activeServerThread?.branch ?? activeDraftThread?.branch ?? currentWorktree?.branch ?? defaultBranch;
+      const workspace = await createDedicatedThreadWorkspace({
+        api,
+        cwd: baseCwd,
+        preferredBaseBranch,
+        queryClient,
+      });
+
+      if (activeServerThread) {
+        if (activeServerThread.session) {
+          await api.orchestration.dispatchCommand({
+            type: "thread.session.stop",
+            commandId: newCommandId(),
+            threadId: activeServerThread.id,
+            createdAt: new Date().toISOString(),
+          });
+        }
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId: activeServerThread.id,
+          branch: workspace.branch,
+          worktreePath: workspace.worktreePath,
+        });
+        setThreadBranch(activeServerThread.id, workspace.branch, workspace.worktreePath);
+      } else if (activeDraftThread && activeThreadId) {
+        setDraftThreadContext(activeThreadId, {
+          branch: workspace.branch,
+          worktreePath: workspace.worktreePath,
+          envMode: "worktree",
+        });
+      }
+
+      toastManager.add({
+        title: "Dedicated workspace ready",
+        description: formatWorktreePathForDisplay(workspace.worktreePath),
+        data: threadToastData,
+      });
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Could not create a dedicated workspace",
+        description: error instanceof Error ? error.message : "An error occurred.",
+        data: threadToastData,
+      });
+    }
+  }, [
+    activeDraftThread,
+    activeServerThread,
+    activeThreadId,
+    currentWorktree?.branch,
+    defaultBranch,
+    gitCwd,
+    projectGitCwd,
+    queryClient,
+    setDraftThreadContext,
+    setThreadBranch,
+    threadToastData,
+  ]);
+
+  const canMoveThreadToDedicatedWorkspace =
+    activeThreadId !== null &&
+    currentWorktree?.isMainWorktree === true &&
+    !activeServerThread?.worktreePath &&
+    !activeDraftThread?.worktreePath;
+
+  const injectConflictDraft = useCallback(
+    async (result: GitMergeBranchesResult) => {
+      if (!activeProjectId) {
+        toastManager.add({
+          type: "error",
+          title: "Could not resolve a target project for the conflict draft.",
+          data: threadToastData,
+        });
+        return;
+      }
+
+      const targetServerThread =
+        threads.find(
+          (thread) =>
+            thread.projectId === activeProjectId &&
+            thread.branch === result.targetBranch &&
+            (thread.worktreePath ?? projectGitCwd ?? null) === result.targetWorktreePath,
+        ) ?? null;
+
+      const targetDraftThread = getDraftThreadByProjectId(activeProjectId);
+      const targetThreadId =
+        targetServerThread?.id ?? targetDraftThread?.threadId ?? newThreadId();
+
+      if (!targetServerThread) {
+        if (!targetDraftThread) {
+          setProjectDraftThreadId(activeProjectId, targetThreadId, {
+            branch: result.targetBranch,
+            worktreePath:
+              worktreesQuery.data?.repoRoot === result.targetWorktreePath
+                ? null
+                : result.targetWorktreePath,
+            envMode:
+              worktreesQuery.data?.repoRoot === result.targetWorktreePath ? "local" : "worktree",
+          });
+        } else {
+          setDraftThreadContext(targetThreadId, {
+            branch: result.targetBranch,
+            worktreePath:
+              worktreesQuery.data?.repoRoot === result.targetWorktreePath
+                ? null
+                : result.targetWorktreePath,
+            envMode:
+              worktreesQuery.data?.repoRoot === result.targetWorktreePath ? "local" : "worktree",
+          });
+        }
+      }
+
+      const nextPrompt = buildConflictDraftPrompt(result);
+      const existingPrompt = draftPromptsByThreadId[targetThreadId]?.prompt?.trim() ?? "";
+      setPrompt(
+        targetThreadId,
+        existingPrompt.length > 0 ? `${existingPrompt}\n\n${nextPrompt}` : nextPrompt,
+      );
+      await navigate({
+        to: "/$threadId",
+        params: { threadId: targetThreadId },
+      }).catch(() => undefined);
+      toastManager.add({
+        type: "success",
+        title: "Conflict brief added to thread draft",
+        description: `Prepared a draft for ${result.targetBranch}.`,
+        data: {
+          ...threadToastData,
+          threadId: targetThreadId,
+        },
+      });
+    },
+    [
+      activeProjectId,
+      draftPromptsByThreadId,
+      getDraftThreadByProjectId,
+      navigate,
+      projectGitCwd,
+      setDraftThreadContext,
+      setProjectDraftThreadId,
+      setPrompt,
+      threadToastData,
+      threads,
+      worktreesQuery.data?.repoRoot,
+    ],
+  );
+
+  const runLocalMerge = useCallback(async () => {
+    if (!mergeSourceBranch || !activeWorkspaceBranch) {
+      toastManager.add({
+        type: "warning",
+        title: "Select a source branch before merging.",
+        data: threadToastData,
+      });
+      return;
+    }
+    if (mergeSourceBranch === activeWorkspaceBranch) {
+      toastManager.add({
+        type: "warning",
+        title: "Source and target branches must be different.",
+        data: threadToastData,
+      });
+      return;
+    }
+
+    try {
+      const result = await mergeBranchesMutation.mutateAsync({
+        sourceBranch: mergeSourceBranch,
+        targetBranch: activeWorkspaceBranch,
+      });
+      setLastMergeResult(result);
+      toastManager.add({
+        type: result.status === "merged" ? "success" : "warning",
+        title:
+          result.status === "merged"
+            ? `Merged ${result.sourceBranch} into ${result.targetBranch}`
+            : `Merge conflicts in ${result.targetBranch}`,
+        description:
+          result.status === "merged"
+            ? undefined
+            : `${result.conflictedFiles.length} conflicted file${result.conflictedFiles.length === 1 ? "" : "s"}.`,
+        data: threadToastData,
+      });
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Local merge failed",
+        description: error instanceof Error ? error.message : "An error occurred.",
+        data: threadToastData,
+      });
+    }
+  }, [
+    activeWorkspaceBranch,
+    mergeBranchesMutation,
+    mergeSourceBranch,
+    threadToastData,
+  ]);
+
+  const abortMergeForWorktree = useCallback(
+    async (targetCwd: string) => {
+      try {
+        const result = await abortMergeMutation.mutateAsync(targetCwd);
+        if (result.status === "aborted") {
+          setLastMergeResult((current) =>
+            current?.targetWorktreePath === targetCwd ? null : current,
+          );
+        }
+        toastManager.add({
+          type: result.status === "aborted" ? "success" : "warning",
+          title:
+            result.status === "aborted"
+              ? "Merge aborted"
+              : "No merge in progress for that workspace",
+          data: threadToastData,
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Could not abort merge",
+          description: error instanceof Error ? error.message : "An error occurred.",
+          data: threadToastData,
+        });
+      }
+    },
+    [abortMergeMutation, threadToastData],
+  );
+
+  const removeWorktree = useCallback(
+    async (worktreePath: string) => {
+      const repoCwd = projectGitCwd ?? gitCwd;
+      if (!repoCwd) {
+        return;
+      }
+      try {
+        await removeWorktreeMutation.mutateAsync({
+          cwd: repoCwd,
+          path: worktreePath,
+          force: true,
+        });
+        toastManager.add({
+          type: "success",
+          title: "Worktree removed",
+          description: formatWorktreePathForDisplay(worktreePath),
+          data: threadToastData,
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Could not remove worktree",
+          description: error instanceof Error ? error.message : "An error occurred.",
+          data: threadToastData,
+        });
+      }
+    },
+    [gitCwd, projectGitCwd, removeWorktreeMutation, threadToastData],
+  );
 
   const openExistingPr = useCallback(async () => {
     const api = readNativeApi();
@@ -711,6 +1191,268 @@ export default function GitHubPanel({ gitCwd, projectGitCwd, activeThreadId }: G
 
             <ScrollArea className="min-h-0 flex-1">
               <div className="space-y-5 p-4">
+                <section className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                      Active workspace
+                    </h3>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    All git actions in this panel apply to this workspace.
+                  </p>
+                  <p className="text-xs text-muted-foreground">{activeWorkspaceScopeCopy}</p>
+
+                  {!isRepo ? (
+                    <p className="text-sm text-muted-foreground">
+                      Initialize Git to unlock workspace controls.
+                    </p>
+                  ) : worktreesQuery.isLoading || worktreesQuery.isFetching ? (
+                    <p className="text-sm text-muted-foreground">Loading workspace...</p>
+                  ) : !currentWorktree ? (
+                    <p className="text-sm text-muted-foreground">No active workspace detected.</p>
+                  ) : (
+                    <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1 space-y-3">
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="space-y-1">
+                              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                                Workspace
+                              </p>
+                              <p className="truncate text-sm font-medium text-foreground">
+                                {activeWorkspaceName}
+                              </p>
+                            </div>
+                            <div className="space-y-1">
+                              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                                Type
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                <Badge variant={currentWorktree.isMainWorktree ? "outline" : "secondary"}>
+                                  {currentWorktree.isMainWorktree ? "Primary" : "Dedicated"}
+                                </Badge>
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                                Branch
+                              </p>
+                              <p className="truncate text-sm font-medium text-foreground">
+                                {activeWorkspaceBranch ?? "Detached HEAD"}
+                              </p>
+                            </div>
+                            <div className="space-y-1">
+                              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                                Status
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {renderWorkspaceHealthBadge({
+                                  hasConflicts: activeWorkspaceHasConflicts,
+                                  hasWorkingTreeChanges: activeWorkspaceHasWorkingTreeChanges,
+                                })}
+                                {isDefaultBranch && <Badge variant="outline">Default branch</Badge>}
+                                {gitStatusForActions && gitStatusForActions.aheadCount > 0 && (
+                                  <Badge variant="secondary">Ahead {gitStatusForActions.aheadCount}</Badge>
+                                )}
+                                {gitStatusForActions && gitStatusForActions.behindCount > 0 && (
+                                  <Badge variant="secondary">Behind {gitStatusForActions.behindCount}</Badge>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <p className="truncate text-xs text-muted-foreground">{activeWorkspacePath}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {activeWorkspaceLinkCount} linked thread{activeWorkspaceLinkCount === 1 ? "" : "s"}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 gap-2">
+                          <Button
+                            variant="outline"
+                            size="xs"
+                            onClick={() => openPathInEditor(currentWorktree.path)}
+                          >
+                            Open
+                          </Button>
+                          {!currentWorktree.isMainWorktree && (
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              disabled={removeWorktreeMutation.isPending || currentWorktree.hasConflicts}
+                              onClick={() => {
+                                void removeWorktree(currentWorktree.path);
+                              }}
+                            >
+                              Remove
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      {canMoveThreadToDedicatedWorkspace && (
+                        <div className="rounded-lg border border-border bg-background p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-medium text-foreground">Create dedicated workspace</p>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                Start this thread in an isolated workspace from the current branch.
+                              </p>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                void moveThreadToDedicatedWorkspace();
+                              }}
+                            >
+                              Create dedicated workspace
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+
+                <section className="space-y-3 border-t border-border pt-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                      Merge into active workspace
+                    </h3>
+                    {isDefaultBranch && <Badge variant="outline">Default branch</Badge>}
+                  </div>
+
+                  {!isRepo ? (
+                    <p className="text-sm text-muted-foreground">
+                      Initialize Git to enable local merge workflows.
+                    </p>
+                  ) : localBranches.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No local branches are available.</p>
+                  ) : (
+                    <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-3">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">Merge into active workspace</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Target workspace: {activeWorkspaceName}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Target branch: {activeWorkspaceBranch ?? "Detached HEAD"}
+                        </p>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                        <label className="space-y-1 text-sm">
+                          <span className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                            Source branch
+                          </span>
+                          <select
+                            className="flex min-h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                            value={mergeSourceBranch}
+                            onChange={(event) => setMergeSourceBranch(event.target.value)}
+                            disabled={localBranches.length < 2}
+                          >
+                            {mergeSourceBranch.length === 0 && (
+                              <option value="">No merge candidates</option>
+                            )}
+                            {localBranches
+                              .filter((branch) => branch.name !== activeWorkspaceBranch)
+                              .map((branch) => (
+                                <option key={branch.name} value={branch.name}>
+                                  {branch.name}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            disabled={
+                              isMergeRunning ||
+                              !activeWorkspaceBranch ||
+                              mergeSourceBranch.length === 0 ||
+                              activeWorkspaceHasWorkingTreeChanges
+                            }
+                            onClick={() => {
+                              void runLocalMerge();
+                            }}
+                          >
+                            {isMergeRunning ? "Merging..." : "Merge source into active workspace"}
+                          </Button>
+                          {activeWorkspaceHasConflicts && currentWorktree && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={isAbortMergeRunning}
+                              onClick={() => {
+                                void abortMergeForWorktree(currentWorktree.path);
+                              }}
+                            >
+                              Abort merge
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      {!activeWorkspaceBranch && (
+                        <p className="text-xs text-muted-foreground">
+                          Checkout a branch before merging.
+                        </p>
+                      )}
+                      {activeWorkspaceBranch && mergeSourceBranch.length === 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          Create another local branch to merge into this workspace.
+                        </p>
+                      )}
+                      {activeWorkspaceHasWorkingTreeChanges && !activeWorkspaceHasConflicts && (
+                        <p className="text-xs text-warning">
+                          Active workspace has local changes. Clean it before merging.
+                        </p>
+                      )}
+
+                      {lastMergeResult && (
+                        <div className="rounded-lg border border-border bg-background p-3 text-sm">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="font-medium">
+                              {lastMergeResult.status === "merged"
+                                ? `Merged ${lastMergeResult.sourceBranch} into ${lastMergeResult.targetBranch}`
+                                : `Conflicts while merging ${lastMergeResult.sourceBranch} into ${lastMergeResult.targetBranch}`}
+                            </p>
+                            <Badge
+                              variant={lastMergeResult.status === "merged" ? "success" : "error"}
+                            >
+                              {lastMergeResult.status === "merged" ? "Merged" : "Conflicted"}
+                            </Badge>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {formatWorktreePathForDisplay(lastMergeResult.targetWorktreePath)}
+                          </p>
+                          {lastMergeResult.status === "conflicted" && (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <Button
+                                size="xs"
+                                onClick={() => {
+                                  void injectConflictDraft(lastMergeResult);
+                                }}
+                              >
+                                Draft conflict brief
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="xs"
+                                onClick={() => {
+                                  void abortMergeForWorktree(lastMergeResult.targetWorktreePath);
+                                }}
+                              >
+                                Abort merge
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+
                 <section className="space-y-3">
                   <div className="flex items-center justify-between gap-2">
                     <h3 className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">

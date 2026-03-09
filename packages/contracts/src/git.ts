@@ -35,6 +35,18 @@ const GitWorktree = Schema.Struct({
   path: TrimmedNonEmptyStringSchema,
   branch: TrimmedNonEmptyStringSchema,
 });
+export type GitWorktree = typeof GitWorktree.Type;
+
+export const GitWorktreeEntry = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+  branch: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  isCurrent: Schema.Boolean,
+  isMainWorktree: Schema.Boolean,
+  hasWorkingTreeChanges: Schema.Boolean,
+  hasConflicts: Schema.Boolean,
+  conflictedFiles: Schema.Array(TrimmedNonEmptyStringSchema),
+});
+export type GitWorktreeEntry = typeof GitWorktreeEntry.Type;
 
 // RPC Inputs
 
@@ -81,6 +93,23 @@ export const GitCreateBranchInput = Schema.Struct({
   branch: TrimmedNonEmptyStringSchema,
 });
 export type GitCreateBranchInput = typeof GitCreateBranchInput.Type;
+
+export const GitListWorktreesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type GitListWorktreesInput = typeof GitListWorktreesInput.Type;
+
+export const GitMergeBranchesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  sourceBranch: TrimmedNonEmptyStringSchema,
+  targetBranch: TrimmedNonEmptyStringSchema,
+});
+export type GitMergeBranchesInput = typeof GitMergeBranchesInput.Type;
+
+export const GitAbortMergeInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type GitAbortMergeInput = typeof GitAbortMergeInput.Type;
 
 export const GitCheckoutInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -149,6 +178,29 @@ export const GitCreateWorktreeResult = Schema.Struct({
   worktree: GitWorktree,
 });
 export type GitCreateWorktreeResult = typeof GitCreateWorktreeResult.Type;
+
+export const GitListWorktreesResult = Schema.Struct({
+  isRepo: Schema.Boolean,
+  repoRoot: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  worktrees: Schema.Array(GitWorktreeEntry),
+});
+export type GitListWorktreesResult = typeof GitListWorktreesResult.Type;
+
+export const GitMergeBranchesResult = Schema.Struct({
+  status: Schema.Literals(["merged", "conflicted"]),
+  sourceBranch: TrimmedNonEmptyStringSchema,
+  targetBranch: TrimmedNonEmptyStringSchema,
+  targetWorktreePath: TrimmedNonEmptyStringSchema,
+  conflictedFiles: Schema.Array(TrimmedNonEmptyStringSchema),
+  mergeCommitSha: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type GitMergeBranchesResult = typeof GitMergeBranchesResult.Type;
+
+export const GitAbortMergeResult = Schema.Struct({
+  status: Schema.Literals(["aborted", "skipped_no_merge_in_progress"]),
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type GitAbortMergeResult = typeof GitAbortMergeResult.Type;
 
 export const GitRunStackedActionResult = Schema.Struct({
   action: GitStackedAction,

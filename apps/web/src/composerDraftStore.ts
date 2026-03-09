@@ -336,7 +336,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
             interactionMode: DEFAULT_INTERACTION_MODE,
             branch: null,
             worktreePath: null,
-            envMode: "local",
+            envMode: "worktree",
           };
         } else if (draftThreadsByThreadId[threadId as ThreadId]?.projectId !== projectId) {
           draftThreadsByThreadId[threadId as ThreadId] = {
@@ -575,7 +575,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             worktreePath: nextWorktreePath,
             envMode:
               options?.envMode ??
-              (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
+              (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "worktree")),
           };
           const hasSameProjectMapping = previousThreadIdForProject === threadId;
           const hasSameDraftThread =

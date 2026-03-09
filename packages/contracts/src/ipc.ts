@@ -1,4 +1,6 @@
 import type {
+  GitAbortMergeInput,
+  GitAbortMergeResult,
   GitCheckoutInput,
   GitCreateBranchInput,
   GitCreateWorktreeInput,
@@ -6,6 +8,10 @@ import type {
   GitInitInput,
   GitListBranchesInput,
   GitListBranchesResult,
+  GitListWorktreesInput,
+  GitListWorktreesResult,
+  GitMergeBranchesInput,
+  GitMergeBranchesResult,
   GitRepositoryContextInput,
   GitRepositoryContextResult,
   GitPullInput,
@@ -144,9 +150,12 @@ export interface NativeApi {
   git: {
     // Existing branch/worktree API
     listBranches: (input: GitListBranchesInput) => Promise<GitListBranchesResult>;
+    listWorktrees: (input: GitListWorktreesInput) => Promise<GitListWorktreesResult>;
     createWorktree: (input: GitCreateWorktreeInput) => Promise<GitCreateWorktreeResult>;
     removeWorktree: (input: GitRemoveWorktreeInput) => Promise<void>;
     createBranch: (input: GitCreateBranchInput) => Promise<void>;
+    mergeBranches: (input: GitMergeBranchesInput) => Promise<GitMergeBranchesResult>;
+    abortMerge: (input: GitAbortMergeInput) => Promise<GitAbortMergeResult>;
     checkout: (input: GitCheckoutInput) => Promise<void>;
     init: (input: GitInitInput) => Promise<void>;
     repositoryContext: (input: GitRepositoryContextInput) => Promise<GitRepositoryContextResult>;

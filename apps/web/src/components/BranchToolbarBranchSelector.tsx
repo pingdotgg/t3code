@@ -81,7 +81,10 @@ export function BranchToolbarBranchSelector({
     () => dedupeRemoteBranchesWithLocalMatches(branchesQuery.data?.branches ?? []),
     [branchesQuery.data?.branches],
   );
-  const currentGitBranch = branches.find((branch) => branch.current)?.name ?? null;
+  const currentGitBranch =
+    branches.find((branch) => branch.current && !branch.isRemote)?.name ?? null;
+  const defaultGitBranch =
+    branches.find((branch) => branch.isDefault && !branch.isRemote)?.name ?? null;
   const canonicalActiveBranch = resolveBranchToolbarValue({
     envMode: effectiveEnvMode,
     activeWorktreePath,
@@ -224,19 +227,21 @@ export function BranchToolbarBranchSelector({
   };
 
   useEffect(() => {
+    const preferredBaseBranch = defaultGitBranch ?? currentGitBranch;
     if (
       effectiveEnvMode !== "worktree" ||
       activeWorktreePath ||
       activeThreadBranch ||
-      !currentGitBranch
+      !preferredBaseBranch
     ) {
       return;
     }
-    onSetThreadBranch(currentGitBranch, null);
+    onSetThreadBranch(preferredBaseBranch, null);
   }, [
     activeThreadBranch,
     activeWorktreePath,
     currentGitBranch,
+    defaultGitBranch,
     effectiveEnvMode,
     onSetThreadBranch,
   ]);
