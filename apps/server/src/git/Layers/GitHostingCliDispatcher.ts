@@ -38,11 +38,15 @@ function detectHostingProvider(cwd: string): HostingProvider {
     }
 
     const url = result.stdout.trim().toLowerCase();
-    if (url.includes("gitlab")) {
-      return "gitlab";
+    try {
+      const hostname = new URL(url.replace(/^git@([^:]+):/, "https://$1/")).hostname;
+      if (hostname === "gitlab.com" || hostname.endsWith(".gitlab.com")) {
+        return "gitlab"
+      }
+    } catch {
+      // Fall through to default
     }
-
-    return "github";
+    return "github"
   } catch {
     return "github";
   }
