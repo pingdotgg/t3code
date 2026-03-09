@@ -15,6 +15,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { Effect, Layer, Schema, Stream } from "effect";
 
+import { redactEventForBoundary } from "../../orchestration/redactEvent.ts";
 import {
   toPersistenceDecodeError,
   toPersistenceSqlError,
@@ -178,19 +179,20 @@ const makeEventStore = Effect.gen(function* () {
       `,
   });
 
-  const append: OrchestrationEventStoreShape["append"] = (event) =>
-    appendEventRow({
-      eventId: event.eventId,
-      aggregateKind: event.aggregateKind,
-      streamId: event.aggregateId,
-      type: event.type,
-      causationEventId: event.causationEventId,
-      correlationId: event.correlationId,
-      actorKind: inferActorKind(event),
-      occurredAt: event.occurredAt,
-      commandId: event.commandId,
-      payloadJson: event.payload,
-      metadataJson: event.metadata,
+  const append: OrchestrationEventStoreShape["append"] = (event) => {
+    const safeEvent = redactEventForBoundary(event);
+    return appendEventRow({
+      eventId: safeEvent.eventId,
+      aggregateKind: safeEvent.aggregateKind,
+      streamId: safeEvent.aggregateId,
+      type: safeEvent.type,
+      causationEventId: safeEvent.causationEventId,
+      correlationId: safeEvent.correlationId,
+      actorKind: inferActorKind(safeEvent),
+      occurredAt: safeEvent.occurredAt,
+      commandId: safeEvent.commandId,
+      payloadJson: safeEvent.payload,
+      metadataJson: safeEvent.metadata,
     }).pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
@@ -204,6 +206,7 @@ const makeEventStore = Effect.gen(function* () {
         ),
       ),
     );
+  };
 
   const readFromSequence: OrchestrationEventStoreShape["readFromSequence"] = (
     sequenceExclusive,

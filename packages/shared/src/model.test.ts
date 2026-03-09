@@ -18,6 +18,7 @@ import {
   getReasoningEffortOptions,
   normalizeModelSlug,
   parseCursorModelSelection,
+  resolveCursorPickerModelSlug,
   resolveCursorModelFromSelection,
   resolveModelSlug,
   resolveModelSlugForProvider,
@@ -51,9 +52,14 @@ describe("normalizeModelSlug", () => {
     expect(normalizeModelSlug("gpt-5.3-codex-spark", "cursor")).toBe(
       "gpt-5.3-codex-spark-preview",
     );
+    expect(normalizeModelSlug("gpt-5.4", "cursor")).toBe("gpt-5.4-medium");
+    expect(normalizeModelSlug("gpt-5.2-codex", "cursor")).toBe("gpt-5.2-codex");
     expect(normalizeModelSlug("gemini-3.1", "cursor")).toBe("gemini-3.1-pro");
     expect(normalizeModelSlug("claude-4.6-sonnet-thinking", "cursor")).toBe(
       "sonnet-4.6-thinking",
+    );
+    expect(normalizeModelSlug("claude-4.5-sonnet-thinking", "cursor")).toBe(
+      "sonnet-4.5-thinking",
     );
   });
 
@@ -113,7 +119,10 @@ describe("cursor model selection", () => {
   it("includes the expected cursor reasoning levels and families", () => {
     expect(CURSOR_REASONING_OPTIONS).toEqual(["low", "normal", "high", "xhigh"]);
     expect(getCursorModelFamilyOptions().map((option) => option.slug)).toContain("gpt-5.3-codex");
+    expect(getCursorModelFamilyOptions().map((option) => option.slug)).toContain("gpt-5.2-codex");
+    expect(getCursorModelFamilyOptions().map((option) => option.slug)).toContain("gpt-5.4-medium");
     expect(getCursorModelFamilyOptions().map((option) => option.slug)).toContain("opus-4.6");
+    expect(getCursorModelFamilyOptions().map((option) => option.slug)).toContain("sonnet-4.5");
   });
 
   it("parses codex reasoning and fast mode variants", () => {
@@ -123,9 +132,28 @@ describe("cursor model selection", () => {
       fast: true,
       thinking: false,
     });
-    expect(parseCursorModelSelection("gpt-5.2-codex")).toEqual(
-      parseCursorModelSelection(DEFAULT_MODEL_BY_PROVIDER.cursor),
-    );
+    expect(parseCursorModelSelection("gpt-5.2-codex")).toEqual({
+      family: "gpt-5.2-codex",
+      reasoning: "normal",
+      fast: false,
+      thinking: false,
+    });
+  });
+
+  it("parses newer cursor codex reasoning variants", () => {
+    expect(parseCursorModelSelection("gpt-5.2-codex-high-fast")).toEqual({
+      family: "gpt-5.2-codex",
+      reasoning: "high",
+      fast: true,
+      thinking: false,
+    });
+    expect(
+      resolveCursorModelFromSelection({
+        family: "gpt-5.2-codex",
+        reasoning: "xhigh",
+        fast: true,
+      }),
+    ).toBe("gpt-5.2-codex-xhigh-fast");
   });
 
   it("parses and resolves thinking variants", () => {
@@ -141,6 +169,12 @@ describe("cursor model selection", () => {
         thinking: true,
       }),
     ).toBe("sonnet-4.6-thinking");
+    expect(parseCursorModelSelection("sonnet-4.5-thinking")).toEqual({
+      family: "sonnet-4.5",
+      reasoning: "normal",
+      fast: false,
+      thinking: true,
+    });
   });
 
   it("resolves codex family selections into concrete model ids", () => {
@@ -151,6 +185,13 @@ describe("cursor model selection", () => {
         fast: true,
       }),
     ).toBe("gpt-5.3-codex-xhigh-fast");
+  });
+
+  it("collapses trait-backed cursor variants to a single picker option", () => {
+    expect(resolveCursorPickerModelSlug("gpt-5.2-codex-high-fast")).toBe("gpt-5.2-codex");
+    expect(resolveCursorPickerModelSlug("opus-4.6-thinking")).toBe("opus-4.6");
+    expect(resolveCursorPickerModelSlug("sonnet-4.5-thinking")).toBe("sonnet-4.5");
+    expect(resolveCursorPickerModelSlug("gpt-5.4-high-fast")).toBe("gpt-5.4-high-fast");
   });
 });
 

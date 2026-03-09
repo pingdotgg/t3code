@@ -1,7 +1,7 @@
 import { ProjectId, ThreadId, TurnId, type OrchestrationReadModel } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { markThreadUnread, syncServerReadModel, type AppState } from "./store";
+import { markThreadUnread, moveProject, syncServerReadModel, type AppState } from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -41,6 +41,17 @@ function makeState(thread: Thread): AppState {
     ],
     threads: [thread],
     threadsHydrated: true,
+  };
+}
+
+function makeProject(projectId: string, name = projectId) {
+  return {
+    id: ProjectId.makeUnsafe(projectId),
+    name,
+    cwd: `/tmp/${projectId}`,
+    model: "gpt-5-codex",
+    expanded: true,
+    scripts: [],
   };
 }
 
@@ -126,6 +137,48 @@ describe("store pure functions", () => {
 
     expect(next).toEqual(initialState);
   });
+
+  it("moveProject inserts a project before the drop target", () => {
+    const initialState: AppState = {
+      projects: [makeProject("project-1"), makeProject("project-2"), makeProject("project-3")],
+      threads: [],
+      threadsHydrated: true,
+    };
+
+    const next = moveProject(
+      initialState,
+      ProjectId.makeUnsafe("project-3"),
+      ProjectId.makeUnsafe("project-1"),
+      "before",
+    );
+
+    expect(next.projects.map((project) => project.id)).toEqual([
+      ProjectId.makeUnsafe("project-3"),
+      ProjectId.makeUnsafe("project-1"),
+      ProjectId.makeUnsafe("project-2"),
+    ]);
+  });
+
+  it("moveProject inserts a project after the drop target", () => {
+    const initialState: AppState = {
+      projects: [makeProject("project-1"), makeProject("project-2"), makeProject("project-3")],
+      threads: [],
+      threadsHydrated: true,
+    };
+
+    const next = moveProject(
+      initialState,
+      ProjectId.makeUnsafe("project-1"),
+      ProjectId.makeUnsafe("project-2"),
+      "after",
+    );
+
+    expect(next.projects.map((project) => project.id)).toEqual([
+      ProjectId.makeUnsafe("project-2"),
+      ProjectId.makeUnsafe("project-1"),
+      ProjectId.makeUnsafe("project-3"),
+    ]);
+  });
 });
 
 describe("store read model sync", () => {
@@ -185,5 +238,47 @@ describe("store read model sync", () => {
 
     expect(next.threads[0]?.model).toBe("composer-1.5");
     expect(next.threads[0]?.session?.provider).toBe("cursor");
+  });
+
+  it("preserves locally reordered projects across read model syncs", () => {
+    const initialState: AppState = {
+      projects: [makeProject("project-2", "Project 2"), makeProject("project-1", "Project 1")],
+      threads: [],
+      threadsHydrated: true,
+    };
+    const readModel: OrchestrationReadModel = {
+      snapshotSequence: 1,
+      updatedAt: "2026-02-27T00:00:00.000Z",
+      projects: [
+        {
+          id: ProjectId.makeUnsafe("project-1"),
+          title: "Project 1",
+          workspaceRoot: "/tmp/project-1",
+          defaultModel: "gpt-5.3-codex",
+          createdAt: "2026-02-27T00:00:00.000Z",
+          updatedAt: "2026-02-27T00:00:00.000Z",
+          deletedAt: null,
+          scripts: [],
+        },
+        {
+          id: ProjectId.makeUnsafe("project-2"),
+          title: "Project 2",
+          workspaceRoot: "/tmp/project-2",
+          defaultModel: "gpt-5.3-codex",
+          createdAt: "2026-02-27T00:00:00.000Z",
+          updatedAt: "2026-02-27T00:00:00.000Z",
+          deletedAt: null,
+          scripts: [],
+        },
+      ],
+      threads: [],
+    };
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.projects.map((project) => project.id)).toEqual([
+      ProjectId.makeUnsafe("project-2"),
+      ProjectId.makeUnsafe("project-1"),
+    ]);
   });
 });

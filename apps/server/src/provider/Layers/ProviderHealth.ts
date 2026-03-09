@@ -10,11 +10,16 @@
  */
 import type {
   ServerProviderAuthStatus,
+  ServerProviderModel,
+  ServerProviderQuotaSnapshot,
   ServerProviderStatus,
   ServerProviderStatusState,
 } from "@t3tools/contracts";
+import { CopilotClient, type ModelInfo } from "@github/copilot-sdk";
 import { Effect, Layer, Option, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+
+import { resolveBundledCopilotCliPath } from "./copilotCliPath.ts";
 
 import {
   formatCodexCliUpgradeMessage,
@@ -26,6 +31,7 @@ import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHe
 const DEFAULT_TIMEOUT_MS = 4_000;
 const CODEX_PROVIDER = "codex" as const;
 const GEMINI_CLI_PROVIDER = "geminiCli" as const;
+const COPILOT_PROVIDER = "copilot" as const;
 
 // ── Pure helpers ────────────────────────────────────────────────────
 
@@ -397,17 +403,131 @@ export const checkGeminiCliProviderStatus: Effect.Effect<
   };
 });
 
+// ── Copilot health check ─────────────────────────────────────────────
+
+interface CopilotHealthProbeError {
+  readonly _tag: "CopilotHealthProbeError";
+  readonly cause: unknown;
+}
+
+const COPILOT_QUOTA_PRIORITY = ["premium_interactions", "chat", "completions"] as const;
+
+export function mapCopilotModel(model: ModelInfo): ServerProviderModel {
+  return {
+    id: model.id,
+    name: model.name,
+    supportsReasoningEffort: (model.supportedReasoningEfforts?.length ?? 0) > 0,
+    ...(model.supportedReasoningEfforts && model.supportedReasoningEfforts.length > 0
+      ? { supportedReasoningEfforts: [...model.supportedReasoningEfforts] }
+      : {}),
+    ...(model.defaultReasoningEffort ? { defaultReasoningEffort: model.defaultReasoningEffort } : {}),
+    ...(typeof model.billing?.multiplier === "number"
+      ? { billingMultiplier: model.billing.multiplier }
+      : {}),
+  } satisfies ServerProviderModel;
+}
+
+interface CopilotQuotaSnapshotInfo {
+  readonly entitlementRequests: number;
+  readonly usedRequests: number;
+  readonly remainingPercentage: number;
+  readonly overage: number;
+  readonly overageAllowedWithExhaustedQuota: boolean;
+  readonly resetDate?: string;
+}
+
+function compareCopilotQuotaKeys(left: string, right: string): number {
+  const leftPriority = COPILOT_QUOTA_PRIORITY.indexOf(left as (typeof COPILOT_QUOTA_PRIORITY)[number]);
+  const rightPriority = COPILOT_QUOTA_PRIORITY.indexOf(right as (typeof COPILOT_QUOTA_PRIORITY)[number]);
+  const normalizedLeftPriority = leftPriority === -1 ? Number.POSITIVE_INFINITY : leftPriority;
+  const normalizedRightPriority = rightPriority === -1 ? Number.POSITIVE_INFINITY : rightPriority;
+  return normalizedLeftPriority - normalizedRightPriority || left.localeCompare(right);
+}
+
+export function mapCopilotQuotaSnapshots(
+  quotaSnapshots: Record<string, CopilotQuotaSnapshotInfo> | undefined,
+): ReadonlyArray<ServerProviderQuotaSnapshot> {
+  if (!quotaSnapshots) return [];
+  return Object.entries(quotaSnapshots)
+    .toSorted(([leftKey], [rightKey]) => compareCopilotQuotaKeys(leftKey, rightKey))
+    .map(([key, snapshot]) => {
+      const entitlementRequests = Math.max(0, Math.trunc(snapshot.entitlementRequests));
+      const usedRequests = Math.max(0, Math.trunc(snapshot.usedRequests));
+      const base = {
+        key,
+        entitlementRequests,
+        usedRequests,
+        remainingRequests: Math.max(0, entitlementRequests - usedRequests),
+        remainingPercentage: Math.max(0, Math.min(100, snapshot.remainingPercentage)),
+        overage: Math.max(0, Math.trunc(snapshot.overage)),
+        overageAllowedWithExhaustedQuota: snapshot.overageAllowedWithExhaustedQuota,
+      };
+      return (snapshot.resetDate
+        ? Object.assign(base, { resetDate: snapshot.resetDate })
+        : base) satisfies ServerProviderQuotaSnapshot;
+    });
+}
+
+export const checkCopilotProviderStatus: Effect.Effect<ServerProviderStatus, never> = Effect.gen(function* () {
+  const checkedAt = new Date().toISOString();
+  const cliPath = resolveBundledCopilotCliPath();
+
+  const probeResult = yield* Effect.tryPromise({
+    try: async () => {
+      const client = new CopilotClient({
+        ...(cliPath ? { cliPath } : {}),
+        logLevel: "error",
+      });
+      try {
+        await client.start();
+        const models = await client.listModels();
+        const quota = await (client as unknown as { rpc: { account: { getQuota: () => Promise<{ quotaSnapshots?: unknown }> } } }).rpc.account.getQuota().catch(() => undefined);
+        const quotaSnapshots = quota?.quotaSnapshots as Record<string, CopilotQuotaSnapshotInfo> | undefined;
+        return { models, quotaSnapshots } as {
+          models: ModelInfo[];
+          quotaSnapshots: Record<string, CopilotQuotaSnapshotInfo> | undefined;
+        };
+      } finally {
+        await client.stop().catch(() => undefined);
+      }
+    },
+    catch: (cause): CopilotHealthProbeError => ({ _tag: "CopilotHealthProbeError", cause }),
+  }).pipe(Effect.timeout(10_000), Effect.option);
+
+  if (Option.isNone(probeResult)) {
+    return {
+      provider: COPILOT_PROVIDER,
+      status: "warning" as const,
+      available: true,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message: "GitHub Copilot health probe timed out or failed.",
+    };
+  }
+
+  const { models, quotaSnapshots } = probeResult.value;
+  return {
+    provider: COPILOT_PROVIDER,
+    status: "ready" as const,
+    available: true,
+    authStatus: "authenticated" as const,
+    checkedAt,
+    models: models.map(mapCopilotModel),
+    quotaSnapshots: mapCopilotQuotaSnapshots(quotaSnapshots),
+  };
+});
+
 // ── Layer ───────────────────────────────────────────────────────────
 
 export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
-    const [codexStatus, geminiCliStatus] = yield* Effect.all(
-      [checkCodexProviderStatus, checkGeminiCliProviderStatus],
+    const [codexStatus, geminiCliStatus, copilotStatus] = yield* Effect.all(
+      [checkCodexProviderStatus, checkGeminiCliProviderStatus, checkCopilotProviderStatus],
       { concurrency: "unbounded" },
     );
     return {
-      getStatuses: Effect.succeed([codexStatus, geminiCliStatus]),
+      getStatuses: Effect.succeed([codexStatus, geminiCliStatus, copilotStatus]),
     } satisfies ProviderHealthShape;
   }),
 );

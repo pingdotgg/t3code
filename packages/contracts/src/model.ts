@@ -7,13 +7,18 @@ export type CursorReasoningOption = (typeof CURSOR_REASONING_OPTIONS)[number];
 export const CODEX_REASONING_EFFORT_OPTIONS = ["xhigh", "high", "medium", "low"] as const;
 export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORT_OPTIONS)[number];
 
+export const CLAUDE_CODE_EFFORT_OPTIONS = ["low", "medium", "high", "max"] as const;
+export type ClaudeCodeEffort = (typeof CLAUDE_CODE_EFFORT_OPTIONS)[number];
+
 export const CodexModelOptions = Schema.Struct({
   reasoningEffort: Schema.optional(Schema.Literals(CODEX_REASONING_EFFORT_OPTIONS)),
   fastMode: Schema.optional(Schema.Boolean),
 });
 export type CodexModelOptions = typeof CodexModelOptions.Type;
 
-export const CopilotModelOptions = Schema.Struct({});
+export const CopilotModelOptions = Schema.Struct({
+  reasoningEffort: Schema.optional(Schema.Literals(CODEX_REASONING_EFFORT_OPTIONS)),
+});
 export type CopilotModelOptions = typeof CopilotModelOptions.Type;
 
 export const OpencodeModelOptions = Schema.Struct({
@@ -27,6 +32,7 @@ export type OpencodeModelOptions = typeof OpencodeModelOptions.Type;
 
 export const ClaudeCodeModelOptions = Schema.Struct({
   thinking: Schema.optional(Schema.Boolean),
+  effort: Schema.optional(Schema.Literals(CLAUDE_CODE_EFFORT_OPTIONS)),
 });
 export type ClaudeCodeModelOptions = typeof ClaudeCodeModelOptions.Type;
 
@@ -83,12 +89,30 @@ export const CURSOR_MODEL_FAMILY_OPTIONS = [
   { slug: "auto", name: "Auto" },
   { slug: "composer-1.5", name: "Composer 1.5" },
   { slug: "composer-1", name: "Composer 1" },
+  { slug: "gpt-5.4-medium", name: "GPT-5.4" },
+  { slug: "gpt-5.4-medium-fast", name: "GPT-5.4 Fast" },
+  { slug: "gpt-5.4-high", name: "GPT-5.4 High" },
+  { slug: "gpt-5.4-high-fast", name: "GPT-5.4 High Fast" },
+  { slug: "gpt-5.4-xhigh", name: "GPT-5.4 Extra High" },
+  { slug: "gpt-5.4-xhigh-fast", name: "GPT-5.4 Extra High Fast" },
   { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
   { slug: "gpt-5.3-codex-spark-preview", name: "GPT-5.3 Codex Spark" },
+  { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
+  { slug: "gpt-5.2", name: "GPT-5.2" },
+  { slug: "gpt-5.2-high", name: "GPT-5.2 High" },
+  { slug: "gpt-5.1-codex-max", name: "GPT-5.1 Codex Max" },
+  { slug: "gpt-5.1-codex-max-high", name: "GPT-5.1 Codex Max High" },
+  { slug: "gpt-5.1-high", name: "GPT-5.1 High" },
+  { slug: "gpt-5.1-codex-mini", name: "GPT-5.1 Codex Mini" },
   { slug: "opus-4.6", name: "Claude 4.6 Opus" },
   { slug: "opus-4.5", name: "Claude 4.5 Opus" },
   { slug: "sonnet-4.6", name: "Claude 4.6 Sonnet" },
+  { slug: "sonnet-4.5", name: "Claude 4.5 Sonnet" },
   { slug: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
+  { slug: "gemini-3-pro", name: "Gemini 3 Pro" },
+  { slug: "gemini-3-flash", name: "Gemini 3 Flash" },
+  { slug: "grok", name: "Grok" },
+  { slug: "kimi-k2.5", name: "Kimi K2.5" },
 ] as const satisfies readonly CursorModelFamilyOption[];
 
 export type CursorModelFamily = (typeof CURSOR_MODEL_FAMILY_OPTIONS)[number]["slug"];
@@ -102,32 +126,24 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "gpt-5.2", name: "GPT-5.2" },
   ],
   copilot: [
-    // Multipliers sourced from https://docs.github.com/en/copilot/concepts/billing/copilot-requests
-    { slug: "gpt-5.4", name: "GPT-5.4", pricingTier: "1x" },
-    { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex", pricingTier: "1x" },
-    { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex", pricingTier: "1x" },
-    { slug: "gpt-5.2", name: "GPT-5.2", pricingTier: "1x" },
-    { slug: "gpt-5.1-codex-max", name: "GPT-5.1 Codex Max", pricingTier: "1x" },
-    { slug: "gpt-5.1-codex", name: "GPT-5.1 Codex", pricingTier: "1x" },
-    { slug: "gpt-5.1-codex-mini", name: "GPT-5.1 Codex Mini (Preview)", pricingTier: "0.33x" },
-    { slug: "gpt-5.1", name: "GPT-5.1", pricingTier: "1x" },
-    { slug: "gpt-5-mini", name: "GPT-5 mini" },  // included, no premium cost
-    { slug: "gpt-4.1", name: "GPT-4.1" },  // included, no premium cost
-    { slug: "claude-sonnet-4.6", name: "Claude Sonnet 4.6", pricingTier: "1x" },
-    { slug: "claude-sonnet-4.5", name: "Claude Sonnet 4.5", pricingTier: "1x" },
-    { slug: "claude-sonnet-4", name: "Claude Sonnet 4", pricingTier: "1x" },
-    { slug: "claude-opus-4.6", name: "Claude Opus 4.6", pricingTier: "3x" },
-    { slug: "claude-opus-4.6-fast", name: "Claude Opus 4.6 Fast (Preview)", pricingTier: "30x" },
-    { slug: "claude-opus-4.5", name: "Claude Opus 4.5", pricingTier: "3x" },
-    { slug: "claude-haiku-4.5", name: "Claude Haiku 4.5", pricingTier: "0.33x" },
-    { slug: "gemini-3.1-pro", name: "Gemini 3.1 Pro (Preview)", pricingTier: "1x" },
-    { slug: "gemini-3-pro", name: "Gemini 3 Pro (Preview)", pricingTier: "1x" },
-    { slug: "gemini-3-flash", name: "Gemini 3 Flash (Preview)", pricingTier: "0.33x" },
-    { slug: "gemini-2.5-pro", name: "Gemini 2.5 Pro", pricingTier: "1x" },
-    { slug: "grok-code-fast-1", name: "Grok Code Fast 1", pricingTier: "0.25x" },
-    { slug: "goldeneye", name: "Goldeneye (Preview)" },
-    { slug: "qwen2.5", name: "Qwen2.5" },
-    { slug: "raptor-mini", name: "Raptor mini (Preview)" },  // included, no premium cost
+    { slug: "gpt-5.4", name: "GPT-5.4" },
+    { slug: "claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
+    { slug: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
+    { slug: "claude-haiku-4.5", name: "Claude Haiku 4.5" },
+    { slug: "claude-opus-4.6", name: "Claude Opus 4.6" },
+    { slug: "claude-opus-4.6-fast", name: "Claude Opus 4.6 (fast mode)" },
+    { slug: "claude-opus-4.5", name: "Claude Opus 4.5" },
+    { slug: "claude-sonnet-4", name: "Claude Sonnet 4" },
+    { slug: "gemini-3-pro-preview", name: "Gemini 3 Pro (Preview)" },
+    { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
+    { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
+    { slug: "gpt-5.2", name: "GPT-5.2" },
+    { slug: "gpt-5.1-codex-max", name: "GPT-5.1 Codex Max" },
+    { slug: "gpt-5.1-codex", name: "GPT-5.1 Codex" },
+    { slug: "gpt-5.1-codex-mini", name: "GPT-5.1 Codex Mini" },
+    { slug: "gpt-5.1", name: "GPT-5.1" },
+    { slug: "gpt-5-mini", name: "GPT-5 mini" },
+    { slug: "gpt-4.1", name: "GPT-4.1" },
   ],
   claudeCode: [
     { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
@@ -146,14 +162,40 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "gpt-5.3-codex-high-fast", name: "GPT-5.3 Codex High Fast" },
     { slug: "gpt-5.3-codex-xhigh", name: "GPT-5.3 Codex Extra High" },
     { slug: "gpt-5.3-codex-xhigh-fast", name: "GPT-5.3 Codex Extra High Fast" },
+    { slug: "gpt-5.2", name: "GPT-5.2" },
     { slug: "gpt-5.3-codex-spark-preview", name: "GPT-5.3 Codex Spark" },
+    { slug: "gpt-5.2-codex-low", name: "GPT-5.2 Codex Low" },
+    { slug: "gpt-5.2-codex-low-fast", name: "GPT-5.2 Codex Low Fast" },
+    { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
+    { slug: "gpt-5.2-codex-fast", name: "GPT-5.2 Codex Fast" },
+    { slug: "gpt-5.2-codex-high", name: "GPT-5.2 Codex High" },
+    { slug: "gpt-5.2-codex-high-fast", name: "GPT-5.2 Codex High Fast" },
+    { slug: "gpt-5.2-codex-xhigh", name: "GPT-5.2 Codex Extra High" },
+    { slug: "gpt-5.2-codex-xhigh-fast", name: "GPT-5.2 Codex Extra High Fast" },
+    { slug: "gpt-5.1-codex-max", name: "GPT-5.1 Codex Max" },
+    { slug: "gpt-5.1-codex-max-high", name: "GPT-5.1 Codex Max High" },
+    { slug: "gpt-5.4-high", name: "GPT-5.4 High" },
     { slug: "opus-4.6", name: "Claude 4.6 Opus" },
     { slug: "opus-4.6-thinking", name: "Claude 4.6 Opus (Thinking)" },
+    { slug: "gpt-5.4-medium", name: "GPT-5.4" },
+    { slug: "gpt-5.4-medium-fast", name: "GPT-5.4 Fast" },
+    { slug: "gpt-5.4-high-fast", name: "GPT-5.4 High Fast" },
+    { slug: "gpt-5.4-xhigh", name: "GPT-5.4 Extra High" },
+    { slug: "gpt-5.4-xhigh-fast", name: "GPT-5.4 Extra High Fast" },
     { slug: "opus-4.5", name: "Claude 4.5 Opus" },
     { slug: "opus-4.5-thinking", name: "Claude 4.5 Opus (Thinking)" },
     { slug: "sonnet-4.6", name: "Claude 4.6 Sonnet" },
     { slug: "sonnet-4.6-thinking", name: "Claude 4.6 Sonnet (Thinking)" },
+    { slug: "gpt-5.2-high", name: "GPT-5.2 High" },
     { slug: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
+    { slug: "grok", name: "Grok" },
+    { slug: "sonnet-4.5", name: "Claude 4.5 Sonnet" },
+    { slug: "sonnet-4.5-thinking", name: "Claude 4.5 Sonnet (Thinking)" },
+    { slug: "gpt-5.1-high", name: "GPT-5.1 High" },
+    { slug: "gemini-3-pro", name: "Gemini 3 Pro" },
+    { slug: "gemini-3-flash", name: "Gemini 3 Flash" },
+    { slug: "gpt-5.1-codex-mini", name: "GPT-5.1 Codex Mini" },
+    { slug: "kimi-k2.5", name: "Kimi K2.5" },
   ],
   opencode: [] as ModelOption[],
   geminiCli: [
@@ -178,7 +220,7 @@ export type CursorModelSlug = (typeof MODEL_OPTIONS_BY_PROVIDER)["cursor"][numbe
 
 export const DEFAULT_MODEL_BY_PROVIDER = {
   codex: "gpt-5.4",
-  copilot: "gpt-5.4",
+  copilot: "claude-sonnet-4.6",
   claudeCode: "claude-sonnet-4-6",
   cursor: "opus-4.6-thinking",
   opencode: "gpt-5",
@@ -201,8 +243,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
   },
   copilot: {
     "4.1": "gpt-4.1",
-    "5": "gpt-5.4",
-    "gpt-5": "gpt-5.4",
+    "5.4": "gpt-5.4",
     "5-mini": "gpt-5-mini",
     "5.1": "gpt-5.1",
     "5.1-codex": "gpt-5.1-codex",
@@ -211,12 +252,10 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "5.2": "gpt-5.2",
     "5.2-codex": "gpt-5.2-codex",
     "5.3": "gpt-5.3-codex",
-    "5.4": "gpt-5.4",
     haiku: "claude-haiku-4.5",
     sonnet: "claude-sonnet-4.6",
     opus: "claude-opus-4.6",
-    gemini: "gemini-3-pro",
-    grok: "grok-code-fast-1",
+    gemini: "gemini-3-pro-preview",
   },
   claudeCode: {
     opus: "claude-opus-4-6",
@@ -236,13 +275,22 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     composer: "composer-1.5",
     "composer-1.5": "composer-1.5",
     "composer-1": "composer-1",
+    "5.4": "gpt-5.4-medium",
+    "gpt-5.4": "gpt-5.4-medium",
+    "5.2": "gpt-5.2",
+    "5.2-codex": "gpt-5.2-codex",
+    "gpt-5.2-codex": "gpt-5.2-codex",
+    "5.1-max": "gpt-5.1-codex-max",
+    "gpt-5.1-codex-max": "gpt-5.1-codex-max",
     "gpt-5.3-codex": "gpt-5.3-codex",
     "gpt-5.3-codex-spark": "gpt-5.3-codex-spark-preview",
     "gemini-3.1": "gemini-3.1-pro",
     "gemini-3.1-pro": "gemini-3.1-pro",
     "claude-4.6-sonnet-thinking": "sonnet-4.6-thinking",
+    "claude-4.5-sonnet-thinking": "sonnet-4.5-thinking",
     "claude-4.6-opus-thinking": "opus-4.6-thinking",
     "claude-4.5-opus-thinking": "opus-4.5-thinking",
+    "sonnet-4.5-thinking": "sonnet-4.5-thinking",
     "sonnet-4.6-thinking": "sonnet-4.6-thinking",
     "opus-4.6-thinking": "opus-4.6-thinking",
     "opus-4.5-thinking": "opus-4.5-thinking",
@@ -289,3 +337,25 @@ export const DEFAULT_REASONING_EFFORT_BY_PROVIDER = {
   geminiCli: null,
   amp: null,
 } as const satisfies Record<ProviderKind, CodexReasoningEffort | null>;
+
+export const CLAUDE_CODE_EFFORT_OPTIONS_BY_PROVIDER = {
+  codex: [],
+  copilot: [],
+  claudeCode: CLAUDE_CODE_EFFORT_OPTIONS,
+  cursor: [],
+  opencode: [],
+  kilo: [],
+  geminiCli: [],
+  amp: [],
+} as const satisfies Record<ProviderKind, readonly ClaudeCodeEffort[]>;
+
+export const DEFAULT_CLAUDE_CODE_EFFORT_BY_PROVIDER = {
+  codex: null,
+  copilot: null,
+  claudeCode: "high",
+  cursor: null,
+  opencode: null,
+  kilo: null,
+  geminiCli: null,
+  amp: null,
+} as const satisfies Record<ProviderKind, ClaudeCodeEffort | null>;

@@ -5,12 +5,12 @@ import type {
   SDKMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import * as Path from "node:path";
 import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Fiber, Random, Stream } from "effect";
 
 import {
-  ProviderAdapterRequestError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { ClaudeCodeAdapter } from "../Services/ClaudeCodeAdapter.ts";
@@ -206,6 +206,7 @@ describe("ClaudeCodeAdapterLive", () => {
       const createInput = harness.getLastCreateQueryInput();
       assert.equal(createInput?.options.permissionMode, "bypassPermissions");
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, true);
+      assert.equal(Path.basename(createInput?.options.pathToClaudeCodeExecutable ?? ""), "cli.js");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -231,6 +232,65 @@ describe("ClaudeCodeAdapterLive", () => {
       assert.equal(createInput?.options.permissionMode, "plan");
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, undefined);
     }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("strips Electron bootstrap env vars before starting Claude query", () => {
+    const harness = makeHarness();
+    const originalRunAsNode = process.env.ELECTRON_RUN_AS_NODE;
+    const originalRendererPort = process.env.ELECTRON_RENDERER_PORT;
+    const originalClaudeCode = process.env.CLAUDECODE;
+    const originalPath = process.env.PATH;
+
+    process.env.ELECTRON_RUN_AS_NODE = "1";
+    process.env.ELECTRON_RENDERER_PORT = "54321";
+    process.env.CLAUDECODE = "1";
+    process.env.PATH = "/usr/bin:/bin";
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeCodeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeCode",
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.isDefined(createInput);
+      assert.equal(createInput?.options.env?.ELECTRON_RUN_AS_NODE, undefined);
+      assert.equal(createInput?.options.env?.ELECTRON_RENDERER_PORT, undefined);
+      assert.equal(createInput?.options.env?.CLAUDECODE, undefined);
+      assert.equal(createInput?.options.env?.PATH, "/usr/bin:/bin");
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (originalRunAsNode === undefined) {
+            delete process.env.ELECTRON_RUN_AS_NODE;
+          } else {
+            process.env.ELECTRON_RUN_AS_NODE = originalRunAsNode;
+          }
+
+          if (originalRendererPort === undefined) {
+            delete process.env.ELECTRON_RENDERER_PORT;
+          } else {
+            process.env.ELECTRON_RENDERER_PORT = originalRendererPort;
+          }
+
+          if (originalClaudeCode === undefined) {
+            delete process.env.CLAUDECODE;
+          } else {
+            process.env.CLAUDECODE = originalClaudeCode;
+          }
+
+          if (originalPath === undefined) {
+            delete process.env.PATH;
+          } else {
+            process.env.PATH = originalPath;
+          }
+        }),
+      ),
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );

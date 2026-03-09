@@ -95,6 +95,11 @@ export interface AppModelOption {
   isCustom: boolean;
 }
 
+export interface BuiltInAppModelOption {
+  slug: string;
+  name: string;
+}
+
 export function resolveAppServiceTier(serviceTier: AppServiceTier): ProviderServiceTier | null {
   return serviceTier === "auto" ? null : serviceTier;
 }

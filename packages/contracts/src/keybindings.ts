@@ -8,6 +8,7 @@ export const MAX_SCRIPT_ID_LENGTH = 24;
 export const MAX_KEYBINDINGS_COUNT = 256;
 
 const STATIC_KEYBINDING_COMMANDS = [
+  "commandPalette.toggle",
   "terminal.toggle",
   "terminal.split",
   "terminal.new",

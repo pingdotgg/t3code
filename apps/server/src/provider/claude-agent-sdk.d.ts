@@ -87,19 +87,30 @@ declare module "@anthropic-ai/claude-agent-sdk" {
     readonly [key: string]: unknown;
   }
 
+  export type ThinkingConfig =
+    | { readonly type: "adaptive" }
+    | { readonly type: "enabled"; readonly budgetTokens?: number }
+    | { readonly type: "disabled" };
+
+  export type EffortLevel = "low" | "medium" | "high" | "max";
+
   export interface Options {
     readonly cwd?: string;
     readonly model?: string;
     readonly pathToClaudeCodeExecutable?: string;
     readonly permissionMode?: PermissionMode;
     readonly allowDangerouslySkipPermissions?: boolean;
+    /** @deprecated Use `thinking` instead. */
     readonly maxThinkingTokens?: number;
+    readonly thinking?: ThinkingConfig;
+    readonly effort?: EffortLevel;
     readonly resume?: string;
     readonly resumeSessionAt?: string;
     readonly includePartialMessages?: boolean;
     readonly canUseTool?: CanUseTool;
     readonly env?: Record<string, string | undefined>;
     readonly additionalDirectories?: ReadonlyArray<string>;
+    readonly stderr?: (message: string) => void;
   }
 
   export type Query = AsyncIterable<SDKMessage> & {

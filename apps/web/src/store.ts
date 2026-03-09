@@ -25,6 +25,7 @@ export interface AppState {
 
 const PERSISTED_STATE_KEY = "t3code:renderer-state:v8";
 const LEGACY_PERSISTED_STATE_KEYS = [
+  "t3code:renderer-state:v7",
   "t3code:renderer-state:v6",
   "t3code:renderer-state:v5",
   "t3code:renderer-state:v4",
@@ -41,6 +42,7 @@ const initialState: AppState = {
   threadsHydrated: false,
 };
 const persistedExpandedProjectCwds = new Set<string>();
+let persistedProjectOrderCwds: string[] = [];
 
 // ── Persist helpers ──────────────────────────────────────────────────
 
@@ -49,15 +51,25 @@ function readPersistedState(): AppState {
   try {
     const raw = window.localStorage.getItem(PERSISTED_STATE_KEY);
     if (!raw) return initialState;
-    const parsed = JSON.parse(raw) as { expandedProjectCwds?: string[] };
+    const parsed = JSON.parse(raw) as {
+      expandedProjectCwds?: string[];
+      projectOrderCwds?: string[];
+    };
     persistedExpandedProjectCwds.clear();
+    persistedProjectOrderCwds = [];
     for (const cwd of parsed.expandedProjectCwds ?? []) {
       if (typeof cwd === "string" && cwd.length > 0) {
         persistedExpandedProjectCwds.add(cwd);
       }
     }
+    for (const cwd of parsed.projectOrderCwds ?? []) {
+      if (typeof cwd === "string" && cwd.length > 0) {
+        persistedProjectOrderCwds.push(cwd);
+      }
+    }
     return { ...initialState };
   } catch {
+    persistedProjectOrderCwds = [];
     return initialState;
   }
 }
@@ -71,6 +83,7 @@ function persistState(state: AppState): void {
         expandedProjectCwds: state.projects
           .filter((project) => project.expanded)
           .map((project) => project.cwd),
+        projectOrderCwds: state.projects.map((project) => project.cwd),
       }),
     );
     for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
@@ -102,7 +115,7 @@ function mapProjectsFromReadModel(
   incoming: OrchestrationReadModel["projects"],
   previous: Project[],
 ): Project[] {
-  return incoming.map((project) => {
+  const mappedProjects = incoming.map((project) => {
     const existing =
       previous.find((entry) => entry.id === project.id) ??
       previous.find((entry) => entry.cwd === project.workspaceRoot);
@@ -120,6 +133,25 @@ function mapProjectsFromReadModel(
           : true),
       scripts: project.scripts.map((script) => ({ ...script })),
     };
+  });
+
+  const projectOrderCwds =
+    previous.length > 0 ? previous.map((project) => project.cwd) : persistedProjectOrderCwds;
+  if (projectOrderCwds.length === 0) {
+    return mappedProjects;
+  }
+
+  const projectOrderByCwd = new Map(
+    projectOrderCwds.map((cwd, index) => [cwd, index] as const),
+  );
+
+  return mappedProjects.toSorted((left, right) => {
+    const leftIndex = projectOrderByCwd.get(left.cwd);
+    const rightIndex = projectOrderByCwd.get(right.cwd);
+    if (leftIndex === undefined && rightIndex === undefined) return 0;
+    if (leftIndex === undefined) return 1;
+    if (rightIndex === undefined) return -1;
+    return leftIndex - rightIndex;
   });
 }
 
@@ -408,6 +440,35 @@ export function setProjectExpanded(
   return changed ? { ...state, projects } : state;
 }
 
+export function moveProject(
+  state: AppState,
+  movedProjectId: Project["id"],
+  targetProjectId: Project["id"],
+  position: "before" | "after",
+): AppState {
+  if (movedProjectId === targetProjectId) {
+    return state;
+  }
+
+  const movedProject = state.projects.find((project) => project.id === movedProjectId);
+  if (!movedProject) {
+    return state;
+  }
+
+  const remainingProjects = state.projects.filter((project) => project.id !== movedProjectId);
+  const targetIndex = remainingProjects.findIndex((project) => project.id === targetProjectId);
+  if (targetIndex < 0) {
+    return state;
+  }
+
+  const insertionIndex = position === "before" ? targetIndex : targetIndex + 1;
+  const projects = [...remainingProjects];
+  projects.splice(insertionIndex, 0, movedProject);
+
+  const orderChanged = projects.some((project, index) => project.id !== state.projects[index]?.id);
+  return orderChanged ? { ...state, projects } : state;
+}
+
 export function setError(state: AppState, threadId: ThreadId, error: string | null): AppState {
   const threads = updateThread(state.threads, threadId, (t) => {
     if (t.error === error) return t;
@@ -443,6 +504,11 @@ interface AppStore extends AppState {
   markThreadUnread: (threadId: ThreadId) => void;
   toggleProject: (projectId: Project["id"]) => void;
   setProjectExpanded: (projectId: Project["id"], expanded: boolean) => void;
+  moveProject: (
+    movedProjectId: Project["id"],
+    targetProjectId: Project["id"],
+    position: "before" | "after",
+  ) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
 }
@@ -456,6 +522,8 @@ export const useStore = create<AppStore>((set) => ({
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
   setProjectExpanded: (projectId, expanded) =>
     set((state) => setProjectExpanded(state, projectId, expanded)),
+  moveProject: (movedProjectId, targetProjectId, position) =>
+    set((state) => moveProject(state, movedProjectId, targetProjectId, position)),
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),
   setThreadBranch: (threadId, branch, worktreePath) =>
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),

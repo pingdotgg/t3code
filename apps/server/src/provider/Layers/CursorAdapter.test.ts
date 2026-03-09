@@ -8,7 +8,7 @@ import { Effect, Fiber, Stream } from "effect";
 
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import { CursorAdapter } from "../Services/CursorAdapter.ts";
-import { makeCursorAdapterLive } from "./CursorAdapter.ts";
+import { makeCursorAdapterLive, parseCursorModelCommandOutput } from "./CursorAdapter.ts";
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-cursor-1");
 const RESUME_THREAD_ID = ThreadId.makeUnsafe("thread-cursor-resume");
@@ -24,9 +24,23 @@ class FakeCursorAcpProcess extends EventEmitter {
   private readonly input = readline.createInterface({ input: this.stdin });
   private permissionRequestId = 700;
   lastPermissionSelection: string | undefined;
+  private readonly promptResult: Record<string, unknown>;
+  private readonly messageChunkContent: unknown;
 
-  constructor() {
+  constructor(options?: { promptResult?: Record<string, unknown>; messageChunkContent?: unknown }) {
     super();
+    this.promptResult = options?.promptResult ?? {
+      stopReason: "end_turn",
+      usage: {
+        input_tokens: 12,
+        output_tokens: 34,
+        total_tokens: 46,
+      },
+    };
+    this.messageChunkContent = options?.messageChunkContent ?? {
+      type: "text",
+      text: "hello",
+    };
     this.input.on("line", (line) => {
       const message = JSON.parse(line) as Record<string, unknown>;
       if (typeof message.method === "string") {
@@ -173,10 +187,7 @@ class FakeCursorAcpProcess extends EventEmitter {
             sessionId: "acp-session-1",
             update: {
               sessionUpdate: "agent_message_chunk",
-              content: {
-                type: "text",
-                text: "hello",
-              },
+              content: this.messageChunkContent,
             },
           },
         });
@@ -217,9 +228,7 @@ class FakeCursorAcpProcess extends EventEmitter {
         this.emitServerMessage({
           jsonrpc: "2.0",
           id,
-          result: {
-            stopReason: "end_turn",
-          },
+          result: this.promptResult,
         });
         return;
       }
@@ -251,6 +260,23 @@ class FakeCursorAcpProcess extends EventEmitter {
 }
 
 describe("CursorAdapterLive", () => {
+  it("parses plain-text agent model output", () => {
+    assert.deepEqual(
+      parseCursorModelCommandOutput(`\u001b[2K\u001b[GLoading models…
+\u001b[2K\u001b[1A\u001b[2K\u001b[GAvailable models
+
+gpt-5.4-medium - GPT-5.4
+gpt-5.4-high-fast - GPT-5.4 High Fast  (current)
+opus-4.6-thinking - Claude 4.6 Opus (Thinking)  (default)
+`),
+      [
+      { slug: "gpt-5.4-medium", name: "GPT-5.4" },
+      { slug: "gpt-5.4-high-fast", name: "GPT-5.4 High Fast" },
+      { slug: "opus-4.6-thinking", name: "Claude 4.6 Opus (Thinking)" },
+      ],
+    );
+  });
+
   it.effect("returns validation error for non-cursor provider on startSession", () => {
     const fake = new FakeCursorAcpProcess();
     const layer = makeCursorAdapterLive({
@@ -339,7 +365,60 @@ describe("CursorAdapterLive", () => {
       assert.equal(completion?.type, "turn.completed");
       if (completion?.type === "turn.completed") {
         assert.equal(completion.payload.state, "completed");
+        assert.deepEqual(completion.payload.usage, {
+          input_tokens: 12,
+          output_tokens: 34,
+          total_tokens: 46,
+        });
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("extracts assistant text from structured Cursor chunk envelopes", () => {
+    const fake = new FakeCursorAcpProcess({
+      messageChunkContent: {
+        type: "content_block",
+        parts: [
+          {
+            type: "text",
+            text: "hello",
+          },
+        ],
+      },
+    });
+    const layer = makeCursorAdapterLive({
+      createProcess: () => fake as never,
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+
+      const eventsFiber = yield* Stream.take(adapter.streamEvents, 13).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        provider: "cursor",
+        threadId: THREAD_ID,
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const assistantDelta = events.find(
+        (event) =>
+          event.type === "content.delta" &&
+          event.payload.streamKind === "assistant_text" &&
+          event.payload.delta === "hello",
+      );
+      assert.equal(assistantDelta?.type, "content.delta");
     }).pipe(Effect.provide(layer));
   });
 
@@ -650,6 +729,56 @@ describe("CursorAdapterLive", () => {
 
       assert.equal(started.payload.itemType, "command_execution");
       assert.equal(completed.payload.itemType, "command_execution");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("completes the turn when Cursor prompt completion lacks a stop reason", () => {
+    const fake = new FakeCursorAcpProcess({
+      promptResult: {
+        usage: {
+          input_tokens: 12,
+          output_tokens: 34,
+        },
+      },
+    });
+    const layer = makeCursorAdapterLive({
+      createProcess: () => fake as never,
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+
+      const eventsFiber = yield* Stream.take(adapter.streamEvents, 13).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        provider: "cursor",
+        threadId: THREAD_ID,
+        runtimeMode: "full-access",
+      });
+
+      const result = yield* adapter
+        .sendTurn({
+          threadId: session.threadId,
+          input: "hello",
+          attachments: [],
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Success");
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const completion = events.find((event) => event.type === "turn.completed");
+      assert.equal(completion?.type, "turn.completed");
+      if (completion?.type === "turn.completed") {
+        assert.equal(completion.payload.state, "completed");
+      }
+
+      const sessions = yield* adapter.listSessions();
+      assert.equal(sessions[0]?.status, "ready");
+      assert.equal(sessions[0]?.activeTurnId, undefined);
     }).pipe(Effect.provide(layer));
   });
 });

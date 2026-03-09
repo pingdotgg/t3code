@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -42,11 +42,7 @@ export function normalizeCopilotCliPathOverride(value: string | null | undefined
   const trimmed = value.trim();
   if (!trimmed) return undefined;
 
-  if (
-    !trimmed.includes("/") &&
-    !trimmed.includes("\\") &&
-    COPILOT_PATHLESS_COMMAND_PATTERN.test(trimmed)
-  ) {
+  if (!trimmed.includes("/") && !trimmed.includes("\\") && COPILOT_PATHLESS_COMMAND_PATTERN.test(trimmed)) {
     return undefined;
   }
 
@@ -81,12 +77,25 @@ export function getBundledCopilotPlatformPackages(
   platform: string = process.platform,
   arch: string = process.arch,
 ): ReadonlyArray<string> {
-  if (platform === "darwin" && arch === "arm64") return ["copilot-darwin-arm64"];
-  if (platform === "darwin" && arch === "x64") return ["copilot-darwin-x64"];
-  if (platform === "linux" && arch === "arm64") return ["copilot-linux-arm64"];
-  if (platform === "linux" && arch === "x64") return ["copilot-linux-x64"];
-  if (platform === "win32" && arch === "arm64") return ["copilot-win32-arm64"];
-  if (platform === "win32" && arch === "x64") return ["copilot-win32-x64"];
+  if (platform === "darwin" && arch === "arm64") {
+    return ["copilot-darwin-arm64"];
+  }
+  if (platform === "darwin" && arch === "x64") {
+    return ["copilot-darwin-x64"];
+  }
+  if (platform === "linux" && arch === "arm64") {
+    return ["copilot-linux-arm64"];
+  }
+  if (platform === "linux" && arch === "x64") {
+    return ["copilot-linux-x64"];
+  }
+  if (platform === "win32" && arch === "arm64") {
+    return ["copilot-win32-arm64"];
+  }
+  if (platform === "win32" && arch === "x64") {
+    return ["copilot-win32-x64"];
+  }
+
   return [];
 }
 

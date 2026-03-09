@@ -15,10 +15,12 @@ import { assertSuccess } from "@effect/vitest/utils";
 
 describe("resolveEditorLaunch", () => {
   it.effect("returns commands for command-based editors", () =>
+    // Use "linux" to avoid macOS .app fallback logic, which depends on
+    // whether the .app bundle happens to be installed on the test host.
     Effect.gen(function* () {
       const cursorLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "cursor" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(cursorLaunch, {
         command: "cursor",
@@ -27,7 +29,7 @@ describe("resolveEditorLaunch", () => {
 
       const vscodeLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "vscode" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(vscodeLaunch, {
         command: "code",
@@ -36,20 +38,97 @@ describe("resolveEditorLaunch", () => {
 
       const zedLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "zed" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(zedLaunch, {
         command: "zed",
         args: ["/tmp/workspace"],
       });
+
+      const windsurfLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "windsurf" },
+        "linux",
+      );
+      assert.deepEqual(windsurfLaunch, {
+        command: "windsurf",
+        args: ["/tmp/workspace"],
+      });
+
+      const sublimeLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "sublime" },
+        "linux",
+      );
+      assert.deepEqual(sublimeLaunch, {
+        command: "subl",
+        args: ["/tmp/workspace"],
+      });
+
+      const webstormLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "webstorm" },
+        "linux",
+      );
+      assert.deepEqual(webstormLaunch, {
+        command: "webstorm",
+        args: ["/tmp/workspace"],
+      });
+
+      const intellijLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "intellij" },
+        "linux",
+      );
+      assert.deepEqual(intellijLaunch, {
+        command: "idea",
+        args: ["/tmp/workspace"],
+      });
+
+      const fleetLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "fleet" },
+        "linux",
+      );
+      assert.deepEqual(fleetLaunch, {
+        command: "fleet",
+        args: ["/tmp/workspace"],
+      });
+
+      const positronLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "positron" },
+        "linux",
+      );
+      assert.deepEqual(positronLaunch, {
+        command: "positron",
+        args: ["/tmp/workspace"],
+      });
+    }),
+  );
+
+  it.effect("uses open -a on macOS for terminal editors like Ghostty", () =>
+    Effect.gen(function* () {
+      const ghosttyMac = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "ghostty" },
+        "darwin",
+      );
+      assert.deepEqual(ghosttyMac, {
+        command: "open",
+        args: ["-a", "Ghostty", "--args", "--working-directory=/tmp/workspace"],
+      });
+
+      const ghosttyLinux = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "ghostty" },
+        "linux",
+      );
+      assert.deepEqual(ghosttyLinux, {
+        command: "ghostty",
+        args: ["--working-directory=/tmp/workspace"],
+      });
     }),
   );
 
   it.effect("uses --goto when editor supports line/column suffixes", () =>
+    // Use "linux" to avoid macOS .app fallback logic for deterministic results.
     Effect.gen(function* () {
       const lineOnly = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/AGENTS.md:48", editor: "cursor" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(lineOnly, {
         command: "cursor",
@@ -58,7 +137,7 @@ describe("resolveEditorLaunch", () => {
 
       const lineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "cursor" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(lineAndColumn, {
         command: "cursor",
@@ -67,7 +146,7 @@ describe("resolveEditorLaunch", () => {
 
       const vscodeLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "vscode" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(vscodeLineAndColumn, {
         command: "code",
@@ -76,11 +155,29 @@ describe("resolveEditorLaunch", () => {
 
       const zedLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "zed" },
-        "darwin",
+        "linux",
       );
       assert.deepEqual(zedLineAndColumn, {
         command: "zed",
         args: ["/tmp/workspace/src/open.ts:71:5"],
+      });
+
+      const windsurfLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "windsurf" },
+        "linux",
+      );
+      assert.deepEqual(windsurfLineAndColumn, {
+        command: "windsurf",
+        args: ["--goto", "/tmp/workspace/src/open.ts:71:5"],
+      });
+
+      const positronLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "positron" },
+        "linux",
+      );
+      assert.deepEqual(positronLineAndColumn, {
+        command: "positron",
+        args: ["--goto", "/tmp/workspace/src/open.ts:71:5"],
       });
     }),
   );

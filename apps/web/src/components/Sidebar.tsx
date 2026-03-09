@@ -1,15 +1,18 @@
 import {
+  ArrowLeftIcon,
   ChevronRightIcon,
   FolderIcon,
   GitPullRequestIcon,
+  PlusIcon,
   RocketIcon,
+  SearchIcon,
   SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
+  XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import {
-  DEFAULT_RUNTIME_MODE,
   DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
   type ProviderKind,
@@ -21,20 +24,21 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL } from "../branding";
-import { newCommandId, newProjectId, newThreadId } from "../lib/utils";
+import { newCommandId, newProjectId } from "../lib/utils";
 import { useStore } from "../store";
 import { isChatNewLocalShortcut, isChatNewShortcut, shortcutLabelForCommand } from "../keybindings";
+import { useProjectThreadNavigation } from "../hooks/useProjectThreadNavigation";
 import { type Thread } from "../types";
 import { derivePendingApprovals } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { providerGetUsageQueryOptions } from "../lib/providerReactQuery";
 import { readNativeApi } from "../nativeApi";
-import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
 import {
@@ -53,6 +57,7 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarHeader,
+  SidebarInput,
   SidebarMenuAction,
   SidebarMenu,
   SidebarMenuButton,
@@ -68,6 +73,15 @@ import { isNonEmpty as isNonEmptyString } from "effect/String";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
+
+function normalizeThreadTitleSearchQuery(value: string): string {
+  return value.trim().toLocaleLowerCase();
+}
+
+function threadTitleMatchesSearch(thread: Thread, query: string): boolean {
+  if (query.length === 0) return true;
+  return thread.title.toLocaleLowerCase().includes(query);
+}
 
 async function copyTextToClipboard(text: string): Promise<void> {
   if (typeof navigator === "undefined" || navigator.clipboard?.writeText === undefined) {
@@ -277,6 +291,54 @@ function formatSidebarTokenCount(n: number): string {
   return String(n);
 }
 
+function resolveUserTimeZone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return undefined;
+  }
+}
+
+function formatUsageResetLabel(resetDate: string): string {
+  const trimmed = resetDate.trim();
+  if (trimmed.length === 0) return resetDate;
+
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(trimmed);
+  if (isDateOnly) {
+    const [year, month, day] = trimmed.split("-").map(Number);
+    const utcDate = new Date(Date.UTC(year ?? 0, (month ?? 1) - 1, day ?? 1));
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(utcDate);
+  }
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return resetDate;
+
+  const includeYear = parsed.getFullYear() !== new Date().getFullYear();
+  const userTimeZone = resolveUserTimeZone();
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(includeYear ? { year: "numeric" as const } : {}),
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+    ...(userTimeZone ? { timeZone: userTimeZone } : {}),
+  }).format(parsed);
+}
+
+function formatUsagePercentLabel(quota: ProviderUsageQuota, percentUsed: number): string {
+  if (quota.percentUsed != null) {
+    return `${String(quota.percentUsed)}%`;
+  }
+  return `${Math.round(percentUsed)}%`;
+}
+
 function ProviderUsageBar({
   label,
   quota,
@@ -320,7 +382,7 @@ function ProviderUsageBar({
           {quota.plan ? <span className="ml-1 text-muted-foreground/60">{quota.plan}</span> : null}
         </span>
         <span className="tabular-nums text-muted-foreground">
-          {percentUsed != null ? `${percentUsed}%${countSuffix}` : "?"}
+          {percentUsed != null ? `${formatUsagePercentLabel(quota, percentUsed)}${countSuffix}` : "?"}
         </span>
       </div>
       {percentUsed != null && (
@@ -335,7 +397,9 @@ function ProviderUsageBar({
         </div>
       )}
       {quota.resetDate && (
-        <p className="mt-1 text-[10px] text-muted-foreground/60">Resets {quota.resetDate}</p>
+        <p className="mt-1 text-[10px] text-muted-foreground/60">
+          Resets {formatUsageResetLabel(quota.resetDate)}
+        </p>
       )}
     </div>
   );
@@ -373,6 +437,7 @@ function ProviderSessionUsageBar({
 const USAGE_PROVIDERS: ReadonlyArray<{ provider: ProviderKind; label: string }> = [
   { provider: "copilot", label: "Copilot" },
   { provider: "codex", label: "Codex" },
+  { provider: "cursor", label: "Cursor" },
   { provider: "claudeCode", label: "Claude Code" },
   { provider: "geminiCli", label: "Gemini" },
   { provider: "amp", label: "Amp" },
@@ -403,6 +468,7 @@ function ProviderUsageSection() {
 
   const copilotUsage = useProviderUsage("copilot");
   const codexUsage = useProviderUsage("codex");
+  const cursorUsage = useProviderUsage("cursor");
   const claudeUsage = useProviderUsage("claudeCode");
   const geminiUsage = useProviderUsage("geminiCli");
   const ampUsage = useProviderUsage("amp");
@@ -410,6 +476,7 @@ function ProviderUsageSection() {
   const usageByProvider: Record<string, typeof copilotUsage.data> = {
     copilot: copilotUsage.data,
     codex: codexUsage.data,
+    cursor: cursorUsage.data,
     claudeCode: claudeUsage.data,
     geminiCli: geminiUsage.data,
     amp: ampUsage.data,
@@ -445,7 +512,11 @@ function ProviderUsageSection() {
       );
     }
     // Session usage (no quota) — show token/cost summary
-    if (data?.sessionUsage && (data.sessionUsage.totalTokens || data.sessionUsage.totalCostUsd)) {
+    if (
+      provider !== "claudeCode" &&
+      data?.sessionUsage &&
+      (data.sessionUsage.totalTokens || data.sessionUsage.totalCostUsd)
+    ) {
       entries.push(
         <ProviderSessionUsageBar key={`${provider}:session`} label={label} usage={data.sessionUsage} />,
       );
@@ -475,6 +546,7 @@ export default function Sidebar() {
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
+  const moveProject = useStore((store) => store.moveProject);
   const toggleProject = useStore((store) => store.toggleProject);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearThreadDraft);
   const getDraftThreadByProjectId = useComposerDraftStore(
@@ -483,8 +555,6 @@ export default function Sidebar() {
   const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
   const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
-  const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
-  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
@@ -492,11 +562,14 @@ export default function Sidebar() {
     (store) => store.clearProjectDraftThreadById,
   );
   const navigate = useNavigate();
+  const isOnSettings = useLocation({ select: (loc) => loc.pathname === "/settings" });
   const { settings: appSettings } = useAppSettings();
   const routeThreadId = useParams({
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
   });
+  const { openOrCreateThread: handleNewThread, openProject: focusMostRecentThreadForProject } =
+    useProjectThreadNavigation(routeThreadId);
   const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery({
     ...serverConfigQueryOptions(),
     select: (config) => config.keybindings,
@@ -507,11 +580,20 @@ export default function Sidebar() {
   const [newCwd, setNewCwd] = useState("");
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
+  const [addProjectError, setAddProjectError] = useState<string | null>(null);
+  const addProjectInputRef = useRef<HTMLInputElement | null>(null);
   const [renamingThreadId, setRenamingThreadId] = useState<ThreadId | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<ProjectId>
   >(() => new Set());
+  const [threadSearchQuery, setThreadSearchQuery] = useState("");
+  const [draggingProjectId, setDraggingProjectId] = useState<ProjectId | null>(null);
+  const draggingProjectIdRef = useRef<ProjectId | null>(null);
+  const [projectDropTarget, setProjectDropTarget] = useState<{
+    projectId: ProjectId;
+    position: "before" | "after";
+  } | null>(null);
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
@@ -596,98 +678,58 @@ export default function Sidebar() {
     });
   }, []);
 
-  const handleNewThread = useCallback(
-    (
-      projectId: ProjectId,
-      options?: {
-        branch?: string | null;
-        worktreePath?: string | null;
-        envMode?: DraftThreadEnvMode;
-      },
-    ): Promise<void> => {
-      const hasBranchOption = options?.branch !== undefined;
-      const hasWorktreePathOption = options?.worktreePath !== undefined;
-      const hasEnvModeOption = options?.envMode !== undefined;
-      const storedDraftThread = getDraftThreadByProjectId(projectId);
-      if (storedDraftThread) {
-        return (async () => {
-          if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
-            setDraftThreadContext(storedDraftThread.threadId, {
-              ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
-              ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
-              ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
-            });
-          }
-          setProjectDraftThreadId(projectId, storedDraftThread.threadId);
-          if (routeThreadId === storedDraftThread.threadId) {
-            return;
-          }
-          await navigate({
-            to: "/$threadId",
-            params: { threadId: storedDraftThread.threadId },
-          });
-        })();
-      }
-      clearProjectDraftThreadId(projectId);
-
-      const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
-      if (activeDraftThread && routeThreadId && activeDraftThread.projectId === projectId) {
-        if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
-          setDraftThreadContext(routeThreadId, {
-            ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
-            ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
-            ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
-          });
-        }
-        setProjectDraftThreadId(projectId, routeThreadId);
-        return Promise.resolve();
-      }
-      const threadId = newThreadId();
-      const createdAt = new Date().toISOString();
-      return (async () => {
-        setProjectDraftThreadId(projectId, threadId, {
-          createdAt,
-          branch: options?.branch ?? null,
-          worktreePath: options?.worktreePath ?? null,
-          envMode: options?.envMode ?? "local",
-          runtimeMode: DEFAULT_RUNTIME_MODE,
-        });
-
-        await navigate({
-          to: "/$threadId",
-          params: { threadId },
-        });
-      })();
+  const getProjectDropPosition = useCallback(
+    (event: DragEvent<HTMLElement>): "before" | "after" => {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      return event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
     },
-    [
-      clearProjectDraftThreadId,
-      getDraftThreadByProjectId,
-      navigate,
-      getDraftThread,
-      routeThreadId,
-      setDraftThreadContext,
-      setProjectDraftThreadId,
-    ],
+    [],
   );
 
-  const focusMostRecentThreadForProject = useCallback(
-    (projectId: ProjectId) => {
-      const latestThread = threads
-        .filter((thread) => thread.projectId === projectId)
-        .toSorted((a, b) => {
-          const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-          if (byDate !== 0) return byDate;
-          return b.id.localeCompare(a.id);
-        })[0];
-      if (!latestThread) return;
+  const handleProjectDragStart = useCallback((event: DragEvent<HTMLElement>, projectId: ProjectId) => {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(projectId));
+    draggingProjectIdRef.current = projectId;
+    setDraggingProjectId(projectId);
+    setProjectDropTarget({ projectId, position: "after" });
+  }, []);
 
-      void navigate({
-        to: "/$threadId",
-        params: { threadId: latestThread.id },
+  const handleProjectDragOver = useCallback(
+    (event: DragEvent<HTMLElement>, projectId: ProjectId) => {
+      if (!draggingProjectIdRef.current) {
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      setProjectDropTarget({
+        projectId,
+        position: getProjectDropPosition(event),
       });
     },
-    [navigate, threads],
+    [getProjectDropPosition],
   );
+
+  const handleProjectDrop = useCallback(
+    (event: DragEvent<HTMLElement>, targetProjectId: ProjectId) => {
+      const currentDraggingId = draggingProjectIdRef.current;
+      if (!currentDraggingId) {
+        return;
+      }
+      event.preventDefault();
+      const position = getProjectDropPosition(event);
+      moveProject(currentDraggingId, targetProjectId, position);
+      draggingProjectIdRef.current = null;
+      setDraggingProjectId(null);
+      setProjectDropTarget(null);
+    },
+    [getProjectDropPosition, moveProject],
+  );
+
+  const clearProjectDragState = useCallback(() => {
+    draggingProjectIdRef.current = null;
+    setDraggingProjectId(null);
+    setProjectDropTarget(null);
+  }, []);
 
   const addProjectFromPath = useCallback(
     async (rawCwd: string) => {
@@ -700,12 +742,13 @@ export default function Sidebar() {
       const finishAddingProject = () => {
         setIsAddingProject(false);
         setNewCwd("");
+        setAddProjectError(null);
         setAddingProject(false);
       };
 
       const existing = projects.find((project) => project.cwd === cwd);
       if (existing) {
-        focusMostRecentThreadForProject(existing.id);
+        await focusMostRecentThreadForProject(existing.id);
         finishAddingProject();
         return;
       }
@@ -726,12 +769,9 @@ export default function Sidebar() {
         await handleNewThread(projectId).catch(() => undefined);
       } catch (error) {
         setIsAddingProject(false);
-        toastManager.add({
-          type: "error",
-          title: "Unable to add project",
-          description:
-            error instanceof Error ? error.message : "An error occurred while adding the project.",
-        });
+        setAddProjectError(
+          error instanceof Error ? error.message : "An error occurred while adding the project.",
+        );
         return;
       }
       finishAddingProject();
@@ -755,6 +795,8 @@ export default function Sidebar() {
     }
     if (pickedPath) {
       await addProjectFromPath(pickedPath);
+    } else {
+      addProjectInputRef.current?.focus();
     }
     setIsPickingFolder(false);
   };
@@ -1112,6 +1154,15 @@ export default function Sidebar() {
       shortcutLabelForCommand(keybindings, "chat.new"),
     [keybindings],
   );
+  const normalizedThreadSearchQuery = useMemo(
+    () => normalizeThreadTitleSearchQuery(threadSearchQuery),
+    [threadSearchQuery],
+  );
+  const hasActiveThreadSearch = normalizedThreadSearchQuery.length > 0;
+  const matchingThreadCount = useMemo(() => {
+    if (!hasActiveThreadSearch) return 0;
+    return threads.filter((thread) => threadTitleMatchesSearch(thread, normalizedThreadSearchQuery)).length;
+  }, [hasActiveThreadSearch, normalizedThreadSearchQuery, threads]);
 
   const handleDesktopUpdateButtonClick = useCallback(() => {
     const bridge = window.desktopBridge;
@@ -1247,6 +1298,133 @@ export default function Sidebar() {
 
       <SidebarContent className="gap-0">
         <SidebarGroup className="px-2 py-2">
+          <div className="mb-1 flex items-center justify-between px-2">
+            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+              Projects
+            </span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label="Add project"
+                    className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                    onClick={() => {
+                      setAddingProject((prev) => !prev);
+                      setAddProjectError(null);
+                    }}
+                  />
+                }
+              >
+                <PlusIcon className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="right">Add project</TooltipPopup>
+            </Tooltip>
+          </div>
+
+          {addingProject && (
+            <div className="mb-2 px-1">
+              {isElectron && (
+                <button
+                  type="button"
+                  className="mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-xs text-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => void handlePickFolder()}
+                  disabled={isPickingFolder || isAddingProject}
+                >
+                  <FolderIcon className="size-3.5" />
+                  {isPickingFolder ? "Picking folder..." : "Browse for folder"}
+                </button>
+              )}
+              <div className="flex gap-1.5">
+                <input
+                  ref={addProjectInputRef}
+                  className={`min-w-0 flex-1 rounded-md border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none ${
+                    addProjectError
+                      ? "border-red-500/70 focus:border-red-500"
+                      : "border-border focus:border-ring"
+                  }`}
+                  placeholder="/path/to/project"
+                  value={newCwd}
+                  onChange={(event) => {
+                    setNewCwd(event.target.value);
+                    setAddProjectError(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") handleAddProject();
+                    if (event.key === "Escape") {
+                      setAddingProject(false);
+                      setAddProjectError(null);
+                    }
+                  }}
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
+                  onClick={handleAddProject}
+                  disabled={isAddingProject}
+                >
+                  {isAddingProject ? "Adding..." : "Add"}
+                </button>
+              </div>
+              {addProjectError && (
+                <p className="mt-1 px-0.5 text-[11px] leading-tight text-red-400">
+                  {addProjectError}
+                </p>
+              )}
+              <div className="mt-1.5 px-0.5">
+                <button
+                  type="button"
+                  className="text-[11px] text-muted-foreground/50 transition-colors hover:text-muted-foreground"
+                  onClick={() => {
+                    setAddingProject(false);
+                    setAddProjectError(null);
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="px-2 pb-2">
+            <div className="relative">
+              <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground/60" />
+              <SidebarInput
+                type="search"
+                aria-label="Search all threads"
+                value={threadSearchQuery}
+                placeholder="Search all threads"
+                className="h-8 border-border/70 bg-background text-xs"
+                inputClassName="pl-8 pr-8 text-[11px] placeholder:text-[11px]"
+                onChange={(event) => {
+                  setThreadSearchQuery(event.target.value);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Escape") return;
+                  event.preventDefault();
+                  setThreadSearchQuery("");
+                }}
+              />
+              {threadSearchQuery.length > 0 && (
+                <button
+                  type="button"
+                  aria-label="Clear thread search"
+                  className="absolute top-1/2 right-1 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
+                  onClick={() => {
+                    setThreadSearchQuery("");
+                  }}
+                >
+                  <XIcon className="size-3" />
+                </button>
+              )}
+            </div>
+            {hasActiveThreadSearch && (
+              <p className="px-1 pt-1 text-[10px] text-muted-foreground/60">
+                {matchingThreadCount === 1 ? "1 matching thread" : `${matchingThreadCount} matching threads`}
+              </p>
+            )}
+          </div>
           <SidebarMenu>
             {projects.map((project) => {
               const projectThreads = threads
@@ -1256,30 +1434,76 @@ export default function Sidebar() {
                   if (byDate !== 0) return byDate;
                   return b.id.localeCompare(a.id);
                 });
-              const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
-              const hasHiddenThreads = projectThreads.length > THREAD_PREVIEW_LIMIT;
+              const filteredProjectThreads = hasActiveThreadSearch
+                ? projectThreads.filter((thread) =>
+                    threadTitleMatchesSearch(thread, normalizedThreadSearchQuery),
+                  )
+                : projectThreads;
+              if (hasActiveThreadSearch && filteredProjectThreads.length === 0) {
+                return null;
+              }
+              const isThreadSearchFiltering = hasActiveThreadSearch;
+              const isThreadListExpanded =
+                isThreadSearchFiltering || expandedThreadListsByProject.has(project.id);
+              const hasHiddenThreads =
+                !isThreadSearchFiltering && filteredProjectThreads.length > THREAD_PREVIEW_LIMIT;
               const visibleThreads =
                 hasHiddenThreads && !isThreadListExpanded
-                  ? projectThreads.slice(0, THREAD_PREVIEW_LIMIT)
-                  : projectThreads;
+                  ? filteredProjectThreads.slice(0, THREAD_PREVIEW_LIMIT)
+                  : filteredProjectThreads;
+              const isProjectOpen = project.expanded || isThreadSearchFiltering;
 
               return (
                 <Collapsible
                   key={project.id}
                   className="group/collapsible"
-                  open={project.expanded}
+                  open={isProjectOpen}
                   onOpenChange={(open) => {
-                    if (open === project.expanded) return;
+                    if (isThreadSearchFiltering || open === project.expanded) return;
                     toggleProject(project.id);
                   }}
                 >
                   <SidebarMenuItem>
-                    <div className="group/project-header relative">
+                    <div
+                      className="group/project-header relative"
+                      role="listitem"
+                      aria-grabbed={draggingProjectId === project.id}
+                      aria-label={`Drag to reorder ${project.name}`}
+                      draggable
+                      onDragStart={(event) => {
+                        handleProjectDragStart(event, project.id);
+                      }}
+                      onDragEnd={clearProjectDragState}
+                      onDragOver={(event) => {
+                        handleProjectDragOver(event, project.id);
+                      }}
+                      onDragLeave={(event) => {
+                        if (
+                          !event.currentTarget.contains(
+                            event.relatedTarget as Node | null,
+                          )
+                        ) {
+                          setProjectDropTarget(null);
+                        }
+                      }}
+                      onDrop={(event) => {
+                        handleProjectDrop(event, project.id);
+                      }}
+                    >
+                      {projectDropTarget?.projectId === project.id ? (
+                        <div
+                          className={`pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-primary ${
+                            projectDropTarget.position === "before" ? "top-0" : "bottom-0"
+                          }`}
+                        />
+                      ) : null}
                       <CollapsibleTrigger
                         render={
                           <SidebarMenuButton
                             size="sm"
-                            className="gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground"
+                            className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
+                              draggingProjectId === project.id ? "opacity-55" : ""
+                            }`}
                           />
                         }
                         onContextMenu={(event) => {
@@ -1292,7 +1516,7 @@ export default function Sidebar() {
                       >
                         <ChevronRightIcon
                           className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
-                            project.expanded ? "rotate-90" : ""
+                            isProjectOpen ? "rotate-90" : ""
                           }`}
                         />
                         <ProjectFavicon cwd={project.cwd} />
@@ -1471,7 +1695,6 @@ export default function Sidebar() {
                             </SidebarMenuSubItem>
                           );
                         })}
-
                         {hasHiddenThreads && !isThreadListExpanded && (
                           <SidebarMenuSubItem className="w-full">
                             <SidebarMenuSubButton
@@ -1508,6 +1731,11 @@ export default function Sidebar() {
             })}
           </SidebarMenu>
 
+          {hasActiveThreadSearch && matchingThreadCount === 0 && (
+            <div className="px-2 pt-2 text-center text-xs text-muted-foreground/60">
+              No matching threads.
+            </div>
+          )}
           {projects.length === 0 && !addingProject && (
             <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
               No projects yet.
@@ -1518,62 +1746,32 @@ export default function Sidebar() {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarSeparator />
       <ProviderUsageSection />
       <SidebarSeparator />
-      <SidebarFooter className="gap-0 p-3">
-        {addingProject ? (
-          <>
-            <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
-              Add project
-            </p>
-            <input
-              className="mb-2 w-full rounded-md border border-border bg-secondary px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
-              placeholder="/path/to/project"
-              value={newCwd}
-              onChange={(event) => setNewCwd(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") handleAddProject();
-                if (event.key === "Escape") setAddingProject(false);
-              }}
-            />
-            {isElectron && (
-              <button
-                type="button"
-                className="mb-2 flex w-full items-center justify-center rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={() => void handlePickFolder()}
-                disabled={isPickingFolder || isAddingProject}
+      <SidebarFooter className="p-2">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            {isOnSettings ? (
+              <SidebarMenuButton
+                size="sm"
+                className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                onClick={() => void navigate({ to: "/" })}
               >
-                {isPickingFolder ? "Picking folder..." : "Browse for folder"}
-              </button>
+                <ArrowLeftIcon className="size-3.5" />
+                <span className="text-xs">Back</span>
+              </SidebarMenuButton>
+            ) : (
+              <SidebarMenuButton
+                size="sm"
+                className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                onClick={() => void navigate({ to: "/settings" })}
+              >
+                <SettingsIcon className="size-3.5" />
+                <span className="text-xs">Settings</span>
+              </SidebarMenuButton>
             )}
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className="flex-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90"
-                onClick={handleAddProject}
-                disabled={isAddingProject}
-              >
-                {isAddingProject ? "Adding..." : "Add"}
-              </button>
-              <button
-                type="button"
-                className="flex-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground/80 transition-colors duration-150 hover:bg-secondary"
-                onClick={() => setAddingProject(false)}
-              >
-                Cancel
-              </button>
-            </div>
-          </>
-        ) : (
-          <button
-            type="button"
-            className="flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-border py-2 text-xs text-muted-foreground/70 transition-colors duration-150 hover:border-ring hover:text-muted-foreground"
-            onClick={() => setAddingProject(true)}
-          >
-            + Add project
-          </button>
-        )}
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarFooter>
     </>
   );

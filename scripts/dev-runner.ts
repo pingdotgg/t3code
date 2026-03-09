@@ -455,6 +455,8 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         stderr: "inherit",
         env,
         extendEnv: false,
+        // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
+        shell: process.platform === "win32",
         // Keep turbo in the same process group so terminal signals (Ctrl+C)
         // reach it directly. Effect defaults to detached: true on non-Windows,
         // which would put turbo in a new group and require manual forwarding.

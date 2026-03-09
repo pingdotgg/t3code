@@ -7,7 +7,7 @@
  * @module CursorAdapterLive
  */
 import { randomUUID } from "node:crypto";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
 
 import {
@@ -45,10 +45,15 @@ import {
   CursorAcpSessionUpdateNotification,
 } from "../Services/CursorAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { toMessage } from "../toMessage.ts";
 
 const PROVIDER = "cursor" as const;
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+// Cursor resolves `session/prompt` only when the turn fully finishes, so it
+// needs a much longer timeout than ordinary ACP RPCs.
+const CURSOR_PROMPT_TIMEOUT_MS = 60 * 60_000;
 const CURSOR_ACP_PROTOCOL_VERSION = 1;
+const CURSOR_MODEL_DISCOVERY_TIMEOUT_MS = 8_000;
 
 interface CursorResumeState {
   readonly acpSessionId?: string;
@@ -92,6 +97,138 @@ interface CursorSessionContext {
   stopping: boolean;
 }
 
+export interface CursorModelDiscoveryOptions {
+  readonly binaryPath?: string;
+  readonly cwd?: string;
+  readonly timeoutMs?: number;
+}
+
+function parseCursorModelsFromUnknown(value: unknown): Array<{ slug: string; name: string }> {
+  if (!value) return [];
+  if (!Array.isArray(value)) return [];
+  const models: Array<{ slug: string; name: string }> = [];
+  for (const entry of value) {
+    if (typeof entry === "string" && entry.trim().length > 0) {
+      const slug = entry.trim();
+      models.push({ slug, name: slug });
+      continue;
+    }
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const record = entry as Record<string, unknown>;
+    const slugCandidate = record.id ?? record.slug ?? record.model ?? record.name;
+    if (typeof slugCandidate !== "string" || slugCandidate.trim().length === 0) {
+      continue;
+    }
+    const slug = slugCandidate.trim();
+    const nameCandidate = record.name ?? record.displayName ?? record.label ?? slug;
+    const name = typeof nameCandidate === "string" && nameCandidate.trim().length > 0 ? nameCandidate.trim() : slug;
+    models.push({ slug, name });
+  }
+  return models;
+}
+
+const ANSI_CONTROL_SEQUENCE_PATTERN = new RegExp(
+  String.raw`\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])`,
+  "g",
+);
+
+function stripAnsiControlSequences(value: string): string {
+  return value.replace(ANSI_CONTROL_SEQUENCE_PATTERN, "");
+}
+
+function parseCursorModelsFromPlainText(stdout: string): Array<{ slug: string; name: string }> {
+  const normalized = stripAnsiControlSequences(stdout);
+  const models: Array<{ slug: string; name: string }> = [];
+  for (const line of normalized.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.includes(" - ")) {
+      continue;
+    }
+    const match = /^(?<slug>[a-z0-9./-]+)\s+-\s+(?<name>.+?)(?:\s+\((?:current|default)\))*$/i.exec(
+      trimmed,
+    );
+    if (!match?.groups) {
+      continue;
+    }
+    const slug = match.groups.slug?.trim();
+    const name = match.groups.name?.trim();
+    if (!slug || !name) {
+      continue;
+    }
+    models.push({ slug, name });
+  }
+  return models;
+}
+
+export function parseCursorModelCommandOutput(stdout: string): Array<{ slug: string; name: string }> {
+  const trimmed = stdout.trim();
+  if (trimmed.length === 0) return [];
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const record = parsed as Record<string, unknown>;
+      const nested = record.models ?? record.data ?? record.items;
+      const nestedModels = parseCursorModelsFromUnknown(nested);
+      if (nestedModels.length > 0) {
+        return nestedModels;
+      }
+    }
+    return parseCursorModelsFromUnknown(parsed);
+  } catch {
+    return parseCursorModelsFromPlainText(stdout);
+  }
+}
+
+function runCursorModelCommand(
+  binaryPath: string,
+  args: ReadonlyArray<string>,
+  options: CursorModelDiscoveryOptions,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      binaryPath,
+      [...args],
+      {
+        ...(options.cwd ? { cwd: options.cwd } : {}),
+        env: process.env,
+        timeout: options.timeoutMs ?? CURSOR_MODEL_DISCOVERY_TIMEOUT_MS,
+      },
+      (error, stdout) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(stdout);
+      },
+    );
+  });
+}
+
+export async function fetchCursorModels(
+  options: CursorModelDiscoveryOptions = {},
+): Promise<ReadonlyArray<{ slug: string; name: string }>> {
+  const binaryPath = options.binaryPath ?? "agent";
+  const commands: ReadonlyArray<ReadonlyArray<string>> = [
+    ["models", "--json"],
+    ["models", "list", "--json"],
+    ["models"],
+  ];
+  for (const args of commands) {
+    try {
+      const stdout = await runCursorModelCommand(binaryPath, args, options);
+      const models = parseCursorModelCommandOutput(stdout);
+      if (models.length > 0) {
+        return models;
+      }
+    } catch {
+      // Try next command shape.
+    }
+  }
+  return [];
+}
+
 export interface CursorAdapterLiveOptions {
   readonly createProcess?: (input: {
     readonly binaryPath: string;
@@ -103,12 +240,6 @@ export interface CursorAdapterLiveOptions {
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
 
-function toMessage(cause: unknown, fallback: string): string {
-  if (cause instanceof Error && cause.message.length > 0) {
-    return cause.message;
-  }
-  return fallback;
-}
 
 function asRuntimeItemId(value: string): RuntimeItemId {
   return RuntimeItemId.makeUnsafe(value);
@@ -170,6 +301,96 @@ function asObject(value: unknown): Record<string, unknown> | undefined {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function appendChunkText(fragments: string[], value: unknown): void {
+  if (typeof value === "string" && value.length > 0) {
+    fragments.push(value);
+  }
+}
+
+function extractChunkTextFromPart(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  const part = asObject(value);
+  if (!part) {
+    return "";
+  }
+  const fragments: string[] = [];
+  appendChunkText(fragments, part.text);
+  appendChunkText(fragments, part.delta);
+  appendChunkText(fragments, part.value);
+  appendChunkText(fragments, part.content);
+  return fragments.join("");
+}
+
+function extractCursorChunkText(update: unknown): string {
+  const updateRecord = asObject(update);
+  if (!updateRecord) {
+    return "";
+  }
+
+  const fragments: string[] = [];
+  appendChunkText(fragments, updateRecord.text);
+  appendChunkText(fragments, updateRecord.delta);
+
+  if (fragments.length > 0) {
+    return fragments.join("");
+  }
+
+  const content = updateRecord.content;
+  if (typeof content === "string") {
+    fragments.push(content);
+    return fragments.join("");
+  }
+
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      appendChunkText(fragments, extractChunkTextFromPart(part));
+    }
+    return fragments.join("");
+  }
+
+  const contentRecord = asObject(content);
+  if (!contentRecord) {
+    return fragments.join("");
+  }
+
+  appendChunkText(fragments, contentRecord.text);
+  appendChunkText(fragments, contentRecord.delta);
+  appendChunkText(fragments, contentRecord.value);
+
+  const nestedLists = [
+    contentRecord.parts,
+    contentRecord.blocks,
+    contentRecord.chunks,
+    contentRecord.items,
+    contentRecord.content,
+    contentRecord.messages,
+  ];
+  for (const list of nestedLists) {
+    if (!Array.isArray(list)) {
+      continue;
+    }
+    for (const part of list) {
+      appendChunkText(fragments, extractChunkTextFromPart(part));
+    }
+  }
+
+  const nestedMessage = asObject(contentRecord.message);
+  if (nestedMessage) {
+    appendChunkText(fragments, nestedMessage.text);
+    appendChunkText(fragments, nestedMessage.delta);
+    appendChunkText(fragments, nestedMessage.value);
+    if (Array.isArray(nestedMessage.content)) {
+      for (const part of nestedMessage.content) {
+        appendChunkText(fragments, extractChunkTextFromPart(part));
+      }
+    }
+  }
+
+  return fragments.join("");
 }
 
 function normalizeToolItemType(kind: unknown, title: unknown): CanonicalItemType {
@@ -433,6 +654,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
       state: "completed" | "failed" | "interrupted" | "cancelled",
       errorMessage?: string,
       stopReason?: string,
+      usage?: unknown,
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
         const turnState = context.turnState;
@@ -476,6 +698,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
           payload: {
             state,
             ...(stopReason ? { stopReason } : {}),
+            ...(usage !== undefined ? { usage } : {}),
             ...(errorMessage ? { errorMessage } : {}),
           },
           providerRefs: {
@@ -660,7 +883,8 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
 
           case "agent_thought_chunk": {
             if (!context.turnState) return;
-            if (update.content.text.length === 0) return;
+            const text = extractCursorChunkText(update);
+            if (text.length === 0) return;
             const stamp = yield* makeEventStamp();
             yield* offerRuntimeEvent({
               ...base,
@@ -671,7 +895,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
               itemId: asRuntimeItemId(context.turnState.assistantItemId),
               payload: {
                 streamKind: "reasoning_text",
-                delta: update.content.text,
+                delta: text,
               },
             });
             return;
@@ -679,7 +903,8 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
 
           case "agent_message_chunk": {
             if (!context.turnState) return;
-            if (update.content.text.length === 0) return;
+            const text = extractCursorChunkText(update);
+            if (text.length === 0) return;
             const stamp = yield* makeEventStamp();
             yield* offerRuntimeEvent({
               ...base,
@@ -690,7 +915,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
               itemId: asRuntimeItemId(context.turnState.assistantItemId),
               payload: {
                 streamKind: "assistant_text",
-                delta: update.content.text,
+                delta: text,
               },
             });
             return;
@@ -1063,6 +1288,12 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
           }
           Effect.runFork(
             Effect.gen(function* () {
+              for (const pending of context.pending.values()) {
+                clearTimeout(pending.timeout);
+                pending.reject(new Error("Cursor ACP process exited unexpectedly."));
+              }
+              context.pending.clear();
+
               if (context.turnState) {
                 yield* completeTurn(
                   context,
@@ -1322,38 +1553,47 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
           },
         });
 
-        const promptResultRaw = yield* Effect.tryPromise({
-          try: async () =>
-            sendRequest(context, "session/prompt", {
-              sessionId: context.acpSessionId,
-              prompt: [{ type: "text", text: promptText }],
-            }),
-          catch: (cause) => toRequestError(input.threadId, "session/prompt", cause),
-        });
+        yield* Effect.gen(function* () {
+          const promptResultRaw = yield* Effect.tryPromise({
+            try: async () =>
+              sendRequest(context, "session/prompt", {
+                sessionId: context.acpSessionId,
+                prompt: [{ type: "text", text: promptText }],
+              }, CURSOR_PROMPT_TIMEOUT_MS),
+            catch: (cause) => toRequestError(input.threadId, "session/prompt", cause),
+          });
 
-        const promptResult = yield* Effect.try({
-          try: () => Schema.decodeUnknownSync(CursorAcpSessionPromptResult)(promptResultRaw),
-          catch: (cause) =>
-            new ProviderAdapterValidationError({
-              provider: PROVIDER,
-              operation: "sendTurn",
-              issue: "Cursor session/prompt response did not match expected schema.",
-              cause,
+          return yield* Effect.try({
+            try: () => Schema.decodeUnknownSync(CursorAcpSessionPromptResult)(promptResultRaw),
+            catch: (cause) =>
+              new ProviderAdapterValidationError({
+                provider: PROVIDER,
+                operation: "sendTurn",
+                issue: "Cursor session/prompt response did not match expected schema.",
+                cause,
+              }),
+          });
+        }).pipe(
+          Effect.tap((result) => {
+            const turnStateValue = mapStopReasonToTurnState(result.stopReason);
+            return completeTurn(
+              context,
+              turnStateValue,
+              turnStateValue === "failed" ? "Cursor prompt failed." : undefined,
+              result.stopReason,
+              result.usage,
+            );
+          }),
+          Effect.catch((error) =>
+            Effect.gen(function* () {
+              yield* completeTurn(context, "failed", toMessage(error, "Cursor prompt failed."));
+              return yield* error;
             }),
-        });
-        const turnStateValue = mapStopReasonToTurnState(promptResult.stopReason);
-        yield* completeTurn(
-          context,
-          turnStateValue,
-          turnStateValue === "failed" ? "Cursor prompt failed." : undefined,
-          promptResult.stopReason,
+          ),
         );
 
         context.session = {
           ...context.session,
-          status: "ready",
-          activeTurnId: undefined,
-          updatedAt: yield* nowIso,
           resumeCursor: {
             acpSessionId: context.acpSessionId,
           },

@@ -43,6 +43,26 @@ describe("ProviderSessionStartInput", () => {
     ).toThrow();
   });
 
+  it("accepts copilot provider payloads", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-1",
+      provider: "copilot",
+      cwd: "/tmp/workspace",
+      model: "claude-sonnet-4.6",
+      providerOptions: {
+        copilot: {
+          cliPath: "/usr/local/bin/gh",
+          configDir: "/tmp/.copilot",
+        },
+      },
+      runtimeMode: "full-access",
+    });
+    expect(parsed.provider).toBe("copilot");
+    expect(parsed.providerOptions?.copilot?.cliPath).toBe("/usr/local/bin/gh");
+    expect(parsed.providerOptions?.copilot?.configDir).toBe("/tmp/.copilot");
+    expect(parsed.runtimeMode).toBe("full-access");
+  });
+
   it("accepts claude runtime knobs", () => {
     const parsed = decodeProviderSessionStartInput({
       threadId: "thread-1",
@@ -65,7 +85,7 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.runtimeMode).toBe("full-access");
   });
 
-  it("accepts cursor provider payloads", () => {
+  it("accepts cursor provider payloads with binary path", () => {
     const parsed = decodeProviderSessionStartInput({
       threadId: "thread-1",
       provider: "cursor",

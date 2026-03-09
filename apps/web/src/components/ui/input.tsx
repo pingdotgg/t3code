@@ -6,6 +6,7 @@ import type * as React from "react";
 import { cn } from "~/lib/utils";
 
 type InputProps = Omit<InputPrimitive.Props & React.RefAttributes<HTMLInputElement>, "size"> & {
+  inputClassName?: string;
   size?: "sm" | "default" | "lg" | number;
   unstyled?: boolean;
   nativeInput?: boolean;
@@ -13,6 +14,7 @@ type InputProps = Omit<InputPrimitive.Props & React.RefAttributes<HTMLInputEleme
 
 function Input({
   className,
+  inputClassName: inputClassNameProp,
   size = "default",
   unstyled = false,
   nativeInput = false,
@@ -26,6 +28,7 @@ function Input({
       "[&::-webkit-search-cancel-button]:appearance-none [&::-webkit-search-decoration]:appearance-none [&::-webkit-search-results-button]:appearance-none [&::-webkit-search-results-decoration]:appearance-none",
     props.type === "file" &&
       "text-muted-foreground file:me-3 file:bg-transparent file:font-medium file:text-foreground file:text-sm",
+    inputClassNameProp,
   );
 
   return (

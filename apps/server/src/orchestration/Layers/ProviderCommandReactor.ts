@@ -4,8 +4,9 @@ import {
   EventId,
   type OrchestrationEvent,
   type ProviderModelOptions,
-  type ProviderKind,
+  ProviderKind,
   type ProviderServiceTier,
+  type ProviderStartOptions,
   type OrchestrationSession,
   ThreadId,
   type ProviderSession,
@@ -29,6 +30,7 @@ type ProviderIntentEvent = Extract<
   OrchestrationEvent,
   {
     type:
+      | "thread.deleted"
       | "thread.runtime-mode-set"
       | "thread.turn-start-requested"
       | "thread.turn-interrupt-requested"
@@ -137,6 +139,12 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed(true),
   });
 
+  // NOTE: Provider options stored here are only consumed at session start time
+  // (inside `startProviderSession`). If a thread already has a live session and
+  // only `providerOptions` change, `ensureSessionForThread` keeps the existing
+  // session — the updated options won't take effect until the next session restart.
+  const threadProviderOptions = new Map<ThreadId, ProviderStartOptions>();
+
   const hasHandledTurnStartRecently = (key: string) =>
     Cache.getOption(handledTurnStartKeys, key).pipe(
       Effect.flatMap((cached) =>
@@ -203,6 +211,7 @@ const make = Effect.gen(function* () {
       readonly model?: string;
       readonly modelOptions?: ProviderModelOptions;
       readonly serviceTier?: ProviderServiceTier | null;
+      readonly providerOptions?: ProviderStartOptions;
     },
   ) {
     const readModel = yield* orchestrationEngine.getReadModel();
@@ -212,15 +221,8 @@ const make = Effect.gen(function* () {
     }
 
     const desiredRuntimeMode = thread.runtimeMode;
-    const currentProvider: ProviderKind | undefined =
-      thread.session?.providerName === "codex" ||
-      thread.session?.providerName === "copilot" ||
-      thread.session?.providerName === "claudeCode" ||
-      thread.session?.providerName === "cursor" ||
-      thread.session?.providerName === "opencode" ||
-      thread.session?.providerName === "geminiCli" ||
-      thread.session?.providerName === "amp" ||
-      thread.session?.providerName === "kilo"
+    const currentProvider =
+      thread.session?.providerName && Schema.is(ProviderKind)(thread.session.providerName)
         ? thread.session.providerName
         : undefined;
     const preferredProvider: ProviderKind | undefined = options?.provider ?? currentProvider;
@@ -235,6 +237,12 @@ const make = Effect.gen(function* () {
         Effect.map((sessions) => sessions.find((session) => session.threadId === threadId)),
       );
 
+    const effectiveProviderOptions =
+      options?.providerOptions ?? threadProviderOptions.get(threadId);
+    if (options?.providerOptions !== undefined) {
+      threadProviderOptions.set(threadId, options.providerOptions);
+    }
+
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderKind;
@@ -248,6 +256,7 @@ const make = Effect.gen(function* () {
         ...(desiredModel ? { model: desiredModel } : {}),
         ...(options?.serviceTier !== undefined ? { serviceTier: options.serviceTier } : {}),
         ...(options?.modelOptions !== undefined ? { modelOptions: options.modelOptions } : {}),
+        ...(effectiveProviderOptions !== undefined ? { providerOptions: effectiveProviderOptions } : {}),
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: desiredRuntimeMode,
       });
@@ -334,6 +343,7 @@ const make = Effect.gen(function* () {
     readonly model?: string;
     readonly serviceTier?: ProviderServiceTier | null;
     readonly modelOptions?: ProviderModelOptions;
+    readonly providerOptions?: ProviderStartOptions;
     readonly interactionMode?: "default" | "plan";
     readonly createdAt: string;
   }) {
@@ -346,6 +356,7 @@ const make = Effect.gen(function* () {
       ...(input.model !== undefined ? { model: input.model } : {}),
       ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
       ...(input.modelOptions !== undefined ? { modelOptions: input.modelOptions } : {}),
+      ...(input.providerOptions !== undefined ? { providerOptions: input.providerOptions } : {}),
     });
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
@@ -481,6 +492,7 @@ const make = Effect.gen(function* () {
       ...(event.payload.model !== undefined ? { model: event.payload.model } : {}),
       ...(event.payload.serviceTier !== undefined ? { serviceTier: event.payload.serviceTier } : {}),
       ...(event.payload.modelOptions !== undefined ? { modelOptions: event.payload.modelOptions } : {}),
+      ...(event.payload.providerOptions !== undefined ? { providerOptions: event.payload.providerOptions } : {}),
       interactionMode: event.payload.interactionMode,
       createdAt: event.payload.createdAt,
     });
@@ -506,7 +518,26 @@ const make = Effect.gen(function* () {
     }
 
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+    yield* providerService
+      .interruptTurn({ threadId: event.payload.threadId })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            if (Cause.hasInterruptsOnly(cause)) {
+              return yield* Effect.failCause(cause);
+            }
+            const error = Cause.squash(cause);
+            yield* appendProviderFailureActivity({
+              threadId: event.payload.threadId,
+              kind: "provider.turn.interrupt.failed",
+              summary: "Provider turn interrupt failed",
+              detail: toErrorMessage(error),
+              turnId: event.payload.turnId ?? null,
+              createdAt: event.payload.createdAt,
+            });
+          }),
+        ),
+      );
   });
 
   const processApprovalResponseRequested = Effect.fnUntraced(function* (
@@ -538,6 +569,9 @@ const make = Effect.gen(function* () {
       .pipe(
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
+            if (Cause.hasInterruptsOnly(cause)) {
+              return yield* Effect.failCause(cause);
+            }
             const error = Cause.squash(cause);
             const detail = toErrorMessage(error);
             yield* appendProviderFailureActivity({
@@ -585,6 +619,9 @@ const make = Effect.gen(function* () {
       .pipe(
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
+            if (Cause.hasInterruptsOnly(cause)) {
+              return yield* Effect.failCause(cause);
+            }
             const error = Cause.squash(cause);
             yield* appendProviderFailureActivity({
               threadId: event.payload.threadId,
@@ -610,8 +647,36 @@ const make = Effect.gen(function* () {
 
     const now = event.payload.createdAt;
     if (thread.session && thread.session.status !== "stopped") {
-      yield* providerService.stopSession({ threadId: thread.id });
+      const stopFailed = yield* providerService
+        .stopSession({ threadId: thread.id })
+        .pipe(
+          Effect.as(false),
+          Effect.catchCause((cause) =>
+            Effect.gen(function* () {
+              if (Cause.hasInterruptsOnly(cause)) {
+                return yield* Effect.failCause(cause);
+              }
+              const error = Cause.squash(cause);
+              yield* appendProviderFailureActivity({
+                threadId: event.payload.threadId,
+                kind: "provider.session.stop.failed",
+                summary: "Provider session stop failed",
+                detail: toErrorMessage(error),
+                turnId: null,
+                createdAt: event.payload.createdAt,
+              });
+              // Signal that the stop failed so we don't clear thread state
+              // while the provider may still be running.
+              return true;
+            }),
+          ),
+        );
+      if (stopFailed) {
+        return;
+      }
     }
+
+    threadProviderOptions.delete(thread.id);
 
     yield* setThreadSession({
       threadId: thread.id,
@@ -631,6 +696,15 @@ const make = Effect.gen(function* () {
   const processDomainEvent = (event: ProviderIntentEvent) =>
     Effect.gen(function* () {
       switch (event.type) {
+        case "thread.deleted": {
+          const threadId = event.payload.threadId;
+          // Best-effort stop — thread is being deleted, ignore failures
+          yield* providerService
+            .stopSession({ threadId })
+            .pipe(Effect.catchCause(() => Effect.void));
+          threadProviderOptions.delete(threadId);
+          return;
+        }
         case "thread.runtime-mode-set": {
           const thread = yield* resolveThread(event.payload.threadId);
           if (!thread?.session || thread.session.status === "stopped") {
@@ -681,6 +755,7 @@ const make = Effect.gen(function* () {
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
         if (
+          event.type !== "thread.deleted" &&
           event.type !== "thread.runtime-mode-set" &&
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.turn-interrupt-requested" &&

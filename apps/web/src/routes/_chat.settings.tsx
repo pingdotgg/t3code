@@ -641,11 +641,12 @@ function SettingsRouteView() {
                           <p className="mt-1 text-xs text-muted-foreground">
                             Custom color for this provider's usage bar. Leave unset to use the global accent color.
                           </p>
-                          <div className="mt-2 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-background px-3 py-2">
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
                             <input
                               type="color"
+                              aria-label={`${providerSettings.title} accent color override`}
                               value={settings.providerAccentColors[provider] ?? accentColor}
-                              className="h-7 w-10 cursor-pointer rounded border border-border bg-transparent p-0"
+                              className="size-5 cursor-pointer appearance-none rounded-full border-0 bg-transparent p-0 [&::-moz-color-swatch]:rounded-full [&::-moz-color-swatch]:border-0 [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-full [&::-webkit-color-swatch]:border-0"
                               onChange={(event) => {
                                 const color = normalizeAccentColor(event.target.value);
                                 updateSettings({
@@ -693,7 +694,8 @@ function SettingsRouteView() {
                 <div>
                   <p className="text-sm font-medium text-foreground">Stream assistant messages</p>
                   <p className="text-xs text-muted-foreground">
-                    Show token-by-token output while a response is in progress.
+                    Show token-by-token output while a response is in progress. Cursor turns
+                    always stream so tool calls and assistant text stay interleaved.
                   </p>
                 </div>
                 <Switch

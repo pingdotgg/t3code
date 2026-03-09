@@ -44,6 +44,30 @@ describe("Cursor ACP schemas", () => {
     expect(message.params.update.sessionUpdate).toBe("agent_message_chunk");
   });
 
+  it("decodes session/update message chunks with non-text content envelopes", () => {
+    const message = Schema.decodeUnknownSync(CursorAcpSessionUpdateNotification)({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "sess-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "content_block",
+            parts: [
+              {
+                type: "text",
+                text: "hello",
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(message.params.update.sessionUpdate).toBe("agent_message_chunk");
+  });
+
   it("decodes tool call lifecycle updates", () => {
     const started = Schema.decodeUnknownSync(CursorAcpSessionUpdateNotification)({
       jsonrpc: "2.0",
@@ -109,9 +133,32 @@ describe("Cursor ACP schemas", () => {
   it("decodes prompt completion result payload", () => {
     const decoded = Schema.decodeUnknownSync(CursorAcpSessionPromptResult)({
       stopReason: "end_turn",
+      usage: {
+        input_tokens: 10,
+        output_tokens: 24,
+      },
     });
 
     expect(decoded.stopReason).toBe("end_turn");
+    expect(decoded.usage).toEqual({
+      input_tokens: 10,
+      output_tokens: 24,
+    });
+  });
+
+  it("accepts a prompt completion without stop reason", () => {
+    const decoded = Schema.decodeUnknownSync(CursorAcpSessionPromptResult)({
+      usage: {
+        input_tokens: 10,
+        output_tokens: 24,
+      },
+    });
+
+    expect(decoded.stopReason).toBeUndefined();
+    expect(decoded.usage).toEqual({
+      input_tokens: 10,
+      output_tokens: 24,
+    });
   });
 
   it("rejects unsupported update types", () => {

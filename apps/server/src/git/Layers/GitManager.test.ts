@@ -13,7 +13,20 @@ import {
   type GitHubPullRequestSummary,
   GitHubCli,
 } from "../Services/GitHubCli.ts";
-import { type TextGenerationShape, TextGeneration } from "../Services/TextGeneration.ts";
+import {
+  type BranchNameGenerationInput,
+  type BranchNameGenerationResult,
+  type CommitMessageGenerationInput,
+  type CommitMessageGenerationResult,
+  type PrContentGenerationInput,
+  type PrContentGenerationResult,
+  type TextGenerationShape,
+  TextGeneration,
+} from "../Services/TextGeneration.ts";
+import {
+  SessionTextGeneration,
+  type SessionTextGenerationShape,
+} from "../Services/SessionTextGeneration.ts";
 import { GitServiceLive } from "./GitService.ts";
 import { GitService } from "../Services/GitService.ts";
 import { GitCoreLive } from "./GitCore.ts";
@@ -27,28 +40,15 @@ interface FakeGhScenario {
 }
 
 interface FakeGitTextGeneration {
-  generateCommitMessage: (input: {
-    cwd: string;
-    branch: string | null;
-    stagedSummary: string;
-    stagedPatch: string;
-    includeBranch?: boolean;
-  }) => Effect.Effect<
-    { subject: string; body: string; branch?: string | undefined },
-    TextGenerationError
-  >;
-  generatePrContent: (input: {
-    cwd: string;
-    baseBranch: string;
-    headBranch: string;
-    commitSummary: string;
-    diffSummary: string;
-    diffPatch: string;
-  }) => Effect.Effect<{ title: string; body: string }, TextGenerationError>;
-  generateBranchName: (input: {
-    cwd: string;
-    message: string;
-  }) => Effect.Effect<{ branch: string }, TextGenerationError>;
+  generateCommitMessage: (
+    input: CommitMessageGenerationInput,
+  ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;
+  generatePrContent: (
+    input: PrContentGenerationInput,
+  ) => Effect.Effect<PrContentGenerationResult, TextGenerationError>;
+  generateBranchName: (
+    input: BranchNameGenerationInput,
+  ) => Effect.Effect<BranchNameGenerationResult, TextGenerationError>;
 }
 
 function makeTempDir(
@@ -291,17 +291,49 @@ function runStackedAction(
     action: "commit" | "commit_push" | "commit_push_pr";
     commitMessage?: string;
     featureBranch?: boolean;
+    provider?: "codex" | "copilot" | "claudeCode" | "cursor" | "opencode" | "geminiCli" | "amp" | "kilo";
+    model?: string;
   },
 ) {
   return manager.runStackedAction(input);
 }
 
+function createSessionTextGeneration(
+  overrides: Partial<FakeGitTextGeneration> = {},
+): SessionTextGenerationShape {
+  const implementation: FakeGitTextGeneration = {
+    generateCommitMessage: () =>
+      Effect.succeed({
+        subject: "Session: implement stacked git actions",
+        body: "",
+      }),
+    generatePrContent: () =>
+      Effect.succeed({
+        title: "Session: add stacked git actions",
+        body: "## Summary\n- Add stacked git workflow\n\n## Testing\n- Not run",
+      }),
+    generateBranchName: () =>
+      Effect.succeed({
+        branch: "session-generated-branch",
+      }),
+    ...overrides,
+  };
+
+  return {
+    generateCommitMessage: implementation.generateCommitMessage,
+    generatePrContent: implementation.generatePrContent,
+    generateBranchName: implementation.generateBranchName,
+  };
+}
+
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   textGeneration?: Partial<FakeGitTextGeneration>;
+  sessionTextGeneration?: Partial<FakeGitTextGeneration>;
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
+  const sessionTextGeneration = createSessionTextGeneration(input?.sessionTextGeneration);
 
   const gitCoreLayer = GitCoreLive.pipe(
     Layer.provideMerge(GitServiceLive),
@@ -311,6 +343,7 @@ function makeManager(input?: {
   const managerLayer = Layer.mergeAll(
     Layer.succeed(GitHubCli, gitHubCli),
     Layer.succeed(TextGeneration, textGeneration),
+    Layer.succeed(SessionTextGeneration, sessionTextGeneration),
     gitCoreLayer,
     NodeServices.layer,
   );
@@ -492,6 +525,64 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           Effect.map((result) => result.stdout.trim()),
         ),
       ).toBe("Implement stacked git actions");
+    }),
+  );
+
+  it.effect("uses session provider/model for generated git content when provided", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\nsession-model\n");
+
+      let defaultGenerationCount = 0;
+      let sessionGenerationCount = 0;
+      let receivedProvider: string | undefined;
+      let receivedModel: string | undefined;
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: () =>
+            Effect.sync(() => {
+              defaultGenerationCount += 1;
+              return {
+                subject: "Default generator should not be used",
+                body: "",
+              };
+            }),
+        },
+        sessionTextGeneration: {
+          generateCommitMessage: (input) =>
+            Effect.sync(() => {
+              sessionGenerationCount += 1;
+              receivedProvider = input.provider;
+              receivedModel = input.model;
+              return {
+                subject: "Session generator commit subject",
+                body: "",
+                ...(input.includeBranch ? { branch: "feature/session-generator" } : {}),
+              };
+            }),
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        provider: "cursor",
+        model: "opus-4.6-thinking",
+      });
+
+      expect(result.commit.status).toBe("created");
+      expect(result.commit.subject).toBe("Session generator commit subject");
+      expect(defaultGenerationCount).toBe(0);
+      expect(sessionGenerationCount).toBe(1);
+      expect(receivedProvider).toBe("cursor");
+      expect(receivedModel).toBe("opus-4.6-thinking");
+      expect(
+        yield* runGit(repoDir, ["log", "-1", "--pretty=%s"]).pipe(
+          Effect.map((commitResult) => commitResult.stdout.trim()),
+        ),
+      ).toBe("Session generator commit subject");
     }),
   );
 

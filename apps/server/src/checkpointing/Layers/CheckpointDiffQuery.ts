@@ -8,7 +8,7 @@ import { Effect, Layer, Schema } from "effect";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { CheckpointInvariantError, CheckpointUnavailableError } from "../Errors.ts";
-import { checkpointRefForThreadTurn, resolveThreadWorkspaceCwd } from "../Utils.ts";
+import { checkpointRefForThreadTurn, resolveExistingThreadWorkspaceCwd } from "../Utils.ts";
 import { CheckpointStore } from "../Services/CheckpointStore.ts";
 import {
   CheckpointDiffQuery,
@@ -62,14 +62,14 @@ const make = Effect.gen(function* () {
         });
       }
 
-      const workspaceCwd = resolveThreadWorkspaceCwd({
+      const workspaceCwd = resolveExistingThreadWorkspaceCwd({
         thread,
         projects: snapshot.projects,
       });
       if (!workspaceCwd) {
         return yield* new CheckpointInvariantError({
           operation,
-          detail: `Workspace path missing for thread '${input.threadId}' when computing turn diff.`,
+          detail: `Workspace path missing or unavailable for thread '${input.threadId}' when computing turn diff.`,
         });
       }
 

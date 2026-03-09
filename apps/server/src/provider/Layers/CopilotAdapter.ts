@@ -1,19 +1,13 @@
 import { randomUUID } from "node:crypto";
 
-import { execFile } from "node:child_process";
-
 import {
-  type CanonicalItemType,
   type CodexReasoningEffort,
   EventId,
   type ProviderApprovalDecision,
-  type ProviderModelMultiplier,
   ProviderItemId,
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ProviderTurnStartResult,
-  type ProviderUsageQuota,
-  type ProviderUsageResult,
   type ProviderUserInputAnswers,
   RuntimeItemId,
   RuntimeRequestId,
@@ -40,8 +34,19 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import {
+  assistantUsageFields,
+  beginCopilotTurn,
+  clearTurnTracking,
+  completionTurnRefs,
+  isCopilotTurnTerminalEvent,
+  markTurnAwaitingCompletion,
+  recordTurnUsage,
+  type CopilotTurnTrackingState,
+} from "./copilotTurnTracking.ts";
 import { normalizeCopilotCliPathOverride, resolveBundledCopilotCliPath } from "./copilotCliPath.ts";
 import { CopilotAdapter, type CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
+import { toMessage } from "../toMessage.ts";
 import type {
   ProviderThreadSnapshot,
   ProviderThreadTurnSnapshot,
@@ -49,6 +54,7 @@ import type {
 
 const PROVIDER = "copilot" as const;
 const USER_INPUT_QUESTION_ID = "answer";
+const USER_INPUT_QUESTION_HEADER = "Question";
 
 export interface CopilotAdapterLiveOptions {
   readonly nativeEventLogger?: EventNdjsonLogger;
@@ -83,61 +89,22 @@ interface PendingUserInputRequest {
   readonly resolve: (result: CopilotUserInputResponse) => void;
 }
 
-interface ActiveCopilotSession {
+interface ActiveCopilotSession extends CopilotTurnTrackingState {
   readonly client: CopilotClientHandle;
   session: CopilotSessionHandle;
   readonly threadId: ThreadId;
   readonly createdAt: string;
-  runtimeMode: ProviderSession["runtimeMode"];
+  readonly runtimeMode: ProviderSession["runtimeMode"];
   cwd: string | undefined;
   configDir: string | undefined;
   model: string | undefined;
   reasoningEffort: CodexReasoningEffort | undefined;
   updatedAt: string;
   lastError: string | undefined;
-  currentTurnId: TurnId | undefined;
-  currentProviderTurnId: TurnId | undefined;
-  pendingTurnIds: Array<TurnId>;
   toolTitlesByCallId: Map<string, string>;
-  toolItemTypeByCallId: Map<string, CanonicalItemType>;
   pendingApprovalResolvers: Map<string, PendingApprovalRequest>;
   pendingUserInputResolvers: Map<string, PendingUserInputRequest>;
   unsubscribe: () => void;
-}
-
-function createSessionRecord(input: {
-  readonly threadId: ThreadId;
-  readonly client: CopilotClientHandle;
-  readonly session: CopilotSessionHandle;
-  readonly runtimeMode: ProviderSession["runtimeMode"];
-  readonly pendingApprovalResolvers: Map<string, PendingApprovalRequest>;
-  readonly pendingUserInputResolvers: Map<string, PendingUserInputRequest>;
-  readonly cwd: string | undefined;
-  readonly configDir: string | undefined;
-  readonly model: string | undefined;
-  readonly reasoningEffort: CodexReasoningEffort | undefined;
-}): ActiveCopilotSession {
-  return {
-    client: input.client,
-    session: input.session,
-    threadId: input.threadId,
-    createdAt: new Date().toISOString(),
-    runtimeMode: input.runtimeMode,
-    cwd: input.cwd,
-    configDir: input.configDir,
-    model: input.model,
-    reasoningEffort: input.reasoningEffort,
-    updatedAt: new Date().toISOString(),
-    lastError: undefined,
-    currentTurnId: undefined,
-    currentProviderTurnId: undefined,
-    pendingTurnIds: [],
-    toolTitlesByCallId: new Map(),
-    toolItemTypeByCallId: new Map(),
-    pendingApprovalResolvers: input.pendingApprovalResolvers,
-    pendingUserInputResolvers: input.pendingUserInputResolvers,
-    unsubscribe: () => undefined,
-  };
 }
 
 interface CopilotSessionHandle {
@@ -160,12 +127,6 @@ interface CopilotClientHandle {
   stop(): Promise<Error[]>;
 }
 
-function toMessage(cause: unknown, fallback: string): string {
-  if (cause instanceof Error && cause.message.length > 0) {
-    return cause.message;
-  }
-  return fallback;
-}
 
 function makeEventId(prefix: string) {
   return EventId.makeUnsafe(`${prefix}-${randomUUID()}`);
@@ -287,7 +248,7 @@ function requestDetailFromPermissionRequest(request: PermissionRequest): string 
   }
 }
 
-function itemTypeFromToolEvent(event: Extract<SessionEvent, { type: "tool.execution_start" }>): CanonicalItemType {
+function itemTypeFromToolEvent(event: Extract<SessionEvent, { type: "tool.execution_start" }>) {
   return event.data.mcpToolName ? "mcp_tool_call" : "dynamic_tool_call";
 }
 
@@ -359,7 +320,7 @@ function mapHistoryToTurns(threadId: ThreadId, events: ReadonlyArray<SessionEven
     }
 
     current.items.push(event);
-    if (event.type === "assistant.turn_end" || event.type === "abort" || event.type === "session.idle") {
+    if (isCopilotTurnTerminalEvent(event)) {
       current = undefined;
     }
   }
@@ -412,6 +373,43 @@ function resolveUserInputAnswer(
   return {
     answer,
     wasFreeform: !pending.request.choices?.includes(answer),
+  };
+}
+
+function createSessionRecord(input: {
+  readonly threadId: ThreadId;
+  readonly client: CopilotClientHandle;
+  readonly session: CopilotSessionHandle;
+  readonly runtimeMode: ProviderSession["runtimeMode"];
+  readonly pendingApprovalResolvers: Map<string, PendingApprovalRequest>;
+  readonly pendingUserInputResolvers: Map<string, PendingUserInputRequest>;
+  readonly cwd: string | undefined;
+  readonly configDir: string | undefined;
+  readonly model: string | undefined;
+  readonly reasoningEffort: CodexReasoningEffort | undefined;
+}): ActiveCopilotSession {
+  return {
+    client: input.client,
+    session: input.session,
+    threadId: input.threadId,
+    createdAt: new Date().toISOString(),
+    runtimeMode: input.runtimeMode,
+    cwd: input.cwd,
+    configDir: input.configDir,
+    model: input.model,
+    reasoningEffort: input.reasoningEffort,
+    updatedAt: new Date().toISOString(),
+    lastError: undefined,
+    currentTurnId: undefined,
+    currentProviderTurnId: undefined,
+    pendingCompletionTurnId: undefined,
+    pendingCompletionProviderTurnId: undefined,
+    pendingTurnIds: [],
+    pendingTurnUsage: undefined,
+    toolTitlesByCallId: new Map(),
+    pendingApprovalResolvers: input.pendingApprovalResolvers,
+    pendingUserInputResolvers: input.pendingUserInputResolvers,
+    unsubscribe: () => undefined,
   };
 }
 
@@ -527,47 +525,41 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
               },
             },
           ];
-        case "session.idle":
-          // session.idle is the Copilot SDK's authoritative "done"
-          // signal — it fires after assistant.turn_end and
-          // assistant.usage have completed. Emit turn.completed here
-          // so the orchestration layer settles the turn cleanly.
-          // If a session.error preceded idle, finalize the turn as
-          // failed so the UI does not incorrectly show success.
-          return [
-            ...(currentTurnId
+        case "session.idle": {
+          const idleCompletionRefs = completionTurnRefs(record);
+          const idleCompletionEvents: ProviderRuntimeEvent[] =
+            idleCompletionRefs.turnId || idleCompletionRefs.providerTurnId
               ? [
                   {
-                    ...base({ providerTurnId: currentProviderTurnId }),
-                    type: "turn.completed" as const,
-                    payload: record.lastError
-                      ? {
-                          state: "failed" as const,
-                          errorMessage: record.lastError,
-                        }
-                      : {
-                          state: "completed" as const,
-                        },
-                  },
+                    ...base(idleCompletionRefs),
+                    type: "turn.completed",
+                    payload: {
+                      state: record.lastError ? "failed" : "completed",
+                      ...assistantUsageFields(record.pendingTurnUsage),
+                    },
+                  } satisfies ProviderRuntimeEvent,
                 ]
-              : []),
+              : [];
+          return [
+            ...idleCompletionEvents,
             {
               ...base(),
-              type: "session.state.changed" as const,
+              type: "session.state.changed",
               payload: {
-                state: "ready" as const,
+                state: "ready",
                 reason: "session.idle",
               },
             },
             {
               ...base(),
-              type: "thread.state.changed" as const,
+              type: "thread.state.changed",
               payload: {
                 state: "idle",
                 detail: event.data,
               },
             },
           ];
+        }
         case "session.title_changed":
           return [
             {
@@ -716,32 +708,35 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
             },
           ];
         case "assistant.turn_end":
-          // Do not emit turn.completed here — the Copilot SDK fires
-          // assistant.usage and session.idle after turn_end. Emitting
-          // completion prematurely flips the UI to "ready" while work
-          // events are still arriving. The real "done" signal is
-          // session.idle (handled below).
           return [];
-        case "assistant.usage":
+        case "assistant.usage": {
+          const completionRefs = completionTurnRefs(record);
+          const completionBase =
+            completionRefs.turnId || completionRefs.providerTurnId ? base(completionRefs) : base();
           return [
             {
-              ...base(),
+              ...completionBase,
               type: "thread.token-usage.updated",
               payload: {
                 usage: event.data,
               },
             },
           ];
-        case "abort":
+        }
+        case "abort": {
+          const abortedTurnRefs = completionTurnRefs(record);
+          const abortedBase =
+            abortedTurnRefs.turnId || abortedTurnRefs.providerTurnId ? base(abortedTurnRefs) : base();
           return [
             {
-              ...base(),
+              ...abortedBase,
               type: "turn.aborted",
               payload: {
                 reason: event.data.reason,
               },
             },
           ];
+        }
         case "tool.execution_start":
           return [
             {
@@ -784,7 +779,9 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
               ...base({ itemId: event.data.toolCallId }),
               type: "item.completed",
               payload: {
-                itemType: record.toolItemTypeByCallId.get(event.data.toolCallId) ?? "dynamic_tool_call",
+                itemType: event.data.result?.contents?.some((content: { type: string }) => content.type === "terminal")
+                  ? "command_execution"
+                  : "dynamic_tool_call",
                 status: event.data.success ? "completed" : "failed",
                 title: record.toolTitlesByCallId.get(event.data.toolCallId) ?? "Tool call",
                 ...(trimToUndefined(event.data.result?.content) ? { detail: event.data.result?.content } : {}),
@@ -913,7 +910,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
                 questions: [
                   {
                     id: USER_INPUT_QUESTION_ID,
-                    header: "GitHub Copilot",
+                    header: USER_INPUT_QUESTION_HEADER,
                     question: request.question,
                     options: (request.choices ?? []).map((choice: string) => ({
                       label: choice,
@@ -1019,6 +1016,13 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
           const sessionId = record.session.sessionId;
           const previousSession = record.session;
           const previousUnsubscribe = record.unsubscribe;
+          previousUnsubscribe();
+          // Best-effort teardown -- must not block new session creation
+          try {
+            await previousSession.destroy();
+          } catch {
+            // ignored
+          }
 
           const handlers = createInteractionHandlers(
             record.threadId,
@@ -1036,7 +1040,6 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
             streaming: true,
           });
 
-          // Install the new session immediately so the record is live
           record.session = nextSession;
           record.model = input.model;
           record.reasoningEffort = input.reasoningEffort;
@@ -1044,14 +1047,6 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
           record.unsubscribe = nextSession.on((event) => {
             handleSessionEvent(record, event);
           });
-
-          // Clean up the old session – failures here must not affect the new session
-          previousUnsubscribe();
-          try {
-            await previousSession.destroy();
-          } catch {
-            // Swallow destroy errors; the new session is already installed
-          }
         },
         catch: (cause) =>
           new ProviderAdapterRequestError({
@@ -1065,9 +1060,10 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
     const handleSessionEvent = (record: ActiveCopilotSession, event: SessionEvent) => {
       record.updatedAt = event.timestamp;
       if (event.type === "assistant.turn_start") {
-        const providerTurnId = TurnId.makeUnsafe(event.data.turnId);
-        record.currentProviderTurnId = providerTurnId;
-        record.currentTurnId = record.pendingTurnIds.shift() ?? record.currentTurnId ?? providerTurnId;
+        beginCopilotTurn(record, TurnId.makeUnsafe(event.data.turnId));
+      }
+      if (event.type === "assistant.usage") {
+        recordTurnUsage(record, event.data);
       }
       if (event.type === "session.error") {
         record.lastError = event.data.message;
@@ -1076,10 +1072,10 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
         record.model = event.data.newModel;
       }
       if (event.type === "tool.execution_start") {
-        if (trimToUndefined(event.data.toolName)) {
-          record.toolTitlesByCallId.set(event.data.toolCallId, trimToUndefined(event.data.toolName)!);
+        const toolName = trimToUndefined(event.data.toolName);
+        if (toolName) {
+          record.toolTitlesByCallId.set(event.data.toolCallId, toolName);
         }
-        record.toolItemTypeByCallId.set(event.data.toolCallId, itemTypeFromToolEvent(event));
       }
 
       void writeNativeEvent(record.threadId, event);
@@ -1089,21 +1085,12 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
       }
       if (event.type === "tool.execution_complete") {
         record.toolTitlesByCallId.delete(event.data.toolCallId);
-        record.toolItemTypeByCallId.delete(event.data.toolCallId);
+      }
+      if (event.type === "assistant.turn_end") {
+        markTurnAwaitingCompletion(record);
       }
       if (event.type === "abort" || event.type === "session.idle") {
-        // If the turn terminates before assistant.turn_start consumed the
-        // pending ID, remove the stale entry so it never leaks into a future
-        // turn.
-        if (record.currentTurnId) {
-          record.pendingTurnIds = record.pendingTurnIds.filter(
-            (id) => id !== record.currentTurnId,
-          );
-        }
-        record.currentTurnId = undefined;
-        record.currentProviderTurnId = undefined;
-        // Clear the error after the idle handler has consumed it for
-        // turn.completed so it doesn't leak into subsequent turns.
+        clearTurnTracking(record);
         if (event.type === "session.idle") {
           record.lastError = undefined;
         }
@@ -1118,10 +1105,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
       return Effect.succeed(record);
     };
 
-    const stopRecord = async (
-      record: ActiveCopilotSession,
-      options?: { readonly emitExitEvent?: boolean },
-    ) => {
+    const stopRecord = async (record: ActiveCopilotSession) => {
       record.unsubscribe();
       try {
         await record.session.destroy();
@@ -1133,51 +1117,20 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
       } catch {
         // best effort
       }
-
-      const teardownEvents: ProviderRuntimeEvent[] = [];
-
-      for (const [requestId, pending] of record.pendingApprovalResolvers) {
+      void emitRuntimeEvents([
+        makeSyntheticEvent(record.threadId, "session.exited", {
+          reason: "Session stopped",
+          exitKind: "graceful",
+        }),
+      ]);
+      for (const pending of record.pendingApprovalResolvers.values()) {
         pending.resolve({ kind: "denied-interactively-by-user" });
-        teardownEvents.push(
-          makeSyntheticEvent(
-            record.threadId,
-            "request.resolved",
-            {
-              requestType: pending.requestType,
-              decision: "cancel",
-              resolution: { kind: "denied-interactively-by-user" },
-            },
-            { requestId, turnId: pending.turnId },
-          ),
-        );
       }
       record.pendingApprovalResolvers.clear();
-
-      for (const [requestId, pending] of record.pendingUserInputResolvers) {
+      for (const pending of record.pendingUserInputResolvers.values()) {
         pending.resolve({ answer: "", wasFreeform: true });
-        teardownEvents.push(
-          makeSyntheticEvent(
-            record.threadId,
-            "user-input.resolved",
-            { answers: {} },
-            { requestId, turnId: pending.turnId },
-          ),
-        );
       }
       record.pendingUserInputResolvers.clear();
-
-      if (options?.emitExitEvent !== false) {
-        teardownEvents.push(
-          makeSyntheticEvent(record.threadId, "session.exited", {
-            reason: "stopped",
-          }),
-        );
-      }
-
-      if (teardownEvents.length > 0) {
-        await emitRuntimeEvents(teardownEvents);
-      }
-
       sessions.delete(record.threadId);
     };
 
@@ -1193,8 +1146,6 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
 
         const existing = sessions.get(input.threadId);
         if (existing) {
-          existing.runtimeMode = input.runtimeMode;
-          existing.updatedAt = new Date().toISOString();
           return {
             provider: PROVIDER,
             status: "ready",
@@ -1237,27 +1188,12 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
           threadId: input.threadId,
           model: input.model,
           reasoningEffort,
-        }).pipe(
-          // validateSessionConfiguration may call client.start() internally.
-          // If validation fails after that, stop the client to avoid leaking
-          // a running process.
-          Effect.tapError(() => Effect.promise(() => client.stop().catch(() => {}))),
-        );
+        });
 
         const session = yield* Effect.tryPromise({
           try: async () => {
-            try {
-              if (resumeSessionId) {
-                return await client.resumeSession(resumeSessionId, {
-                  ...handlers,
-                  ...(input.model ? { model: input.model } : {}),
-                  ...(reasoningEffort ? { reasoningEffort } : {}),
-                  ...(input.cwd ? { workingDirectory: input.cwd } : {}),
-                  ...(configDir ? { configDir } : {}),
-                  streaming: true,
-                });
-              }
-              return await client.createSession({
+            if (resumeSessionId) {
+              return client.resumeSession(resumeSessionId, {
                 ...handlers,
                 ...(input.model ? { model: input.model } : {}),
                 ...(reasoningEffort ? { reasoningEffort } : {}),
@@ -1265,10 +1201,15 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
                 ...(configDir ? { configDir } : {}),
                 streaming: true,
               });
-            } catch (err) {
-              await client.stop().catch(() => {});
-              throw err;
             }
+            return client.createSession({
+              ...handlers,
+              ...(input.model ? { model: input.model } : {}),
+              ...(reasoningEffort ? { reasoningEffort } : {}),
+              ...(input.cwd ? { workingDirectory: input.cwd } : {}),
+              ...(configDir ? { configDir } : {}),
+              streaming: true,
+            });
           },
           catch: (cause) =>
             new ProviderAdapterProcessError({
@@ -1277,7 +1218,11 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
               detail: toMessage(cause, "Failed to start GitHub Copilot session."),
               cause,
             }),
-        });
+        }).pipe(
+          Effect.tapError(() =>
+            Effect.promise(() => client.stop().catch(() => undefined)),
+          ),
+        );
 
         const record = createSessionRecord({
           threadId: input.threadId,
@@ -1291,7 +1236,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
           model: input.model,
           reasoningEffort,
         });
-        const unsubscribe = session.on((event: SessionEvent) => {
+        const unsubscribe = session.on((event: unknown) => {
           handleSessionEvent(record, event);
         });
         record.unsubscribe = unsubscribe;
@@ -1356,28 +1301,26 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
             : input.model && input.model !== record.model
               ? undefined
               : record.reasoningEffort;
-        const attachments = yield* Effect.forEach(
-          input.attachments ?? [],
-          (attachment) =>
-            Effect.gen(function* () {
-              const attachmentPath = resolveAttachmentPath({
-                stateDir: serverConfig.stateDir,
-                attachment,
-              });
-              if (!attachmentPath) {
-                return yield* new ProviderAdapterRequestError({
-                  provider: PROVIDER,
-                  method: "session.send",
-                  detail: `Invalid attachment id '${attachment.id}'.`,
-                });
-              }
-              return {
-                type: "file" as const,
-                path: attachmentPath,
-                displayName: attachment.name,
-              };
-            }),
-        );
+        const attachments = yield* Effect.forEach(input.attachments ?? [], (attachment) => {
+          const attachmentPath = resolveAttachmentPath({
+            stateDir: serverConfig.stateDir,
+            attachment,
+          });
+          if (!attachmentPath) {
+            return Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "session.send",
+                detail: `Invalid attachment id '${attachment.id}'.`,
+              }),
+            );
+          }
+          return Effect.succeed({
+            type: "file" as const,
+            path: attachmentPath,
+            displayName: attachment.name,
+          });
+        });
 
         yield* validateSessionConfiguration({
           client: record.client,
@@ -1514,7 +1457,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
         const record = yield* getSessionRecord(threadId);
         yield* Effect.tryPromise({
           try: async () => {
-            await stopRecord(record, { emitExitEvent: true });
+            await stopRecord(record);
           },
           catch: (cause) =>
             new ProviderAdapterProcessError({
@@ -1528,31 +1471,22 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
 
     const listSessions: CopilotAdapterShape["listSessions"] = () =>
       Effect.sync(() =>
-        Array.from(sessions.values()).map((record) => {
-          const status: ProviderSession["status"] = record.currentTurnId ? "running" : "ready";
-          const session = {
-            provider: PROVIDER,
-            status,
-            runtimeMode: record.runtimeMode,
-            threadId: record.threadId,
-            resumeCursor: record.session.sessionId,
-            createdAt: record.createdAt,
-            updatedAt: record.updatedAt,
-          };
-          if (record.cwd) {
-            Object.assign(session, { cwd: record.cwd });
-          }
-          if (record.model) {
-            Object.assign(session, { model: record.model });
-          }
-          if (record.currentTurnId) {
-            Object.assign(session, { activeTurnId: record.currentTurnId });
-          }
-          if (record.lastError) {
-            Object.assign(session, { lastError: record.lastError });
-          }
-          return session satisfies ProviderSession;
-        }),
+        Array.from(sessions.values()).map(
+          (record) =>
+            ({
+              provider: PROVIDER,
+              status: record.currentTurnId ? "running" : "ready",
+              runtimeMode: record.runtimeMode,
+              threadId: record.threadId,
+              resumeCursor: record.session.sessionId,
+              createdAt: record.createdAt,
+              updatedAt: record.updatedAt,
+              ...(record.cwd ? { cwd: record.cwd } : {}),
+              ...(record.model ? { model: record.model } : {}),
+              ...(record.currentTurnId ? { activeTurnId: record.currentTurnId } : {}),
+              ...(record.lastError ? { lastError: record.lastError } : {}),
+            }) satisfies ProviderSession,
+        ),
       );
 
     const hasSession: CopilotAdapterShape["hasSession"] = (threadId) =>
@@ -1589,9 +1523,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
     const stopAll: CopilotAdapterShape["stopAll"] = () =>
       Effect.tryPromise({
         try: async () => {
-          await Promise.all(
-            Array.from(sessions.values()).map((record) => stopRecord(record, { emitExitEvent: true })),
-          );
+          await Promise.all(Array.from(sessions.values()).map((record) => stopRecord(record)));
         },
         catch: (cause) =>
           new ProviderAdapterProcessError({
@@ -1606,7 +1538,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
       Effect.forEach(
         sessions,
         ([, record]) =>
-          Effect.promise(() => stopRecord(record, { emitExitEvent: false }).catch(() => undefined)),
+          Effect.promise(() => stopRecord(record).catch(() => undefined)),
         { discard: true },
       ).pipe(Effect.tap(() => Queue.shutdown(runtimeEventQueue))),
     );
@@ -1637,241 +1569,84 @@ export function makeCopilotAdapterLive(options?: CopilotAdapterLiveOptions) {
   return Layer.effect(CopilotAdapter, makeCopilotAdapter(options));
 }
 
-// ── Dynamic model discovery with pricing ────────────────────────────
+// ── Dynamic model discovery & usage (consumed by wsServer) ─────────
 
-function extractPricingTier(model: ModelInfo): string | undefined {
-  if (!model || typeof model !== "object") return undefined;
-  // The Copilot SDK exposes pricing as a multiplier string (e.g. "1x", "3x").
-  // Try common field names the SDK may use.
-  const record = model as Record<string, unknown>;
-  for (const key of [
-    "pricingTier",
-    "pricing",
-    "premiumRequestMultiplier",
-    "costMultiplier",
-    "premiumTier",
-  ]) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim().length > 0) {
-      return value.trim();
-    }
-    if (typeof value === "number" && value > 0) {
-      return `${value}x`;
-    }
-  }
-  return undefined;
-}
-
-function extractModelName(model: ModelInfo): string {
-  if (!model || typeof model !== "object") return String(model?.id ?? "unknown");
-  const record = model as Record<string, unknown>;
-  const name = record.name ?? record.displayName ?? record.label;
-  if (typeof name === "string" && name.trim().length > 0) return name.trim();
-  return String(record.id ?? "unknown");
-}
-
-export interface CopilotModelDiscoveryOptions {
-  readonly cliPath?: string;
-  readonly cwd?: string;
-}
-
-export async function fetchCopilotModels(
-  options?: CopilotModelDiscoveryOptions,
-): Promise<ReadonlyArray<{ slug: string; name: string; pricingTier?: string }>> {
-  const cliPath =
-    normalizeCopilotCliPathOverride(options?.cliPath) ??
-    resolveBundledCopilotCliPath();
-  const clientOptions: CopilotClientOptions = {
-    ...(cliPath ? { cliPath } : {}),
-    ...(options?.cwd ? { cwd: options.cwd } : {}),
-    logLevel: "error",
-  };
-  const client = new CopilotClient(clientOptions);
+export async function fetchCopilotModels(): Promise<
+  ReadonlyArray<{ slug: string; name: string; pricingTier?: string }> | null
+> {
   try {
-    await client.start();
-    const models = await client.listModels();
-    const result: Array<{ slug: string; name: string; pricingTier?: string }> = [];
-    for (const model of models) {
-      const slug = String(model.id ?? "");
-      if (slug.length === 0) continue;
-      const entry: { slug: string; name: string; pricingTier?: string } = {
-        slug,
-        name: extractModelName(model),
-      };
-      const tier = extractPricingTier(model);
-      if (tier) {
-        entry.pricingTier = tier;
-      }
-      result.push(entry);
-    }
-    return result;
-  } finally {
-    await client.stop().catch(() => undefined);
-  }
-}
-
-// ── Copilot usage / quota discovery ─────────────────────────────────
-
-function extractMultiplier(model: ModelInfo): number {
-  if (!model || typeof model !== "object") return 1;
-  const record = model as Record<string, unknown>;
-  for (const key of [
-    "premiumRequestMultiplier",
-    "costMultiplier",
-    "pricingTier",
-    "pricing",
-  ]) {
-    const value = record[key];
-    if (typeof value === "number" && value > 0) return value;
-    if (typeof value === "string") {
-      const match = /^(\d+(?:\.\d+)?)\s*x?$/i.exec(value.trim());
-      if (match) return Number(match[1]);
-    }
-  }
-  return 1;
-}
-
-/**
- * Query the internal Copilot API via the `gh` CLI to get premium interaction
- * quota. This uses the same endpoint that VS Code uses: `/copilot_internal/user`.
- * Falls back gracefully when `gh` is unavailable.
- */
-async function fetchCopilotQuotaViaGh(): Promise<ProviderUsageQuota | undefined> {
-  return new Promise<ProviderUsageQuota | undefined>((resolve) => {
-    execFile(
-      "gh",
-      ["api", "/copilot_internal/user", "--jq", "."],
-      { timeout: 8_000, env: { ...process.env, GH_NO_UPDATE_NOTIFIER: "1" } },
-      (error, stdout) => {
-        if (error || !stdout.trim()) {
-          resolve(undefined);
-          return;
-        }
-        try {
-          const data = JSON.parse(stdout.trim()) as Record<string, unknown>;
-          const quota = parseCopilotInternalResponse(data);
-          resolve(quota);
-        } catch {
-          resolve(undefined);
-        }
-      },
-    );
-  });
-}
-
-/**
- * Parse the /copilot_internal/user response which has shape:
- * {
- *   copilot_plan: "individual" | "business" | ...,
- *   quota_reset_date: "2026-04-01",
- *   quota_snapshots: {
- *     premium_interactions: {
- *       entitlement: 300,
- *       remaining: 295,
- *       percent_remaining: 98.33,
- *       unlimited: false,
- *     }
- *   }
- * }
- */
-function parseCopilotInternalResponse(data: Record<string, unknown>): ProviderUsageQuota | undefined {
-  const snapshots = data.quota_snapshots as Record<string, unknown> | undefined;
-  const premium = snapshots?.premium_interactions as Record<string, unknown> | undefined;
-  if (!premium) return undefined;
-
-  const entitlement = typeof premium.entitlement === "number" ? premium.entitlement : undefined;
-  const remaining = typeof premium.remaining === "number" ? premium.remaining : undefined;
-  const unlimited = premium.unlimited === true;
-
-  if (unlimited) return { plan: toString(data.copilot_plan) ?? "Copilot" };
-
-  const limit = entitlement;
-  const used = limit != null && remaining != null ? limit - remaining : undefined;
-  const resetDate = toDateString(data.quota_reset_date ?? data.quota_reset_date_utc);
-  const plan = toString(data.copilot_plan);
-
-  if (limit === undefined && used === undefined) return undefined;
-
-  return {
-    ...(plan ? { plan } : {}),
-    ...(used !== undefined ? { used } : {}),
-    ...(limit !== undefined ? { limit } : {}),
-    ...(resetDate ? { resetDate } : {}),
-    ...(limit !== undefined && limit > 0 && used !== undefined
-      ? { percentUsed: Math.round((used / limit) * 100) }
-      : {}),
-  };
-}
-
-function toDateString(value: unknown): string | undefined {
-  if (!value) return undefined;
-  const s = String(value).trim();
-  if (s.length === 0) return undefined;
-  // Accept ISO dates or date-only strings
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return undefined;
-  return d.toISOString().slice(0, 10);
-}
-
-function toString(value: unknown): string | undefined {
-  if (typeof value === "string" && value.trim().length > 0) return value.trim();
-  return undefined;
-}
-
-/**
- * Fetch full Copilot usage info: account quota + per-model multipliers.
- */
-export async function fetchCopilotUsage(
-  options?: CopilotModelDiscoveryOptions,
-): Promise<ProviderUsageResult> {
-  // Run quota fetch and model list concurrently
-  const [quota, models] = await Promise.all([
-    fetchCopilotQuotaViaGh().catch(() => undefined),
-    fetchCopilotModels(options).catch(() => []),
-  ]);
-
-  const modelMultipliers: ProviderModelMultiplier[] = [];
-  // Re-parse from raw SDK models to get numeric multipliers
-  const cliPath =
-    normalizeCopilotCliPathOverride(options?.cliPath) ??
-    resolveBundledCopilotCliPath();
-  const clientOptions: CopilotClientOptions = {
-    ...(cliPath ? { cliPath } : {}),
-    ...(options?.cwd ? { cwd: options.cwd } : {}),
-    logLevel: "error",
-  };
-
-  try {
-    const client = new CopilotClient(clientOptions);
-    await client.start();
+    const { CopilotClient } = await import("@github/copilot-sdk");
+    const { resolveBundledCopilotCliPath } = await import("./copilotCliPath.ts");
+    const cliPath = resolveBundledCopilotCliPath();
+    const client = new CopilotClient({
+      ...(cliPath ? { cliPath } : {}),
+      logLevel: "error",
+    });
     try {
-      const rawModels = await client.listModels();
-      for (const model of rawModels) {
-        const slug = String(model.id ?? "");
-        if (slug.length === 0) continue;
-        const multiplier = extractMultiplier(model);
-        modelMultipliers.push({
-          model: slug,
-          name: extractModelName(model),
-          multiplier,
-        });
-      }
+      await client.start();
+      const models = await client.listModels().catch(() => undefined);
+      if (!models || models.length === 0) return null;
+      return models.map((m: { id: string; name: string }) => ({
+        slug: m.id,
+        name: m.name,
+      }));
     } finally {
-      await client.stop().catch(() => undefined);
+      await client.stop().catch(() => {});
     }
   } catch {
-    // Fall back to the already-fetched models with no multiplier info
-    for (const m of models) {
-      const multiplier = m.pricingTier
-        ? (Number(m.pricingTier.replace(/x$/i, "")) || 1)
-        : 1;
-      modelMultipliers.push({ model: m.slug, name: m.name, multiplier });
-    }
+    return null;
   }
+}
 
-  return {
-    provider: "copilot",
-    ...(quota ? { quota } : {}),
-    ...(modelMultipliers.length > 0 ? { modelMultipliers } : {}),
-  };
+export async function fetchCopilotUsage(): Promise<{
+  provider: string;
+  quotas?: ReadonlyArray<{
+    key: string;
+    limit: number;
+    used: number;
+    remaining: number;
+    percentageRemaining: number;
+    overage: number;
+    resetDate?: string;
+  }>;
+}> {
+  try {
+    const { CopilotClient } = await import("@github/copilot-sdk");
+    const { resolveBundledCopilotCliPath } = await import("./copilotCliPath.ts");
+    const cliPath = resolveBundledCopilotCliPath();
+    const client = new CopilotClient({
+      ...(cliPath ? { cliPath } : {}),
+      logLevel: "error",
+    });
+    try {
+      await client.start();
+      const quota = await (client as unknown as { rpc: { account: { getQuota: () => Promise<{ quotaSnapshots?: unknown }> } } }).rpc.account.getQuota().catch(() => undefined);
+      if (!quota?.quotaSnapshots) return { provider: "copilot" };
+      const quotas = Object.entries(
+        quota.quotaSnapshots as Record<
+          string,
+          {
+            entitlementRequests: number;
+            usedRequests: number;
+            remainingPercentage: number;
+            overage: number;
+            resetDate?: string;
+          }
+        >,
+      ).map(([key, snap]) => ({
+        key,
+        limit: Math.max(0, Math.trunc(snap.entitlementRequests)),
+        used: Math.max(0, Math.trunc(snap.usedRequests)),
+        remaining: Math.max(0, Math.trunc(snap.entitlementRequests) - Math.trunc(snap.usedRequests)),
+        percentageRemaining: snap.remainingPercentage,
+        overage: Math.max(0, Math.trunc(snap.overage)),
+        ...(snap.resetDate ? { resetDate: snap.resetDate } : {}),
+      }));
+      return { provider: "copilot", quotas };
+    } finally {
+      await client.stop().catch(() => {});
+    }
+  } catch {
+    return { provider: "copilot" };
+  }
 }

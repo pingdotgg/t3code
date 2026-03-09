@@ -910,6 +910,7 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         itemType: "assistant_message",
         status: "completed",
+        detail: "hello live",
       },
     });
 
@@ -924,6 +925,262 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(finalMessage?.text).toBe("hello live");
     expect(finalMessage?.streaming).toBe(false);
+  });
+
+  it("completes streaming assistant messages even when read model lookup lags completion", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-streaming-lag"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("message-streaming-lag"),
+          role: "user",
+          text: "stream with lag",
+          attachments: [],
+        },
+        assistantDeliveryMode: "streaming",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(Effect.sleep("30 millis"));
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-streaming-lag"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-streaming-lag"),
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" && thread.session?.activeTurnId === "turn-streaming-lag",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-streaming-lag"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-streaming-lag"),
+      itemId: asItemId("item-streaming-lag"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "hello lagged",
+      },
+    });
+
+    const liveThread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-streaming-lag" &&
+          message.streaming &&
+          message.text === "hello lagged",
+      ),
+    );
+    const liveMessage = liveThread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-streaming-lag",
+    );
+    expect(liveMessage?.streaming).toBe(true);
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-streaming-lag"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-streaming-lag"),
+      itemId: asItemId("item-streaming-lag"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    const finalThread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-streaming-lag" && !message.streaming,
+      ),
+    );
+    const finalMessage = finalThread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-streaming-lag",
+    );
+    expect(finalMessage?.text).toBe("hello lagged");
+    expect(finalMessage?.streaming).toBe(false);
+  });
+
+  it("splits streaming assistant text into separate messages around tool activity", async () => {
+    const harness = await createHarness();
+    const turnStartedAt = "2026-03-09T10:00:00.000Z";
+    const beforeToolAt = "2026-03-09T10:00:01.000Z";
+    const toolAt = "2026-03-09T10:00:02.000Z";
+    const afterToolAt = "2026-03-09T10:00:03.000Z";
+    const completedAt = "2026-03-09T10:00:04.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-interleaved-streaming"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("message-interleaved-streaming"),
+          role: "user",
+          text: "show interleaving",
+          attachments: [],
+        },
+        assistantDeliveryMode: "streaming",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: turnStartedAt,
+      }),
+    );
+    await Effect.runPromise(Effect.sleep("30 millis"));
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-interleaved-streaming"),
+      provider: "codex",
+      createdAt: turnStartedAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-interleaved-streaming"),
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-interleaved-streaming",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-before-tool"),
+      provider: "codex",
+      createdAt: beforeToolAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-interleaved-streaming"),
+      itemId: asItemId("item-interleaved-streaming"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "Before tool.",
+      },
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-interleaved-streaming" &&
+            message.streaming &&
+            message.text === "Before tool.",
+        ),
+    );
+
+    harness.emit({
+      type: "item.updated",
+      eventId: asEventId("evt-tool-updated-interleaved-streaming"),
+      provider: "codex",
+      createdAt: toolAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-interleaved-streaming"),
+      itemId: asItemId("tool-interleaved-streaming"),
+      payload: {
+        itemType: "command_execution",
+        status: "in_progress",
+        title: "Run command",
+        detail: "pwd",
+      },
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-interleaved-streaming" &&
+            !message.streaming &&
+            message.text === "Before tool.",
+        ) &&
+        thread.activities.some(
+          (activity: ProviderRuntimeTestActivity) =>
+            activity.id === "evt-tool-updated-interleaved-streaming" &&
+            activity.kind === "tool.updated",
+        ),
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-after-tool"),
+      provider: "codex",
+      createdAt: afterToolAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-interleaved-streaming"),
+      itemId: asItemId("item-interleaved-streaming"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "After tool.",
+      },
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-interleaved-streaming:segment:1" &&
+            message.streaming &&
+            message.text === "After tool.",
+        ),
+    );
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-interleaved-streaming"),
+      provider: "codex",
+      createdAt: completedAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-interleaved-streaming"),
+      itemId: asItemId("item-interleaved-streaming"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-interleaved-streaming:segment:1" && !message.streaming,
+        ),
+    );
+    expect(
+      thread.messages.map((message: ProviderRuntimeTestMessage) => ({
+        id: message.id,
+        text: message.text,
+        streaming: message.streaming,
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          id: "assistant:item-interleaved-streaming",
+          text: "Before tool.",
+          streaming: false,
+        },
+        {
+          id: "assistant:item-interleaved-streaming:segment:1",
+          text: "After tool.",
+          streaming: false,
+        },
+      ]),
+    );
   });
 
   it("spills oversized buffered deltas and still finalizes full assistant text", async () => {

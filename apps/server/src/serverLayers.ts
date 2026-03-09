@@ -38,6 +38,7 @@ import { GitManagerLive } from "./git/Layers/GitManager";
 import { GitCoreLive } from "./git/Layers/GitCore";
 import { GitHubCliLive } from "./git/Layers/GitHubCli";
 import { CodexTextGenerationLive } from "./git/Layers/CodexTextGeneration";
+import { SessionTextGenerationLive } from "./git/Layers/SessionTextGeneration";
 import { GitServiceLive } from "./git/Layers/GitService";
 import { BunPtyAdapterLive } from "./terminal/Layers/BunPTY";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
@@ -97,6 +98,7 @@ export function makeServerProviderLayer(): Layer.Layer<
 export function makeServerRuntimeServicesLayer() {
   const gitCoreLayer = GitCoreLive.pipe(Layer.provideMerge(GitServiceLive));
   const textGenerationLayer = CodexTextGenerationLive;
+  const sessionTextGenerationLayer = SessionTextGenerationLive;
 
   const orchestrationLayer = OrchestrationEngineLive.pipe(
     Layer.provide(OrchestrationProjectionPipelineLive),
@@ -144,6 +146,7 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provideMerge(gitCoreLayer),
     Layer.provideMerge(GitHubCliLive),
     Layer.provideMerge(textGenerationLayer),
+    Layer.provideMerge(sessionTextGenerationLayer),
   );
 
   return Layer.mergeAll(

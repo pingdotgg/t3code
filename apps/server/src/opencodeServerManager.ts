@@ -1022,12 +1022,44 @@ export class OpenCodeServerManager extends EventEmitter<OpenCodeManagerEvents> {
 
   async interruptTurn(threadId: ThreadId): Promise<void> {
     const context = this.requireSession(threadId);
-    await readJsonData(
-      context.client.session.abort({
-        sessionID: context.providerSessionId,
-        ...(context.workspace ? { workspace: context.workspace } : {}),
-      }),
-    );
+    try {
+      await readJsonData(
+        context.client.session.abort({
+          sessionID: context.providerSessionId,
+          ...(context.workspace ? { workspace: context.workspace } : {}),
+        }),
+      );
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "OpenCode session abort failed";
+      this.emitRuntimeEvent({
+        type: "runtime.error",
+        eventId: eventId("opencode-interrupt-error"),
+        provider: PROVIDER,
+        threadId,
+        createdAt: nowIso(),
+        ...(context.activeTurnId ? { turnId: context.activeTurnId } : {}),
+        payload: {
+          message,
+          class: "transport_error",
+        },
+      });
+      // Still clean up local state even if the abort RPC failed so the UI
+      // does not stay stuck in a "running" state.
+    }
+    const interruptedTurnId = context.activeTurnId;
+    if (interruptedTurnId) {
+      this.emitRuntimeEvent({
+        type: "turn.completed",
+        eventId: eventId("opencode-turn-interrupted"),
+        provider: PROVIDER,
+        threadId,
+        createdAt: nowIso(),
+        turnId: interruptedTurnId,
+        payload: {
+          state: "interrupted",
+        },
+      });
+    }
     context.activeTurnId = undefined;
     context.session = {
       ...stripTransientSessionFields(context.session),

@@ -6,8 +6,12 @@
  *
  * @module ClaudeCodeAdapterLive
  */
+import { createRequire } from "node:module";
+import * as Path from "node:path";
+
 import {
   type CanUseTool,
+  type EffortLevel,
   query,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
@@ -36,7 +40,7 @@ import {
 } from "@t3tools/contracts";
 import { Cause, DateTime, Deferred, Effect, Layer, Queue, Random, Ref, Stream } from "effect";
 
-import type { ProviderSessionUsage, ProviderUsageQuota, ProviderUsageResult } from "@t3tools/contracts";
+import type { ProviderUsageQuota, ProviderUsageResult } from "@t3tools/contracts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -47,8 +51,44 @@ import {
 } from "../Errors.ts";
 import { ClaudeCodeAdapter, type ClaudeCodeAdapterShape } from "../Services/ClaudeCodeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { toMessage } from "../toMessage.ts";
 
 const PROVIDER = "claudeCode" as const;
+
+/**
+ * Environment variables that must be stripped before spawning the Claude Code
+ * subprocess.  These are set by the Electron desktop shell and leak into the
+ * server's `process.env` when T3 Code runs in desktop mode.  Passing them
+ * through to the Claude CLI can cause it to exit immediately with code 1.
+ */
+const SPAWN_ENV_BLOCKLIST = new Set([
+  "ELECTRON_RUN_AS_NODE",
+  "ELECTRON_RENDERER_PORT",
+  "CLAUDECODE",
+]);
+
+const DESKTOP_DIAGNOSTIC_ENV_PREFIXES = ["CLAUDE", "ELECTRON", "CODEX", "T3CODE"] as const;
+
+function sanitizedEnv(): Record<string, string | undefined> {
+  const env = { ...process.env };
+  for (const key of SPAWN_ENV_BLOCKLIST) {
+    delete env[key];
+  }
+  return env;
+}
+
+const require = createRequire(import.meta.url);
+let resolvedClaudeSdkCliPath: string | undefined;
+
+function defaultClaudeSdkCliPath(): string {
+  if (resolvedClaudeSdkCliPath) {
+    return resolvedClaudeSdkCliPath;
+  }
+
+  const sdkEntry = require.resolve("@anthropic-ai/claude-agent-sdk");
+  resolvedClaudeSdkCliPath = Path.join(Path.dirname(sdkEntry), "cli.js");
+  return resolvedClaudeSdkCliPath;
+}
 
 /**
  * Loose accessor type for SDKMessage dynamic properties that arrive via
@@ -61,48 +101,14 @@ type SDKMessageLoose = SDKMessage & Record<string, any>; // oxlint-ignore-next-l
 // ── Module-level usage tracking ──────────────────────────────────────
 
 interface ClaudeCodeUsageAccumulator {
-  totalCostUsd: number;
-  inputTokens: number;
-  outputTokens: number;
-  cachedTokens: number;
-  turnCount: number;
   lastRateLimits: Record<string, unknown> | null;
 }
 
 // Intentionally module-level: aggregates usage across all Claude Code sessions
 // for the global usage display shown in the UI sidebar.
 let _claudeUsageAccumulator: ClaudeCodeUsageAccumulator = {
-  totalCostUsd: 0,
-  inputTokens: 0,
-  outputTokens: 0,
-  cachedTokens: 0,
-  turnCount: 0,
   lastRateLimits: null,
 };
-
-function accumulateClaudeUsage(result: SDKResultMessage | undefined): void {
-  if (!result) return;
-  _claudeUsageAccumulator.turnCount++;
-  if (typeof result.total_cost_usd === "number") {
-    _claudeUsageAccumulator.totalCostUsd = result.total_cost_usd;
-  }
-  if (result.usage) {
-    if (typeof result.usage.input_tokens === "number") {
-      _claudeUsageAccumulator.inputTokens += result.usage.input_tokens;
-    }
-    if (typeof result.usage.output_tokens === "number") {
-      _claudeUsageAccumulator.outputTokens += result.usage.output_tokens;
-    }
-    const cached =
-      (typeof result.usage.cache_read_input_tokens === "number"
-        ? result.usage.cache_read_input_tokens
-        : 0) +
-      (typeof result.usage.cache_creation_input_tokens === "number"
-        ? result.usage.cache_creation_input_tokens
-        : 0);
-    if (cached > 0) _claudeUsageAccumulator.cachedTokens += cached;
-  }
-}
 
 function storeClaudeRateLimits(message: Record<string, unknown>): void {
   _claudeUsageAccumulator.lastRateLimits = message;
@@ -149,23 +155,9 @@ export function fetchClaudeCodeUsage(): ProviderUsageResult {
     if (tokensQuota) quotas.push(tokensQuota);
   }
 
-  // Build session usage from accumulated data
-  let sessionUsage: ProviderSessionUsage | undefined;
-  if (acc.turnCount > 0) {
-    sessionUsage = {
-      ...(acc.totalCostUsd > 0 ? { totalCostUsd: acc.totalCostUsd } : {}),
-      inputTokens: acc.inputTokens,
-      outputTokens: acc.outputTokens,
-      ...(acc.cachedTokens > 0 ? { cachedTokens: acc.cachedTokens } : {}),
-      totalTokens: acc.inputTokens + acc.outputTokens,
-      turnCount: acc.turnCount,
-    };
-  }
-
   return {
     provider: PROVIDER,
     ...(quotas.length > 0 ? { quota: quotas[0], quotas } : {}),
-    ...(sessionUsage ? { sessionUsage } : {}),
   };
 }
 
@@ -253,12 +245,6 @@ function isSyntheticClaudeThreadId(value: string): boolean {
   return value.startsWith("claude-thread-");
 }
 
-function toMessage(cause: unknown, fallback: string): string {
-  if (cause instanceof Error && cause.message.length > 0) {
-    return cause.message;
-  }
-  return fallback;
-}
 
 function toStringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
@@ -266,6 +252,25 @@ function toStringOrUndefined(value: unknown): string | undefined {
 
 function toUnknownRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+}
+
+function isDesktopRuntime(): boolean {
+  return process.env.T3CODE_MODE === "desktop";
+}
+
+function diagnosticEnvKeys(env: Readonly<Record<string, string | undefined>>): ReadonlyArray<string> {
+  return Object.keys(env)
+    .filter((key) => DESKTOP_DIAGNOSTIC_ENV_PREFIXES.some((prefix) => key.startsWith(prefix)))
+    .sort();
+}
+
+function logDesktopClaudeDiagnostic(message: string, data?: Record<string, unknown>): void {
+  if (!isDesktopRuntime()) return;
+  if (data) {
+    console.warn("[claudeCode][desktop]", message, data);
+    return;
+  }
+  console.warn("[claudeCode][desktop]", message);
 }
 
 function asRuntimeItemId(value: string): RuntimeItemId {
@@ -815,7 +820,6 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
       result?: SDKResultMessage,
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
-        accumulateClaudeUsage(result);
         const turnState = context.turnState;
         if (!turnState) {
           const stamp = yield* makeEventStamp();
@@ -1694,30 +1698,61 @@ function makeClaudeCodeAdapter(options?: ClaudeCodeAdapterLiveOptions) {
           );
 
         const providerOptions = input.providerOptions?.claudeCode;
+        const claudeCodeModelOptions = input.modelOptions?.claudeCode;
         const permissionMode =
           toPermissionMode(providerOptions?.permissionMode) ??
           (input.runtimeMode === "full-access" ? "bypassPermissions" : undefined);
+        const effort = claudeCodeModelOptions?.effort as EffortLevel | undefined;
+
+        const pathToClaudeCodeExecutable = yield* Effect.try({
+          try: () =>
+            (providerOptions?.binaryPath as string | undefined) ?? defaultClaudeSdkCliPath(),
+          catch: (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId,
+              detail: toMessage(cause, "Failed to resolve Claude Code executable."),
+              cause,
+            }),
+        });
 
         const queryOptions: ClaudeQueryOptions = {
           ...(input.cwd ? { cwd: input.cwd } : {}),
           ...(input.model ? { model: input.model } : {}),
-          ...(providerOptions?.binaryPath
-            ? { pathToClaudeCodeExecutable: providerOptions.binaryPath }
-            : {}),
+          pathToClaudeCodeExecutable,
           ...(permissionMode ? { permissionMode } : {}),
           ...(permissionMode === "bypassPermissions"
             ? { allowDangerouslySkipPermissions: true }
             : {}),
           ...(providerOptions?.maxThinkingTokens !== undefined
-            ? { maxThinkingTokens: providerOptions.maxThinkingTokens }
+            ? { maxThinkingTokens: providerOptions.maxThinkingTokens as number }
             : {}),
+          ...(effort ? { effort } : {}),
           ...(resumeState?.resume ? { resume: resumeState.resume } : {}),
           ...(resumeState?.resumeSessionAt ? { resumeSessionAt: resumeState.resumeSessionAt } : {}),
           includePartialMessages: true,
           canUseTool,
-          env: process.env,
+          env: sanitizedEnv(),
+          ...(isDesktopRuntime()
+            ? {
+                stderr: (message: string) => {
+                  const trimmed = message.trimEnd();
+                  if (trimmed.length > 0) {
+                    console.warn("[claudeCode][stderr]", trimmed);
+                  }
+                },
+              }
+            : {}),
           ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         };
+
+        logDesktopClaudeDiagnostic("starting Claude query", {
+          blockedEnvKeys: [...SPAWN_ENV_BLOCKLIST].sort(),
+          inheritedDiagnosticEnvKeys: diagnosticEnvKeys(process.env),
+          forwardedDiagnosticEnvKeys: diagnosticEnvKeys(queryOptions.env ?? {}),
+          model: input.model,
+          cwd: input.cwd,
+        });
 
         const queryRuntime = yield* Effect.try({
           try: () =>

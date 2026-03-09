@@ -13,12 +13,6 @@ import type { ProviderAdapterShape } from "./ProviderAdapter.ts";
 export const CursorAcpJsonRpcId = Schema.Union([Schema.String, Schema.Int]);
 export type CursorAcpJsonRpcId = typeof CursorAcpJsonRpcId.Type;
 
-export const CursorAcpTextContent = Schema.Struct({
-  type: Schema.Literal("text"),
-  text: Schema.String,
-});
-export type CursorAcpTextContent = typeof CursorAcpTextContent.Type;
-
 export const CursorAcpSessionUpdate = Schema.Union([
   Schema.Struct({
     sessionUpdate: Schema.Literal("available_commands_update"),
@@ -31,11 +25,15 @@ export const CursorAcpSessionUpdate = Schema.Union([
   }),
   Schema.Struct({
     sessionUpdate: Schema.Literal("agent_thought_chunk"),
-    content: CursorAcpTextContent,
+    content: Schema.optional(Schema.Unknown),
+    text: Schema.optional(Schema.String),
+    delta: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     sessionUpdate: Schema.Literal("agent_message_chunk"),
-    content: CursorAcpTextContent,
+    content: Schema.optional(Schema.Unknown),
+    text: Schema.optional(Schema.String),
+    delta: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     sessionUpdate: Schema.Literal("tool_call"),
@@ -98,6 +96,7 @@ export type CursorAcpSessionNewResult = typeof CursorAcpSessionNewResult.Type;
 
 export const CursorAcpSessionPromptResult = Schema.Struct({
   stopReason: Schema.optional(Schema.String),
+  usage: Schema.optional(Schema.Unknown),
 });
 export type CursorAcpSessionPromptResult = typeof CursorAcpSessionPromptResult.Type;
 

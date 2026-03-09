@@ -1,12 +1,16 @@
 import {
+  CLAUDE_CODE_EFFORT_OPTIONS,
+  CLAUDE_CODE_EFFORT_OPTIONS_BY_PROVIDER,
   CODEX_REASONING_EFFORT_OPTIONS,
   CURSOR_MODEL_FAMILY_OPTIONS,
   CURSOR_REASONING_OPTIONS,
+  DEFAULT_CLAUDE_CODE_EFFORT_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_REASONING_EFFORT_BY_PROVIDER,
   MODEL_OPTIONS_BY_PROVIDER,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
   REASONING_EFFORT_OPTIONS_BY_PROVIDER,
+  type ClaudeCodeEffort,
   type CodexReasoningEffort,
   type CursorModelFamily,
   type CursorModelSlug,
@@ -52,6 +56,83 @@ const CURSOR_MODEL_CAPABILITY_BY_FAMILY: Record<CursorModelFamily, CursorModelCa
     defaultReasoning: "normal",
     defaultThinking: false,
   },
+  "gpt-5.2-codex": {
+    supportsReasoning: true,
+    supportsFast: true,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  "gpt-5.2": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  "gpt-5.2-high": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  "gpt-5.1-codex-max": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  "gpt-5.1-codex-max-high": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  "gpt-5.4-medium": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  "gpt-5.4-medium-fast": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  "gpt-5.4-high": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  "gpt-5.4-high-fast": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  "gpt-5.4-xhigh": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  "gpt-5.4-xhigh-fast": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
   "gpt-5.3-codex-spark-preview": {
     supportsReasoning: false,
     supportsFast: false,
@@ -80,7 +161,56 @@ const CURSOR_MODEL_CAPABILITY_BY_FAMILY: Record<CursorModelFamily, CursorModelCa
     defaultReasoning: "normal",
     defaultThinking: true,
   },
+  "sonnet-4.5": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: true,
+    defaultReasoning: "normal",
+    defaultThinking: true,
+  },
   "gemini-3.1-pro": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  grok: {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  "gpt-5.1-high": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  "gemini-3-pro": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  "gemini-3-flash": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  "gpt-5.1-codex-mini": {
+    supportsReasoning: false,
+    supportsFast: false,
+    supportsThinking: false,
+    defaultReasoning: "normal",
+    defaultThinking: false,
+  },
+  "kimi-k2.5": {
     supportsReasoning: false,
     supportsFast: false,
     supportsThinking: false,
@@ -146,9 +276,24 @@ function resolveCursorModelFamily(model: string | null | undefined): CursorModel
   ) {
     return "gpt-5.3-codex";
   }
+  if (
+    normalized === "gpt-5.2-codex" ||
+    normalized === "gpt-5.2-codex-fast" ||
+    normalized === "gpt-5.2-codex-low" ||
+    normalized === "gpt-5.2-codex-low-fast" ||
+    normalized === "gpt-5.2-codex-high" ||
+    normalized === "gpt-5.2-codex-high-fast" ||
+    normalized === "gpt-5.2-codex-xhigh" ||
+    normalized === "gpt-5.2-codex-xhigh-fast"
+  ) {
+    return "gpt-5.2-codex";
+  }
 
   if (normalized === "sonnet-4.6-thinking") {
     return "sonnet-4.6";
+  }
+  if (normalized === "sonnet-4.5-thinking") {
+    return "sonnet-4.5";
   }
   if (normalized === "opus-4.6-thinking") {
     return "opus-4.6";
@@ -198,6 +343,15 @@ export function parseCursorModelSelection(model: string | null | undefined): Cur
     fast: false,
     thinking: capability.defaultThinking,
   };
+}
+
+export function resolveCursorPickerModelSlug(
+  model: string | null | undefined,
+): CursorModelSlug | CursorModelFamily {
+  const selection = parseCursorModelSelection(model);
+  const capability = CURSOR_MODEL_CAPABILITY_BY_FAMILY[selection.family];
+  const normalized = resolveModelSlugForProvider("cursor", model) as CursorModelSlug;
+  return capability.supportsReasoning || capability.supportsThinking ? selection.family : normalized;
 }
 
 export function resolveCursorModelFromSelection(input: {
@@ -286,4 +440,18 @@ export function getDefaultReasoningEffort(
   return DEFAULT_REASONING_EFFORT_BY_PROVIDER[provider];
 }
 
-export { CODEX_REASONING_EFFORT_OPTIONS };
+export function getClaudeCodeEffortOptions(
+  provider: ProviderKind = "claudeCode",
+): ReadonlyArray<ClaudeCodeEffort> {
+  return CLAUDE_CODE_EFFORT_OPTIONS_BY_PROVIDER[provider];
+}
+
+export function getDefaultClaudeCodeEffort(provider: "claudeCode"): ClaudeCodeEffort;
+export function getDefaultClaudeCodeEffort(provider: ProviderKind): ClaudeCodeEffort | null;
+export function getDefaultClaudeCodeEffort(
+  provider: ProviderKind = "claudeCode",
+): ClaudeCodeEffort | null {
+  return DEFAULT_CLAUDE_CODE_EFFORT_BY_PROVIDER[provider];
+}
+
+export { CLAUDE_CODE_EFFORT_OPTIONS, CODEX_REASONING_EFFORT_OPTIONS };

@@ -1,4 +1,4 @@
-import type { GitStackedAction, GitStatusResult, ThreadId } from "@t3tools/contracts";
+import type { GitStackedAction, GitStatusResult, ProviderKind, ThreadId } from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
@@ -42,6 +42,7 @@ import {
 } from "~/lib/gitReactQuery";
 import { preferredTerminalEditor, resolvePathLinkTarget } from "~/terminal-links";
 import { readNativeApi } from "~/nativeApi";
+import { useStore } from "~/store";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -98,7 +99,7 @@ function getMenuActionDisabledReason(
   }
 
   if (hasOpenPr) {
-    return "Open PR is currently unavailable.";
+    return "View PR is currently unavailable.";
   }
   if (!hasBranch) {
     return "Detached HEAD: checkout a branch before creating a PR.";
@@ -148,6 +149,12 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
     useState<PendingDefaultBranchAction | null>(null);
+
+  const activeThread = useStore((state) =>
+    activeThreadId ? state.threads.find((t) => t.id === activeThreadId) : undefined,
+  );
+  const activeProvider: ProviderKind | undefined = activeThread?.session?.provider;
+  const activeModel: string | undefined = activeThread?.model;
 
   const { data: gitStatus = null, error: gitStatusError } = useQuery(gitStatusQueryOptions(gitCwd));
 
@@ -324,6 +331,8 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         action,
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
+        ...(activeProvider ? { provider: activeProvider } : {}),
+        ...(activeModel ? { model: activeModel } : {}),
       });
 
       try {
@@ -376,7 +385,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
             : shouldOfferOpenPrCta
               ? {
                   actionProps: {
-                    children: "Open PR",
+                    children: "View PR",
                     onClick: () => {
                       const api = readNativeApi();
                       if (!api) return;
@@ -414,6 +423,8 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     },
 
     [
+      activeModel,
+      activeProvider,
       isDefaultBranch,
       runImmediateGitActionMutation,
       setPendingDefaultBranchAction,

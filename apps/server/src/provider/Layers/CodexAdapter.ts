@@ -38,6 +38,7 @@ import {
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { toMessage } from "../toMessage.ts";
 
 const PROVIDER = "codex" as const;
 
@@ -49,13 +50,6 @@ export interface CodexAdapterLiveOptions {
   readonly makeManager?: (services?: ServiceMap.ServiceMap<never>) => CodexAppServerManager;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
-}
-
-function toMessage(cause: unknown, fallback: string): string {
-  if (cause instanceof Error && cause.message.length > 0) {
-    return cause.message;
-  }
-  return fallback;
 }
 
 function toSessionError(
@@ -1531,14 +1525,21 @@ function codexBucketToQuota(
   label: string,
 ): ProviderUsageQuota | undefined {
   if (!bucket || bucket.usedPercent == null) return undefined;
-  const resetsAt = bucket.resetsAt
-    ? new Date(bucket.resetsAt * 1000).toISOString().slice(0, 10)
-    : undefined;
+  const resetsAt = bucket.resetsAt ? new Date(bucket.resetsAt * 1000).toISOString() : undefined;
   return {
     plan: label,
     percentUsed: bucket.usedPercent,
     ...(resetsAt ? { resetDate: resetsAt } : {}),
   };
+}
+
+function formatCodexSessionWindowLabel(windowDurationMins: number): string {
+  if (windowDurationMins > 0 && windowDurationMins % 60 === 0) {
+    const hours = windowDurationMins / 60;
+    return `Session (${hours} hr${hours === 1 ? "" : "s"})`;
+  }
+
+  return `Session (${windowDurationMins} min)`;
 }
 
 /**
@@ -1556,7 +1557,7 @@ export async function fetchCodexUsage(): Promise<ProviderUsageResult> {
   }
 
   const sessionLabel = limits.primary?.windowDurationMins
-    ? `Session (${limits.primary.windowDurationMins}min)`
+    ? formatCodexSessionWindowLabel(limits.primary.windowDurationMins)
     : "Session";
   const quotas: ProviderUsageQuota[] = [];
   const sessionQuota = codexBucketToQuota(limits.primary, sessionLabel);

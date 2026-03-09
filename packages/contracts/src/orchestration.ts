@@ -8,6 +8,7 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ProviderItemId,
   ThreadId,
@@ -54,6 +55,104 @@ export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
 export const ProviderServiceTier = Schema.Literals(["fast", "flex"]);
 export type ProviderServiceTier = typeof ProviderServiceTier.Type;
 export const DEFAULT_PROVIDER_KIND: ProviderKind = "codex";
+export const CodexProviderStartOptions = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyString),
+  homePath: Schema.optional(TrimmedNonEmptyString),
+});
+export type CodexProviderStartOptions = typeof CodexProviderStartOptions.Type;
+
+export const CopilotProviderStartOptions = Schema.Struct({
+  cliPath: Schema.optional(TrimmedNonEmptyString),
+  configDir: Schema.optional(TrimmedNonEmptyString),
+});
+export type CopilotProviderStartOptions = typeof CopilotProviderStartOptions.Type;
+
+export const ClaudeCodeProviderStartOptions = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyString),
+  permissionMode: Schema.optional(TrimmedNonEmptyString),
+  maxThinkingTokens: Schema.optional(NonNegativeInt),
+});
+export type ClaudeCodeProviderStartOptions = typeof ClaudeCodeProviderStartOptions.Type;
+
+export const CursorProviderStartOptions = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyString),
+});
+export type CursorProviderStartOptions = typeof CursorProviderStartOptions.Type;
+
+export const GeminiCliProviderStartOptions = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyString),
+});
+export type GeminiCliProviderStartOptions = typeof GeminiCliProviderStartOptions.Type;
+
+export const AmpProviderStartOptions = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyString),
+});
+export type AmpProviderStartOptions = typeof AmpProviderStartOptions.Type;
+
+export const OpencodeProviderStartOptions = Schema.Struct({
+  serverUrl: Schema.optional(TrimmedNonEmptyString),
+  binaryPath: Schema.optional(TrimmedNonEmptyString),
+  hostname: Schema.optional(TrimmedNonEmptyString),
+  port: Schema.optional(PositiveInt),
+  workspace: Schema.optional(TrimmedNonEmptyString),
+  username: Schema.optional(TrimmedNonEmptyString),
+  password: Schema.optional(TrimmedNonEmptyString),
+});
+export type OpencodeProviderStartOptions = typeof OpencodeProviderStartOptions.Type;
+
+export const KiloProviderStartOptions = Schema.Struct({
+  serverUrl: Schema.optional(TrimmedNonEmptyString),
+  binaryPath: Schema.optional(TrimmedNonEmptyString),
+  hostname: Schema.optional(TrimmedNonEmptyString),
+  port: Schema.optional(PositiveInt),
+  workspace: Schema.optional(TrimmedNonEmptyString),
+  username: Schema.optional(TrimmedNonEmptyString),
+  password: Schema.optional(TrimmedNonEmptyString),
+});
+export type KiloProviderStartOptions = typeof KiloProviderStartOptions.Type;
+
+export const ProviderStartOptions = Schema.Struct({
+  codex: Schema.optional(CodexProviderStartOptions),
+  copilot: Schema.optional(CopilotProviderStartOptions),
+  claudeCode: Schema.optional(ClaudeCodeProviderStartOptions),
+  cursor: Schema.optional(CursorProviderStartOptions),
+  amp: Schema.optional(AmpProviderStartOptions),
+  geminiCli: Schema.optional(GeminiCliProviderStartOptions),
+  opencode: Schema.optional(OpencodeProviderStartOptions),
+  kilo: Schema.optional(KiloProviderStartOptions),
+});
+export type ProviderStartOptions = typeof ProviderStartOptions.Type;
+
+/** Opencode options with credentials stripped for safe persistence in events. */
+const OpencodeProviderStartOptionsRedacted = Schema.Struct({
+  serverUrl: Schema.optional(TrimmedNonEmptyString),
+  binaryPath: Schema.optional(TrimmedNonEmptyString),
+  hostname: Schema.optional(TrimmedNonEmptyString),
+  port: Schema.optional(PositiveInt),
+  workspace: Schema.optional(TrimmedNonEmptyString),
+});
+
+/** Kilo options with credentials stripped for safe persistence in events. */
+const KiloProviderStartOptionsRedacted = Schema.Struct({
+  serverUrl: Schema.optional(TrimmedNonEmptyString),
+  binaryPath: Schema.optional(TrimmedNonEmptyString),
+  hostname: Schema.optional(TrimmedNonEmptyString),
+  port: Schema.optional(PositiveInt),
+  workspace: Schema.optional(TrimmedNonEmptyString),
+});
+
+/** ProviderStartOptions without sensitive fields (username/password). Use in persisted events. */
+export const ProviderStartOptionsRedacted = Schema.Struct({
+  codex: Schema.optional(CodexProviderStartOptions),
+  copilot: Schema.optional(CopilotProviderStartOptions),
+  claudeCode: Schema.optional(ClaudeCodeProviderStartOptions),
+  cursor: Schema.optional(CursorProviderStartOptions),
+  amp: Schema.optional(AmpProviderStartOptions),
+  geminiCli: Schema.optional(GeminiCliProviderStartOptions),
+  opencode: Schema.optional(OpencodeProviderStartOptionsRedacted),
+  kilo: Schema.optional(KiloProviderStartOptionsRedacted),
+});
+export type ProviderStartOptionsRedacted = typeof ProviderStartOptionsRedacted.Type;
 export const RuntimeMode = Schema.Literals(["approval-required", "full-access"]);
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
@@ -386,6 +485,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   serviceTier: Schema.optional(Schema.NullOr(ProviderServiceTier)),
   modelOptions: Schema.optional(ProviderModelOptions),
+  providerOptions: Schema.optional(ProviderStartOptions),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
   interactionMode: ProviderInteractionMode.pipe(
@@ -408,6 +508,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   serviceTier: Schema.optional(Schema.NullOr(ProviderServiceTier)),
   modelOptions: Schema.optional(ProviderModelOptions),
+  providerOptions: Schema.optional(ProviderStartOptions),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -689,6 +790,9 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   serviceTier: Schema.optional(Schema.NullOr(ProviderServiceTier)),
   modelOptions: Schema.optional(ProviderModelOptions),
+  /** Runtime events carry full ProviderStartOptions (including credentials).
+   *  Redaction to ProviderStartOptionsRedacted happens at persistence and broadcast boundaries. */
+  providerOptions: Schema.optional(ProviderStartOptions),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
   interactionMode: ProviderInteractionMode.pipe(

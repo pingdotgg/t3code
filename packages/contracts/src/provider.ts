@@ -5,7 +5,6 @@ import {
   ApprovalRequestId,
   EventId,
   IsoDateTime,
-  NonNegativeInt,
   ProviderItemId,
   ThreadId,
   TurnId,
@@ -21,6 +20,7 @@ import {
   ProviderRequestKind,
   ProviderSandboxMode,
   ProviderServiceTier,
+  ProviderStartOptions,
   ProviderUserInputAnswers,
   RuntimeMode,
 } from "./orchestration";
@@ -49,64 +49,7 @@ export const ProviderSession = Schema.Struct({
 });
 export type ProviderSession = typeof ProviderSession.Type;
 
-const CodexProviderStartOptions = Schema.Struct({
-  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
-  homePath: Schema.optional(TrimmedNonEmptyStringSchema),
-});
-
-const ClaudeCodeProviderStartOptions = Schema.Struct({
-  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
-  permissionMode: Schema.optional(TrimmedNonEmptyStringSchema),
-  maxThinkingTokens: Schema.optional(NonNegativeInt),
-});
-
-const CursorProviderStartOptions = Schema.Struct({
-  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
-});
-
-const CopilotProviderStartOptions = Schema.Struct({
-  cliPath: Schema.optional(TrimmedNonEmptyStringSchema),
-  configDir: Schema.optional(TrimmedNonEmptyStringSchema),
-});
-
-const OpencodeProviderStartOptions = Schema.Struct({
-  serverUrl: Schema.optional(TrimmedNonEmptyStringSchema),
-  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
-  hostname: Schema.optional(TrimmedNonEmptyStringSchema),
-  port: Schema.optional(Schema.Number),
-  workspace: Schema.optional(TrimmedNonEmptyStringSchema),
-  username: Schema.optional(TrimmedNonEmptyStringSchema),
-  password: Schema.optional(TrimmedNonEmptyStringSchema),
-});
-
-const GeminiCliProviderStartOptions = Schema.Struct({
-  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
-});
-
-const AmpProviderStartOptions = Schema.Struct({
-  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
-});
-
-const KiloProviderStartOptions = Schema.Struct({
-  serverUrl: Schema.optional(TrimmedNonEmptyStringSchema),
-  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
-  hostname: Schema.optional(TrimmedNonEmptyStringSchema),
-  port: Schema.optional(Schema.Number),
-  workspace: Schema.optional(TrimmedNonEmptyStringSchema),
-  username: Schema.optional(TrimmedNonEmptyStringSchema),
-  password: Schema.optional(TrimmedNonEmptyStringSchema),
-});
-
-const ProviderStartOptions = Schema.Struct({
-  codex: Schema.optional(CodexProviderStartOptions),
-  copilot: Schema.optional(CopilotProviderStartOptions),
-  claudeCode: Schema.optional(ClaudeCodeProviderStartOptions),
-  cursor: Schema.optional(CursorProviderStartOptions),
-  opencode: Schema.optional(OpencodeProviderStartOptions),
-  geminiCli: Schema.optional(GeminiCliProviderStartOptions),
-  amp: Schema.optional(AmpProviderStartOptions),
-  kilo: Schema.optional(KiloProviderStartOptions),
-});
+export { ProviderStartOptions };
 
 export const ProviderSessionStartInput = Schema.Struct({
   threadId: ThreadId,

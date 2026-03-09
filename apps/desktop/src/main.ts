@@ -1114,6 +1114,30 @@ function createWindow(): BrowserWindow {
     },
   });
 
+  window.webContents.on("context-menu", (event, params) => {
+    event.preventDefault();
+    const menuTemplate: MenuItemConstructorOptions[] = [];
+    if (params.misspelledWord) {
+      for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
+        menuTemplate.push({
+          label: suggestion,
+          click: () => window.webContents.replaceMisspelling(suggestion),
+        });
+      }
+      if (params.dictionarySuggestions.length === 0) {
+        menuTemplate.push({ label: "No suggestions", enabled: false });
+      }
+      menuTemplate.push({ type: "separator" });
+    }
+    menuTemplate.push(
+      { role: "cut", enabled: params.editFlags.canCut },
+      { role: "copy", enabled: params.editFlags.canCopy },
+      { role: "paste", enabled: params.editFlags.canPaste },
+      { role: "selectAll", enabled: params.editFlags.canSelectAll },
+    );
+    Menu.buildFromTemplate(menuTemplate).popup({ window });
+  });
+
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.on("page-title-updated", (event) => {
     event.preventDefault();

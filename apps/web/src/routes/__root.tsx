@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, type ProviderKind } from "@t3tools/contracts";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -34,6 +34,21 @@ export const Route = createRootRouteWithContext<{
     meta: [{ name: "title", content: APP_DISPLAY_NAME }],
   }),
 });
+
+const PROVIDER_KINDS = [
+  "codex",
+  "copilot",
+  "claudeCode",
+  "cursor",
+  "opencode",
+  "geminiCli",
+  "amp",
+  "kilo",
+] as const satisfies ReadonlyArray<ProviderKind>;
+
+function isProviderKind(value: string): value is ProviderKind {
+  return (PROVIDER_KINDS as readonly string[]).includes(value);
+}
 
 function RootRouteView() {
   const { settings } = useAppSettings();
@@ -200,6 +215,14 @@ function EventRouter() {
         return;
       }
       latestSequence = event.sequence;
+      if (event.type === "thread.session-set") {
+        const providerName = event.payload.session.providerName;
+        if (providerName && isProviderKind(providerName)) {
+          void queryClient.invalidateQueries({
+            queryKey: providerQueryKeys.getUsage(providerName),
+          });
+        }
+      }
       if (event.type === "thread.turn-diff-completed" || event.type === "thread.reverted") {
         void queryClient.invalidateQueries({ queryKey: providerQueryKeys.all });
       }

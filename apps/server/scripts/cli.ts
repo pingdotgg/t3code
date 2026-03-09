@@ -132,6 +132,8 @@ const buildCmd = Command.make(
           cwd: serverDir,
           stdout: config.verbose ? "inherit" : "ignore",
           stderr: "inherit",
+          // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
+          shell: process.platform === "win32",
         })`bun tsdown`,
       );
 
@@ -225,6 +227,8 @@ const publishCmd = Command.make(
                 cwd: serverDir,
                 stdout: config.verbose ? "inherit" : "ignore",
                 stderr: "inherit",
+                // Windows needs shell mode to resolve .cmd shims (e.g. npm.cmd).
+                shell: process.platform === "win32",
               }),
             );
           }),

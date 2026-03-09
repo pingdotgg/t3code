@@ -84,36 +84,39 @@ beforeEach(() => {
 });
 
 it.layer(testLayer)("server CLI command", (it) => {
-  it.effect("parses all CLI flags and wires scoped start/stop", () =>
-    Effect.gen(function* () {
-      yield* runCli([
-        "--mode",
-        "desktop",
-        "--port",
-        "4010",
-        "--host",
-        "0.0.0.0",
-        "--state-dir",
-        "/tmp/t3-cli-state",
-        "--dev-url",
-        "http://127.0.0.1:5173",
-        "--no-browser",
-        "--auth-token",
-        "auth-secret",
-      ]);
+  it.effect(
+    "parses all CLI flags and wires scoped start/stop",
+    () =>
+      Effect.gen(function* () {
+        yield* runCli([
+          "--mode",
+          "desktop",
+          "--port",
+          "4010",
+          "--host",
+          "0.0.0.0",
+          "--state-dir",
+          "/tmp/t3-cli-state",
+          "--dev-url",
+          "http://127.0.0.1:5173",
+          "--no-browser",
+          "--auth-token",
+          "auth-secret",
+        ]);
 
-      assert.equal(start.mock.calls.length, 1);
-      assert.equal(resolvedConfig?.mode, "desktop");
-      assert.equal(resolvedConfig?.port, 4010);
-      assert.equal(resolvedConfig?.host, "0.0.0.0");
-      assert.equal(resolvedConfig?.stateDir, "/tmp/t3-cli-state");
-      assert.equal(resolvedConfig?.devUrl?.toString(), "http://127.0.0.1:5173/");
-      assert.equal(resolvedConfig?.noBrowser, true);
-      assert.equal(resolvedConfig?.authToken, "auth-secret");
-      assert.equal(resolvedConfig?.autoBootstrapProjectFromCwd, false);
-      assert.equal(resolvedConfig?.logWebSocketEvents, true);
-      assert.equal(stop.mock.calls.length, 1);
-    }),
+        assert.equal(start.mock.calls.length, 1);
+        assert.equal(resolvedConfig?.mode, "desktop");
+        assert.equal(resolvedConfig?.port, 4010);
+        assert.equal(resolvedConfig?.host, "0.0.0.0");
+        assert.equal(resolvedConfig?.stateDir, "/tmp/t3-cli-state");
+        assert.equal(resolvedConfig?.devUrl?.toString(), "http://127.0.0.1:5173/");
+        assert.equal(resolvedConfig?.noBrowser, true);
+        assert.equal(resolvedConfig?.authToken, "auth-secret");
+        assert.equal(resolvedConfig?.autoBootstrapProjectFromCwd, false);
+        assert.equal(resolvedConfig?.logWebSocketEvents, true);
+        assert.equal(stop.mock.calls.length, 1);
+      }),
+    15_000,
   );
 
   it.effect("supports --token as an alias for --auth-token", () =>

@@ -53,6 +53,7 @@ import { GitManager } from "./git/Services/GitManager.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { Keybindings } from "./keybindings";
 import { searchWorkspaceEntries } from "./workspaceEntries";
+import { redactEventForBoundary } from "./orchestration/redactEvent.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
@@ -74,6 +75,8 @@ import { fetchGeminiCliUsage } from "./geminiCliServerManager.ts";
 import { fetchKiloModels } from "./kiloServerManager.ts";
 import { fetchOpenCodeModels } from "./opencodeServerManager.ts";
 import { fetchCopilotModels, fetchCopilotUsage } from "./provider/Layers/CopilotAdapter.ts";
+import { fetchCursorModels } from "./provider/Layers/CursorAdapter.ts";
+import { fetchCursorUsage } from "./provider/Layers/CursorUsage.ts";
 import { fetchClaudeCodeUsage } from "./provider/Layers/ClaudeCodeAdapter.ts";
 import { fetchCodexUsage } from "./provider/Layers/CodexAdapter.ts";
 import {
@@ -632,7 +635,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     broadcastPush({
       type: "push",
       channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
-      data: event,
+      data: redactEventForBoundary(event),
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
@@ -932,6 +935,19 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
             return { models: enriched } satisfies ProviderListModelsResult;
           }
         }
+        if (provider === "cursor") {
+          const dynamicModels = yield* Effect.tryPromise({
+            try: () => fetchCursorModels(),
+            catch: () => null,
+          });
+          if (dynamicModels && dynamicModels.length > 0) {
+            const models: ProviderModelOption[] = dynamicModels.map((m) => ({
+              slug: m.slug,
+              name: m.name,
+            }));
+            return { models } satisfies ProviderListModelsResult;
+          }
+        }
         const staticModels =
           (MODEL_OPTIONS_BY_PROVIDER[provider] ?? []) as ReadonlyArray<{
             slug: string;
@@ -968,6 +984,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           });
           return usage satisfies ProviderUsageResult;
         }
+        if (provider === "cursor") {
+          const usage = yield* Effect.tryPromise({
+            try: () => fetchCursorUsage(),
+            catch: () =>
+              new RouteRequestError({
+                message: "Failed to fetch Cursor usage.",
+              }),
+          });
+          return usage satisfies ProviderUsageResult;
+        }
         if (provider === "claudeCode") {
           return fetchClaudeCodeUsage() satisfies ProviderUsageResult;
         }
@@ -995,6 +1021,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);
         const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);
+        return { keybindings: keybindingsConfig, issues: [] };
+      }
+
+      case WS_METHODS.serverRemoveKeybinding: {
+        const body = stripRequestTag(request.body);
+        const keybindingsConfig = yield* keybindingsManager.removeKeybindingForCommand(
+          body.command,
+        );
         return { keybindings: keybindingsConfig, issues: [] };
       }
 

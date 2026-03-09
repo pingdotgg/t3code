@@ -1,5 +1,6 @@
 import {
   type ApprovalRequestId,
+  type ClaudeCodeEffort,
   DEFAULT_MODEL_BY_PROVIDER,
   CURSOR_REASONING_OPTIONS,
   EDITORS,
@@ -25,6 +26,8 @@ import {
   ProviderInteractionMode,
 } from "@t3tools/contracts";
 import {
+  getClaudeCodeEffortOptions,
+  getDefaultClaudeCodeEffort,
   getDefaultModel,
   getDefaultReasoningEffort,
   getCursorModelCapabilities,
@@ -32,6 +35,7 @@ import {
   getReasoningEffortOptions,
   normalizeModelSlug,
   parseCursorModelSelection,
+  resolveCursorPickerModelSlug,
   resolveCursorModelFromSelection,
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
@@ -81,10 +85,11 @@ import {
   type PendingUserInput,
   PROVIDER_OPTIONS,
   deriveWorkLogEntries,
-  hasToolActivityForTurn,
+  hasToolActivitySince,
   isLatestTurnSettled,
   formatElapsed,
   formatTimestamp,
+  type WorkLogEntry,
 } from "../session-logic";
 import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX, isScrollContainerNearBottom } from "../chat-scroll";
 import {
@@ -98,6 +103,8 @@ import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
   buildProposedPlanMarkdownFilename,
+  downloadPlanAsTextFile,
+  normalizePlanMarkdownForExport,
   proposedPlanTitle,
   resolvePlanFollowUpSubmission,
 } from "../proposedPlan";
@@ -128,22 +135,35 @@ import {
   shortcutLabelForCommand,
 } from "../keybindings";
 import ChatMarkdown from "./ChatMarkdown";
+import CommandPalette from "./CommandPalette";
+import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
+import GhosttyTerminalSplitView from "./GhosttyTerminalSplitView";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import {
   BotIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CircleAlertIcon,
+  DatabaseIcon,
+  EyeIcon,
   FileIcon,
   FolderIcon,
   DiffIcon,
   EllipsisIcon,
   FolderClosedIcon,
+  HammerIcon,
+  ListTodoIcon,
   LockIcon,
   LockOpenIcon,
+  type LucideIcon,
+  SearchIcon,
+  SquarePenIcon,
+  TargetIcon,
+  TerminalIcon,
   Undo2Icon,
+  WrenchIcon,
   XIcon,
   CopyIcon,
   CheckIcon,
@@ -170,14 +190,21 @@ import {
 import {
   ClaudeAI,
   CursorIcon,
+  FleetIcon,
   Gemini,
+  GhosttyIcon,
   GitHubIcon,
   Icon,
+  IntelliJIcon,
   OpenAI,
   OpenCodeIcon,
   AmpIcon,
   KiloIcon,
+  PositronIcon,
+  SublimeTextIcon,
   VisualStudioCode,
+  WebStormIcon,
+  WindsurfIcon,
   Zed,
 } from "./Icons";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
@@ -258,7 +285,6 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
-const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -300,20 +326,105 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   return "text-muted-foreground/40";
 }
 
-function normalizePlanMarkdownForExport(planMarkdown: string): string {
-  return `${planMarkdown.trimEnd()}\n`;
+function workToneIcon(tone: "thinking" | "tool" | "info" | "error") {
+  if (tone === "error") {
+    return {
+      icon: CircleAlertIcon,
+      className: "text-black/85 dark:text-white/90",
+    };
+  }
+  if (tone === "thinking") {
+    return {
+      icon: BotIcon,
+      className: "text-black/85 dark:text-white/90",
+    };
+  }
+  if (tone === "info") {
+    return {
+      icon: CheckIcon,
+      className: "text-black/85 dark:text-white/90",
+    };
+  }
+  return {
+    icon: ZapIcon,
+    className: "text-black/85 dark:text-white/90",
+  };
 }
 
-function downloadTextFile(filename: string, contents: string): void {
-  const blob = new Blob([contents], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  window.setTimeout(() => {
-    URL.revokeObjectURL(url);
-  }, 0);
+function workEntryPreview(workEntry: {
+  detail?: string;
+  command?: string;
+  changedFiles?: ReadonlyArray<string>;
+}): string | null {
+  if (workEntry.command) return workEntry.command;
+  if (workEntry.detail) return workEntry.detail;
+  if ((workEntry.changedFiles?.length ?? 0) > 0) {
+    const [firstPath] = workEntry.changedFiles ?? [];
+    if (!firstPath) return null;
+    return workEntry.changedFiles!.length === 1
+      ? firstPath
+      : `${firstPath} +${workEntry.changedFiles!.length - 1} more`;
+  }
+  return null;
+}
+
+function workEntryIcon(workEntry: WorkLogEntry): LucideIcon {
+  if (workEntry.requestKind === "command") return TerminalIcon;
+  if (workEntry.requestKind === "file-read") return EyeIcon;
+  if (workEntry.requestKind === "file-change") return SquarePenIcon;
+
+  const haystack = [workEntry.label, workEntry.detail, workEntry.command]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join(" ")
+    .toLowerCase();
+
+  if (haystack.includes("report_intent") || haystack.includes("intent logged")) {
+    return TargetIcon;
+  }
+  if (
+    haystack.includes("bash") ||
+    haystack.includes("read_bash") ||
+    haystack.includes("write_bash") ||
+    haystack.includes("stop_bash") ||
+    haystack.includes("list_bash")
+  ) {
+    return TerminalIcon;
+  }
+  if (haystack.includes("sql")) return DatabaseIcon;
+  if (haystack.includes("view")) return EyeIcon;
+  if (haystack.includes("apply_patch")) return SquarePenIcon;
+  if (haystack.includes("rg") || haystack.includes("glob") || haystack.includes("search")) {
+    return SearchIcon;
+  }
+  if (haystack.includes("skill")) return ZapIcon;
+  if (haystack.includes("ask_user") || haystack.includes("approval")) return BotIcon;
+  if (haystack.includes("store_memory")) return FolderIcon;
+  if (haystack.includes("edit") || haystack.includes("patch")) return WrenchIcon;
+  if (haystack.includes("file")) return FileIcon;
+
+  switch (workEntry.itemType) {
+    case "command_execution":
+      return TerminalIcon;
+    case "file_change":
+      return SquarePenIcon;
+    case "mcp_tool_call":
+      return WrenchIcon;
+    case "dynamic_tool_call":
+    case "collab_agent_tool_call":
+      return HammerIcon;
+    case "web_search":
+      return SearchIcon;
+    case "image_view":
+      return EyeIcon;
+  }
+  if (haystack.includes("task")) return HammerIcon;
+
+  if (workEntry.activityKind === "turn.plan.updated") return ListTodoIcon;
+  if (workEntry.activityKind === "task.progress") return HammerIcon;
+  if (workEntry.activityKind === "approval.requested") return BotIcon;
+  if (workEntry.activityKind === "approval.resolved") return CheckIcon;
+
+  return workToneIcon(workEntry.tone).icon;
 }
 
 interface ExpandedImageItem {
@@ -627,6 +738,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const setComposerDraftEffort = useComposerDraftStore((store) => store.setEffort);
   const setComposerDraftCodexFastMode = useComposerDraftStore((store) => store.setCodexFastMode);
+  const setComposerDraftClaudeCodeEffort = useComposerDraftStore(
+    (store) => store.setClaudeCodeEffort,
+  );
   const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const removeComposerDraftImage = useComposerDraftStore((store) => store.removeImage);
@@ -645,6 +759,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const promptRef = useRef(prompt);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
+  const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
+  // Tracks whether the user explicitly dismissed the sidebar for the active turn.
+  const planSidebarDismissedForTurnRef = useRef<string | null>(null);
+  // When set, the thread-change reset effect will open the sidebar instead of closing it.
+  // Used by "Implement in new thread" to carry the sidebar-open intent across navigation.
+  const planSidebarOpenOnNextThreadRef = useRef(false);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
@@ -664,7 +784,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   >({});
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
-  const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
@@ -704,6 +823,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const sendInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
+  const [ghosttySplitOpen, setGhosttySplitOpen] = useState(false);
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
     messagesScrollRef.current = element;
     setMessagesScrollElement(element);
@@ -808,6 +928,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     ? (sessionProvider ?? selectedProviderByThreadId ?? null)
     : null;
   const selectedProvider: ProviderKind = lockedProvider ?? selectedProviderByThreadId ?? "codex";
+  const assistantDeliveryMode =
+    settings.enableAssistantStreaming || selectedProvider === "cursor"
+      ? "streaming"
+      : "buffered";
   const customModelsByProvider = useMemo(
     () => ({
       codex: settings.customCodexModels,
@@ -855,6 +979,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const selectedEffort = composerDraft.effort ?? getDefaultReasoningEffort(selectedProvider);
   const selectedCodexFastModeEnabled =
     selectedProvider === "codex" ? composerDraft.codexFastMode : false;
+  const claudeCodeEffortOptions = getClaudeCodeEffortOptions(selectedProvider);
+  const supportsClaudeCodeEffort = claudeCodeEffortOptions.length > 0;
+  const selectedClaudeCodeEffort =
+    composerDraft.claudeCodeEffort ?? getDefaultClaudeCodeEffort(selectedProvider);
   const selectedModelOptionsForDispatch = useMemo(() => {
     if (selectedProvider === "codex") {
       const codexOptions = {
@@ -863,8 +991,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
       };
       return Object.keys(codexOptions).length > 0 ? { codex: codexOptions } : undefined;
     }
+    if (selectedProvider === "claudeCode" && supportsClaudeCodeEffort && selectedClaudeCodeEffort) {
+      return { claudeCode: { effort: selectedClaudeCodeEffort } };
+    }
     return undefined;
-  }, [selectedCodexFastModeEnabled, selectedEffort, selectedProvider, supportsReasoningEffort]);
+  }, [selectedClaudeCodeEffort, selectedCodexFastModeEnabled, selectedEffort, selectedProvider, supportsClaudeCodeEffort, supportsReasoningEffort]);
   const selectedCursorModel = useMemo(
     () => (selectedProvider === "cursor" ? parseCursorModelSelection(selectedModel) : null),
     [selectedModel, selectedProvider],
@@ -884,6 +1015,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       ? selectedCursorModel.family
       : selectedModel;
   const copilotModelsQuery = useQuery(providerListModelsQueryOptions("copilot"));
+  const cursorModelsQuery = useQuery(providerListModelsQueryOptions("cursor"));
   const opencodeModelsQuery = useQuery(providerListModelsQueryOptions("opencode"));
   const kiloModelsQuery = useQuery(providerListModelsQueryOptions("kilo"));
   const geminiCliModelsQuery = useQuery(providerListModelsQueryOptions("geminiCli"));
@@ -892,12 +1024,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () =>
       mergeDiscoveredModels(getCustomModelOptionsByProvider(settings), {
         copilot: copilotModelsQuery.data,
+        cursor: cursorModelsQuery.data,
         opencode: opencodeModelsQuery.data,
         kilo: kiloModelsQuery.data,
         geminiCli: geminiCliModelsQuery.data,
         amp: ampModelsQuery.data,
       }),
-    [settings, copilotModelsQuery.data, opencodeModelsQuery.data, kiloModelsQuery.data, geminiCliModelsQuery.data, ampModelsQuery.data],
+    [
+      settings,
+      copilotModelsQuery.data,
+      cursorModelsQuery.data,
+      opencodeModelsQuery.data,
+      kiloModelsQuery.data,
+      geminiCliModelsQuery.data,
+      ampModelsQuery.data,
+    ],
   );
   const selectedModelForPickerWithCustomFallback = useMemo(() => {
     if (selectedProvider !== "cursor") {
@@ -942,13 +1083,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
     sendStartedAt,
   );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  const latestUserMessageCreatedAt = useMemo(
+    () =>
+      [...(activeThread?.messages ?? [])].toReversed().find((message) => message.role === "user")
+        ?.createdAt,
+    [activeThread?.messages],
+  );
   const workLogEntries = useMemo(
-    () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
-    [activeLatestTurn?.turnId, threadActivities],
+    () => deriveWorkLogEntries(threadActivities, undefined, latestUserMessageCreatedAt),
+    [latestUserMessageCreatedAt, threadActivities],
   );
   const latestTurnHasToolActivity = useMemo(
-    () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),
-    [activeLatestTurn?.turnId, threadActivities],
+    () => hasToolActivitySince(threadActivities, latestUserMessageCreatedAt),
+    [latestUserMessageCreatedAt, threadActivities],
   );
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
@@ -1644,6 +1791,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (isElectron && keybindingRule) {
         await api.server.upsertKeybinding(keybindingRule);
         await queryClient.invalidateQueries({ queryKey: serverQueryKeys.all });
+      } else if (isElectron && input.keybinding === null) {
+        // Explicitly null keybinding means the script (and its shortcut) is
+        // being deleted. Remove any persisted keybinding for this command so
+        // stale accelerators don't linger.
+        await api.server.removeKeybinding({ command: input.keybindingCommand });
+        await queryClient.invalidateQueries({ queryKey: serverQueryKeys.all });
       }
     },
     [queryClient],
@@ -1713,6 +1866,37 @@ export default function ChatView({ threadId }: ChatViewProps) {
         keybinding: input.keybinding,
         keybindingCommand: commandForProjectScript(scriptId),
       });
+    },
+    [activeProject, persistProjectScripts],
+  );
+
+  const deleteProjectScript = useCallback(
+    async (scriptId: string) => {
+      if (!activeProject) return;
+      const nextScripts = activeProject.scripts.filter((script) => script.id !== scriptId);
+
+      const deletedName = activeProject.scripts.find((s) => s.id === scriptId)?.name;
+
+      try {
+        await persistProjectScripts({
+          projectId: activeProject.id,
+          projectCwd: activeProject.cwd,
+          previousScripts: activeProject.scripts,
+          nextScripts,
+          keybinding: null,
+          keybindingCommand: commandForProjectScript(scriptId),
+        });
+        toastManager.add({
+          type: "success",
+          title: `Deleted action "${deletedName ?? "Unknown"}"`,
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Could not delete action",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      }
     },
     [activeProject, persistProjectScripts],
   );
@@ -2005,10 +2189,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [phase, scheduleStickToBottom, timelineEntries]);
 
   useEffect(() => {
-    setExpandedWorkGroups({});
-  }, [activeThread?.id]);
-
-  useEffect(() => {
     if (!composerMenuOpen) {
       setComposerHighlightedItemId(null);
       return;
@@ -2022,6 +2202,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   useEffect(() => {
     setIsRevertingCheckpoint(false);
+    if (planSidebarOpenOnNextThreadRef.current) {
+      planSidebarOpenOnNextThreadRef.current = false;
+      setPlanSidebarOpen(true);
+    } else {
+      setPlanSidebarOpen(false);
+    }
+    planSidebarDismissedForTurnRef.current = null;
   }, [activeThread?.id]);
 
   useEffect(() => {
@@ -2438,10 +2625,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
     event.preventDefault();
-    const nextTarget = event.relatedTarget;
-    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
-      return;
-    }
     dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
     if (dragDepthRef.current === 0) {
       setIsDragOverComposer(false);
@@ -2733,7 +2916,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ? { modelOptions: selectedModelOptionsForDispatch }
           : {}),
         provider: selectedProvider,
-        assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+        assistantDeliveryMode,
         runtimeMode,
         interactionMode,
         createdAt: messageCreatedAt,
@@ -2782,16 +2965,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
   };
 
-  const onInterrupt = async () => {
+  const onInterrupt = useCallback(async () => {
     const api = readNativeApi();
     if (!api || !activeThread) return;
-    await api.orchestration.dispatchCommand({
-      type: "thread.turn.interrupt",
-      commandId: newCommandId(),
-      threadId: activeThread.id,
-      createdAt: new Date().toISOString(),
-    });
-  };
+    try {
+      await api.orchestration.dispatchCommand({
+        type: "thread.turn.interrupt",
+        commandId: newCommandId(),
+        threadId: activeThread.id,
+        createdAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      setThreadError(
+        activeThread.id,
+        err instanceof Error ? err.message : "Failed to stop generation.",
+      );
+    }
+  }, [activeThread, setThreadError]);
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
@@ -3010,11 +3200,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ...(selectedModelOptionsForDispatch
             ? { modelOptions: selectedModelOptionsForDispatch }
             : {}),
-          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          assistantDeliveryMode,
           runtimeMode,
           interactionMode: nextInteractionMode,
           createdAt: messageCreatedAt,
         });
+        // Optimistically open the plan sidebar when implementing (not refining).
+        // "default" mode here means the agent is executing the plan, which produces
+        // step-tracking activities that the sidebar will display.
+        if (nextInteractionMode === "default") {
+          planSidebarDismissedForTurnRef.current = null;
+          setPlanSidebarOpen(true);
+        }
         sendInFlightRef.current = false;
       } catch (err) {
         setOptimisticUserMessages((existing) =>
@@ -3044,7 +3241,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       selectedServiceTier,
       setComposerDraftInteractionMode,
       setThreadError,
-      settings.enableAssistantStreaming,
+      assistantDeliveryMode,
     ],
   );
 
@@ -3081,6 +3278,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       resetSendPhase();
     };
 
+    let serverStarted = false;
+
     await api.orchestration
       .dispatchCommand({
         type: "thread.create",
@@ -3112,34 +3311,49 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ...(selectedModelOptionsForDispatch
             ? { modelOptions: selectedModelOptionsForDispatch }
             : {}),
-          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          assistantDeliveryMode,
           runtimeMode,
           interactionMode: "default",
           createdAt,
         }),
       )
-      .then(() => api.orchestration.getSnapshot())
+      .then(() => {
+        serverStarted = true;
+        return api.orchestration.getSnapshot();
+      })
       .then((snapshot) => {
+        // Snapshot sync is a safety net for the navigation/thread creation
+        // flow: the newly created thread must exist in the client-side read
+        // model before we navigate to it. The WebSocket push channel
+        // (`orchestration.domainEvent`) is the primary update path and will
+        // usually deliver the event first, but a snapshot fetch here
+        // guarantees correctness when the push hasn't arrived yet.
         syncServerReadModel(snapshot);
+        // Signal that the plan sidebar should open on the new thread.
+        planSidebarOpenOnNextThreadRef.current = true;
         return navigate({
           to: "/$threadId",
           params: { threadId: nextThreadId },
         });
       })
       .catch(async (err) => {
-        await api.orchestration
-          .dispatchCommand({
-            type: "thread.delete",
-            commandId: newCommandId(),
-            threadId: nextThreadId,
-          })
-          .catch(() => undefined);
-        await api.orchestration
-          .getSnapshot()
-          .then((snapshot) => {
-            syncServerReadModel(snapshot);
-          })
-          .catch(() => undefined);
+        if (!serverStarted) {
+          await api.orchestration
+            .dispatchCommand({
+              type: "thread.delete",
+              commandId: newCommandId(),
+              threadId: nextThreadId,
+            })
+            .catch(() => undefined);
+          // Re-sync after rollback so the deleted thread is removed from
+          // the client read model even if the WebSocket push is delayed.
+          await api.orchestration
+            .getSnapshot()
+            .then((snapshot) => {
+              syncServerReadModel(snapshot);
+            })
+            .catch(() => undefined);
+        }
         toastManager.add({
           type: "error",
           title: "Could not start implementation thread",
@@ -3163,7 +3377,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedModelOptionsForDispatch,
     selectedProvider,
     selectedServiceTier,
-    settings.enableAssistantStreaming,
+    assistantDeliveryMode,
     syncServerReadModel,
   ]);
 
@@ -3246,6 +3460,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       scheduleComposerFocus();
     },
     [scheduleComposerFocus, setComposerDraftEffort, threadId],
+  );
+  const onClaudeCodeEffortSelect = useCallback(
+    (effort: ClaudeCodeEffort) => {
+      setComposerDraftClaudeCodeEffort(threadId, effort);
+      scheduleComposerFocus();
+    },
+    [scheduleComposerFocus, setComposerDraftClaudeCodeEffort, threadId],
   );
   const onCodexFastModeChange = useCallback(
     (enabled: boolean) => {
@@ -3478,12 +3699,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     return false;
   };
-  const onToggleWorkGroup = useCallback((groupId: string) => {
-    setExpandedWorkGroups((existing) => ({
-      ...existing,
-      [groupId]: !existing[groupId],
-    }));
-  }, []);
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
   }, []);
@@ -3539,6 +3754,35 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+      <CommandPalette
+        threadId={activeThread.id}
+        activeThread={activeThread}
+        activeProject={activeProject}
+        keybindings={keybindings}
+        diffOpen={diffOpen}
+        terminalOpen={terminalState.terminalOpen}
+        isGitRepo={isGitRepo}
+        isWorking={phase === "running"}
+        canCreateTerminal={!hasReachedTerminalLimit}
+        canSplitTerminal={!hasReachedTerminalLimit}
+        interactionMode={interactionMode}
+        runtimeMode={runtimeMode}
+        onToggleDiff={onToggleDiff}
+        onToggleTerminal={toggleTerminalVisibility}
+        onCreateTerminal={createNewTerminal}
+        onSplitTerminal={splitTerminal}
+        onToggleInteractionMode={toggleInteractionMode}
+        onToggleRuntimeMode={() =>
+          void handleRuntimeModeChange(
+            runtimeMode === "full-access" ? "approval-required" : "full-access",
+          )
+        }
+        onInterrupt={onInterrupt}
+        onRunProjectScript={(script) => runProjectScript(script)}
+        ghosttySplitOpen={ghosttySplitOpen}
+        onToggleGhosttySplit={() => setGhosttySplitOpen((v) => !v)}
+      />
+
       {/* Top bar */}
       <header
         className={cn(
@@ -3566,14 +3810,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
+          onDeleteProjectScript={deleteProjectScript}
           onToggleDiff={onToggleDiff}
         />
       </header>
 
       {/* Error banner */}
       <ProviderHealthBanner status={activeProviderStatus} />
-      <ThreadErrorBanner error={activeThread.error} />
+      <ThreadErrorBanner
+        error={activeThread.error}
+        onDismiss={() => setThreadError(activeThread.id, null)}
+      />
       <PlanModePanel activePlan={activePlan} />
+      {/* Main content area with optional plan sidebar */}
+      <div className="flex min-h-0 flex-1">
+        {/* Chat column */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
 
       {/* Messages */}
       <div
@@ -3602,8 +3854,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           completionSummary={completionSummary}
           turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
           nowIso={nowIso}
-          expandedWorkGroups={expandedWorkGroups}
-          onToggleWorkGroup={onToggleWorkGroup}
           onOpenTurnDiff={onOpenTurnDiff}
           revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
           onRevertUserMessage={onRevertUserMessage}
@@ -3647,6 +3897,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   answers={activePendingDraftAnswers}
                   questionIndex={activePendingQuestionIndex}
                   onSelectOption={onSelectActivePendingUserInputOption}
+                  onAdvance={onAdvanceActivePendingUserInput}
                 />
               </div>
             ) : showPlanFollowUpPrompt && activeProposedPlan ? (
@@ -3872,6 +4123,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         onFastModeChange={onCodexFastModeChange}
                       />
                     </>
+                  ) : selectedProvider === "claudeCode" && supportsClaudeCodeEffort && selectedClaudeCodeEffort != null ? (
+                    <>
+                      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+                      <ClaudeCodeTraitsPicker
+                        effort={selectedClaudeCodeEffort}
+                        options={claudeCodeEffortOptions}
+                        onEffortChange={onClaudeCodeEffortSelect}
+                      />
+                    </>
                   ) : null}
 
                   {/* Divider */}
@@ -3921,6 +4181,43 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       {runtimeMode === "full-access" ? "Full access" : "Supervised"}
                     </span>
                   </Button>
+
+                  {/* Plan sidebar toggle */}
+                  {(activePlan || activeProposedPlan || planSidebarOpen) ? (
+                    <>
+                      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+                      <Button
+                        variant="ghost"
+                        className={cn(
+                          "shrink-0 whitespace-nowrap px-2 sm:px-3",
+                          planSidebarOpen
+                            ? "text-blue-400 hover:text-blue-300"
+                            : "text-muted-foreground/70 hover:text-foreground/80",
+                        )}
+                        size="sm"
+                        type="button"
+                        onClick={() => {
+                          setPlanSidebarOpen((open) => {
+                            if (open) {
+                              // Closing: track dismissal for current turn
+                              const turnKey = activePlan?.turnId ?? activeProposedPlan?.turnId ?? null;
+                              if (turnKey) {
+                                planSidebarDismissedForTurnRef.current = turnKey;
+                              }
+                            } else {
+                              // Re-opening: clear dismissal tracking
+                              planSidebarDismissedForTurnRef.current = null;
+                            }
+                            return !open;
+                          });
+                        }}
+                        title={planSidebarOpen ? "Hide plan sidebar" : "Show plan sidebar"}
+                      >
+                        <ListTodoIcon />
+                        <span className="sr-only sm:not-sr-only">Plan</span>
+                      </Button>
+                    </>
+                  ) : null}
                 </div>
 
                 {/* Right side: send / stop button */}
@@ -4087,6 +4384,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
         </form>
       </div>
 
+        </div>{/* end chat column */}
+
+        {/* Plan sidebar */}
+        {planSidebarOpen ? (
+          <PlanSidebar
+            activePlan={activePlan}
+            activeProposedPlan={activeProposedPlan}
+            markdownCwd={gitCwd ?? undefined}
+            workspaceRoot={activeProject?.cwd ?? undefined}
+            onClose={() => {
+              setPlanSidebarOpen(false);
+              // Track that the user explicitly dismissed for this turn so auto-open won't fight them.
+              const turnKey = activePlan?.turnId ?? activeProposedPlan?.turnId ?? null;
+              if (turnKey) {
+                planSidebarDismissedForTurnRef.current = turnKey;
+              }
+            }}
+          />
+        ) : null}
+      </div>{/* end horizontal flex container */}
+
       {isGitRepo && (
         <BranchToolbar
           threadId={activeThread.id}
@@ -4123,6 +4441,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
           />
         );
       })()}
+
+      {ghosttySplitOpen && activeProject && activeThread && (
+        <GhosttyTerminalSplitView
+          key={`ghostty-${activeThread.id}`}
+          threadId={activeThread.id}
+          cwd={gitCwd ?? activeProject.cwd}
+          runtimeEnv={threadTerminalRuntimeEnv}
+        />
+      )}
 
       {expandedImage && expandedImageItem && (
         <div
@@ -4211,6 +4538,7 @@ interface ChatHeaderProps {
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
+  onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onToggleDiff: () => void;
 }
 
@@ -4230,6 +4558,7 @@ const ChatHeader = memo(function ChatHeader({
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
+  onDeleteProjectScript,
   onToggleDiff,
 }: ChatHeaderProps) {
   return (
@@ -4262,6 +4591,7 @@ const ChatHeader = memo(function ChatHeader({
             onRunScript={onRunProjectScript}
             onAddScript={onAddProjectScript}
             onUpdateScript={onUpdateProjectScript}
+            onDeleteScript={onDeleteProjectScript}
           />
         )}
         {activeProjectName && (
@@ -4301,7 +4631,13 @@ const ChatHeader = memo(function ChatHeader({
   );
 });
 
-const ThreadErrorBanner = memo(function ThreadErrorBanner({ error }: { error: string | null }) {
+const ThreadErrorBanner = memo(function ThreadErrorBanner({
+  error,
+  onDismiss,
+}: {
+  error: string | null;
+  onDismiss?: () => void;
+}) {
   if (!error) return null;
   return (
     <div className="pt-3 mx-auto max-w-3xl">
@@ -4310,6 +4646,18 @@ const ThreadErrorBanner = memo(function ThreadErrorBanner({ error }: { error: st
         <AlertDescription className="line-clamp-3" title={error}>
           {error}
         </AlertDescription>
+        {onDismiss && (
+          <AlertAction>
+            <button
+              type="button"
+              aria-label="Dismiss error"
+              className="inline-flex size-6 items-center justify-center rounded-md text-destructive/60 transition-colors hover:text-destructive"
+              onClick={onDismiss}
+            >
+              <XIcon className="size-3.5" />
+            </button>
+          </AlertAction>
+        )}
       </Alert>
     </div>
   );
@@ -4334,7 +4682,11 @@ const ProviderHealthBanner = memo(function ProviderHealthBanner({
       <Alert variant={status.status === "error" ? "error" : "warning"}>
         <CircleAlertIcon />
         <AlertTitle>
-          {status.provider === "codex" ? "Codex provider status" : `${status.provider} status`}
+          {status.provider === "codex"
+            ? "Codex provider status"
+            : status.provider === "copilot"
+              ? "GitHub Copilot provider status"
+              : `${status.provider} status`}
         </AlertTitle>
         <AlertDescription className="line-clamp-3" title={status.message ?? defaultMessage}>
           {status.message ?? defaultMessage}
@@ -4480,6 +4832,7 @@ interface PendingUserInputPanelProps {
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
   onSelectOption: (questionId: string, optionLabel: string) => void;
+  onAdvance: () => void;
 }
 
 const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
@@ -4488,6 +4841,7 @@ const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPane
   answers,
   questionIndex,
   onSelectOption,
+  onAdvance,
 }: PendingUserInputPanelProps) {
   if (pendingUserInputs.length === 0) return null;
   const activePrompt = pendingUserInputs[0];
@@ -4501,6 +4855,7 @@ const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPane
       answers={answers}
       questionIndex={questionIndex}
       onSelectOption={onSelectOption}
+      onAdvance={onAdvance}
     />
   );
 });
@@ -4511,27 +4866,89 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   answers,
   questionIndex,
   onSelectOption,
+  onAdvance,
 }: {
   prompt: PendingUserInput;
   isResponding: boolean;
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
   onSelectOption: (questionId: string, optionLabel: string) => void;
+  onAdvance: () => void;
 }) {
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
+  const autoAdvanceTimerRef = useRef<number | null>(null);
+
+  // Clear auto-advance timer on unmount
+  useEffect(() => {
+    return () => {
+      if (autoAdvanceTimerRef.current !== null) {
+        window.clearTimeout(autoAdvanceTimerRef.current);
+      }
+    };
+  }, []);
+
+  const selectOptionAndAutoAdvance = useCallback(
+    (questionId: string, optionLabel: string) => {
+      onSelectOption(questionId, optionLabel);
+      if (autoAdvanceTimerRef.current !== null) {
+        window.clearTimeout(autoAdvanceTimerRef.current);
+      }
+      autoAdvanceTimerRef.current = window.setTimeout(() => {
+        autoAdvanceTimerRef.current = null;
+        onAdvance();
+      }, 200);
+    },
+    [onSelectOption, onAdvance],
+  );
+
+  // Keyboard shortcut: number keys 1-9 select corresponding option and auto-advance.
+  // Works even when the Lexical composer (contenteditable) has focus — the composer
+  // doubles as a custom-answer field during user input, and when it's empty the digit
+  // keys should pick options instead of typing into the editor.
+  useEffect(() => {
+    if (!activeQuestion || isResponding) return;
+    const handler = (event: globalThis.KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+      // If the user has started typing a custom answer in the contenteditable
+      // composer, let digit keys pass through so they can type numbers.
+      if (target instanceof HTMLElement && target.isContentEditable) {
+        const hasCustomText = progress.customAnswer.length > 0;
+        if (hasCustomText) return;
+      }
+      const digit = Number.parseInt(event.key, 10);
+      if (Number.isNaN(digit) || digit < 1 || digit > 9) return;
+      const optionIndex = digit - 1;
+      if (optionIndex >= activeQuestion.options.length) return;
+      const option = activeQuestion.options[optionIndex];
+      if (!option) return;
+      event.preventDefault();
+      selectOptionAndAutoAdvance(activeQuestion.id, option.label);
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [activeQuestion, isResponding, selectOptionAndAutoAdvance, progress.customAnswer.length]);
 
   if (!activeQuestion) {
     return null;
   }
 
   return (
-    <div className="px-4 py-4 sm:px-5">
-      <div className="flex gap-2">
+    <div className="px-4 py-3 sm:px-5">
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
         <span className="uppercase text-sm tracking-[0.2em]">
           {questionIndex + 1}/{prompt.questions.length} {activeQuestion.header}
         </span>
         <div className="text-sm font-medium">{activeQuestion.question}</div>
+        </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
         {activeQuestion.options.map((option) => {
@@ -4542,7 +4959,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               size="sm"
               variant={isSelected ? "default" : "outline"}
               disabled={isResponding}
-              onClick={() => onSelectOption(activeQuestion.id, option.label)}
+              onClick={() => selectOptionAndAutoAdvance(activeQuestion.id, option.label)}
               title={option.description}
             >
               {option.label}
@@ -4760,7 +5177,7 @@ const ProposedPlanCard = memo(function ProposedPlanCard({
   const saveContents = normalizePlanMarkdownForExport(planMarkdown);
 
   const handleDownload = () => {
-    downloadTextFile(downloadFilename, saveContents);
+    downloadPlanAsTextFile(downloadFilename, saveContents);
   };
 
   const openSaveDialog = () => {
@@ -4921,8 +5338,6 @@ interface MessagesTimelineProps {
   completionSummary: string | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   nowIso: string;
-  expandedWorkGroups: Record<string, boolean>;
-  onToggleWorkGroup: (groupId: string) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
@@ -4975,8 +5390,6 @@ const MessagesTimeline = memo(function MessagesTimeline({
   completionSummary,
   turnDiffSummaryByAssistantMessageId,
   nowIso,
-  expandedWorkGroups,
-  onToggleWorkGroup,
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
@@ -5024,21 +5437,33 @@ const MessagesTimeline = memo(function MessagesTimeline({
       }
 
       if (timelineEntry.kind === "work") {
-        const groupedEntries = [timelineEntry.entry];
-        let cursor = index + 1;
-        while (cursor < timelineEntries.length) {
-          const nextEntry = timelineEntries[cursor];
-          if (!nextEntry || nextEntry.kind !== "work") break;
-          groupedEntries.push(nextEntry.entry);
-          cursor += 1;
+        if (timelineEntry.entry.tone === "tool") {
+          const groupedEntries = [timelineEntry.entry];
+          let cursor = index + 1;
+          while (cursor < timelineEntries.length) {
+            const nextEntry = timelineEntries[cursor];
+            if (!nextEntry || nextEntry.kind !== "work" || nextEntry.entry.tone !== "tool") {
+              break;
+            }
+            groupedEntries.push(nextEntry.entry);
+            cursor += 1;
+          }
+          nextRows.push({
+            kind: "work",
+            id: timelineEntry.id,
+            createdAt: timelineEntry.createdAt,
+            groupedEntries,
+          });
+          index = cursor - 1;
+          continue;
         }
+
         nextRows.push({
           kind: "work",
           id: timelineEntry.id,
           createdAt: timelineEntry.createdAt,
-          groupedEntries,
+          groupedEntries: [timelineEntry.entry],
         });
-        index = cursor - 1;
         continue;
       }
 
@@ -5187,23 +5612,13 @@ const MessagesTimeline = memo(function MessagesTimeline({
     >
       {row.kind === "work" &&
         (() => {
-          const groupId = row.id;
           const groupedEntries = row.groupedEntries;
-          const isExpanded = expandedWorkGroups[groupId] ?? false;
-          const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
-          const visibleEntries =
-            hasOverflow && !isExpanded
-              ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
-              : groupedEntries;
-          const hiddenCount = groupedEntries.length - visibleEntries.length;
           const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
           const groupLabel = onlyToolEntries
             ? groupedEntries.length === 1
               ? "Tool call"
               : `Tool calls (${groupedEntries.length})`
-            : groupedEntries.length === 1
-              ? "Work event"
-              : `Work log (${groupedEntries.length})`;
+            : "Work event";
 
           return (
             <div className="rounded-lg border border-border/80 bg-card/45 px-3 py-2">
@@ -5211,59 +5626,71 @@ const MessagesTimeline = memo(function MessagesTimeline({
                 <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
                   {groupLabel}
                 </p>
-                {hasOverflow && (
-                  <button
-                    type="button"
-                    className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-muted-foreground/80"
-                    onClick={() => onToggleWorkGroup(groupId)}
-                  >
-                    {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
-                  </button>
-                )}
               </div>
               <div className="space-y-1">
-                {visibleEntries.map((workEntry) => (
-                  <div key={`work-row:${workEntry.id}`} className="flex items-start gap-2 py-0.5">
-                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
-                    <div className="min-w-0 flex-1 py-[2px]">
-                      <p className={`text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}>
-                        {workEntry.label}
-                      </p>
-                      {workEntry.command && (
-                        <pre className="mt-1 overflow-x-auto rounded-md border border-border/70 bg-background/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-foreground/80">
-                          {workEntry.command}
-                        </pre>
-                      )}
-                      {workEntry.changedFiles && workEntry.changedFiles.length > 0 && (
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {workEntry.changedFiles.slice(0, 6).map((filePath) => (
-                            <span
-                              key={`${workEntry.id}:${filePath}`}
-                              className="rounded-md border border-border/70 bg-background/65 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/85"
-                              title={filePath}
-                            >
-                              {filePath}
-                            </span>
-                          ))}
-                          {workEntry.changedFiles.length > 6 && (
-                            <span className="px-1 text-[10px] text-muted-foreground/65">
-                              +{workEntry.changedFiles.length - 6} more
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      {workEntry.detail &&
-                        (!workEntry.command || workEntry.detail !== workEntry.command) && (
+                {groupedEntries.map((workEntry) => {
+                  const iconConfig = workToneIcon(workEntry.tone);
+                  const EntryIcon = workEntryIcon(workEntry);
+                  const preview = workEntryPreview(workEntry);
+                  return (
+                    <div key={`work-row:${workEntry.id}`} className="flex items-start gap-2 py-0.5">
+                      <span
+                        className={cn(
+                          "mt-[3px] flex size-4 shrink-0 items-center justify-center",
+                          iconConfig.className,
+                        )}
+                      >
+                        <EntryIcon className="size-3" />
+                      </span>
+                      <div className="min-w-0 flex-1 py-[2px]">
+                        <p className={`text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}>
+                          {workEntry.label}
+                        </p>
+                        {preview && preview !== workEntry.label && (
                           <p
-                            className="mt-1 text-[11px] leading-relaxed text-muted-foreground/75"
-                            title={workEntry.detail}
+                            className="mt-0.5 truncate text-[10px] leading-relaxed text-muted-foreground/65"
+                            title={preview}
                           >
-                            {workEntry.detail}
+                            {preview}
                           </p>
                         )}
+                        {workEntry.command && (
+                          <pre className="mt-1 overflow-x-auto rounded-md border border-border/70 bg-background/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-foreground/80">
+                            {workEntry.command}
+                          </pre>
+                        )}
+                        {workEntry.changedFiles && workEntry.changedFiles.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {workEntry.changedFiles.slice(0, 6).map((filePath) => (
+                              <span
+                                key={`${workEntry.id}:${filePath}`}
+                                className="rounded-md border border-border/70 bg-background/65 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/85"
+                                title={filePath}
+                              >
+                                {basenameOfPath(filePath)}
+                              </span>
+                            ))}
+                            {workEntry.changedFiles.length > 6 && (
+                              <span className="px-1 text-[10px] text-muted-foreground/65">
+                                +{workEntry.changedFiles.length - 6} more
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {workEntry.detail &&
+                          (!workEntry.command || workEntry.detail !== workEntry.command) &&
+                          workEntry.detail !== preview && (
+                            <p
+                              className="mt-1 text-[11px] leading-relaxed text-muted-foreground/75"
+                              title={workEntry.detail}
+                            >
+                              {workEntry.detail}
+                            </p>
+                          )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           );
@@ -5315,9 +5742,9 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   </div>
                 )}
                 {row.message.text && (
-                  <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+                  <div className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-foreground">
                     {row.message.text}
-                  </pre>
+                  </div>
                 )}
                 <div className="mt-1.5 flex items-center justify-end gap-2">
                   <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
@@ -5553,6 +5980,11 @@ function mergeDiscoveredModels(
     [ProviderKind, ReadonlyArray<ModelOptionEntry> | undefined]
   >) {
     if (!models || models.length === 0) continue;
+    const normalizedModels =
+      provider === "cursor"
+        ? models.filter((model) => resolveCursorPickerModelSlug(model.slug) === model.slug)
+        : models;
+    const dedupedModels = Array.from(new Map(normalizedModels.map((m) => [m.slug, m])).values());
     const existing = new Set(base[provider]?.map((m) => m.slug));
     // For copilot, discovered models replace the static list but inherit
     // pricingTier from the static entries when the SDK doesn't provide it.
@@ -5560,26 +5992,26 @@ function mergeDiscoveredModels(
       const baseTiers = new Map(
         (base[provider] ?? []).map((m) => [m.slug, m.pricingTier]),
       );
-      const enriched = models.map((m) => {
+      const enriched = dedupedModels.map((m) => {
         if (m.pricingTier) return m;
         const tier = baseTiers.get(m.slug);
         return tier ? { ...m, pricingTier: tier } : m;
       });
       const customOnly = (base[provider] ?? []).filter(
-        (m) => m.isCustom && !models.some((d) => d.slug === m.slug),
+        (m) => m.isCustom && !dedupedModels.some((d) => d.slug === m.slug),
       );
       result[provider] = [...enriched, ...customOnly];
       continue;
     }
     // Build a lookup of discovered models by slug so we can merge metadata
     // (e.g. pricingTier) into base entries and also add truly-new models.
-    const discoveredBySlug = new Map(models.map((m) => [m.slug, m]));
+    const discoveredBySlug = new Map(dedupedModels.map((m) => [m.slug, m]));
     const merged = (base[provider] ?? []).map((m) => {
       const discovered = discoveredBySlug.get(m.slug);
       return discovered ? { ...m, ...discovered } : m;
     });
     // Append any discovered models that weren't already in the base list.
-    const additions = models.filter((m) => !existing.has(m.slug));
+    const additions = dedupedModels.filter((m) => !existing.has(m.slug));
     result[provider] = [...additions, ...merged];
   }
   return result;
@@ -5971,6 +6403,65 @@ const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
   );
 });
 
+const CLAUDE_CODE_EFFORT_LABEL: Record<ClaudeCodeEffort, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  max: "Max",
+};
+
+const ClaudeCodeTraitsPicker = memo(function ClaudeCodeTraitsPicker(props: {
+  effort: ClaudeCodeEffort;
+  options: ReadonlyArray<ClaudeCodeEffort>;
+  onEffortChange: (effort: ClaudeCodeEffort) => void;
+}) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const defaultEffort = getDefaultClaudeCodeEffort("claudeCode");
+
+  return (
+    <Menu
+      open={isMenuOpen}
+      onOpenChange={(open) => {
+        setIsMenuOpen(open);
+      }}
+    >
+      <MenuTrigger
+        render={
+          <Button
+            size="sm"
+            variant="ghost"
+            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+          />
+        }
+      >
+        <span>{CLAUDE_CODE_EFFORT_LABEL[props.effort]}</span>
+        <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
+      </MenuTrigger>
+      <MenuPopup align="start">
+        <MenuGroup>
+          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Effort</div>
+          <MenuRadioGroup
+            value={props.effort}
+            onValueChange={(value) => {
+              if (!value) return;
+              const nextEffort = props.options.find((option) => option === value);
+              if (!nextEffort) return;
+              props.onEffortChange(nextEffort);
+            }}
+          >
+            {props.options.map((effort) => (
+              <MenuRadioItem key={effort} value={effort}>
+                {CLAUDE_CODE_EFFORT_LABEL[effort]}
+                {effort === defaultEffort ? " (default)" : ""}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuGroup>
+      </MenuPopup>
+    </Menu>
+  );
+});
+
 const CursorTraitsPicker = memo(function CursorTraitsPicker(props: {
   selection: ReturnType<typeof parseCursorModelSelection>;
   capabilities: ReturnType<typeof getCursorModelCapabilities>;
@@ -6104,6 +6595,11 @@ const OpenInPicker = memo(function OpenInPicker({
         value: "cursor",
       },
       {
+        label: "Windsurf",
+        Icon: WindsurfIcon,
+        value: "windsurf",
+      },
+      {
         label: "VS Code",
         Icon: VisualStudioCode,
         value: "vscode",
@@ -6112,6 +6608,36 @@ const OpenInPicker = memo(function OpenInPicker({
         label: "Zed",
         Icon: Zed,
         value: "zed",
+      },
+      {
+        label: "Positron",
+        Icon: PositronIcon,
+        value: "positron",
+      },
+      {
+        label: "Sublime Text",
+        Icon: SublimeTextIcon,
+        value: "sublime",
+      },
+      {
+        label: "WebStorm",
+        Icon: WebStormIcon,
+        value: "webstorm",
+      },
+      {
+        label: "IntelliJ IDEA",
+        Icon: IntelliJIcon,
+        value: "intellij",
+      },
+      {
+        label: "Fleet",
+        Icon: FleetIcon,
+        value: "fleet",
+      },
+      {
+        label: "Ghostty",
+        Icon: GhosttyIcon,
+        value: "ghostty",
       },
       {
         label: isMacPlatform(navigator.platform)
@@ -6147,6 +6673,33 @@ const OpenInPicker = memo(function OpenInPicker({
     },
     [effectiveEditor, openInCwd, setLastEditor],
   );
+
+  const [copiedPath, setCopiedPath] = useState(false);
+  const copiedPathTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copiedPathTimeoutRef.current !== null) {
+        clearTimeout(copiedPathTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const copyPath = useCallback(() => {
+    if (!openInCwd) return;
+    void navigator.clipboard.writeText(openInCwd).then(() => {
+      setCopiedPath(true);
+      if (copiedPathTimeoutRef.current !== null) {
+        clearTimeout(copiedPathTimeoutRef.current);
+      }
+      copiedPathTimeoutRef.current = setTimeout(() => {
+        setCopiedPath(false);
+        copiedPathTimeoutRef.current = null;
+      }, 2000);
+    }).catch(() => {
+      // Clipboard write failed — don't show success indicator.
+    });
+  }, [openInCwd]);
 
   const openFavoriteEditorShortcutLabel = useMemo(
     () => shortcutLabelForCommand(keybindings, "editor.openFavorite"),
@@ -6196,6 +6749,19 @@ const OpenInPicker = memo(function OpenInPicker({
               )}
             </MenuItem>
           ))}
+          {openInCwd && (
+            <>
+              <MenuDivider />
+              <MenuItem onClick={copyPath}>
+                {copiedPath ? (
+                  <CheckIcon aria-hidden="true" className="text-success" />
+                ) : (
+                  <CopyIcon aria-hidden="true" className="text-muted-foreground" />
+                )}
+                Copy Path
+              </MenuItem>
+            </>
+          )}
         </MenuPopup>
       </Menu>
     </Group>
