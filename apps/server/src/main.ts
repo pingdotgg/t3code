@@ -146,19 +146,16 @@ const resolveRequestedWorkspaceRoot = (projectPath: Option.Option<string>, baseD
   );
 };
 
-const hasExplicitBooleanFlag = (flag: Option.Option<boolean>): boolean =>
-  Option.isSome(Option.filter(flag, Boolean));
-
 const hasExplicitServerOverrides = (input: CliInput): boolean =>
   Option.isSome(input.mode) ||
   Option.isSome(input.port) ||
   Option.isSome(input.host) ||
   Option.isSome(input.stateDir) ||
   Option.isSome(input.devUrl) ||
-  hasExplicitBooleanFlag(input.noBrowser) ||
+  Option.isSome(input.noBrowser) ||
   Option.isSome(input.authToken) ||
-  hasExplicitBooleanFlag(input.autoBootstrapProjectFromCwd) ||
-  hasExplicitBooleanFlag(input.logWebSocketEvents);
+  Option.isSome(input.autoBootstrapProjectFromCwd) ||
+  Option.isSome(input.logWebSocketEvents);
 
 const shouldAttemptDesktopHandoff = (input: CliInput): boolean => {
   if (hasExplicitServerOverrides(input)) {
