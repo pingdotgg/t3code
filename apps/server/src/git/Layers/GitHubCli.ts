@@ -4,6 +4,7 @@ import { runProcess } from "../../processRunner";
 import { GitHubCliError } from "../Errors.ts";
 import {
   GitHubCli,
+  type GitHubRepositoryCloneUrls,
   type GitHubCliShape,
   type GitHubPullRequestSummary,
 } from "../Services/GitHubCli.ts";
@@ -85,6 +86,25 @@ function parsePullRequestSummary(
   const url = record.url;
   const baseRefName = record.baseRefName;
   const headRefName = record.headRefName;
+  const isCrossRepository = record.isCrossRepository;
+  const headRepository =
+    record.headRepository && typeof record.headRepository === "object" && !Array.isArray(record.headRepository)
+      ? (record.headRepository as Record<string, unknown>)
+      : null;
+  const headRepositoryOwner =
+    record.headRepositoryOwner &&
+    typeof record.headRepositoryOwner === "object" &&
+    !Array.isArray(record.headRepositoryOwner)
+      ? (record.headRepositoryOwner as Record<string, unknown>)
+      : null;
+  const headRepositoryNameWithOwner =
+    typeof headRepository?.nameWithOwner === "string" ? headRepository.nameWithOwner : null;
+  const headRepositoryOwnerLogin =
+    typeof headRepositoryOwner?.login === "string"
+      ? headRepositoryOwner.login
+      : typeof headRepositoryNameWithOwner === "string" && headRepositoryNameWithOwner.includes("/")
+        ? headRepositoryNameWithOwner.split("/")[0] ?? null
+        : null;
   if (
     typeof number !== "number" ||
     !Number.isInteger(number) ||
@@ -103,6 +123,34 @@ function parsePullRequestSummary(
     baseRefName,
     headRefName,
     state: normalizePullRequestState(record),
+    ...(typeof isCrossRepository === "boolean" ? { isCrossRepository } : {}),
+    ...(headRepositoryNameWithOwner ? { headRepositoryNameWithOwner } : {}),
+    ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
+  };
+}
+
+function parseRepositoryCloneUrls(raw: unknown): GitHubRepositoryCloneUrls | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const record = raw as Record<string, unknown>;
+  const nameWithOwner = record.nameWithOwner;
+  const url = record.url;
+  const sshUrl = record.sshUrl;
+  if (
+    typeof nameWithOwner !== "string" ||
+    typeof url !== "string" ||
+    typeof sshUrl !== "string" ||
+    nameWithOwner.trim().length === 0 ||
+    url.trim().length === 0 ||
+    sshUrl.trim().length === 0
+  ) {
+    return null;
+  }
+  return {
+    nameWithOwner,
+    url,
+    sshUrl,
   };
 }
 
@@ -179,7 +227,7 @@ const makeGitHubCli = Effect.sync(() => {
           "view",
           input.reference,
           "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -200,6 +248,40 @@ const makeGitHubCli = Effect.sync(() => {
                   error instanceof Error
                     ? `GitHub CLI returned invalid pull request JSON: ${error.message}`
                     : "GitHub CLI returned invalid pull request JSON.",
+                ...(error !== undefined ? { cause: error } : {}),
+              }),
+          }),
+        ),
+      ),
+    getRepositoryCloneUrls: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "repo",
+          "view",
+          input.repository,
+          "--json",
+          "nameWithOwner,url,sshUrl",
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          Effect.try({
+            try: () => {
+              const parsed = raw.length > 0 ? JSON.parse(raw) : null;
+              const repository = parseRepositoryCloneUrls(parsed);
+              if (!repository) {
+                throw new Error("GitHub CLI returned invalid repository clone URL JSON.");
+              }
+              return repository;
+            },
+            catch: (error: unknown) =>
+              new GitHubCliError({
+                operation: "getRepositoryCloneUrls",
+                detail:
+                  error instanceof Error
+                    ? `GitHub CLI returned invalid repository JSON: ${error.message}`
+                    : "GitHub CLI returned invalid repository JSON.",
                 ...(error !== undefined ? { cause: error } : {}),
               }),
           }),

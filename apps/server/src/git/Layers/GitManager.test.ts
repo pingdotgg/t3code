@@ -30,7 +30,11 @@ interface FakeGhScenario {
     baseRefName: string;
     headRefName: string;
     state?: "open" | "closed" | "merged";
+    isCrossRepository?: boolean;
+    headRepositoryNameWithOwner?: string | null;
+    headRepositoryOwnerLogin?: string | null;
   };
+  repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
   failWith?: GitHubCliError;
 }
 
@@ -58,6 +62,8 @@ interface FakeGitTextGeneration {
     message: string;
   }) => Effect.Effect<{ branch: string }, TextGenerationError>;
 }
+
+type FakePullRequest = NonNullable<FakeGhScenario["pullRequest"]>;
 
 function makeTempDir(
   prefix: string,
@@ -211,18 +217,33 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
     }
 
     if (args[0] === "pr" && args[1] === "view") {
+      const pullRequest: FakePullRequest = scenario.pullRequest ?? {
+        number: 101,
+        title: "Pull request",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/101",
+        baseRefName: "main",
+        headRefName: "feature/pull-request",
+        state: "open",
+      };
       return Effect.succeed({
         stdout:
-          JSON.stringify(
-            scenario.pullRequest ?? {
-              number: 101,
-              title: "Pull request",
-              url: "https://github.com/pingdotgg/codething-mvp/pull/101",
-              baseRefName: "main",
-              headRefName: "feature/pull-request",
-              state: "OPEN",
-            },
-          ) + "\n",
+          JSON.stringify({
+            ...pullRequest,
+            ...(pullRequest.headRepositoryNameWithOwner
+              ? {
+                  headRepository: {
+                    nameWithOwner: pullRequest.headRepositoryNameWithOwner,
+                  },
+                }
+              : {}),
+            ...(pullRequest.headRepositoryOwnerLogin
+              ? {
+                  headRepositoryOwner: {
+                    login: pullRequest.headRepositoryOwnerLogin,
+                  },
+                }
+              : {}),
+          }) + "\n",
         stderr: "",
         code: 0,
         signal: null,
@@ -241,6 +262,30 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
     }
 
     if (args[0] === "repo" && args[1] === "view") {
+      const repository = args[2];
+      if (typeof repository === "string" && args.includes("nameWithOwner,url,sshUrl")) {
+        const cloneUrls = scenario.repositoryCloneUrls?.[repository];
+        if (!cloneUrls) {
+          return Effect.fail(
+            new GitHubCliError({
+              operation: "execute",
+              detail: `Unexpected repository lookup: ${repository}`,
+            }),
+          );
+        }
+        return Effect.succeed({
+          stdout:
+            JSON.stringify({
+              nameWithOwner: repository,
+              url: cloneUrls.url,
+              sshUrl: cloneUrls.sshUrl,
+            }) + "\n",
+          stderr: "",
+          code: 0,
+          signal: null,
+          timedOut: false,
+        });
+      }
       return Effect.succeed({
         stdout: `${scenario.defaultBranch ?? "main"}\n`,
         stderr: "",
@@ -315,11 +360,16 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "view",
             input.reference,
             "--json",
-            "number,title,url,baseRefName,headRefName,state,mergedAt",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
           ],
         }).pipe(
           Effect.map((result) => JSON.parse(result.stdout) as GitHubPullRequestSummary),
         ),
+      getRepositoryCloneUrls: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
+        }).pipe(Effect.map((result) => JSON.parse(result.stdout))),
       checkoutPullRequest: (input) =>
         execute({
           cwd: input.cwd,
@@ -1099,6 +1149,64 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(result.worktreePath as string, ["branch", "--show-current"])
       ).stdout.trim();
       expect(worktreeBranch).toBe("feature/pr-worktree");
+    }),
+  );
+
+  it.effect("preserves fork upstream tracking when preparing a worktree PR thread", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-fork"]);
+      fs.writeFileSync(path.join(repoDir, "fork.txt"), "fork\n");
+      yield* runGit(repoDir, ["add", "fork.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Fork PR branch"]);
+      yield* runGit(repoDir, ["push", "-u", "fork-seed", "feature/pr-fork"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 81,
+            title: "Fork PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/81",
+            baseRefName: "main",
+            headRefName: "feature/pr-fork",
+            state: "open",
+            isCrossRepository: true,
+            headRepositoryNameWithOwner: "octocat/codething-mvp",
+            headRepositoryOwnerLogin: "octocat",
+          },
+          repositoryCloneUrls: {
+            "octocat/codething-mvp": {
+              url: forkDir,
+              sshUrl: forkDir,
+            },
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "81",
+        mode: "worktree",
+      });
+
+      expect(result.worktreePath).not.toBeNull();
+      const upstreamRef = (
+        yield* runGit(result.worktreePath as string, ["rev-parse", "--abbrev-ref", "@{upstream}"])
+      ).stdout.trim();
+      expect(upstreamRef).toBe("fork-seed/feature/pr-fork");
+      expect(upstreamRef.startsWith("origin/")).toBe(false);
+      expect(
+        (yield* runGit(result.worktreePath as string, ["config", "--get", "remote.fork-seed.url"]))
+          .stdout
+          .trim(),
+      ).toBe(forkDir);
     }),
   );
 
