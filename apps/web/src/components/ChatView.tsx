@@ -3707,6 +3707,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               </div>
             ) : (
               <div
+                data-chat-composer-footer="true"
                 className={cn(
                   "flex items-center justify-between px-2.5 pb-2.5 sm:px-3 sm:pb-3",
                   isComposerFooterCompact ? "gap-1.5" : "flex-wrap gap-2 sm:flex-nowrap sm:gap-0",
@@ -3835,7 +3836,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 </div>
 
                 {/* Right side: send / stop button */}
-                <div className="flex shrink-0 items-center gap-2">
+                <div data-chat-composer-actions="right" className="flex shrink-0 items-center gap-2">
                   {isPreparingWorktree ? (
                     <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
                   ) : null}
