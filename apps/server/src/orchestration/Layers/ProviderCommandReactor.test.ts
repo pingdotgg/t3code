@@ -13,7 +13,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
+import { Effect, Exit, Layer, ManagedRuntime, Option, PubSub, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
@@ -26,6 +26,10 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import {
+  ProviderSessionDirectory,
+  type ProviderRuntimeBinding,
+} from "../../provider/Services/ProviderSessionDirectory.ts";
 import { GitCore, type GitCoreShape } from "../../git/Services/GitCore.ts";
 import { TextGeneration, type TextGenerationShape } from "../../git/Services/TextGeneration.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
@@ -87,6 +91,7 @@ describe("ProviderCommandReactor", () => {
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     let nextSessionIndex = 1;
     const runtimeSessions: Array<ProviderSession> = [];
+    const persistedBindings = new Map<ThreadId, ProviderRuntimeBinding>();
     const startSession = vi.fn((_: unknown, input: unknown) => {
       const sessionIndex = nextSessionIndex++;
       const provider =
@@ -103,6 +108,10 @@ describe("ProviderCommandReactor", () => {
       const model =
         typeof input === "object" && input !== null && "model" in input && typeof input.model === "string"
           ? input.model
+          : undefined;
+      const cwd =
+        typeof input === "object" && input !== null && "cwd" in input && typeof input.cwd === "string"
+          ? input.cwd
           : undefined;
       const threadId =
         typeof input === "object" &&
@@ -122,12 +131,24 @@ describe("ProviderCommandReactor", () => {
             ? input.runtimeMode
             : "full-access",
         ...(model !== undefined ? { model } : {}),
+        ...(cwd !== undefined ? { cwd } : {}),
         threadId,
         resumeCursor: resumeCursor ?? { opaque: `cursor-${sessionIndex}` },
         createdAt: now,
         updatedAt: now,
       };
       runtimeSessions.push(session);
+      persistedBindings.set(threadId, {
+        threadId,
+        provider,
+        runtimeMode: session.runtimeMode,
+        status: "running",
+        resumeCursor: session.resumeCursor,
+        runtimePayload: {
+          ...(cwd !== undefined ? { cwd } : {}),
+          ...(model !== undefined ? { model } : {}),
+        },
+      });
       return Effect.succeed(session);
     });
     const sendTurn = vi.fn((_: unknown) =>
@@ -190,6 +211,25 @@ describe("ProviderCommandReactor", () => {
       rollbackConversation: () => unsupported(),
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
     };
+    const providerSessionDirectory: typeof ProviderSessionDirectory.Service = {
+      upsert: (binding) =>
+        Effect.sync(() => {
+          persistedBindings.set(binding.threadId, binding);
+        }),
+      getProvider: (threadId) =>
+        Effect.succeed(persistedBindings.get(threadId)?.provider ?? "codex"),
+      getBinding: (threadId) =>
+        Effect.succeed(
+          persistedBindings.has(threadId)
+            ? Option.some(persistedBindings.get(threadId) as ProviderRuntimeBinding)
+            : Option.none<ProviderRuntimeBinding>(),
+        ),
+      remove: (threadId) =>
+        Effect.sync(() => {
+          persistedBindings.delete(threadId);
+        }),
+      listThreadIds: () => Effect.succeed(Array.from(persistedBindings.keys())),
+    };
 
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionPipelineLive),
@@ -200,6 +240,7 @@ describe("ProviderCommandReactor", () => {
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
+      Layer.provideMerge(Layer.succeed(ProviderSessionDirectory, providerSessionDirectory)),
       Layer.provideMerge(Layer.succeed(GitCore, { renameBranch } as unknown as GitCoreShape)),
       Layer.provideMerge(
         Layer.succeed(TextGeneration, { generateBranchName } as unknown as TextGenerationShape),
@@ -252,6 +293,7 @@ describe("ProviderCommandReactor", () => {
       stopSession,
       renameBranch,
       generateBranchName,
+      runtimeSessions,
       stateDir,
     };
   }
@@ -511,6 +553,62 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("reuses the persisted resume cursor when the live provider session is missing", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-resume-missing-live-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-resume-missing-live-1"),
+          role: "user",
+          text: "first",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    harness.runtimeSessions.splice(0, harness.runtimeSessions.length);
+    harness.startSession.mockClear();
+    harness.sendTurn.mockClear();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-resume-missing-live-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-resume-missing-live-2"),
+          role: "user",
+          text: "second",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      resumeCursor: { opaque: "cursor-1" },
+      runtimeMode: "approval-required",
+      cwd: "/tmp/provider-project",
+    });
   });
 
   it("does not stop the active session when restart fails before rebind", async () => {

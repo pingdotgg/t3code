@@ -281,6 +281,7 @@ export const makeOrchestrationIntegrationHarness = (
     } as unknown as TextGenerationShape);
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
+      Layer.provideMerge(providerSessionDirectoryLayer),
       Layer.provideMerge(gitCoreLayer),
       Layer.provideMerge(textGenerationLayer),
     );
