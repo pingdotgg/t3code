@@ -384,10 +384,9 @@ try {
             Invoke-WebRequest -Uri $msiUrl -OutFile $msiPath -UseBasicParsing
             $ProgressPreference = $prevPref
 
-            # Use current directory as install target, or fallback to Program Files
-            $installDir = $PWD.Path
-            Write-Step "Installing T3 Code to $installDir (admin prompt may appear)..."
-            $msiArgs = "/i `"$msiPath`" /qb /norestart INSTALLDIR=`"$installDir`""
+            # Let the MSI show its full UI so user can pick install folder
+            Write-Step "Installing T3 Code (choose your install folder in the dialog)..."
+            $msiArgs = "/i `"$msiPath`" /norestart"
             $proc = Start-Process msiexec.exe -ArgumentList $msiArgs -Wait -Verb RunAs -PassThru
             if ($proc.ExitCode -eq 0) {
                 if ($isUpdate) {
@@ -444,8 +443,6 @@ Write-Host "  ========================================" -ForegroundColor Green
 Write-Host ""
 
 if (-not $isUpdate) {
-    Write-Host "  Installed to: $($PWD.Path)" -ForegroundColor White
-    Write-Host ""
     Write-Host "  Quick start:" -ForegroundColor DarkGray
     Write-Host "    1. Launch T3 Code from the Start Menu or Desktop shortcut" -ForegroundColor DarkGray
     Write-Host "    2. Sign in with your AI providers (ChatGPT, Claude, Gemini)" -ForegroundColor DarkGray
