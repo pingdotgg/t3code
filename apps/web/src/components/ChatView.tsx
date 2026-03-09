@@ -1675,6 +1675,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const toggleInteractionMode = useCallback(() => {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
+  const toggleRuntimeMode = useCallback(() => {
+    void handleRuntimeModeChange(
+      runtimeMode === "full-access" ? "approval-required" : "full-access",
+    );
+  }, [handleRuntimeModeChange, runtimeMode]);
   const togglePlanSidebar = useCallback(() => {
     setPlanSidebarOpen((open) => {
       if (open) {
@@ -3745,11 +3750,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       onCodexFastModeChange={onCodexFastModeChange}
                       onToggleInteractionMode={toggleInteractionMode}
                       onTogglePlanSidebar={togglePlanSidebar}
-                      onToggleRuntimeMode={() =>
-                        void handleRuntimeModeChange(
-                          runtimeMode === "full-access" ? "approval-required" : "full-access",
-                        )
-                      }
+                      onToggleRuntimeMode={toggleRuntimeMode}
                     />
                   ) : (
                     <>
