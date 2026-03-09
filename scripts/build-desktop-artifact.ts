@@ -473,6 +473,11 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       icon: "icon.png",
       category: "Development",
     };
+    buildConfig.extraResources = [{
+      from: "apps/desktop/resources",
+      to: "resources",
+      filter: ["**/*"],
+    }];
   }
 
   if (platform === "win") {
