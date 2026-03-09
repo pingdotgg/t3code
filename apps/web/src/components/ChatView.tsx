@@ -31,7 +31,6 @@ import {
 } from "@t3tools/shared/model";
 import {
   memo,
-  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -4765,7 +4764,6 @@ const ProposedPlanCard = memo(function ProposedPlanCard({
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [savePath, setSavePath] = useState("");
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
-  const [renderCollapsedMarkdown, setRenderCollapsedMarkdown] = useState(false);
   const savePathInputId = useId();
   const title = proposedPlanTitle(planMarkdown) ?? "Proposed plan";
   const lineCount = planMarkdown.split("\n").length;
@@ -4776,22 +4774,6 @@ const ProposedPlanCard = memo(function ProposedPlanCard({
     : null;
   const downloadFilename = buildProposedPlanMarkdownFilename(planMarkdown);
   const saveContents = normalizePlanMarkdownForExport(planMarkdown);
-
-  useEffect(() => {
-    if (!canCollapse || expanded) {
-      setRenderCollapsedMarkdown(false);
-      return;
-    }
-    setRenderCollapsedMarkdown(false);
-    const frame = window.requestAnimationFrame(() => {
-      startTransition(() => {
-        setRenderCollapsedMarkdown(true);
-      });
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [canCollapse, expanded, collapsedPreview]);
 
   const handleDownload = () => {
     downloadPlanAsTextFile(downloadFilename, saveContents);
@@ -4880,13 +4862,7 @@ const ProposedPlanCard = memo(function ProposedPlanCard({
       <div className="mt-4">
         <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
           {canCollapse && !expanded ? (
-            renderCollapsedMarkdown ? (
-              <ChatMarkdown text={collapsedPreview ?? ""} cwd={cwd} isStreaming={false} />
-            ) : (
-              <pre className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-foreground/80">
-                {collapsedPreview}
-              </pre>
-            )
+            <ChatMarkdown text={collapsedPreview ?? ""} cwd={cwd} isStreaming={false} />
           ) : (
             <ChatMarkdown text={displayedPlanMarkdown} cwd={cwd} isStreaming={false} />
           )}
