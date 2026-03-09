@@ -80,10 +80,26 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.WebSocket = originalWebSocket;
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
 describe("WsTransport", () => {
+  it("clears send wait timers when disposed before the socket opens", async () => {
+    vi.useFakeTimers();
+
+    const transport = new WsTransport("ws://localhost:3020");
+    const requestPromise = transport.request("projects.list");
+    const rejection = expect(requestPromise).rejects.toThrow("Transport disposed");
+
+    expect(vi.getTimerCount()).toBe(3);
+
+    transport.dispose();
+
+    expect(vi.getTimerCount()).toBe(0);
+    await rejection;
+  });
+
   it("routes valid push envelopes to channel listeners", () => {
     const transport = new WsTransport("ws://localhost:3020");
     const socket = getSocket();
