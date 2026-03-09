@@ -844,7 +844,7 @@ const makeGitCore = Effect.gen(function* () {
       if (localBranchResult.code !== 0) {
         const stderr = localBranchResult.stderr.trim();
         if (stderr.toLowerCase().includes("not a git repository")) {
-          return { branches: [], isRepo: false };
+          return { branches: [], isRepo: false, hasOriginRemote: false };
         }
         return yield* createGitCommandError(
           "GitCore.listBranches",
@@ -1010,7 +1010,7 @@ const makeGitCore = Effect.gen(function* () {
 
       const branches = [...localBranches, ...remoteBranches];
 
-      return { branches, isRepo: true };
+      return { branches, isRepo: true, hasOriginRemote: remoteNames.includes("origin") };
     });
 
   const createWorktree: GitCoreShape["createWorktree"] = (input) =>
