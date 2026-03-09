@@ -14,11 +14,53 @@ import {
   DEFAULT_RUNTIME_MODE,
   type ChatImageAttachment,
 } from "./types";
+import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
 export type DraftThreadEnvMode = "local" | "worktree";
+
+const COMPOSER_PERSIST_DEBOUNCE_MS = 300;
+
+interface DebouncedStorage extends StateStorage {
+  flush: () => void;
+}
+
+export function createDebouncedStorage(baseStorage: StateStorage): DebouncedStorage {
+  const debouncedSetItem = new Debouncer(
+    (name: string, value: string) => {
+      baseStorage.setItem(name, value);
+    },
+    { wait: COMPOSER_PERSIST_DEBOUNCE_MS },
+  );
+
+  return {
+    getItem: (name) => baseStorage.getItem(name),
+    setItem: (name, value) => {
+      debouncedSetItem.maybeExecute(name, value);
+    },
+    removeItem: (name) => {
+      debouncedSetItem.cancel();
+      baseStorage.removeItem(name);
+    },
+    flush: () => {
+      debouncedSetItem.flush();
+    },
+  };
+}
+
+const composerDebouncedStorage: DebouncedStorage =
+  typeof localStorage !== "undefined"
+    ? createDebouncedStorage(localStorage)
+    : { getItem: () => null, setItem: () => {}, removeItem: () => {}, flush: () => {} };
+
+// Flush pending composer draft writes before page unload to prevent data loss.
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", () => {
+    composerDebouncedStorage.flush();
+  });
+}
 
 export interface PersistedComposerImageAttachment {
   id: string;
@@ -1169,7 +1211,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
     {
       name: COMPOSER_DRAFT_STORAGE_KEY,
       version: 1,
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => composerDebouncedStorage),
       partialize: (state) => {
         const persistedDraftsByThreadId: PersistedComposerDraftStoreState["draftsByThreadId"] = {};
         for (const [threadId, draft] of Object.entries(state.draftsByThreadId)) {

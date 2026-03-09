@@ -14,6 +14,7 @@ import {
 } from "@t3tools/shared/model";
 import { create } from "zustand";
 import { type ChatMessage, type Project, type Thread } from "./types";
+import { Debouncer } from "@tanstack/react-pacer";
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -74,25 +75,31 @@ function readPersistedState(): AppState {
   }
 }
 
+let legacyKeysCleanedUp = false;
+
 function persistState(state: AppState): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
-        JSON.stringify({
-          expandedProjectCwds: state.projects
-            .filter((project) => project.expanded)
-            .map((project) => project.cwd),
-          projectOrderCwds: state.projects.map((project) => project.cwd),
-        }),
-      );
-    for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
-      window.localStorage.removeItem(legacyKey);
+      JSON.stringify({
+        expandedProjectCwds: state.projects
+          .filter((project) => project.expanded)
+          .map((project) => project.cwd),
+        projectOrderCwds: state.projects.map((project) => project.cwd),
+      }),
+    );
+    if (!legacyKeysCleanedUp) {
+      legacyKeysCleanedUp = true;
+      for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
+        window.localStorage.removeItem(legacyKey);
+      }
     }
   } catch {
     // Ignore quota/storage errors to avoid breaking chat UX.
   }
 }
+const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
 
 // ── Pure helpers ──────────────────────────────────────────────────────
 
@@ -468,8 +475,15 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
 }));
 
-// Persist on every state change
-useStore.subscribe((state) => persistState(state));
+// Persist state changes with debouncing to avoid localStorage thrashing
+useStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
+
+// Flush pending writes synchronously before page unload to prevent data loss.
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", () => {
+    debouncedPersistState.flush();
+  });
+}
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
