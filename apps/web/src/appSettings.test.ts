@@ -5,6 +5,8 @@ import {
   getSlashModelOptions,
   normalizeCustomModelSlugs,
   resolveAppModelSelection,
+  resolveSidebarThreadOrder,
+  SIDEBAR_THREAD_ORDER_OPTIONS,
 } from "./appSettings";
 
 describe("normalizeCustomModelSlugs", () => {
@@ -80,5 +82,20 @@ describe("getSlashModelOptions", () => {
     );
 
     expect(options.map((option) => option.slug)).toEqual(["openai/gpt-oss-120b"]);
+  });
+});
+
+describe("resolveSidebarThreadOrder", () => {
+  it("defaults invalid values to recent-activity", () => {
+    expect(resolveSidebarThreadOrder("something-else")).toBe("recent-activity");
+  });
+
+  it("keeps the supported thread ordering preferences", () => {
+    expect(resolveSidebarThreadOrder("recent-activity")).toBe("recent-activity");
+    expect(resolveSidebarThreadOrder("created-at")).toBe("created-at");
+    expect(SIDEBAR_THREAD_ORDER_OPTIONS.map((option) => option.value)).toEqual([
+      "recent-activity",
+      "created-at",
+    ]);
   });
 });

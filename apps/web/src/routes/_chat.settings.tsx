@@ -4,7 +4,11 @@ import { useCallback, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
-import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
+import {
+  MAX_CUSTOM_MODEL_LENGTH,
+  SIDEBAR_THREAD_ORDER_OPTIONS,
+  useAppSettings,
+} from "../appSettings";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -12,6 +16,13 @@ import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { SidebarInset } from "~/components/ui/sidebar";
 
@@ -96,6 +107,7 @@ function SettingsRouteView() {
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const sidebarThreadOrder = settings.sidebarThreadOrder;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
   const openKeybindingsFile = useCallback(() => {
@@ -232,6 +244,45 @@ function SettingsRouteView() {
               <p className="mt-4 text-xs text-muted-foreground">
                 Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
               </p>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Sidebar</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Choose how chats are ordered in each project.
+                </p>
+              </div>
+
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-foreground">Chat ordering</span>
+                <Select
+                  items={SIDEBAR_THREAD_ORDER_OPTIONS.map((option) => ({
+                    label: option.label,
+                    value: option.value,
+                  }))}
+                  value={sidebarThreadOrder}
+                  onValueChange={(value) => {
+                    if (!value) return;
+                    updateSettings({ sidebarThreadOrder: value });
+                  }}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {SIDEBAR_THREAD_ORDER_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+                <span className="text-xs text-muted-foreground">
+                  {SIDEBAR_THREAD_ORDER_OPTIONS.find((option) => option.value === sidebarThreadOrder)
+                    ?.description ?? ""}
+                </span>
+              </label>
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">

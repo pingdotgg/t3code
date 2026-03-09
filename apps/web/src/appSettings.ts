@@ -6,6 +6,20 @@ import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/s
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
+export const SIDEBAR_THREAD_ORDER_OPTIONS = [
+  {
+    value: "recent-activity",
+    label: "Recent activity",
+    description: "Sort chats by the latest user message, final assistant message, plan, or assistant question.",
+  },
+  {
+    value: "created-at",
+    label: "Created time",
+    description: "Sort chats by when the thread was originally created.",
+  },
+] as const;
+export type SidebarThreadOrder = (typeof SIDEBAR_THREAD_ORDER_OPTIONS)[number]["value"];
+const SidebarThreadOrderSchema = Schema.Literals(["recent-activity", "created-at"]);
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
 };
@@ -21,6 +35,9 @@ const AppSettingsSchema = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
+  sidebarThreadOrder: SidebarThreadOrderSchema.pipe(
+    Schema.withConstructorDefault(() => Option.some("recent-activity")),
+  ),
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
@@ -30,6 +47,10 @@ export interface AppModelOption {
   slug: string;
   name: string;
   isCustom: boolean;
+}
+
+export function resolveSidebarThreadOrder(value: string | null | undefined): SidebarThreadOrder {
+  return value === "created-at" ? "created-at" : "recent-activity";
 }
 
 const DEFAULT_APP_SETTINGS = AppSettingsSchema.makeUnsafe({});
@@ -70,6 +91,7 @@ export function normalizeCustomModelSlugs(
 function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
+    sidebarThreadOrder: resolveSidebarThreadOrder(settings.sidebarThreadOrder),
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
   };
 }
