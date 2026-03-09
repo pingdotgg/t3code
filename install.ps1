@@ -332,6 +332,87 @@ if (Test-Command "npm") {
 }
 
 # =========================================================================
+#  SOURCE CODE (git pull / clone)
+# =========================================================================
+
+if (Test-Command "git") {
+    # Check if we're inside the t3code repo already
+    $inRepo = $false
+    $repoRoot = $null
+    try {
+        $toplevel = git rev-parse --show-toplevel 2>$null
+        if ($LASTEXITCODE -eq 0 -and $toplevel) {
+            $remoteUrl = git remote get-url origin 2>$null
+            if ($remoteUrl -match "t3code") {
+                $inRepo = $true
+                $repoRoot = $toplevel
+            }
+        }
+    } catch {}
+
+    if ($inRepo) {
+        Write-Bot "I see you're inside the T3 Code repo ($repoRoot)."
+        if (Ask-YesNo "Pull latest code from GitHub?") {
+            Write-Step "Pulling latest changes..."
+            $branch = git rev-parse --abbrev-ref HEAD 2>$null
+            git pull origin $branch 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+            if ($LASTEXITCODE -eq 0) {
+                Write-Ok "Code updated (branch: $branch)"
+            } else {
+                Write-Warn "Git pull had issues — you may need to resolve conflicts"
+            }
+
+            # Refresh deps if bun is available
+            if (Test-Command "bun") {
+                if (Ask-YesNo "Run bun install to refresh dependencies?") {
+                    Write-Step "Installing dependencies..."
+                    bun install 2>&1 | Select-Object -Last 3 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Ok "Dependencies up to date"
+                    } else {
+                        Write-Warn "bun install had issues"
+                    }
+                }
+            }
+            Write-Host ""
+        } else {
+            Write-Skip "Skipping source code update"
+            Write-Host ""
+        }
+    } else {
+        Write-Bot "Want to clone the T3 Code source code for development?"
+        if (Ask-YesNo "Clone hlsitechio/t3code to current folder?") {
+            $cloneDir = Join-Path $PWD.Path "t3code"
+            if (Test-Path $cloneDir) {
+                Write-Warn "Folder already exists: $cloneDir"
+                Write-Skip "Skipping clone"
+            } else {
+                Write-Step "Cloning repository..."
+                git clone "https://github.com/$repo.git" "$cloneDir" 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Ok "Cloned to $cloneDir"
+                    if (Test-Command "bun") {
+                        if (Ask-YesNo "Run bun install in the cloned repo?") {
+                            Push-Location $cloneDir
+                            Write-Step "Installing dependencies..."
+                            bun install 2>&1 | Select-Object -Last 3 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+                            Pop-Location
+                            if ($LASTEXITCODE -eq 0) { Write-Ok "Dependencies installed" }
+                        }
+                    }
+                } else {
+                    Write-Err "Clone failed"
+                }
+            }
+            Write-Host ""
+        } else {
+            Write-Skip "Skipping source code"
+            Write-Host ""
+        }
+    }
+}
+
+# =========================================================================
 #  T3 CODE DESKTOP APP
 # =========================================================================
 
