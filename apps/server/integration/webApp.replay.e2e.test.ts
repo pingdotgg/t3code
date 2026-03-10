@@ -1,6 +1,6 @@
 import fs from "node:fs";
 
-import { chromium } from "playwright";
+import { chromium, type Page } from "playwright";
 import { describe, expect, it } from "vitest";
 
 import { createWebAppReplayHarness } from "./WebAppReplayHarness.ts";
@@ -9,89 +9,153 @@ const shouldRunE2E = process.env.T3CODE_E2E === "1";
 const chromiumInstalled = fs.existsSync(chromium.executablePath());
 const STEP_TIMEOUT_MS = 10_000;
 
+async function runScenario(fixtureName: string, run: (page: Page) => Promise<void>): Promise<void> {
+  const harness = await createWebAppReplayHarness(import.meta.url, { fixtureName });
+  const browser = await chromium.launch({ headless: true });
+  const { context, page } = await harness.openPage(browser, {
+    viewport: { width: 1440, height: 1024 },
+  });
+
+  try {
+    await page.goto(harness.appUrl, { waitUntil: "domcontentloaded" });
+    await run(page);
+  } finally {
+    await context.close();
+    await browser.close();
+    await harness.dispose();
+  }
+}
+
+async function waitForBootstrap(page: Page): Promise<void> {
+  await page.getByRole("button", { name: /Create new thread in/i }).waitFor({
+    state: "visible",
+    timeout: STEP_TIMEOUT_MS,
+  });
+  await page.getByText("Send a message to start the conversation.").waitFor({
+    state: "visible",
+    timeout: STEP_TIMEOUT_MS,
+  });
+}
+
+async function createThread(page: Page): Promise<void> {
+  const bootstrapPath = new URL(page.url()).pathname;
+  await page.getByRole("button", { name: /Create new thread in/i }).click();
+  await page.waitForURL((url) => new URL(String(url)).pathname !== bootstrapPath, {
+    timeout: STEP_TIMEOUT_MS,
+  });
+}
+
+async function sendMessage(page: Page, prompt: string): Promise<void> {
+  const composer = page.locator('[contenteditable="true"]').first();
+  await composer.click();
+  await page.keyboard.insertText(prompt);
+  await page.getByRole("button", { name: "Send message" }).click();
+}
+
 describe("web app replay e2e", () => {
   it.skipIf(!shouldRunE2E || !chromiumInstalled)(
-    "creates a new thread and sends the first message through backend IO replay",
+    "shows bootstrap state for a new workspace",
     async () => {
-      const harness = await createWebAppReplayHarness(import.meta.url);
-      const browser = await chromium.launch({ headless: true });
-      const { context, page } = await harness.openPage(browser, {
-        viewport: { width: 1440, height: 1024 },
+      await runScenario("bootstrap", async (page) => {
+        await waitForBootstrap(page);
       });
-      const consoleMessages: string[] = [];
-      const pageErrors: string[] = [];
+    },
+    30_000,
+  );
 
-      page.on("console", (message) => {
-        consoleMessages.push(`[${message.type()}] ${message.text()}`);
+  it.skipIf(!shouldRunE2E || !chromiumInstalled)(
+    "creates a thread and keeps URL stable after first reply",
+    async () => {
+      await runScenario("happyPath", async (page) => {
+        await waitForBootstrap(page);
+        await createThread(page);
+        const threadPath = new URL(page.url()).pathname;
+
+        await sendMessage(page, "Explain how the replay harness works.");
+        await page.getByText("Replay harness response for the first message.").waitFor({
+          state: "visible",
+          timeout: STEP_TIMEOUT_MS,
+        });
+
+        expect(new URL(page.url()).pathname).toBe(threadPath);
       });
-      page.on("pageerror", (error) => {
-        pageErrors.push(error.message);
-      });
+    },
+    30_000,
+  );
 
-      const debugContext = async () => {
-        const bodyText = (await page.locator("body").textContent().catch(() => null))?.trim() ?? "";
-        return [
-          `url=${page.url()}`,
-          pageErrors.length > 0 ? `pageErrors=${pageErrors.join(" | ")}` : null,
-          consoleMessages.length > 0 ? `console=${consoleMessages.join(" | ")}` : null,
-          bodyText.length > 0 ? `body=${bodyText.slice(0, 800)}` : null,
-        ]
-          .filter((value): value is string => value !== null)
-          .join("\n");
-      };
-
-      try {
-        await page.goto(harness.appUrl, { waitUntil: "domcontentloaded" });
-        await page
-          .getByRole("button", { name: /Create new thread in/i })
-          .waitFor({ state: "visible", timeout: STEP_TIMEOUT_MS })
-          .catch(async (error) => {
-            throw new Error(`New-thread button never appeared.\n${await debugContext()}`, {
-              cause: error,
-            });
-          });
-        await page
-          .getByText("Send a message to start the conversation.")
-          .waitFor({ state: "visible", timeout: STEP_TIMEOUT_MS })
-          .catch(async (error) => {
-            throw new Error(`Empty-thread state never appeared.\n${await debugContext()}`, {
-              cause: error,
-            });
-          });
-
-        const bootstrapPath = new URL(page.url()).pathname;
-
-        await page.getByRole("button", { name: /Create new thread in/i }).click();
-        await page.waitForURL(
-          (url) => {
-            return new URL(String(url)).pathname !== bootstrapPath;
-          },
-          { timeout: STEP_TIMEOUT_MS },
-        );
-
-        const draftThreadPath = new URL(page.url()).pathname;
+  it.skipIf(!shouldRunE2E || !chromiumInstalled)(
+    "renders user prompt and assistant response in transcript",
+    async () => {
+      await runScenario("happyPath", async (page) => {
         const prompt = "Explain how the replay harness works.";
+        await waitForBootstrap(page);
+        await createThread(page);
+        await sendMessage(page, prompt);
+
+        await page.getByText(prompt).waitFor({ state: "visible", timeout: STEP_TIMEOUT_MS });
+        await page.getByText("Replay harness response for the first message.").waitFor({
+          state: "visible",
+          timeout: STEP_TIMEOUT_MS,
+        });
+      });
+    },
+    30_000,
+  );
+
+  it.skipIf(!shouldRunE2E || !chromiumInstalled)(
+    "supports multiple turns in one thread",
+    async () => {
+      await runScenario("twoTurns", async (page) => {
+        await waitForBootstrap(page);
+        await createThread(page);
+
+        await sendMessage(page, "First question");
+        await page
+          .getByText("First assistant reply.")
+          .waitFor({ state: "visible", timeout: STEP_TIMEOUT_MS });
+
+        await sendMessage(page, "Second question");
+        await page.getByText("Second assistant reply.").waitFor({
+          state: "visible",
+          timeout: STEP_TIMEOUT_MS,
+        });
+      });
+    },
+    30_000,
+  );
+
+  it.skipIf(!shouldRunE2E || !chromiumInstalled)(
+    "shows codex provider unavailable state",
+    async () => {
+      await runScenario("providerOffline", async (page) => {
+        await waitForBootstrap(page);
+        await page.getByText("Codex unavailable").waitFor({
+          state: "visible",
+          timeout: STEP_TIMEOUT_MS,
+        });
+      });
+    },
+    30_000,
+  );
+
+  it.skipIf(!shouldRunE2E || !chromiumInstalled)(
+    "keeps composer editable after a completed turn",
+    async () => {
+      await runScenario("happyPath", async (page) => {
+        await waitForBootstrap(page);
+        await createThread(page);
+        await sendMessage(page, "Explain how the replay harness works.");
+
+        await page.getByText("Replay harness response for the first message.").waitFor({
+          state: "visible",
+          timeout: STEP_TIMEOUT_MS,
+        });
 
         const composer = page.locator('[contenteditable="true"]').first();
         await composer.click();
-        await page.keyboard.insertText(prompt);
-        await page.getByRole("button", { name: "Send message" }).click();
-
-        await page
-          .getByText("Replay harness response for the first message.")
-          .waitFor({ state: "visible", timeout: STEP_TIMEOUT_MS })
-          .catch(async (error) => {
-            throw new Error(`Assistant replay response never rendered.\n${await debugContext()}`, {
-              cause: error,
-            });
-          });
-
-        expect(new URL(page.url()).pathname).toBe(draftThreadPath);
-      } finally {
-        await context.close();
-        await browser.close();
-        await harness.dispose();
-      }
+        await page.keyboard.insertText("Draft after completion");
+        await expect(composer).toContainText("Draft after completion");
+      });
     },
     30_000,
   );

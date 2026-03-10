@@ -1,32 +1,14 @@
-import type { ReplayFixture } from "./WebAppReplayHarness.ts";
+import type { ReplayFixture, ReplayInteraction } from "./WebAppReplayHarness.ts";
 
-const fixture: ReplayFixture = {
-  version: 1,
-  state: {
-    providerThreadId: "fixture-provider-thread",
-    providerTurnId: "fixture-provider-turn",
-    assistantText: "Replay harness response for the first message.\n",
-    turnConsumed: false,
-  },
-  providerStatuses: [
-    {
-      provider: "codex",
-      status: "ready",
-      available: true,
-      authStatus: "authenticated",
-      checkedAt: "2026-03-10T12:00:00.000Z",
-    },
-  ],
-  interactions: [
+function baseGitInteractions(): ReadonlyArray<ReplayInteraction> {
+  return [
     {
       name: "git status upstream",
       service: "git.execute",
       match: {
         operation: "GitCore.resolveCurrentUpstream",
         args: ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
-        cwd: {
-          $ref: "state.cwd",
-        },
+        cwd: { $ref: "state.cwd" },
       },
       result: {
         code: 128,
@@ -40,14 +22,11 @@ const fixture: ReplayFixture = {
       match: {
         operation: "GitCore.statusDetails.status",
         args: ["status", "--porcelain=2", "--branch"],
-        cwd: {
-          $ref: "state.cwd",
-        },
+        cwd: { $ref: "state.cwd" },
       },
       result: {
         code: 0,
-        stdout:
-          "# branch.oid 0123456789abcdef0123456789abcdef01234567\n# branch.head main\n",
+        stdout: "# branch.oid 0123456789abcdef0123456789abcdef01234567\n# branch.head main\n",
         stderr: "",
       },
     },
@@ -57,15 +36,9 @@ const fixture: ReplayFixture = {
       match: {
         operation: "GitCore.statusDetails.unstagedNumstat",
         args: ["diff", "--numstat"],
-        cwd: {
-          $ref: "state.cwd",
-        },
+        cwd: { $ref: "state.cwd" },
       },
-      result: {
-        code: 0,
-        stdout: "",
-        stderr: "",
-      },
+      result: { code: 0, stdout: "", stderr: "" },
     },
     {
       name: "git staged numstat",
@@ -73,15 +46,9 @@ const fixture: ReplayFixture = {
       match: {
         operation: "GitCore.statusDetails.stagedNumstat",
         args: ["diff", "--cached", "--numstat"],
-        cwd: {
-          $ref: "state.cwd",
-        },
+        cwd: { $ref: "state.cwd" },
       },
-      result: {
-        code: 0,
-        stdout: "",
-        stderr: "",
-      },
+      result: { code: 0, stdout: "", stderr: "" },
     },
     {
       name: "github latest pr lookup",
@@ -99,9 +66,7 @@ const fixture: ReplayFixture = {
           "--json",
           "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt",
         ],
-        cwd: {
-          $ref: "state.cwd",
-        },
+        cwd: { $ref: "state.cwd" },
       },
       result: {
         stdout: "[]\n",
@@ -118,16 +83,15 @@ const fixture: ReplayFixture = {
       service: "git.execute",
       match: {
         operation: "GitCore.readBranchRecency",
-        args: ["for-each-ref", "--format=%(refname:short)%09%(committerdate:unix)", "refs/heads", "refs/remotes"],
-        cwd: {
-          $ref: "state.cwd",
-        },
+        args: [
+          "for-each-ref",
+          "--format=%(refname:short)%09%(committerdate:unix)",
+          "refs/heads",
+          "refs/remotes",
+        ],
+        cwd: { $ref: "state.cwd" },
       },
-      result: {
-        code: 0,
-        stdout: "main\t1741608000\norigin/main\t1741608000\n",
-        stderr: "",
-      },
+      result: { code: 0, stdout: "main\t1741608000\norigin/main\t1741608000\n", stderr: "" },
     },
     {
       name: "git local branches",
@@ -135,15 +99,9 @@ const fixture: ReplayFixture = {
       match: {
         operation: "GitCore.listBranches.branchNoColor",
         args: ["branch", "--no-color"],
-        cwd: {
-          $ref: "state.cwd",
-        },
+        cwd: { $ref: "state.cwd" },
       },
-      result: {
-        code: 0,
-        stdout: "* main\n",
-        stderr: "",
-      },
+      result: { code: 0, stdout: "* main\n", stderr: "" },
     },
     {
       name: "git remote branches",
@@ -151,15 +109,9 @@ const fixture: ReplayFixture = {
       match: {
         operation: "GitCore.listBranches.remoteBranches",
         args: ["branch", "--no-color", "--remotes"],
-        cwd: {
-          $ref: "state.cwd",
-        },
+        cwd: { $ref: "state.cwd" },
       },
-      result: {
-        code: 0,
-        stdout: "",
-        stderr: "",
-      },
+      result: { code: 0, stdout: "", stderr: "" },
     },
     {
       name: "git remote names",
@@ -167,15 +119,9 @@ const fixture: ReplayFixture = {
       match: {
         operation: "GitCore.listBranches.remoteNames",
         args: ["remote"],
-        cwd: {
-          $ref: "state.cwd",
-        },
+        cwd: { $ref: "state.cwd" },
       },
-      result: {
-        code: 0,
-        stdout: "origin\n",
-        stderr: "",
-      },
+      result: { code: 0, stdout: "origin\n", stderr: "" },
     },
     {
       name: "git default ref",
@@ -183,15 +129,9 @@ const fixture: ReplayFixture = {
       match: {
         operation: "GitCore.listBranches.defaultRef",
         args: ["symbolic-ref", "refs/remotes/origin/HEAD"],
-        cwd: {
-          $ref: "state.cwd",
-        },
+        cwd: { $ref: "state.cwd" },
       },
-      result: {
-        code: 0,
-        stdout: "refs/remotes/origin/main\n",
-        stderr: "",
-      },
+      result: { code: 0, stdout: "refs/remotes/origin/main\n", stderr: "" },
     },
     {
       name: "git worktree list",
@@ -199,141 +139,157 @@ const fixture: ReplayFixture = {
       match: {
         operation: "GitCore.listBranches.worktreeList",
         args: ["worktree", "list", "--porcelain"],
-        cwd: {
-          $ref: "state.cwd",
-        },
+        cwd: { $ref: "state.cwd" },
       },
-      result: {
-        code: 0,
-        stdout: "",
-        stderr: "",
-      },
+      result: { code: 0, stdout: "", stderr: "" },
     },
     {
       name: "codex version check",
       service: "codex.versionCheck",
-      match: {
-        binaryPath: "codex",
-      },
-      result: {
-        status: 0,
-        stdout: "codex-cli 0.37.0\n",
-        stderr: "",
-      },
+      match: { binaryPath: "codex" },
+      result: { status: 0, stdout: "codex-cli 0.37.0\n", stderr: "" },
     },
     {
       name: "codex initialize",
       service: "codex.request",
-      match: {
-        method: "initialize",
-      },
+      match: { method: "initialize" },
       result: {},
     },
     {
       name: "codex model list",
       service: "codex.request",
-      match: {
-        method: "model/list",
-      },
-      result: {
-        models: [],
-      },
+      match: { method: "model/list" },
+      result: { models: [] },
     },
     {
       name: "codex account read",
       service: "codex.request",
-      match: {
-        method: "account/read",
-      },
-      result: {
-        account: {
-          type: "apiKey",
-        },
-      },
+      match: { method: "account/read" },
+      result: { account: { type: "apiKey" } },
     },
     {
       name: "codex thread start",
       service: "codex.request",
-      match: {
-        method: "thread/start",
-      },
-      result: {
-        thread: {
-          id: {
-            $ref: "state.providerThreadId",
-          },
-        },
+      match: { method: "thread/start" },
+      result: { thread: { id: { $ref: "state.providerThreadId" } } },
+    },
+  ];
+}
+
+function turnInteraction(index: 1 | 2, prompt: string, answer: string): ReplayInteraction {
+  return {
+    name: `codex turn start ${index}`,
+    service: "codex.request",
+    match: {
+      method: "turn/start",
+      params: {
+        threadId: { $ref: "state.providerThreadId" },
+        input: [{ type: "text", text: prompt }],
       },
     },
-    {
-      name: "codex turn start",
-      service: "codex.request",
-      match: {
-        method: "turn/start",
+    whenState: {
+      turnIndex: index - 1,
+    },
+    setState: {
+      turnIndex: index,
+      providerTurnId: `fixture-provider-turn-${index}`,
+    },
+    result: {
+      turn: {
+        id: { $ref: "state.providerTurnId" },
+      },
+    },
+    notifications: [
+      {
+        method: "turn/started",
         params: {
-          threadId: {
-            $ref: "state.providerThreadId",
-          },
-          input: [
-            {
-              type: "text",
-              text: "Explain how the replay harness works.",
-            },
-          ],
-        },
-      },
-      whenState: {
-        turnConsumed: false,
-      },
-      capture: {
-        userMessageText: "request.params.input.0.text",
-      },
-      setState: {
-        turnConsumed: true,
-      },
-      result: {
-        turn: {
-          id: {
-            $ref: "state.providerTurnId",
+          turn: {
+            id: { $ref: "state.providerTurnId" },
           },
         },
       },
-      notifications: [
-        {
-          method: "turn/started",
-          params: {
-            turn: {
-              id: {
-                $ref: "state.providerTurnId",
-              },
-            },
+      {
+        method: "item/agentMessage/delta",
+        params: {
+          turnId: { $ref: "state.providerTurnId" },
+          delta: answer,
+        },
+      },
+      {
+        method: "turn/completed",
+        params: {
+          turn: {
+            id: { $ref: "state.providerTurnId" },
+            status: "completed",
           },
         },
-        {
-          method: "item/agentMessage/delta",
-          params: {
-            turnId: {
-              $ref: "state.providerTurnId",
-            },
-            delta: {
-              $ref: "state.assistantText",
-            },
-          },
-        },
-        {
-          method: "turn/completed",
-          params: {
-            turn: {
-              id: {
-                $ref: "state.providerTurnId",
-              },
-              status: "completed",
-            },
-          },
-        },
-      ],
+      },
+    ],
+  };
+}
+
+function makeBaseFixture(): ReplayFixture {
+  return {
+    version: 1,
+    state: {
+      providerThreadId: "fixture-provider-thread",
+      providerTurnId: "fixture-provider-turn-1",
+      turnIndex: 0,
+    },
+    providerStatuses: [
+      {
+        provider: "codex",
+        status: "ready",
+        available: true,
+        authStatus: "authenticated",
+        checkedAt: "2026-03-10T12:00:00.000Z",
+      },
+    ],
+    interactions: [...baseGitInteractions()],
+  };
+}
+
+const bootstrap = makeBaseFixture();
+
+const happyPath = {
+  ...makeBaseFixture(),
+  interactions: [
+    ...makeBaseFixture().interactions,
+    turnInteraction(
+      1,
+      "Explain how the replay harness works.",
+      "Replay harness response for the first message.\n",
+    ),
+  ],
+} satisfies ReplayFixture;
+
+const twoTurns = {
+  ...makeBaseFixture(),
+  interactions: [
+    ...makeBaseFixture().interactions,
+    turnInteraction(1, "First question", "First assistant reply.\n"),
+    turnInteraction(2, "Second question", "Second assistant reply.\n"),
+  ],
+} satisfies ReplayFixture;
+
+const providerOffline = {
+  ...makeBaseFixture(),
+  providerStatuses: [
+    {
+      provider: "codex",
+      status: "error",
+      available: false,
+      authStatus: "unauthenticated",
+      checkedAt: "2026-03-10T12:00:00.000Z",
     },
   ],
+} satisfies ReplayFixture;
+
+const fixtures: Record<string, ReplayFixture> = {
+  bootstrap,
+  happyPath,
+  twoTurns,
+  providerOffline,
 };
 
-export default fixture;
+export default fixtures;
