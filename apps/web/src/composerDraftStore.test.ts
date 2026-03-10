@@ -1,11 +1,8 @@
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  type ComposerImageAttachment,
-  createDebouncedStorage,
-  useComposerDraftStore,
-} from "./composerDraftStore";
+import { type ComposerImageAttachment, useComposerDraftStore } from "./composerDraftStore";
+import { MAIN_THREAD_GROUP_ID } from "./threadGroups";
 
 function makeImage(input: {
   id: string;
@@ -456,124 +453,79 @@ describe("composerDraftStore runtime and interaction settings", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// createDebouncedStorage
-// ---------------------------------------------------------------------------
+describe("composerDraftStore project group draft thread mapping", () => {
+  const projectId = ProjectId.makeUnsafe("project-group");
+  const mainThreadId = ThreadId.makeUnsafe("thread-main-group");
+  const featureThreadId = ThreadId.makeUnsafe("thread-feature-group");
 
-function createMockStorage() {
-  const store = new Map<string, string>();
-  return {
-    getItem: vi.fn((name: string) => store.get(name) ?? null),
-    setItem: vi.fn((name: string, value: string) => {
-      store.set(name, value);
-    }),
-    removeItem: vi.fn((name: string) => {
-      store.delete(name);
-    }),
-  };
-}
-
-describe("createDebouncedStorage", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+      projectGroupDraftThreadIdById: {},
+    });
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
+  it("stores independent drafts for Main and a worktree subgroup in the same project", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProjectGroupDraftThreadId(projectId, MAIN_THREAD_GROUP_ID, mainThreadId, {
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+    });
+    store.setProjectGroupDraftThreadId(
+      projectId,
+      "worktree:/tmp/project/.t3/worktrees/feature-a",
+      featureThreadId,
+      {
+        branch: "feature/a",
+        worktreePath: "/tmp/project/.t3/worktrees/feature-a",
+        envMode: "worktree",
+      },
+    );
+
+    expect(
+      useComposerDraftStore.getState().getDraftThreadByProjectGroupId(projectId, MAIN_THREAD_GROUP_ID),
+    ).toMatchObject({
+      threadId: mainThreadId,
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+    });
+    expect(
+      useComposerDraftStore
+        .getState()
+        .getDraftThreadByProjectGroupId(
+          projectId,
+          "worktree:/tmp/project/.t3/worktrees/feature-a",
+        ),
+    ).toMatchObject({
+      threadId: featureThreadId,
+      branch: "feature/a",
+      worktreePath: "/tmp/project/.t3/worktrees/feature-a",
+      envMode: "worktree",
+    });
   });
 
-  it("delegates getItem immediately", () => {
-    const base = createMockStorage();
-    base.getItem.mockReturnValueOnce("value");
-    const storage = createDebouncedStorage(base);
+  it("clears only the targeted subgroup draft mapping", () => {
+    const store = useComposerDraftStore.getState();
 
-    expect(storage.getItem("key")).toBe("value");
-    expect(base.getItem).toHaveBeenCalledWith("key");
-  });
+    store.setProjectGroupDraftThreadId(projectId, MAIN_THREAD_GROUP_ID, mainThreadId);
+    store.setProjectGroupDraftThreadId(projectId, "branch:feature/a", featureThreadId, {
+      branch: "feature/a",
+      worktreePath: null,
+      envMode: "worktree",
+    });
 
-  it("does not write to base storage until the debounce fires", () => {
-    const base = createMockStorage();
-    const storage = createDebouncedStorage(base);
+    store.clearProjectGroupDraftThreadId(projectId, "branch:feature/a");
 
-    storage.setItem("key", "v1");
-    expect(base.setItem).not.toHaveBeenCalled();
-
-    vi.advanceTimersByTime(299);
-    expect(base.setItem).not.toHaveBeenCalled();
-
-    vi.advanceTimersByTime(1);
-    expect(base.setItem).toHaveBeenCalledWith("key", "v1");
-  });
-
-  it("only writes the last value when setItem is called rapidly", () => {
-    const base = createMockStorage();
-    const storage = createDebouncedStorage(base);
-
-    storage.setItem("key", "v1");
-    storage.setItem("key", "v2");
-    storage.setItem("key", "v3");
-
-    vi.advanceTimersByTime(300);
-    expect(base.setItem).toHaveBeenCalledTimes(1);
-    expect(base.setItem).toHaveBeenCalledWith("key", "v3");
-  });
-
-  it("removeItem cancels a pending setItem write", () => {
-    const base = createMockStorage();
-    const storage = createDebouncedStorage(base);
-
-    storage.setItem("key", "v1");
-    storage.removeItem("key");
-
-    vi.advanceTimersByTime(300);
-    expect(base.setItem).not.toHaveBeenCalled();
-    expect(base.removeItem).toHaveBeenCalledWith("key");
-  });
-
-  it("flush writes the pending value immediately", () => {
-    const base = createMockStorage();
-    const storage = createDebouncedStorage(base);
-
-    storage.setItem("key", "v1");
-    expect(base.setItem).not.toHaveBeenCalled();
-
-    storage.flush();
-    expect(base.setItem).toHaveBeenCalledWith("key", "v1");
-
-    // Timer should be cancelled; no duplicate write.
-    vi.advanceTimersByTime(300);
-    expect(base.setItem).toHaveBeenCalledTimes(1);
-  });
-
-  it("flush is a no-op when nothing is pending", () => {
-    const base = createMockStorage();
-    const storage = createDebouncedStorage(base);
-
-    storage.flush();
-    expect(base.setItem).not.toHaveBeenCalled();
-  });
-
-  it("flush after removeItem is a no-op", () => {
-    const base = createMockStorage();
-    const storage = createDebouncedStorage(base);
-
-    storage.setItem("key", "v1");
-    storage.removeItem("key");
-    storage.flush();
-
-    expect(base.setItem).not.toHaveBeenCalled();
-  });
-
-  it("setItem works normally after removeItem cancels a pending write", () => {
-    const base = createMockStorage();
-    const storage = createDebouncedStorage(base);
-
-    storage.setItem("key", "v1");
-    storage.removeItem("key");
-    storage.setItem("key", "v2");
-
-    vi.advanceTimersByTime(300);
-    expect(base.setItem).toHaveBeenCalledTimes(1);
-    expect(base.setItem).toHaveBeenCalledWith("key", "v2");
+    expect(
+      useComposerDraftStore.getState().getDraftThreadByProjectGroupId(projectId, MAIN_THREAD_GROUP_ID),
+    ).toMatchObject({ threadId: mainThreadId });
+    expect(
+      useComposerDraftStore.getState().getDraftThreadByProjectGroupId(projectId, "branch:feature/a"),
+    ).toBeNull();
   });
 });
