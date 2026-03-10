@@ -83,7 +83,10 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
-import { resolveThreadStatusPill } from "./Sidebar.logic";
+import {
+  resolveThreadStatusPill,
+  shouldClearThreadSelectionOnMouseDown,
+} from "./Sidebar.logic";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -1063,8 +1066,8 @@ export default function Sidebar() {
 
     const onMouseDown = (event: globalThis.MouseEvent) => {
       if (selectedThreadIds.size === 0) return;
-      const target = event.target as HTMLElement;
-      if (target.closest("[data-thread-item]")) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (!shouldClearThreadSelectionOnMouseDown(target)) return;
       clearSelection();
     };
 
@@ -1638,6 +1641,7 @@ export default function Sidebar() {
                                   <SidebarMenuSubItem className="w-full">
                                     <SidebarMenuSubButton
                                       render={<button type="button" />}
+                                      data-thread-selection-safe
                                       size="sm"
                                       className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
                                       onClick={() => {
@@ -1652,6 +1656,7 @@ export default function Sidebar() {
                                   <SidebarMenuSubItem className="w-full">
                                     <SidebarMenuSubButton
                                       render={<button type="button" />}
+                                      data-thread-selection-safe
                                       size="sm"
                                       className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
                                       onClick={() => {

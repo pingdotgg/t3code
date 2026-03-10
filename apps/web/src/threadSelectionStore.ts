@@ -15,7 +15,7 @@ export interface ThreadSelectionState {
   anchorThreadId: ThreadId | null;
 }
 
-interface ThreadSelectionActions {
+interface ThreadSelectionStore extends ThreadSelectionState {
   /** Toggle a single thread in the selection (Cmd/Ctrl+Click). */
   toggleThread: (threadId: ThreadId) => void;
   /**
@@ -33,8 +33,6 @@ interface ThreadSelectionActions {
   /** Check if any threads are selected. */
   hasSelection: () => boolean;
 }
-
-type ThreadSelectionStore = ThreadSelectionState & ThreadSelectionActions;
 
 const EMPTY_SET = new Set<ThreadId>();
 
