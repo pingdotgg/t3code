@@ -136,6 +136,7 @@ const makeIsolatedGitCore = (gitService: GitServiceShape) =>
       checkoutBranch: (input) => core.checkoutBranch(input),
       initRepo: (input) => core.initRepo(input),
       listLocalBranchNames: (cwd) => core.listLocalBranchNames(cwd),
+      deleteBranch: (input) => core.deleteBranch(input),
     } satisfies GitCoreShape;
   });
 

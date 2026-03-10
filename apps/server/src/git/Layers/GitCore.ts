@@ -1395,6 +1395,44 @@ const makeGitCore = Effect.gen(function* () {
       ),
     );
 
+  const deleteBranch: GitCoreShape["deleteBranch"] = (input) =>
+    Effect.gen(function* () {
+      let deletedLocal = false;
+      let deletedRemote = false;
+
+      // Delete local branch (force delete to handle unmerged branches)
+      const localDeleteResult = yield* executeGit(
+        "GitCore.deleteBranch.local",
+        input.cwd,
+        ["branch", "-D", input.branch],
+        {
+          timeoutMs: 10_000,
+          allowNonZeroExit: true,
+        },
+      );
+      deletedLocal = localDeleteResult.code === 0;
+
+      // Delete remote branch if requested
+      if (input.deleteRemote) {
+        const remoteDeleteResult = yield* executeGit(
+          "GitCore.deleteBranch.remote",
+          input.cwd,
+          ["push", "origin", "--delete", input.branch],
+          {
+            timeoutMs: 30_000,
+            allowNonZeroExit: true,
+          },
+        );
+        deletedRemote = remoteDeleteResult.code === 0;
+      }
+
+      return {
+        branch: input.branch,
+        deletedLocal,
+        deletedRemote,
+      };
+    });
+
   return {
     status,
     statusDetails,
@@ -1415,6 +1453,7 @@ const makeGitCore = Effect.gen(function* () {
     checkoutBranch,
     initRepo,
     listLocalBranchNames,
+    deleteBranch,
   } satisfies GitCoreShape;
 });
 

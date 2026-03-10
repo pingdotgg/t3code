@@ -208,7 +208,6 @@ const makeCodexTextGeneration = Effect.gen(function* () {
           "codex",
           [
             "exec",
-            "--ephemeral",
             "-s",
             "read-only",
             "--model",

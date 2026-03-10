@@ -14,6 +14,7 @@ import {
   FolderGit2Icon,
   GitBranchIcon,
   GitCommitIcon,
+  GitMergeIcon,
   GitPullRequestIcon,
   LogInIcon,
   RefreshCcwIcon,
@@ -426,6 +427,7 @@ export default function GitHubPanel({
   const [lastMergeResult, setLastMergeResult] = useState<GitMergeBranchesResult | null>(null);
   const [mergeExpanded, setMergeExpanded] = useState(false);
   const [promotionTargetBranch, setPromotionTargetBranch] = useState<string | null>(null);
+  const [isPromoteDialogOpen, setIsPromoteDialogOpen] = useState(false);
 
   const { data: gitStatus = null, error: gitStatusError } = useQuery(
     gitStatusQueryOptions(workspaceCwd),
@@ -447,6 +449,7 @@ export default function GitHubPanel({
     setIsCommitDialogOpen(false);
     setMergeExpanded(false);
     setPromotionTargetBranch(null);
+    setIsPromoteDialogOpen(false);
     void invalidateGitQueries(queryClient);
     void invalidateGitHubQueries(queryClient);
   }, [activeThreadId, queryClient, repoCwd, workspaceCwd]);
@@ -773,6 +776,7 @@ export default function GitHubPanel({
       featureBranch = false,
       isDefaultBranchOverride,
       progressToastId,
+      targetBranch,
     }: {
       action: GitStackedAction;
       commitMessage?: string;
@@ -783,6 +787,7 @@ export default function GitHubPanel({
       featureBranch?: boolean;
       isDefaultBranchOverride?: boolean;
       progressToastId?: GitActionToastId;
+      targetBranch?: string;
     }) => {
       const actionStatus = statusOverride ?? gitStatusForActions;
       const actionBranch = actionStatus?.branch ?? null;
@@ -817,6 +822,7 @@ export default function GitHubPanel({
         forcePushOnly: forcePushOnlyProgress,
         featureBranch,
         ...(pushTarget ? { pushTarget } : {}),
+        ...(targetBranch ? { targetBranch } : {}),
       });
       const resolvedProgressToastId =
         progressToastId ??
@@ -855,6 +861,7 @@ export default function GitHubPanel({
         action,
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
+        ...(targetBranch ? { targetBranch } : {}),
       });
 
       try {
@@ -1026,6 +1033,15 @@ export default function GitHubPanel({
     },
     [openExistingPr, runGitActionWithToast, setIsCommitDialogOpen],
   );
+
+  const runPromoteAction = useCallback(() => {
+    if (!activeTargetBranch) return;
+    setIsPromoteDialogOpen(false);
+    void runGitActionWithToast({
+      action: "promote",
+      targetBranch: activeTargetBranch,
+    });
+  }, [activeTargetBranch, runGitActionWithToast]);
 
   const openExternalUrl = useCallback(
     async (url: string) => {
@@ -1282,7 +1298,7 @@ export default function GitHubPanel({
                 )}
 
                 {/* Secondary actions row */}
-                <div className="grid grid-cols-3 gap-1.5">
+                <div className="grid grid-cols-4 gap-1.5">
                   <Button
                     variant="outline"
                     size="xs"
@@ -1304,6 +1320,22 @@ export default function GitHubPanel({
                   >
                     <RefreshCcwIcon className="size-3.5" />
                     Pull
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    disabled={
+                      !activeTargetBranch ||
+                      isDefaultBranch ||
+                      isGitActionRunning ||
+                      !gitStatusForActions ||
+                      activeWorkspaceHasConflicts
+                    }
+                    onClick={() => setIsPromoteDialogOpen(true)}
+                    className="justify-center"
+                  >
+                    <GitMergeIcon className="size-3.5" />
+                    Promote
                   </Button>
                   <Button
                     variant="outline"
@@ -1853,6 +1885,56 @@ export default function GitHubPanel({
             </Button>
             <Button size="sm" onClick={checkoutFeatureBranchAndContinuePendingAction}>
               Feature branch
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+
+      {/* ================================================================== */}
+      {/* PROMOTE CONFIRMATION DIALOG */}
+      {/* ================================================================== */}
+      <Dialog
+        open={isPromoteDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setIsPromoteDialogOpen(false);
+          }
+        }}
+      >
+        <DialogPopup className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Promote to {activeTargetBranch ?? "target"}?</DialogTitle>
+            <DialogDescription>
+              This will merge{" "}
+              <code className="rounded bg-muted px-1 font-mono text-xs">
+                {activeWorkspaceBranch ?? "current branch"}
+              </code>{" "}
+              into{" "}
+              <code className="rounded bg-muted px-1 font-mono text-xs">
+                {activeTargetBranch ?? "target"}
+              </code>
+              , push, and delete the feature branch. This bypasses pull request review.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-3">
+            <div className="flex items-center gap-2 text-sm">
+              <GitBranchIcon className="size-4 text-muted-foreground" />
+              <span className="font-mono">{activeWorkspaceBranch}</span>
+              <ArrowRightIcon className="size-4 text-muted-foreground" />
+              <span className="font-mono font-medium">{activeTargetBranch}</span>
+            </div>
+            {gitStatusForActions?.hasWorkingTreeChanges && (
+              <p className="text-xs text-muted-foreground">
+                Uncommitted changes will be committed first.
+              </p>
+            )}
+          </DialogPanel>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setIsPromoteDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={runPromoteAction}>
+              Promote
             </Button>
           </DialogFooter>
         </DialogPopup>

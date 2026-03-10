@@ -58,6 +58,7 @@ export function buildGitActionProgressStages(input: {
   forcePushOnly?: boolean;
   pushTarget?: string;
   featureBranch?: boolean;
+  targetBranch?: string;
 }): string[] {
   const branchStages = input.featureBranch ? ["Preparing feature branch..."] : [];
   const shouldIncludeCommitStages =
@@ -68,6 +69,17 @@ export function buildGitActionProgressStages(input: {
       ? ["Committing..."]
       : ["Generating commit message...", "Committing..."];
   const pushStage = input.pushTarget ? `Pushing to ${input.pushTarget}...` : "Pushing...";
+
+  if (input.action === "promote") {
+    const targetLabel = input.targetBranch ? ` into ${input.targetBranch}` : "";
+    return [
+      ...(input.hasWorkingTreeChanges ? commitStages : []),
+      "Pushing backup...",
+      `Merging${targetLabel}...`,
+      `Pushing ${input.targetBranch ?? "target"}...`,
+      "Cleaning up...",
+    ];
+  }
   if (input.action === "commit") {
     return [...branchStages, ...commitStages];
   }
@@ -84,6 +96,23 @@ export function summarizeGitResult(result: GitRunStackedActionResult): {
   title: string;
   description?: string;
 } {
+  // Handle promote action first
+  if (result.promote.status === "promoted") {
+    const targetBranch = result.promote.targetBranch ?? "target";
+    const description = result.promote.branchDeleted
+      ? `${result.promote.sourceBranch ?? "Feature branch"} deleted`
+      : undefined;
+    return withDescription(`Promoted to ${targetBranch}`, description);
+  }
+
+  if (result.promote.status === "conflicts") {
+    const fileCount = result.promote.conflictedFiles?.length ?? 0;
+    return {
+      title: "Merge conflicts",
+      description: `${fileCount} file${fileCount === 1 ? "" : "s"} need resolution`,
+    };
+  }
+
   if (result.pr.status === "created" || result.pr.status === "opened_existing") {
     const prNumber = result.pr.number ? ` #${result.pr.number}` : "";
     const title = `${result.pr.status === "created" ? "Created PR" : "Opened PR"}${prNumber}`;

@@ -5,7 +5,12 @@ const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 
 // Domain Types
 
-export const GitStackedAction = Schema.Literals(["commit", "commit_push", "commit_push_pr"]);
+export const GitStackedAction = Schema.Literals([
+  "commit",
+  "commit_push",
+  "commit_push_pr",
+  "promote",
+]);
 export type GitStackedAction = typeof GitStackedAction.Type;
 const GitCommitStepStatus = Schema.Literals(["created", "skipped_no_changes"]);
 const GitPushStepStatus = Schema.Literals([
@@ -17,6 +22,11 @@ const GitBranchStepStatus = Schema.Literals(["created", "skipped_not_requested"]
 const GitPrStepStatus = Schema.Literals([
   "created",
   "opened_existing",
+  "skipped_not_requested",
+]);
+const GitPromoteStepStatus = Schema.Literals([
+  "promoted",
+  "conflicts",
   "skipped_not_requested",
 ]);
 const GitStatusPrState = Schema.Literals(["open", "closed", "merged"]);
@@ -54,6 +64,7 @@ export const GitRunStackedActionInput = Schema.Struct({
   action: GitStackedAction,
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
+  targetBranch: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 
@@ -209,6 +220,13 @@ export const GitRunStackedActionResult = Schema.Struct({
     baseBranch: Schema.optional(TrimmedNonEmptyStringSchema),
     headBranch: Schema.optional(TrimmedNonEmptyStringSchema),
     title: Schema.optional(TrimmedNonEmptyStringSchema),
+  }),
+  promote: Schema.Struct({
+    status: GitPromoteStepStatus,
+    sourceBranch: Schema.optional(TrimmedNonEmptyStringSchema),
+    targetBranch: Schema.optional(TrimmedNonEmptyStringSchema),
+    conflictedFiles: Schema.optional(Schema.Array(TrimmedNonEmptyStringSchema)),
+    branchDeleted: Schema.optional(Schema.Boolean),
   }),
 });
 export type GitRunStackedActionResult = typeof GitRunStackedActionResult.Type;

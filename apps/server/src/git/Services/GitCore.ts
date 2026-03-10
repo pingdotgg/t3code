@@ -60,6 +60,18 @@ export interface GitRenameBranchResult {
   branch: string;
 }
 
+export interface GitDeleteBranchInput {
+  cwd: string;
+  branch: string;
+  deleteRemote?: boolean;
+}
+
+export interface GitDeleteBranchResult {
+  branch: string;
+  deletedLocal: boolean;
+  deletedRemote: boolean;
+}
+
 /**
  * GitCoreShape - Service API for low-level Git repository interactions.
  */
@@ -185,6 +197,13 @@ export interface GitCoreShape {
    * List local branch names (short format).
    */
   readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
+
+  /**
+   * Delete a local branch and optionally its remote tracking branch.
+   */
+  readonly deleteBranch: (
+    input: GitDeleteBranchInput,
+  ) => Effect.Effect<GitDeleteBranchResult, GitCommandError>;
 }
 
 /**

@@ -846,6 +846,7 @@ describe("summarizeGitResult", () => {
       },
       push: { status: "skipped_not_requested" },
       pr: { status: "skipped_not_requested" },
+      promote: { status: "skipped_not_requested" },
     });
 
     assert.deepEqual(result, {
@@ -869,6 +870,7 @@ describe("summarizeGitResult", () => {
         upstreamBranch: "origin/foo",
       },
       pr: { status: "skipped_not_requested" },
+      promote: { status: "skipped_not_requested" },
     });
 
     assert.deepEqual(result, {
@@ -895,6 +897,7 @@ describe("summarizeGitResult", () => {
         number: 42,
         title: "feat: ship github shortcuts and improve PR CTA in success toast",
       },
+      promote: { status: "skipped_not_requested" },
     });
 
     assert.deepEqual(result, {
@@ -919,11 +922,55 @@ describe("summarizeGitResult", () => {
         title:
           "feat: this title is intentionally extremely long so we can validate that toast descriptions are truncated with an ellipsis suffix",
       },
+      promote: { status: "skipped_not_requested" },
     });
 
     assert.deepEqual(result, {
       title: "Created PR #99",
       description: "feat: this title is intentionally extremely long so we can validate t...",
+    });
+  });
+
+  it("returns promote-focused toast for successful promote action", () => {
+    const result = summarizeGitResult({
+      action: "promote",
+      branch: { status: "skipped_not_requested" },
+      commit: { status: "created", commitSha: "abc123", subject: "fix: something" },
+      push: { status: "pushed", branch: "main" },
+      pr: { status: "skipped_not_requested" },
+      promote: {
+        status: "promoted",
+        sourceBranch: "feature/test",
+        targetBranch: "main",
+        branchDeleted: true,
+      },
+    });
+
+    assert.deepEqual(result, {
+      title: "Promoted to main",
+      description: "feature/test deleted",
+    });
+  });
+
+  it("returns conflicts toast for promote with conflicts", () => {
+    const result = summarizeGitResult({
+      action: "promote",
+      branch: { status: "skipped_not_requested" },
+      commit: { status: "created", commitSha: "abc123", subject: "fix: something" },
+      push: { status: "pushed", branch: "feature/test" },
+      pr: { status: "skipped_not_requested" },
+      promote: {
+        status: "conflicts",
+        sourceBranch: "feature/test",
+        targetBranch: "main",
+        conflictedFiles: ["src/app.ts", "package.json"],
+        branchDeleted: false,
+      },
+    });
+
+    assert.deepEqual(result, {
+      title: "Merge conflicts",
+      description: "2 files need resolution",
     });
   });
 });

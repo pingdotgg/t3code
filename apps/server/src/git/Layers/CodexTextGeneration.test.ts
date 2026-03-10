@@ -27,6 +27,11 @@ function makeFakeCodexBinary(dir: string) {
       [
         "#!/bin/sh",
         'output_path=""',
+        'args="$*"',
+        'if printf "%s" "$args" | grep -F -- "--ephemeral" >/dev/null; then',
+        '  printf "%s\\n" "unexpected deprecated flag --ephemeral" >&2',
+        "  exit 9",
+        "fi",
         "while [ $# -gt 0 ]; do",
         '  if [ "$1" = "--image" ]; then',
         "    shift",

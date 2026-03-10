@@ -475,10 +475,74 @@ export const makeGitManager = Effect.gen(function* () {
       };
     });
 
+  const runPromoteStep = (
+    cwd: string,
+    sourceBranch: string,
+    targetBranch: string,
+    commitMessage?: string,
+  ) =>
+    Effect.gen(function* () {
+      // Step 1: Commit pending changes on feature branch (if any)
+      const commit = yield* runCommitStep(cwd, sourceBranch, commitMessage);
+
+      // Step 2: Push feature branch to origin (backup, in case conflicts arise)
+      yield* gitCore.pushCurrentBranch(cwd, sourceBranch);
+
+      // Step 3: Checkout target branch
+      yield* Effect.scoped(gitCore.checkoutBranch({ cwd, branch: targetBranch }));
+
+      // Step 4: Pull latest target (to avoid push conflicts)
+      yield* gitCore.pullCurrentBranch(cwd).pipe(Effect.catch(() => Effect.void));
+
+      // Step 5: Merge feature branch into target
+      const mergeResult = yield* gitCore.mergeBranches({
+        cwd,
+        sourceBranch,
+        targetBranch,
+      });
+
+      if (mergeResult.status === "conflicted") {
+        // Leave in conflict state for user to resolve
+        return {
+          commit,
+          push: { status: "pushed" as const, branch: sourceBranch },
+          promote: {
+            status: "conflicts" as const,
+            sourceBranch,
+            targetBranch,
+            conflictedFiles: mergeResult.conflictedFiles,
+            branchDeleted: false,
+          },
+        };
+      }
+
+      // Step 6: Push target to origin
+      yield* gitCore.pushCurrentBranch(cwd, targetBranch);
+
+      // Step 7: Delete feature branch (local + remote)
+      const deleteResult = yield* gitCore.deleteBranch({
+        cwd,
+        branch: sourceBranch,
+        deleteRemote: true,
+      });
+
+      return {
+        commit,
+        push: { status: "pushed" as const, branch: targetBranch },
+        promote: {
+          status: "promoted" as const,
+          sourceBranch,
+          targetBranch,
+          branchDeleted: deleteResult.deletedLocal || deleteResult.deletedRemote,
+        },
+      };
+    });
+
   const runStackedAction: GitManagerShape["runStackedAction"] = Effect.fnUntraced(
     function* (input) {
       const wantsPush = input.action !== "commit";
       const wantsPr = input.action === "commit_push_pr";
+      const wantsPromote = input.action === "promote";
 
       const initialStatus = yield* gitCore.statusDetails(input.cwd);
       if (!input.featureBranch && wantsPush && !initialStatus.branch) {
@@ -489,6 +553,31 @@ export const makeGitManager = Effect.gen(function* () {
           "runStackedAction",
           "Cannot create a pull request from detached HEAD.",
         );
+      }
+      if (wantsPromote && !initialStatus.branch) {
+        return yield* gitManagerError("runStackedAction", "Cannot promote from detached HEAD.");
+      }
+      if (wantsPromote && !input.targetBranch) {
+        return yield* gitManagerError("runStackedAction", "Promote action requires a target branch.");
+      }
+
+      // Handle promote action separately
+      if (wantsPromote && initialStatus.branch && input.targetBranch) {
+        const promoteResult = yield* runPromoteStep(
+          input.cwd,
+          initialStatus.branch,
+          input.targetBranch,
+          input.commitMessage,
+        );
+
+        return {
+          action: input.action,
+          branch: { status: "skipped_not_requested" as const },
+          commit: promoteResult.commit,
+          push: promoteResult.push,
+          pr: { status: "skipped_not_requested" as const },
+          promote: promoteResult.promote,
+        };
       }
 
       let branchStep: { status: "created" | "skipped_not_requested"; name?: string };
@@ -531,6 +620,7 @@ export const makeGitManager = Effect.gen(function* () {
         commit,
         push,
         pr,
+        promote: { status: "skipped_not_requested" as const },
       };
     },
   );
