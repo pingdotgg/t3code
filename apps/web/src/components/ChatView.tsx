@@ -135,6 +135,7 @@ import {
   DiffIcon,
   EllipsisIcon,
   FolderClosedIcon,
+  ImagePlusIcon,
   LockIcon,
   LockOpenIcon,
   PencilIcon,
@@ -465,6 +466,36 @@ function cloneComposerImageForRetry(image: ComposerImageAttachment): ComposerIma
   }
 }
 
+async function materializeMessageImageAttachmentForEdit(
+  attachment: Extract<NonNullable<ChatMessage["attachments"]>[number], { type: "image" }>,
+): Promise<ComposerImageAttachment | null> {
+  if (!attachment.previewUrl) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(attachment.previewUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load ${attachment.name}.`);
+    }
+    const blob = await response.blob();
+    const file = new File([blob], attachment.name, {
+      type: blob.type || attachment.mimeType,
+    });
+    return {
+      type: "image",
+      id: attachment.id,
+      name: attachment.name,
+      mimeType: file.type || attachment.mimeType,
+      sizeBytes: blob.size || attachment.sizeBytes,
+      previewUrl: attachment.previewUrl,
+      file,
+    };
+  } catch {
+    return null;
+  }
+}
+
 const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
   pathValue: string;
   kind: "file" | "directory";
@@ -664,6 +695,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [editingUserMessageId, setEditingUserMessageId] = useState<MessageId | null>(null);
   const [editingUserMessageText, setEditingUserMessageText] = useState("");
+  const [editingUserMessageImages, setEditingUserMessageImages] = useState<ComposerImageAttachment[]>(
+    [],
+  );
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
     Record<string, string[]>
   >({});
@@ -1982,6 +2016,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setComposerHighlightedItemId(null);
     setEditingUserMessageId(null);
     setEditingUserMessageText("");
+    setEditingUserMessageImages((existing) => {
+      for (const image of existing) {
+        revokeBlobPreviewUrl(image.previewUrl);
+      }
+      return [];
+    });
     setComposerCursor(promptRef.current.length);
     setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
     dragDepthRef.current = 0;
@@ -2299,6 +2339,68 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setThreadError(activeThreadId, error);
   };
 
+  const addEditingUserMessageImages = useCallback((files: File[]) => {
+    if (!activeThreadId || files.length === 0) return;
+
+    const nextImages: ComposerImageAttachment[] = [];
+    let nextImageCount = editingUserMessageImages.length;
+    let error: string | null = null;
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) {
+        error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
+        continue;
+      }
+      if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+        error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
+        continue;
+      }
+      if (nextImageCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
+        break;
+      }
+
+      const previewUrl = URL.createObjectURL(file);
+      nextImages.push({
+        type: "image",
+        id: crypto.randomUUID(),
+        name: file.name || "image",
+        mimeType: file.type,
+        sizeBytes: file.size,
+        previewUrl,
+        file,
+      });
+      nextImageCount += 1;
+    }
+
+    if (nextImages.length > 0) {
+      setEditingUserMessageImages((existing) => [...existing, ...nextImages]);
+    }
+    setThreadError(activeThreadId, error);
+  }, [activeThreadId, editingUserMessageImages.length, setThreadError]);
+
+  const removeEditingUserMessageImage = useCallback((imageId: string) => {
+    setEditingUserMessageImages((existing) => {
+      const image = existing.find((entry) => entry.id === imageId);
+      if (image) {
+        revokeBlobPreviewUrl(image.previewUrl);
+      }
+      return existing.filter((entry) => entry.id !== imageId);
+    });
+  }, []);
+
+  const onEditMessagePaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData.files);
+    if (files.length === 0) {
+      return;
+    }
+    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+    if (imageFiles.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    addEditingUserMessageImages(imageFiles);
+  }, [addEditingUserMessageImages]);
+
   const removeComposerImage = (imageId: string) => {
     removeComposerImageFromDraft(imageId);
   };
@@ -2415,14 +2517,35 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
 
-  const onStartEditUserMessage = useCallback((message: TimelineMessage) => {
+  const onStartEditUserMessage = useCallback(async (message: TimelineMessage) => {
     setEditingUserMessageId(message.id);
     setEditingUserMessageText(message.text);
+
+    const nextImages = await Promise.all(
+      (message.attachments ?? [])
+        .filter((attachment): attachment is Extract<NonNullable<ChatMessage["attachments"]>[number], { type: "image" }> => attachment.type === "image")
+        .map(materializeMessageImageAttachmentForEdit),
+    );
+
+    setEditingUserMessageImages((existing) => {
+      for (const image of existing) {
+        if (!nextImages.some((candidate) => candidate?.previewUrl === image.previewUrl)) {
+          revokeBlobPreviewUrl(image.previewUrl);
+        }
+      }
+      return nextImages.flatMap((image) => (image ? [image] : []));
+    });
   }, []);
 
   const onCancelEditUserMessage = useCallback(() => {
     setEditingUserMessageId(null);
     setEditingUserMessageText("");
+    setEditingUserMessageImages((existing) => {
+      for (const image of existing) {
+        revokeBlobPreviewUrl(image.previewUrl);
+      }
+      return [];
+    });
   }, []);
 
   const submitUserTurn = async (input: {
@@ -2724,7 +2847,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const onSubmitEditUserMessage = async (message: TimelineMessage) => {
     const nextText = editingUserMessageText.trim();
-    if (!activeThread || nextText.length === 0) {
+    if (!activeThread || (nextText.length === 0 && editingUserMessageImages.length === 0)) {
       return;
     }
 
@@ -2745,9 +2868,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     setEditingUserMessageId(null);
     setEditingUserMessageText("");
+    const nextImages = editingUserMessageImages;
+    setEditingUserMessageImages([]);
     await submitUserTurn({
       text: nextText,
-      images: [],
+      images: nextImages,
       clearComposerDraft: false,
     });
   };
@@ -3525,8 +3650,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onRevertUserMessage={onRevertUserMessage}
           editingUserMessageId={editingUserMessageId}
           editingUserMessageText={editingUserMessageText}
+          editingUserMessageImages={editingUserMessageImages}
           onStartEditUserMessage={onStartEditUserMessage}
           onChangeEditingUserMessageText={setEditingUserMessageText}
+          onAddEditingUserMessageImages={addEditingUserMessageImages}
+          onRemoveEditingUserMessageImage={removeEditingUserMessageImage}
+          onEditMessagePaste={onEditMessagePaste}
           onCancelEditUserMessage={onCancelEditUserMessage}
           onSubmitEditUserMessage={onSubmitEditUserMessage}
           isRevertingCheckpoint={isRevertingCheckpoint}
@@ -4449,6 +4578,7 @@ const EditableUserMessageBubble = memo(function EditableUserMessageBubble(props:
   canRevertAgentWork: boolean;
   isEditing: boolean;
   editingText: string;
+  editingImages: ComposerImageAttachment[];
   isBusy: boolean;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -4456,6 +4586,9 @@ const EditableUserMessageBubble = memo(function EditableUserMessageBubble(props:
   onRevertUserMessage: (messageId: MessageId) => void;
   onStartEdit: (message: TimelineMessage) => void;
   onChangeEditingText: (value: string) => void;
+  onAddEditingImages: (files: File[]) => void;
+  onRemoveEditingImage: (imageId: string) => void;
+  onEditPaste: (event: React.ClipboardEvent<HTMLTextAreaElement>) => void;
   onCancelEdit: () => void;
   onSubmitEdit: (message: TimelineMessage) => void;
 }) {
@@ -4464,6 +4597,7 @@ const EditableUserMessageBubble = memo(function EditableUserMessageBubble(props:
     canRevertAgentWork,
     isEditing,
     editingText,
+    editingImages,
     isBusy,
     isRevertingCheckpoint,
     onImageExpand,
@@ -4471,11 +4605,16 @@ const EditableUserMessageBubble = memo(function EditableUserMessageBubble(props:
     onRevertUserMessage,
     onStartEdit,
     onChangeEditingText,
+    onAddEditingImages,
+    onRemoveEditingImage,
+    onEditPaste,
     onCancelEdit,
     onSubmitEdit,
   } = props;
   const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const editFileInputRef = useRef<HTMLInputElement | null>(null);
   const userImages = message.attachments ?? [];
+  const displayedImages = isEditing ? editingImages : userImages;
 
   useEffect(() => {
     if (!isEditing) {
@@ -4493,12 +4632,12 @@ const EditableUserMessageBubble = memo(function EditableUserMessageBubble(props:
   return (
     <div className="flex justify-end">
       <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
-        {userImages.length > 0 && (
+        {displayedImages.length > 0 && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-            {userImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+            {displayedImages.map((image) => (
               <div
                 key={image.id}
-                className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                className="group/image relative overflow-hidden rounded-lg border border-border/80 bg-background/70"
               >
                 {image.previewUrl ? (
                   <button
@@ -4506,7 +4645,7 @@ const EditableUserMessageBubble = memo(function EditableUserMessageBubble(props:
                     className="h-full w-full cursor-zoom-in"
                     aria-label={`Preview ${image.name}`}
                     onClick={() => {
-                      const preview = buildExpandedImagePreview(userImages, image.id);
+                      const preview = buildExpandedImagePreview(displayedImages, image.id);
                       if (!preview) return;
                       onImageExpand(preview);
                     }}
@@ -4524,16 +4663,44 @@ const EditableUserMessageBubble = memo(function EditableUserMessageBubble(props:
                     {image.name}
                   </div>
                 )}
+                {isEditing && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="absolute right-1 top-1 bg-background/80 opacity-0 transition-opacity group-hover/image:opacity-100 hover:bg-background/90"
+                    onClick={() => onRemoveEditingImage(image.id)}
+                    aria-label={`Remove ${image.name}`}
+                    disabled={isBusy}
+                  >
+                    <XIcon />
+                  </Button>
+                )}
               </div>
             ))}
           </div>
         )}
         {isEditing ? (
           <div className="space-y-2">
+            <input
+              ref={editFileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(event) => {
+                const files = Array.from(event.target.files ?? []);
+                if (files.length > 0) {
+                  onAddEditingImages(files);
+                }
+                event.currentTarget.value = "";
+              }}
+            />
             <Textarea
               ref={editTextareaRef}
               value={editingText}
               onChange={(event) => onChangeEditingText(event.target.value)}
+              onPaste={onEditPaste}
               onKeyDown={(event) => {
                 if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
                   event.preventDefault();
@@ -4552,7 +4719,19 @@ const EditableUserMessageBubble = memo(function EditableUserMessageBubble(props:
               aria-label="Edit message"
             />
             <div className="flex items-center justify-between gap-2">
-              <p className="text-[10px] text-muted-foreground/55">Ctrl/Cmd+Enter to send</p>
+              <div className="flex items-center gap-2 text-[10px] text-muted-foreground/55">
+                <p>Ctrl/Cmd+Enter to send</p>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => editFileInputRef.current?.click()}
+                  disabled={isBusy || editingImages.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS}
+                >
+                  <ImagePlusIcon className="size-3" />
+                  Image
+                </Button>
+              </div>
               <div className="flex items-center gap-1.5">
                 <Button
                   type="button"
@@ -4568,7 +4747,7 @@ const EditableUserMessageBubble = memo(function EditableUserMessageBubble(props:
                   size="xs"
                   variant="outline"
                   onClick={() => onSubmitEdit(message)}
-                  disabled={isBusy || editingText.trim().length === 0}
+                  disabled={isBusy || (editingText.trim().length === 0 && editingImages.length === 0)}
                 >
                   <CheckIcon className="size-3" />
                   Send
@@ -4586,7 +4765,7 @@ const EditableUserMessageBubble = memo(function EditableUserMessageBubble(props:
             <div className="mt-1.5 flex items-center justify-end gap-2">
               <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
                 {message.text && <MessageCopyButton text={message.text} />}
-                {message.text && canRevertAgentWork && (
+                {(message.text || userImages.length > 0) && canRevertAgentWork && (
                   <Button
                     type="button"
                     size="xs"
@@ -5001,8 +5180,12 @@ interface MessagesTimelineProps {
   onRevertUserMessage: (messageId: MessageId) => void;
   editingUserMessageId: MessageId | null;
   editingUserMessageText: string;
+  editingUserMessageImages: ComposerImageAttachment[];
   onStartEditUserMessage: (message: TimelineMessage) => void;
   onChangeEditingUserMessageText: (value: string) => void;
+  onAddEditingUserMessageImages: (files: File[]) => void;
+  onRemoveEditingUserMessageImage: (imageId: string) => void;
+  onEditMessagePaste: (event: React.ClipboardEvent<HTMLTextAreaElement>) => void;
   onCancelEditUserMessage: () => void;
   onSubmitEditUserMessage: (message: TimelineMessage) => void;
   isRevertingCheckpoint: boolean;
@@ -5061,8 +5244,12 @@ const MessagesTimeline = memo(function MessagesTimeline({
   onRevertUserMessage,
   editingUserMessageId,
   editingUserMessageText,
+  editingUserMessageImages,
   onStartEditUserMessage,
   onChangeEditingUserMessageText,
+  onAddEditingUserMessageImages,
+  onRemoveEditingUserMessageImage,
+  onEditMessagePaste,
   onCancelEditUserMessage,
   onSubmitEditUserMessage,
   isRevertingCheckpoint,
@@ -5364,6 +5551,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
               canRevertAgentWork={canRevertAgentWork}
               isEditing={editingUserMessageId === row.message.id}
               editingText={editingUserMessageText}
+              editingImages={editingUserMessageImages}
               isBusy={isWorking || isRevertingCheckpoint}
               isRevertingCheckpoint={isRevertingCheckpoint}
               onImageExpand={onImageExpand}
@@ -5371,6 +5559,9 @@ const MessagesTimeline = memo(function MessagesTimeline({
               onRevertUserMessage={onRevertUserMessage}
               onStartEdit={onStartEditUserMessage}
               onChangeEditingText={onChangeEditingUserMessageText}
+              onAddEditingImages={onAddEditingUserMessageImages}
+              onRemoveEditingImage={onRemoveEditingUserMessageImage}
+              onEditPaste={onEditMessagePaste}
               onCancelEdit={onCancelEditUserMessage}
               onSubmitEdit={onSubmitEditUserMessage}
             />
