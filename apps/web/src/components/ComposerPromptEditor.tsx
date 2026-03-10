@@ -656,10 +656,11 @@ function ComposerPromptEditorInner({
 
     isApplyingControlledUpdateRef.current = true;
     editor.update(() => {
+      const valueChanged = previousSnapshot.value !== value;
       if (previousSnapshot.value !== value) {
         $setComposerEditorPrompt(value);
       }
-      if (isFocused) {
+      if (valueChanged || isFocused) {
         $setSelectionAtComposerOffset(normalizedCursor);
       }
     });
